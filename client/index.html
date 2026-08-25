@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <link rel="icon" href="/logo.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Daedalus" />
+    <meta name="theme-color" content="#ffffff" />
+    <title>Daedalus</title>
+    <script>
+      (function () {
+        // Applies the theme class before first paint — ThemeProvider (src/lib/theme.tsx)
+        // does this in a useEffect, too late to stop a dark-mode user seeing a white
+        // flash (and a white boot splash). Keep in sync with its "theme" storage key.
+        try {
+          var stored = localStorage.getItem("theme") || "system";
+          var resolved =
+            stored === "system"
+              ? window.matchMedia("(prefers-color-scheme: dark)").matches
+                ? "dark"
+                : "light"
+              : stored;
+          document.documentElement.classList.toggle("dark", resolved === "dark");
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.content = resolved === "dark" ? "#0a0a0a" : "#ffffff";
+        } catch (e) {}
+      })();
+    </script>
+    <style>
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        background: #ffffff;
+        --boot-fg: #0f172a;
+        transition: opacity 260ms ease-out;
+      }
+      .dark #boot-splash { background: #0a0a0a; --boot-fg: #ffffff; }
+      #boot-splash.is-leaving { opacity: 0; pointer-events: none; }
+      #boot-splash img { width: 56px; height: 56px; }
+      #boot-splash .boot-name {
+        font: 600 26px/1 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        letter-spacing: -0.02em;
+        color: var(--boot-fg);
+      }
+      #boot-splash .boot-breathe {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        animation: boot-breathe 2.4s ease-in-out 0.6s infinite;
+      }
+      @keyframes boot-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.68; } }
+      @media (prefers-reduced-motion: reduce) {
+        #boot-splash .boot-breathe { animation: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="boot-splash" role="status" aria-label="Loading">
+      <div class="boot-breathe">
+        <img src="/logo.svg" alt="" />
+        <span class="boot-name">Daedalus</span>
+      </div>
+    </div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

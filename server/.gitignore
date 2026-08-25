@@ -1,0 +1,3 @@
+node_modules/
+# holds the access token, API keys and push tokens — never commit
+data/

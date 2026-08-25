@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Daedalus mark: one thread routed between two terminals — the client and the
+       agent, with the harness piping a single stream between them.
+       #007595 is the primary token, oklch(0.52 0.105 223.128). -->
+  <g fill="none" stroke="#007595" stroke-width="6" stroke-linecap="round">
+    <path d="M12 12 H36 A8 8 0 0 1 44 20 V24 A8 8 0 0 1 36 32 H28 A8 8 0 0 0 20 40 V44 A8 8 0 0 0 28 52 H52"/>
+  </g>
+  <g fill="#007595">
+    <circle cx="12" cy="12" r="5"/>
+    <circle cx="52" cy="52" r="5"/>
+  </g>
+</svg>
