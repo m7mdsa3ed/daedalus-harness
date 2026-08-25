@@ -94,6 +94,8 @@
 
   /* One content width for the whole session column. */
   --harness-chat-width: 748px;
+  /* The composer sits inside that column — tune this alone to change its width. */
+  --harness-composer-width: calc(var(--harness-chat-width) - 48px);
 }
 
 .dark {

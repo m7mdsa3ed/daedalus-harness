@@ -61,8 +61,6 @@ export interface ThreadState {
   context: acp.UsageUpdate | null
   /** Time to first update of the last turn, ms. */
   ttftMs: number | null
-  /** Last turn ended in a cancel — the Continue button picks it back up. */
-  canContinue: boolean
 }
 
 export interface State {
@@ -86,7 +84,6 @@ export const emptyThread: ThreadState = {
   usage: null,
   context: null,
   ttftMs: null,
-  canContinue: false,
 }
 
 // ---- update application (shared by live updates and journal rebuild) ----
@@ -204,11 +201,7 @@ export function rebuildThread(entries: JournalEntry[]): ThreadState {
         const text = ((msg.params?.prompt ?? []) as acp.ContentBlock[])
           .map((b) => (b.type === "text" ? b.text : ""))
           .join("")
-        // A new prompt supersedes whatever the previous turn was cancelled from.
-        thread = { ...thread, canContinue: false }
-        // Continue-button prompts are ours, not the user's — never shown.
-        const hidden = msg.params?._meta?.daedalus?.hidden === true
-        if (text && !hidden) thread = { ...thread, items: pushUserMessage(thread.items, text) }
+        if (text) thread = { ...thread, items: pushUserMessage(thread.items, text) }
       } else if (entry.d === "a" && msg.method === "session/update" && msg.params?.update) {
         // User chunks enabled: after a respawn the journal starts with a
         // session/load replay, where they are the only source of user messages.
@@ -228,12 +221,8 @@ export function rebuildThread(entries: JournalEntry[]): ThreadState {
           usage: msg.params?.usage ?? thread.usage,
           items: settleTools(thread.items),
         }
-      } else if (entry.d === "a" && msg.result?.stopReason) {
-        thread = {
-          ...thread,
-          usage: msg.result.usage ?? thread.usage,
-          canContinue: msg.result.stopReason === "cancelled",
-        }
+      } else if (entry.d === "a" && msg.result?.stopReason && msg.result?.usage) {
+        thread = { ...thread, usage: msg.result.usage }
       }
     } catch {
       // non-JSON frame — ignore
@@ -268,7 +257,6 @@ export type Action =
   | { type: "thread-reset"; id: string; thread: ThreadState }
   | { type: "thread-status"; id: string; status: ThreadState["status"] }
   | { type: "turn-active"; id: string; active: boolean }
-  | { type: "can-continue"; id: string; canContinue: boolean }
   | { type: "update"; id: string; update: acp.SessionUpdate; allowUserChunks?: boolean }
   | { type: "user-message"; id: string; text: string }
   | { type: "permission"; id: string; permission: PendingPermission | null }
@@ -316,12 +304,8 @@ export function reducer(state: State, action: Action): State {
     case "turn-active":
       return withThread(state, action.id, {
         turnActive: action.active,
-        ...(action.active
-          ? { canContinue: false }
-          : { items: settleTools(thread(state, action.id).items) }),
+        ...(action.active ? null : { items: settleTools(thread(state, action.id).items) }),
       })
-    case "can-continue":
-      return withThread(state, action.id, { canContinue: action.canContinue })
     case "update":
       return {
         ...state,

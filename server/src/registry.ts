@@ -45,7 +45,7 @@ const DEFAULT_AGENTS: AgentDef[] = [
     env: {
       CODEX_API_KEY: "{apiKey}",
       CODEX_CONFIG:
-        '{"model":"{model}","model_reasoning_effort":"{effort}","model_provider":"{baseUrl?daedalus}","model_providers":{"daedalus":{"name":"{baseUrl?Daedalus gateway}","base_url":"{baseUrl}","env_key":"{baseUrl?CODEX_API_KEY}","wire_api":"{baseUrl?responses}"}}}',
+        '{"model":"{model}","model_reasoning_effort":"{effort}","model_context_window":{contextWindow},"model_max_output_tokens":{maxOutputTokens},"model_provider":"{baseUrl?daedalus}","model_providers":{"daedalus":{"name":"{baseUrl?Daedalus gateway}","base_url":"{baseUrl}","env_key":"{baseUrl?CODEX_API_KEY}","wire_api":"{baseUrl?responses}"}}}',
     },
   },
 ];

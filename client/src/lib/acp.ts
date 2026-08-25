@@ -18,7 +18,7 @@ export interface ThreadCallbacks {
   /** Time-to-first-update for a turn, ms. */
   onTtft?: (ms: number) => void
   /** Server-synthesized turn end (reaches clients that didn't send the prompt). */
-  onTurnEnded?: (usage: acp.Usage | null, stopReason: string | null) => void
+  onTurnEnded?: (usage: acp.Usage | null) => void
 }
 
 /**
@@ -80,8 +80,8 @@ export class AcpThread {
       // so a client that reattached mid-turn still learns the turn is over.
       .onNotification(
         "_daedalus/turn_ended",
-        (params) => params as { usage: acp.Usage | null; stopReason: string | null },
-        (ctx) => this.callbacks.onTurnEnded?.(ctx.params.usage, ctx.params.stopReason ?? null)
+        (params) => params as { usage: acp.Usage | null },
+        (ctx) => this.callbacks.onTurnEnded?.(ctx.params.usage)
       )
       .connect(stream)
     this.connection.closed.then(() => {
@@ -143,18 +143,12 @@ export class AcpThread {
     this.callbacks.onStatus("connected")
   }
 
-  /**
-   * `hidden` marks a prompt the user never typed (the Continue button). ACP has
-   * no way to resume a cancelled turn, so continuing is always a real prompt —
-   * the flag only keeps it out of our transcript, live and on journal replay.
-   */
-  async prompt(text: string, hidden = false): Promise<acp.PromptResponse | undefined> {
+  async prompt(text: string): Promise<acp.PromptResponse | undefined> {
     if (!this.connection || !this.acpSessionId) throw new Error("not connected")
     const send = () =>
       this.connection!.agent.request(acp.methods.agent.session.prompt, {
         sessionId: this.acpSessionId!,
         prompt: [{ type: "text", text }],
-        ...(hidden ? { _meta: { daedalus: { hidden: true } } } : null),
       })
     if (!this.promptActive) {
       this.promptActive = true

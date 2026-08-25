@@ -40,13 +40,18 @@ The client stores server URL + token in localStorage (connect screen) — no bui
 
 A thread = a **project** (the workspace) run by a **profile** (the agent):
 
-- **Project** — working directory, extra instructions (materialized into `<cwd>/.claude/CLAUDE.md`
-  managed block), skill paths (symlinked into `<cwd>/.claude/skills/`), MCP servers (sent in ACP
-  `session/new`).
+- **Project** — working directory plus the MCP servers and skills it links to (by id).
 - **Profile** — agent runtime, base URL + API key (env at spawn), model list (per-thread picker),
   default model. API keys never leave the server.
+- **MCP servers** (`data/mcp-servers.json`) and **skills** (`data/skills.json`) — defined once,
+  attached to any number of projects. MCP servers are sent to the agent in ACP `session/new`;
+  skills are symlinked into `<cwd>/.claude/skills/` when the agent process spawns.
+  Both have an **Import** button: `GET /api/import` scans what the agents on the server already
+  have — `~/.claude.json` (global + per-project `mcpServers`), `~/.codex/config.toml`
+  (`[mcp_servers.*]`), and skill directories under `~/.claude/skills`, `~/.codex/skills` and
+  installed Claude plugins — minus whatever the library already holds.
 
-Threads are grouped by project in the sidebar; both are managed on the Settings page.
+Threads are grouped by project in the sidebar; all of it is managed on the Settings page.
 
 ## Adding an agent
 

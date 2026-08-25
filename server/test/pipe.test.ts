@@ -46,9 +46,8 @@ const project = {
   id: "w1",
   name: "test-ws",
   cwd: "/tmp/daedalus-test-data/ws",
-  extraInstructions: "be terse",
-  mcpServers: [],
-  skills: [],
+  mcpServerIds: [],
+  skillIds: [],
 };
 
 const manager = new SessionManager({}, 1);
@@ -142,6 +141,36 @@ assert.deepEqual(
 assert.deepEqual(JSON.parse(resolveEnvValue(codexTemplate, { model: "m", baseUrl: "" })!), {
   model: "m",
 });
+
+// Unquoted JSON slots: numbers pass through; absent metadata fills as the
+// literal null and prunes away.
+const numTemplate = '{"model":"{model}","model_context_window":{contextWindow}}';
+assert.deepEqual(
+  JSON.parse(resolveEnvValue(numTemplate, { model: "m", contextWindow: "128000" })!),
+  { model: "m", model_context_window: 128000 },
+);
+assert.deepEqual(JSON.parse(resolveEnvValue(numTemplate, { model: "m", contextWindow: "null" })!), {
+  model: "m",
+});
+
+// resolveSpawn threads the selected model's catalog metadata into the vars.
+const { resolveSpawn } = await import("../src/registry.js");
+const spec = resolveSpawn(
+  {
+    id: "x",
+    name: "X",
+    command: "x",
+    args: [],
+    env: { C: '{"model_context_window":{contextWindow},"model_max_output_tokens":{maxOutputTokens}}' },
+  },
+  {
+    ...profile,
+    models: [{ id: "m1", label: "M1", contextWindow: 200_000, reasoningEfforts: [] }],
+  },
+  project,
+  "m1",
+);
+assert.deepEqual(JSON.parse(spec.env.C), { model_context_window: 200_000 });
 
 // Persistence: a fresh manager (simulated server restart) lists prior sessions
 // as exited-but-revivable, and respawn revives them without a live old proc.

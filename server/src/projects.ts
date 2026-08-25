@@ -3,29 +3,13 @@ import { join } from "node:path";
 import { z } from "zod";
 import { DATA_DIR, readJson, writeJson } from "./config.js";
 
-const McpServerSchema = z.union([
-  z.object({
-    type: z.literal("http"),
-    name: z.string().min(1),
-    url: z.string().url(),
-    headers: z.array(z.object({ name: z.string(), value: z.string() })).default([]),
-  }),
-  z.object({
-    type: z.literal("stdio").default("stdio"),
-    name: z.string().min(1),
-    command: z.string().min(1),
-    args: z.array(z.string()).default([]),
-    env: z.array(z.object({ name: z.string(), value: z.string() })).default([]),
-  }),
-]);
-
 // A project is the WORKSPACE a session runs in; the agent side lives in profiles.ts.
+// MCP servers and skills are library entries (library.ts), referenced by id.
 export const ProjectInputSchema = z.object({
   name: z.string().min(1),
   cwd: z.string().min(1),
-  extraInstructions: z.string().optional().default(""),
-  mcpServers: z.array(McpServerSchema).default([]),
-  skills: z.array(z.string()).default([]),
+  mcpServerIds: z.array(z.string()).default([]),
+  skillIds: z.array(z.string()).default([]),
 });
 
 export type ProjectInput = z.infer<typeof ProjectInputSchema>;
@@ -34,7 +18,15 @@ export type Project = ProjectInput & { id: string };
 const PROJECTS_PATH = join(DATA_DIR, "projects.json");
 
 export function listProjects(): Project[] {
-  return readJson<Project[]>(PROJECTS_PATH, []);
+  // Records on disk may lack fields the schema has since gained — normalize to
+  // the current shape (and drop anything stale) so the API only ever emits it.
+  return readJson<Partial<Project>[]>(PROJECTS_PATH, []).map((p) => ({
+    id: p.id!,
+    name: p.name ?? "",
+    cwd: p.cwd ?? "",
+    mcpServerIds: p.mcpServerIds ?? [],
+    skillIds: p.skillIds ?? [],
+  }));
 }
 
 export function getProject(id: string): Project | undefined {

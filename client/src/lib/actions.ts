@@ -42,12 +42,9 @@ export function useActions(settings: ServerSettings) {
       onSessionConfig: (modes, configOptions) =>
         dispatch({ type: "session-config", id, modes, configOptions }),
       onTtft: (ms) => dispatch({ type: "ttft", id, ms: Math.round(ms) }),
-      onTurnEnded: (usage, stopReason) => {
+      onTurnEnded: (usage) => {
         dispatch({ type: "turn-active", id, active: false })
         if (usage) dispatch({ type: "usage", id, usage })
-        if (stopReason) {
-          dispatch({ type: "can-continue", id, canContinue: stopReason === "cancelled" })
-        }
       },
     })
 
@@ -58,6 +55,56 @@ export function useActions(settings: ServerSettings) {
     const refreshSessions = async () => {
       const sessions = await api<SessionMeta[]>(settings, "/api/sessions")
       dispatch({ type: "sessions", sessions })
+    }
+
+    /** Connect (or reattach to) a thread; the caller navigates to its route. */
+    const openThread = async (meta: SessionMeta) => {
+      if (liveThreads.get(meta.id)?.connected) return
+      const project = stateRef.current.projects.find((p) => p.id === meta.projectId)
+      if (!project) return
+
+      // No live process (idle-retired or the server restarted): revive it —
+      // respawn with the same profile/model, restore context via session/load.
+      if (meta.exited) {
+        await api(settings, `/api/sessions/${meta.id}/respawn`, {
+          method: "POST",
+          body: JSON.stringify({
+            profileId: meta.profileId,
+            model: meta.model || undefined,
+            effort: meta.effort || undefined,
+          }),
+        })
+        await refreshSessions()
+        dispatch({ type: "thread-reset", id: meta.id, thread: { ...emptyThread } })
+        const thread = new AcpThread(meta.id, settings, makeCallbacks(meta.id))
+        liveThreads.set(meta.id, thread)
+        await thread.connect({
+          fresh: false,
+          load: true,
+          project,
+          mcpServers: mcpFor(project),
+          cursor: 0,
+          acpSessionId: meta.acpSessionId,
+        })
+        return
+      }
+
+      const journal = await api<{ cursor: number; entries: JournalEntry[] }>(
+        settings,
+        `/api/sessions/${meta.id}/journal`
+      )
+      dispatch({ type: "thread-reset", id: meta.id, thread: rebuildThread(journal.entries) })
+      // A turn may still be running server-side; _daedalus/turn_ended clears this.
+      if (meta.promptActive) dispatch({ type: "turn-active", id: meta.id, active: true })
+      const thread = new AcpThread(meta.id, settings, makeCallbacks(meta.id))
+      liveThreads.set(meta.id, thread)
+      await thread.connect({
+        fresh: false,
+        project,
+        mcpServers: mcpFor(project),
+        cursor: journal.cursor,
+        acpSessionId: meta.acpSessionId,
+      })
     }
 
     return {
@@ -109,71 +156,19 @@ export function useActions(settings: ServerSettings) {
         return id
       },
 
-      /** Connect (or reattach to) a thread; the caller navigates to its route. */
-      async openThread(meta: SessionMeta) {
-        if (liveThreads.get(meta.id)?.connected) return
-        const project = stateRef.current.projects.find((p) => p.id === meta.projectId)
-        if (!project) return
+      openThread,
 
-        // No live process (idle-retired or the server restarted): revive it —
-        // respawn with the same profile/model, restore context via session/load.
-        if (meta.exited) {
-          await api(settings, `/api/sessions/${meta.id}/respawn`, {
-            method: "POST",
-            body: JSON.stringify({
-              profileId: meta.profileId,
-              model: meta.model || undefined,
-              effort: meta.effort || undefined,
-            }),
-          })
-          await refreshSessions()
-          dispatch({ type: "thread-reset", id: meta.id, thread: { ...emptyThread } })
-          const thread = new AcpThread(meta.id, settings, makeCallbacks(meta.id))
-          liveThreads.set(meta.id, thread)
-          await thread.connect({
-            fresh: false,
-            load: true,
-            project,
-            mcpServers: mcpFor(project),
-            cursor: 0,
-            acpSessionId: meta.acpSessionId,
-          })
-          return
-        }
-
-        const journal = await api<{ cursor: number; entries: JournalEntry[] }>(
-          settings,
-          `/api/sessions/${meta.id}/journal`
-        )
-        dispatch({ type: "thread-reset", id: meta.id, thread: rebuildThread(journal.entries) })
-        // A turn may still be running server-side; _daedalus/turn_ended clears this.
-        if (meta.promptActive) dispatch({ type: "turn-active", id: meta.id, active: true })
-        const thread = new AcpThread(meta.id, settings, makeCallbacks(meta.id))
-        liveThreads.set(meta.id, thread)
-        await thread.connect({
-          fresh: false,
-          project,
-          mcpServers: mcpFor(project),
-          cursor: journal.cursor,
-          acpSessionId: meta.acpSessionId,
-        })
-      },
-
-      /** Resume a cancelled turn. Sends a prompt (ACP has no turn-resume), but
-          the user neither types it nor sees it in the transcript. */
-      async continueTurn(sessionId: string) {
-        const thread = liveThreads.get(sessionId)
-        if (!thread) throw new Error("thread not connected")
-        dispatch({ type: "can-continue", id: sessionId, canContinue: false })
-        const response = await thread.prompt("continue", true)
-        if (response?.usage) dispatch({ type: "usage", id: sessionId, usage: response.usage })
-        if (response) {
-          dispatch({
-            type: "can-continue",
-            id: sessionId,
-            canContinue: response.stopReason === "cancelled",
-          })
-        }
+      /**
+       * Bring a dead thread back: refetch its metadata (the process may have
+       * been idle-retired or lost to a server restart), then reconnect —
+       * openThread respawns and replays when the meta says it exited.
+       */
+      async reviveThread(sessionId: string) {
+        const sessions = await api<SessionMeta[]>(settings, "/api/sessions")
+        dispatch({ type: "sessions", sessions })
+        const meta = sessions.find((s) => s.id === sessionId)
+        if (!meta) throw new Error("thread no longer exists on the server")
+        await openThread(meta)
       },
 
       async send(sessionId: string, text: string) {
@@ -183,14 +178,6 @@ export function useActions(settings: ServerSettings) {
         dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
         const response = await thread.prompt(text)
         if (response?.usage) dispatch({ type: "usage", id: sessionId, usage: response.usage })
-        // A cancelled turn is resumable — surface the Continue button.
-        if (response) {
-          dispatch({
-            type: "can-continue",
-            id: sessionId,
-            canContinue: response.stopReason === "cancelled",
-          })
-        }
       },
 
       /**

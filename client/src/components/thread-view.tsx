@@ -1,5 +1,5 @@
 import * as React from "react"
-import { ArrowUp, Loader2, Mic, Play, Square } from "lucide-react"
+import { ArrowUp, Loader2, Mic, RotateCw, Square } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
@@ -183,8 +183,19 @@ function Composer({
   thread: ThreadState
 }) {
   const [text, setText] = React.useState("")
+  const [reviving, setReviving] = React.useState(false)
   const voice = useVoice((transcript) => setText((t) => (t ? t + " " : "") + transcript))
   const disabled = thread.status === "closed"
+
+  /* The process is gone, not the conversation: respawning restores it through
+     ACP session/load. Until that happens the composer has nothing to talk to. */
+  const revive = () => {
+    setReviving(true)
+    actions
+      .reviveThread(sessionId)
+      .catch((err) => toast.error(String(err)))
+      .finally(() => setReviving(false))
+  }
 
   const send = () => {
     const value = text.trim()
@@ -196,11 +207,15 @@ function Composer({
   return (
     <div className="px-4 pt-1 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       {disabled && (
-        <p className="mx-auto mb-1.5 w-full max-w-[calc(var(--harness-chat-width)+32px)] rounded-lg border border-dashed px-3 py-1.5 text-center text-xs text-muted-foreground">
-          The agent process exited — this thread is read-only.
-        </p>
+        <div className="mx-auto mb-1.5 flex w-full max-w-[var(--harness-composer-width)] flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-lg border border-dashed px-3 py-1.5 text-center text-xs text-muted-foreground">
+          <span>The agent process exited — the conversation is restored on revive.</span>
+          <Button size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={revive} disabled={reviving}>
+            <RotateCw className={cn("size-3", reviving && "animate-spin")} />
+            {reviving ? "Reviving…" : "Revive"}
+          </Button>
+        </div>
       )}
-      <div className="mx-auto w-full max-w-[calc(var(--harness-chat-width)+32px)] rounded-2xl border bg-card p-2 shadow-glass focus-within:ring-1 focus-within:ring-ring">
+      <div className="mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl border bg-card p-2 shadow-glass focus-within:ring-1 focus-within:ring-ring">
         <Textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -242,19 +257,6 @@ function Composer({
               title="Stop"
             >
               <Square className="size-3.5" />
-            </Button>
-          )}
-          {!thread.turnActive && thread.canContinue && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 shrink-0 gap-1 rounded-full px-3"
-              onClick={() => actions.continueTurn(sessionId).catch((err) => toast.error(String(err)))}
-              disabled={disabled}
-              title="Resume the cancelled turn"
-            >
-              <Play className="size-3.5" />
-              Continue
             </Button>
           )}
           <Button

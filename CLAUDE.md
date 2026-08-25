@@ -6,7 +6,8 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   (registry in `data/agents.json`, `{apiKey}`/`{baseUrl}`/`{model}`/`{cwd}` placeholders filled
   from profile + project) and pipes raw NDJSON between agent stdio and the client WebSocket.
   Owns **profiles** (agent config: credentials/models, `data/profiles.json`, keys redacted from
-  the API) and **projects** (workspace: cwd/instructions/MCPs/skills, `data/projects.json`),
+  the API), **projects** (workspace: cwd + linked MCP/skill ids, `data/projects.json`) and the
+  **library** of reusable MCP servers/skills (`data/mcp-servers.json`, `data/skills.json`),
   bearer-token auth, the frame journal (reconnect/replay), and FCM push. `data/` holds
   secrets — gitignored, never commit.
 - `client/` — Vite + React 19 + Tailwind v4 + shadcn (Base UI, NOT Radix: compose triggers
