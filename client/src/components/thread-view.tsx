@@ -19,7 +19,7 @@ import { useStore, emptyThread, type ThreadState } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { SessionConfigPopover } from "./session-config"
 import { InlineToolApproval } from "./tool-approval"
-import { isStepItem, ThreadItemView } from "./thread-items"
+import { ThreadItemView } from "./thread-items"
 
 export function ThreadView({ sessionId, actions }: { sessionId: string; actions: Actions }) {
   const { state } = useStore()
@@ -65,16 +65,13 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   key={item.id}
                   messageId={item.id}
                   scrollAnchor={item.kind === "user"}
-                  data-step={isStepItem(item) ? "" : undefined}
                 >
                   <ThreadItemView item={item} />
                 </MessageScrollerItem>
                 ))}
               {thread.turnActive && (
                 <MessageScrollerItem messageId="working">
-                  {/* ps-6 (not pl-6) and no inner padding: the word starts on the
-                      same 24px column as a step row's title. */}
-                  <div className="py-0.5 ps-6">
+                  <div className="py-0.5">
                     <ActivityIndicator step={thread.items.length} />
                   </div>
                 </MessageScrollerItem>

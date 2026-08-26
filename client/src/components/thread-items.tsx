@@ -5,7 +5,6 @@ import type * as acp from "@agentclientprotocol/sdk"
 import {
   ArrowLeftRightIcon,
   BrainIcon,
-  ChevronRightIcon,
   FileTextIcon,
   GlobeIcon,
   PencilLineIcon,
@@ -17,7 +16,6 @@ import {
 } from "lucide-react"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Message, MessageContent } from "@/components/ui/message"
-import { Spinner } from "@/components/ui/spinner"
 import { ToolCallSkeleton } from "@/components/ui/skeletons"
 import { cn } from "@/lib/utils"
 import type { PlanItem, ThreadItem, ToolItem } from "@/lib/store"
@@ -27,7 +25,7 @@ import type { PlanItem, ThreadItem, ToolItem } from "@/lib/store"
    kind is demoted to a right-hand label so those form their own scan column.
    Everything a step produced is collapsed behind the row until clicked. */
 
-const KIND_LABELS: Record<string, string> = {
+export const KIND_LABELS: Record<string, string> = {
   read: "read",
   edit: "edit",
   delete: "delete",
@@ -40,7 +38,7 @@ const KIND_LABELS: Record<string, string> = {
   other: "tool",
 }
 
-const KIND_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+export const KIND_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   read: FileTextIcon,
   edit: PencilLineIcon,
   delete: Trash2Icon,
@@ -96,23 +94,6 @@ function formatElapsed(ms: number): string {
     : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
 }
 
-/** The mark sitting on the rail: spinner while live, dot once settled. */
-function StepNode({ status, active }: { status: string | null; active: boolean }) {
-  if (active) return <Spinner className="harness-node harness-node-active size-2.5 text-primary" />
-  return (
-    <span
-      className={cn(
-        "harness-node size-1.5 rounded-full",
-        status === "failed"
-          ? "bg-destructive"
-          : status === "pending"
-            ? "border border-muted-foreground/60"
-            : "bg-muted-foreground/70"
-      )}
-    />
-  )
-}
-
 function StepRow({
   target,
   label,
@@ -137,11 +118,7 @@ function StepRow({
   const elapsedMs = useElapsed(startedAt ?? 0, active && startedAt !== undefined)
 
   return (
-    <div className="relative ps-6" data-open={expandable && open ? "" : undefined}>
-      <span aria-hidden className="harness-rail-top" />
-      <span aria-hidden className="harness-rail-bottom" />
-      <StepNode status={status} active={active} />
-
+    <div>
       <button
         type="button"
         disabled={!expandable}
@@ -151,15 +128,22 @@ function StepRow({
           // (overflow: hidden), so its baseline is its bottom edge — baseline
           // alignment lifted the title ~5px above the "edit"/"run" label. Every
           // child is leading-6, so centring lines them up exactly.
-          "group/step -ms-1.5 flex w-full min-w-0 items-center gap-2 rounded-md py-0.5 pe-1.5 ps-1.5 text-start transition-colors duration-150",
+          // The width is calc(100% + 12px) so the -mx-1.5/px-1.5 hover bleed
+          // cancels on BOTH sides: a `w-full` box only shifts left under a
+          // negative start margin, which left the row's content edge 12px shy
+          // of the right edge that messages run to.
+          "-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-start transition-colors duration-150",
           expandable && "hover:bg-muted/40"
         )}
       >
+        {/* Steps are what the agent did, not what it said: the whole row sits at
+            caption weight so prose stays the thing you read. */}
         <span
           className={cn(
             "min-w-0 flex-1 truncate text-xs leading-6",
             mono && "font-mono",
-            failed ? "text-destructive" : active ? "harness-shimmer text-foreground" : "text-foreground/85"
+            failed ? "text-destructive" : "text-muted-foreground",
+            active && "harness-shimmer"
           )}
         >
           {target}
@@ -183,24 +167,11 @@ function StepRow({
         >
           {failed ? "failed" : label}
         </span>
-
-        <ChevronRightIcon
-          className={cn(
-            "size-3 shrink-0 text-muted-foreground/60 transition-transform duration-150",
-            !expandable && "invisible",
-            open ? "rotate-90 opacity-100" : "opacity-0 group-hover/step:opacity-100"
-          )}
-        />
       </button>
 
       {expandable && open && <div className="mt-1 mb-2.5 min-w-0 space-y-2">{detail}</div>}
     </div>
   )
-}
-
-/** True for kinds that render as step rows (rail-threaded timeline). */
-export function isStepItem(item: ThreadItem): boolean {
-  return item.kind === "tool" || item.kind === "thought" || item.kind === "plan"
 }
 
 /* Prose palette + code/table styling live in index.css, so both themes come
@@ -255,6 +226,8 @@ export function ThreadItemView({ item }: { item: ThreadItem }) {
       )
     case "agent":
       return (
+        // The transcript is ONE column: prose, steps and notices all start on
+        // the same left edge, with nothing inset for a gutter.
         <Message className="py-2">
           <MessageContent>
             <Bubble variant="ghost">
@@ -264,6 +237,16 @@ export function ThreadItemView({ item }: { item: ThreadItem }) {
             </Bubble>
           </MessageContent>
         </Message>
+      )
+    case "notice":
+      // A break in the conversation, so it reads as one: hairline across the
+      // column with the reason inline.
+      return (
+        <div className="flex items-center gap-2.5 py-2 text-[11px] text-muted-foreground/70">
+          <span aria-hidden className="h-px flex-1 bg-border" />
+          <span className="shrink-0">{item.text}</span>
+          <span aria-hidden className="h-px flex-1 bg-border" />
+        </div>
       )
     case "thought": {
       const reasoning = item.text.trim()
@@ -338,9 +321,7 @@ function ToolStep({ item }: { item: ToolItem }) {
           ))}
         </ul>
       )}
-      {mergeText(item.content).map((content, i) => (
-        <ToolContentView key={i} content={content} />
-      ))}
+      <ToolCallContent content={item.content} />
     </>
   ) : active ? (
     <ToolCallSkeleton className="py-1" />
@@ -352,7 +333,11 @@ function ToolStep({ item }: { item: ToolItem }) {
       status={item.status}
       target={
         <span className="flex min-w-0 items-center gap-1.5">
-          <KindIcon className={cn("size-3.5 shrink-0", active ? "text-primary" : "text-muted-foreground")} />
+          {/* Needs its own colour: the shimmer paints text via background-clip,
+              which would leave a currentColor icon invisible while active. */}
+          <KindIcon
+            className={cn("size-3.5 shrink-0", active ? "text-primary" : "text-muted-foreground/60")}
+          />
           <span className="truncate">{item.title}</span>
         </span>
       }
@@ -361,6 +346,12 @@ function ToolStep({ item }: { item: ToolItem }) {
       detail={detail}
     />
   )
+}
+
+/** Everything a tool call produced, rendered the way the transcript renders it.
+    Shared with the approval card so a diff looks the same before and after. */
+export function ToolCallContent({ content }: { content: acp.ToolCallContent[] }) {
+  return mergeText(content).map((part, i) => <ToolContentView key={i} content={part} />)
 }
 
 function ToolContentView({ content }: { content: acp.ToolCallContent }) {

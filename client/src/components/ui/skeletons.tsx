@@ -27,10 +27,11 @@ export function TranscriptSkeleton() {
           <SkeletonText lines={2} />
         </div>
       </div>
+      {/* Mirrors a real step row: flush left column, no gutter — so the
+          transcript doesn't jump when it swaps in. */}
       {[3, 2, 4].map((lines, index) => (
-        <div key={index} className="flex items-start gap-2">
-          <Skeleton className="mt-1 size-2.5 rounded-full" />
-          <div className="min-w-0 flex-1 space-y-2 pt-0.5">
+        <div key={index}>
+          <div className="min-w-0 space-y-2 pt-0.5">
             <Skeleton className="h-3 w-28" />
             <SkeletonText lines={lines} />
           </div>

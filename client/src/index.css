@@ -3,6 +3,7 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/inter";
 @import "@fontsource-variable/roboto";
+@import "@fontsource-variable/figtree";
 @plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
@@ -49,8 +50,8 @@
 
   --shadow-glass: 0 8px 32px oklch(0 0 0 / 6%), 0 1px 4px oklch(0 0 0 / 4%);
   --shadow-glass-lg: 0 16px 48px oklch(0 0 0 / 10%), 0 2px 8px oklch(0 0 0 / 6%);
-  --font-heading: 'Roboto Variable', sans-serif;
-  --font-sans: 'Inter Variable', sans-serif;
+  --font-heading: var(--font-sans);
+  --font-sans: 'Figtree Variable', sans-serif;
 
   /* One body size for the whole app — chat prose, sidebar, settings, controls.
      The kit is downsized to text-xs everywhere, so this is *the* size knob;
@@ -63,80 +64,82 @@
   --radius: 0.625rem;
 
   --background: oklch(1 0 0);
-  --foreground: oklch(0.147 0.004 49.25);
+  --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.147 0.004 49.25);
+  --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.147 0.004 49.25);
-  --primary: oklch(0.216 0.006 56.043);
-  --primary-foreground: oklch(0.985 0.001 106.423);
-  --secondary: oklch(0.97 0.001 106.424);
-  --secondary-foreground: oklch(0.216 0.006 56.043);
-  --muted: oklch(0.97 0.001 106.424);
-  --muted-foreground: oklch(0.553 0.013 58.071);
-  --accent: oklch(0.97 0.001 106.424);
-  --accent-foreground: oklch(0.216 0.006 56.043);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.923 0.003 48.717);
-  --input: oklch(0.923 0.003 48.717);
-  --ring: oklch(0.709 0.01 56.259);
-  --chart-1: oklch(0.809 0.105 251.813);
-  --chart-2: oklch(0.623 0.214 259.815);
-  --chart-3: oklch(0.546 0.245 262.881);
-  --chart-4: oklch(0.488 0.243 264.376);
-  --chart-5: oklch(0.424 0.199 265.638);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
 
-  --sidebar: oklch(0.985 0.001 106.423);
-  --sidebar-foreground: oklch(0.147 0.004 49.25);
-  --sidebar-primary: oklch(0.216 0.006 56.043);
-  --sidebar-primary-foreground: oklch(0.985 0.001 106.423);
-  --sidebar-accent: oklch(0.97 0.001 106.424);
-  --sidebar-accent-foreground: oklch(0.216 0.006 56.043);
-  --sidebar-border: oklch(0.923 0.003 48.717);
-  --sidebar-ring: oklch(0.709 0.01 56.259);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
   --scrollbar-thumb: color-mix(in oklch, var(--foreground) 18%, transparent);
   --scrollbar-thumb-hover: color-mix(in oklch, var(--foreground) 28%, transparent);
   --scrollbar-track: color-mix(in oklch, var(--muted) 45%, transparent);
 
   /* One content width for the whole session column. */
   --harness-chat-width: 748px;
-  /* The composer sits inside that column — tune this alone to change its width. */
-  --harness-composer-width: calc(var(--harness-chat-width) - 48px);
+  /* The composer shares the transcript's text column exactly: both sit inside a
+     px-4 wrapper, so subtracting that 2rem lines their edges up at every width.
+     (At -48px the composer landed 8px right of every message.) */
+  --harness-composer-width: calc(var(--harness-chat-width) - 2rem);
 }
 
 .dark {
-  --background: oklch(0.147 0.004 49.25);
-  --foreground: oklch(0.985 0.001 106.423);
-  --card: oklch(0.216 0.006 56.043);
-  --card-foreground: oklch(0.985 0.001 106.423);
-  --popover: oklch(0.216 0.006 56.043);
-  --popover-foreground: oklch(0.985 0.001 106.423);
-  --primary: oklch(0.923 0.003 48.717);
-  --primary-foreground: oklch(0.216 0.006 56.043);
-  --secondary: oklch(0.268 0.007 34.298);
-  --secondary-foreground: oklch(0.985 0.001 106.423);
-  --muted: oklch(0.268 0.007 34.298);
-  --muted-foreground: oklch(0.709 0.01 56.259);
-  --accent: oklch(0.268 0.007 34.298);
-  --accent-foreground: oklch(0.985 0.001 106.423);
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.553 0.013 58.071);
-  --chart-1: oklch(0.809 0.105 251.813);
-  --chart-2: oklch(0.623 0.214 259.815);
-  --chart-3: oklch(0.546 0.245 262.881);
-  --chart-4: oklch(0.488 0.243 264.376);
-  --chart-5: oklch(0.424 0.199 265.638);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
 
-  --sidebar: oklch(0.216 0.006 56.043);
-  --sidebar-foreground: oklch(0.985 0.001 106.423);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0.001 106.423);
-  --sidebar-accent: oklch(0.268 0.007 34.298);
-  --sidebar-accent-foreground: oklch(0.985 0.001 106.423);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.553 0.013 58.071);
+  --sidebar-ring: oklch(0.556 0 0);
   --scrollbar-thumb: color-mix(in oklch, var(--foreground) 22%, transparent);
   --scrollbar-thumb-hover: color-mix(in oklch, var(--foreground) 34%, transparent);
   --scrollbar-track: color-mix(in oklch, var(--muted) 50%, transparent);
@@ -948,42 +951,7 @@
   animation: harness-shimmer 1.8s linear infinite;
 }
 
-/* ── Step timeline ──
-   Consecutive step rows read as one timeline: a continuous hairline down the
-   gutter, interrupted only by each row's node. Two segments rather than one
-   full-height line, so the break around the node is exact at any row height.
-   Geometry follows the row: py-0.5 (2px) + leading-6 (24px) puts the node
-   centre at 14px; the gutter centre is 11px (matching ps-6 with a 12px node). */
-.harness-rail-top,
-.harness-rail-bottom {
-  position: absolute;
-  inset-inline-start: 10.5px;
-  width: 1px;
-  /* Off the foreground, not --border: symmetric weight in both themes. */
-  background: color-mix(in oklab, var(--foreground) 18%, transparent);
-  opacity: 0;
-}
-/* The break is the node's own diameter (10px) centred on 14px, so the rail
-   reads as one line interrupted by marks rather than as a dashed column. */
-.harness-rail-top { top: -2px; height: 11px; }
-.harness-rail-bottom { top: 19px; bottom: -2px; }
-
-/* Descendant (not child) combinator: steps sit inside message-scroller items. */
-[data-step] + [data-step] .harness-rail-top { opacity: 1; }
-[data-step]:has(+ [data-step]) .harness-rail-bottom { opacity: 1; }
-/* An expanded row flanks its own output, even as the last step of a run. */
-[data-open] > .harness-rail-bottom { opacity: 1; }
-
-.harness-node {
-  position: absolute;
-  inset-inline-start: 11px;
-  top: 14px;
-  translate: -50% -50%;
-  display: block;
-  flex: none;
-}
-
-/* A live step's mark: a soft primary halo breathing behind the spinner. */
+/* A live mark: a soft primary halo breathing behind a dot (plan entries). */
 @keyframes harness-node-pulse {
   0%, 100% { box-shadow: 0 0 0 2px color-mix(in oklab, var(--primary) 8%, transparent); }
   50% { box-shadow: 0 0 0 5px color-mix(in oklab, var(--primary) 14%, transparent); }
@@ -1009,10 +977,11 @@ html[data-desktop="true"] [data-drag-region] :is(button, a, input, select, texta
   -webkit-app-region: no-drag;
 }
 
-/* macOS traffic lights sit over the sidebar's top-left corner. */
+/* macOS traffic lights sit over the sidebar's top-left corner. The header only
+   makes room for them — dragging belongs to its brand row ([data-drag-region],
+   which un-drags nested buttons), since the header now holds a real action. */
 html[data-desktop="true"][data-desktop-platform="darwin"] [data-sidebar="sidebar"] > :first-child {
   padding-top: var(--desktop-titlebar-height);
-  -webkit-app-region: drag;
 }
 
 /* True through-the-desktop blur (macOS vibrancy / Windows acrylic): drop the

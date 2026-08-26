@@ -1,13 +1,5 @@
 import * as React from "react"
-import {
-  ChevronLeft,
-  FolderIcon,
-  FolderPlus,
-  MessageSquareIcon,
-  Plus,
-  Settings2,
-  Trash2,
-} from "lucide-react"
+import { ChevronLeft, ChevronRight, FolderPlus, Plus, Settings2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
@@ -61,15 +53,25 @@ import { ThreadView } from "./thread-view"
 
 /** Swappable sidebar body. One panel per route family — see `panels` below. */
 interface SidebarPanel {
-  /** Row that leaves this panel for the root one; omit on the root panel. */
-  back?: { label: string; onClick: () => void }
-  /** Primary action pinned under the brand row. */
-  action?: React.ReactNode
+  /** Row pinned under the brand: this panel's primary action, or its way out. */
+  top: React.ReactNode
   body: React.ReactNode
 }
 
 const SIDEBAR_WIDTH_KEY = "sidebar_width"
 const SIDEBAR_WIDTH_DEFAULT = "16rem"
+/** Rows a group shows before it folds the rest behind "Show N more". */
+const THREADS_SHOWN = 5
+
+/** Compact age for a thread row: now, 5m, 3h, 2d, then a date. */
+function ago(ts: number): string {
+  const minutes = Math.round((Date.now() - ts) / 60_000)
+  if (minutes < 1) return "now"
+  if (minutes < 60) return `${minutes}m`
+  if (minutes < 60 * 24) return `${Math.floor(minutes / 60)}h`
+  if (minutes < 60 * 24 * 7) return `${Math.floor(minutes / (60 * 24))}d`
+  return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+}
 
 /** URL segment → a section that exists; anything else falls back to General. */
 const sectionOf = (value: string): SettingsSectionId =>
@@ -86,7 +88,9 @@ export function AppShell({
 }) {
   const { state } = useStore()
   const route = useRoute()
-  const [newThreadOpen, setNewThreadOpen] = React.useState(false)
+  // The project the new-thread dialog is for; null while it's closed. "" means
+  // "no project picked yet" — the dialog falls back to the first one.
+  const [newThreadProject, setNewThreadProject] = React.useState<string | null>(null)
   const [newProjectOpen, setNewProjectOpen] = React.useState(false)
   // Sidebar width overrides the shadcn default via the same CSS var it reads.
   const [sidebarWidth, setSidebarWidth] = React.useState(
@@ -112,46 +116,49 @@ export function AppShell({
 
   const openSettings = (next?: SettingsSectionId) =>
     navigate({ name: "settings", section: next ?? section })
-  const startThread = () => (ready ? setNewThreadOpen(true) : openSettings("projects"))
+  const startThread = (projectId = "") =>
+    ready ? setNewThreadProject(projectId) : openSettings("projects")
 
   /* ── Sidebar panels ──
      The sidebar body is swappable: one entry per route family. To add a panel,
      add a route in lib/router and an entry here — the shell itself is generic. */
   const panels: Record<"threads" | "settings", SidebarPanel> = {
     threads: {
-      action: (
-        <SidebarGroup>
-          <SidebarGroupLabel>Create</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton tooltip="New thread" onClick={startThread} disabled={loading}>
-                  <Plus className="size-4" />
-                  <span>New thread</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton tooltip="New project" onClick={() => setNewProjectOpen(true)} disabled={loading}>
-                  <FolderPlus className="size-4" />
-                  <span>New project</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+      // Threads start from a project (the + on each group), so the one action
+      // that isn't per-project is the one pinned up here.
+      top: (
+        <SidebarMenuButton
+          tooltip="New project"
+          variant="outline"
+          onClick={() => setNewProjectOpen(true)}
+          disabled={loading}
+        >
+          <FolderPlus className="size-4" />
+          <span className="font-medium">New project</span>
+        </SidebarMenuButton>
       ),
-      body: loading ? <SidebarGroupsSkeleton /> : <ThreadGroups actions={actions} />,
+      body: loading ? (
+        <SidebarGroupsSkeleton />
+      ) : (
+        <ThreadGroups actions={actions} onNewThread={startThread} />
+      ),
     },
     settings: {
-      back: {
-        label: "Back to threads",
-        onClick: () =>
-          navigate(
-            lastThread.current
-              ? { name: "thread", sessionId: lastThread.current }
-              : { name: "home" }
-          ),
-      },
+      top: (
+        <SidebarMenuButton
+          tooltip="Back to threads"
+          onClick={() =>
+            navigate(
+              lastThread.current
+                ? { name: "thread", sessionId: lastThread.current }
+                : { name: "home" }
+            )
+          }
+        >
+          <ChevronLeft className="size-4" />
+          <span>Back to threads</span>
+        </SidebarMenuButton>
+      ),
       body: (
         <SettingsNav
           section={section}
@@ -173,40 +180,30 @@ export function AppShell({
       } as React.CSSProperties}
     >
       <Sidebar collapsible="icon">
-        <SidebarHeader className="gap-2 p-3 group-data-[collapsible=icon]:p-2">
-          <div className="flex items-center gap-2 px-1 group-data-[collapsible=icon]:px-0">
-            <img src="/logo.svg" alt="" className="size-7 shrink-0" />
+        {/* Brand + the panel's one primary action; the list below is all content. */}
+        <SidebarHeader className="gap-2 p-2">
+          <div
+            data-drag-region
+            className="flex h-8 items-center gap-2 px-1 group-data-[collapsible=icon]:px-0"
+          >
+            <img src="/logo.svg" alt="" className="size-6 shrink-0" />
             <span className="text-sm font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
               Daedalus
             </span>
           </div>
+          <SidebarMenu>
+            <SidebarMenuItem>{panel.top}</SidebarMenuItem>
+          </SidebarMenu>
         </SidebarHeader>
-        <SidebarContent>
-          {panel.back ? (
-            <SidebarGroup>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton tooltip={panel.back.label} onClick={panel.back.onClick}>
-                      <ChevronLeft className="size-4" />
-                      <span>{panel.back.label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          ) : (
-            panel.action
-          )}
-          {panel.body}
-        </SidebarContent>
-        <SidebarFooter className="p-3 group-data-[collapsible=icon]:p-2">
+        <SidebarContent className="py-1">{panel.body}</SidebarContent>
+        <SidebarFooter className="border-t border-sidebar-border/60 p-2">
           <SidebarMenu>
             <SidebarMenuItem>
               <SidebarMenuButton
                 tooltip="Settings"
                 isActive={route.name === "settings"}
                 onClick={() => openSettings()}
+                className="text-sidebar-foreground/70 data-active:text-sidebar-accent-foreground"
               >
                 <Settings2 className="size-4" />
                 <span>Settings</span>
@@ -291,12 +288,18 @@ export function AppShell({
           <EmptyState
             loading={loading}
             ready={ready}
-            onNewThread={startThread}
+            onNewThread={() => startThread()}
             onOpenSettings={openSettings}
           />
         )}
       </SidebarInset>
-      <NewThreadDialog open={newThreadOpen} onOpenChange={setNewThreadOpen} actions={actions} />
+      <NewThreadDialog
+        open={newThreadProject !== null}
+        onOpenChange={(open) => !open && setNewThreadProject(null)}
+        projectId={newThreadProject ?? ""}
+        onProjectChange={setNewThreadProject}
+        actions={actions}
+      />
       {/* Same form the settings page uses — created from the sidebar too. */}
       <ResponsiveDialog open={newProjectOpen} onOpenChange={setNewProjectOpen}>
         <ResponsiveDialogContent>
@@ -366,15 +369,19 @@ const DEFAULT_CHOICE = "__default__"
 function NewThreadDialog({
   open,
   onOpenChange,
+  projectId,
+  onProjectChange,
   actions,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** Owned by the shell: opening from a project's + is what preselects it. */
+  projectId: string
+  onProjectChange: (projectId: string) => void
   actions: Actions
 }) {
   const { state } = useStore()
   const { setOpenMobile } = useSidebar()
-  const [projectId, setProjectId] = React.useState("")
   const [agentId, setAgentId] = React.useState("")
   const [profileId, setProfileId] = React.useState("")
   const [model, setModel] = React.useState<string | null>(null)
@@ -421,7 +428,7 @@ function NewThreadDialog({
         <div className="grid gap-3 sm:grid-cols-2">
           {pick(
             "Project",
-            <Select value={project?.id ?? ""} onValueChange={(v) => v && setProjectId(v)}>
+            <Select value={project?.id ?? ""} onValueChange={(v) => v && onProjectChange(v)}>
               <SelectTrigger className="w-full">
                 <SelectValue>{project?.name}</SelectValue>
               </SelectTrigger>
@@ -548,46 +555,118 @@ function NewThreadDialog({
   )
 }
 
-/** Threads grouped by project, newest first. */
-function ThreadGroups({ actions }: { actions: Actions }) {
+/** Recent threads across everything, then one collapsible group per project. */
+function ThreadGroups({
+  actions,
+  onNewThread,
+}: {
+  actions: Actions
+  onNewThread: (projectId: string) => void
+}) {
   const { state } = useStore()
-  const groups = new Map<string, SessionMeta[]>()
-  for (const session of [...state.sessions].sort((a, b) => b.createdAt - a.createdAt)) {
+  const newest = [...state.sessions].sort((a, b) => b.createdAt - a.createdAt)
+  // Every project gets a group, threads or not — an empty one still needs its +.
+  const groups = new Map<string, SessionMeta[]>(state.projects.map((p) => [p.id, []]))
+  for (const session of newest) {
     const list = groups.get(session.projectId) ?? []
     list.push(session)
     groups.set(session.projectId, list)
   }
 
-  if (state.sessions.length === 0) {
+  if (groups.size === 0) {
     return (
-      <SidebarGroup>
-        <SidebarGroupLabel>Threads</SidebarGroupLabel>
-        <SidebarGroupContent>
-          <p className="px-2 py-4 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
-            No threads yet.
-          </p>
-        </SidebarGroupContent>
-      </SidebarGroup>
+      <p className="px-4 py-6 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
+        No projects yet.
+      </p>
     )
   }
 
   return (
     <>
+      {/* Redundant while everything already fits on screen — only worth a section
+          once the project groups stop showing you the thread you just left. */}
+      {newest.length > THREADS_SHOWN && (
+        <ThreadGroup label="Recent" sessions={newest.slice(0, THREADS_SHOWN)} actions={actions} />
+      )}
       {[...groups.entries()].map(([projectId, sessions]) => (
-        <SidebarGroup key={projectId}>
-          <SidebarGroupLabel className="gap-1.5">
-            <FolderIcon className="size-3 shrink-0" />
-            <span className="truncate">
-              {state.projects.find((p) => p.id === projectId)?.name ?? "Other"}
-            </span>
-            <span className="ml-auto tabular-nums opacity-60">{sessions.length}</span>
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <ThreadList sessions={sessions} actions={actions} />
-          </SidebarGroupContent>
-        </SidebarGroup>
+        <ThreadGroup
+          key={projectId}
+          label={state.projects.find((p) => p.id === projectId)?.name ?? "Other"}
+          sessions={sessions}
+          actions={actions}
+          onNewThread={() => onNewThread(projectId)}
+        />
       ))}
     </>
+  )
+}
+
+/** A foldable section of thread rows: heading, count, its own new-thread action. */
+function ThreadGroup({
+  label,
+  sessions,
+  actions,
+  onNewThread,
+}: {
+  label: string
+  sessions: SessionMeta[]
+  actions: Actions
+  onNewThread?: () => void
+}) {
+  const route = useRoute()
+  const [open, setOpen] = React.useState(true)
+  const [showAll, setShowAll] = React.useState(false)
+  const overflow = sessions.slice(THREADS_SHOWN)
+  // Never fold away the thread that's open — the cut would erase the active row.
+  const expanded =
+    showAll || (route.name === "thread" && overflow.some((s) => s.id === route.sessionId))
+  const visible = expanded ? sessions : sessions.slice(0, THREADS_SHOWN)
+
+  return (
+    // Rows are text-only now, so a 3rem rail has nothing legible to show.
+    <SidebarGroup className="py-0.5 group-data-[collapsible=icon]:hidden">
+      <SidebarGroupLabel className="h-7 pe-1 text-[11px] font-semibold tracking-wider text-sidebar-foreground/80 uppercase">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-center gap-1 rounded-sm hover:text-sidebar-foreground"
+        >
+          <span className="truncate">{label}</span>
+          <span className="ms-auto font-normal tabular-nums text-sidebar-foreground/45">
+            {sessions.length}
+          </span>
+          <ChevronRight
+            className={cn("size-3 shrink-0 transition-transform duration-150", open && "rotate-90")}
+          />
+        </button>
+        {onNewThread && (
+          <button
+            type="button"
+            onClick={onNewThread}
+            title={`New thread in ${label}`}
+            className="flex size-5 shrink-0 items-center justify-center rounded-sm hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          >
+            <Plus className="size-3.5" />
+            <span className="sr-only">New thread in {label}</span>
+          </button>
+        )}
+      </SidebarGroupLabel>
+      {open && (
+        <SidebarGroupContent>
+          <ThreadList sessions={visible} actions={actions} />
+          {!expanded && overflow.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowAll(true)}
+              className="w-full rounded-md px-2 py-1 text-start text-[11px] text-sidebar-foreground/50 hover:text-sidebar-foreground"
+            >
+              Show {overflow.length} more
+            </button>
+          )}
+        </SidebarGroupContent>
+      )}
+    </SidebarGroup>
   )
 }
 
@@ -599,6 +678,7 @@ function ThreadList({ sessions, actions }: { sessions: SessionMeta[]; actions: A
       {sessions.map((session) => (
         <SidebarMenuItem key={session.id}>
           <SidebarMenuButton
+            size="sm"
             tooltip={session.title}
             isActive={route.name === "thread" && route.sessionId === session.id}
             onClick={() => {
@@ -607,16 +687,20 @@ function ThreadList({ sessions, actions }: { sessions: SessionMeta[]; actions: A
               navigate({ name: "thread", sessionId: session.id })
             }}
           >
-            <MessageSquareIcon className={cn("size-4", session.exited && "opacity-50")} />
-            <span className={cn("truncate", session.exited && "text-muted-foreground")}>
+            {/* Title carries the state itself: it shimmers while a turn runs and
+                dims once the process is gone — no marker column needed. */}
+            <span
+              className={cn(
+                "truncate",
+                session.promptActive && "harness-shimmer",
+                session.exited && "text-sidebar-foreground/50"
+              )}
+            >
               {session.title}
             </span>
-            {session.promptActive && (
-              <span
-                title="Turn running"
-                className="ml-auto size-1.5 shrink-0 animate-pulse rounded-full bg-primary group-data-[collapsible=icon]:hidden"
-              />
-            )}
+            <span className="ms-auto shrink-0 text-[11px] tabular-nums text-sidebar-foreground/40">
+              {ago(session.createdAt)}
+            </span>
           </SidebarMenuButton>
           <SidebarMenuAction
             showOnHover

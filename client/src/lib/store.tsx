@@ -14,7 +14,8 @@ import type {
 // ---- thread item model ----
 
 export interface TextItem {
-  kind: "user" | "agent" | "thought"
+  /** `notice` = transcript rule (interrupts): agent-authored, nobody typed it. */
+  kind: "user" | "agent" | "thought" | "notice"
   id: string
   text: string
 }
@@ -96,6 +97,16 @@ function appendText(items: ThreadItem[], kind: TextItem["kind"], text: string): 
   return [...items, { kind, id: `${kind}-${items.length}`, text }]
 }
 
+/* Agents write a synthetic user turn when a prompt is cancelled, so the model
+   can see why the assistant stopped mid-sentence. It is a genuine user-role
+   message in the agent's own transcript — and it stays there, in the model's
+   context, which is the point. But nobody typed it, so it reads as a rule
+   across the transcript, not as a user bubble. The capture keeps the agent's
+   own wording (plain vs "for tool use") as the rule's label.
+   Anchored on the whole (trimmed) chunk: quoting the phrase inside a real
+   message must still render as that message. Pattern mirrors claude-agent-sdk's. */
+const SYNTHETIC_USER_RE = /^\[(Request interrupted by user[^\]]*)\]$/
+
 export function applySessionUpdate(
   items: ThreadItem[],
   update: acp.SessionUpdate,
@@ -108,13 +119,21 @@ export function applySessionUpdate(
       const kind = update.sessionUpdate === "agent_message_chunk" ? "agent" : "thought"
       return appendText(items, kind, update.content.text)
     }
-    case "user_message_chunk":
+    case "user_message_chunk": {
       // Live prompts push user messages locally, so the agent echo is skipped —
       // EXCEPT during a session/load replay, where chunks are the only source.
-      if (allowUserChunks && update.content.type === "text") {
-        return appendText(items, "user", update.content.text)
+      if (!allowUserChunks || update.content.type !== "text") return items
+      const synthetic = SYNTHETIC_USER_RE.exec(update.content.text.trim())
+      // Not appendText: two interrupts in a row are two rules, never one
+      // concatenated label.
+      // ponytail: replay-only, so a live cancel shows no rule until reload —
+      // the agent picks the wording and we can't know it at cancel time. Push a
+      // notice from actions.stop() if that gap ever bites.
+      if (synthetic) {
+        return [...items, { kind: "notice", id: `notice-${items.length}`, text: synthetic[1] }]
       }
-      return items
+      return appendText(items, "user", update.content.text)
+    }
     case "tool_call": {
       const item: ToolItem = {
         kind: "tool",

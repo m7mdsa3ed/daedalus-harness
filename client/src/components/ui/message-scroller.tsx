@@ -10,7 +10,8 @@ import {
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { ArrowDownIcon } from "lucide-react"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { ArrowDown02Icon } from "@hugeicons/core-free-icons"
 
 function MessageScrollerProvider(
   props: React.ComponentProps<typeof MessageScrollerPrimitive.Provider>
@@ -57,7 +58,7 @@ function MessageScrollerContent({
   return (
     <MessageScrollerPrimitive.Content
       data-slot="message-scroller-content"
-      className={cn("flex h-max min-h-full flex-col gap-6", className)}
+      className={cn("flex h-max min-h-full flex-col gap-8", className)}
       {...props}
     />
   )
@@ -72,10 +73,11 @@ function MessageScrollerItem({
     <MessageScrollerPrimitive.Item
       data-slot="message-scroller-item"
       scrollAnchor={scrollAnchor}
-      className={cn(
-        "min-w-0 shrink-0 [contain-intrinsic-size:auto_10rem] [content-visibility:auto]",
-        className
-      )}
+      // ponytail: no content-visibility here. It let every off-screen item lay
+      // out at a placeholder 10rem, so scrollHeight (and the autoscroll target)
+      // was computed from fake heights and the transcript jumped as real sizes
+      // resolved. Put it back only with a measured perf problem to solve.
+      className={cn("min-w-0 shrink-0", className)}
       {...props}
     />
   )
@@ -107,8 +109,7 @@ function MessageScrollerButton({
     >
       {children ?? (
         <>
-          <ArrowDownIcon
-          />
+          <HugeiconsIcon icon={ArrowDown02Icon} strokeWidth={2} />
           <span className="sr-only">
             {direction === "end" ? "Scroll to end" : "Scroll to start"}
           </span>

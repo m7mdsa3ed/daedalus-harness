@@ -139,13 +139,16 @@ export function useActions(settings: ServerSettings) {
         return
       }
 
-      const journal = await api<{ cursor: number; entries: JournalEntry[] }>(
+      const journal = await api<{ cursor: number; promptActive: boolean; entries: JournalEntry[] }>(
         settings,
         `/api/sessions/${meta.id}/journal`
       )
       dispatch({ type: "thread-reset", id: meta.id, thread: rebuildThread(journal.entries) })
       // A turn may still be running server-side; _daedalus/turn_ended clears this.
-      if (meta.promptActive) dispatch({ type: "turn-active", id: meta.id, active: true })
+      // Read from the journal response, NOT from `meta`: state.sessions is only
+      // refetched on bootstrap/mutations, so its promptActive is a stale snapshot —
+      // stale-false loses the indicator, stale-true strands it forever.
+      if (journal.promptActive) dispatch({ type: "turn-active", id: meta.id, active: true })
       const thread = new AcpThread(meta.id, settings, makeCallbacks(meta.id))
       liveThreads.set(meta.id, thread)
       await thread.connect({

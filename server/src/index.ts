@@ -147,7 +147,14 @@ app.post("/api/sessions/:id/respawn", async (c) => {
 app.get("/api/sessions/:id/journal", (c) => {
   const session = sessions.get(c.req.param("id"));
   if (!session) return c.json({ error: "not found" }, 404);
-  return c.json({ cursor: session.journal.length, entries: session.journal });
+  // promptActive rides along with the cursor: read in the same tick as the
+  // journal it describes, so the client can't pair a stale turn state with a
+  // fresh replay window (or vice versa).
+  return c.json({
+    cursor: session.journal.length,
+    promptActive: session.promptActive,
+    entries: session.journal,
+  });
 });
 app.delete("/api/sessions/:id", (c) =>
   sessions.kill(c.req.param("id")) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404),
