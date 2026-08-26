@@ -38,12 +38,16 @@ const DEFAULT_AGENTS: AgentDef[] = [
     // base URL the whole block prunes away and Codex uses its default
     // provider. wire_api is "responses" — edit to "chat" for
     // chat-completions-only gateways.
+    // MODEL_PROVIDER repeats the choice because codex-acp's session/load path
+    // (getResumeModelProvider) ignores CODEX_CONFIG.model_provider and falls
+    // back to "openai" — without it every revived thread 401s on api.openai.com.
     id: "codex",
     name: "Codex",
     command: "npx",
     args: ["-y", "@agentclientprotocol/codex-acp"],
     env: {
       CODEX_API_KEY: "{apiKey}",
+      MODEL_PROVIDER: "{baseUrl?daedalus}",
       CODEX_CONFIG:
         '{"model":"{model}","model_reasoning_effort":"{effort}","model_context_window":{contextWindow},"model_max_output_tokens":{maxOutputTokens},"model_provider":"{baseUrl?daedalus}","model_providers":{"daedalus":{"name":"{baseUrl?Daedalus gateway}","base_url":"{baseUrl}","env_key":"{baseUrl?CODEX_API_KEY}","wire_api":"{baseUrl?responses}"}}}',
     },

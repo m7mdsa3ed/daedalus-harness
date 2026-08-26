@@ -191,6 +191,29 @@ export function pushUserMessage(items: ThreadItem[], text: string): ThreadItem[]
   return [...items, { kind: "user", id: `user-${items.length}`, text }]
 }
 
+/** null only when neither side reported the field — keeps optional stats hidden. */
+const addOptional = (a: number | null | undefined, b: number | null | undefined) =>
+  a == null && b == null ? null : (a ?? 0) + (b ?? 0)
+
+/**
+ * ACP's Usage doc-comments claim session totals, but agents send per-turn
+ * numbers (observed: totalTokens falling between turns), so the running total
+ * is ours to keep — and an average cache rate needs it. `_daedalus/turn_ended`
+ * is the ONLY caller: the prompt response carries the same usage a second time,
+ * and adding both would double every turn.
+ */
+export function addUsage(prev: acp.Usage | null, next: acp.Usage): acp.Usage {
+  if (!prev) return next
+  return {
+    totalTokens: prev.totalTokens + next.totalTokens,
+    inputTokens: prev.inputTokens + next.inputTokens,
+    outputTokens: prev.outputTokens + next.outputTokens,
+    thoughtTokens: addOptional(prev.thoughtTokens, next.thoughtTokens),
+    cachedReadTokens: addOptional(prev.cachedReadTokens, next.cachedReadTokens),
+    cachedWriteTokens: addOptional(prev.cachedWriteTokens, next.cachedWriteTokens),
+  }
+}
+
 /** Rebuild a thread from the server's frame journal after a reconnect. */
 export function rebuildThread(entries: JournalEntry[]): ThreadState {
   let thread: ThreadState = { ...emptyThread }
@@ -215,14 +238,13 @@ export function rebuildThread(entries: JournalEntry[]): ThreadState {
         }
       } else if (entry.d === "a" && msg.method === "_daedalus/turn_ended") {
         // Server-synthesized turn end — carries usage even when the prompt's
-        // requesting connection died mid-turn.
+        // requesting connection died mid-turn, and is journaled, so it is the
+        // single accumulation point for both live frames and this replay.
         thread = {
           ...thread,
-          usage: msg.params?.usage ?? thread.usage,
+          usage: msg.params?.usage ? addUsage(thread.usage, msg.params.usage) : thread.usage,
           items: settleTools(thread.items),
         }
-      } else if (entry.d === "a" && msg.result?.stopReason && msg.result?.usage) {
-        thread = { ...thread, usage: msg.result.usage }
       }
     } catch {
       // non-JSON frame — ignore
@@ -338,7 +360,7 @@ export function reducer(state: State, action: Action): State {
     case "config-options":
       return withThread(state, action.id, { configOptions: action.configOptions })
     case "usage":
-      return withThread(state, action.id, { usage: action.usage })
+      return withThread(state, action.id, { usage: addUsage(thread(state, action.id).usage, action.usage) })
     case "ttft":
       return withThread(state, action.id, { ttftMs: action.ms })
     default:

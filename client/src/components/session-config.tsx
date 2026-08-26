@@ -48,9 +48,9 @@ export function SessionConfigPopover({
   const profile = state.profiles.find((p) => p.id === meta?.profileId)
   if (!meta || !profile) return null
 
-  // Some agents advertise the permission mode both as `modes` (rendered as the
-  // composer's standalone select) and again as a select config option (the
-  // newer ACP channel). Hide the config-option twin: same value set = same knob.
+  // Some agents advertise the permission mode both as `modes` and again as a
+  // select config option (the newer ACP channel). Hide the config-option twin:
+  // same value set = same knob.
   const modeIds = new Set(thread.modes?.availableModes.map((m) => m.id) ?? [])
   const agentOptions = thread.configOptions.filter((option) => {
     if (option.type !== "select" || modeIds.size === 0) return true
@@ -63,6 +63,8 @@ export function SessionConfigPopover({
   const resolvedModel = models.find((m) => m.id === (meta.model || profile.defaultModel))
   const efforts = resolvedModel?.reasoningEfforts ?? []
   const modelLabel = resolvedModel?.label ?? (meta.model || "Default")
+  const modes = thread.modes && thread.modes.availableModes.length > 1 ? thread.modes : null
+  const modeLabel = modes?.availableModes.find((m) => m.id === modes.currentModeId)?.name
 
   const change = async (next: { profileId?: string; model?: string; effort?: string }) => {
     if (
@@ -81,11 +83,17 @@ export function SessionConfigPopover({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="ghost" className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground">
-            <Settings2Icon className="size-3.5" />
-            <span className="max-w-40 truncate">
+          <Button
+            variant="ghost"
+            className="h-8 gap-1.5 border-0 bg-transparent px-2 text-xs shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent"
+          >
+            <Settings2Icon className="size-4" />
+            {/* The mode rides along in the trigger: it left the composer, and a
+                silently-active "accept edits" is the one setting you must see. */}
+            <span className="max-w-56 truncate">
               {modelLabel}
               {meta.effort && <span className="capitalize"> · {meta.effort}</span>}
+              {modeLabel && ` · ${modeLabel}`}
             </span>
           </Button>
         }
@@ -174,11 +182,37 @@ export function SessionConfigPopover({
             </DropdownMenuSub>
           )}
         </DropdownMenuGroup>
-        {agentOptions.length > 0 && (
+        {(modes || agentOptions.length > 0) && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuLabel>Agent options</DropdownMenuLabel>
+              {modes && (
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <span className="flex-1">Mode</span>
+                    <span className="max-w-24 truncate text-xs text-muted-foreground">{modeLabel}</span>
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuPortal>
+                    <DropdownMenuSubContent>
+                      {/* setMode applies live over ACP — no respawn, so no confirm. */}
+                      <DropdownMenuRadioGroup
+                        value={modes.currentModeId}
+                        onValueChange={(modeId) =>
+                          modeId &&
+                          actions.setMode(sessionId, modeId).catch((err) => toast.error(String(err)))
+                        }
+                      >
+                        {modes.availableModes.map((mode) => (
+                          <DropdownMenuRadioItem key={mode.id} value={mode.id}>
+                            {mode.name}
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuSubContent>
+                  </DropdownMenuPortal>
+                </DropdownMenuSub>
+              )}
               {agentOptions.map((option) =>
                 option.type === "select" ? (
                   <DropdownMenuSub key={option.id}>

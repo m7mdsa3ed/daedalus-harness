@@ -29,6 +29,7 @@ function App() {
 function Connected({ settings }: { settings: ServerSettings }) {
   const actions = useActions(settings)
   const booted = React.useRef(false)
+  const [loaded, setLoaded] = React.useState(false)
 
   React.useEffect(() => {
     if (booted.current) return
@@ -38,9 +39,10 @@ function Connected({ settings }: { settings: ServerSettings }) {
       .bootstrap()
       .then(() => setupPush(settings))
       .catch((err) => toast.error(String(err)))
+      .finally(() => setLoaded(true))
   }, [actions, settings])
 
-  return <AppShell settings={settings} actions={actions} />
+  return <AppShell loading={!loaded} settings={settings} actions={actions} />
 }
 
 export default App

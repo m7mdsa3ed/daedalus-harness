@@ -25,6 +25,7 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
+import { PickerSkeleton } from "@/components/ui/skeletons"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -124,6 +125,15 @@ export const SETTINGS_SECTIONS = [
 
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]["id"]
 type SectionMeta = (typeof SETTINGS_SECTIONS)[number]
+
+export const SETTINGS_NAV_GROUPS: readonly {
+  label: string
+  sections: readonly SettingsSectionId[]
+}[] = [
+  { label: "Preferences", sections: ["general", "appearance"] },
+  { label: "Workspace", sections: ["projects", "mcp", "skills"] },
+  { label: "Agents", sections: ["profiles", "agents"] },
+] as const
 
 export function SettingsPage({
   section,
@@ -298,7 +308,7 @@ function GeneralSection({ meta, settings }: { meta: SectionMeta; settings: Serve
         <Row title="Disconnect" subtitle="Forget the server URL and token stored on this device.">
           <Button
             variant="outline"
-            size="sm"
+            size="lg"
             onClick={() => {
               clearSettings()
               location.reload()
@@ -331,11 +341,28 @@ function GeneralSection({ meta, settings }: { meta: SectionMeta; settings: Serve
 
 // ---- appearance ----
 
-const THEMES = [
+const MODES = [
   { value: "light", label: "Light", icon: Sun },
   { value: "dark", label: "Dark", icon: Moon },
   { value: "system", label: "System", icon: Monitor },
 ] as const
+
+const COLOR_THEMES = [
+  { value: "default", label: "Default" },
+  { value: "ocean", label: "Ocean" },
+  { value: "forest", label: "Forest" },
+  { value: "violet", label: "Violet" },
+  { value: "sunset", label: "Sunset" },
+  { value: "rose", label: "Rose" },
+  { value: "amber", label: "Amber" },
+  { value: "slate", label: "Slate" },
+  { value: "claude", label: "Claude" },
+  { value: "codex", label: "Codex" },
+  { value: "gemini", label: "Gemini" },
+  { value: "copilot", label: "Copilot" },
+] as const
+
+type ColorThemeValue = (typeof COLOR_THEMES)[number]["value"]
 
 /** Slider + live value + reset, on its own row so the track gets real width. */
 function SliderRow({
@@ -372,13 +399,13 @@ function SliderRow({
         </span>
         <Button
           variant="ghost"
-          size="icon"
-          className="size-7 shrink-0"
+          size="icon-lg"
+          className="shrink-0"
           title="Reset"
           disabled={value === fallback}
           onClick={() => onChange(fallback)}
         >
-          <RotateCcw className="size-3.5" />
+          <RotateCcw />
         </Button>
       </div>
       <Slider
@@ -394,16 +421,16 @@ function SliderRow({
 }
 
 function AppearanceSection({ meta }: { meta: SectionMeta }) {
-  const { theme, setTheme } = useTheme()
+  const { theme, setTheme, colorTheme, setColorTheme } = useTheme()
   const [fontSize, setFontSize] = useFontSize()
   const [scale, setScale] = useScale()
 
   return (
     <>
       <PageHeader meta={meta} />
-      <Group label="Theme">
+      <Group label="Mode">
         <div className="grid grid-cols-3 gap-2 p-2">
-          {THEMES.map(({ value, label, icon: Icon }) => (
+          {MODES.map(({ value, label, icon: Icon }) => (
             <button
               key={value}
               type="button"
@@ -417,6 +444,27 @@ function AppearanceSection({ meta }: { meta: SectionMeta }) {
               )}
             >
               <Icon className="size-4.5" />
+              {label}
+            </button>
+          ))}
+        </div>
+      </Group>
+      <Group label="Color theme">
+        <div className="grid grid-cols-2 gap-2 p-2 sm:grid-cols-3 lg:grid-cols-4">
+          {COLOR_THEMES.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setColorTheme(value)}
+              aria-pressed={colorTheme === value}
+              className={cn(
+                "flex flex-col gap-1.5 rounded-xl border p-1.5 text-xs font-medium transition-colors",
+                colorTheme === value
+                  ? "border-ring bg-accent text-accent-foreground ring-2 ring-ring/25"
+                  : "border-transparent text-muted-foreground hover:border-border hover:bg-accent/50"
+              )}
+            >
+              <ThemePreview value={value} />
               {label}
             </button>
           ))}
@@ -449,6 +497,39 @@ function AppearanceSection({ meta }: { meta: SectionMeta }) {
   )
 }
 
+/** A miniature app surface that reads the palette's real semantic variables. */
+function ThemePreview({ value }: { value: ColorThemeValue }) {
+  return (
+    <div aria-hidden className="overflow-hidden rounded-lg border border-border/60">
+      <ThemePreviewSurface value={value} mode="light" />
+      <ThemePreviewSurface value={value} mode="dark" />
+    </div>
+  )
+}
+
+function ThemePreviewSurface({
+  value,
+  mode,
+}: {
+  value: ColorThemeValue
+  mode: "light" | "dark"
+}) {
+  return (
+    <div
+      aria-hidden
+      data-color-theme={value}
+      className={cn("flex gap-1 bg-background p-1", mode === "dark" && "dark")}
+    >
+      <span className="h-8 w-2 shrink-0 rounded-[3px] bg-muted" />
+      <span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
+        <span className="h-0.5 w-4/5 rounded-full bg-foreground/65" />
+        <span className="h-0.5 w-3/5 rounded-full bg-muted-foreground" />
+        <span className="mt-0.5 h-1.5 w-3 rounded-full bg-primary" />
+      </span>
+    </div>
+  )
+}
+
 // ---- projects ----
 
 function ProjectsSection({
@@ -476,7 +557,7 @@ function ProjectsSection({
   }
 
   const newButton = (
-    <Button size="sm" onClick={() => setEditing("new")}>
+    <Button size="lg" onClick={() => setEditing("new")}>
       <Plus className="size-4" /> New project
     </Button>
   )
@@ -501,11 +582,11 @@ function ProjectsSection({
                 </span>
               }
             >
-              <Button variant="ghost" size="icon" className="size-8" title="Edit" onClick={() => setEditing(project)}>
-                <Pencil className="size-3.5" />
+              <Button variant="ghost" size="icon-lg" title="Edit" onClick={() => setEditing(project)}>
+                <Pencil />
               </Button>
-              <Button variant="ghost" size="icon" className="size-8" title="Delete" onClick={() => remove(project)}>
-                <Trash2 className="size-3.5" />
+              <Button variant="ghost" size="icon-lg" title="Delete" onClick={() => remove(project)}>
+                <Trash2 />
               </Button>
             </Row>
           ))}
@@ -666,13 +747,13 @@ function LibrarySection<T extends { id: string; name: string }>({
   }
 
   const newButton = (
-    <Button size="sm" onClick={() => setEditing("new")}>
+    <Button size="lg" onClick={() => setEditing("new")}>
       <Plus className="size-4" /> New {noun}
     </Button>
   )
   const actions = (
     <div className="flex flex-wrap justify-end gap-2">
-      <Button size="sm" variant="outline" onClick={() => setImporting(true)}>
+      <Button size="lg" variant="outline" onClick={() => setImporting(true)}>
         <Download className="size-4" /> Import
       </Button>
       {newButton}
@@ -688,11 +769,11 @@ function LibrarySection<T extends { id: string; name: string }>({
         <Group>
           {items.map((item) => (
             <Row key={item.id} icon={meta.icon} title={item.name} subtitle={<span className="font-mono">{subtitle(item)}</span>}>
-              <Button variant="ghost" size="icon" className="size-8" title="Edit" onClick={() => setEditing(item)}>
-                <Pencil className="size-3.5" />
+              <Button variant="ghost" size="icon-lg" title="Edit" onClick={() => setEditing(item)}>
+                <Pencil />
               </Button>
-              <Button variant="ghost" size="icon" className="size-8" title="Delete" onClick={() => remove(item)}>
-                <Trash2 className="size-3.5" />
+              <Button variant="ghost" size="icon-lg" title="Delete" onClick={() => remove(item)}>
+                <Trash2 />
               </Button>
             </Row>
           ))}
@@ -787,7 +868,9 @@ function ImportDialog({
         <ResponsiveDialogTitle>Import {noun}s</ResponsiveDialogTitle>
       </ResponsiveDialogHeader>
       {found === null ? (
-        <p className="py-8 text-center text-sm text-muted-foreground">Scanning the server…</p>
+        <div className="py-2">
+          <PickerSkeleton rows={4} />
+        </div>
       ) : (
         <>
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -1089,7 +1172,7 @@ function ProfilesSection({
   }
 
   const newButton = (
-    <Button size="sm" onClick={() => setEditing("new")}>
+    <Button size="lg" onClick={() => setEditing("new")}>
       <Plus className="size-4" /> New profile
     </Button>
   )
@@ -1135,11 +1218,11 @@ function ProfilesSection({
                     no key
                   </Badge>
                 )}
-                <Button variant="ghost" size="icon" className="size-8" title="Edit" onClick={() => setEditing(profile)}>
-                  <Pencil className="size-3.5" />
+                <Button variant="ghost" size="icon-lg" title="Edit" onClick={() => setEditing(profile)}>
+                  <Pencil />
                 </Button>
-                <Button variant="ghost" size="icon" className="size-8" title="Delete" onClick={() => remove(profile)}>
-                  <Trash2 className="size-3.5" />
+                <Button variant="ghost" size="icon-lg" title="Delete" onClick={() => remove(profile)}>
+                  <Trash2 />
                 </Button>
               </Row>
             ))}
@@ -1253,15 +1336,15 @@ function ModelRowEditor({
         <Button
           type="button"
           variant={isDefault ? "secondary" : "ghost"}
-          size="sm"
-          className="h-8 shrink-0 text-xs"
+          size="lg"
+          className="shrink-0"
           title={isDefault ? "This is the default model" : "Make default"}
           onClick={onSetDefault}
         >
           {isDefault ? "Default" : "Set default"}
         </Button>
-        <Button type="button" variant="ghost" size="icon" className="size-8 shrink-0" title="Remove model" onClick={onRemove}>
-          <Trash2 className="size-3.5" />
+        <Button type="button" variant="ghost" size="icon-lg" className="shrink-0" title="Remove model" onClick={onRemove}>
+          <Trash2 />
         </Button>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -1402,7 +1485,7 @@ function ProfileForm({
               }}
             />
           ))}
-          <Button type="button" variant="outline" size="sm" onClick={() => setRows((r) => [...r, blankModelRow()])}>
+          <Button type="button" variant="outline" size="lg" onClick={() => setRows((r) => [...r, blankModelRow()])}>
             <Plus className="size-4" /> Add model
           </Button>
         </div>

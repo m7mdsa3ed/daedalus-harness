@@ -2,21 +2,59 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
 
 type Theme = "light" | "dark" | "system"
+export type ColorTheme =
+  | "default"
+  | "ocean"
+  | "forest"
+  | "violet"
+  | "sunset"
+  | "rose"
+  | "amber"
+  | "slate"
+  | "claude"
+  | "codex"
+  | "gemini"
+  | "copilot"
+
+const COLOR_THEMES: readonly ColorTheme[] = [
+  "default",
+  "ocean",
+  "forest",
+  "violet",
+  "sunset",
+  "rose",
+  "amber",
+  "slate",
+  "claude",
+  "codex",
+  "gemini",
+  "copilot",
+]
+const COLOR_THEME_KEY = "ui.colorTheme"
 
 interface ThemeContext {
   theme: Theme
   setTheme: (t: Theme) => void
   resolved: "light" | "dark"
+  colorTheme: ColorTheme
+  setColorTheme: (theme: ColorTheme) => void
 }
 
 const Ctx = createContext<ThemeContext>({
   theme: "system",
   setTheme: () => {},
   resolved: "light",
+  colorTheme: "default",
+  setColorTheme: () => {},
 })
 
 function getSystemTheme(): "light" | "dark" {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+}
+
+function storedColorTheme(): ColorTheme {
+  const value = localStorage.getItem(COLOR_THEME_KEY)
+  return COLOR_THEMES.includes(value as ColorTheme) ? (value as ColorTheme) : "default"
 }
 
 /** Tint the browser/PWA status bar with the app background for the active theme. */
@@ -52,6 +90,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const stored = localStorage.getItem("theme") as Theme | null
     return stored === "light" || stored === "dark" ? stored : getSystemTheme()
   })
+  const [colorTheme, setColorTheme] = useState<ColorTheme>(storedColorTheme)
 
   useEffect(() => {
     if (theme !== "system") {
@@ -67,12 +106,18 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", resolved === "dark")
+    document.documentElement.dataset.colorTheme = colorTheme
     localStorage.setItem("theme", theme)
+    localStorage.setItem(COLOR_THEME_KEY, colorTheme)
     applyThemeColor(resolved)
     window.desktop?.setTitleBarTheme?.(resolved)
-  }, [theme, resolved])
+  }, [theme, resolved, colorTheme])
 
-  return <Ctx.Provider value={{ theme, setTheme: setThemeState, resolved }}>{children}</Ctx.Provider>
+  return (
+    <Ctx.Provider value={{ theme, setTheme: setThemeState, resolved, colorTheme, setColorTheme }}>
+      {children}
+    </Ctx.Provider>
+  )
 }
 
 export function useTheme() {

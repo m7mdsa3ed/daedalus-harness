@@ -2,10 +2,23 @@ import * as React from "react"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import type * as acp from "@agentclientprotocol/sdk"
-import { ChevronRightIcon } from "lucide-react"
+import {
+  ArrowLeftRightIcon,
+  BrainIcon,
+  ChevronRightIcon,
+  FileTextIcon,
+  GlobeIcon,
+  PencilLineIcon,
+  SearchIcon,
+  SquareTerminalIcon,
+  Trash2Icon,
+  ToggleLeftIcon,
+  WrenchIcon,
+} from "lucide-react"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Message, MessageContent } from "@/components/ui/message"
 import { Spinner } from "@/components/ui/spinner"
+import { ToolCallSkeleton } from "@/components/ui/skeletons"
 import { cn } from "@/lib/utils"
 import type { PlanItem, ThreadItem, ToolItem } from "@/lib/store"
 
@@ -25,6 +38,18 @@ const KIND_LABELS: Record<string, string> = {
   fetch: "fetch",
   switch_mode: "mode",
   other: "tool",
+}
+
+const KIND_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  read: FileTextIcon,
+  edit: PencilLineIcon,
+  delete: Trash2Icon,
+  move: ArrowLeftRightIcon,
+  search: SearchIcon,
+  execute: SquareTerminalIcon,
+  think: BrainIcon,
+  fetch: GlobeIcon,
+  switch_mode: ToggleLeftIcon,
 }
 
 function lineCount(text: string): number {
@@ -122,13 +147,17 @@ function StepRow({
         disabled={!expandable}
         onClick={() => setOpen((o) => !o)}
         className={cn(
-          "group/step -ms-1.5 flex w-full min-w-0 items-baseline gap-2 rounded-md py-0.5 pe-1.5 ps-1.5 text-start transition-colors duration-150",
+          // items-center, not items-baseline: the target span is `truncate`
+          // (overflow: hidden), so its baseline is its bottom edge — baseline
+          // alignment lifted the title ~5px above the "edit"/"run" label. Every
+          // child is leading-6, so centring lines them up exactly.
+          "group/step -ms-1.5 flex w-full min-w-0 items-center gap-2 rounded-md py-0.5 pe-1.5 ps-1.5 text-start transition-colors duration-150",
           expandable && "hover:bg-muted/40"
         )}
       >
         <span
           className={cn(
-            "min-w-0 flex-1 truncate text-[13px] leading-6",
+            "min-w-0 flex-1 truncate text-xs leading-6",
             mono && "font-mono",
             failed ? "text-destructive" : active ? "harness-shimmer text-foreground" : "text-foreground/85"
           )}
@@ -157,7 +186,7 @@ function StepRow({
 
         <ChevronRightIcon
           className={cn(
-            "size-3 shrink-0 self-center text-muted-foreground/60 transition-transform duration-150",
+            "size-3 shrink-0 text-muted-foreground/60 transition-transform duration-150",
             !expandable && "invisible",
             open ? "rotate-90 opacity-100" : "opacity-0 group-hover/step:opacity-100"
           )}
@@ -217,7 +246,7 @@ export function ThreadItemView({ item }: { item: ThreadItem }) {
         <Message align="end" className="py-2">
           <MessageContent>
             <Bubble align="end">
-              <BubbleContent className="rounded-2xl rounded-br-sm px-4 py-2.5 text-sm whitespace-pre-wrap">
+              <BubbleContent className="rounded-2xl rounded-br-sm px-4 py-2.5 text-xs whitespace-pre-wrap">
                 {item.text}
               </BubbleContent>
             </Bubble>
@@ -229,27 +258,30 @@ export function ThreadItemView({ item }: { item: ThreadItem }) {
         <Message className="py-2">
           <MessageContent>
             <Bubble variant="ghost">
-              <BubbleContent className="text-sm leading-relaxed">
+              <BubbleContent className="text-xs leading-relaxed">
                 <AgentText text={item.text} />
               </BubbleContent>
             </Bubble>
           </MessageContent>
         </Message>
       )
-    case "thought":
+    case "thought": {
+      const reasoning = item.text.trim()
+
       return (
         <StepRow
           label="think"
           status={null}
           mono={false}
-          target={item.text.split("\n").find((l) => l.trim()) ?? "…"}
+          target={reasoning.split("\n").find((line) => line.trim()) ?? "…"}
           detail={
             <p className="text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground">
-              {item.text}
+              {reasoning}
             </p>
           }
         />
       )
+    }
     case "tool":
       return <ToolStep item={item} />
     case "plan":
@@ -283,6 +315,7 @@ function mergeText(content: acp.ToolCallContent[]): acp.ToolCallContent[] {
 
 function ToolStep({ item }: { item: ToolItem }) {
   const active = item.status === "in_progress" || item.status === "pending"
+  const KindIcon = KIND_ICONS[item.toolKind ?? "other"] ?? WrenchIcon
   const json = JSON.stringify(item.rawInput ?? null)
   const args = json === "null" || json === "{}" ? null : json
   const hasBody = item.content.length > 0 || item.locations.length > 0 || args !== null
@@ -310,18 +343,19 @@ function ToolStep({ item }: { item: ToolItem }) {
       ))}
     </>
   ) : active ? (
-    // Running but nothing printed yet.
-    <div className="space-y-1.5 py-1">
-      <div className="harness-skeleton-line w-3/5" />
-      <div className="harness-skeleton-line w-2/5" />
-    </div>
+    <ToolCallSkeleton className="py-1" />
   ) : undefined
 
   return (
     <StepRow
       label={KIND_LABELS[item.toolKind ?? "other"] ?? KIND_LABELS.other}
       status={item.status}
-      target={item.title}
+      target={
+        <span className="flex min-w-0 items-center gap-1.5">
+          <KindIcon className={cn("size-3.5 shrink-0", active ? "text-primary" : "text-muted-foreground")} />
+          <span className="truncate">{item.title}</span>
+        </span>
+      }
       metric={metricFor(item)}
       startedAt={item.startedAt}
       detail={detail}

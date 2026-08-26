@@ -1,6 +1,14 @@
 import * as acp from "@agentclientprotocol/sdk"
-import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client"
+import {
+  createWebSocketStream,
+} from "@agentclientprotocol/sdk/experimental/ws-client"
 import { wsUrl, type McpServerDef, type Project, type ServerSettings } from "./settings"
+
+export interface ThreadCloseInfo {
+  clientInitiated: boolean
+  code?: number
+  reason?: string
+}
 
 export interface ThreadCallbacks {
   /** `replaying` is true while a session/load history replay is streaming. */
@@ -8,7 +16,7 @@ export interface ThreadCallbacks {
   onPermission: (
     request: acp.RequestPermissionRequest
   ) => Promise<acp.RequestPermissionResponse>
-  onStatus: (status: "connecting" | "connected" | "closed") => void
+  onStatus: (status: "connecting" | "connected" | "closed", closeInfo?: ThreadCloseInfo) => void
   onTurnActive: (active: boolean) => void
   /** Modes + config options from the session/new response (fresh sessions). */
   onSessionConfig?: (
@@ -35,6 +43,8 @@ export class AcpThread {
   private settings: ServerSettings
   private callbacks: ThreadCallbacks
   private connection: acp.ClientConnection | null = null
+  private clientInitiatedClose = false
+  private closeInfo: ThreadCloseInfo = { clientInitiated: false }
 
   constructor(serverSessionId: string, settings: ServerSettings, callbacks: ThreadCallbacks) {
     this.serverSessionId = serverSessionId
@@ -61,9 +71,24 @@ export class AcpThread {
     load?: boolean
   }): Promise<void> {
     this.callbacks.onStatus("connecting")
-    const stream = createWebSocketStream(
-      wsUrl(this.settings, this.serverSessionId, opts.cursor ?? 0)
-    )
+    this.clientInitiatedClose = false
+    this.closeInfo = { clientInitiated: false }
+    const thread = this
+    class TrackingWebSocket extends WebSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols)
+        this.addEventListener("close", (event) => {
+          thread.closeInfo = {
+            clientInitiated: thread.clientInitiatedClose,
+            code: event.code,
+            reason: event.reason,
+          }
+        })
+      }
+    }
+    const stream = createWebSocketStream(wsUrl(this.settings, this.serverSessionId, opts.cursor ?? 0), {
+      WebSocket: TrackingWebSocket,
+    })
     this.connection = acp
       .client({ name: "daedalus" })
       .onNotification(acp.methods.client.session.update, (ctx) => {
@@ -86,7 +111,7 @@ export class AcpThread {
       .connect(stream)
     this.connection.closed.then(() => {
       this.connection = null
-      this.callbacks.onStatus("closed")
+      this.callbacks.onStatus("closed", this.closeInfo)
     })
 
     try {
@@ -194,6 +219,7 @@ export class AcpThread {
   }
 
   close(): void {
+    this.clientInitiatedClose = true
     this.connection?.close()
     this.connection = null
   }

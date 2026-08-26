@@ -13,6 +13,13 @@ import {
 } from "./settings"
 import { emptyThread, rebuildThread, useStore } from "./store"
 
+const RECONNECT_MAX_ATTEMPTS = 5
+const RECONNECT_BASE_DELAY_MS = 500
+const RECONNECT_MAX_DELAY_MS = 8000
+const NON_RECONNECTABLE_CLOSE_CODES = new Set([4000, 4002, 4004])
+const reconnectAttempts = new Map<string, number>()
+const reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
 /** Side-effectful operations: REST calls + ACP thread lifecycle. */
 export function useActions(settings: ServerSettings) {
   const { state, dispatch } = useStore()
@@ -20,6 +27,38 @@ export function useActions(settings: ServerSettings) {
   stateRef.current = state
 
   return React.useMemo(() => {
+    const reconnectThread = async (sessionId: string) => {
+      const sessions = await api<SessionMeta[]>(settings, "/api/sessions")
+      dispatch({ type: "sessions", sessions })
+      const meta = sessions.find((s) => s.id === sessionId)
+      if (!meta) throw new Error("thread no longer exists on the server")
+      await openThread(meta)
+    }
+
+    const scheduleReconnect = (sessionId: string) => {
+      if (reconnectTimers.has(sessionId)) return
+      const attempt = (reconnectAttempts.get(sessionId) ?? 0) + 1
+      if (attempt > RECONNECT_MAX_ATTEMPTS) return
+
+      reconnectAttempts.set(sessionId, attempt)
+      dispatch({ type: "thread-status", id: sessionId, status: "connecting" })
+      const delayMs = Math.min(
+        RECONNECT_BASE_DELAY_MS * 2 ** (attempt - 1),
+        RECONNECT_MAX_DELAY_MS,
+      )
+      reconnectTimers.set(
+        sessionId,
+        setTimeout(() => {
+          reconnectTimers.delete(sessionId)
+          void reconnectThread(sessionId).catch((error) => {
+            console.warn(`Reconnecting thread ${sessionId} failed`, error)
+            dispatch({ type: "thread-status", id: sessionId, status: "closed" })
+            scheduleReconnect(sessionId)
+          })
+        }, delayMs),
+      )
+    }
+
     const makeCallbacks = (id: string): ThreadCallbacks => ({
       onUpdate: (notification, replaying) =>
         dispatch({ type: "update", id, update: notification.update, allowUserChunks: replaying }),
@@ -37,7 +76,18 @@ export function useActions(settings: ServerSettings) {
             },
           })
         }),
-      onStatus: (status) => dispatch({ type: "thread-status", id, status }),
+      onStatus: (status, closeInfo) => {
+        if (status === "connected") {
+          reconnectAttempts.delete(id)
+        } else if (
+          status === "closed" &&
+          !closeInfo?.clientInitiated &&
+          !NON_RECONNECTABLE_CLOSE_CODES.has(closeInfo?.code ?? 0)
+        ) {
+          scheduleReconnect(id)
+        }
+        dispatch({ type: "thread-status", id, status })
+      },
       onTurnActive: (active) => dispatch({ type: "turn-active", id, active }),
       onSessionConfig: (modes, configOptions) =>
         dispatch({ type: "session-config", id, modes, configOptions }),
@@ -158,17 +208,9 @@ export function useActions(settings: ServerSettings) {
 
       openThread,
 
-      /**
-       * Bring a dead thread back: refetch its metadata (the process may have
-       * been idle-retired or lost to a server restart), then reconnect —
-       * openThread respawns and replays when the meta says it exited.
-       */
       async reviveThread(sessionId: string) {
-        const sessions = await api<SessionMeta[]>(settings, "/api/sessions")
-        dispatch({ type: "sessions", sessions })
-        const meta = sessions.find((s) => s.id === sessionId)
-        if (!meta) throw new Error("thread no longer exists on the server")
-        await openThread(meta)
+        reconnectAttempts.delete(sessionId)
+        await reconnectThread(sessionId)
       },
 
       async send(sessionId: string, text: string) {
@@ -176,8 +218,10 @@ export function useActions(settings: ServerSettings) {
         if (!thread) throw new Error("thread not connected")
         dispatch({ type: "user-message", id: sessionId, text })
         dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
-        const response = await thread.prompt(text)
-        if (response?.usage) dispatch({ type: "usage", id: sessionId, usage: response.usage })
+        // The response's usage is dropped on purpose: `_daedalus/turn_ended`
+        // reports the same turn, and usage now accumulates — counting both
+        // would double it.
+        await thread.prompt(text)
       },
 
       /**

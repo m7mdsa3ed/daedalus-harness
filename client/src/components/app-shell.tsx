@@ -26,6 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
+import { SettingsSectionSkeleton, SetupCardsSkeleton, SidebarGroupsSkeleton } from "@/components/ui/skeletons"
 import {
   Sidebar,
   SidebarContent,
@@ -43,13 +44,20 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar"
+import { Skeleton } from "@/components/ui/skeleton"
 import type { Actions } from "@/lib/actions"
 import { navigate, useRoute } from "@/lib/router"
 import type { ServerSettings, SessionMeta } from "@/lib/settings"
-import { emptyThread, useStore } from "@/lib/store"
+import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
-import { ProjectForm, SETTINGS_SECTIONS, SettingsPage, type SettingsSectionId } from "./settings-page"
-import { ThreadView, UsageStats } from "./thread-view"
+import {
+  ProjectForm,
+  SETTINGS_NAV_GROUPS,
+  SETTINGS_SECTIONS,
+  SettingsPage,
+  type SettingsSectionId,
+} from "./settings-page"
+import { ThreadView } from "./thread-view"
 
 /** Swappable sidebar body. One panel per route family — see `panels` below. */
 interface SidebarPanel {
@@ -67,7 +75,15 @@ const SIDEBAR_WIDTH_DEFAULT = "16rem"
 const sectionOf = (value: string): SettingsSectionId =>
   SETTINGS_SECTIONS.find((s) => s.id === value)?.id ?? "general"
 
-export function AppShell({ settings, actions }: { settings: ServerSettings; actions: Actions }) {
+export function AppShell({
+  settings,
+  actions,
+  loading,
+}: {
+  settings: ServerSettings
+  actions: Actions
+  loading: boolean
+}) {
   const { state } = useStore()
   const route = useRoute()
   const [newThreadOpen, setNewThreadOpen] = React.useState(false)
@@ -83,8 +99,7 @@ export function AppShell({ settings, actions }: { settings: ServerSettings; acti
   const lastThread = React.useRef<string | null>(null)
   if (sessionId) lastThread.current = sessionId
   const active = state.sessions.find((s) => s.id === sessionId)
-  const activeThread = sessionId ? (state.threads[sessionId] ?? emptyThread) : null
-  const ready = state.projects.length > 0 && state.profiles.length > 0
+  const ready = !loading && state.projects.length > 0 && state.profiles.length > 0
 
   /* The route is the source of truth: whatever thread the URL names gets
      connected — on click, on reload, on back/forward and on a push deep link. */
@@ -110,13 +125,13 @@ export function AppShell({ settings, actions }: { settings: ServerSettings; acti
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton tooltip="New thread" onClick={startThread}>
+                <SidebarMenuButton tooltip="New thread" onClick={startThread} disabled={loading}>
                   <Plus className="size-4" />
                   <span>New thread</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <SidebarMenuButton tooltip="New project" onClick={() => setNewProjectOpen(true)}>
+                <SidebarMenuButton tooltip="New project" onClick={() => setNewProjectOpen(true)} disabled={loading}>
                   <FolderPlus className="size-4" />
                   <span>New project</span>
                 </SidebarMenuButton>
@@ -125,7 +140,7 @@ export function AppShell({ settings, actions }: { settings: ServerSettings; acti
           </SidebarGroupContent>
         </SidebarGroup>
       ),
-      body: <ThreadGroups actions={actions} />,
+      body: loading ? <SidebarGroupsSkeleton /> : <ThreadGroups actions={actions} />,
     },
     settings: {
       back: {
@@ -233,15 +248,19 @@ export function AppShell({ settings, actions }: { settings: ServerSettings; acti
           data-drag-region
           className="relative z-30 flex h-12 shrink-0 items-center gap-1 bg-transparent px-2 sm:gap-2 sm:px-4"
         >
-          <SidebarTrigger className="-ml-1 size-8 shrink-0" />
+          <SidebarTrigger className="-ml-1 shrink-0" />
           <Separator orientation="vertical" className="mr-1 h-4 shrink-0 sm:mr-2" />
           <div className="flex min-w-0 flex-1 items-center justify-between gap-2 sm:gap-3">
             <div className="flex min-w-0 items-baseline gap-2">
-              <h1 className="truncate text-sm font-medium">
-                {route.name === "settings"
-                  ? (SETTINGS_SECTIONS.find((s) => s.id === section)?.label ?? "Settings")
-                  : (active?.title ?? "Daedalus")}
-              </h1>
+              {loading ? (
+                <Skeleton className="h-4 w-32" />
+              ) : (
+                <h1 className="truncate text-sm font-medium">
+                  {route.name === "settings"
+                    ? (SETTINGS_SECTIONS.find((s) => s.id === section)?.label ?? "Settings")
+                    : (active?.title ?? "Daedalus")}
+                </h1>
+              )}
               {route.name === "settings" ? (
                 <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Settings</span>
               ) : (
@@ -254,19 +273,27 @@ export function AppShell({ settings, actions }: { settings: ServerSettings; acti
                 )
               )}
             </div>
-            {activeThread && (
-              <div className="flex shrink-0 items-center gap-1 overflow-x-auto sm:gap-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                <UsageStats thread={activeThread} />
-              </div>
-            )}
           </div>
         </header>
         {route.name === "settings" ? (
-          <SettingsPage section={section} settings={settings} actions={actions} />
+          loading ? (
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="mx-auto w-full max-w-3xl px-4 pt-6 pb-16 sm:px-8">
+                <SettingsSectionSkeleton />
+              </div>
+            </div>
+          ) : (
+            <SettingsPage section={section} settings={settings} actions={actions} />
+          )
         ) : sessionId ? (
           <ThreadView key={sessionId} sessionId={sessionId} actions={actions} />
         ) : (
-          <EmptyState ready={ready} onNewThread={startThread} onOpenSettings={openSettings} />
+          <EmptyState
+            loading={loading}
+            ready={ready}
+            onNewThread={startThread}
+            onOpenSettings={openSettings}
+          />
         )}
       </SidebarInset>
       <NewThreadDialog open={newThreadOpen} onOpenChange={setNewThreadOpen} actions={actions} />
@@ -298,29 +325,38 @@ function SettingsNav({
   onSelect: (id: SettingsSectionId) => void
 }) {
   const { isMobile, setOpenMobile } = useSidebar()
+
+  const select = (id: SettingsSectionId) => {
+    if (isMobile) setOpenMobile(false)
+    onSelect(id)
+  }
+
   return (
-    <SidebarGroup>
-      <SidebarGroupLabel>Settings</SidebarGroupLabel>
-      <SidebarGroupContent>
-        <SidebarMenu>
-          {SETTINGS_SECTIONS.map((entry) => (
-            <SidebarMenuItem key={entry.id}>
-              <SidebarMenuButton
-                tooltip={entry.label}
-                isActive={entry.id === section}
-                onClick={() => {
-                  if (isMobile) setOpenMobile(false)
-                  onSelect(entry.id)
-                }}
-              >
-                <entry.icon className="size-4" />
-                <span>{entry.label}</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ))}
-        </SidebarMenu>
-      </SidebarGroupContent>
-    </SidebarGroup>
+    <>
+      {SETTINGS_NAV_GROUPS.map((group) => (
+        <SidebarGroup key={group.label}>
+          <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {SETTINGS_SECTIONS.filter((entry) =>
+                group.sections.includes(entry.id)
+              ).map((entry) => (
+                <SidebarMenuItem key={entry.id}>
+                  <SidebarMenuButton
+                    tooltip={entry.label}
+                    isActive={entry.id === section}
+                    onClick={() => select(entry.id)}
+                  >
+                    <entry.icon className="size-4" />
+                    <span>{entry.label}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      ))}
+    </>
   )
 }
 
@@ -603,10 +639,12 @@ function ThreadList({ sessions, actions }: { sessions: SessionMeta[]; actions: A
 
 /** No thread open: a short "what now" with the two setup paths. */
 function EmptyState({
+  loading,
   ready,
   onNewThread,
   onOpenSettings,
 }: {
+  loading: boolean
   ready: boolean
   onNewThread: () => void
   onOpenSettings: (section?: SettingsSectionId) => void
@@ -626,6 +664,20 @@ function EmptyState({
       count: state.profiles.length,
     },
   ]
+
+  if (loading) {
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6">
+        <div aria-busy="true" className="w-full max-w-md text-center">
+          <Skeleton className="mx-auto size-11 rounded-lg" />
+          <Skeleton className="mx-auto mt-4 h-5 w-40" />
+          <Skeleton className="mx-auto mt-2 h-3 w-72" />
+          <Skeleton className="mx-auto mt-6 h-7 w-28 rounded-md" />
+          <SetupCardsSkeleton />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6">
