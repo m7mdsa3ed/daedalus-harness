@@ -1,24 +1,83 @@
-// One-off: renders public/logo.svg to the PWA PNG icons. Run: node scripts/render-icons.mjs
+// One-off: regenerates every rasterised icon (Electron + PWA) from
+// build/icon.svg — a single SVG that's the mark on a slate tile. Run:
+// `node scripts/render-icons.mjs` (also wired as `pnpm icons`).
+//
+// Why both Electron and the PWA come from the same file: the icon lives in
+// three places (taskbar/dock, browser tab, installed PWA) and they have to
+// match. They differ only in shape: Windows .ico needs several square
+// bitmaps packed together, the PWA wants 192/512 plus a maskable variant
+// with a safe-zone tile, and Apple wants its 180×180 touch icon.
+//
+// ImageMagick's bundled SVG renderer drops the strokes here (only the
+// tile colour survives), so the SVG goes through sharp/librsvg — that's
+// the only path that produces a faithful raster. The final .ico for
+// Windows is built from those PNGs with `magick`, which handles raster
+// packaging correctly.
 import sharp from "sharp"
-import { readFile } from "node:fs/promises"
+import { execFileSync } from "node:child_process"
+import { readFile, writeFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
+import { mkdtemp, rm } from "node:fs/promises"
 
+const here = (f) => fileURLToPath(new URL(`../${f}`, import.meta.url))
 const pub = (f) => fileURLToPath(new URL(`../public/${f}`, import.meta.url))
-const logo = (await readFile(pub("logo.svg"))).toString()
 
-// The mark itself is a bare teal glyph; app icons need a plate, so recolor the
-// glyph white and drop it on a brand-teal tile. `rx=0` for maskable/apple —
-// the OS rounds those corners itself and the glyph sits inside the safe zone.
-const white = logo.replaceAll("#007595", "#ffffff")
-const onTeal = (rx) =>
-  Buffer.from(white.replace(/(<svg[^>]*>)/, `$1<rect width="64" height="64" rx="${rx}" fill="#007595"/>`))
+const ICON_SVG = here("build/icon.svg")
+const PNG_OUT = here("build/icon.png")
+const ICO_OUT = here("build/icon.ico")
 
-for (const [src, name, size] of [
-  [onTeal(14), "icon-192.png", 192],
-  [onTeal(14), "icon-512.png", 512],
-  [onTeal(0), "icon-512-maskable.png", 512],
-  [onTeal(0), "apple-touch-icon.png", 180],
-]) {
-  await sharp(src, { density: (72 * size) / 64 }).resize(size, size).png().toFile(pub(name))
-  console.log("wrote", name)
+const PWA = [
+  ["icon-192.png", 192, { rx: 14 }],
+  ["icon-512.png", 512, { rx: 14 }],
+  ["icon-512-maskable.png", 512, { rx: 0 }],
+  ["apple-touch-icon.png", 180, { rx: 0 }],
+]
+
+const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
+const DENSITY = 384
+
+const svgString = (await readFile(ICON_SVG)).toString()
+const isMaskable = (rx) => rx === 0
+// Maskable / Apple: the OS clips the tile to its own shape, so any
+// rounded corners here would vanish — drop the SVG's rounded rect and
+// draw a flat tile for the platform to mask.
+const tileSvg = (rx) =>
+  isMaskable(rx)
+    ? svgString.replace(/<rect[^>]*fill="#0f172a"[^>]*\/>/, `<rect width="64" height="64" fill="#0f172a"/>`)
+    : svgString
+
+// build/icon.png — the 1024 master. electron-builder reads this for mac/linux
+// and dev-mode Electron loads it via the path in main.cjs.
+const master = await sharp(Buffer.from(svgString), { density: DENSITY })
+  .resize(1024, 1024, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+  .png()
+  .toBuffer()
+await writeFile(PNG_OUT, master)
+console.log("wrote", PNG_OUT)
+
+for (const [name, size, opts] of PWA) {
+  const buf = await sharp(Buffer.from(tileSvg(opts.rx)), { density: DENSITY })
+    .resize(size, size, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .png()
+    .toBuffer()
+  await writeFile(pub(name), buf)
+  console.log("wrote", pub(name))
 }
+
+// .ico = a folder of bitmaps. Render each size from the master, then let
+// ImageMagick pack them — that's its one job here and it does it fine.
+const tmpDir = await mkdtemp("/tmp/daedalus-icons-")
+const tmpFiles = await Promise.all(
+  ICO_SIZES.map(async (s) => {
+    const p = `${tmpDir}/${s}.png`
+    const buf = await sharp(master)
+      .resize(s, s, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .png()
+      .toBuffer()
+    await writeFile(p, buf)
+    return p
+  }),
+)
+execFileSync("magick", [...tmpFiles, ICO_OUT])
+await rm(tmpDir, { recursive: true, force: true })
+console.log("wrote", ICO_OUT)

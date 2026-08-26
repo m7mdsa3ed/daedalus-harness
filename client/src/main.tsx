@@ -1,11 +1,25 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
+import { BrowserRouter } from 'react-router'
 import App from './App.tsx'
+import { ErrorBoundary } from './components/error-boundary.tsx'
+import { installGlobalErrorReporting } from './lib/errors.ts'
+
+// The floor under everything else: a promise nobody caught, or a listener that
+// threw outside React's tree, would otherwise vanish into the console. The
+// ErrorBoundary only sees failures that happen during a render.
+installGlobalErrorReporting()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    {/* Last-resort boundary: it sits outside the providers, so it still renders
+        if one of them throws. Per-region boundaries live in the app shell. */}
+    <ErrorBoundary>
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </ErrorBoundary>
   </StrictMode>,
 )
 
@@ -20,10 +34,29 @@ createRoot(document.getElementById('root')!).render(
       splash.classList.add('is-leaving')
       window.setTimeout(() => splash.remove(), 300)
     }
+    // A missing latch means the inline script in index.html never ran (blocked
+    // or threw) — the CSS sequence still plays, so hold for its length rather
+    // than dismissing on the next microtask, which erased the splash entirely.
     const intro = (window as { __bootIntro?: Promise<void> }).__bootIntro
-    void (intro ?? Promise.resolve()).then(dismiss)
+    void (intro ?? new Promise((resolve) => window.setTimeout(resolve, 1700))).then(dismiss)
     // Backstop: a throttled background tab (or a browser that never fires the
-    // event) must not leave the app stranded behind the splash.
-    window.setTimeout(dismiss, 4000)
+    // event) must not leave the app stranded behind the splash. Armed only once
+    // the page is actually on screen — index.html holds the sequence until
+    // then (prerender/background-tab), and a backstop counting through that
+    // hold would dismiss the splash before anyone saw it.
+    const armBackstop = () => window.setTimeout(dismiss, 4000)
+    const doc = document as Document & { prerendering?: boolean }
+    if (!doc.prerendering && doc.visibilityState === 'visible') {
+      armBackstop()
+    } else {
+      const onShown = () => {
+        if (doc.prerendering || doc.visibilityState !== 'visible') return
+        doc.removeEventListener('prerenderingchange', onShown)
+        doc.removeEventListener('visibilitychange', onShown)
+        armBackstop()
+      }
+      doc.addEventListener('prerenderingchange', onShown)
+      doc.addEventListener('visibilitychange', onShown)
+    }
   }
 }

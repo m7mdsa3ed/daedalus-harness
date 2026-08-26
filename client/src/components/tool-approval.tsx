@@ -1,4 +1,4 @@
-import { ChevronRightIcon, WrenchIcon } from "lucide-react"
+import { CheckIcon, ChevronRightIcon, WrenchIcon, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import type { PendingPermission } from "@/lib/store"
@@ -6,8 +6,10 @@ import { cn } from "@/lib/utils"
 import { KIND_ICONS, KIND_LABELS, ToolCallContent } from "./thread-items"
 
 /* The card answers one question — "may I do this?" — so the thing being done is
-   the headline and the buttons are the only other thing with weight. Ids, status
-   and raw payloads are debugging material: they live behind <details>. */
+   the headline and the actions are the other thing with weight. Ids, status and
+   raw payloads are debugging material: they live behind <details>. The actions
+   split spatially: allows on the left where the eye lands, rejects pushed to
+   the far edge, so the destructive choice is never adjacent to the tempting one. */
 
 function prettyJson(value: unknown): string | null {
   if (value === undefined || value === null) return null
@@ -20,7 +22,7 @@ function prettyJson(value: unknown): string | null {
 
 function CodeBlock({ value }: { value: string }) {
   return (
-    <pre className="max-h-48 overflow-auto rounded-md border border-border/50 bg-muted/40 px-2.5 py-2 font-mono text-[11px] whitespace-pre-wrap">
+    <pre className="max-h-56 overflow-auto rounded-lg border border-border/50 bg-muted/30 px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words text-foreground/90">
       {value}
     </pre>
   )
@@ -54,33 +56,42 @@ export function InlineToolApproval({ permission }: { permission: PendingPermissi
     <div
       aria-live="polite"
       role="group"
-      className="overflow-hidden rounded-xl border border-primary/30 bg-card/70 shadow-xs"
+      className="animate-in slide-in-from-bottom-1 fade-in zoom-in-[0.99] overflow-hidden rounded-xl border border-primary/30 bg-card/80 shadow-md shadow-primary/5 backdrop-blur-sm duration-200"
     >
-      <div className="flex items-start gap-2.5 p-3">
-        <span className="grid size-7 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
-          <KindIcon className="size-3.5" />
+      <div className="flex items-start gap-3 p-3.5 pb-3">
+        <span className="relative grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-primary ring-1 ring-primary/15 ring-inset">
+          <KindIcon className="size-4" />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="harness-shimmer text-[11px] tracking-wide text-primary uppercase">
-            Permission needed
-          </p>
-          <p className="mt-0.5 font-mono text-xs leading-5 break-words">
+          <div className="flex items-center justify-between gap-2">
+            <p className="harness-shimmer text-[10px] font-medium tracking-widest text-primary uppercase">
+              Permission needed
+            </p>
+            {/* Same right-hand kind column the transcript's step rows scan on,
+                dressed as a chip now that the card owns this strip of screen. */}
+            <span className="shrink-0 rounded-full border border-border/50 bg-muted/30 px-2 py-px text-[10px] leading-4 tracking-wide text-muted-foreground">
+              {KIND_LABELS[kind] ?? KIND_LABELS.other}
+            </span>
+          </div>
+          <p className="mt-1 font-mono text-[13px] leading-snug break-words">
             {call.title || call.name || call.toolCallId}
           </p>
         </div>
-        {/* Same right-hand kind column the transcript's step rows scan on. */}
-        <span className="shrink-0 text-[11px] leading-5 text-muted-foreground/60">
-          {KIND_LABELS[kind] ?? KIND_LABELS.other}
-        </span>
       </div>
 
-      <div className="space-y-2 px-3 pb-3">
+      <div className="space-y-2.5 px-3.5 pb-3.5">
         {locations.length > 0 && (
-          <ul className="space-y-0.5 font-mono text-[11px] text-muted-foreground/80">
+          <ul className="flex flex-wrap gap-1">
             {locations.map((location, index) => (
-              <li key={`${location.path}-${index}`} className="truncate">
+              <li
+                key={`${location.path}-${index}`}
+                title={location.path}
+                className="max-w-full truncate rounded-md border border-border/40 bg-muted/30 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+              >
                 {location.path}
-                {location.line != null && `:${location.line}`}
+                {location.line != null && (
+                  <span className="pl-1 text-muted-foreground/60">:{location.line}</span>
+                )}
               </li>
             ))}
           </ul>
@@ -90,52 +101,67 @@ export function InlineToolApproval({ permission }: { permission: PendingPermissi
             one, otherwise the arguments — never nothing. */}
         {content.length > 0 ? <ToolCallContent content={content} /> : input && <CodeBlock value={input} />}
 
-        <details className="group/details">
-          <summary className="flex cursor-pointer list-none items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground">
+        <details className="group/details pt-0.5">
+          <summary className="-mx-1 inline-flex w-fit cursor-pointer list-none items-center gap-1 rounded px-1 py-0.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground">
             <ChevronRightIcon className="size-3 transition-transform group-open/details:rotate-90" />
             Details
           </summary>
-          <dl className="mt-1.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-[11px]">
+          <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-[11px]">
             <MetaRow label="Session" value={request.sessionId} />
             <MetaRow label="Call ID" value={call.toolCallId} />
             <MetaRow label="Name" value={call.name ?? "—"} />
             <MetaRow label="Status" value={call.status ?? "pending"} />
           </dl>
-          {content.length > 0 && input && (
-            <div className="mt-2">
-              <p className="mb-1 text-[11px] tracking-wide text-muted-foreground uppercase">Raw input</p>
-              <CodeBlock value={input} />
+          {output && (
+            <div className="mt-2.5">
+              <p className="mb-1 text-[10px] font-medium tracking-widest text-muted-foreground uppercase">
+                Raw output
+              </p>
+              <CodeBlock value={output} />
             </div>
           )}
-          {output && (
-            <div className="mt-2">
-              <p className="mb-1 text-[11px] tracking-wide text-muted-foreground uppercase">Raw output</p>
-              <CodeBlock value={output} />
+          {content.length > 0 && input && (
+            <div className="mt-2.5">
+              <p className="mb-1 text-[10px] font-medium tracking-widest text-muted-foreground uppercase">
+                Raw input
+              </p>
+              <CodeBlock value={input} />
             </div>
           )}
         </details>
       </div>
 
-      <div className="flex flex-wrap gap-1.5 border-t border-border/50 bg-muted/25 px-3 py-2.5">
-        {request.options.map((option) => (
-          <Button
-            key={option.optionId}
-            size="lg"
-            variant={
-              option.optionId === primaryId
-                ? "default"
-                : option.kind.startsWith("reject")
-                  ? "destructive"
-                  : option.kind.startsWith("allow")
-                    ? "secondary"
-                    : "outline"
-            }
-            className={cn(option.optionId === primaryId && "font-medium")}
-            onClick={() => resolve({ outcome: { outcome: "selected", optionId: option.optionId } })}
-          >
-            {option.name}
-          </Button>
-        ))}
+      <div className="flex flex-wrap items-center gap-1.5 border-t border-border/50 bg-muted/25 px-3.5 py-2.5">
+        {/* The reject side starts at the first reject — that button's leading
+            auto margin carries it and everything after it to the opposite edge
+            of the bar, so deny never sits beside its tempting affirmative. */}
+        {(() => {
+          const rejectStart = request.options.findIndex((o) => o.kind.startsWith("reject"))
+          return request.options.map((option, index) => {
+            const primary = option.optionId === primaryId
+            const rejecting = option.kind.startsWith("reject")
+            const allowing = option.kind.startsWith("allow")
+            const OptionIcon = rejecting ? XIcon : allowing ? CheckIcon : null
+            return (
+              <Button
+                key={option.optionId}
+                size="default"
+                variant={
+                  primary ? "default" : rejecting ? "destructive" : allowing ? "secondary" : "outline"
+                }
+                className={cn(primary && "font-semibold", index === rejectStart && "ms-auto")}
+                onClick={() =>
+                  resolve({ outcome: { outcome: "selected", optionId: option.optionId } })
+                }
+              >
+                {OptionIcon && (
+                  <OptionIcon data-icon="inline-start" className="size-3.5 opacity-80" />
+                )}
+                {option.name}
+              </Button>
+            )
+          })
+        })()}
       </div>
     </div>
   )

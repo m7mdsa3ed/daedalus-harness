@@ -1,7 +1,9 @@
-import { join } from "node:path";
-import { DATA_DIR, readJson, writeJson, type FcmConfig } from "./config.js";
+import { isAbsolute, join } from "node:path";
+import { inArray } from "drizzle-orm";
+import { DATA_DIR, type FcmConfig } from "./config.js";
+import { db, pushTokens } from "./db/index.js";
 
-const TOKENS_PATH = join(DATA_DIR, "push-tokens.json");
+const listTokens = (): string[] => db.select({ token: pushTokens.token }).from(pushTokens).all().map((r) => r.token);
 
 export class Push {
   private messaging: import("firebase-admin/messaging").Messaging | null = null;
@@ -18,8 +20,8 @@ export class Push {
   }
 
   registerToken(token: string): void {
-    const tokens = readJson<string[]>(TOKENS_PATH, []);
-    if (!tokens.includes(token)) writeJson(TOKENS_PATH, [...tokens, token]);
+    // Re-registering the same device is the common case, not an error.
+    db.insert(pushTokens).values({ token, createdAt: Date.now() }).onConflictDoNothing().run();
   }
 
   async send(title: string, body: string, data: Record<string, string>): Promise<void> {
@@ -27,9 +29,14 @@ export class Push {
     if (!this.messaging) {
       const { initializeApp, cert } = await import("firebase-admin/app");
       const { getMessaging } = await import("firebase-admin/messaging");
-      this.messaging = getMessaging(initializeApp({ credential: cert(this.fcm.serviceAccountPath) }));
+      // A relative serviceAccountPath is relative to the server directory
+      // ("data/…"), not to whatever cwd the process happened to start with.
+      const path = this.fcm.serviceAccountPath;
+      this.messaging = getMessaging(
+        initializeApp({ credential: cert(isAbsolute(path) ? path : join(DATA_DIR, "..", path)) }),
+      );
     }
-    const tokens = readJson<string[]>(TOKENS_PATH, []);
+    const tokens = listTokens();
     if (tokens.length === 0) return;
     const result = await this.messaging.sendEachForMulticast({
       tokens,
@@ -40,6 +47,6 @@ export class Push {
       const code = result.responses[i].error?.code;
       return code === "messaging/registration-token-not-registered" || code === "messaging/invalid-argument";
     });
-    if (dead.length) writeJson(TOKENS_PATH, tokens.filter((t) => !dead.includes(t)));
+    if (dead.length) db.delete(pushTokens).where(inArray(pushTokens.token, dead)).run();
   }
 }

@@ -92,6 +92,11 @@ async function createWindow() {
     minWidth: 700,
     minHeight: 500,
     show: false,
+    /* Dev/unpackaged runs have no bundled resources, so the window icon has to
+       be pointed at the source PNG; a packaged build takes it from the
+       electron-builder `icon` config instead. macOS ignores this entirely and
+       uses the bundle icon. */
+    icon: path.join(__dirname, "..", "build", "icon.png"),
     // Edge-to-edge: no OS title bar, the app paints its own chrome. macOS keeps
     // the traffic lights inset; Windows/Linux get an overlay for min/max/close.
     frame: process.platform === "darwin",

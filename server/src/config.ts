@@ -1,10 +1,14 @@
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const DATA_DIR =
   process.env.DAEDALUS_DATA_DIR ?? join(dirname(fileURLToPath(import.meta.url)), "..", "data");
+
+// The database file is opened as soon as db/index.ts is imported, and
+// better-sqlite3 will not create the directory for it.
+mkdirSync(DATA_DIR, { recursive: true });
 
 export interface FcmConfig {
   /** Path to a Firebase service account JSON (server-side sends). */
@@ -24,16 +28,42 @@ export interface ServerConfig {
   fcm?: FcmConfig;
 }
 
+/*
+ * Everything else the harness stores now lives in SQLite (see db/schema.ts).
+ * config.json stays a file on purpose: it is bootstrap — the port and host the
+ * server binds to, the token it prints, the path to a Firebase service account —
+ * and it is the one thing a person edits by hand, sometimes to recover a server
+ * they can no longer reach. A row in a database nobody can open yet would be a
+ * worse place for it.
+ *
+ * readJson/writeJson survive for exactly that file and for reading the agents'
+ * own config files during discovery (discover.ts) and the one-time JSON import
+ * (db/index.ts).
+ */
 const CONFIG_PATH = join(DATA_DIR, "config.json");
 
 export function readJson<T>(path: string, fallback: T): T {
-  if (!existsSync(path)) return fallback;
-  return JSON.parse(readFileSync(path, "utf8")) as T;
+  // A torn write leaves the file unparseable; the previous good copy is next to
+  // it. Preferring a stale config to no config is the right way round here.
+  for (const candidate of [path, `${path}.bak`]) {
+    if (!existsSync(candidate)) continue;
+    try {
+      return JSON.parse(readFileSync(candidate, "utf8")) as T;
+    } catch (error) {
+      console.error(`[config] ${candidate} is not valid JSON`, error);
+    }
+  }
+  return fallback;
 }
 
+/** Write via a temp file and rename, so a crash mid-write cannot leave a
+    half-written config behind. `rename` is atomic within one filesystem. */
 export function writeJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(value, null, 2) + "\n");
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n");
+  if (existsSync(path)) copyFileSync(path, `${path}.bak`);
+  renameSync(tmp, path);
 }
 
 export function loadConfig(): ServerConfig {

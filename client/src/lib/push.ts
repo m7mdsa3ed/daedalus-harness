@@ -12,9 +12,10 @@ export async function setupPush(settings: ServerSettings): Promise<void> {
     )
     if (!config.enabled || !config.firebase) return
     if (!("serviceWorker" in navigator) || !("Notification" in window)) return
-    if (Notification.permission === "denied") return
-    if (Notification.permission !== "granted" && (await Notification.requestPermission()) !== "granted")
-      return
+    // Never prompts. Asking belongs to a user gesture — the enable-notifications
+    // alert in the thread view (components/notification-alert) or the settings
+    // toggle — which calls back into setupPush once permission is granted.
+    if (Notification.permission !== "granted") return
 
     const { initializeApp } = await import("firebase/app")
     const { getMessaging, getToken } = await import("firebase/messaging")

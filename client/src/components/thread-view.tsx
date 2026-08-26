@@ -1,9 +1,8 @@
 import * as React from "react"
 import { ArrowUp, Mic, RotateCw, Square } from "lucide-react"
-import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { ActivityIndicator, ComposerPlan, ContextIndicator } from "@/components/composer-status"
-import { TranscriptSkeleton } from "@/components/ui/skeletons"
+import { ComposerStrip, ComposerStripItem } from "@/components/composer-strip"
 import { Textarea } from "@/components/ui/textarea"
 import {
   MessageScroller,
@@ -13,23 +12,88 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { useVoice } from "@/hooks/use-voice"
 import type { Actions } from "@/lib/actions"
-import { useStore, emptyThread, type ThreadState } from "@/lib/store"
+import { clearDraft, loadDraft, saveDraft } from "@/lib/drafts"
+import { reportError } from "@/lib/errors"
+import type { SessionMeta } from "@/lib/settings"
+import { useStore, emptyThread, threadIsEmpty, type ThreadItem, type ThreadState } from "@/lib/store"
+import { useViewOptions } from "@/lib/view-options"
 import { cn } from "@/lib/utils"
+import { DraftConfigPopover, DraftScopeRow } from "./draft-config"
+import { NotificationAlert } from "./notification-alert"
 import { SessionConfigPopover } from "./session-config"
+import { SlashCommandMenu, useSlashCommands } from "./slash-commands"
+import { SessionSettingsButton } from "./session-settings"
+import { InlineElicitation } from "./elicitation-form"
 import { InlineToolApproval } from "./tool-approval"
-import { ThreadItemView } from "./thread-items"
+import { ThreadItemView, ToolRun, type ToolRunGroup } from "./thread-items"
+
+/** Consecutive tool steps become one ToolRunGroup; everything else passes
+    through untouched. Runs of one stay ungrouped — a lone step wrapped in a
+    "1 step" disclosure is strictly worse than the step. */
+function groupToolRuns(items: ThreadItem[]): (ThreadItem | ToolRunGroup)[] {
+  const rows: (ThreadItem | ToolRunGroup)[] = []
+  let run: Extract<ThreadItem, { kind: "tool" }>[] = []
+
+  const flush = () => {
+    if (run.length > 1) rows.push({ id: `tools-${run[0].id}`, items: run })
+    else rows.push(...run)
+    run = []
+  }
+
+  for (const item of items) {
+    if (item.kind === "tool") run.push(item)
+    else {
+      flush()
+      rows.push(item)
+    }
+  }
+  flush()
+  return rows
+}
 
 export function ThreadView({ sessionId, actions }: { sessionId: string; actions: Actions }) {
-  const { state } = useStore()
+  const { state, dispatch } = useStore()
   const thread = state.threads[sessionId] ?? emptyThread
-  const loading =
-    thread.status === "connecting" ||
-    (thread.status === "idle" && thread.items.length === 0)
+  /* An interrupt is resumable only while it is the last thing that happened:
+     the turn is over, the agent is still there, and nothing has been said
+     since. Anything older is history, and history does not get a button. */
+  const options = useViewOptions(sessionId)
+  const visible = thread.items.filter((item) => item.kind !== "plan")
+  /* Grouping folds a *run* of steps into one row. It is computed here, not in
+     the reducer: it is a way of looking at the transcript, not a change to it,
+     and toggling it must not touch a single item. */
+  const rows = options.groupTools ? groupToolRuns(visible) : visible
+  const last = visible[visible.length - 1]
+  const resumable =
+    last?.kind === "notice" && !thread.turnActive && thread.status !== "closed"
+      ? last.id
+      : null
+  /* actions.send records its own failure in the transcript (with the text, so
+     the row it leaves behind can offer Retry) — a toast on top would say the
+     same thing twice. */
+  const resume = () => void actions.send(sessionId, "Continue.").catch(() => {})
+  const retry = (text: string) => void actions.send(sessionId, text).catch(() => {})
+
+  const meta = state.sessions.find((s) => s.id === sessionId)
+  // Shared with the hero behind the whole inset, which the shell paints — the
+  // two must agree about when this thread counts as empty. See lib/store.
+  const empty = threadIsEmpty(thread, meta?.draft)
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    /* Rows: transcript | composer | spacer. The spacer is 1fr while the thread
+       is empty and 0fr once it is not, which centres the composer and then
+       docks it — `fr` interpolates, so that whole move is one transition on one
+       property with nothing measured in JS.
+       minmax(0,…) on both flexible tracks, never a bare `1fr`: that is shorthand
+       for minmax(auto,1fr), whose auto minimum lets a long transcript push the
+       row taller than the thread and scroll the whole pane. */
+    <div
+      data-empty={empty || undefined}
+      className="relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto_minmax(0,0fr)] transition-[grid-template-rows] duration-500 ease-out data-empty:grid-rows-[minmax(0,1fr)_auto_minmax(0,1fr)]"
+    >
       {/* `autoScroll` defaults to FALSE — without it the transcript never follows
           the stream. Every direct child of Content must be an Item with a
           `messageId`: the visibility/preservation scanner skips elements without
@@ -38,37 +102,48 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
         <MessageScroller className="min-h-0 flex-1">
           <MessageScrollerViewport>
             <MessageScrollerContent className="mx-auto w-full max-w-[var(--harness-chat-width)] gap-0.5 px-4 py-4">
-              {loading && (
-                <MessageScrollerItem messageId="connecting">
-                  <div className="py-2">
-                    <TranscriptSkeleton />
+              {/* Nothing stands in while a thread connects. A skeleton claimed a
+                  shape for content nobody had seen yet, and on a thread that
+                  turns out to be empty it was a lie twice over. The sidebar row
+                  says "connecting" instead — see AppShell.
+                  The empty state is not in here either: it sits with the
+                  composer in the middle row, so the greeting and the box you
+                  type into travel to the bottom together. */}
+              {thread.status === "connecting" && (
+                <MessageScrollerItem messageId="starting">
+                  <div className="harness-shimmer py-2 text-xs text-primary">
+                    {meta?.draft ? "Starting the agent…" : "Connecting…"}
                   </div>
                 </MessageScrollerItem>
               )}
-              {!loading && thread.items.length === 0 && (
-                <MessageScrollerItem messageId="empty">
-                  <div className="flex flex-col items-center gap-1.5 py-16 text-center">
-                    <p className="text-sm font-medium">Thread ready</p>
-                    <p className="max-w-xs text-xs text-balance text-muted-foreground">
-                      Send the first message — tool calls, plans and thinking stream in here as
-                      steps.
-                    </p>
-                  </div>
+              {rows.map((row) => (
+                /* ponytail: no scrollAnchor. Anchoring the user's message to
+                   the top of the viewport meant sending scrolled the whole
+                   transcript up and left a blank screen until the agent
+                   produced enough output to fill it back in. Autoscroll alone
+                   keeps the newest content in view without the jump. */
+                <MessageScrollerItem key={row.id} messageId={row.id}>
+                  {"items" in row ? (
+                    <ToolRun items={row.items} showTimestamps={options.showTimestamps} />
+                  ) : (
+                    <ThreadItemView
+                      item={row}
+                      onContinue={resumable === row.id ? resume : undefined}
+                      onRetry={
+                        row.kind === "error" && row.retryText
+                          ? () => retry(row.retryText!)
+                          : undefined
+                      }
+                      onDismiss={
+                        row.kind === "error"
+                          ? () => dispatch({ type: "dismiss-error", id: sessionId, itemId: row.id })
+                          : undefined
+                      }
+                      showTimestamps={options.showTimestamps}
+                    />
+                  )}
                 </MessageScrollerItem>
-              )}
-              {thread.items
-                .filter((item) => item.kind !== "plan")
-                .map((item) => (
-                  // A new anchor gets scrolled to the top of the viewport, so the
-                  // anchor is the user's message — the turn then streams below it.
-                <MessageScrollerItem
-                  key={item.id}
-                  messageId={item.id}
-                  scrollAnchor={item.kind === "user"}
-                >
-                  <ThreadItemView item={item} />
-                </MessageScrollerItem>
-                ))}
+              ))}
               {thread.turnActive && (
                 <MessageScrollerItem messageId="working">
                   <div className="py-0.5">
@@ -83,87 +158,214 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   </div>
                 </MessageScrollerItem>
               )}
+              {thread.elicitation && (
+                <MessageScrollerItem messageId="elicitation">
+                  <div className="py-1">
+                    <InlineElicitation elicitation={thread.elicitation} />
+                  </div>
+                </MessageScrollerItem>
+              )}
             </MessageScrollerContent>
           </MessageScrollerViewport>
           <MessageScrollerButton />
         </MessageScroller>
       </MessageScrollerProvider>
-      <Composer sessionId={sessionId} actions={actions} thread={thread} />
+      <div className="relative">
+        {/* Travels with the composer: visible without scrolling, gone once the
+            browser has been asked (or the offer dismissed). */}
+        <NotificationAlert />
+        {empty && <ThreadWelcome draft={meta?.draft} />}
+        <Composer sessionId={sessionId} actions={actions} thread={thread} meta={meta} />
+      </div>
+      {/* The spacer that collapses. Nothing renders in it — its whole job is to
+          be the bottom half of the centring while the thread is empty. */}
+      <span aria-hidden />
     </div>
   )
+}
+
+/** Sits directly above the composer while a thread is empty, so it travels with
+    it rather than being stranded at the top of an empty transcript. */
+function ThreadWelcome({ draft }: { draft?: boolean }) {
+  return (
+    <div className="mx-auto flex w-full max-w-[var(--harness-composer-width)] flex-col items-center gap-1.5 px-4 pb-5 text-center">
+      <p className="text-base font-medium">
+        {draft ? "What are we working on?" : "Thread ready"}
+      </p>
+      <p className="max-w-xs text-xs text-balance text-muted-foreground">
+        {draft
+          ? "Nothing is running yet — the agent starts when you send the first message."
+          : "Send the first message — tool calls, plans and thinking stream in here as steps."}
+      </p>
+    </div>
+  )
+}
+
+/** Close codes the server attaches to the socket (see server/src/sessions.ts):
+    4000 killed, 4001 agent exited, 4002 replaced by another connection, 4004 unknown. */
+function closedState(code: number | undefined) {
+  if (code === 4002)
+    return {
+      takeover: true,
+      message: "This connection was replaced by another device — reconnect to reattach.",
+      label: "Reconnect",
+      busyLabel: "Reconnecting…",
+    }
+  return {
+    takeover: false,
+    message:
+      code === 4000 || code === 4004
+        ? "This thread is no longer running on the server — the conversation is restored on revive."
+        : "The agent process exited — the conversation is restored on revive.",
+    label: "Revive",
+    busyLabel: "Reviving…",
+  }
 }
 
 function Composer({
   sessionId,
   actions,
   thread,
+  meta,
 }: {
   sessionId: string
   actions: Actions
   thread: ThreadState
+  meta?: SessionMeta
 }) {
-  const [text, setText] = React.useState("")
+  /* The draft lives on this device, per session (lib/drafts). ThreadView is
+     keyed by sessionId today so the initializer would be enough — the effect
+     keeps it correct if that key ever goes away. */
+  const [text, setText] = React.useState(() => loadDraft(sessionId))
+  React.useEffect(() => setText(loadDraft(sessionId)), [sessionId])
+  React.useEffect(() => saveDraft(sessionId, text), [sessionId, text])
   const [reviving, setReviving] = React.useState(false)
+  const isMobile = useIsMobile()
   const voice = useVoice((transcript) => setText((t) => (t ? t + " " : "") + transcript))
-  const disabled = thread.status === "closed"
+  // A draft has no socket, so "closed" never applies to it — it is waiting to be
+  // typed into, which is the one state where the composer must stay live.
+  const draft = meta?.draft === true
+  const disabled = !draft && thread.status === "closed"
+  const closed = closedState(thread.closeCode)
 
-  /* The process is gone, not the conversation: respawning restores it through
-     ACP session/load. Until that happens the composer has nothing to talk to. */
-  const revive = () => {
+  /* Two shapes of dead socket, one recovery path (openThread respawns only when
+     the session is actually gone). 4002 only comes from a pre-multiplexing
+     server that keeps one socket per thread — the process there is alive, so
+     reattaching is enough; the other codes mean the process is gone and ACP
+     session/load restores it. */
+  const recover = () => {
     setReviving(true)
-    actions
-      .reviveThread(sessionId)
-      .catch((err) => toast.error(String(err)))
+    const run = closed.takeover ? actions.reconnectThread : actions.reviveThread
+    // openThread already writes the failure into the thread; the toast is for
+    // the case where the user is looking at the button, not the transcript.
+    run(sessionId)
+      .catch((err) => reportError(err, closed.busyLabel.replace("…", " failed")))
       .finally(() => setReviving(false))
   }
 
+  /* The draft is cleared optimistically: a failure leaves a transcript row that
+     carries the exact text and a Retry button, which is a better home for it
+     than a textarea the user has since typed into. */
   const send = () => {
     const value = text.trim()
     if (!value) return
     setText("")
-    actions.send(sessionId, value).catch((err) => toast.error(String(err)))
+    clearDraft(sessionId)
+    void actions.send(sessionId, value).catch(() => {})
   }
+
+  /* Running a command is just sending `/name args` as the prompt — the agent
+     resolves it — so the menu only completes the name. Drafts advertise no
+     commands (no process yet), which closes the menu on its own. */
+  const slash = useSlashCommands(text, thread.availableCommands, setText)
 
   return (
     <div className="px-4 pt-1 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       {disabled && (
         <div className="mx-auto mb-1.5 flex w-full max-w-[var(--harness-composer-width)] flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-lg border border-dashed px-3 py-1.5 text-center text-xs text-muted-foreground">
-          <span>The agent process exited — the conversation is restored on revive.</span>
-          <Button size="lg" variant="outline" onClick={revive} disabled={reviving}>
+          <span>{closed.message}</span>
+          <Button size="lg" variant="outline" onClick={recover} disabled={reviving}>
             <RotateCw className={cn("size-4", reviving && "animate-spin")} />
-            {reviving ? "Reviving…" : "Revive"}
+            {reviving ? closed.busyLabel : closed.label}
           </Button>
         </div>
       )}
-      <div className="mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl border bg-card p-2 shadow-glass focus-within:ring-1 focus-within:ring-ring">
+      <ComposerStrip>
+        {/* Where it runs and who answers, before either is settled. They belong
+            on the shelf rather than in the settings menu: picking a different
+            agent changes what every option under it even means, and a thread
+            started in the wrong project is started in the wrong directory. */}
+        {draft && meta && (
+          <ComposerStripItem>
+            <DraftScopeRow meta={meta} actions={actions} />
+          </ComposerStripItem>
+        )}
         <ComposerPlan thread={thread} />
+      </ComposerStrip>
+      {/* relative/z-10: the composer paints over the strip's tucked bottom edge. */}
+      <div className="relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl bg-card p-2 shadow-glass">
+        <SlashCommandMenu state={slash} />
         <Textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            // ponytail: Enter = newline; Cmd/Ctrl+Enter sends
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            // The command menu owns navigation keys (and Enter) while open.
+            if (slash.onKeyDown(e)) return
+            if (e.key !== "Enter") return
+            /* Cmd/Ctrl+Enter always sends. Bare Enter sends on desktop and
+               inserts a newline on touch, where Return is the only newline key
+               there is and every soft keyboard shows it as one. Shift+Enter is
+               the desktop escape hatch. IME composition is left alone — Enter
+               is how you accept a candidate. */
+            if (e.metaKey || e.ctrlKey) {
               e.preventDefault()
               send()
+              return
             }
+            if (isMobile || e.shiftKey || e.altKey || e.nativeEvent.isComposing) return
+            e.preventDefault()
+            send()
           }}
           placeholder={
-            disabled ? "Session ended" : thread.turnActive ? "Steer the agent…" : "Message the agent…"
+            disabled
+              ? "Session ended"
+              : thread.turnActive
+                ? "Steer the agent…"
+                : "Message the agent…"
           }
           disabled={disabled}
           rows={1}
           className="max-h-40 min-h-9 w-full resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
         />
+        {/* One control language across the row: every button is icon-sm (32px,
+            the height the model/config trigger already sets), rounded-lg, and
+            chrome-less — no resting border or fill, only a hover wash. The row
+            sits INSIDE the composer card, so a bordered button there is a box
+            inside a box; colour carries the meaning instead (primary sends,
+            destructive stops). */}
         <div className="flex items-center gap-1 pt-1">
           <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            <SessionConfigPopover sessionId={sessionId} actions={actions} thread={thread} />
+            {/* Before the session exists the profile catalog is the only thing
+                that knows the choices; after it, the agent is. Two controls,
+                one slot — see CLAUDE.md's rule about which owns the model. */}
+            {draft && meta ? (
+              <DraftConfigPopover meta={meta} actions={actions} />
+            ) : (
+              <SessionConfigPopover sessionId={sessionId} actions={actions} thread={thread} />
+            )}
+            <SessionSettingsButton sessionId={sessionId} />
           </div>
           <ContextIndicator thread={thread} />
           {voice.supported && (
             <Button
-              variant={voice.listening ? "destructive" : "ghost"}
-              size="icon-lg"
-              className={cn("shrink-0 rounded-full", voice.listening && "animate-pulse")}
+              variant="ghost"
+              size="icon-sm"
+              className={cn(
+                "shrink-0 rounded-lg",
+                // Listening is a live state, so it stays coloured — but as text,
+                // not as a filled chip that reintroduces the chrome.
+                voice.listening && "animate-pulse text-destructive hover:text-destructive"
+              )}
               onClick={() => (voice.listening ? voice.stop() : voice.start())}
               disabled={disabled}
               title="Voice input"
@@ -173,9 +375,9 @@ function Composer({
           )}
           {thread.turnActive && (
             <Button
-              variant="outline"
-              size="icon-lg"
-              className="shrink-0 rounded-full"
+              variant="ghost"
+              size="icon-sm"
+              className="shrink-0 rounded-lg text-destructive hover:text-destructive"
               onClick={() => actions.stop(sessionId).catch(() => {})}
               title="Stop"
             >
@@ -183,8 +385,9 @@ function Composer({
             </Button>
           )}
           <Button
-            size="icon-lg"
-            className="shrink-0 rounded-full"
+            variant="ghost"
+            size="icon-sm"
+            className="shrink-0 rounded-lg text-primary hover:text-primary disabled:text-muted-foreground"
             onClick={send}
             disabled={disabled || !text.trim()}
             title={thread.turnActive ? "Send steering message" : "Send"}

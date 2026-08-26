@@ -6,19 +6,32 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "test": "DAEDALUS_DATA_DIR=/tmp/daedalus-test-data tsx test/pipe.test.ts"
+    "test": "DAEDALUS_DATA_DIR=/tmp/daedalus-test-data tsx test/pipe.test.ts && DAEDALUS_DATA_DIR=/tmp/daedalus-test-data tsx test/pm.test.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^1.4.0",
     "@hono/node-server": "^1.14.0",
+    "ai": "^7.0.82",
+    "better-sqlite3": "^13.0.3",
+    "drizzle-orm": "^0.45.2",
     "firebase-admin": "^14.3.0",
     "hono": "^4.13.4",
     "ws": "^8.18.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.2.0",
     "@types/ws": "^8.18.1",
+    "drizzle-kit": "^0.31.10",
     "tsx": "^4.19.0",
     "typescript": "^5.9.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
   }
 }

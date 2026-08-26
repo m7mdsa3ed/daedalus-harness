@@ -16,6 +16,13 @@ export interface ThreadCallbacks {
   onPermission: (
     request: acp.RequestPermissionRequest
   ) => Promise<acp.RequestPermissionResponse>
+  /** The agent needs structured input — an AskUserQuestion form, an MCP
+      elicitation, a URL flow. Resolves when the user answers or dismisses. */
+  onElicitation: (
+    request: acp.CreateElicitationRequest
+  ) => Promise<acp.CreateElicitationResponse>
+  /** A URL-mode elicitation finished out of band — the form can settle. */
+  onElicitationComplete?: (elicitationId: string) => void
   onStatus: (status: "connecting" | "connected" | "closed", closeInfo?: ThreadCloseInfo) => void
   onTurnActive: (active: boolean) => void
   /** Modes + config options from the session/new response (fresh sessions). */
@@ -25,8 +32,31 @@ export interface ThreadCallbacks {
   ) => void
   /** Time-to-first-update for a turn, ms. */
   onTtft?: (ms: number) => void
-  /** Server-synthesized turn end (reaches clients that didn't send the prompt). */
-  onTurnEnded?: (usage: acp.Usage | null) => void
+  /** Server-synthesized turn end (reaches clients that didn't send the prompt).
+      `error` is the JSON-RPC error the prompt failed with, when it failed — the
+      only way a peer that did not send the prompt learns the turn went wrong. */
+  onTurnEnded?: (usage: acp.Usage | null, error?: unknown) => void
+  /** Another device attached to this same thread sent a prompt. */
+  onPeerPrompt?: (text: string) => void
+  /** Another device answered the permission request for this tool call. */
+  onPeerAnswered?: (toolCallId: string | undefined) => void
+  /** Another device changed the session's mode or config options. */
+  onPeerSettings?: (modeId: string | undefined, configOptions: acp.SessionConfigOption[] | undefined) => void
+  /** A background task this thread's agent launched appended a journal line —
+      the server tails the file (see /api/tasks/watch) and streams the rest. */
+  onTaskEvent?: (transcriptDir: string, event: Record<string, unknown>) => void
+}
+
+export interface ConnectOptions {
+  /** true runs session/new; on reattach the agent already holds the session. */
+  fresh: boolean
+  project: Project
+  /** The project's MCP servers, already resolved from the library. */
+  mcpServers?: McpServerDef[]
+  cursor?: number
+  acpSessionId?: string
+  /** Restore the conversation via ACP session/load (after a respawn). */
+  load?: boolean
 }
 
 /**
@@ -60,16 +90,7 @@ export class AcpThread {
    * fresh=true runs session/new; on reattach the agent process already holds
    * the session, so we only re-handshake and reuse the known ACP session id.
    */
-  async connect(opts: {
-    fresh: boolean
-    project: Project
-    /** The project's MCP servers, already resolved from the library. */
-    mcpServers?: McpServerDef[]
-    cursor?: number
-    acpSessionId?: string
-    /** Restore the conversation via ACP session/load (after a respawn). */
-    load?: boolean
-  }): Promise<void> {
+  async connect(opts: ConnectOptions): Promise<void> {
     this.callbacks.onStatus("connecting")
     this.clientInitiatedClose = false
     this.closeInfo = { clientInitiated: false }
@@ -101,23 +122,105 @@ export class AcpThread {
       .onRequest(acp.methods.client.session.requestPermission, (ctx) =>
         this.callbacks.onPermission(ctx.params)
       )
+      .onRequest(acp.methods.client.elicitation.create, (ctx) =>
+        this.callbacks.onElicitation(ctx.params)
+      )
+      .onNotification(acp.methods.client.elicitation.complete, (ctx) =>
+        this.callbacks.onElicitationComplete?.(ctx.params.elicitationId)
+      )
       // Bridge extension: the server synthesizes this when a prompt turn ends,
       // so a client that reattached mid-turn still learns the turn is over.
       .onNotification(
         "_daedalus/turn_ended",
-        (params) => params as { usage: acp.Usage | null },
-        (ctx) => this.callbacks.onTurnEnded?.(ctx.params.usage)
+        (params) => params as { usage: acp.Usage | null; error?: unknown },
+        (ctx) => this.callbacks.onTurnEnded?.(ctx.params.usage, ctx.params.error)
+      )
+      // Peer sync: several devices can attach to one thread, and these two
+      // frames carry what one peer does that the others would otherwise miss —
+      // a prompt (which travels to the agent, not to them) and a permission
+      // answer (which closes a dialog they are also showing).
+      .onNotification(
+        "_daedalus/peer_prompt",
+        (params) => params as { text: string },
+        (ctx) => this.callbacks.onPeerPrompt?.(ctx.params.text)
+      )
+      .onNotification(
+        "_daedalus/request_answered",
+        (params) => params as { toolCallId?: string },
+        (ctx) => this.callbacks.onPeerAnswered?.(ctx.params.toolCallId)
+      )
+      .onNotification(
+        "_daedalus/peer_settings",
+        (params) => params as { modeId?: string; configOptions?: acp.SessionConfigOption[] },
+        (ctx) => this.callbacks.onPeerSettings?.(ctx.params.modeId, ctx.params.configOptions)
+      )
+      // The server's tail of a background task's journal (see /api/tasks/watch):
+      // one parsed journal line per notification, keyed by the transcript dir.
+      .onNotification(
+        "_daedalus/task_event",
+        (params) => params as { transcriptDir: string; event: Record<string, unknown> },
+        (ctx) => this.callbacks.onTaskEvent?.(ctx.params.transcriptDir, ctx.params.event)
       )
       .connect(stream)
-    this.connection.closed.then(() => {
+    const connection = this.connection
+    connection.closed.then(() => {
+      // Superseded by a later connect(): that generation owns the status now,
+      // and reporting this one's close would mark a live connection dead. A
+      // plain close() leaves it null and still reports — the UI has to learn
+      // the thread went down.
+      if (this.connection && this.connection !== connection) return
       this.connection = null
       this.callbacks.onStatus("closed", this.closeInfo)
     })
 
     try {
+      await this.handshake(opts)
+    } catch (error) {
+      // A half-open thread is worse than no thread: the composer would look
+      // live and every prompt would fail. Drop it and let the caller report.
+      this.close()
+      throw this.explain(error)
+    }
+    this.callbacks.onStatus("connected")
+  }
+
+  /** Why the handshake really failed. A request that was in flight when the
+      socket died rejects with something generic ("connection closed"), while
+      the close frame carries the server's own reason — unknown session, session
+      deleted, agent exited. That reason is the answer, so put it in front. */
+  private explain(error: unknown): unknown {
+    const { code, reason } = this.closeInfo
+    if (!reason || this.connection) return error
+    const explained = new Error(`${reason}${code ? ` (${code})` : ""}`)
+    explained.cause = error
+    return explained
+  }
+
+  private async handshake(opts: ConnectOptions): Promise<void> {
+    if (!this.connection) throw new Error("connection closed before the handshake started")
+    try {
       await this.connection.agent.request(acp.methods.agent.initialize, {
         protocolVersion: acp.PROTOCOL_VERSION,
-        clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
+        clientCapabilities: {
+          fs: { readTextFile: false, writeTextFile: false },
+          // The config menu already renders boolean options; without advertising
+          // this, agents are within spec to withhold `type: "boolean"` entries
+          // entirely — codex hides its fast-mode toggle on exactly this check.
+          session: { configOptions: { boolean: {} } },
+          // Same bargain for plans. ACP has two plan channels: the original
+          // `plan` notification, and `plan_update`/`plan_removed`, which carry
+          // markdown and file-backed plans as well as structured entries. An
+          // agent only sends the second pair if the client says it can take
+          // them, and `{}` means both — so without this a codex plan arrives as
+          // nothing at all rather than as a plan we render badly.
+          plan: {},
+          // Same bargain a third time, and the highest-stakes one: without
+          // form elicitation claude-agent-acp puts AskUserQuestion on the
+          // session's disallowedTools — the model can't ask at all, not even
+          // badly. Advertising it turns the tool back on and routes it (plus
+          // MCP elicitations and codex's question bridge) to onElicitation.
+          elicitation: { form: {}, url: {} },
+        },
       })
     } catch (error) {
       // On reattach some agents reject a second initialize; the session still works.
@@ -165,11 +268,17 @@ export class AcpThread {
     } else {
       this.acpSessionId = opts.acpSessionId ?? null
     }
-    this.callbacks.onStatus("connected")
   }
 
   async prompt(text: string): Promise<acp.PromptResponse | undefined> {
-    if (!this.connection || !this.acpSessionId) throw new Error("not connected")
+    if (!this.connection) {
+      throw new Error(
+        this.closeInfo.reason
+          ? `Not connected to the agent — ${this.closeInfo.reason}`
+          : "Not connected to the agent"
+      )
+    }
+    if (!this.acpSessionId) throw new Error("The agent never opened a session on this thread")
     const send = () =>
       this.connection!.agent.request(acp.methods.agent.session.prompt, {
         sessionId: this.acpSessionId!,
@@ -194,7 +303,7 @@ export class AcpThread {
   }
 
   async setMode(modeId: string): Promise<void> {
-    if (!this.connection || !this.acpSessionId) throw new Error("not connected")
+    if (!this.connection || !this.acpSessionId) throw new Error("Not connected to the agent")
     await this.connection.agent.request(acp.methods.agent.session.setMode, {
       sessionId: this.acpSessionId,
       modeId,
@@ -203,10 +312,17 @@ export class AcpThread {
 
   /** Set a config option (model, thinking level, …); returns the updated set. */
   async setConfigOption(configId: string, value: string | boolean) {
-    if (!this.connection || !this.acpSessionId) throw new Error("not connected")
+    if (!this.connection || !this.acpSessionId) throw new Error("Not connected to the agent")
     const response = await this.connection.agent.request(
       acp.methods.agent.session.setConfigOption,
-      { sessionId: this.acpSessionId, configId, value } as acp.SetSessionConfigOptionRequest
+      {
+        sessionId: this.acpSessionId,
+        configId,
+        // The request is a discriminated union and only the boolean variant
+        // carries its tag: a bare string value IS the default variant, while a
+        // bare boolean matches neither and agents reject it.
+        ...(typeof value === "boolean" ? { type: "boolean" as const, value } : { value }),
+      } as acp.SetSessionConfigOptionRequest
     )
     return response.configOptions
   }
@@ -220,6 +336,12 @@ export class AcpThread {
 
   close(): void {
     this.clientInitiatedClose = true
+    // The SDK tears the stream down synchronously inside close(), so `closed`
+    // resolves before the socket's own close event can stamp closeInfo. Set the
+    // flag here — keeping any code/reason already captured, which is what
+    // explain() reads — or onStatus sees the connect() default, reads it as a
+    // close we did not ask for, and schedules a phantom reconnect.
+    this.closeInfo = { ...this.closeInfo, clientInitiated: true }
     this.connection?.close()
     this.connection = null
   }

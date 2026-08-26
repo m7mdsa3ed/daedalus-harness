@@ -1,14 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <!-- Daedalus mark: a chars logo — the letter D held between two chevrons, the
-       client and the agent with the harness piping between them. Drawn as strokes
-       rather than set in a font, so it renders identically as favicon, PWA icon
-       and img with no font to load. The splash in index.html inlines the same four
-       paths and draws them in order — keep the two in sync.
-       #007595 is the primary token, oklch(0.52 0.105 223.128). -->
-  <g fill="none" stroke="#007595" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M20 17 L9 32 L20 47"/>
-    <path d="M44 17 L55 32 L44 47"/>
-    <path d="M25 21 V43"/>
-    <path d="M25 21 H28 A11 11 0 0 1 28 43 H25"/>
+  <!-- Daedalus mark: a labyrinth read as two broken rings around a centre — the
+       maze he built, and a frame finding its way in and back out. The two gaps
+       sit on opposite sides so it reads as a route, not a target.
+       Mono: no brand colour to fight a custom theme. This copy is the favicon
+       and the app-icon source, so it cannot inherit anything — it flips with
+       the OS colour scheme instead. The in-app mark is
+       src/components/ui/logo.tsx (currentColor) and the boot splash in
+       index.html inlines the same three paths — keep all three in sync. -->
+  <style>
+    #mark { stroke: #0f172a; }
+    @media (prefers-color-scheme: dark) { #mark { stroke: #f8fafc; } }
+  </style>
+  <g id="mark" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M38 8H46A10 10 0 0 1 56 18V46A10 10 0 0 1 46 56H18A10 10 0 0 1 8 46V18A10 10 0 0 1 18 8H26"/>
+    <path d="M28 45H25A6 6 0 0 1 19 39V25A6 6 0 0 1 25 19H39A6 6 0 0 1 45 25V39A6 6 0 0 1 39 45H36"/>
+    <path d="M32 31V33"/>
   </g>
 </svg>

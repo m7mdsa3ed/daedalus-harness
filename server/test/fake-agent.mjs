@@ -4,10 +4,15 @@ import { createInterface } from "node:readline";
 
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + "\n");
 
+// `category` is what tells the client which selector is the model and which is
+// the reasoning level, so those two get promoted out of the generic "Agent
+// options" list. The third option deliberately carries no category: unknown and
+// missing categories must still render, and this is what proves it.
 let configOptions = [
   {
     id: "model",
     name: "Model",
+    category: "model",
     type: "select",
     currentValue: "fast",
     options: [
@@ -18,6 +23,7 @@ let configOptions = [
   {
     id: "effort",
     name: "Effort",
+    category: "thought_level",
     type: "select",
     currentValue: "medium",
     options: [
@@ -26,7 +32,17 @@ let configOptions = [
       { value: "high", name: "High effort" },
     ],
   },
+  {
+    id: "verbose",
+    name: "Verbose logging",
+    type: "boolean",
+    currentValue: false,
+  },
 ];
+
+/** Permission request id -> the prompt id whose turn is waiting on it. */
+const parkedTurns = new Map();
+let permCounter = 0;
 
 const tool = (id, title, kind, status, extra = {}) => ({
   sessionUpdate: "tool_call",
@@ -127,6 +143,46 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     );
     out({ jsonrpc: "2.0", id: msg.id, result: { configOptions } });
   } else if (msg.method === "session/prompt") {
+    const asked = (msg.params.prompt ?? []).map((b) => b.text ?? "").join(" ");
+    // A prompt mentioning "permission" parks the turn on a permission request,
+    // so both the UI and the multi-peer arbitration have something to exercise.
+    if (asked.includes("permission")) {
+      const permId = `perm-${++permCounter}`;
+      parkedTurns.set(permId, msg.id);
+      out({
+        jsonrpc: "2.0",
+        id: permId,
+        method: "session/request_permission",
+        params: {
+          sessionId: "acp-123",
+          toolCall: { toolCallId: `t-${permId}`, title: "rm -rf ./build", kind: "execute" },
+          options: [
+            { optionId: "allow", name: "Allow", kind: "allow_once" },
+            { optionId: "reject", name: "Reject", kind: "reject_once" },
+          ],
+        },
+      });
+      return;
+    }
+    // A prompt mentioning "fail" answers with a bare JSON-RPC internal error
+    // after printing a stack to stderr — exactly the shape that used to reach
+    // the UI as an unexplained "RequestError: Internal error". The server
+    // splices the stderr into the error's `data`, and the client renders it.
+    if (asked.includes("fail")) {
+      process.stderr.write("Error: the model provider returned 529\n    at Agent.prompt (agent.js:42:11)\n");
+      // Give the stderr pipe a tick to land before the answer overtakes it.
+      setTimeout(() => {
+        out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error" } });
+      }, 20);
+      return;
+    }
+    // A prompt mentioning "crash" kills the agent mid-turn: nothing ever
+    // answers, which is what failPendingRequests exists to clean up.
+    if (asked.includes("crash")) {
+      process.stderr.write("Fatal: agent died holding the turn\n");
+      setTimeout(() => process.exit(3), 20);
+      return;
+    }
     // One of every step kind, in order — this is what the transcript UI is
     // developed against, so every branch of the step row has a live sample.
     for (const update of promptUpdates()) {
@@ -145,5 +201,18 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         usage: { totalTokens: 10_500, inputTokens: 1000, outputTokens: 500, cachedReadTokens: 9000 },
       },
     });
+  } else if (msg.method === undefined && parkedTurns.has(msg.id)) {
+    // The answer to a permission request — finish the turn it was blocking.
+    const promptId = parkedTurns.get(msg.id);
+    parkedTurns.delete(msg.id);
+    out({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "acp-123",
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `permission: ${JSON.stringify(msg.result?.outcome ?? msg.error)}` } },
+      },
+    });
+    out({ jsonrpc: "2.0", id: promptId, result: { stopReason: "end_turn", usage: { totalTokens: 10 } } });
   } else if (msg.id !== undefined) out({ jsonrpc: "2.0", id: msg.id, result: {} });
 });

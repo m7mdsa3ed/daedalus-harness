@@ -1,5 +1,5 @@
+import type * as acp from "@agentclientprotocol/sdk"
 import { Settings2Icon } from "lucide-react"
-import { toast } from "sonner"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
 import {
@@ -8,30 +8,35 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuLabel,
-  DropdownMenuPortal,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { MenuRow, selectChoices } from "@/components/config-menu"
 import type { Actions } from "@/lib/actions"
+import { optionsForModel, useAgentOptions } from "@/lib/agent-options"
+import { reportError } from "@/lib/errors"
+import { currentChoiceLabel, partitionSessionOptions } from "@/lib/session-options"
 import { useStore, type ThreadState } from "@/lib/store"
 
+/** Sentinel for "whatever the profile says", which is not itself a model id. */
 const DEFAULT_CHOICE = "__default__"
 
-function flattenSelectOptions(
-  options: import("@agentclientprotocol/sdk").SessionConfigSelectOptions
-) {
-  return options.flatMap((entry) => ("options" in entry ? entry.options : [entry]))
-}
-
 /**
- * Model + effort + profile, one compact trigger (reference: ModelEffortPopover).
- * Profile/model/effort changes respawn the agent process and restore the
- * conversation via session/load; "Agent options" apply live over ACP.
+ * Everything about how this thread is answering, behind one compact trigger.
+ *
+ * Two sources feed it, and the profile decides which one owns the model:
+ *
+ *   - **A profile that lists models has overridden the agent.** Those ids reach
+ *     the agent only through its env, so picking one restarts the process. This
+ *     is the case a gateway profile exists for: point codex at a router and its
+ *     own catalog is a list of models your endpoint does not serve, and the
+ *     efforts it advertises belong to models it thinks it is running.
+ *   - **A profile that lists none defers to the agent**, whose `category:
+ *     "model"` / `"thought_level"` selectors apply in a single ACP call with no
+ *     restart at all.
+ *
+ * Either way every *other* agent option is passed through untouched: the
+ * override is scoped to the two settings the profile actually replaces.
  */
 export function SessionConfigPopover({
   sessionId,
@@ -46,37 +51,99 @@ export function SessionConfigPopover({
   const confirm = useConfirm()
   const meta = state.sessions.find((s) => s.id === sessionId)
   const profile = state.profiles.find((p) => p.id === meta?.profileId)
+  // Called before the early return below: hooks cannot be conditional.
+  // Sibling profiles of the same agent stand in while this one has no
+  // remembered set — the profile owns only model and effort, so the rest of
+  // the agent's options are the same set whichever profile spawned it.
+  const remembered = useAgentOptions(
+    meta?.profileId ?? "",
+    state.profiles
+      .filter((p) => p.agentId === profile?.agentId && p.id !== meta?.profileId)
+      .map((p) => p.id)
+  )
   if (!meta || !profile) return null
 
-  // Some agents advertise the permission mode both as `modes` and again as a
-  // select config option (the newer ACP channel). Hide the config-option twin:
-  // same value set = same knob.
   const modeIds = new Set(thread.modes?.availableModes.map((m) => m.id) ?? [])
-  const agentOptions = thread.configOptions.filter((option) => {
-    if (option.type !== "select" || modeIds.size === 0) return true
-    const values = flattenSelectOptions(option.options).map((c) => c.value)
-    return !(values.length === modeIds.size && values.every((v) => modeIds.has(v)))
-  })
-
+  /* A live session is the authority on its own settings — but it is not always
+     able to say. `session/new` returns the option set; a plain reattach makes
+     no call that carries one, and a `session/load` on revive is free to answer
+     without one. In either case `thread.configOptions` is empty and this menu
+     used to go blank, while the new-thread menu — reading the same agent's
+     remembered set — showed everything. Same source, same fallback: what the
+     profile's agent last advertised, replaced the moment the session speaks. */
+  const live = thread.configOptions.length > 0
+  const options = partitionSessionOptions(
+    live ? thread.configOptions : optionsForModel(remembered, meta.model || undefined),
+    modeIds
+  )
   const agentProfiles = state.profiles.filter((p) => p.agentId === profile.agentId)
-  const models = profile.models
-  const resolvedModel = models.find((m) => m.id === (meta.model || profile.defaultModel))
-  const efforts = resolvedModel?.reasoningEfforts ?? []
-  const modelLabel = resolvedModel?.label ?? (meta.model || "Default")
   const modes = thread.modes && thread.modes.availableModes.length > 1 ? thread.modes : null
   const modeLabel = modes?.availableModes.find((m) => m.id === modes.currentModeId)?.name
 
-  const change = async (next: { profileId?: string; model?: string; effort?: string }) => {
+  /* The profile's catalog wins where it has one; where it does not, the agent's.
+     Effort follows the model: the profile's efforts when that model declares
+     any, otherwise the agent's own live selector. A profile that says nothing
+     about effort has not said "this model has no effort control", and hiding
+     the agent's working selector on its behalf would be inventing a claim it
+     never made. */
+  const overridden = profile.models.length > 0
+  const spawnModel = profile.models.find((m) => m.id === (meta.model || profile.defaultModel))
+  const spawnEfforts = spawnModel?.reasoningEfforts ?? []
+  const profileEffort = overridden && spawnEfforts.length > 0
+  const liveEffort = profileEffort ? undefined : options.effort
+
+  const modelLabel = overridden
+    ? (spawnModel?.label ?? (meta.model || "Profile default"))
+    : options.model
+      ? currentChoiceLabel(options.model)
+      : profile.name
+  const effortLabel = profileEffort
+    ? meta.effort || null
+    : liveEffort
+      ? currentChoiceLabel(liveEffort)
+      : null
+
+  /** Live ACP change: one call to the running agent, safe mid-turn. */
+  const set = (option: acp.SessionConfigOption, value: string | boolean) =>
+    actions
+      .setConfigOption(sessionId, option.id, value)
+      .catch((err) => reportError(err, `Couldn't change ${option.name}`))
+
+  /** Env change: the process restarts, so a running turn dies with it. */
+  const respawnWith = async (next: { model?: string; effort?: string }) => {
     if (
       thread.turnActive &&
       !(await confirm({
         title: "Restart the agent?",
-        description: "A turn is running — switching stops it, then the conversation is restored.",
+        description:
+          "This profile supplies its own models, which the agent reads at startup — switching restarts it. The running turn stops, then the conversation is restored.",
         confirmLabel: "Restart",
       }))
     )
       return
-    actions.changeSession(meta, next).catch((err) => toast.error(String(err)))
+    actions
+      .changeSpawnConfig(meta, next)
+      .catch((err) => reportError(err, "Couldn't restart the agent"))
+  }
+
+  /* Always asks, turn or no turn. Changing profile is not retuning: it is new
+     credentials, a new endpoint and a new model catalog, and the model you were
+     on almost certainly does not exist on the other side. */
+  const changeProfile = async (profileId: string) => {
+    const next = state.profiles.find((p) => p.id === profileId)
+    if (
+      !(await confirm({
+        title: `Move this thread to "${next?.name ?? "another profile"}"?`,
+        description: thread.turnActive
+          ? "The agent restarts on the new profile's credentials and default model — the running turn stops, then the conversation is restored."
+          : "The agent restarts on the new profile's credentials and default model. The conversation is restored, but the model you are on now does not carry over.",
+        confirmLabel: "Switch profile",
+      }))
+    )
+      return
+    actions
+      .changeProfile(meta, profileId)
+      .catch((err) => reportError(err, "Couldn't switch profile"))
   }
 
   return (
@@ -92,7 +159,7 @@ export function SessionConfigPopover({
                 silently-active "accept edits" is the one setting you must see. */}
             <span className="max-w-56 truncate">
               {modelLabel}
-              {meta.effort && <span className="capitalize"> · {meta.effort}</span>}
+              {effortLabel && <span className="capitalize"> · {effortLabel}</span>}
               {modeLabel && ` · ${modeLabel}`}
             </span>
           </Button>
@@ -102,155 +169,96 @@ export function SessionConfigPopover({
         <DropdownMenuGroup>
           <DropdownMenuLabel>Session</DropdownMenuLabel>
           {agentProfiles.length > 1 && (
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                <span className="flex-1">Profile</span>
-                <span className="max-w-24 truncate text-xs text-muted-foreground">{profile.name}</span>
-              </DropdownMenuSubTrigger>
-              <DropdownMenuPortal>
-                <DropdownMenuSubContent>
-                  <DropdownMenuRadioGroup
-                    value={profile.id}
-                    onValueChange={(id) => id && id !== profile.id && change({ profileId: id })}
-                  >
-                    {agentProfiles.map((p) => (
-                      <DropdownMenuRadioItem key={p.id} value={p.id}>
-                        {p.name}
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuSubContent>
-              </DropdownMenuPortal>
-            </DropdownMenuSub>
+            <MenuRow
+              label="Profile"
+              value={profile.id}
+              choices={agentProfiles.map((p) => ({ value: p.id, name: p.name }))}
+              onSelect={changeProfile}
+            />
           )}
-          {models.length > 0 && (
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                <span className="flex-1">Model</span>
-                <span className="max-w-24 truncate text-xs text-muted-foreground">{modelLabel}</span>
-              </DropdownMenuSubTrigger>
-              <DropdownMenuPortal>
-                <DropdownMenuSubContent>
-                  <DropdownMenuRadioGroup
-                    value={meta.model || DEFAULT_CHOICE}
-                    onValueChange={(id) => {
-                      if (!id || id === (meta.model || DEFAULT_CHOICE)) return
-                      change({ model: id === DEFAULT_CHOICE ? "" : id, effort: "" })
-                    }}
-                  >
-                    <DropdownMenuRadioItem value={DEFAULT_CHOICE}>
-                      <span className="text-muted-foreground">Default model</span>
-                    </DropdownMenuRadioItem>
-                    {models.map((m) => (
-                      <DropdownMenuRadioItem key={m.id} value={m.id}>
-                        {m.label}
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuSubContent>
-              </DropdownMenuPortal>
-            </DropdownMenuSub>
+          {overridden ? (
+            <MenuRow
+              label="Model"
+              value={meta.model || DEFAULT_CHOICE}
+              choices={[
+                { value: DEFAULT_CHOICE, name: "Profile default" },
+                ...profile.models.map((m) => ({ value: m.id, name: m.label })),
+              ]}
+              /* A new model brings its own effort list, and the one you were on
+                 may not be in it — clear rather than carry a stale value into
+                 the env. */
+              onSelect={(value) =>
+                respawnWith({ model: value === DEFAULT_CHOICE ? "" : value, effort: "" })
+              }
+            />
+          ) : (
+            options.model && (
+              <MenuRow
+                label="Model"
+                value={options.model.type === "select" ? options.model.currentValue : ""}
+                choices={selectChoices(options.model)}
+                onSelect={(value) => set(options.model!, value)}
+              />
+            )
           )}
-          {efforts.length > 0 && (
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                <span className="flex-1">Effort</span>
-                <span className="max-w-24 truncate text-xs text-muted-foreground capitalize">
-                  {meta.effort || "Default"}
-                </span>
-              </DropdownMenuSubTrigger>
-              <DropdownMenuPortal>
-                <DropdownMenuSubContent>
-                  <DropdownMenuRadioGroup
-                    value={meta.effort || DEFAULT_CHOICE}
-                    onValueChange={(id) => {
-                      if (!id || id === (meta.effort || DEFAULT_CHOICE)) return
-                      change({ effort: id === DEFAULT_CHOICE ? "" : id })
-                    }}
-                  >
-                    <DropdownMenuRadioItem value={DEFAULT_CHOICE}>
-                      <span className="text-muted-foreground">Default effort</span>
-                    </DropdownMenuRadioItem>
-                    {efforts.map((effort) => (
-                      <DropdownMenuRadioItem key={effort} value={effort}>
-                        <span className="capitalize">{effort}</span>
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuSubContent>
-              </DropdownMenuPortal>
-            </DropdownMenuSub>
+          {profileEffort ? (
+            <MenuRow
+              label="Effort"
+              value={meta.effort || DEFAULT_CHOICE}
+              choices={[
+                { value: DEFAULT_CHOICE, name: "Default" },
+                ...spawnEfforts.map((effort) => ({ value: effort, name: effort })),
+              ]}
+              onSelect={(value) => respawnWith({ effort: value === DEFAULT_CHOICE ? "" : value })}
+            />
+          ) : (
+            liveEffort && (
+              <MenuRow
+                label="Effort"
+                value={liveEffort.type === "select" ? liveEffort.currentValue : ""}
+                choices={selectChoices(liveEffort)}
+                onSelect={(value) => set(liveEffort, value)}
+              />
+            )
           )}
         </DropdownMenuGroup>
-        {(modes || agentOptions.length > 0) && (
+        {(modes || options.rest.length > 0) && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuLabel>Agent options</DropdownMenuLabel>
+              {/* Untouched by the override above: only model and effort are the
+                  profile's to replace, and everything the agent offers besides
+                  them still applies live. */}
               {modes && (
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>
-                    <span className="flex-1">Mode</span>
-                    <span className="max-w-24 truncate text-xs text-muted-foreground">{modeLabel}</span>
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuPortal>
-                    <DropdownMenuSubContent>
-                      {/* setMode applies live over ACP — no respawn, so no confirm. */}
-                      <DropdownMenuRadioGroup
-                        value={modes.currentModeId}
-                        onValueChange={(modeId) =>
-                          modeId &&
-                          actions.setMode(sessionId, modeId).catch((err) => toast.error(String(err)))
-                        }
-                      >
-                        {modes.availableModes.map((mode) => (
-                          <DropdownMenuRadioItem key={mode.id} value={mode.id}>
-                            {mode.name}
-                          </DropdownMenuRadioItem>
-                        ))}
-                      </DropdownMenuRadioGroup>
-                    </DropdownMenuSubContent>
-                  </DropdownMenuPortal>
-                </DropdownMenuSub>
+                <MenuRow
+                  label="Mode"
+                  value={modes.currentModeId}
+                  choices={modes.availableModes.map((mode) => ({
+                    value: mode.id,
+                    name: mode.name,
+                  }))}
+                  onSelect={(modeId) =>
+                    actions
+                      .setMode(sessionId, modeId)
+                      .catch((err) => reportError(err, "Couldn't switch mode"))
+                  }
+                />
               )}
-              {agentOptions.map((option) =>
+              {options.rest.map((option) =>
                 option.type === "select" ? (
-                  <DropdownMenuSub key={option.id}>
-                    <DropdownMenuSubTrigger>
-                      <span className="flex-1">{option.name}</span>
-                      <span className="max-w-24 truncate text-xs text-muted-foreground">
-                        {flattenSelectOptions(option.options).find((c) => c.value === option.currentValue)?.name}
-                      </span>
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuPortal>
-                      <DropdownMenuSubContent>
-                        <DropdownMenuRadioGroup
-                          value={option.currentValue}
-                          onValueChange={(value) =>
-                            value &&
-                            actions
-                              .setConfigOption(sessionId, option.id, value)
-                              .catch((err) => toast.error(String(err)))
-                          }
-                        >
-                          {flattenSelectOptions(option.options).map((choice) => (
-                            <DropdownMenuRadioItem key={choice.value} value={choice.value}>
-                              {choice.name}
-                            </DropdownMenuRadioItem>
-                          ))}
-                        </DropdownMenuRadioGroup>
-                      </DropdownMenuSubContent>
-                    </DropdownMenuPortal>
-                  </DropdownMenuSub>
+                  <MenuRow
+                    key={option.id}
+                    label={option.name}
+                    value={option.currentValue}
+                    choices={selectChoices(option)}
+                    onSelect={(value) => set(option, value)}
+                  />
                 ) : (
                   <DropdownMenuCheckboxItem
                     key={option.id}
                     checked={option.currentValue}
-                    onCheckedChange={(checked) =>
-                      actions
-                        .setConfigOption(sessionId, option.id, checked === true)
-                        .catch((err) => toast.error(String(err)))
-                    }
+                    onCheckedChange={(checked) => set(option, checked === true)}
                   >
                     {option.name}
                   </DropdownMenuCheckboxItem>

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="1024" height="1024">
+  <!-- App icon: the mark on a filled tile. A hairline outline on transparency
+       vanishes at dock/taskbar sizes, so the icon carries its own ground.
+       Regenerate the rasters with scripts/icons.sh after editing this. -->
+  <rect width="64" height="64" rx="14" fill="#0f172a"/>
+  <g fill="none" stroke="#f8fafc" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"
+     transform="translate(32 32) scale(0.78) translate(-32 -32)">
+    <path d="M38 8H46A10 10 0 0 1 56 18V46A10 10 0 0 1 46 56H18A10 10 0 0 1 8 46V18A10 10 0 0 1 18 8H26"/>
+    <path d="M28 45H25A6 6 0 0 1 19 39V25A6 6 0 0 1 25 19H39A6 6 0 0 1 45 25V39A6 6 0 0 1 39 45H36"/>
+    <path d="M32 31V33"/>
+  </g>
+</svg>

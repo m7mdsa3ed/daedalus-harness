@@ -164,9 +164,9 @@ function DrawerContent({
   )
 }
 
-function DrawerHeader({ className, ...props }: React.ComponentProps<"div">) {
+function DrawerHeader({ className, ...props }: React.ComponentProps<"header">) {
   return (
-    <div
+    <header
       data-slot="drawer-header"
       className={cn(
         "flex shrink-0 flex-col gap-0.5 p-4 pb-0 group-data-[swipe-axis=y]/drawer-popup:text-center md:gap-1.5 md:text-left",
@@ -177,9 +177,9 @@ function DrawerHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
-function DrawerFooter({ className, ...props }: React.ComponentProps<"div">) {
+function DrawerFooter({ className, ...props }: React.ComponentProps<"footer">) {
   return (
-    <div
+    <footer
       data-slot="drawer-footer"
       className={cn("mt-auto flex shrink-0 flex-col gap-2 p-4 pt-0", className)}
       {...props}

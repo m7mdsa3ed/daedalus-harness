@@ -1,7 +1,27 @@
 import { useState } from "react"
-import { CheckCircle2Icon, CircleDashedIcon, LoaderCircleIcon, ListTreeIcon } from "lucide-react"
+import {
+  CheckCircle2Icon,
+  CheckIcon,
+  ChevronDownIcon,
+  CircleDashedIcon,
+  LoaderCircleIcon,
+} from "lucide-react"
 
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
+import {
+  Item,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+} from "@/components/ui/item"
+import { Logo } from "@/components/ui/logo"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import type { PlanItem, ThreadState } from "@/lib/store"
 import { cn } from "@/lib/utils"
@@ -73,8 +93,8 @@ export function ContextIndicator({ thread }: { thread: ThreadState }) {
         render={
           <Button
             variant="ghost"
-            size="icon-lg"
-            className="relative shrink-0 rounded-full text-muted-foreground hover:text-foreground"
+            size="icon-sm"
+            className="relative shrink-0 rounded-lg text-muted-foreground hover:text-foreground"
             title={context ? `Context window — ${percent}% used` : "Turn stats"}
           >
             <Ring percent={percent} />
@@ -130,7 +150,18 @@ export function ContextIndicator({ thread }: { thread: ThreadState }) {
   )
 }
 
+/**
+ * The plan above the composer. Collapsed it is one line — what the agent is on
+ * now, and a segment per step so the *shape* of the plan is visible at a
+ * glance: how many steps there are, how many are behind you, which one is
+ * live. Expanded it is the whole checklist, in place.
+ *
+ * ponytail: this used to hide the list behind a popover. A popover is for
+ * things you consult; a plan is something you watch, so it opens downward into
+ * the page instead of floating over it.
+ */
 export function ComposerPlan({ thread }: { thread: ThreadState }) {
+  const [open, setOpen] = useState(false)
   const plan = thread.items.find((item): item is PlanItem => item.kind === "plan")
   if (!plan || plan.entries.length === 0) return null
 
@@ -138,50 +169,91 @@ export function ComposerPlan({ thread }: { thread: ThreadState }) {
   const completed = plan.entries.filter((entry) => entry.status === "completed").length
   const current = plan.entries.find((entry) => entry.status === "in_progress")
     ?? plan.entries.find((entry) => entry.status !== "completed")
+  const running = current?.status === "in_progress"
+  const done = completed === total
   const percent = Math.round((completed / total) * 100)
 
   return (
-    <div className="relative mb-1 flex h-7 items-center gap-1.5 rounded-lg bg-muted/45 px-2 text-xs text-muted-foreground">
-      <ListTreeIcon className="size-3.5 shrink-0 text-primary" />
-      <span className="min-w-0 flex-1 truncate">
-        {current?.content ?? "All steps complete"}
-      </span>
-      <span className="shrink-0 font-mono tabular-nums">{completed}/{total}</span>
-      <Popover>
-        <PopoverTrigger
-          render={
-            <Button variant="ghost" size="sm" className="h-6 shrink-0 rounded-full px-2 text-[11px]">
-              Steps
-            </Button>
-          }
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className="w-full"
+    >
+      <CollapsibleTrigger
+        render={
+          <button
+            type="button"
+            className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left transition-colors hover:bg-accent/40"
+          />
+        }
+      >
+        {/* The ring carries the progress — same dial the context indicator uses,
+            so "how far through" reads the same way everywhere in the composer. */}
+        <span className="relative grid size-6 shrink-0 place-items-center text-primary">
+          <Ring percent={percent} />
+          <span className="absolute grid place-items-center text-[8px] font-semibold tabular-nums">
+            {done ? <CheckIcon className="size-2.5" /> : completed}
+          </span>
+        </span>
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate text-xs",
+            // The live step shimmers like the transcript's working line, so
+            // "which step" and "still going" are the same signal.
+            running ? "harness-shimmer text-primary" : "text-muted-foreground"
+          )}
+        >
+          {current?.content ?? "All steps complete"}
+        </span>
+        <Badge variant="secondary" className="shrink-0 font-mono tabular-nums">
+          {completed}/{total}
+        </Badge>
+        <ChevronDownIcon
+          aria-hidden
+          className={cn(
+            "size-3.5 shrink-0 text-muted-foreground transition-transform duration-200",
+            open && "rotate-180"
+          )}
         />
-        <PopoverContent align="end" side="top" className="w-64 gap-2">
-          <div className="flex items-center justify-between">
-            <p className="font-medium">Plan</p>
-            <span className="font-mono tabular-nums text-muted-foreground">{completed}/{total}</span>
-          </div>
-          <ol className="space-y-1.5">
-            {plan.entries.map((entry) => (
-              <li key={`${entry.content}-${entry.status}`} className="flex items-start gap-2">
+        <span className="sr-only">{open ? "Hide steps" : "Show all steps"}</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="harness-collapse">
+        {/* A twenty-step plan must not push the composer off screen: the list
+            caps out and scrolls, so the shelf stays a shelf. */}
+        <ItemGroup className="max-h-56 gap-0.5 overflow-y-auto border-t border-border/40 p-1 overscroll-contain">
+          {plan.entries.map((entry, index) => (
+            <Item
+              key={`${entry.content}-${index}`}
+              size="xs"
+              variant={entry.status === "in_progress" ? "muted" : "default"}
+              className="items-start gap-2 rounded-lg py-1.5"
+            >
+              <ItemMedia variant="icon" className="mt-px">
                 {entry.status === "completed" ? (
-                  <CheckCircle2Icon className="mt-0.5 size-3 shrink-0 text-primary" />
+                  <CheckCircle2Icon className="size-3.5 text-primary" />
                 ) : entry.status === "in_progress" ? (
-                  <LoaderCircleIcon className="mt-0.5 size-3 shrink-0 animate-spin text-primary" />
+                  <LoaderCircleIcon className="size-3.5 animate-spin text-primary" />
                 ) : (
-                  <CircleDashedIcon className="mt-0.5 size-3 shrink-0 text-muted-foreground/60" />
+                  <CircleDashedIcon className="size-3.5 text-muted-foreground/60" />
                 )}
-                <span className={cn("min-w-0", entry.status === "completed" ? "text-muted-foreground" : "text-foreground")}>
+              </ItemMedia>
+              <ItemContent>
+                <ItemDescription
+                  className={cn(
+                    "line-clamp-none text-xs",
+                    entry.status === "completed"
+                      ? "line-through opacity-60"
+                      : "text-foreground"
+                  )}
+                >
                   {entry.content}
-                </span>
-              </li>
-            ))}
-          </ol>
-        </PopoverContent>
-      </Popover>
-      <div className="absolute inset-x-2 bottom-0 h-px overflow-hidden rounded-full bg-border/60">
-        <div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${percent}%` }} />
-      </div>
-    </div>
+                </ItemDescription>
+              </ItemContent>
+            </Item>
+          ))}
+        </ItemGroup>
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 
@@ -201,9 +273,13 @@ export function ActivityIndicator({ step }: { step: number }) {
   return (
     <div
       aria-label="Agent working"
-      className="inline-flex items-center text-primary"
+      className="inline-flex items-center gap-2 text-primary"
       role="status"
     >
+      {/* The mark traces itself for as long as the turn runs — the same three
+          paths the boot splash draws, so starting a turn rhymes with starting
+          the app. size-4 sits on the step row's 1.5rem line box. */}
+      <Logo working className="size-4 shrink-0" />
       {/* ponytail: one flat text node — the shimmer paints a background clipped to
           text, and background-image doesn't inherit, so a nested span goes blank. */}
       {/* leading-6 matches a step row's line box, so the working line keeps the

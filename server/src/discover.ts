@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { McpServerInput, SkillInput } from "./library.js";
+import type { CommandInput, McpServerInput, SkillInput } from "./library.js";
 
 // Import sources: MCP servers and skills already configured for the agents on
 // this machine, offered as library entries. Read-only — nothing is written back
@@ -115,6 +115,48 @@ function skillsIn(root: string, source: string): Found<SkillInput>[] {
 
 export function discoverMcpServers(): Found<McpServerInput>[] {
   return [...claudeMcpServers(), ...codexMcpServers()];
+}
+
+/** `<root>/*.md` -> library shape; description/argument-hint out of frontmatter. */
+function commandsIn(root: string, source: string): Found<CommandInput>[] {
+  if (!existsSync(root)) return [];
+  const found: Found<CommandInput>[] = [];
+  for (const entry of readdirSync(root)) {
+    if (!entry.endsWith(".md")) continue;
+    const path = join(root, entry);
+    let raw: string;
+    try {
+      if (lstatSync(path).isSymbolicLink() || !lstatSync(path).isFile()) continue;
+      raw = readFileSync(path, "utf8");
+    } catch {
+      continue;
+    }
+    // Files the harness materialized itself are not import candidates.
+    if (raw.includes("managed by daedalus-harness")) continue;
+    const name = entry.slice(0, -3);
+    let content = raw;
+    let description = "";
+    let argumentHint: string | null = null;
+    const frontmatter = /^---\n([\s\S]*?)\n---\n?/.exec(raw);
+    if (frontmatter) {
+      content = raw.slice(frontmatter[0].length);
+      for (const line of frontmatter[1].split("\n")) {
+        const kv = /^([\w-]+):\s*(.*)$/.exec(line.trim());
+        if (!kv) continue;
+        const value = kv[2].replace(/^["']|["']$/g, "");
+        if (kv[1] === "description") description = value;
+        if (kv[1] === "argument-hint") argumentHint = value || null;
+      }
+    }
+    content = content.trim();
+    if (!content) continue;
+    found.push({ name, description: description || name, argumentHint, content, source });
+  }
+  return found;
+}
+
+export function discoverCommands(): Found<CommandInput>[] {
+  return commandsIn(join(HOME, ".claude", "commands"), "claude (global)");
 }
 
 export function discoverSkills(): Found<SkillInput>[] {

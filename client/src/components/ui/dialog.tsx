@@ -78,9 +78,9 @@ function DialogContent({
   )
 }
 
-function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
+function DialogHeader({ className, ...props }: React.ComponentProps<"header">) {
   return (
-    <div
+    <header
       data-slot="dialog-header"
       className={cn("flex flex-col gap-2", className)}
       {...props}
@@ -93,11 +93,11 @@ function DialogFooter({
   showCloseButton = false,
   children,
   ...props
-}: React.ComponentProps<"div"> & {
+}: React.ComponentProps<"footer"> & {
   showCloseButton?: boolean
 }) {
   return (
-    <div
+    <footer
       data-slot="dialog-footer"
       className={cn(
         "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
@@ -111,7 +111,7 @@ function DialogFooter({
           Close
         </DialogPrimitive.Close>
       )}
-    </div>
+    </footer>
   )
 }
 

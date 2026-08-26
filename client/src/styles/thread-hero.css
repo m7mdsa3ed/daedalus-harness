@@ -1,0 +1,56 @@
+/* ── Empty-thread hero ──
+   The layer a thread with nothing in it yet sits on. It spans the whole window —
+   under the sidebar and the header, not just the transcript — so an empty thread
+   reads as one surface with something moving under it rather than as a
+   decorated panel between solid bands.
+
+   The picture is a WebGL shader (components/ui/shader-background) coloured from
+   the live theme tokens; all this file owns is where the layer sits, what steps
+   aside to let it through, and the fade. React mounts the canvas only while it
+   is wanted and unmounts it a beat after the fade ends, so no GL context
+   outlives the thing it draws — keep FADE_MS in components/thread-hero.tsx in
+   step with the duration below. */
+
+.thread-hero {
+  position: fixed;
+  inset: 0;
+  /* Behind every in-flow surface but still above the page background: negative
+     z-index paints after the canvas background and before normal content, which
+     is exactly the slot a backdrop wants. Nothing needs repositioning to sit on
+     top of it, so the sidebar's own layout is left alone. */
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 320ms ease-out;
+}
+
+.thread-hero[data-visible] {
+  opacity: 1;
+}
+
+/* The shell's surfaces step back while it shows. Scoped to the wrapper's
+   data-hero flag so every other screen keeps its solid ones, and tinted rather
+   than cleared — sidebar labels still have to be readable over whatever the
+   shader happens to be doing underneath them. */
+[data-hero] [data-slot="sidebar-inner"] {
+  background: color-mix(in oklab, var(--sidebar) 62%, transparent);
+  backdrop-filter: blur(20px);
+}
+
+[data-hero] [data-slot="sidebar-inset"] {
+  background: color-mix(in oklab, var(--background) 28%, transparent);
+}
+
+[data-slot="sidebar-inner"],
+[data-slot="sidebar-inset"] {
+  transition: background-color 320ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thread-hero,
+  [data-slot="sidebar-inner"],
+  [data-slot="sidebar-inset"] {
+    transition: none;
+  }
+}

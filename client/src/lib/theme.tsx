@@ -1,35 +1,44 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react"
+import {
+  customThemeId,
+  customThemesSnapshot,
+  isCustomTheme,
+  subscribeCustomThemes,
+  type CustomTheme,
+} from "./custom-themes"
 
 type Theme = "light" | "dark" | "system"
-export type ColorTheme =
-  | "default"
-  | "ocean"
-  | "forest"
-  | "violet"
-  | "sunset"
-  | "rose"
-  | "amber"
-  | "slate"
-  | "claude"
-  | "codex"
-  | "gemini"
-  | "copilot"
 
-const COLOR_THEMES: readonly ColorTheme[] = [
-  "default",
-  "ocean",
-  "forest",
-  "violet",
-  "sunset",
-  "rose",
-  "amber",
-  "slate",
-  "claude",
-  "codex",
-  "gemini",
-  "copilot",
-]
+/** A palette id: a built-in one, or `custom:<id>` from the theme builder. */
+export type ColorTheme = string
+
+/** The palettes that ship in styles/themes.css. Adding one means adding a
+    block there and an entry here — nothing else in the app knows their names. */
+export const BUILTIN_THEMES = [
+  { value: "default", label: "Default" },
+  { value: "ocean", label: "Ocean" },
+  { value: "forest", label: "Forest" },
+  { value: "violet", label: "Violet" },
+  { value: "sunset", label: "Sunset" },
+  { value: "rose", label: "Rose" },
+  { value: "amber", label: "Amber" },
+  { value: "slate", label: "Slate" },
+  { value: "claude", label: "Claude" },
+  { value: "codex", label: "Codex" },
+  { value: "gemini", label: "Gemini" },
+  { value: "copilot", label: "Copilot" },
+] as const
+
+export const DEFAULT_COLOR_THEME = "default"
+
 const COLOR_THEME_KEY = "ui.colorTheme"
 
 interface ThemeContext {
@@ -52,9 +61,21 @@ function getSystemTheme(): "light" | "dark" {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
 }
 
+/** A palette id is usable only if something still defines it: a built-in, or a
+    custom theme that has not been deleted since it was selected. */
+export function colorThemeExists(value: string, custom: CustomTheme[]): boolean {
+  if (isCustomTheme(value)) return custom.some((theme) => theme.id === customThemeId(value))
+  return BUILTIN_THEMES.some((theme) => theme.value === value)
+}
+
 function storedColorTheme(): ColorTheme {
-  const value = localStorage.getItem(COLOR_THEME_KEY)
-  return COLOR_THEMES.includes(value as ColorTheme) ? (value as ColorTheme) : "default"
+  const value = localStorage.getItem(COLOR_THEME_KEY) ?? ""
+  return colorThemeExists(value, customThemesSnapshot()) ? value : DEFAULT_COLOR_THEME
+}
+
+/** The user's saved palettes, live — the builder writes through this store. */
+export function useCustomThemes(): CustomTheme[] {
+  return useSyncExternalStore(subscribeCustomThemes, customThemesSnapshot, customThemesSnapshot)
 }
 
 /** Tint the browser/PWA status bar with the app background for the active theme. */
@@ -91,6 +112,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return stored === "light" || stored === "dark" ? stored : getSystemTheme()
   })
   const [colorTheme, setColorTheme] = useState<ColorTheme>(storedColorTheme)
+  const customThemes = useCustomThemes()
+
+  // Deleting the palette you are wearing drops you back to Default rather than
+  // leaving the app styled by a data attribute nothing defines any more.
+  useEffect(() => {
+    if (!colorThemeExists(colorTheme, customThemes)) setColorTheme(DEFAULT_COLOR_THEME)
+  }, [colorTheme, customThemes])
 
   useEffect(() => {
     if (theme !== "system") {
@@ -111,7 +139,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(COLOR_THEME_KEY, colorTheme)
     applyThemeColor(resolved)
     window.desktop?.setTitleBarTheme?.(resolved)
-  }, [theme, resolved, colorTheme])
+  }, [theme, resolved, colorTheme, customThemes])
 
   return (
     <Ctx.Provider value={{ theme, setTheme: setThemeState, resolved, colorTheme, setColorTheme }}>
@@ -150,32 +178,62 @@ function applyScale(pct: number) {
   document.documentElement.style.setProperty("--spacing", `${(0.25 * pct) / 100}rem`)
 }
 
-// Apply stored values at module load so the app never flashes the defaults.
-applyFontSize(storedNumber("ui.fontSize", FONT_SIZE_DEFAULT, FONT_SIZE_MIN, FONT_SIZE_MAX))
-applyScale(storedNumber("ui.scale", SCALE_DEFAULT, SCALE_MIN, SCALE_MAX))
-
-function useAppearanceNumber(
+/* One store per knob, outside React. The settings sliders and the command
+   palette both drive these; component state would let the two disagree until
+   one of them remounted. The value is applied on creation, at module load, so
+   the app never flashes the defaults. */
+function appearanceStore(
   key: string,
   fallback: number,
   min: number,
   max: number,
   apply: (value: number) => void
+) {
+  let value = storedNumber(key, fallback, min, max)
+  apply(value)
+  const listeners = new Set<() => void>()
+
+  return {
+    get: () => value,
+    set(next: number) {
+      const clamped = Math.min(max, Math.max(min, Math.round(next) || fallback))
+      if (clamped === value) return
+      value = clamped
+      localStorage.setItem(key, String(value))
+      apply(value)
+      for (const listener of listeners) listener()
+    },
+    subscribe(listener: () => void) {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+  }
+}
+
+const fontSizeStore = appearanceStore(
+  "ui.fontSize",
+  FONT_SIZE_DEFAULT,
+  FONT_SIZE_MIN,
+  FONT_SIZE_MAX,
+  applyFontSize
+)
+const scaleStore = appearanceStore("ui.scale", SCALE_DEFAULT, SCALE_MIN, SCALE_MAX, applyScale)
+
+function useAppearanceNumber(
+  store: ReturnType<typeof appearanceStore>
 ): [number, (value: number) => void] {
-  const [value, setValue] = useState(() => storedNumber(key, fallback, min, max))
-  useEffect(() => {
-    localStorage.setItem(key, String(value))
-    apply(value)
-  }, [key, value, apply])
-  const set = (next: number) => setValue(Math.min(max, Math.max(min, Math.round(next) || fallback)))
-  return [value, set]
+  const value = useSyncExternalStore(store.subscribe, store.get, store.get)
+  return [value, store.set]
 }
 
 export function useFontSize() {
-  return useAppearanceNumber("ui.fontSize", FONT_SIZE_DEFAULT, FONT_SIZE_MIN, FONT_SIZE_MAX, applyFontSize)
+  return useAppearanceNumber(fontSizeStore)
 }
 
 export function useScale() {
-  return useAppearanceNumber("ui.scale", SCALE_DEFAULT, SCALE_MIN, SCALE_MAX, applyScale)
+  return useAppearanceNumber(scaleStore)
 }
 
 declare global {

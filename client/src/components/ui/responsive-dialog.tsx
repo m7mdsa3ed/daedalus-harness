@@ -9,14 +9,17 @@ import {
 } from "@/components/ui/dialog"
 import {
   Drawer,
+  DrawerClose,
   DrawerContent,
   DrawerDescription,
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
 } from "@/components/ui/drawer"
+import { Button } from "@/components/ui/button"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
+import { X } from "lucide-react"
 
 /* One modal API: a Dialog on desktop, a bottom Drawer on mobile.
    Parts mirror the Dialog parts; the mobile flag flows through context so
@@ -77,24 +80,96 @@ function ResponsiveDialogContent({
   )
 }
 
-function ResponsiveDialogHeader(props: React.ComponentProps<"div">) {
+function ResponsiveDialogHeader({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<"header">) {
   const isMobile = React.useContext(MobileCtx)
-  return isMobile ? <DrawerHeader className="px-0" {...props} /> : <DialogHeader {...props} />
+  if (isMobile) {
+    return (
+      <DrawerHeader
+        className={cn(
+          "sticky top-0 z-20 -mx-4 gap-1 border-b border-border/60 bg-popover/95 px-4 py-4 pr-14 group-data-[swipe-axis=y]/drawer-popup:text-left supports-backdrop-filter:backdrop-blur-xl",
+          className
+        )}
+        {...props}
+      >
+        {children}
+        <DrawerClose
+          render={
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="absolute top-3.5 right-3 text-muted-foreground hover:text-foreground"
+            />
+          }
+        >
+          <X />
+          <span className="sr-only">Close</span>
+        </DrawerClose>
+      </DrawerHeader>
+    )
+  }
+  return (
+    <DialogHeader
+      className={cn(
+        "sticky -top-6 z-20 -mx-6 -mt-6 gap-1.5 border-b border-border/60 bg-popover/95 px-6 py-5 pr-14 supports-backdrop-filter:backdrop-blur-xl",
+        className
+      )}
+      {...props}
+    >
+      {children}
+    </DialogHeader>
+  )
 }
 
-function ResponsiveDialogTitle(props: React.ComponentProps<typeof DialogTitle>) {
+function ResponsiveDialogTitle({
+  className,
+  ...props
+}: React.ComponentProps<typeof DialogTitle>) {
   const isMobile = React.useContext(MobileCtx)
-  return isMobile ? <DrawerTitle {...props} /> : <DialogTitle {...props} />
+  const titleClassName = cn("text-lg leading-tight font-semibold", className)
+  return isMobile ? (
+    <DrawerTitle className={titleClassName} {...props} />
+  ) : (
+    <DialogTitle className={titleClassName} {...props} />
+  )
 }
 
-function ResponsiveDialogDescription(props: React.ComponentProps<typeof DialogDescription>) {
+function ResponsiveDialogDescription({
+  className,
+  ...props
+}: React.ComponentProps<typeof DialogDescription>) {
   const isMobile = React.useContext(MobileCtx)
-  return isMobile ? <DrawerDescription {...props} /> : <DialogDescription {...props} />
+  const descriptionClassName = cn("max-w-[65ch] leading-relaxed", className)
+  return isMobile ? (
+    <DrawerDescription className={descriptionClassName} {...props} />
+  ) : (
+    <DialogDescription className={descriptionClassName} {...props} />
+  )
 }
 
-function ResponsiveDialogFooter(props: React.ComponentProps<"div">) {
+function ResponsiveDialogFooter({ className, ...props }: React.ComponentProps<"footer">) {
   const isMobile = React.useContext(MobileCtx)
-  return isMobile ? <DrawerFooter className="px-0" {...props} /> : <DialogFooter {...props} />
+  return isMobile ? (
+    <DrawerFooter
+      className={cn(
+        "sticky bottom-[calc(-1*max(1rem,env(safe-area-inset-bottom)))] z-20 -mx-4 -mb-[max(1rem,env(safe-area-inset-bottom))] mt-2 border-t border-border/60 bg-popover/95 px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] supports-backdrop-filter:backdrop-blur-xl",
+        className
+      )}
+      {...props}
+    />
+  ) : (
+    <DialogFooter
+      className={cn(
+        "sticky -bottom-6 z-20 -mx-6 -mb-6 mt-2 border-t border-border/60 bg-popover/95 px-6 py-4 supports-backdrop-filter:backdrop-blur-xl",
+        className
+      )}
+      {...props}
+    />
+  )
 }
 
 export {
