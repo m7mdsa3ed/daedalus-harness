@@ -16,6 +16,7 @@ import {
   FolderIcon,
   FolderPlus,
   Gauge,
+  Keyboard,
   LogOut,
   MessageSquareIcon,
   Minus,
@@ -55,6 +56,8 @@ import {
   CommandShortcut,
 } from "@/components/ui/command"
 import { useSidebar } from "@/components/ui/sidebar"
+import { useHotkey } from "@/hooks/use-hotkey"
+import { KEYS, formatChord } from "@/lib/shortcuts"
 import { SETTINGS_SECTIONS } from "@/components/settings/sections"
 import type { Actions } from "@/lib/actions"
 import { customThemeValue } from "@/lib/custom-themes"
@@ -83,15 +86,10 @@ import {
 export function useCommandPalette() {
   const [open, setOpen] = React.useState(false)
 
-  React.useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() !== "k" || !(event.metaKey || event.ctrlKey)) return
-      event.preventDefault()
-      setOpen((previous) => !previous)
-    }
-    window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
-  }, [])
+  useHotkey(KEYS.palette, (event) => {
+    event.preventDefault()
+    setOpen((previous) => !previous)
+  })
 
   return { open, setOpen }
 }
@@ -135,6 +133,17 @@ function transcriptText(items: ThreadItem[]): string {
           return `- **${item.title}** — ${item.status}`
         case "plan":
           return item.entries.map((entry) => `- [${entry.status}] ${entry.content}`).join("\n")
+        // The summary is the only part of the pre-compaction history the agent
+        // still has, so a pasted transcript that dropped it would not explain
+        // what the agent was working from after this point.
+        case "compaction":
+          return [
+            `_Context compacted (${item.status})_`,
+            item.error,
+            ...item.summary.map((block) => (block.type === "text" ? block.text : "")),
+          ]
+            .filter(Boolean)
+            .join("\n\n")
       }
     })
     .filter(Boolean)
@@ -147,12 +156,14 @@ export function CommandPalette({
   actions,
   onNewThread,
   onNewProject,
+  onShortcuts,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   actions: Actions
   onNewThread: () => void
   onNewProject: () => void
+  onShortcuts: () => void
 }) {
   const { state } = useStore()
   const location = useLocation()
@@ -362,7 +373,7 @@ export function CommandPalette({
                 >
                   <Plus />
                   New thread
-                  <CommandShortcut>⌘N</CommandShortcut>
+                  <CommandShortcut>{formatChord(KEYS.newThread)}</CommandShortcut>
                 </CommandItem>
                 <CommandItem
                   value="new project workspace directory cwd"
@@ -568,7 +579,15 @@ export function CommandPalette({
                 <CommandItem value="toggle sidebar panel collapse" onSelect={() => run(toggleSidebar)}>
                   <PanelLeft />
                   Toggle sidebar
-                  <CommandShortcut>⌘B</CommandShortcut>
+                  <CommandShortcut>{formatChord(KEYS.sidebar)}</CommandShortcut>
+                </CommandItem>
+                <CommandItem
+                  value="keyboard shortcuts keys bindings help"
+                  onSelect={() => run(onShortcuts)}
+                >
+                  <Keyboard />
+                  Keyboard shortcuts
+                  <CommandShortcut>?</CommandShortcut>
                 </CommandItem>
               </CommandGroup>
 

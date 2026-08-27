@@ -1,6 +1,7 @@
 import * as React from "react"
-import { ArrowUp, Mic, RotateCw, Square } from "lucide-react"
+import { ArrowUp, History, Mic, RotateCw, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { ActivityIndicator, ComposerPlan, ContextIndicator } from "@/components/composer-status"
 import { ComposerStrip, ComposerStripItem } from "@/components/composer-strip"
 import { Textarea } from "@/components/ui/textarea"
@@ -13,12 +14,16 @@ import {
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useHotkey } from "@/hooks/use-hotkey"
 import { useVoice } from "@/hooks/use-voice"
 import type { Actions } from "@/lib/actions"
 import { clearDraft, loadDraft, saveDraft } from "@/lib/drafts"
 import { reportError } from "@/lib/errors"
+import { currentThreadId } from "@/lib/router"
 import type { SessionMeta } from "@/lib/settings"
+import { KEYS, isInteractiveTarget, isTypingTarget, matchesChord, overlayOpen } from "@/lib/shortcuts"
 import { useStore, emptyThread, threadIsEmpty, type ThreadItem, type ThreadState } from "@/lib/store"
+import { useLocation } from "react-router"
 import { useViewOptions } from "@/lib/view-options"
 import { cn } from "@/lib/utils"
 import { DraftConfigPopover, DraftScopeRow } from "./draft-config"
@@ -26,7 +31,7 @@ import { SessionConfigPopover } from "./session-config"
 import { SlashCommandMenu, useSlashCommands } from "./slash-commands"
 import { SessionSettingsButton } from "./session-settings"
 import { InlineElicitation } from "./elicitation-form"
-import { InlineToolApproval } from "./tool-approval"
+import { InlineToolApproval, primaryPermissionOption } from "./tool-approval"
 import { ThreadItemView, ToolRun, type ToolRunGroup } from "./thread-items"
 
 /** Consecutive tool steps become one ToolRunGroup; everything else passes
@@ -53,6 +58,91 @@ function groupToolRuns(items: ThreadItem[]): (ThreadItem | ToolRunGroup)[] {
   return rows
 }
 
+/* ── Thread keys ──
+   Escape, and the digits that answer a pending question, for the transcript the
+   URL points at — the dock can have several mounted at once and only one of
+   them is the one being looked at, so these are gated rather than bound per
+   card. Priority is the order the screen reads: a question the agent is blocked
+   on outranks a permission, which outranks the turn still running.
+
+   Escape is deliberately live while the composer has focus. It does nothing in
+   a textarea, and "skip this and move on" is a thing you want to do without
+   taking your hands off the keys. The digits are not: a bare 1 belongs to
+   whatever you are typing. */
+function useThreadKeys({
+  sessionId,
+  thread,
+  actions,
+  enabled,
+}: {
+  sessionId: string
+  thread: ThreadState
+  actions: Actions
+  enabled: boolean
+}) {
+  const { permission, elicitation, turnActive } = thread
+
+  useHotkey(
+    KEYS.escape,
+    (event) => {
+      // A dialog, menu or popup is open — that Escape is its own.
+      if (overlayOpen()) return
+      if (elicitation) {
+        /* `decline` is a real answer, not an abort: the AskUserQuestion bridges
+           read it as "the user skipped" and the turn carries on. See
+           lib/elicitation. */
+        event.preventDefault()
+        elicitation.resolve({ action: "decline" })
+        return
+      }
+      if (permission) {
+        // Only if the agent offered a no. Nothing is assumed on its behalf.
+        const reject = permission.request.options.find((option) =>
+          option.kind.startsWith("reject")
+        )
+        if (!reject) return
+        event.preventDefault()
+        permission.resolve({ outcome: { outcome: "selected", optionId: reject.optionId } })
+        return
+      }
+      if (turnActive) {
+        event.preventDefault()
+        actions.stop(sessionId).catch((err) => reportError(err, "Couldn't stop the turn"))
+      }
+    },
+    { enabled }
+  )
+
+  useHotkey(
+    OPTION_DIGITS,
+    (event) => {
+      if (!permission || isTypingTarget(event.target) || overlayOpen()) return
+      const option = permission.request.options[Number(event.key) - 1]
+      if (!option) return
+      event.preventDefault()
+      permission.resolve({ outcome: { outcome: "selected", optionId: option.optionId } })
+    },
+    { enabled: enabled && !!permission }
+  )
+
+  useHotkey(
+    "enter",
+    (event) => {
+      if (!permission || isTypingTarget(event.target) || overlayOpen()) return
+      // A focused button answers for itself — Enter must not also answer for it.
+      if (isInteractiveTarget(event.target)) return
+      // The same narrow yes the card gives the primary button to.
+      const optionId = primaryPermissionOption(permission.request.options)
+      if (!optionId) return
+      event.preventDefault()
+      permission.resolve({ outcome: { outcome: "selected", optionId } })
+    },
+    { enabled: enabled && !!permission }
+  )
+}
+
+const OPTION_DIGITS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
+
 export function ThreadView({ sessionId, actions }: { sessionId: string; actions: Actions }) {
   const { state, dispatch } = useStore()
   const thread = state.threads[sessionId] ?? emptyThread
@@ -77,6 +167,16 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
   const retry = (text: string) => void actions.send(sessionId, text).catch(() => {})
 
   const meta = state.sessions.find((s) => s.id === sessionId)
+  /* Which transcript the keys belong to. The dock keeps every opened thread
+     mounted and navigates the URL as tabs are activated (see session-dock), so
+     the route is the app's own answer to "which one is in front". */
+  const location = useLocation()
+  useThreadKeys({
+    sessionId,
+    thread,
+    actions,
+    enabled: currentThreadId(location.pathname, location.search) === sessionId,
+  })
   // Shared with the hero behind the whole inset, which the shell paints — the
   // two must agree about when this thread counts as empty. See lib/store.
   const empty = threadIsEmpty(thread, meta?.draft)
@@ -218,6 +318,80 @@ function closedState(code: number | undefined) {
   }
 }
 
+/* ── Prompt history ──
+   Up recalls what you have already sent in this thread, the way a shell recalls
+   a command. The history IS the transcript — every user turn, oldest last — so
+   there is nothing to persist and nothing that can disagree with what is on
+   screen above the box. Walking back stashes whatever was half-typed; Escape,
+   and walking forward off the end, put it back. */
+function usePromptHistory(items: ThreadItem[], setText: (text: string) => void) {
+  const history = React.useMemo(
+    () => items.flatMap((item) => (item.kind === "user" && item.text ? [item.text] : [])),
+    [items]
+  )
+  /** null = not browsing. Otherwise an index into `history`. */
+  const [index, setIndex] = React.useState<number | null>(null)
+  const stash = React.useRef("")
+
+  // Sending (or a replay landing) changes the list under the cursor, so the
+  // walk is over — the index would point at a different prompt than it did.
+  React.useEffect(() => setIndex(null), [history.length])
+
+  const apply = (el: HTMLTextAreaElement, value: string) => {
+    setText(value)
+    // The caret belongs at the end of the recalled prompt — after React has put
+    // it in the DOM, which is the next frame.
+    requestAnimationFrame(() => el.setSelectionRange(el.value.length, el.value.length))
+  }
+
+  /** True when it consumed the event, matching the slash menu's contract. */
+  const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): boolean => {
+    const el = event.currentTarget
+    if (matchesChord(event, KEYS.escape)) {
+      if (index === null) return false
+      setIndex(null)
+      apply(el, stash.current)
+      /* Stop it reaching the thread's Escape, which would read this as "stop the
+         turn" — leaving the history is the more local meaning and wins. */
+      event.preventDefault()
+      event.stopPropagation()
+      return true
+    }
+    if (history.length === 0) return false
+
+    if (matchesChord(event, KEYS.historyPrev)) {
+      /* Only from the very start of the box. Anywhere else Up is a caret move,
+         which is what the key is for while editing a long prompt. */
+      if (index === null && !(el.selectionStart === 0 && el.selectionEnd === 0)) return false
+      const next = index === null ? history.length - 1 : index - 1
+      event.preventDefault()
+      // At the oldest prompt: stay there rather than falling out of the walk.
+      if (next < 0) return true
+      if (index === null) stash.current = el.value
+      setIndex(next)
+      apply(el, history[next])
+      return true
+    }
+
+    if (matchesChord(event, KEYS.historyNext)) {
+      if (index === null) return false
+      event.preventDefault()
+      const next = index + 1
+      if (next >= history.length) {
+        setIndex(null)
+        apply(el, stash.current)
+      } else {
+        setIndex(next)
+        apply(el, history[next])
+      }
+      return true
+    }
+    return false
+  }
+
+  return { onKeyDown, browsing: index !== null }
+}
+
 function Composer({
   sessionId,
   actions,
@@ -270,6 +444,10 @@ function Composer({
     void actions.send(sessionId, value).catch(() => {})
   }
 
+  /* Up/Down walk what has already been sent here. It goes after the slash menu
+     in the key handler below: while that menu is open the arrows are its. */
+  const history = usePromptHistory(thread.items, setText)
+
   /* Running a command is just sending `/name args` as the prompt — the agent
      resolves it — so the menu only completes the name. Drafts advertise no
      commands (no process yet), which closes the menu on its own. */
@@ -297,16 +475,35 @@ function Composer({
           </ComposerStripItem>
         )}
         <ComposerPlan thread={thread} />
+        {/* Says what the box is showing and how to get back out of it — without
+            it, a recalled prompt is indistinguishable from one you typed. */}
+        {history.browsing && (
+          <ComposerStripItem className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-muted-foreground">
+            <History className="size-3" />
+            <span>Earlier prompt</span>
+            <span className="ms-auto flex items-center gap-1.5">
+              <KbdGroup>
+                <Kbd>Esc</Kbd>
+              </KbdGroup>
+              to go back
+            </span>
+          </ComposerStripItem>
+        )}
+        {/* Last on the shelf, nearest the composer: these suggestions are about
+            the text being typed right now, where everything above belongs to
+            the turn. It is a row, not an overlay, so the plan and the history
+            notice stay readable while you complete a command. */}
+        <SlashCommandMenu state={slash} />
       </ComposerStrip>
       {/* relative/z-10: the composer paints over the strip's tucked bottom edge. */}
       <div className="relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl bg-card p-2 shadow-glass">
-        <SlashCommandMenu state={slash} />
         <Textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             // The command menu owns navigation keys (and Enter) while open.
             if (slash.onKeyDown(e)) return
+            if (history.onKeyDown(e)) return
             if (e.key !== "Enter") return
             /* Cmd/Ctrl+Enter always sends. Bare Enter sends on desktop and
                inserts a newline on touch, where Return is the only newline key

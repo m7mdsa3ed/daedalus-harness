@@ -1,8 +1,7 @@
-import { spawn } from "node:child_process";
 import { eq } from "drizzle-orm";
+import * as acp from "@agentclientprotocol/sdk";
 import { agentOptions as agentOptionsTable, db } from "./db/index.js";
-import { getAgent, resolveSpawn } from "./registry.js";
-import { materializeProject } from "./materialize.js";
+import { agentStream, spawnAgent } from "./acp-bridge.js";
 import type { Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 
@@ -15,17 +14,9 @@ const PROBE_TIMEOUT_MS = 25_000;
     should not turn one probe into a hundred round trips. */
 const MAX_MODEL_SWEEP = 40;
 
-interface ConfigOption {
-  id: string;
-  type?: string;
-  category?: string | null;
-  currentValue?: unknown;
-  options?: unknown[];
-}
-
 export interface AgentOptions {
-  modes: unknown;
-  configOptions: ConfigOption[];
+  modes: acp.SessionModeState | null;
+  configOptions: acp.SessionConfigOption[];
   /**
    * Model value -> the option set the agent advertises while it is selected.
    *
@@ -35,17 +26,13 @@ export interface AgentOptions {
    * live when the snapshot was taken, and picking a reasoning model would
    * silently fail to reveal its effort selector.
    */
-  byModel: Record<string, ConfigOption[]>;
+  byModel: Record<string, acp.SessionConfigOption[]>;
 }
 
 /** Select options may arrive grouped; the sweep wants one flat list. */
-function flattenChoices(options: unknown[] | undefined): { value: string }[] {
-  return (options ?? []).flatMap((entry) => {
-    const group = entry as { options?: unknown[] };
-    return (group && typeof group === "object" && Array.isArray(group.options)
-      ? group.options
-      : [entry]) as { value: string }[];
-  });
+function flattenChoices(option: acp.SessionConfigOption): { value: string }[] {
+  if (option.type !== "select") return [];
+  return option.options.flatMap((entry) => ("options" in entry ? entry.options : [entry]));
 }
 
 /** In-flight probes, keyed like the cache. Two tabs opening the same menu at
@@ -113,16 +100,7 @@ export function probeAgentOptions(
  * price of asking: ACP has no way to enumerate configuration without one.
  */
 async function runProbe(profile: Profile, project: Project): Promise<AgentOptions> {
-  const agent = getAgent(profile.agentId);
-  if (!agent) throw new Error(`unknown agent: ${profile.agentId}`);
-  materializeProject(project);
-  const { command, args, env, cwd } = resolveSpawn(agent, profile, project);
-
-  const proc = spawn(command, args, {
-    cwd,
-    env: { ...process.env, ...env },
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  const proc = spawnAgent(profile, project);
 
   const stderr: string[] = [];
   proc.stderr.on("data", (chunk: Buffer) => {
@@ -130,102 +108,85 @@ async function runProbe(profile: Profile, project: Project): Promise<AgentOption
     if (stderr.length > 40) stderr.shift();
   });
 
-  let buffer = "";
-  let nextId = 0;
-  const waiting = new Map<number, (msg: Record<string, unknown>) => void>();
-
-  proc.stdout.on("data", (chunk: Buffer) => {
-    buffer += chunk.toString("utf8");
-    let nl: number;
-    while ((nl = buffer.indexOf("\n")) !== -1) {
-      const line = buffer.slice(0, nl);
-      buffer = buffer.slice(nl + 1);
-      if (!line.trim()) continue;
-      try {
-        const msg = JSON.parse(line) as { id?: number };
-        if (typeof msg.id === "number" && waiting.has(msg.id)) {
-          waiting.get(msg.id)!(msg as Record<string, unknown>);
-          waiting.delete(msg.id);
-        }
-      } catch {
-        // Not JSON: an agent logging to stdout. Nothing here to answer.
-      }
-    }
-  });
-
-  const call = (method: string, params: unknown) =>
-    new Promise<Record<string, unknown>>((resolve, reject) => {
-      const id = ++nextId;
-      waiting.set(id, resolve);
-      proc.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
-      setTimeout(() => {
-        if (waiting.delete(id)) reject(new Error(`${method} timed out`));
-      }, PROBE_TIMEOUT_MS).unref();
-    });
-
-  const failed = new Promise<never>((_, reject) => {
-    proc.on("error", (err) => reject(err));
+  /* An agent that exits before answering rejects with its own last words. The
+     SDK would otherwise report a closed connection, which never explains why. */
+  const died = new Promise<never>((_, reject) => {
+    proc.on("error", reject);
     proc.on("exit", (code) =>
       reject(
         new Error(
-          `${agent.name} exited before answering (${code ?? "signal"})${
+          `${profile.agentId} exited before answering (${code ?? "signal"})${
             stderr.length ? `: ${stderr.join("").trim().slice(-400)}` : ""
           }`,
         ),
       ),
     );
   });
+  died.catch(() => {});
+
+  /* A cooperative `cancellationSignal` would not help here: it still waits for
+     the peer's eventual response, and a wedged agent has none to give. */
+  let expire: ReturnType<typeof setTimeout>;
+  const deadline = new Promise<never>((_, reject) => {
+    expire = setTimeout(() => reject(new Error("the agent did not answer in time")), PROBE_TIMEOUT_MS);
+    expire.unref();
+  });
+  deadline.catch(() => {});
 
   try {
-    await Promise.race([
-      call("initialize", {
-        protocolVersion: 1,
-        clientCapabilities: {
-          fs: { readTextFile: false, writeTextFile: false },
-          session: { configOptions: { boolean: {} } },
-        },
-      }),
-      failed,
-    ]);
-    const created = (await Promise.race([
-      call("session/new", { cwd: project.cwd, mcpServers: [] }),
-      failed,
-    ])) as { result?: { modes?: unknown; configOptions?: unknown[] }; error?: unknown };
-    if (created.error) throw new Error(JSON.stringify(created.error).slice(0, 400));
-    const sessionId = (created.result as { sessionId?: string } | undefined)?.sessionId;
-    const configOptions = (created.result?.configOptions ?? []) as ConfigOption[];
-
-    /* Walk the model list, asking what each one brings with it. One extra call
-       per model on a process that is already up and about to be discarded —
-       far cheaper than spawning again later, and the only way a draft can know
-       that picking a reasoning model should reveal an effort selector. */
-    const byModel: Record<string, ConfigOption[]> = {};
-    const model = configOptions.find((o) => o.category === "model" && o.type === "select");
-    if (sessionId && model) {
-      const choices = flattenChoices(model.options);
-      if (choices.length > MAX_MODEL_SWEEP) {
-        console.warn(
-          `[probe] ${agent.name}: sweeping ${MAX_MODEL_SWEEP} of ${choices.length} models`,
+    return await Promise.race([
+      acp.client({ name: "daedalus-probe" }).connectWith(agentStream(proc), async (agent) => {
+        await agent.request(
+          acp.methods.agent.initialize,
+          {
+            protocolVersion: acp.PROTOCOL_VERSION,
+            clientCapabilities: {
+              fs: { readTextFile: false, writeTextFile: false },
+              session: { configOptions: { boolean: {} } },
+            },
+          },
         );
-      }
-      for (const choice of choices.slice(0, MAX_MODEL_SWEEP)) {
-        try {
-          const set = (await Promise.race([
-            call("session/set_config_option", {
-              sessionId,
-              configId: model.id,
-              value: choice.value,
-            }),
-            failed,
-          ])) as { result?: { configOptions?: ConfigOption[] } };
-          if (set.result?.configOptions) byModel[choice.value] = set.result.configOptions;
-        } catch {
-          // A model the agent will not select is one the menu can fall back on.
+        const created = await agent.request(acp.methods.agent.session.new, {
+          cwd: project.cwd,
+          mcpServers: [],
+        });
+        const configOptions = created.configOptions ?? [];
+
+        /* Walk the model list, asking what each one brings with it. One extra
+           call per model on a process that is already up and about to be
+           discarded — far cheaper than spawning again later, and the only way a
+           draft can know that picking a reasoning model should reveal an effort
+           selector. */
+        const byModel: Record<string, acp.SessionConfigOption[]> = {};
+        const model = configOptions.find((o) => o.category === "model" && o.type === "select");
+        if (model) {
+          const choices = flattenChoices(model);
+          if (choices.length > MAX_MODEL_SWEEP) {
+            console.warn(
+              `[probe] ${profile.agentId}: sweeping ${MAX_MODEL_SWEEP} of ${choices.length} models`,
+            );
+          }
+          for (const choice of choices.slice(0, MAX_MODEL_SWEEP)) {
+            try {
+              const set = await agent.request(acp.methods.agent.session.setConfigOption, {
+                sessionId: created.sessionId,
+                configId: model.id,
+                value: choice.value,
+              });
+              if (set.configOptions) byModel[choice.value] = set.configOptions;
+            } catch {
+              // A model the agent will not select is one the menu can fall back on.
+            }
+          }
         }
-      }
-    }
-    return { modes: created.result?.modes ?? null, configOptions, byModel };
+        return { modes: created.modes ?? null, configOptions, byModel };
+      }),
+      died,
+      deadline,
+    ]);
   } finally {
+    clearTimeout(expire!);
+    // connectWith closes the connection; the process is ours to end.
     proc.kill();
   }
 }

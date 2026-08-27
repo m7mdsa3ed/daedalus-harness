@@ -11,11 +11,11 @@ import path from "node:path";
  * ACP frame ever carries that progress, and the file lives on this machine,
  * where the agent process runs — so the server is the only party that can
  * watch it. This tails the file and hands each new line to the caller, who
- * fans it out to the thread's peers as `_daedalus/task_event`.
+ * fans it out to the thread's peers as a `task_event`.
  *
  * The file itself is the durable store: a watch request answers with
  * everything parsed so far, and only later lines travel over the WebSocket —
- * nothing here touches the frame journal, which would otherwise absorb an
+ * nothing here touches the thread's event log, which would otherwise absorb an
  * unbounded second protocol it never replays correctly.
  */
 

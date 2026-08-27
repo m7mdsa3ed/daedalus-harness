@@ -1,15 +1,51 @@
+import * as React from "react"
+import type * as acp from "@agentclientprotocol/sdk"
 import { CheckIcon, ChevronRightIcon, WrenchIcon, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import {
+  AgentRequestActions,
+  AgentRequestBody,
+  AgentRequestCard,
+  AgentRequestHeader,
+  AgentRequestWell,
+  REQUEST_BUTTON,
+} from "./agent-request"
+import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import type { PendingPermission } from "@/lib/store"
-import { cn } from "@/lib/utils"
 import { KIND_ICONS, KIND_LABELS, ToolCallContent } from "./thread-items"
 
-/* The card answers one question — "may I do this?" — so the thing being done is
+/* ── Permission card ──
+   The card answers one question — "may I do this?" — so the thing being done is
    the headline and the actions are the other thing with weight. Ids, status and
    raw payloads are debugging material: they live behind <details>. The actions
    split spatially: allows on the left where the eye lands, rejects pushed to
-   the far edge, so the destructive choice is never adjacent to the tempting one. */
+   the far edge, so the destructive choice is never adjacent to the tempting one.
+
+   The frame — accent rail, tinted body, tinted action bar, pill buttons — is
+   `agent-request.tsx`, shared with the question card. The two are the same
+   event to a reader (the turn has stopped, you are what it is waiting for) and
+   they should not be two different objects on screen. What is local to this
+   file is only what a permission actually is: the tool, what it wants to touch,
+   and the options the agent offered. */
+
+/**
+ * The option the card gives the primary button to — and, because it is exported,
+ * the one Enter answers with from the transcript (see ThreadView's hotkeys).
+ * One definition, so the keyboard and the card can never disagree about which
+ * "yes" is the default.
+ *
+ * Emphasise the narrow yes over the standing one: an agent that lists
+ * allow_always first shouldn't get the primary button for it by accident.
+ */
+export function primaryPermissionOption(
+  options: acp.RequestPermissionRequest["options"]
+): string | undefined {
+  return (
+    options.find((o) => o.kind === "allow_once")?.optionId ??
+    options.find((o) => o.kind.startsWith("allow"))?.optionId
+  )
+}
 
 function prettyJson(value: unknown): string | null {
   if (value === undefined || value === null) return null
@@ -22,16 +58,26 @@ function prettyJson(value: unknown): string | null {
 
 function CodeBlock({ value }: { value: string }) {
   return (
-    <pre className="max-h-56 overflow-auto rounded-lg border border-border/50 bg-muted/30 px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words text-foreground/90">
+    <pre className="max-h-56 overflow-auto font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words text-foreground/90">
       {value}
     </pre>
+  )
+}
+
+/** The caption-tier heading the tool-call details already use, so a section
+    means the same thing wherever it appears. */
+function Label({ children }: { children: React.ReactNode }) {
+  return (
+    <h4 className="text-[10px] font-semibold tracking-[0.08em] uppercase text-muted-foreground/50">
+      {children}
+    </h4>
   )
 }
 
 function MetaRow({ label, value }: { label: string; value: string }) {
   return (
     <>
-      <dt className="text-muted-foreground">{label}</dt>
+      <dt className="text-muted-foreground/70">{label}</dt>
       <dd className="min-w-0 font-mono break-all">{value}</dd>
     </>
   )
@@ -46,47 +92,36 @@ export function InlineToolApproval({ permission }: { permission: PendingPermissi
   const output = prettyJson(call.rawOutput)
   const locations = call.locations ?? []
   const content = call.content ?? []
-  /* Emphasise the narrow "yes" over the standing one — an agent that lists
-     allow_always first shouldn't get the primary button for it by accident. */
-  const primaryId =
-    request.options.find((o) => o.kind === "allow_once")?.optionId ??
-    request.options.find((o) => o.kind.startsWith("allow"))?.optionId
+  const primaryId = primaryPermissionOption(request.options)
+  /* The reject side starts at the first reject — that button's leading auto
+     margin carries it and everything after it to the opposite edge of the row,
+     so deny never sits beside its tempting affirmative. */
+  const rejectStart = request.options.findIndex((o) => o.kind.startsWith("reject"))
 
   return (
-    <div
-      aria-live="polite"
-      role="group"
-      className="animate-in slide-in-from-bottom-1 fade-in zoom-in-[0.99] overflow-hidden rounded-xl border border-primary/30 bg-card/80 shadow-md shadow-primary/5 backdrop-blur-sm duration-200"
-    >
-      <div className="flex items-start gap-3 p-3.5 pb-3">
-        <span className="relative grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-primary ring-1 ring-primary/15 ring-inset">
-          <KindIcon className="size-4" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-2">
-            <p className="harness-shimmer text-[10px] font-medium tracking-widest text-primary uppercase">
-              Permission needed
-            </p>
-            {/* Same right-hand kind column the transcript's step rows scan on,
-                dressed as a chip now that the card owns this strip of screen. */}
-            <span className="shrink-0 rounded-full border border-border/50 bg-muted/30 px-2 py-px text-[10px] leading-4 tracking-wide text-muted-foreground">
-              {KIND_LABELS[kind] ?? KIND_LABELS.other}
-            </span>
-          </div>
-          <p className="mt-1 font-mono text-[13px] leading-snug break-words">
-            {call.title || call.name || call.toolCallId}
-          </p>
-        </div>
-      </div>
+    <AgentRequestCard>
+      <AgentRequestHeader
+        icon={KindIcon}
+        label="Permission needed"
+        /* The kind keeps the right-hand column the transcript's step rows are
+           scanned on, at caption weight. */
+        aside={
+          <span className="shrink-0 text-[10px] tracking-wide text-muted-foreground/70">
+            {KIND_LABELS[kind] ?? KIND_LABELS.other}
+          </span>
+        }
+      >
+        {call.title || call.name || call.toolCallId}
+      </AgentRequestHeader>
 
-      <div className="space-y-2.5 px-3.5 pb-3.5">
+      <AgentRequestBody>
         {locations.length > 0 && (
           <ul className="flex flex-wrap gap-1">
             {locations.map((location, index) => (
               <li
                 key={`${location.path}-${index}`}
                 title={location.path}
-                className="max-w-full truncate rounded-md border border-border/40 bg-muted/30 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+                className="max-w-full truncate rounded-md bg-background/60 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
               >
                 {location.path}
                 {location.line != null && (
@@ -99,70 +134,89 @@ export function InlineToolApproval({ permission }: { permission: PendingPermissi
 
         {/* What's actually being approved: the diff or output if the agent sent
             one, otherwise the arguments — never nothing. */}
-        {content.length > 0 ? <ToolCallContent content={content} /> : input && <CodeBlock value={input} />}
+        {content.length > 0 ? (
+          <ToolCallContent content={content} />
+        ) : (
+          input && (
+            <AgentRequestWell>
+              <CodeBlock value={input} />
+            </AgentRequestWell>
+          )
+        )}
 
-        <details className="group/details pt-0.5">
-          <summary className="-mx-1 inline-flex w-fit cursor-pointer list-none items-center gap-1 rounded px-1 py-0.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground">
-            <ChevronRightIcon className="size-3 transition-transform group-open/details:rotate-90" />
+        <details className="group/details">
+          <summary className="flex w-fit cursor-pointer list-none items-center gap-1 text-[11px] text-muted-foreground/80 transition-colors hover:text-foreground">
+            <ChevronRightIcon
+              aria-hidden
+              className="size-3 transition-transform group-open/details:rotate-90"
+            />
             Details
           </summary>
-          <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-[11px]">
-            <MetaRow label="Session" value={request.sessionId} />
-            <MetaRow label="Call ID" value={call.toolCallId} />
-            <MetaRow label="Name" value={call.name ?? "—"} />
-            <MetaRow label="Status" value={call.status ?? "pending"} />
-          </dl>
-          {output && (
-            <div className="mt-2.5">
-              <p className="mb-1 text-[10px] font-medium tracking-widest text-muted-foreground uppercase">
-                Raw output
-              </p>
-              <CodeBlock value={output} />
-            </div>
-          )}
-          {content.length > 0 && input && (
-            <div className="mt-2.5">
-              <p className="mb-1 text-[10px] font-medium tracking-widest text-muted-foreground uppercase">
-                Raw input
-              </p>
-              <CodeBlock value={input} />
-            </div>
-          )}
+          <div className="mt-2 space-y-2.5">
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-[11px]">
+              <MetaRow label="Session" value={request.sessionId} />
+              <MetaRow label="Call ID" value={call.toolCallId} />
+              <MetaRow label="Name" value={call.name ?? "—"} />
+              <MetaRow label="Status" value={call.status ?? "pending"} />
+            </dl>
+            {output && (
+              <section className="space-y-1">
+                <Label>Raw output</Label>
+                <AgentRequestWell>
+                  <CodeBlock value={output} />
+                </AgentRequestWell>
+              </section>
+            )}
+            {content.length > 0 && input && (
+              <section className="space-y-1">
+                <Label>Raw input</Label>
+                <AgentRequestWell>
+                  <CodeBlock value={input} />
+                </AgentRequestWell>
+              </section>
+            )}
+          </div>
         </details>
-      </div>
+      </AgentRequestBody>
 
-      <div className="flex flex-wrap items-center gap-1.5 border-t border-border/50 bg-muted/25 px-3.5 py-2.5">
-        {/* The reject side starts at the first reject — that button's leading
-            auto margin carries it and everything after it to the opposite edge
-            of the bar, so deny never sits beside its tempting affirmative. */}
-        {(() => {
-          const rejectStart = request.options.findIndex((o) => o.kind.startsWith("reject"))
-          return request.options.map((option, index) => {
-            const primary = option.optionId === primaryId
-            const rejecting = option.kind.startsWith("reject")
-            const allowing = option.kind.startsWith("allow")
-            const OptionIcon = rejecting ? XIcon : allowing ? CheckIcon : null
-            return (
-              <Button
-                key={option.optionId}
-                size="default"
-                variant={
-                  primary ? "default" : rejecting ? "destructive" : allowing ? "secondary" : "outline"
-                }
-                className={cn(primary && "font-semibold", index === rejectStart && "ms-auto")}
-                onClick={() =>
-                  resolve({ outcome: { outcome: "selected", optionId: option.optionId } })
-                }
-              >
-                {OptionIcon && (
-                  <OptionIcon data-icon="inline-start" className="size-3.5 opacity-80" />
-                )}
-                {option.name}
-              </Button>
-            )
-          })
-        })()}
-      </div>
-    </div>
+      {/* Allows where the eye lands, rejects carried to the far edge by the
+          first reject's auto margin — the destructive choice is never adjacent
+          to the tempting one. */}
+      <AgentRequestActions>
+        {request.options.map((option, index) => {
+          const primary = option.optionId === primaryId
+          const rejecting = option.kind.startsWith("reject")
+          const allowing = option.kind.startsWith("allow")
+          const OptionIcon = rejecting ? XIcon : allowing ? CheckIcon : null
+          return (
+            <Button
+              key={option.optionId}
+              size="sm"
+              variant={
+                primary ? "default" : rejecting ? "destructive" : allowing ? "secondary" : "outline"
+              }
+              className={index === rejectStart ? `${REQUEST_BUTTON} ms-auto` : REQUEST_BUTTON}
+              onClick={() =>
+                resolve({ outcome: { outcome: "selected", optionId: option.optionId } })
+              }
+            >
+              {OptionIcon && <OptionIcon aria-hidden className="size-3.5" />}
+              {option.name}
+              {/* The keys ThreadView binds while a permission is open: the
+                  option's own digit, and Enter for the primary. Shown on the
+                  button they answer — a shortcut nobody can see is a shortcut
+                  nobody uses — and hidden on touch, where there is no keyboard
+                  to hint at. */}
+              {(index < 9 || primary) && (
+                <KbdGroup className="ms-0.5 hidden sm:inline-flex">
+                  {index < 9 && <Kbd className="bg-transparent">{index + 1}</Kbd>}
+                  {primary && <Kbd className="bg-transparent">↵</Kbd>}
+                </KbdGroup>
+              )}
+            </Button>
+          )
+        })}
+      </AgentRequestActions>
+    </AgentRequestCard>
   )
 }

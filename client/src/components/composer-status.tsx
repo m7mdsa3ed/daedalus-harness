@@ -7,20 +7,12 @@ import {
   LoaderCircleIcon,
 } from "lucide-react"
 
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
-import {
-  Item,
-  ItemContent,
-  ItemDescription,
-  ItemGroup,
-  ItemMedia,
-} from "@/components/ui/item"
 import { Logo } from "@/components/ui/logo"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import type { PlanItem, ThreadState } from "@/lib/store"
@@ -183,7 +175,9 @@ export function ComposerPlan({ thread }: { thread: ThreadState }) {
         render={
           <button
             type="button"
-            className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left transition-colors hover:bg-accent/40"
+            /* px-2: the strip's own gutter, the one DraftScopeRow sits in — a
+               row on the shelf should start where the other row starts. */
+            className="flex w-full items-center gap-2 px-2 py-1.5 text-left transition-colors hover:bg-accent/40"
           />
         }
       >
@@ -205,53 +199,77 @@ export function ComposerPlan({ thread }: { thread: ThreadState }) {
         >
           {current?.content ?? "All steps complete"}
         </span>
-        <Badge variant="secondary" className="shrink-0 font-mono tabular-nums">
-          {completed}/{total}
-        </Badge>
-        <ChevronDownIcon
-          aria-hidden
-          className={cn(
-            "size-3.5 shrink-0 text-muted-foreground transition-transform duration-200",
-            open && "rotate-180"
-          )}
-        />
+        {/* The count and the chevron are one cluster, not two things that
+            happened to end up next to each other: they share a tighter gap than
+            the row's, and the chevron sits in a fixed square so it is on the
+            same right edge whether the count is 1/9 or 12/40. */}
+        <span className="flex shrink-0 items-center gap-1.5">
+          {/* Plain caption text, not a filled badge: the strip has no chips on
+              it anywhere else, and the ring to the left is already the loud way
+              of saying how far along this is. */}
+          <span className="text-[11px] tabular-nums text-muted-foreground/70">
+            {completed}/{total}
+          </span>
+          <span className="grid size-4 place-items-center">
+            <ChevronDownIcon
+              aria-hidden
+              className={cn(
+                "size-3.5 text-muted-foreground transition-transform duration-200",
+                open && "rotate-180"
+              )}
+            />
+          </span>
+        </span>
         <span className="sr-only">{open ? "Hide steps" : "Show all steps"}</span>
       </CollapsibleTrigger>
       <CollapsibleContent className="harness-collapse">
-        {/* A twenty-step plan must not push the composer off screen: the list
-            caps out and scrolls, so the shelf stays a shelf. */}
-        <ItemGroup className="max-h-56 gap-0.5 overflow-y-auto border-t border-border/40 p-1 overscroll-contain">
+        {/* Full height, no inner scroll. A plan is read in one piece — which
+            step follows which is most of the information in it — and a list
+            that scrolls inside a shelf that is itself inside a scrolling page
+            gives you two wheels doing different things over one line of text.
+            The transcript above is the flexible track (`minmax(0,1fr)`), so an
+            open plan takes its room from the conversation and gives it straight
+            back on collapse; the composer never moves. It is opened by hand and
+            closes the same way, so a long one is on screen because it was
+            asked for.
+
+            A plan step IS a transcript step, so it is built like one: a
+            `size-3.5` status icon on the first line, `text-xs leading-6` beside
+            it, nothing boxed. The Item kit gave every row its own padded,
+            rounded, sometimes-filled surface — a list of little cards stacked
+            inside a shelf that is itself inside the composer, three frames deep
+            for one line of text each. */}
+        <ul className="space-y-0.5 border-t border-border/40 px-2 py-1.5">
           {plan.entries.map((entry, index) => (
-            <Item
-              key={`${entry.content}-${index}`}
-              size="xs"
-              variant={entry.status === "in_progress" ? "muted" : "default"}
-              className="items-start gap-2 rounded-lg py-1.5"
-            >
-              <ItemMedia variant="icon" className="mt-px">
+            <li key={`${entry.content}-${index}`} className="flex items-start gap-2 text-xs">
+              {/* `size-6`, the ring's width, so a step's icon sits under the
+                  ring's centre and its text starts on the same column as the
+                  current-step line above it. Without the box the list was
+                  indented ten pixels left of the row it expands from. */}
+              <span className="grid size-6 shrink-0 place-items-center">
                 {entry.status === "completed" ? (
-                  <CheckCircle2Icon className="size-3.5 text-primary" />
+                  <CheckCircle2Icon aria-hidden className="size-3.5 text-primary" />
                 ) : entry.status === "in_progress" ? (
-                  <LoaderCircleIcon className="size-3.5 animate-spin text-primary" />
+                  <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin text-primary" />
                 ) : (
-                  <CircleDashedIcon className="size-3.5 text-muted-foreground/60" />
+                  <CircleDashedIcon aria-hidden className="size-3.5 text-muted-foreground/60" />
                 )}
-              </ItemMedia>
-              <ItemContent>
-                <ItemDescription
-                  className={cn(
-                    "line-clamp-none text-xs",
-                    entry.status === "completed"
-                      ? "line-through opacity-60"
-                      : "text-foreground"
-                  )}
-                >
-                  {entry.content}
-                </ItemDescription>
-              </ItemContent>
-            </Item>
+              </span>
+              <span
+                className={cn(
+                  "min-w-0 flex-1 leading-6",
+                  entry.status === "completed"
+                    ? "text-muted-foreground line-through opacity-70"
+                    : entry.status === "in_progress"
+                      ? "text-foreground"
+                      : "text-muted-foreground"
+                )}
+              >
+                {entry.content}
+              </span>
+            </li>
           ))}
-        </ItemGroup>
+        </ul>
       </CollapsibleContent>
     </Collapsible>
   )

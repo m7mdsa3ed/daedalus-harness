@@ -11,7 +11,7 @@ import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "driz
  *     that nothing kept honest, so deleting a library entry left its id behind
  *     in every project that referenced it and the readers filtered the corpses
  *     out at spawn time. They are join tables now, and the cascade does it.
- *   - **The journal is not in memory.** It was an unbounded array per live
+ *   - **The event log is not in memory.** It was an unbounded array per live
  *     session, which is what made a long thread expensive to hold and its
  *     transcript expensive to fetch. It is a table keyed by (session, seq), so
  *     the tail costs nothing to keep and a replay is a range scan.
@@ -163,24 +163,31 @@ export const sessions = sqliteTable(
   (t) => [index("sessions_live").on(t.deletedAt, t.createdAt)],
 );
 
-export const journal = sqliteTable(
-  "journal",
+/**
+ * A thread's durable event log — the same events the live socket sends.
+ *
+ * This used to be raw ACP frames, which forced the client to carry a second
+ * parser: one for live `session/update` notifications and another that sniffed
+ * JSON-RPC out of the replayed log. Now live and replay are the same events, so
+ * they take the same path on the other end and there is one parser.
+ */
+export const sessionEvents = sqliteTable(
+  "session_events",
   {
     sessionId: text("session_id")
       .notNull()
       .references(() => sessions.id, { onDelete: "cascade" }),
-    /** Position in this session's frame log. This is what `cursor` indexes —
-        it is monotonic and survives the in-memory tail rolling. */
+    /** Position in this session's event log. This is what `cursor` indexes —
+        it is monotonic and a replay is a range scan on (session_id, seq). */
     seq: integer("seq").notNull(),
-    dir: text("dir", { enum: ["a", "c"] }).notNull(),
-    line: text("line").notNull(),
-    /** Agent->client request id, JSON-encoded because it may be a string or a
-        number. Replay skips requests another peer already answered. */
-    reqId: text("req_id"),
-    /** Agent->client response. Ids are per-peer, so replay skips these. */
-    res: integer("res", { mode: "boolean" }).notNull(),
+    /** The event's discriminant: "update" | "session_config" | "turn_started" |
+        "turn_ended". It duplicates `payload.ev`, which is the point — the table
+        stays readable in db:studio and filterable without parsing JSON. */
+    kind: text("kind").notNull(),
+    /** The event exactly as the socket sends it (see src/protocol.ts). */
+    payload: text("payload", { mode: "json" }).$type<unknown>().notNull(),
   },
-  (t) => [uniqueIndex("journal_seq").on(t.sessionId, t.seq)],
+  (t) => [uniqueIndex("session_events_seq").on(t.sessionId, t.seq)],
 );
 
 export const pushTokens = sqliteTable("push_tokens", {

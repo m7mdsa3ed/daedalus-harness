@@ -3,6 +3,8 @@
 // servers can be stored at once; one of them is active (switched in the
 // sidebar), and the active one is what every request in the app talks to.
 
+import { uuid } from "./uuid"
+
 export interface ServerSettings {
   id: string
   name: string
@@ -62,7 +64,7 @@ function write(store: ServerStore): void {
 }
 
 function newId(): string {
-  return crypto.randomUUID()
+  return uuid()
 }
 
 export function loadServers(): ServerSettings[] {
@@ -331,7 +333,3 @@ export interface SessionMeta {
   configChoices?: Record<string, string | boolean>
 }
 
-export interface JournalEntry {
-  d: "a" | "c"
-  line: string
-}

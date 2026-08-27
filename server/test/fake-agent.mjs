@@ -40,6 +40,12 @@ let configOptions = [
   },
 ];
 
+/* What the client claimed at initialize. Compaction updates are the one thing
+   here an agent is forbidden to send unquestioned — the spec says only when the
+   client advertised `session.compaction` — so this is stored and honoured
+   rather than assumed, which is what makes the capability itself testable. */
+let clientCapabilities = {};
+
 /** Permission request id -> the prompt id whose turn is waiting on it. */
 const parkedTurns = new Map();
 let permCounter = 0;
@@ -99,7 +105,10 @@ function promptUpdates() {
 
 createInterface({ input: process.stdin }).on("line", (line) => {
   const msg = JSON.parse(line);
-  if (msg.method === "initialize") out({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } });
+  if (msg.method === "initialize") {
+    clientCapabilities = msg.params?.clientCapabilities ?? {};
+    out({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } });
+  }
   else if (msg.method === "session/new")
     out({
       jsonrpc: "2.0",
@@ -181,6 +190,33 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     if (asked.includes("crash")) {
       process.stderr.write("Fatal: agent died holding the turn\n");
       setTimeout(() => process.exit(3), 20);
+      return;
+    }
+    /* A prompt mentioning "compact" runs a context compaction: the in_progress
+       upsert, the summary streamed as chunks, then a terminal update carrying
+       neither `summary` nor `error` — the shape that proves the client patches
+       instead of replacing, since treating the omission as empty would wipe the
+       summary it just streamed. Silent when the client never claimed the
+       capability, exactly as the spec requires. */
+    if (asked.includes("compact")) {
+      if (clientCapabilities.session?.compaction) {
+        const send = (update) =>
+          out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "acp-123", update } });
+        send({ sessionUpdate: "compaction_update", compactionId: "c1", status: "in_progress" });
+        for (const line of ["Rewrote the transcript step rows.", "Left the rail geometry alone."]) {
+          send({
+            sessionUpdate: "compaction_summary_chunk",
+            compactionId: "c1",
+            content: { type: "text", text: line },
+          });
+        }
+        send({ sessionUpdate: "compaction_update", compactionId: "c1", status: "completed" });
+      }
+      out({
+        jsonrpc: "2.0",
+        id: msg.id,
+        result: { stopReason: "end_turn", usage: { totalTokens: 40 } },
+      });
       return;
     }
     // One of every step kind, in order — this is what the transcript UI is

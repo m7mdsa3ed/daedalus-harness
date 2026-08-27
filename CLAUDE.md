@@ -2,33 +2,40 @@
 
 Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
 
-- `server/` — Node 22 + Hono + ws. Thin bridge: spawns ACP agent processes per thread
-  (agent registry, `{apiKey}`/`{baseUrl}`/`{model}`/`{cwd}` placeholders filled from profile +
-  project) and pipes raw NDJSON between agent stdio and the client WebSocket.
-  Owns **profiles** (agent config: credentials/models, keys redacted from the API),
-  **projects** (workspace: cwd + linked MCP/skill ids), the **library** of reusable MCP
-  servers/skills, bearer-token auth, the frame journal (reconnect/replay), and FCM push.
+- `server/` — Node 22 + Hono + ws. **The ACP client lives here.** It spawns an agent
+  process per thread (agent registry, `{apiKey}`/`{baseUrl}`/`{model}`/`{cwd}` placeholders
+  filled from profile + project) and drives the protocol over its stdio with
+  `@agentclientprotocol/sdk` — one `AcpBridge` (`src/acp-bridge.ts`) per process, owning the
+  handshake, `session/new`-vs-`session/load`, prompts, config, and the permission and
+  elicitation requests the agent blocks on. What reaches the browser is *derived state*: the
+  small command/event protocol in `src/protocol.ts`, over the same WebSocket. Also owns
+  **profiles** (agent config: credentials/models, keys redacted from the API), **projects**
+  (workspace: cwd + linked MCP/skill ids), the **library** of reusable MCP servers/skills,
+  bearer-token auth, the event log (reconnect/replay), and FCM push.
   `data/` holds secrets — gitignored, never commit.
 - **Storage is SQLite via Drizzle** (`server/src/db/`), not JSON files.
   `data/daedalus.db`, opened with better-sqlite3 — chosen over `node:sqlite`/libsql because
   it is what Drizzle's Node driver binds to *and* it is synchronous, and `getProfile`/
-  `getAgent`/`listProjects` are called from sync paths (`spawnProc` builds a child's env from
+  `getAgent`/`listProjects` are called from sync paths (`spawnAgent` builds a child's env from
   all three). Every query goes through the `db` exported by `db/index.ts`, so the driver is
   swappable in one file. Schema in `db/schema.ts`; migrations are generated
   (`pnpm db:generate`) into `server/drizzle/` — **committed, and applied at boot** by
   `migrate()` — never `drizzle-kit push`. A pre-SQLite install is imported once on first boot
   and its files kept as `*.json.imported` (`importLegacyJson`). Two things the JSON could not
   express: a project's MCP/skill links are **join tables with `ON DELETE CASCADE`**, so a
-  dangling id cannot exist and nothing filters for one any more; and the **frame journal is a
-  table** keyed `(session_id, seq)` rather than an unbounded in-memory array, so `cursor` is a
-  monotonic seq, a replay is a range scan, and a long thread costs no RAM. `data/config.json`
+  dangling id cannot exist and nothing filters for one any more; and the **event log is a
+  table** (`session_events`) keyed `(session_id, seq)` rather than an unbounded in-memory
+  array, so `cursor` is a monotonic seq, a replay is a range scan, and a long thread costs no
+  RAM. `data/config.json`
   is the deliberate holdout — bootstrap (host/port/token/FCM path), hand-editable, and needed
   before any database exists.
 - `client/` — Vite + React 19 + Tailwind v4 + shadcn (Base UI, NOT Radix: compose triggers
   with `render={...}`, not `asChild`; `SelectValue` needs explicit children for labels).
-  The browser is the real ACP client via `@agentclientprotocol/sdk` over
-  `experimental/ws-client`. State: one reducer in `src/lib/store.tsx`; side effects in
-  `src/lib/actions.ts`; ACP connection per thread in `src/lib/acp.ts`. Color palettes live in
+  The browser does **not** speak ACP — the server does. `src/lib/thread-socket.ts` is a plain
+  WebSocket that sends the commands in `server/src/protocol.ts` and dispatches its events;
+  `@agentclientprotocol/sdk` is a **devDependency**, imported type-only (the payloads are
+  still ACP-shaped because the transcript renders them). State: one reducer in
+  `src/lib/store.tsx`; side effects in `src/lib/actions.ts`. Color palettes live in
   `src/styles/themes.css` (one `[data-color-theme]` block per palette, light +
   dark), not in `index.css`; user-made palettes are that same token set written
   into a runtime `<style>` by `src/lib/custom-themes.ts` and edited in
@@ -59,24 +66,58 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   `seedAgents()` inserts only the ones this install has never been offered, so **an agent
   added in a later release reaches installs that already have rows** (the old seed-if-empty
   rule could not). It backfills fields a release *adds* (e.g. `spawnCategories`) onto older
-  built-in rows but never touches name/command/args/env — those are the user's.
-- Server: `cd server && pnpm dev` (prints token), `pnpm test` (pipe self-check, fake agent).
+  built-in rows but never replaces name/command/args/env — those are the user's. A release
+  that adds a single key *inside* one of them (the codex catalog key in `CODEX_CONFIG`) says
+  so with a `backfill` on the seed entry, which merges that one key and leaves the rest; it
+  also drops that agent's cached probe answers, since what the key adds is what the probe
+  reports.
+- Server: `cd server && pnpm dev` (prints token), `pnpm test` (bridge self-check against the
+  fake agent: handshake, event log, replay, multi-peer, failure paths).
 - Schema change: edit `server/src/db/schema.ts`, run `pnpm db:generate`, commit the SQL in
   `server/drizzle/`. `pnpm db:studio` browses the database.
 - Client: `cd client && pnpm dev` / `pnpm build` / `pnpm electron:dev` / `pnpm electron:dist:win`.
+- **The PWA needs https, so dev has `pnpm dev:tunnel`.** No secure context means no
+  service worker and no install prompt, and `localhost` is one where a LAN IP is not —
+  which is why plain `pnpm dev` gets you a browser shortcut on a phone, not an app.
+  `client/scripts/dev-tunnel.mjs` puts Cloudflare quick tunnels in front instead of
+  issuing a certificate every device would have to be taught to trust. It tunnels
+  **both** halves, because an https page may not open `ws://` to the server — the
+  browser blocks that as mixed content — and prints the pair plus the token. It does
+  not start the server; that stays `cd server && pnpm dev`. `DAEDALUS_TUNNEL=1` is what
+  the tunnel tells `vite.config.ts`, whose only effect is HMR: the client derives its
+  socket from the dev server's port, so behind a tunnel it needs `wss` on 443 told to
+  it. `allowedHosts: true` already covers the random hostname. That hostname changes
+  every run, so the URL saved on a device goes stale — `DAEDALUS_CLIENT_URL` /
+  `DAEDALUS_SERVER_URL` skip the quick tunnel for a named one that doesn't. While it
+  runs both ports are on the public internet with only the bearer token in front.
 - Typecheck: `pnpm exec tsc -b` (client), `pnpm exec tsc --noEmit` (server).
 - `tsconfig` uses `erasableSyntaxOnly` — no TS constructor parameter properties.
 - eslint currently crashes at startup (typescript-eslint vs typescript 7 — pre-existing).
 
 ## Conventions
 
-- Protocol truth lives at the endpoints. The server reads ACP only as far as multiplexing
-  demands: it sniffs `session/new` / `session/prompt` / `session/request_permission` for
-  metadata, and arbitrates JSON-RPC ids so several clients can share one agent process —
-  client request ids are rewritten to session-unique ones and responses routed back to the
-  peer that asked; agent->client requests fan out to every peer and the first answer wins.
-  Peers stay in sync through the `_daedalus/*` bridge notifications (`turn_ended`,
-  `peer_prompt`, `request_answered`). It still never interprets `session/update` payloads.
+- **The server is the ACP client; the browser is a subscriber.** One `AcpBridge` per agent
+  process holds the SDK connection over the child's stdio (`ndJsonStream` on
+  `Writable.toWeb(stdin)` / `Readable.toWeb(stdout)` — which takes exclusive ownership of
+  stdout, so nothing else may attach a `data` listener). N browser sockets are peers of the
+  SessionManager, not of the agent, which is why there is no id arbitration left: the server
+  mints one ACP request and answers the one peer that asked. Commands carry a per-socket
+  `id` and get exactly one `reply`; events fan out, minus the peer whose own action caused
+  them. Four are journaled and replayed on attach — `update`, `session_config`,
+  `turn_started`, `turn_ended` — and the rest are live-only. A permission or elicitation is
+  **not** journaled: it lives in `bridge.pending` for exactly as long as the agent is blocked
+  on it, so a peer attaching mid-question is handed what is still open and an answered
+  request simply is not there. First answer wins; a loser is told directly so its card still
+  clears. `settleAll` answers everything when the process dies, because the agent's promise
+  is held here now and nothing else would ever settle it.
+  The one thing the server still does not interpret is a `session/update` payload — it
+  forwards them whole.
+- **Live and replay are one code path.** `attached` and `caught_up` bracket the replay, and
+  everything between them is the same event the live socket sends, so the client has no
+  second parser and no cursor to keep in step (it always attaches from 0). The bracket is
+  load-bearing: without it a reload re-fires a desktop — and, with nobody watching, a push —
+  notification for every turn in the thread. `session_config` carries **absolute** state,
+  which is what makes it safe to journal and broadcast at once; never make it a delta.
 - ACP schema is the source for modes/config options/usage — render generically, don't
   hardcode per-agent knowledge in the client.
 - **The profile decides who owns the model.** A profile that lists `models[]` has
@@ -89,18 +130,33 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   stays live** in either case. This exists because an agent pointed at a gateway advertises
   its own catalog, which the endpoint does not serve — codex derives its effort list from
   the *current model's* metadata, so an unknown gateway model id yields no effort selector
-  at all. `lib/session-options.ts` does the sorting from the ACP `category` field; unknown
+  at all. **The profile's catalog is therefore written out as the agent's catalog** where an
+  agent will read one: codex looks a model up by *slug* in its built-in list and an id it has
+  never heard of gets invented metadata (`Model metadata for … not found. Defaulting to
+  fallback metadata`) — a made-up context window, so compaction fires at the wrong point, and
+  no reasoning levels, which is that missing effort selector. `model_context_window` does not
+  silence it; only `model_catalog_json` does, and it takes a *path*. So
+  `server/src/model-catalog.ts` writes `data/model-catalogs/<profileId>.json` on spawn and
+  `{codexModelCatalog}` in the env template points at it. An entry carries far more than
+  numbers (`base_instructions` is codex's whole system prompt), so none is invented: `codex
+  debug models` prints the built-in catalog and each entry is its flagship model with the
+  identity, context window and efforts swapped. No `codex` on PATH, or a profile with no
+  `models[]`, means no file, an empty placeholder and the key pruned away — the agent keeps
+  its own catalog. `lib/session-options.ts` does the sorting from the ACP `category` field; unknown
   and missing categories fall through to "Agent options" rather than being dropped, and an
   agent advertising no model selector gets no Model row — the client never invents one.
   **A profile changes the model and the effort, and nothing else.** It is credentials and a
-  catalog, not a way of working, so a respawn must not reset how the agent was configured:
-  `respawnThread` captures the permission mode and every non-model/effort option before it
-  closes the old process and `restoreSettings` puts them back once `session/load` has
-  answered, skipping whatever the new session already agrees with. Both menus read Profile →
-  Model → Effort, with mode and the rest under "Agent options", because the profile decides
-  what the two lists below it can contain. Profile changes always confirm (new credentials,
-  new endpoint, new catalog; the model does not carry over). After a live change `PATCH /api/sessions/:id` keeps `session.model`/
-  `effort` in step so reviving a retired thread rebuilds the right env.
+  catalog, not a way of working, so a respawn must not reset how the agent was configured.
+  `POST /api/sessions/:id/respawn` is therefore **atomic and server-side**: it captures the
+  permission mode and every non-model/effort option from the live bridge, kills the process,
+  spawns, `session/load`s, and puts the settings back before it answers, skipping whatever
+  the new session already agrees with (`AcpBridge.captureRestoreState` / `applyRestore`).
+  Driving that from the browser is what used to leave a half-restored thread when a tab
+  closed halfway through. Both menus read Profile → Model → Effort, with mode and the rest
+  under "Agent options", because the profile decides what the two lists below it can contain.
+  Profile changes always confirm (new credentials, new endpoint, new catalog; the model does
+  not carry over). After a live change the server records `session.model`/`effort` itself —
+  it knows the option's `category` — so reviving a retired thread rebuilds the right env.
 - **Every agent gets a virtual "Default" profile**, listed first. `defaultProfileFor`
   synthesizes `default:<agentId>` — no credentials and, deliberately, no `models`, which is
   what hands model and effort back to the agent per the rule above. It is offered for every
@@ -119,8 +175,8 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   database**, keyed `profileId:agentId:cwd` (cwd is in the key because it changes the answer),
   with an in-flight map so two tabs asking at once spawn one agent, not two — so it is one
   spawn ever, not one per page-load, and `?refresh=1` is the escape hatch for an upgraded
-  binary or a changed gateway catalog. Picks are held on the draft and replayed with `session/set_config_option` right
-  after `session/new` (`createSession`).
+  binary or a changed gateway catalog. Picks are held on the draft, sent as `configChoices`
+  in `POST /api/sessions`, and applied by the bridge right after `session/new`.
   **Which options exist can depend on which model is selected** — opencode reveals `effort`
   only for its reasoning models, in the `set_config_option` *response*, with no
   `config_option_update` notification. So the probe does not just snapshot the current set:
@@ -133,7 +189,8 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   change, not a round trip: `actions.newDraftThread` mints a UUID, puts a `draft: true`
   `SessionMeta` in the store and navigates. `POST /api/sessions` (which accepts that id,
   rejecting non-UUIDs and collisions) is not called — and no agent process is spawned —
-  until the first message, in `actions.send`. Everything that treats the server's list as
+  until the first message, in `actions.send` — and that POST does not answer until the
+  handshake is done, so a 201 means the thread is genuinely ready. Everything that treats the server's list as
   the authority has to let drafts through: the `sessions` reducer **merges** instead of
   replacing, `refreshSessions` prunes against server ids **plus** draft ids, and
   `connectThread` returns early for a draft since there is nothing to connect to. A route
@@ -142,41 +199,76 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   docks it on the first message — both driven by one `data-empty` flag on a grid whose
   spacer row animates `1fr` → `0fr`.
 - **A capability we don't advertise is a feature the agent turns off.** The `initialize`
-  handshake in `lib/acp.ts` is not a formality: claude-agent-acp puts `AskUserQuestion` on
+  handshake in `server/src/acp-bridge.ts` is not a formality: claude-agent-acp puts `AskUserQuestion` on
   the session's `disallowedTools` unless the client claims `elicitation.form`, so without it
   the model cannot ask a question at all — not badly, at all. Same bargain buys codex's
   boolean config options (`session.configOptions.boolean`) and codex's plans (`plan`).
-  Questions arrive as `elicitation/create`, NOT as a permission request: a form-mode request
+  **Context compaction is the same bargain and the quietest one**
+  (`session.compaction`): an agent that runs out of window compacts either way, but without
+  the claim it must keep `compaction_update`/`compaction_summary_chunk` to itself, so the
+  history simply stops being what the agent can see and the transcript says nothing. The
+  updates are ordinary `session/update`s — journaled, replayed, forwarded whole like the
+  rest — so the whole client side is one thread item: `CompactionItem` in `lib/store.tsx`,
+  an upsert keyed `compaction:<compactionId>` whose **first** update fixes its place in the
+  transcript. `summary` and `error` have *patch* semantics (omitted = unchanged, `null` or
+  `[]` = cleared, a value = replaced) and `compaction_summary_chunk` appends to the summary,
+  which is why absent and empty must not be conflated: agents stream the summary in chunks
+  and send the terminal `completed` with no `summary` at all. There is no compaction RPC —
+  asking for one is the agent's own `/compact` slash command, which already rides the normal
+  prompt path. Questions arrive as `elicitation/create`, NOT as a permission request: a form-mode request
   whose `requestedSchema` is a JSON Schema of primitive properties. Reading that schema —
   titled `oneOf` enums, `items.anyOf` multi-selects, and the two `_meta` conventions the
   AskUserQuestion bridges ride (`_askUserQuestionCustomAnswer`, which pairs a free-text
   "Other" field to a select field, and `_claude/askUserQuestionOption`, which carries an
   option's preview) — is quarantined in `lib/elicitation.ts`, the way `lib/tools.ts`
   quarantines tool-call shapes. `components/elicitation-form.tsx` renders it as a
-  `ui/questionnaire` stepper, one field per step. Narrow the request with the SDK's
-  `CreateElicitationRequest.isForm`/`isUrl` guards, never `mode === "form"`: the union's
-  custom variant carries the same tag and the guards validate the payload too. Answers are
-  `accept` with content keyed by field; **`decline` is a real answer** (the bridges read it
-  as "the user skipped" and the turn continues) where `cancel` aborts the tool call. The
-  lifecycle mirrors `permission` exactly — one pending slot on `ThreadState`, cleared by
-  `resolve`, settled as `cancel` when `_daedalus/request_answered` says another device
-  answered first, and pushed by the server (`onElicitationRequest`) when no peer is attached.
+  `ui/questionnaire` stepper, one field per step. Narrow the request with
+  `isFormElicitation`/`isUrlElicitation`, never `mode === "form"`: the union's custom variant
+  carries the same tag, so the guards check the payload instead. Answers are `accept` with
+  content keyed by field; **`decline` is a real answer** (the bridges read it as "the user
+  skipped" and the turn continues) where `cancel` aborts the tool call. The lifecycle mirrors
+  `permission` exactly — one pending slot on `ThreadState` keyed by the server's `requestId`,
+  cleared by `resolve`, dropped when `request_answered` says somebody else got there first,
+  and pushed by the server (`onElicitationRequest`) when no peer is attached. A URL flow that
+  completes is accepted **server-side** on `elicitation/complete`: the answer is already in,
+  and waiting for a browser meant an agent with no peer attached blocked forever.
+- **A key that is bound is a key that is listed.** `client/src/lib/shortcuts.ts` holds
+  the chord vocabulary (`mod` = ⌘ or Ctrl), the matcher, and the `SHORTCUTS` table that
+  `components/shortcuts-help.tsx` (`?` / `⌘/`, and a command-palette entry) prints — so a
+  binding nobody can discover is a bug in one file, not two. `hooks/use-hotkey.ts` binds on
+  `window` with the handler in a ref and skips an event another handler already claimed
+  (`defaultPrevented`), which is how a local owner — the slash menu's arrows, a dialog's
+  Escape — always beats a global. Scope is the real decision: global keys are unguarded,
+  **thread keys are gated on `currentThreadId(location)`** because the dock keeps every
+  opened transcript mounted and only the routed one is in front, and composer keys stay on
+  the textarea where the caret is what they are about. `ThreadView.useThreadKeys` owns the
+  whole Escape chain in one place — skip the elicitation, else reject the permission (only
+  if the agent offered a reject), else stop the turn — rather than letting each card bind
+  it and race. Digits/Enter answer a permission only when `isTypingTarget`/
+  `isInteractiveTarget` say nothing else owns the key. Prompt history (↑/↓) reads the
+  transcript's own user turns: no second store, nothing to persist, and nothing that can
+  disagree with what is on screen.
 - **Errors are never `String(err)`.** `client/src/lib/errors.ts` normalizes everything
-  thrown (ACP `RequestError`, `ApiError` from `lib/settings`, network failures, aborts)
+  thrown (`AgentError` from `lib/thread-socket`, the plain `{code, message, data}` on a
+  `turn_ended`, `ApiError` from `lib/settings`, network failures, aborts)
   into `{ title, detail }`: `describeError` for the values, `reportError(err, context)`
   for the toast, where `context` names the action ("Couldn't save the profile") and the
   normalized title/detail go underneath. Failures that belong to a thread go IN that
   thread instead — `actions.recordError` appends an `error` ThreadItem (title / reason /
   folded detail / `retryText` for a Retry button), which survives longer than a toast and
-  is rebuilt from the journal on reload. `installGlobalErrorReporting()` in `main.tsx` is
+  comes back on reload from the journaled `turn_ended` (which carries the prompt text, so
+  the rebuilt row still offers Retry). `installGlobalErrorReporting()` in `main.tsx` is
   the floor under both.
-- The server splices the agent's stderr into JSON-RPC errors on the way out
+- The server splices the agent's stderr into errors on the way out
   (`SessionManager.enrichError`, `data.stderr`) — "Internal error" is a code, not an
-  explanation, and the explanation was only ever on stderr. It also answers in-flight
-  requests when the agent dies (`failPendingRequests`) rather than letting them hang, and
+  explanation, and the explanation was only ever on stderr. When the process dies mid-turn
+  the SDK rejects instantly with "ACP connection closed", which explains nothing while the
+  stderr that does has not finished arriving — so the bridge **holds** that turn until
+  `close(reason)` (called after `EXIT_DRAIN_MS`) has both the reason and the output.
   `GET /api/sessions/:id/stderr` exposes the tail. `app.onError` turns every route throw
   into the `{ error }` shape the client already parses.
 - Test agent: `server/test/fake-agent.mjs` (registered as `fake-echo`), drives the UI without
-  credentials.
+  credentials. It answers raw NDJSON, which the SDK on the other end is happy with — it
+  validates inbound `session/update` params but not responses.
 - No visual testing: don't drive the UI with Playwright/browser automation or take screenshots
   to check work. Verify with `tsc -b` and reasoning about the code; the user checks the UI.

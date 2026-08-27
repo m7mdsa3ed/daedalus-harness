@@ -36,6 +36,20 @@
       "when": 1787792111492,
       "tag": "0004_flowery_viper",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1787794405941,
+      "tag": "0005_silent_retro_girl",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1787794412821,
+      "tag": "0006_mighty_deadpool",
+      "breakpoints": true
     }
   ]
 }

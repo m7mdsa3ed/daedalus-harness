@@ -1,8 +1,8 @@
 import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
-import { CreateElicitationRequest } from "@agentclientprotocol/sdk"
-import { AcpThread, liveThreads, type ConnectOptions, type ThreadCallbacks } from "./acp"
+import { liveThreads, ThreadSocket, type ThreadCallbacks } from "./thread-socket"
 import { describeError, markReported } from "./errors"
+import { uuid } from "./uuid"
 import {
   alreadyAsked,
   loadAgentOptions,
@@ -20,7 +20,6 @@ import { pruneViewOptions } from "./view-options"
 import {
   api,
   type AgentDef,
-  type JournalEntry,
   type McpServerDef,
   type Profile,
   type Project,
@@ -29,8 +28,7 @@ import {
   type SkillDef,
   type CommandDef,
 } from "./settings"
-import { partitionSessionOptions } from "./session-options"
-import { emptyThread, rebuildThread, useStore } from "./store"
+import { emptyThread, useStore } from "./store"
 
 const RECONNECT_MAX_ATTEMPTS = 5
 const RECONNECT_BASE_DELAY_MS = 500
@@ -121,61 +119,62 @@ export function useActions(settings: ServerSettings) {
     const titleOf = (id: string) =>
       stateRef.current.sessions.find((s) => s.id === id)?.title || "Untitled thread"
 
-    /* `owner` is filled in by startThread the moment the thread exists — see the
+    /* `owner` is filled in by startThread the moment the socket exists — see the
        guard in onStatus. */
-    const makeCallbacks = (id: string, owner: { thread?: AcpThread }): ThreadCallbacks => ({
-      onUpdate: (notification, replaying) =>
-        dispatch({ type: "update", id, update: notification.update, allowUserChunks: replaying }),
-      onPermission: (request) =>
-        new Promise((resolve) => {
-          notifyThreadEvent("permissionNeeded", id, titleOf(id), request.toolCall?.title ?? undefined)
-          dispatch({
-            type: "permission",
-            id,
-            permission: {
-              request,
-              resolve: (response) => {
-                dispatch({ type: "permission", id, permission: null })
-                resolve(response)
-              },
+    const makeCallbacks = (id: string, owner: { thread?: ThreadSocket }): ThreadCallbacks => ({
+      onUpdate: (update, historyReplay) =>
+        dispatch({ type: "update", id, update, allowUserChunks: historyReplay }),
+      /* The agent is blocked on this question until somebody answers it. The
+         server holds its promise now, so `resolve` is a message rather than a
+         callback: it names the request the server minted, which is also how a
+         peer's answer is matched against this card. */
+      onPermission: (requestId, request) => {
+        notifyThreadEvent("permissionNeeded", id, titleOf(id), request.toolCall?.title ?? undefined)
+        dispatch({
+          type: "permission",
+          id,
+          permission: {
+            requestId,
+            request,
+            resolve: (response) => {
+              dispatch({ type: "permission", id, permission: null })
+              owner.thread?.answerPermission(requestId, response)
             },
-          })
-        }),
-      onElicitation: (request) =>
-        new Promise((resolve) => {
-          notifyThreadEvent("questionAsked", id, titleOf(id), request.message)
-          dispatch({
-            type: "elicitation",
-            id,
-            elicitation: {
-              request,
-              resolve: (response) => {
-                dispatch({ type: "elicitation", id, elicitation: null })
-                resolve(response)
-              },
+          },
+        })
+      },
+      onElicitation: (requestId, request) => {
+        notifyThreadEvent("questionAsked", id, titleOf(id), request.message)
+        dispatch({
+          type: "elicitation",
+          id,
+          elicitation: {
+            requestId,
+            request,
+            resolve: (response) => {
+              dispatch({ type: "elicitation", id, elicitation: null })
+              owner.thread?.answerElicitation(requestId, response)
             },
-          })
-        }),
-      // A URL-mode elicitation finished on the far side of the browser tab it
-      // opened in: the agent says so, and the accept is the whole answer.
-      onElicitationComplete: (elicitationId) => {
-        const pending = stateRef.current.threads[id]?.elicitation
-        if (!pending) return
-        const request = pending.request
-        if (
-          CreateElicitationRequest.isUrl(request) &&
-          request.elicitationId !== elicitationId
-        ) {
-          return
+          },
+        })
+      },
+      /* Somebody else settled this question — another device answered it, or
+         the agent's process died holding it. Either way the card is stale and
+         the answer is no longer ours to give. */
+      onRequestAnswered: (requestId) => {
+        const thread = stateRef.current.threads[id]
+        if (thread?.permission?.requestId === requestId) {
+          dispatch({ type: "permission", id, permission: null })
         }
-        pending.resolve({ action: "accept" })
+        if (thread?.elicitation?.requestId === requestId) {
+          dispatch({ type: "elicitation", id, elicitation: null })
+        }
       },
       onStatus: (status, closeInfo) => {
-        /* A respawn or a reconnect installs a new AcpThread for this same
-           session id while the old one's socket is still closing. The old
-           instance's closing status is about a connection nobody is using —
-           letting it through marks the live thread dead and, worse, books a
-           reconnect against it. */
+        /* A respawn or a reconnect installs a new socket for this same session
+           id while the old one is still closing. The old instance's closing
+           status is about a connection nobody is using — letting it through
+           marks the live thread dead and, worse, books a reconnect against it. */
         if (owner.thread && liveThreads.get(id) !== owner.thread) return
         if (status === "connected") {
           reconnectAttempts.delete(id)
@@ -200,68 +199,67 @@ export function useActions(settings: ServerSettings) {
           closeCode: closeInfo?.code,
           closeReason: closeInfo?.reason,
         })
-        /* A dead socket ends any turn it was carrying. The server answers the
-           prompts an exiting agent will never answer (`failPendingRequests`)
-           and closes the peers, but it does NOT synthesize `turn_ended` for
-           them — so without this the working indicator outlives the process
-           and only a reload clears it. */
+        /* A dead socket ends any turn it was carrying. The server does answer
+           the prompts an exiting agent never will — but if the close beats the
+           `turn_ended` to this tab, the working indicator would outlive the
+           process and only a reload would clear it. */
         if (status === "closed") dispatch({ type: "turn-active", id, active: false })
       },
-      onTurnActive: (active) => dispatch({ type: "turn-active", id, active }),
-      onSessionConfig: (modes, configOptions) => {
-        dispatch({ type: "session-config", id, modes, configOptions })
+      /* The session's whole settings state, from wherever it changed: the
+         handshake, this device, or another one. It is absolute, so applying it
+         twice is the same as applying it once. */
+      onSessionConfig: (modes, modeId, configOptions) => {
+        if (modes !== undefined || configOptions !== undefined) {
+          dispatch({
+            type: "session-config",
+            id,
+            modes: modes ?? null,
+            configOptions: configOptions ?? stateRef.current.threads[id]?.configOptions ?? [],
+          })
+        } else if (modeId) {
+          dispatch({ type: "mode", id, modeId })
+        }
         /* Remember what this profile's agent offers. A draft has no process to
            ask, so without this a new thread cannot show a single setting until
            it has already started — see lib/agent-options. */
         const profileId = stateRef.current.sessions.find((s) => s.id === id)?.profileId
-        if (profileId && configOptions.length > 0) saveAgentOptions(profileId, configOptions)
+        if (profileId && configOptions && configOptions.length > 0) {
+          saveAgentOptions(profileId, configOptions)
+        }
       },
-      onTtft: (ms) => dispatch({ type: "ttft", id, ms: Math.round(ms) }),
-      onTurnEnded: (usage, error) => {
+      onTtft: (ms) => dispatch({ type: "ttft", id, ms }),
+      onTurnEnded: (usage, error, promptText, catchingUp) => {
         dispatch({ type: "turn-active", id, active: false })
         if (usage) dispatch({ type: "usage", id, usage })
-        // The server fans this out to every peer, including the one whose
-        // prompt just rejected — the reducer collapses the two into one row.
         if (error) {
-          const info = recordError(id, error, "The agent couldn't answer this message")
-          if (info.kind !== "cancelled") notifyThreadEvent("turnFailed", id, titleOf(id), info.title)
-        } else {
+          // Recorded in the transcript either way — a failure that survived a
+          // reload is still the answer to the message above it, and carries the
+          // text so the row can offer Retry.
+          const info = recordError(id, error, "The agent couldn't answer this message", promptText)
+          if (!catchingUp && info.kind !== "cancelled") {
+            notifyThreadEvent("turnFailed", id, titleOf(id), info.title)
+          }
+        } else if (!catchingUp) {
+          // Notifying on replay would re-announce every turn in the thread on
+          // every reload — on a phone, as a push.
           notifyThreadEvent("turnFinished", id, titleOf(id))
         }
       },
-      // Another device on this thread prompted: show its message and light up
-      // the turn indicator. _daedalus/turn_ended clears it for every peer.
-      onPeerPrompt: (text) => {
+      /* A turn began on words this device did not type — either another peer
+         prompted, or this is the replay rebuilding the transcript. Only the
+         first is live activity. */
+      onTurnStarted: (text, catchingUp) => {
         dispatch({ type: "user-message", id, text })
         dispatch({ type: "session-title", id, title: text.slice(0, 60) })
-        dispatch({ type: "turn-active", id, active: true })
+        if (!catchingUp) dispatch({ type: "turn-active", id, active: true })
       },
-      // Another device answered the permission request we are also showing.
-      // Resolving with `cancelled` settles our own ACP handler; the server
-      // drops the duplicate response, so the agent only ever sees the first.
-      onPeerAnswered: (toolCallId) => {
-        const thread = stateRef.current.threads[id]
-        const permission = thread?.permission
-        if (permission && (!toolCallId || permission.request.toolCall?.toolCallId === toolCallId)) {
-          permission.resolve({ outcome: { outcome: "cancelled" } })
-        }
-        // An elicitation is the same race: another device submitted the form,
-        // so this one's copy settles as cancelled and the server drops it.
-        const elicitation = thread?.elicitation
-        // Only a session-scoped elicitation names a tool call; a request-scoped
-        // one has none, so it matches the bare "someone answered" frame only.
-        const elicitationToolCallId =
-          elicitation && "toolCallId" in elicitation.request
-            ? elicitation.request.toolCallId
-            : undefined
-        if (elicitation && (!toolCallId || elicitationToolCallId === toolCallId)) {
-          elicitation.resolve({ action: "cancel" })
-        }
-      },
-      // Mode / config options are session-wide: mirror another device's change.
-      onPeerSettings: (modeId, configOptions) => {
-        if (modeId) dispatch({ type: "mode", id, modeId })
-        if (configOptions) dispatch({ type: "config-options", id, configOptions })
+      // The replay is about to start: everything on screen is about to be said
+      // again, from the beginning.
+      onAttached: () =>
+        dispatch({ type: "thread-reset", id, thread: { ...emptyThread, status: "connecting" } }),
+      // A turn may still be running server-side; `turn_ended` clears it.
+      onCaughtUp: (_cursor, promptActive) => {
+        if (promptActive) dispatch({ type: "turn-active", id, active: true })
       },
       // A background task's journal grew server-side. Into the module store,
       // not the reducer: the events are keyed by transcript dir, not by
@@ -269,34 +267,22 @@ export function useActions(settings: ServerSettings) {
       onTaskEvent: (transcriptDir, event) => appendTaskEvent(transcriptDir, event),
     })
 
-    /** Project -> the MCP server definitions it links to (dangling ids drop out). */
-    const mcpFor = (project: Project) =>
-      stateRef.current.mcpServers.filter((s) => project.mcpServerIds.includes(s.id))
-
-    /* Swap the agent process and put the conversation back through session/load.
+    /* Swap the agent process and put the conversation back.
        The one move that needs this: profile, model and effort are all filled
        into the agent's env template at spawn (server/src/registry.ts), so they
        cannot be changed on a process that is already running. Callers decide
        what to send — what they leave out, the server rebuilds from the profile's
-       own defaults. */
+       own defaults.
+
+       All of it happens server-side now, in one call: spawn, session/load, and
+       putting back the mode and switches the restart reset. This used to be
+       three round trips driven from here, which meant closing the tab halfway
+       through left a half-restored thread. */
     const respawnThread = async (
       meta: SessionMeta,
       body: { profileId: string; model?: string; effort?: string },
       context: string
     ) => {
-      const project = stateRef.current.projects.find((p) => p.id === meta.projectId)
-      if (!project) throw new Error("This thread's project no longer exists.")
-      /* What must survive the restart. A profile is credentials and a model
-         catalog — it says nothing about how you like to work, so the permission
-         mode and every other agent switch have to come back exactly as they
-         were. Only model and effort are the profile's to change, and they are
-         excluded here precisely because they are what is being changed.
-         Captured before the close, since the process that knows them is about
-         to die. */
-      const previous = stateRef.current.threads[meta.id]
-      const modeIds = new Set(previous?.modes?.availableModes.map((m) => m.id) ?? [])
-      const carried = partitionSessionOptions(previous?.configOptions ?? [], modeIds).rest
-      const carriedMode = previous?.modes?.currentModeId
       try {
         liveThreads.get(meta.id)?.close()
         await api(settings, `/api/sessions/${meta.id}/respawn`, {
@@ -304,17 +290,8 @@ export function useActions(settings: ServerSettings) {
           body: JSON.stringify(body),
         })
         await refreshSessions()
-        // The journal was reset server-side; the load replay rebuilds the transcript.
-        dispatch({ type: "thread-reset", id: meta.id, thread: { ...emptyThread } })
-        const thread = await startThread(meta.id, {
-          fresh: false,
-          load: true,
-          project,
-          mcpServers: mcpFor(project),
-          cursor: 0,
-          acpSessionId: meta.acpSessionId,
-        })
-        await restoreSettings(meta.id, thread, carriedMode, carried)
+        // The event log was rebuilt by the load replay; attaching from 0 reads it.
+        await startThread(meta.id)
       } catch (error) {
         // The old process is already gone at this point, so a failure here
         // leaves a thread that needs reviving — say that, in the thread.
@@ -323,56 +300,17 @@ export function useActions(settings: ServerSettings) {
       }
     }
 
-    /**
-     * Put back the settings a restart reset.
-     *
-     * The fresh process starts on its own defaults, and `session/load` restores
-     * the conversation but not how the user had the agent configured. Anything
-     * the new session already agrees with is skipped, so this is usually no
-     * calls at all.
-     *
-     * Best-effort throughout: an option the new profile's agent no longer
-     * offers is a preference that no longer applies, not a failure worth
-     * throwing a restored thread away over.
-     */
-    const restoreSettings = async (
-      sessionId: string,
-      thread: AcpThread,
-      modeId: string | undefined,
-      options: acp.SessionConfigOption[]
-    ) => {
-      const now = stateRef.current.threads[sessionId]
-      if (modeId && now?.modes && now.modes.currentModeId !== modeId) {
-        try {
-          await thread.setMode(modeId)
-          dispatch({ type: "mode", id: sessionId, modeId })
-        } catch (error) {
-          console.warn(`Couldn't restore mode ${modeId} after the restart`, error)
-        }
-      }
-      for (const option of options) {
-        const current = now?.configOptions.find((o) => o.id === option.id)
-        if (!current || current.currentValue === option.currentValue) continue
-        try {
-          const configOptions = await thread.setConfigOption(option.id, option.currentValue)
-          if (configOptions) dispatch({ type: "config-options", id: sessionId, configOptions })
-        } catch (error) {
-          console.warn(`Couldn't restore ${option.id} after the restart`, error)
-        }
-      }
-    }
-
-    /** Bring a draft into existence: tell the server (which spawns the agent),
-        adopt its row, then handshake. The id travelled from the client, so the
-        route the user is already looking at needs no correction. */
+    /** Bring a draft into existence: tell the server (which spawns the agent
+        and handshakes), adopt its row, then attach. The id travelled from the
+        client, so the route the user is already looking at needs no correction. */
     const createSession = async (meta: SessionMeta) => {
       const project = stateRef.current.projects.find((p) => p.id === meta.projectId)
       const profile = stateRef.current.profiles.find((p) => p.id === meta.profileId)
       if (!project) throw new Error("Choose a project for this thread before sending.")
       if (!profile) throw new Error("Choose a profile for this thread before sending.")
-      /* Spawning the agent and handshaking takes a second or two, and until
-         `connect` runs there is no status at all — so the thread would sit
-         there looking like nothing had happened to the message just sent. */
+      /* Spawning the agent and handshaking takes a second or two, and until the
+         socket opens there is no status at all — so the thread would sit there
+         looking like nothing had happened to the message just sent. */
       dispatch({ type: "thread-status", id: meta.id, status: "connecting" })
       await api<{ id: string }>(settings, "/api/sessions", {
         method: "POST",
@@ -382,38 +320,27 @@ export function useActions(settings: ServerSettings) {
           projectId: project.id,
           model: meta.model || undefined,
           effort: meta.effort || undefined,
+          /* Settings picked on the draft, against the option set the agent last
+             advertised. The server applies them the moment session/new answers,
+             best-effort: a remembered option the agent no longer offers must not
+             stop the message that created the thread. */
+          configChoices: meta.configChoices,
         }),
       })
       // Swaps the draft row for the server's own — see the `sessions` reducer.
       await refreshSessions()
-      const thread = await startThread(meta.id, {
-        fresh: true,
-        project,
-        mcpServers: mcpFor(project),
-      })
-      /* Settings chosen on the draft, against the option set the agent last
-         advertised. Now that session/new has answered there is something to
-         apply them to. Best-effort on purpose: a remembered option the agent no
-         longer offers must not stop the message that created the thread. */
-      for (const [configId, value] of Object.entries(meta.configChoices ?? {})) {
-        try {
-          const configOptions = await thread.setConfigOption(configId, value)
-          if (configOptions) dispatch({ type: "config-options", id: meta.id, configOptions })
-        } catch (error) {
-          console.warn(`The agent rejected the remembered ${configId} setting`, error)
-        }
-      }
+      await startThread(meta.id)
     }
 
-    /** Build a thread, register it as the session's live one, and connect it.
-        Every path that opens a connection goes through here, so the ownership
-        wiring the callbacks depend on exists in exactly one place. */
-    const startThread = async (id: string, opts: ConnectOptions) => {
-      const owner: { thread?: AcpThread } = {}
-      const thread = new AcpThread(id, settings, makeCallbacks(id, owner))
+    /** Open a socket, register it as the session's live one, and wait for the
+        replay to finish. Every path that connects goes through here, so the
+        ownership wiring the callbacks depend on exists in exactly one place. */
+    const startThread = async (id: string, cursor = 0) => {
+      const owner: { thread?: ThreadSocket } = {}
+      const thread = new ThreadSocket(id, settings, makeCallbacks(id, owner))
       owner.thread = thread
       liveThreads.set(id, thread)
-      await thread.connect(opts)
+      await thread.connect({ cursor })
       return thread
     }
 
@@ -434,30 +361,6 @@ export function useActions(settings: ServerSettings) {
       dispatch({ type: "sessions", sessions })
     }
 
-    /* Model and reasoning effort are process env: the server rebuilds them from
-       session.model/effort every time it revives a retired thread, and so does
-       connectThread from `meta`. A change made over ACP never touches that
-       record, so without this the thread comes back on the model the user
-       switched away from. Pure bookkeeping — a failure here must not undo a
-       change the agent has already accepted. */
-    const syncSpawnState = async (
-      sessionId: string,
-      category: string | null | undefined,
-      value: string | boolean
-    ) => {
-      const field = category === "model" ? "model" : category === "thought_level" ? "effort" : null
-      if (!field || typeof value !== "string") return
-      try {
-        await api(settings, `/api/sessions/${sessionId}`, {
-          method: "PATCH",
-          body: JSON.stringify({ [field]: value }),
-        })
-        await refreshSessions()
-      } catch (error) {
-        console.warn(`Couldn't record the new ${field} on session ${sessionId}`, error)
-      }
-    }
-
     /** Connect (or reattach to) a thread; the caller navigates to its route.
         Every failure below lands in the thread itself before it propagates, so
         a caller that only logs still leaves the user something to read. */
@@ -475,17 +378,17 @@ export function useActions(settings: ServerSettings) {
       // connect to until the first message brings it into existence.
       if (meta.draft) return
       if (liveThreads.get(meta.id)?.connected) return
-      const project = stateRef.current.projects.find((p) => p.id === meta.projectId)
       // A thread whose project was deleted can never open. Saying nothing left
       // it stuck on the connecting skeleton forever.
-      if (!project) {
+      if (!stateRef.current.projects.some((p) => p.id === meta.projectId)) {
         throw new Error(
           "This thread's project no longer exists, so there is no working directory to run the agent in."
         )
       }
 
-      // No live process (idle-retired or the server restarted): revive it —
-      // respawn with the same profile/model, restore context via session/load.
+      // No live process (idle-retired or the server restarted): revive it. The
+      // server respawns, replays the conversation through session/load and puts
+      // the settings back before it answers.
       if (meta.exited) {
         await api(settings, `/api/sessions/${meta.id}/respawn`, {
           method: "POST",
@@ -496,40 +399,16 @@ export function useActions(settings: ServerSettings) {
           }),
         })
         await refreshSessions()
-        dispatch({ type: "thread-reset", id: meta.id, thread: { ...emptyThread } })
-        await startThread(meta.id, {
-          fresh: false,
-          load: true,
-          project,
-          mcpServers: mcpFor(project),
-          cursor: 0,
-          acpSessionId: meta.acpSessionId,
-        })
-        return
       }
 
-      const journal = await api<{ cursor: number; promptActive: boolean; entries: JournalEntry[] }>(
-        settings,
-        `/api/sessions/${meta.id}/journal`
-      )
-      dispatch({ type: "thread-reset", id: meta.id, thread: rebuildThread(journal.entries) })
-      // A turn may still be running server-side; _daedalus/turn_ended clears this.
-      // Read from the journal response, NOT from `meta`: state.sessions is only
-      // refetched on bootstrap/mutations, so its promptActive is a stale snapshot —
-      // stale-false loses the indicator, stale-true strands it forever.
-      if (journal.promptActive) dispatch({ type: "turn-active", id: meta.id, active: true })
-      await startThread(meta.id, {
-        fresh: false,
-        project,
-        mcpServers: mcpFor(project),
-        cursor: journal.cursor,
-        acpSessionId: meta.acpSessionId,
-        /* Hand the same answer to the connection: a turn that was already
-           running is one this client cannot see the end of by watching its own
-           requests, so only `_daedalus/turn_ended` may clear it. Steering such
-           a turn is what used to lose the indicator. */
-        turnActive: journal.promptActive,
-      })
+      /* Attach from the beginning of the log, always. The replay is bracketed
+         (`attached` resets the thread, `caught_up` ends it), and it carries the
+         same events the live socket sends — so there is no second parser here
+         and no cursor to keep in step. `caught_up` also carries whether a turn
+         is still running, read server-side in the same tick as the log it
+         follows: `meta.promptActive` is a snapshot from the last /api/sessions
+         fetch, and stale-false loses the indicator while stale-true strands it. */
+      await startThread(meta.id)
     }
 
     return {
@@ -605,7 +484,7 @@ export function useActions(settings: ServerSettings) {
         id?: string
       }) {
         const { project, profile, model, effort } = opts
-        const id = opts.id ?? crypto.randomUUID()
+        const id = opts.id ?? uuid()
         dispatch({
           type: "draft-session",
           session: {
@@ -723,14 +602,27 @@ export function useActions(settings: ServerSettings) {
           recordError(sessionId, error, "Couldn't send the message", text)
           throw error
         }
+        /* Steering — a prompt sent while a turn is already running — is why this
+           is read BEFORE the dispatch below. If this send fails, it may only
+           take back the indicator it turned on itself: a steer that never
+           reaches the agent leaves the turn it was aimed at still running, and
+           clearing the indicator there loses it until a reload (the server is
+           still `promptActive`, so `caught_up` puts it straight back — which is
+           exactly the "refresh brings it back" shape of the bug). */
+        const alreadyRunning = stateRef.current.threads[sessionId]?.turnActive ?? false
         dispatch({ type: "user-message", id: sessionId, text })
         dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
+        /* This device is the one peer that does not get a `turn_started` — it
+           already put the message on screen — so it lights its own indicator.
+           `turn_ended` is what clears it, here and everywhere else. */
+        dispatch({ type: "turn-active", id: sessionId, active: true })
         try {
-          // The response's usage is dropped on purpose: `_daedalus/turn_ended`
-          // reports the same turn, and usage now accumulates — counting both
-          // would double it.
+          /* Resolves when the server has dispatched the prompt, not when the
+             turn ends: how the turn went reaches every device on the thread as
+             `turn_ended`, and awaiting it here would report a failure twice. */
           await thread.prompt(text)
         } catch (error) {
+          if (!alreadyRunning) dispatch({ type: "turn-active", id: sessionId, active: false })
           recordError(sessionId, error, "The agent couldn't answer this message", text)
           throw error
         }
@@ -795,7 +687,11 @@ export function useActions(settings: ServerSettings) {
           recordError(sessionId, error, `The agent rejected that ${configId} setting`)
           throw error
         }
-        await syncSpawnState(sessionId, category, value)
+        /* Model and effort are also process env: the server rebuilds them from
+           the session record every time it revives a retired thread. It records
+           the change itself now (it knows the option's category), so all that is
+           left here is to re-read the list this thread's row appears in. */
+        if (category === "model" || category === "thought_level") await refreshSessions()
       },
 
       async stop(sessionId: string) {

@@ -2,6 +2,7 @@ import * as React from "react"
 import { SlashSquare } from "lucide-react"
 import type * as acp from "@agentclientprotocol/sdk"
 import { cn } from "@/lib/utils"
+import { ComposerStripItem } from "./composer-strip"
 
 /* Slash-command autocomplete for the composer.
 
@@ -99,6 +100,22 @@ export function useSlashCommands(
   return { matches, selected: index, hint, pick, setSelected, onKeyDown }
 }
 
+/**
+ * The suggestions, as a row on the composer strip.
+ *
+ * It used to be a bordered, shadowed popover pinned over the composer with
+ * `absolute inset-x-0 bottom-full`. Two problems with that: it was a second
+ * floating surface in a place that already has a shelf for exactly this kind of
+ * thing, and being absolutely positioned it painted straight over whatever the
+ * strip was showing — a running plan, the "earlier prompt" notice — hiding
+ * state the user needs while they type.
+ *
+ * As a strip item it has no chrome of its own (the strip is the surface), it
+ * stacks under the plan instead of on top of it, and the composer moves down to
+ * make room rather than being covered. It goes LAST, closest to the composer,
+ * because it belongs to the text being typed right now — the rows above it
+ * belong to the turn.
+ */
 export function SlashCommandMenu({ state }: { state: SlashCommandState }) {
   const listRef = React.useRef<HTMLDivElement>(null)
   React.useEffect(() => {
@@ -109,48 +126,51 @@ export function SlashCommandMenu({ state }: { state: SlashCommandState }) {
 
   if (state.hint) {
     return (
-      <div className="absolute inset-x-0 bottom-full z-20 mb-2 rounded-xl border bg-popover px-3 py-1.5 text-xs text-muted-foreground shadow-glass">
-        {state.hint}
-      </div>
+      <ComposerStripItem className="flex items-center gap-2 px-2 py-1.5 text-[11px] text-muted-foreground">
+        <SlashSquare className="size-3 shrink-0" />
+        <span className="min-w-0 truncate">{state.hint}</span>
+      </ComposerStripItem>
     )
   }
   if (state.matches.length === 0) return null
 
   return (
-    <div
-      ref={listRef}
-      className="absolute inset-x-0 bottom-full z-20 mb-2 max-h-64 overflow-y-auto rounded-xl border bg-popover p-1 shadow-glass"
-    >
-      {state.matches.map((command, i) => (
-        <button
-          key={command.name}
-          type="button"
-          data-selected={i === state.selected || undefined}
-          /* mousedown, not click: click fires after the textarea has lost
-             focus, and preventDefault here keeps the caret where typing
-             continues. */
-          onMouseDown={(e) => {
-            e.preventDefault()
-            state.pick(command)
-          }}
-          onMouseMove={() => state.setSelected(i)}
-          className={cn(
-            "flex w-full items-baseline gap-2 rounded-lg px-2 py-1.5 text-left text-sm",
-            i === state.selected && "bg-accent text-accent-foreground"
-          )}
-        >
-          <SlashSquare className="size-3.5 shrink-0 self-center text-muted-foreground" />
-          <span className="shrink-0 font-mono text-[13px]">/{command.name}</span>
-          {command.input?.hint && (
-            <span className="shrink-0 font-mono text-[11px] text-muted-foreground/70">
-              {command.input.hint}
+    <ComposerStripItem>
+      {/* Caps at roughly five rows and scrolls: a long catalog must not push the
+          composer off the bottom of the screen — the same rule the plan list
+          follows. */}
+      <div ref={listRef} className="max-h-44 overflow-y-auto p-1 overscroll-contain">
+        {state.matches.map((command, i) => (
+          <button
+            key={command.name}
+            type="button"
+            data-selected={i === state.selected || undefined}
+            /* mousedown, not click: click fires after the textarea has lost
+               focus, and preventDefault here keeps the caret where typing
+               continues. */
+            onMouseDown={(e) => {
+              e.preventDefault()
+              state.pick(command)
+            }}
+            onMouseMove={() => state.setSelected(i)}
+            className={cn(
+              "flex w-full items-baseline gap-2 rounded-lg px-2 py-1 text-left",
+              i === state.selected && "bg-accent text-accent-foreground"
+            )}
+          >
+            <SlashSquare className="size-3.5 shrink-0 self-center text-muted-foreground" />
+            <span className="shrink-0 font-mono text-xs">/{command.name}</span>
+            {command.input?.hint && (
+              <span className="shrink-0 font-mono text-[11px] text-muted-foreground/70">
+                {command.input.hint}
+              </span>
+            )}
+            <span className="truncate text-[11px] text-muted-foreground">
+              {command.description}
             </span>
-          )}
-          <span className="truncate text-xs text-muted-foreground">
-            {command.description}
-          </span>
-        </button>
-      ))}
-    </div>
+          </button>
+        ))}
+      </div>
+    </ComposerStripItem>
   )
 }

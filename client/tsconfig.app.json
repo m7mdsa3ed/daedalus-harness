@@ -24,7 +24,11 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      /* The thread protocol is defined once, on the server that speaks it.
+         Every import of it is type-only, so `verbatimModuleSyntax` erases the
+         statement and Vite never resolves this path at build time. */
+      "@daedalus/protocol": ["../server/src/protocol.ts"]
     }
   },
   "include": ["src"]

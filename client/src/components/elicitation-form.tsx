@@ -1,8 +1,15 @@
 import * as React from "react"
-import { CreateElicitationRequest } from "@agentclientprotocol/sdk"
 import { CheckIcon, ExternalLinkIcon, MessageCircleQuestionIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import {
+  AgentRequestActions,
+  AgentRequestBody,
+  AgentRequestCard,
+  AgentRequestHeader,
+  REQUEST_BUTTON,
+} from "./agent-request"
+import { Kbd } from "@/components/ui/kbd"
 import {
   Questionnaire,
   QuestionnaireChoice,
@@ -18,7 +25,13 @@ import {
   QuestionnaireSubmit,
   QuestionnaireTitle,
 } from "@/components/ui/questionnaire"
-import { elicitationAnswers, elicitationFields, type ElicitationField } from "@/lib/elicitation"
+import {
+  elicitationAnswers,
+  elicitationFields,
+  isFormElicitation,
+  isUrlElicitation,
+  type ElicitationField,
+} from "@/lib/elicitation"
 import type { PendingElicitation } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
@@ -93,7 +106,7 @@ function ElicitationStep({
           {prompt}
         </QuestionnaireTitle>
         {chip && (
-          <span className="mt-px shrink-0 rounded-full border border-border/50 bg-muted/30 px-2 py-px text-[10px] leading-4 tracking-wide text-muted-foreground">
+          <span className="mt-px shrink-0 rounded-full bg-background/60 px-2 py-0.5 text-[10px] leading-4 tracking-wide text-muted-foreground">
             {chip}
           </span>
         )}
@@ -101,14 +114,24 @@ function ElicitationStep({
       {/* Two things the user can only learn from the schema: that this one takes
           more than one answer, and that it can't be skipped. */}
       {(field.kind === "multiselect" || field.required) && (
-        <QuestionnaireDescription className="-mt-1.5 text-xs">
+        <QuestionnaireDescription className="text-xs">
           {field.kind === "multiselect" ? "Choose as many as apply." : "Required."}
         </QuestionnaireDescription>
       )}
       {choices && (
         <QuestionnaireChoices>
           {field.options.map((option) => (
-            <QuestionnaireChoice key={option.value} value={option.value} className="rounded-xl">
+            <QuestionnaireChoice
+              key={option.value}
+              value={option.value}
+              /* Same material as everything else on this card: no outline, a
+                 recess against the tint, and a stronger fill of the accent when
+                 chosen. The kit's default is a bordered pill on a page
+                 background — correct on a settings form, a foreign object
+                 inside a borderless tinted card. The shortcut badge follows,
+                 or it is the one outlined thing left in the card. */
+              className="rounded-xl border-transparent bg-background/60 hover:bg-background/80 data-checked:border-transparent data-checked:bg-primary/15 [&_[data-slot=questionnaire-choice-shortcut]]:border-transparent [&_[data-slot=questionnaire-choice-shortcut]]:bg-primary/10"
+            >
               <span className="font-medium">{option.label}</span>
               {option.description && (
                 <QuestionnaireChoiceDescription className="text-xs">
@@ -120,7 +143,10 @@ function ElicitationStep({
                   than revealing one at a time — but capped, since a long one
                   would push the next option off the screen. */}
               {option.preview && (
-                <pre className="mt-1.5 max-h-40 overflow-auto rounded-lg border border-border/50 bg-muted/40 px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap text-foreground/90">
+                /* One step further down than the option it sits in — the same
+                   `bg-background/60` would make it invisible against its own
+                   parent. */
+                <pre className="mt-1.5 max-h-40 overflow-auto rounded-lg bg-muted/60 px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap text-foreground/90">
                   {option.preview}
                 </pre>
               )}
@@ -138,7 +164,12 @@ function ElicitationStep({
           placeholder={choices ? "Or type your own answer…" : "Type your answer…"}
           // Squared off to match the choice cards; the "Other" box is quieter
           // than the options it sits under, so it loses the filled background.
-          className={cn("rounded-xl text-sm", choices && "-mt-0.5 h-9 min-h-9 bg-transparent")}
+          className={cn(
+            "rounded-xl border-transparent bg-background/60 text-sm",
+            // Under a set of options this is the "Other" box, so it stays
+            // quieter than they are — but it keeps their height and material.
+            choices && "bg-background/40"
+          )}
         />
       )}
       {/* No children: the primitive's own text already distinguishes a required
@@ -159,12 +190,10 @@ export function InlineElicitation({ elicitation }: { elicitation: PendingElicita
     resolve(response)
   }
 
-  /* The SDK's guards, not a `mode === "form"` check: the union's custom/future
-     variant carries the same tag shape, and these validate the payload too — a
-     malformed form matches nothing and falls through to the can't-render card
-     rather than throwing halfway down the schema. */
-  const form = CreateElicitationRequest.isForm(request) ? request : null
-  const url = CreateElicitationRequest.isUrl(request) ? request : null
+  /* The payload guards, not a `mode === "form"` check: the union's custom/future
+     variant carries the same tag shape. See lib/elicitation. */
+  const form = isFormElicitation(request) ? request : null
+  const url = isUrlElicitation(request) ? request : null
   const fields = React.useMemo(() => (form ? elicitationFields(form.requestedSchema) : []), [form])
   const items = React.useMemo(
     () =>
@@ -188,40 +217,29 @@ export function InlineElicitation({ elicitation }: { elicitation: PendingElicita
     fields.findIndex((field) => field.key === step)
   )
 
-  const shell = (children: React.ReactNode, message?: string) => (
-    <div
-      aria-live="polite"
-      role="group"
-      className="animate-in slide-in-from-bottom-1 fade-in zoom-in-[0.99] overflow-hidden rounded-xl border border-primary/30 bg-card/80 shadow-md shadow-primary/5 backdrop-blur-sm duration-200"
-    >
-      <div className="flex items-start gap-3 p-3.5 pb-3">
-        <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-primary ring-1 ring-primary/15 ring-inset">
-          <MessageCircleQuestionIcon className="size-4" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="harness-shimmer text-[10px] font-medium tracking-widest text-primary uppercase">
-            {eyebrow}
-          </p>
-          {/* With one question the step's own title says it; repeating the
-              message above it would print the same sentence twice. */}
-          {message && (
-            <p className="mt-1 text-[13px] leading-snug text-pretty break-words text-muted-foreground">
-              {message}
-            </p>
-          )}
-        </div>
-        {!single && fields.length > 0 && <StepDots total={fields.length} current={current} />}
-      </div>
+  /* Same shell as the permission card — accent rail, tinted body, tinted action
+     bar (components/agent-request). Both are "the turn has stopped and you are
+     what it is waiting for"; a reader should not have to learn two objects for
+     one situation. Only the contents differ, and they differ because a verdict
+     and a questionnaire genuinely are different things. */
+  const shell = (children: React.ReactNode, message?: string, actions?: React.ReactNode) => (
+    <AgentRequestCard>
+      <AgentRequestHeader
+        icon={MessageCircleQuestionIcon}
+        label={eyebrow}
+        aside={
+          !single && fields.length > 0 ? (
+            <StepDots total={fields.length} current={current} />
+          ) : undefined
+        }
+      >
+        {/* With one question the step's own title says it; repeating the
+            message above it would print the same sentence twice. */}
+        {message}
+      </AgentRequestHeader>
       {children}
-    </div>
-  )
-
-  /** The bar every variant ends with: the way out on the left, the way forward
-      on the right, never adjacent. */
-  const bar = (children: React.ReactNode) => (
-    <div className="flex flex-wrap items-center gap-1.5 border-t border-border/50 bg-muted/25 px-3.5 py-2.5">
-      {children}
-    </div>
+      {actions && <AgentRequestActions>{actions}</AgentRequestActions>}
+    </AgentRequestCard>
   )
 
   /* A URL elicitation has no form: the answer happens on the far side of the
@@ -229,30 +247,29 @@ export function InlineElicitation({ elicitation }: { elicitation: PendingElicita
      owes the user is the link and a way out. */
   if (url) {
     return shell(
-      bar(
-        <>
-          <Button
-            type="button"
-            size="default"
-            variant="ghost"
-            className="text-muted-foreground"
-            onClick={() => settle({ action: "decline" })}
-          >
-            Dismiss
-          </Button>
-          <Button
-            size="default"
-            className="ms-auto font-semibold"
-            render={
-              <a href={url.url} target="_blank" rel="noreferrer noopener">
-                <ExternalLinkIcon data-icon="inline-start" className="size-3.5 opacity-80" />
-                Open
-              </a>
-            }
-          />
-        </>
-      ),
-      request.message
+      null,
+      request.message,
+      <>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className={cn(REQUEST_BUTTON, "text-muted-foreground")}
+          onClick={() => settle({ action: "decline" })}
+        >
+          Dismiss
+        </Button>
+        <Button
+          size="sm"
+          className={cn(REQUEST_BUTTON, "ms-auto")}
+          render={
+            <a href={url.url} target="_blank" rel="noreferrer noopener">
+              <ExternalLinkIcon aria-hidden className="size-3" />
+              Open
+            </a>
+          }
+        />
+      </>
     )
   }
 
@@ -260,26 +277,28 @@ export function InlineElicitation({ elicitation }: { elicitation: PendingElicita
   // rather than showing an empty questionnaire the agent is waiting on.
   if (fields.length === 0) {
     return shell(
-      bar(
-        <>
-          <p className="me-auto min-w-0 flex-1 text-[13px] text-muted-foreground">
-            This question arrived in a form this client can't render.
-          </p>
-          <Button
-            type="button"
-            size="default"
-            variant="secondary"
-            onClick={() => settle({ action: "decline" })}
-          >
-            Skip
-          </Button>
-        </>
-      ),
-      request.message
+      <AgentRequestBody>
+        <p className="text-muted-foreground">
+          This question arrived in a form this client can't render.
+        </p>
+      </AgentRequestBody>,
+      request.message,
+      <Button
+        type="button"
+        size="sm"
+        variant="secondary"
+        className={cn(REQUEST_BUTTON, "ms-auto")}
+        onClick={() => settle({ action: "decline" })}
+      >
+        Skip
+      </Button>
     )
   }
 
-  return shell(
+  /* The form element wraps the whole card, not just its body: the nav lives on
+     the header line now, and Next/Submit are form controls — they have to be
+     inside the form they submit. */
+  return (
     <Questionnaire
       items={items}
       item={step}
@@ -294,18 +313,38 @@ export function InlineElicitation({ elicitation }: { elicitation: PendingElicita
         })
       }}
     >
-      <div className="px-3.5 pb-3.5">
-        {fields.map((field) => (
-          <ElicitationStep key={field.key} field={field} message={request.message} single={single} />
-        ))}
-      </div>
-      {bar(
-        <>
-          {/* Grouped rather than pushed apart button by button: any of these can
-              hide itself (Previous on the first step, Skip on a required one),
-              and an auto margin on a hidden button stops pushing. */}
+      <AgentRequestCard>
+        <AgentRequestHeader
+          icon={MessageCircleQuestionIcon}
+          label={eyebrow}
+          aside={!single ? <StepDots total={fields.length} current={current} /> : undefined}
+        >
+          {/* Only when there are several: then `message` is the form's own
+              framing ("Please answer the following questions.") and each step
+              states its own question below it. With one question the two would
+              be the same sentence printed twice. */}
+          {!single && request.message}
+        </AgentRequestHeader>
+        <AgentRequestBody>
+          {fields.map((field) => (
+            <ElicitationStep
+              key={field.key}
+              field={field}
+              message={request.message}
+              single={single}
+            />
+          ))}
+        </AgentRequestBody>
+        <AgentRequestActions>
+          {/* Grouped rather than pushed apart button by button: Previous and
+              Skip hide themselves (first step, required question), and an auto
+              margin on a hidden button stops pushing. */}
           <div className="flex items-center gap-1.5">
-            <QuestionnairePrevious size="sm" variant="ghost" className="text-muted-foreground" />
+            <QuestionnairePrevious
+              size="sm"
+              variant="ghost"
+              className={cn(REQUEST_BUTTON, "text-muted-foreground")}
+            />
             {/* Declining answers the whole thing — "I'm not doing this" — where
                 the questionnaire's own Skip passes on one question and carries
                 you to the next. */}
@@ -313,29 +352,31 @@ export function InlineElicitation({ elicitation }: { elicitation: PendingElicita
               type="button"
               size="sm"
               variant="ghost"
-              className="text-muted-foreground"
+              className={cn(REQUEST_BUTTON, "text-muted-foreground")}
               onClick={() => settle({ action: "decline" })}
             >
               {single ? "Don't answer" : "Dismiss"}
+              {/* Escape does this from anywhere in the thread — including from
+                  the composer, where the cursor usually is. */}
+              <Kbd className="ms-1 hidden bg-transparent sm:inline-flex">Esc</Kbd>
             </Button>
           </div>
           <div className="ms-auto flex items-center gap-1.5">
-            <QuestionnaireSkip size="sm" variant="ghost" className="text-muted-foreground">
+            <QuestionnaireSkip
+              size="sm"
+              variant="ghost"
+              className={cn(REQUEST_BUTTON, "text-muted-foreground")}
+            >
               Skip this
             </QuestionnaireSkip>
-            <QuestionnaireNext size="default" />
-            <QuestionnaireSubmit size="default" className="font-semibold">
-              <CheckIcon data-icon="inline-start" className="size-3.5 opacity-80" />
+            <QuestionnaireNext size="sm" className={REQUEST_BUTTON} />
+            <QuestionnaireSubmit size="sm" className={REQUEST_BUTTON}>
+              <CheckIcon aria-hidden className="size-3.5" />
               {single ? "Answer" : "Submit"}
             </QuestionnaireSubmit>
           </div>
-        </>
-      )}
-    </Questionnaire>,
-    /* Only when there are several: then `message` is the form's own framing
-       ("Please answer the following questions.") and each step states its own
-       question below it. With one question the two would be the same sentence
-       printed twice. */
-    single ? undefined : request.message
+        </AgentRequestActions>
+      </AgentRequestCard>
+    </Questionnaire>
   )
 }

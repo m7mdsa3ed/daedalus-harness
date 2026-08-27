@@ -7,6 +7,7 @@ import {
   ArrowLeftRightIcon,
   BrainIcon,
   FileTextIcon,
+  FoldVerticalIcon,
   GlobeIcon,
   ChevronRightIcon,
   CopyIcon,
@@ -50,7 +51,7 @@ import {
 import { useTaskEvents, watchTask } from "@/lib/task-events"
 import { loadSettings } from "@/lib/settings"
 import { cn } from "@/lib/utils"
-import type { PlanItem, ThreadItem, ToolItem } from "@/lib/store"
+import type { CompactionItem, PlanItem, ThreadItem, ToolItem } from "@/lib/store"
 
 /* Right-clicking text the user has selected keeps the browser's own menu —
    native Copy works there. Ours only claims clicks on unselected content.
@@ -435,7 +436,15 @@ export function ToolRun({
   items: ToolItem[]
   showTimestamps?: boolean
 }) {
-  const [open, setOpen] = React.useState(false)
+  /* Open by default. A group is only ever a run of tool calls with NOTHING
+     between them — `groupToolRuns` breaks the run on the first non-tool item —
+     so the summary line is a heading for steps that belong together, not a
+     drawer to hide them in. Collapsing by default made the transcript go quiet
+     exactly where the agent was busiest; text between tool calls is what
+     separates one run from the next, and that already happens by splitting
+     them into two groups. The disclosure stays: a 40-step run is still worth
+     folding away by hand. */
+  const [open, setOpen] = React.useState(true)
   const failed = items.filter((item) => item.status === "failed").length
   const active = items.some((item) => item.status === "in_progress" || item.status === "pending")
   const summary = summarise(items)
@@ -648,9 +657,14 @@ export function ThreadItemView({
           className="select-text"
           onContextMenu={yieldToTextSelection}
         >
+          {/* Tinted, not filled: a soft wash of the accent with foreground text
+              rather than the primary-on-primary-foreground pair, which is the
+              loudest thing the theme has and made every prompt shout over the
+              answer under it. Width, alignment and the corner tail are as they
+              were — the bubble still hugs the right edge at 80%. */}
           <Message align="end" className="flex-col items-end gap-0.5 py-2">
             <MessageContent>
-              <Bubble align="end">
+              <Bubble variant="tinted" align="end">
                 <BubbleContent className="rounded-2xl rounded-br-sm px-4 py-2.5 text-xs whitespace-pre-wrap">
                   {item.text}
                 </BubbleContent>
@@ -736,7 +750,55 @@ export function ThreadItemView({
       return <ToolStep item={item} showTimestamp={showTimestamps} />
     case "plan":
       return <PlanStep item={item} />
+    case "compaction":
+      return <CompactionStep item={item} showTimestamp={showTimestamps} />
   }
+}
+
+/** A context compaction, in the place in the transcript where it happened —
+    the marker saying the history above it is no longer what the agent can see.
+    A step row like any other, with the retained summary folded behind it: the
+    summary is the only part anyone reads twice, and it can be long. */
+function CompactionStep({
+  item,
+  showTimestamp,
+}: {
+  item: CompactionItem
+  showTimestamp?: boolean
+}) {
+  const running = item.status === "in_progress"
+  const failed = item.status === "failed"
+  const cancelled = item.status === "cancelled"
+  const label = running
+    ? "Compacting context…"
+    : failed
+      ? "Compaction failed"
+      : cancelled
+        ? "Compaction cancelled"
+        : "Context compacted"
+  // A failure explains itself even with no summary; a summary is worth opening
+  // on any status. Nothing to show means a plain rule with no affordance.
+  const detail =
+    item.summary.length > 0 || item.error ? (
+      <div className="min-w-0 space-y-2">
+        {item.error && <p className="text-xs text-destructive">{item.error}</p>}
+        {item.summary.map((block, i) => (
+          <ContentBlockView key={i} block={block} />
+        ))}
+      </div>
+    ) : undefined
+
+  return (
+    <StepRow
+      label="context"
+      icon={FoldVerticalIcon}
+      status={running ? "in_progress" : failed ? "failed" : null}
+      mono={false}
+      target={label}
+      metric={showTimestamp && item.at !== undefined ? <Timestamp at={item.at} /> : undefined}
+      detail={detail}
+    />
+  )
 }
 
 /* Agents stream output as many small text blocks (one per result, per line).
@@ -799,7 +861,10 @@ function ToolInput({ item }: { item: ToolItem }) {
       : null
   if (entries && entries.length > 0 && entries.every(([, value]) => isScalar(value))) {
     return (
-      <dl className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 font-mono text-[11px]">
+      /* Body tier, not caption tier: these are the tool's actual arguments —
+         the thing you read — so they match message prose. `text-[11px]` is for
+         labels and counters. */
+      <dl className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 font-mono text-xs">
         {entries.map(([key, value]) => (
           <React.Fragment key={key}>
             <dt className="text-muted-foreground/60">{key}</dt>
@@ -820,7 +885,11 @@ function ToolProse({ text }: { text: string }) {
   if (!text.trim()) return null
   return (
     <div className="max-h-64 min-w-0 overflow-auto rounded-md border border-border/50 bg-muted/40 px-2.5 py-2">
-      <div className="prose prose-sm max-w-none text-[11px]">
+      {/* No size utility: the unlayered `.prose` rule in index.css sets the body
+          size and outranks any `text-*` utility on this element — the
+          `text-[11px]` that used to be here never applied, which is half of why
+          tool output and message prose disagreed. */}
+      <div className="prose prose-sm max-w-none">
         <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={REHYPE}>
           {text}
         </Markdown>
@@ -846,10 +915,10 @@ function Highlighted({
 }) {
   // A payload containing its own fence would break out of ours; leave it plain.
   if (!language || code.includes("```")) {
-    return <pre className={cn("font-mono text-[11px] whitespace-pre-wrap", className)}>{code}</pre>
+    return <pre className={cn("font-mono text-xs whitespace-pre-wrap", className)}>{code}</pre>
   }
   return (
-    <div className={cn("harness-code-bare prose prose-sm max-w-none text-[11px]", className)}>
+    <div className={cn("harness-code-bare prose prose-sm max-w-none", className)}>
       <Markdown rehypePlugins={REHYPE}>{"```" + language + "\n" + code.replace(/\n$/, "") + "\n```"}</Markdown>
     </div>
   )

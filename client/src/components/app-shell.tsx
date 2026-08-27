@@ -30,6 +30,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
 import { CommandPalette, useCommandPalette } from "@/components/command-palette"
+import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
 import {
   HeaderNotice,
   NotificationAlert,
@@ -88,7 +89,9 @@ import {
   renderMenuItems,
   type MenuItemSpec,
 } from "@/components/item-context-menu"
+import { useHotkey } from "@/hooks/use-hotkey"
 import { togglePin, usePins } from "@/lib/pins"
+import { KEYS } from "@/lib/shortcuts"
 import { loadThreadDefaults } from "@/lib/thread-defaults"
 import { shortAge } from "@/lib/time"
 import {
@@ -154,6 +157,7 @@ export function AppShell({
   )
   const [resizing, setResizing] = React.useState(false)
   const palette = useCommandPalette()
+  const shortcuts = useShortcutsHelp()
   const offer = useNotificationOffer()
   const notice = useHeaderNotice()
   const inSettings = location.pathname.startsWith("/settings")
@@ -216,17 +220,13 @@ export function AppShell({
     [dock]
   )
 
-  /* ⌘N mirrors the palette's "New thread" entry — the palette advertises the
-     shortcut, so something has to answer for it. */
-  React.useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() !== "n" || !(event.metaKey || event.ctrlKey) || event.shiftKey) return
-      event.preventDefault()
-      startThreadRef.current()
-    }
-    window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
-  }, [])
+  /* Mirrors the palette's "New thread" entry — the palette advertises the
+     shortcut, so something has to answer for it. The chord itself is named in
+     lib/shortcuts, which is also what the help sheet prints. */
+  useHotkey(KEYS.newThread, (event) => {
+    event.preventDefault()
+    startThreadRef.current()
+  })
 
   const openSettings = (next?: SettingsSectionId) =>
     void navigate(settingsPath(next ?? section))
@@ -499,7 +499,9 @@ export function AppShell({
         actions={actions}
         onNewThread={startThread}
         onNewProject={() => setNewProjectOpen(true)}
+        onShortcuts={() => shortcuts.setOpen(true)}
       />
+      <ShortcutsHelp open={shortcuts.open} onOpenChange={shortcuts.setOpen} />
       {/* Same form the settings page uses — created from the sidebar too. */}
       <ResponsiveDialog open={newProjectOpen} onOpenChange={setNewProjectOpen}>
         <ResponsiveDialogContent className="sm:max-w-xl">
@@ -570,7 +572,8 @@ function SettingsNav({
      Pinned   the ones you said matter, from every project
      Recent   the newest of what is left, project-agnostic
      <project>  everything older, grouped by where it runs
-     Trash    deleted, still recoverable — last, and only when it has something
+     Trash    deleted, still recoverable — last, folded shut, and only when it
+              has something in it
 
    Recent exists because the thing you want next is almost always the thing you
    touched last, and hunting for it inside a project group costs a scan. Older
@@ -630,12 +633,14 @@ function ThreadGroups({ actions }: { actions: Actions }) {
     byProject.set(session.projectId, list)
   }
 
+  /* The tiers that do not fold: they are short by construction (pins are what
+     you chose, Recent is capped) and hiding them would hide the whole point of
+     having them at the top. */
   const group = (
     key: string,
     label: React.ReactNode,
     sessions: SessionMeta[],
-    icon?: React.ReactNode,
-    trash = false
+    icon?: React.ReactNode
   ) => (
     <SidebarGroup key={key} className="mt-2 px-2 py-0 first:mt-0">
       <SidebarGroupLabel className={GROUP_LABEL}>
@@ -644,7 +649,7 @@ function ThreadGroups({ actions }: { actions: Actions }) {
         <span className="ml-auto tabular-nums opacity-70">{sessions.length}</span>
       </SidebarGroupLabel>
       <SidebarGroupContent>
-        <ThreadList sessions={sessions} actions={actions} trash={trash} />
+        <ThreadList sessions={sessions} actions={actions} />
       </SidebarGroupContent>
     </SidebarGroup>
   )
@@ -654,13 +659,14 @@ function ThreadGroups({ actions }: { actions: Actions }) {
      the label: the number of old threads in a project is not a thing anyone
      acts on, and it competed with the disclosure arrow for the same corner. */
   const projectGroup = (projectId: string, sessions: SessionMeta[]) => (
-    <ProjectGroup
+    <FoldableGroup
       key={projectId}
-      projectId={projectId}
+      groupKey={projectId}
+      icon={<FolderIcon className="shrink-0" />}
       label={state.projects.find((p) => p.id === projectId)?.name ?? "Other"}
     >
       <ThreadList sessions={sessions} actions={actions} />
-    </ProjectGroup>
+    </FoldableGroup>
   )
 
   return (
@@ -672,44 +678,79 @@ function ThreadGroups({ actions }: { actions: Actions }) {
       {[...byProject.entries()].map(([projectId, sessions]) =>
         projectGroup(projectId, sessions)
       )}
-      {trashed.length > 0 &&
-        group("__trash", "Trash", trashed, <Trash2 className="size-3 shrink-0" />, true)}
+      {/* Trash folds, and folds shut by default: it is where things go, not
+          where anyone works, and an install that deletes a lot of threads used
+          to end up scrolling past all of them to reach nothing. */}
+      {trashed.length > 0 && (
+        <FoldableGroup
+          groupKey="__trash"
+          label="Trash"
+          icon={<Trash2 className="size-3 shrink-0" />}
+          count={trashed.length}
+          defaultOpen={false}
+        >
+          <ThreadList sessions={trashed} actions={actions} trash />
+          <EmptyTrash sessions={trashed} actions={actions} />
+        </FoldableGroup>
+      )}
     </>
   )
 }
 
-const PROJECT_COLLAPSED_KEY = "ui.collapsedProjects"
+/* Which groups are folded, on this device. One list for every foldable group —
+   a project is keyed by its id, Trash by a name no project can have — so the
+   sidebar has one fold memory rather than one per kind of group. The key is
+   the old projects one: a group that was folded before this list grew stays
+   folded. */
+const COLLAPSED_KEY = "ui.collapsedProjects"
 
-function collapsedProjects(): string[] {
+function collapsedGroups(): string[] {
   try {
-    const raw = JSON.parse(localStorage.getItem(PROJECT_COLLAPSED_KEY) ?? "[]") as unknown
+    const raw = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]") as unknown
     return Array.isArray(raw) ? raw.filter((id): id is string => typeof id === "string") : []
   } catch {
     return []
   }
 }
 
-/** A project's threads, foldable. Open/closed is remembered per project. */
-function ProjectGroup({
-  projectId,
+function rememberFold(key: string, open: boolean, defaultOpen: boolean) {
+  /* Only the *departure* from the default is stored, so a group that defaults
+     closed (Trash) does not need a row in the list to stay closed — and one
+     that defaults open does not need one to stay open. */
+  const collapsed = collapsedGroups().filter((id) => id !== key)
+  if (open !== defaultOpen) collapsed.push(key)
+  try {
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify(collapsed))
+  } catch {
+    // A forgotten fold is not worth throwing out of a click handler.
+  }
+}
+
+/** A foldable sidebar group. Open/closed is remembered per key. */
+function FoldableGroup({
+  groupKey,
   label,
+  icon,
+  count,
+  defaultOpen = true,
   children,
 }: {
-  projectId: string
+  groupKey: string
   label: string
+  icon: React.ReactNode
+  /** Printed next to the label when the number is something you act on. */
+  count?: number
+  /** Trash defaults closed: it is a place things go, not a place you work. */
+  defaultOpen?: boolean
   children: React.ReactNode
 }) {
-  const [open, setOpen] = React.useState(() => !collapsedProjects().includes(projectId))
+  const [open, setOpen] = React.useState(
+    () => collapsedGroups().includes(groupKey) !== defaultOpen
+  )
 
   const toggle = (next: boolean) => {
     setOpen(next)
-    const collapsed = collapsedProjects().filter((id) => id !== projectId)
-    if (!next) collapsed.push(projectId)
-    try {
-      localStorage.setItem(PROJECT_COLLAPSED_KEY, JSON.stringify(collapsed))
-    } catch {
-      // A forgotten fold is not worth throwing out of a click handler.
-    }
+    rememberFold(groupKey, next, defaultOpen)
   }
 
   return (
@@ -720,12 +761,16 @@ function ProjectGroup({
             <SidebarGroupLabel className={cn(GROUP_LABEL, "hover:text-sidebar-foreground/70")} />
           }
         >
-          <FolderIcon className="shrink-0" />
+          {icon}
           <span className="truncate">{label}</span>
+          {count != null && (
+            <span className="ml-auto tabular-nums opacity-70">{count}</span>
+          )}
           <ChevronRight
             aria-hidden
             className={cn(
-              "ml-auto shrink-0 transition-transform duration-200",
+              "shrink-0 transition-transform duration-200",
+              count == null && "ml-auto",
               open && "rotate-90"
             )}
           />
@@ -735,6 +780,55 @@ function ProjectGroup({
         </CollapsibleContent>
       </SidebarGroup>
     </Collapsible>
+  )
+}
+
+/** The one action that belongs to the Trash rather than to a thread in it.
+    It sits at the foot of the list, not on the group label: the label is a
+    disclosure trigger, and a destructive button inside a trigger is a click
+    away from being hit by someone who only meant to fold the group. */
+function EmptyTrash({ sessions, actions }: { sessions: SessionMeta[]; actions: Actions }) {
+  const confirm = useConfirm()
+  const [busy, setBusy] = React.useState(false)
+
+  const empty = async () => {
+    if (
+      !(await confirm({
+        title: sessions.length === 1 ? "Empty the Trash?" : `Delete ${sessions.length} threads forever?`,
+        description:
+          "The harness forgets them. Only each agent's own transcript file would still have the conversation.",
+        confirmLabel: "Delete forever",
+        destructive: true,
+      }))
+    )
+      return
+    setBusy(true)
+    /* One at a time: purgeThread refreshes the session list after each, and a
+       parallel burst would have several refreshes racing to describe a list
+       that is still changing. There are never many. */
+    try {
+      for (const session of sessions) await actions.purgeThread(session.id)
+    } catch (err) {
+      reportError(err, "Couldn't empty the Trash")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          onClick={empty}
+          disabled={busy}
+          tooltip="Delete every thread in the Trash"
+          className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+        >
+          <Trash2 className="size-4" />
+          <span className="truncate">{busy ? "Emptying…" : "Empty Trash"}</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
   )
 }
 

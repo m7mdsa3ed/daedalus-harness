@@ -1,5 +1,6 @@
-import { desc, eq } from "drizzle-orm";
-import { agents as agentsTable, db } from "./db/index.js";
+import { desc, eq, like } from "drizzle-orm";
+import { agentOptions, agents as agentsTable, db } from "./db/index.js";
+import { writeCodexModelCatalog } from "./model-catalog.js";
 import type { Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 
@@ -28,7 +29,49 @@ export interface AgentDef {
 
 /** A default agent, plus the seed release that introduced it. Give a new
     default the next unused `since` and installs pick it up — see `seedAgents`. */
-type SeedAgent = AgentDef & { since: number };
+type SeedAgent = AgentDef & {
+  since: number;
+  /**
+   * What this seed release ADDS to a row that already exists. Returns only the
+   * fields to change, and only ever fields a release introduced — never a
+   * wholesale replacement, because `name`/`command`/`args`/`env` are the user's.
+   * A release that adds a key *inside* an env template (see the codex catalog
+   * below) is the case this exists for: it can merge the key in without
+   * touching whatever else the user put there.
+   */
+  backfill?: (existing: AgentDef) => Partial<AgentDef>;
+};
+
+/** The `{placeholder}` that resolves to a generated Codex model catalog. Named
+    for its dialect because the file it points at is Codex-shaped: an agent that
+    wants one asks for it by using this name in its env. */
+const CODEX_CATALOG_VAR = "codexModelCatalog";
+
+/**
+ * Add `model_catalog_json` to an existing codex row's CODEX_CONFIG.
+ *
+ * The key is new in this seed release, and without it a gateway model keeps
+ * falling back to made-up metadata (see model-catalog.ts). Adding one key is the
+ * narrowest edit that fixes it; anything the user changed around it survives,
+ * and a template that already has the key is left exactly as it is.
+ *
+ * Textual, not `JSON.parse` → merge → `stringify`: the template is not JSON yet.
+ * Its numeric slots (`"model_context_window":{contextWindow}`) are unquoted on
+ * purpose, so it only becomes parseable once the placeholders are filled — which
+ * is what `resolveEnvValue` does, and why the pruner runs there and not here.
+ */
+function withCodexCatalogKey(env: Record<string, string>): Record<string, string> {
+  const template = env.CODEX_CONFIG;
+  if (!template?.trimStart().startsWith("{")) return env;
+  if (template.includes("model_catalog_json")) return env;
+  const at = template.indexOf("{") + 1;
+  const key = `"model_catalog_json":"{${CODEX_CATALOG_VAR}}"`;
+  const rest = template.slice(at).trimStart();
+  return {
+    ...env,
+    CODEX_CONFIG: template.slice(0, at) + key + (rest.startsWith("}") ? "" : ",") + template.slice(at),
+  };
+}
 
 /** Model and effort are env at spawn for all three agents we ship. */
 const SPAWN_CATEGORIES: Record<string, "model" | "effort"> = {
@@ -73,7 +116,10 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // MODEL_PROVIDER repeats the choice because codex-acp's session/load path
     // (getResumeModelProvider) ignores CODEX_CONFIG.model_provider and falls
     // back to "openai" — without it every revived thread 401s on api.openai.com.
-    since: 1,
+    // model_catalog_json is what stops Codex inventing metadata for a gateway
+    // model id: model_context_window alone does not (see model-catalog.ts).
+    since: 2,
+    backfill: (existing) => ({ env: withCodexCatalogKey(existing.env) }),
     id: "codex",
     name: "Codex",
     command: "codex-acp",
@@ -83,7 +129,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
       CODEX_API_KEY: "{apiKey}",
       MODEL_PROVIDER: "{baseUrl?daedalus}",
       CODEX_CONFIG:
-        '{"model":"{model}","model_reasoning_effort":"{effort}","model_context_window":{contextWindow},"model_max_output_tokens":{maxOutputTokens},"model_provider":"{baseUrl?daedalus}","model_providers":{"daedalus":{"name":"{baseUrl?Daedalus gateway}","base_url":"{baseUrl}","env_key":"{baseUrl?CODEX_API_KEY}","wire_api":"{baseUrl?responses}"}}}',
+        '{"model":"{model}","model_reasoning_effort":"{effort}","model_context_window":{contextWindow},"model_max_output_tokens":{maxOutputTokens},"model_catalog_json":"{codexModelCatalog}","model_provider":"{baseUrl?daedalus}","model_providers":{"daedalus":{"name":"{baseUrl?Daedalus gateway}","base_url":"{baseUrl}","env_key":"{baseUrl?CODEX_API_KEY}","wire_api":"{baseUrl?responses}"}}}',
     },
   },
   {
@@ -133,7 +179,7 @@ export function seedAgents(): void {
   const applied =
     db.select({ v: agentsTable.seededVersion }).from(agentsTable).orderBy(desc(agentsTable.seededVersion)).get()
       ?.v ?? 0;
-  for (const { since, ...agent } of DEFAULT_AGENTS) {
+  for (const { since, backfill, ...agent } of DEFAULT_AGENTS) {
     if (since <= applied) continue;
     const existing = db.select().from(agentsTable).where(eq(agentsTable.id, agent.id)).get();
     if (!existing) {
@@ -144,16 +190,23 @@ export function seedAgents(): void {
     }
     /* The row is older than this seed release — an install that already had
        this agent before the field existed. Stamp it as offered, and fill in
-       only what the release ADDED. Never name, command, args or env: those are
-       the fields a user edits, and silently replacing them is how a harness
-       loses someone's gateway configuration. */
+       only what the release ADDED. Never name, command, args or env wholesale:
+       those are the fields a user edits, and silently replacing them is how a
+       harness loses someone's gateway configuration. A release that adds a
+       single key inside one of them says so with `backfill`. */
     db.update(agentsTable)
       .set({
         seededVersion: since,
         spawnCategories: existing.spawnCategories ?? agent.spawnCategories ?? null,
+        ...backfill?.(existing),
       })
       .where(eq(agentsTable.id, agent.id))
       .run();
+    /* The probe's cached answer was recorded by the old spawn, and what a
+       release adds here is exactly the kind of thing that changes it — a real
+       catalog is what makes Codex advertise an effort selector for a gateway
+       model at all. Drop this agent's entries so the next draft asks again. */
+    db.delete(agentOptions).where(like(agentOptions.key, `%:${agent.id}:%`)).run();
   }
 }
 
@@ -238,6 +291,13 @@ export function resolveSpawn(
     maxOutputTokens: modelMeta?.maxOutputTokens ? String(modelMeta.maxOutputTokens) : "null",
     cwd: project.cwd,
   };
+  /* Costs a file write and (once per process) a `codex debug models` spawn, so
+     it is only paid when an env template actually asks for it. A profile with
+     no models resolves it empty, and the key it fills prunes away — which is
+     the agent keeping its own catalog, exactly as elsewhere. */
+  if (Object.values(agent.env).some((t) => t.includes(`{${CODEX_CATALOG_VAR}}`))) {
+    vars[CODEX_CATALOG_VAR] = writeCodexModelCatalog(profile.id, profile.models ?? []) ?? "";
+  }
   const env: Record<string, string> = {};
   for (const [key, template] of Object.entries(agent.env)) {
     const value = resolveEnvValue(template, vars);

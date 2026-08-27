@@ -126,7 +126,9 @@ export function DiffView({
         </div>
       )}
       <div className="max-h-80 overflow-auto">
-        <pre className="min-w-max py-1 font-mono text-[11.5px] leading-5">
+        {/* Same body size as the rest of the transcript; `leading-5` stays, a
+            diff wants a touch more room between lines than prose does. */}
+        <pre className="min-w-max py-1 font-mono text-xs leading-5">
           {rows.map((row, index) =>
             row.type === "skip" ? (
               <div

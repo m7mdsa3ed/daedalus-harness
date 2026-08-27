@@ -1,9 +1,10 @@
 // One place that turns anything thrown in this app into something a person can
 // read. Three kinds of failure reach the UI and none of them stringify well:
 //
-//   - ACP `RequestError` — `String(err)` yields "RequestError: Internal error",
-//     which is the JSON-RPC code's generic label and nothing else. The cause the
-//     agent actually reported lives in `data`, and that is the part worth seeing.
+//   - `AgentError` from lib/thread-socket — `String(err)` yields "AgentError:
+//     Internal error", which is the JSON-RPC code's generic label and nothing
+//     else. The cause the agent actually reported lives in `data` (including the
+//     stderr the server splices in), and that is the part worth seeing.
 //   - `ApiError` from lib/settings — HTTP status plus whatever the server put in
 //     the body (a message, or a zod issue list).
 //   - Everything else — network failures, aborts, plain Errors, thrown strings.
@@ -52,15 +53,16 @@ const RPC_STEMS: Record<number, string> = {
   [-32002]: "Resource not found",
 }
 
-/** Duck-typed rather than `instanceof RequestError`: the value can cross a
-    module boundary (the SDK's) or arrive as a plain object straight off the
-    frame journal, and still be the thing we mean. The `instanceof Error` guard
-    keeps DOMException — which also carries a legacy numeric `code` — out. */
+/** Duck-typed rather than `instanceof`: the value may be an `AgentError` from
+    lib/thread-socket, or a plain `{code, message, data}` straight off a
+    `turn_ended` event, and still be the thing we mean. The `instanceof Error`
+    guard keeps DOMException — which also carries a legacy numeric `code` —
+    out, so anything that IS an Error has to name itself. */
 function asRpcError(err: unknown): { code: number; message: string; data?: unknown } | null {
   if (!err || typeof err !== "object") return null
   const e = err as { code?: unknown; message?: unknown; data?: unknown; name?: unknown }
   if (typeof e.code !== "number" || typeof e.message !== "string") return null
-  if (e.name !== "RequestError" && err instanceof Error) return null
+  if (e.name !== "RequestError" && e.name !== "AgentError" && err instanceof Error) return null
   return { code: e.code, message: e.message, data: e.data }
 }
 

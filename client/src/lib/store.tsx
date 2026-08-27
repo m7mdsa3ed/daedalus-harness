@@ -1,14 +1,12 @@
 /* eslint-disable react-refresh/only-export-components */
 import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
-import { describeError } from "./errors"
 // Value import, but tools.ts imports only *types* from here — erased at build,
 // so there is no runtime cycle.
 import { parseTaskNotification } from "./tools"
 import type {
   AgentDef,
   CommandDef,
-  JournalEntry,
   McpServerDef,
   Profile,
   Project,
@@ -98,17 +96,45 @@ export interface ErrorItem {
   at?: number
 }
 
-export type ThreadItem = TextItem | ToolItem | PlanItem | ErrorItem
+/**
+ * The agent compacted its own context: history replaced by a summary, in the
+ * place in the transcript where it happened.
+ *
+ * This is an upsert keyed by `compactionId`, and the *first* update fixes its
+ * position — later ones patch it where it already sits, which is why the id is
+ * `compaction:<id>` and not a positional one. The summary arrives two ways and
+ * both have to work: whole, on a `compaction_update` (replacement semantics —
+ * an omitted `summary` leaves the stored one alone, `null` or `[]` clears it),
+ * or streamed as `compaction_summary_chunk` blocks that append to it.
+ */
+export interface CompactionItem {
+  kind: "compaction"
+  /** `compaction:<compactionId>`. */
+  id: string
+  status: acp.CompactionStatus
+  /** Content blocks, not text: a summary is an ACP ContentBlock list and the
+      renderer already knows how to draw every variant. */
+  summary: acp.ContentBlock[]
+  /** Why it failed. Only ever set alongside `status: "failed"`. */
+  error?: string
+  at?: number
+}
+
+export type ThreadItem = TextItem | ToolItem | PlanItem | ErrorItem | CompactionItem
 
 export interface PendingPermission {
+  /** The server's id for the question, so an answer from another device can be
+      matched exactly instead of guessed at from the tool call it belongs to. */
+  requestId: string
   request: acp.RequestPermissionRequest
   resolve: (response: acp.RequestPermissionResponse) => void
 }
 
 /** An elicitation (AskUserQuestion form, MCP elicitation, URL flow) the agent
-    is blocked on. Same lifecycle as PendingPermission: resolve settles the
-    JSON-RPC request and clears the card. */
+    is blocked on. Same lifecycle as PendingPermission: resolve answers the
+    agent and clears the card. */
 export interface PendingElicitation {
+  requestId: string
   request: acp.CreateElicitationRequest
   resolve: (response: acp.CreateElicitationResponse) => void
 }
@@ -345,6 +371,44 @@ export function applySessionUpdate(
         ? items.map((i) => (i.kind === "plan" && i.id === plan.id ? plan : i))
         : [...items, plan]
     }
+    case "compaction_update": {
+      /* Patch semantics, per field: an omitted `summary`/`error` leaves what is
+         stored alone, `null` clears it, a value replaces it. `summary: []` is a
+         value that happens to clear too. Conflating "absent" with "empty" here
+         would wipe a streamed summary the moment the terminal update lands
+         without one — which is exactly how agents send it. */
+      const id = `compaction:${update.compactionId}`
+      const existing = items.find(
+        (i): i is CompactionItem => i.kind === "compaction" && i.id === id
+      )
+      const summary =
+        update.summary === undefined ? (existing?.summary ?? []) : (update.summary ?? [])
+      const error =
+        update.error === undefined ? existing?.error : (update.error ?? undefined)
+      const item: CompactionItem = {
+        kind: "compaction",
+        id,
+        status: update.status,
+        summary,
+        error,
+        at: existing?.at ?? at,
+      }
+      return existing
+        ? items.map((i) => (i.kind === "compaction" && i.id === id ? item : i))
+        : [...items, item]
+    }
+    case "compaction_summary_chunk": {
+      /* Appends to a compaction already on screen. The spec has chunks arrive
+         only between the `in_progress` update and the terminal one, so a chunk
+         for an id we have never seen is a stray — dropped rather than made into
+         a headless summary with no status to describe it. */
+      const id = `compaction:${update.compactionId}`
+      return items.map((i) =>
+        i.kind === "compaction" && i.id === id
+          ? { ...i, summary: [...i.summary, update.content] }
+          : i
+      )
+    }
     case "plan_removed":
       // The agent abandoned this plan; leaving it on screen would describe work
       // nobody is doing any more.
@@ -378,13 +442,18 @@ function applyMetaUpdate(
 
 /** A turn can end with tool calls still in flight (cancel, agent crash) — no
     further update will ever arrive for them, so settle them at turn end instead
-    of leaving a spinner running forever. */
+    of leaving a spinner running forever. A compaction is the same bargain: its
+    terminal update is owed by the same process that just stopped talking. */
 function settleTools(items: ThreadItem[]): ThreadItem[] {
-  return items.map((item) =>
-    item.kind === "tool" && (item.status === "pending" || item.status === "in_progress")
-      ? { ...item, status: "failed" }
-      : item
-  )
+  return items.map((item) => {
+    if (item.kind === "tool" && (item.status === "pending" || item.status === "in_progress")) {
+      return { ...item, status: "failed" }
+    }
+    if (item.kind === "compaction" && item.status === "in_progress") {
+      return { ...item, status: "failed" as acp.CompactionStatus }
+    }
+    return item
+  })
 }
 
 export function pushUserMessage(items: ThreadItem[], text: string, at?: number): ThreadItem[] {
@@ -398,9 +467,9 @@ const addOptional = (a: number | null | undefined, b: number | null | undefined)
 /**
  * ACP's Usage doc-comments claim session totals, but agents send per-turn
  * numbers (observed: totalTokens falling between turns), so the running total
- * is ours to keep — and an average cache rate needs it. `_daedalus/turn_ended`
- * is the ONLY caller: the prompt response carries the same usage a second time,
- * and adding both would double every turn.
+ * is ours to keep — and an average cache rate needs it. The `turn_ended` event
+ * is the ONLY caller: it is the one place a turn's usage is reported, live and
+ * on replay alike, so nothing can count the same turn twice.
  */
 export function addUsage(prev: acp.Usage | null, next: acp.Usage): acp.Usage {
   if (!prev) return next
@@ -412,91 +481,6 @@ export function addUsage(prev: acp.Usage | null, next: acp.Usage): acp.Usage {
     cachedReadTokens: addOptional(prev.cachedReadTokens, next.cachedReadTokens),
     cachedWriteTokens: addOptional(prev.cachedWriteTokens, next.cachedWriteTokens),
   }
-}
-
-/** Append a failure while rebuilding — same shape the live `error` action makes. */
-function pushError(items: ThreadItem[], error: Omit<ErrorItem, "kind" | "id">): ThreadItem[] {
-  const last = items[items.length - 1]
-  if (last?.kind === "error" && last.title === error.title && last.reason === error.reason) return items
-  return [...items, { kind: "error", id: `error-${items.length}`, ...error }]
-}
-
-/** Rebuild a thread from the server's frame journal after a reconnect. */
-export function rebuildThread(entries: JournalEntry[]): ThreadState {
-  let thread: ThreadState = { ...emptyThread }
-  // Request id -> the prompt text it carried. A JSON-RPC error response names
-  // only an id, so this is the only way a replay can tell "the prompt failed"
-  // from "some bookkeeping call failed" — and the only way it can offer Retry.
-  const promptsById = new Map<string | number, string>()
-  for (const entry of entries) {
-    try {
-      const msg = JSON.parse(entry.line)
-      if (entry.d === "c" && msg.method === "session/load") {
-        /* A load replays the ENTIRE conversation as fresh notifications, so
-           everything accumulated so far is about to be restated. A thread that
-           reconnected more than once has several replays in one journal — and
-           without this the transcript renders the conversation once per replay.
-           Usage is left alone: turn_ended is not part of a replay, so it cannot
-           be double-counted here. */
-        thread = { ...thread, items: [] }
-        promptsById.clear()
-        continue
-      }
-      if (entry.d === "c" && msg.method === "session/prompt") {
-        const text = ((msg.params?.prompt ?? []) as acp.ContentBlock[])
-          .map((b) => (b.type === "text" ? b.text : ""))
-          .join("")
-        if (msg.id !== undefined) promptsById.set(msg.id, text)
-        if (text) thread = { ...thread, items: pushUserMessage(thread.items, text) }
-      } else if (entry.d === "a" && msg.error && msg.id !== undefined) {
-        // Only prompt failures are transcript-worthy: a rejected re-initialize
-        // or a session/load the client already recovered from is not news.
-        if (!promptsById.has(msg.id)) continue
-        const info = describeError(msg.error)
-        thread = {
-          ...thread,
-          items: settleTools(
-            pushError(thread.items, {
-              title: "The agent couldn't answer this message",
-              reason: info.title,
-              detail: info.detail,
-              retryText: promptsById.get(msg.id) || undefined,
-            })
-          ),
-        }
-        promptsById.delete(msg.id)
-      } else if (entry.d === "a" && msg.method === "session/update" && msg.params?.update) {
-        // User chunks enabled: after a respawn the journal starts with a
-        // session/load replay, where they are the only source of user messages.
-        thread = applyMetaUpdate(thread, msg.params.update, true)
-      } else if (entry.d === "a" && msg.result?.sessionId) {
-        // session/new response: initial modes + config options
-        thread = {
-          ...thread,
-          modes: msg.result.modes ?? thread.modes,
-          configOptions: msg.result.configOptions ?? thread.configOptions,
-        }
-      } else if (entry.d === "a" && msg.method === "_daedalus/turn_ended") {
-        // Server-synthesized turn end — carries usage even when the prompt's
-        // requesting connection died mid-turn, and is journaled, so it is the
-        // single accumulation point for both live frames and this replay.
-        thread = {
-          ...thread,
-          usage: msg.params?.usage ? addUsage(thread.usage, msg.params.usage) : thread.usage,
-          items: settleTools(thread.items),
-        }
-      }
-    } catch {
-      // non-JSON frame — ignore
-    }
-  }
-  // A replayed user message can coexist with its sniffed session/prompt twin —
-  // collapse consecutive identical user items.
-  const items = thread.items.filter((item, i) => {
-    const prev = thread.items[i - 1]
-    return !(item.kind === "user" && prev?.kind === "user" && prev.text === item.text)
-  })
-  return { ...thread, items }
 }
 
 // ---- reducer ----
@@ -663,10 +647,10 @@ export function reducer(state: State, action: Action): State {
     case "error": {
       const items = thread(state, action.id).items
       const last = items[items.length - 1]
-      // Two paths report a failed prompt — the JSON-RPC rejection to whoever
-      // sent it, and the server's `_daedalus/turn_ended` fanout to everyone —
-      // and a reconnect loop repeats itself on every attempt. Same failure,
-      // one row; whichever arrival knows the prompt text donates Retry.
+      // The same failure can arrive more than once — a reconnect loop repeats
+      // itself on every attempt, and a replay restates a turn the live socket
+      // already reported. Same failure, one row; whichever arrival knows the
+      // prompt text donates Retry.
       if (last?.kind === "error" && last.title === action.title && last.reason === action.reason) {
         if (!action.retryText || last.retryText) return state
         return withThread(state, action.id, {

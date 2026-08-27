@@ -153,10 +153,19 @@ function ResponsiveDialogDescription({
 
 function ResponsiveDialogFooter({ className, ...props }: React.ComponentProps<"footer">) {
   const isMobile = React.useContext(MobileCtx)
+  /* A confirmation has a header and a footer and nothing in between, and the
+     space meant for the body does not disappear on its own: DialogContent is a
+     grid with `gap-6`, and this footer adds `mt-2` on top of it, so the two
+     bars sit ~2rem apart with nothing between them reading as a stray band of
+     padding. A footer that *directly follows* the header has no body to be
+     separated from, so it cancels both — the bars meet at their borders and
+     the dialog is exactly as tall as what it says. Adjacent-sibling, so any
+     real content between them restores the spacing by itself. */
   return isMobile ? (
     <DrawerFooter
       className={cn(
         "sticky bottom-[calc(-1*max(1rem,env(safe-area-inset-bottom)))] z-20 -mx-4 -mb-[max(1rem,env(safe-area-inset-bottom))] mt-2 border-t border-border/60 bg-popover/95 px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] supports-backdrop-filter:backdrop-blur-xl",
+        "[[data-slot=drawer-header]+&]:mt-0",
         className
       )}
       {...props}
@@ -165,6 +174,9 @@ function ResponsiveDialogFooter({ className, ...props }: React.ComponentProps<"f
     <DialogFooter
       className={cn(
         "sticky -bottom-6 z-20 -mx-6 -mb-6 mt-2 border-t border-border/60 bg-popover/95 px-6 py-4 supports-backdrop-filter:backdrop-blur-xl",
+        // -mt-6 cancels the grid's own gap-6; a margin cannot make a gap
+        // smaller, but a negative one pulls the row back over it.
+        "[[data-slot=dialog-header]+&]:-mt-6",
         className
       )}
       {...props}

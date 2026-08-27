@@ -1,29 +1,20 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, gte, inArray, lt } from "drizzle-orm";
+import { and, asc, eq, gte } from "drizzle-orm";
 import type { WebSocket } from "ws";
-import { db, journal as journalTable, sessions as sessionsTable } from "./db/index.js";
-import { getAgent, resolveSpawn } from "./registry.js";
+import type * as acp from "@agentclientprotocol/sdk";
+import { db, sessionEvents as eventsTable, sessions as sessionsTable } from "./db/index.js";
+import { mcpServers as mcpLibrary } from "./library.js";
 import type { Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
-import { materializeProject } from "./materialize.js";
+import { AcpBridge, spawnAgent, toWireError, type BridgeHost } from "./acp-bridge.js";
+import { JOURNALED_EVENTS, type ThreadCommand, type ThreadEvent, type WireError } from "./protocol.js";
 
-/** One NDJSON frame with its direction: agent->client or client->agent. */
-export interface JournalEntry {
-  d: "a" | "c";
-  line: string;
-  /** Agent->client request id. Replay skips requests another peer answered. */
-  reqId?: string | number;
-  /** Agent->client response. Ids are per-peer, so replay skips these; the
-      synthetic _daedalus/turn_ended carries what a late peer actually needs. */
-  res?: boolean;
-}
-
-/** One attached client. Several may share a session; the manager arbitrates. */
+/** One attached client. Several may share a session; they are subscribers to
+    one server-side ACP client, not ACP clients themselves — which is why a peer
+    carries no request bookkeeping any more. */
 export interface Peer {
   ws: WebSocket;
-  /** Agent-facing id -> the id this peer used, for requests it has in flight. */
-  inflight: Map<string | number, string | number>;
 }
 
 export interface Session {
@@ -36,22 +27,16 @@ export interface Session {
   title: string;
   acpSessionId?: string;
   createdAt: number;
-  /** Frames ever journaled for this session. `cursor` is an index into this,
-      not into any array — the log itself is a table (see appendJournal), so
-      nothing about a long thread is held in memory any more. */
-  journalCount: number;
+  /** Events ever journaled for this session. `cursor` is an index into this,
+      not into any array — the log itself is a table (see appendEvent), so
+      nothing about a long thread is held in memory. */
+  eventCount: number;
   /** null = no live process (loaded from disk / retired); revive via respawn. */
   proc: ChildProcessWithoutNullStreams | null;
-  /** Every attached client. Agent notifications fan out to all of them. */
+  /** The ACP client driving that process. Goes with it. */
+  bridge: AcpBridge | null;
+  /** Every attached client. Agent events fan out to all of them. */
   peers: Set<Peer>;
-  /** Agent-facing request id -> the peer waiting for it, and enough of the
-      request to tell the other peers what changed once the answer arrives. */
-  routes: Map<string | number, { peer: Peer; method: string; modeId?: string }>;
-  /** Open agent->client requests (permission prompts) -> the toolCallId that
-      identifies them client-side, so peers can dismiss one another's dialogs. */
-  openRequests: Map<string | number, string | undefined>;
-  /** Counter behind the rewritten, session-unique client->agent request ids. */
-  nextRequestId: number;
   /** Rolling tail of the agent's stderr. When an agent answers a prompt with a
       bare "Internal error", this is where the reason actually is — so it is
       kept, capped, and handed to the client instead of only reaching the
@@ -69,9 +54,6 @@ export interface Session {
       only thing that forgets a thread. */
   deletedAt: number | null;
   exited: boolean;
-  promptActive: boolean;
-  pendingPrompts: Set<string | number>;
-  pendingNews: Set<string | number>;
 }
 
 /** How much of the agent's stderr to keep. Enough for a stack trace, bounded so
@@ -81,6 +63,8 @@ const STDERR_TAIL_LINES = 200;
 /** How long to wait after 'exit' for the agent's stdio to close before telling
     the peers anyway — a grandchild holding a pipe must not strand them. */
 const EXIT_DRAIN_MS = 250;
+
+const JOURNALED = new Set<string>(JOURNALED_EVENTS);
 
 /** A WebSocket close reason is capped at 123 bytes by the protocol, and `ws`
     throws rather than truncating — which, in an exit handler, would take the
@@ -94,13 +78,33 @@ function truncateReason(reason: string): string {
   return `${text}…`;
 }
 
+/**
+ * The project's MCP servers, in the shape `session/new` takes.
+ *
+ * The browser used to send these — it no longer speaks to the agent, and the
+ * server already holds the links (join tables, so nothing dangling can be in
+ * them). ACP's stdio variant carries no `type` discriminator, so ours is
+ * stripped on the way out.
+ */
+export function mcpServersFor(project: Project): acp.McpServer[] {
+  const linked = new Set(project.mcpServerIds);
+  return mcpLibrary
+    .list()
+    .filter((s) => linked.has(s.id))
+    .map((s) =>
+      s.type === "http"
+        ? { type: "http" as const, name: s.name, url: s.url, headers: s.headers }
+        : { name: s.name, command: s.command, args: s.args, env: s.env },
+    );
+}
+
 export interface SessionEvents {
   /** Fired only while no client is attached — used for push notifications. */
   onPermissionRequest?: (session: Session) => void;
   /** The agent asked the user something (elicitation/create) with nobody
       attached to answer. Same push case as a permission, different sentence. */
   onElicitationRequest?: (session: Session) => void;
-  /** `error` is the JSON-RPC error the prompt failed with, when it failed. */
+  /** `error` is the error the prompt failed with, when it failed. */
   onTurnEnd?: (session: Session, error?: unknown) => void;
 }
 
@@ -110,27 +114,22 @@ export class SessionManager {
   constructor(private events: SessionEvents = {}, idleMinutes = 30) {
     // Sessions from before the last server restart: processes are gone, but the
     // thread identity remains and the client can revive it (respawn + load).
-    // Their journals go with the processes — reviving replays the conversation
+    // Their event logs go with the processes — reviving replays the conversation
     // through session/load, which is the agent's account and the canonical one.
-    db.delete(journalTable).run();
+    db.delete(eventsTable).run();
     for (const row of db.select().from(sessionsTable).all()) {
       this.sessions.set(row.id, {
         ...row,
         acpSessionId: row.acpSessionId ?? undefined,
-        journalCount: 0,
+        eventCount: 0,
         stderr: [],
         stderrCount: 0,
         stderrMark: 0,
         proc: null,
+        bridge: null,
         peers: new Set(),
-        routes: new Map(),
-        openRequests: new Map(),
-        nextRequestId: 1,
         detachedAt: Date.now(),
         exited: true,
-        promptActive: false,
-        pendingPrompts: new Set(),
-        pendingNews: new Set(),
       });
     }
 
@@ -174,154 +173,84 @@ export class SessionManager {
     }
   }
 
-  /** Append one frame to the session's log.
+  // ---- the event log ----
+
+  /** Append one event to the session's log and stamp it with its seq.
    *
-   * One INSERT per ACP frame. Under WAL with synchronous=NORMAL a commit is a
-   * buffered append, not an fsync, so a streaming turn costs no more than the
-   * array push it replaces — and unlike the array, nothing accumulates in RAM. */
-  private appendJournal(session: Session, entry: JournalEntry): void {
-    db.insert(journalTable)
-      .values({
-        sessionId: session.id,
-        seq: session.journalCount++,
-        dir: entry.d,
-        // A request id may be a string or a number, so it is stored encoded.
-        reqId: entry.reqId === undefined ? null : JSON.stringify(entry.reqId),
-        res: entry.res ?? false,
-        line: entry.line,
-      })
+   * One INSERT per journaled event. Under WAL with synchronous=NORMAL a commit
+   * is a buffered append, not an fsync, so a streaming turn costs no more than
+   * the array push it replaces — and unlike the array, nothing accumulates in
+   * RAM. */
+  private appendEvent(session: Session, event: ThreadEvent): ThreadEvent {
+    const seq = session.eventCount++;
+    const stamped = { ...event, seq } as ThreadEvent;
+    db.insert(eventsTable)
+      .values({ sessionId: session.id, seq, kind: event.ev, payload: stamped })
       .run();
+    return stamped;
   }
 
-  /** Frames from `cursor` on, in order. A range scan on (session_id, seq). */
-  private journalFrom(session: Session, cursor: number): JournalEntry[] {
+  /** Events from `cursor` on, in order. A range scan on (session_id, seq). */
+  private eventsFrom(session: Session, cursor: number): ThreadEvent[] {
     return db
-      .select()
-      .from(journalTable)
-      .where(and(eq(journalTable.sessionId, session.id), gte(journalTable.seq, cursor)))
-      .orderBy(asc(journalTable.seq))
+      .select({ payload: eventsTable.payload })
+      .from(eventsTable)
+      .where(and(eq(eventsTable.sessionId, session.id), gte(eventsTable.seq, cursor)))
+      .orderBy(asc(eventsTable.seq))
       .all()
-      .map((row) => ({
-        d: row.dir,
-        line: row.line,
-        ...(row.reqId !== null ? { reqId: JSON.parse(row.reqId) as string | number } : {}),
-        ...(row.res ? { res: true } : {}),
-      }));
+      .map((row) => row.payload as ThreadEvent);
+  }
+
+  private clearEvents(session: Session): void {
+    db.delete(eventsTable).where(eq(eventsTable.sessionId, session.id)).run();
+    session.eventCount = 0;
   }
 
   /** Everything this session has journaled, and the cursor that follows it. */
-  journal(id: string): { cursor: number; entries: JournalEntry[] } | undefined {
+  journal(id: string): { cursor: number; events: ThreadEvent[] } | undefined {
     const session = this.sessions.get(id);
     if (!session) return undefined;
-    return { cursor: session.journalCount, entries: this.journalFrom(session, 0) };
+    return { cursor: session.eventCount, events: this.eventsFrom(session, 0) };
   }
 
-  /** Journal lines for still-open agent->client requests that fall below
-      `cursor` — the ones a reattaching client would otherwise never be sent. */
-  private openRequestFrames(session: Session, cursor: number): string[] {
-    if (cursor === 0 || session.openRequests.size === 0) return [];
-    const ids = [...session.openRequests.keys()].map((id) => JSON.stringify(id));
-    return db
-      .select({ line: journalTable.line })
-      .from(journalTable)
-      .where(
-        and(
-          eq(journalTable.sessionId, session.id),
-          inArray(journalTable.reqId, ids),
-          lt(journalTable.seq, cursor),
-        ),
-      )
-      .orderBy(asc(journalTable.seq))
-      .all()
-      .map((row) => row.line);
+  // ---- fan-out ----
+
+  private send(peer: Peer, event: ThreadEvent): void {
+    peer.ws.send(JSON.stringify(event));
   }
 
-  private clearJournal(session: Session): void {
-    db.delete(journalTable).where(eq(journalTable.sessionId, session.id)).run();
-    session.journalCount = 0;
+  /**
+   * Journal (when the event is one of the four that are) and fan out.
+   *
+   * `except` is the peer whose own action produced the event — it has already
+   * shown the result and being told again would double it.
+   */
+  private emit(session: Session, event: ThreadEvent, except?: Peer): void {
+    /* Closing a bridge rejects whatever it had in flight, and those rejections
+       land a microtask later — after a purge has already deleted the row the
+       event rows point at. Nothing is listening for them either way. */
+    if (!this.sessions.has(session.id)) return;
+    const out = JOURNALED.has(event.ev) ? this.appendEvent(session, event) : event;
+    if (session.peers.size === 0) return;
+    const line = JSON.stringify(out);
+    for (const peer of session.peers) if (peer !== except) peer.ws.send(line);
   }
 
-  /** Stop the process but keep the thread — the opposite of kill(). */
-  private retire(session: Session): void {
-    const proc = session.proc;
-    session.proc = null; // flips the generation guard
-    session.exited = true;
-    this.clearJournal(session);
-    session.promptActive = false;
-    this.resetRouting(session);
-    proc?.kill();
+  /** A server-side subsystem (the task tailer) telling a thread's live peers
+      something. Not journaled: the source is durable on its own and re-read at
+      watch time, so replaying these would double-count every event. */
+  taskEvent(id: string, transcriptDir: string, event: unknown): void {
+    const session = this.sessions.get(id);
+    if (session) {
+      this.emit(session, {
+        ev: "task_event",
+        transcriptDir,
+        event: event as Record<string, unknown>,
+      });
+    }
   }
 
-  private spawnProc(profile: Profile, project: Project, model?: string, effort?: string) {
-    const agent = getAgent(profile.agentId);
-    if (!agent) throw new Error(`unknown agent: ${profile.agentId}`);
-    materializeProject(project);
-    const { command, args, env, cwd } = resolveSpawn(agent, profile, project, model, effort);
-    return spawn(command, args, {
-      cwd,
-      env: { ...process.env, ...env },
-      stdio: ["pipe", "pipe", "pipe"],
-    }) as ChildProcessWithoutNullStreams;
-  }
-
-  /** Pipe a process into the session. Guards on session.proc so a respawned
-      session's stale process can't write into the journal or close the WS. */
-  private wire(session: Session, proc: ChildProcessWithoutNullStreams, profileName: string): void {
-    let buffer = "";
-    proc.stdout.on("data", (chunk: Buffer) => {
-      if (session.proc !== proc) return;
-      buffer += chunk.toString("utf8");
-      let nl;
-      while ((nl = buffer.indexOf("\n")) !== -1) {
-        const line = buffer.slice(0, nl);
-        buffer = buffer.slice(nl + 1);
-        if (line.trim()) this.onAgentLine(session, line);
-      }
-    });
-    proc.stderr.on("data", (chunk: Buffer) => {
-      const text = chunk.toString().trimEnd();
-      console.error(`[${session.id.slice(0, 8)}:${profileName}]`, text);
-      if (session.proc !== proc) return;
-      this.pushStderr(session, text);
-    });
-    // spawn() reports a missing binary, a bad cwd or a permissions problem
-    // asynchronously — and an unhandled 'error' on a ChildProcess takes the
-    // whole server down with it. Treat it as an immediate exit and tell the
-    // client what the OS said, which is the only useful thing anyone has.
-    proc.on("error", (error: NodeJS.ErrnoException) => {
-      if (session.proc !== proc) return;
-      const reason = `agent failed to start: ${error.code ?? error.name} — ${error.message}`;
-      console.error(`[${session.id.slice(0, 8)}:${profileName}]`, reason);
-      this.pushStderr(session, reason);
-      session.exited = true;
-      session.proc = null;
-      this.failPendingRequests(session, reason);
-      this.closePeers(session, 4001, truncateReason(reason));
-    });
-    // 'exit' fires the moment the process is gone, but stderr written just
-    // before it dies is often still in flight — and that last line is usually
-    // the whole explanation. 'close' is the event that waits for the pipes, so
-    // the peers are told there, with a timer in case a grandchild holds a pipe
-    // open and 'close' never comes.
-    let settled = false;
-    const finish = (code: number | null, signal: NodeJS.Signals | null) => {
-      if (settled || session.proc !== proc) return;
-      settled = true;
-      session.exited = true;
-      // Anything the client was waiting on will never be answered now. Without
-      // this, a prompt sent to a dying agent hangs until the socket closes and
-      // the transcript just stops mid-turn.
-      const how = code !== null ? `exit code ${code}` : `signal ${signal}`;
-      this.failPendingRequests(session, `The agent process ended (${how}).`);
-      this.closePeers(session, 4001, truncateReason(`agent exited (${code ?? signal ?? "unknown"})`));
-    };
-    proc.on("exit", (code, signal) => {
-      if (session.proc !== proc) return;
-      session.exited = true;
-      setTimeout(() => finish(code, signal), EXIT_DRAIN_MS).unref();
-    });
-    proc.on("close", finish);
-  }
+  // ---- stderr ----
 
   private pushStderr(session: Session, text: string): void {
     const lines = text.split("\n");
@@ -340,49 +269,118 @@ export class SessionManager {
   }
 
   /**
-   * Attach the agent's own output to a JSON-RPC error before it reaches the
-   * client. "Internal error" is a code, not an explanation; the explanation was
-   * on stderr, and this is the only place that has both.
+   * Attach the agent's own output to an error before it reaches the client.
+   * "Internal error" is a code, not an explanation; the explanation was on
+   * stderr, and this is the only place that has both.
    */
-  private enrichError(session: Session, error: unknown): unknown {
+  private enrichError(session: Session, error: WireError): WireError {
     const stderr = this.stderrSinceMark(session);
-    if (!stderr || !error || typeof error !== "object") return error;
-    const { data } = error as { data?: unknown };
+    if (!stderr) return error;
+    const { data } = error;
     const merged =
       data && typeof data === "object" && !Array.isArray(data)
         ? { ...(data as Record<string, unknown>), stderr }
         : data === undefined
           ? { stderr }
           : { details: data, stderr };
-    return { ...(error as Record<string, unknown>), data: merged };
+    return { ...error, data: merged };
   }
 
-  /** Answer every in-flight client->agent request with a JSON-RPC error, so the
-      client's promises reject with a reason instead of hanging forever. */
-  private failPendingRequests(session: Session, reason: string): void {
-    const stderr = this.stderrSinceMark(session) || session.stderr.join("\n").trim();
-    for (const [agentId, route] of session.routes) {
-      const clientId = route.peer.inflight.get(agentId);
-      route.peer.inflight.delete(agentId);
-      if (clientId === undefined) continue;
-      route.peer.ws.send(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: clientId,
-          error: {
-            code: -32603,
-            message: reason,
-            // The agent's last words. When an agent dies mid-prompt this is
-            // usually the stack trace that explains why.
-            data: stderr ? { details: stderr } : undefined,
-          },
-        }),
-      );
-    }
-    session.routes.clear();
-    session.pendingPrompts.clear();
-    session.pendingNews.clear();
-    session.promptActive = false;
+  /** The agent's recent stderr, for a client that wants to see why a thread is
+      misbehaving. Read-only; the server's console gets it either way. */
+  stderrTail(id: string): string[] {
+    return this.sessions.get(id)?.stderr ?? [];
+  }
+
+  // ---- process lifecycle ----
+
+  /** What the bridge calls back into. One per session, reused across respawns —
+      the `session` closure is stable, the bridge inside it is not. */
+  private hostFor(session: Session): BridgeHost {
+    return {
+      emit: (event, except) => this.emit(session, event, except),
+      peerCount: () => session.peers.size,
+      markTurnStderr: () => {
+        session.stderrMark = session.stderrCount;
+      },
+      enrichError: (error) => this.enrichError(session, error),
+      onPermissionRequest: () => this.events.onPermissionRequest?.(session),
+      onElicitationRequest: () => this.events.onElicitationRequest?.(session),
+      onTurnEnd: (error) => this.events.onTurnEnd?.(session, error),
+      onAcpSessionId: (acpSessionId) => {
+        session.acpSessionId = acpSessionId;
+        this.persist(session);
+      },
+      onSpawnStateChange: (next) => {
+        if (next.model !== undefined) session.model = next.model;
+        if (next.effort !== undefined) session.effort = next.effort;
+        this.persist(session);
+      },
+    };
+  }
+
+  /**
+   * Watch a process on the session's behalf. Everything here is guarded on
+   * `session.bridge`, the generation token: a respawned session's dying
+   * predecessor must not close the new one's sockets.
+   *
+   * Note what is NOT here any more: stdout. The bridge's ndJsonStream owns it,
+   * and a second reader would silently steal its bytes.
+   */
+  private wire(session: Session, proc: ChildProcessWithoutNullStreams, bridge: AcpBridge, profileName: string): void {
+    proc.stderr.on("data", (chunk: Buffer) => {
+      const text = chunk.toString().trimEnd();
+      console.error(`[${session.id.slice(0, 8)}:${profileName}]`, text);
+      if (session.bridge !== bridge) return;
+      this.pushStderr(session, text);
+    });
+    // spawn() reports a missing binary, a bad cwd or a permissions problem
+    // asynchronously — and an unhandled 'error' on a ChildProcess takes the
+    // whole server down with it. Treat it as an immediate exit and tell the
+    // client what the OS said, which is the only useful thing anyone has.
+    proc.on("error", (error: NodeJS.ErrnoException) => {
+      if (session.bridge !== bridge) return;
+      const reason = `agent failed to start: ${error.code ?? error.name} — ${error.message}`;
+      console.error(`[${session.id.slice(0, 8)}:${profileName}]`, reason);
+      this.pushStderr(session, reason);
+      this.collapse(session, bridge, reason);
+    });
+    // 'exit' fires the moment the process is gone, but stderr written just
+    // before it dies is often still in flight — and that last line is usually
+    // the whole explanation. 'close' is the event that waits for the pipes, so
+    // the peers are told there, with a timer in case a grandchild holds a pipe
+    // open and 'close' never comes.
+    let settled = false;
+    const finish = (code: number | null, signal: NodeJS.Signals | null) => {
+      if (settled || session.bridge !== bridge) return;
+      settled = true;
+      const how = code !== null ? `exit code ${code}` : `signal ${signal}`;
+      this.collapse(session, bridge, `The agent process ended (${how}).`);
+    };
+    proc.on("exit", (code, signal) => {
+      if (session.bridge !== bridge) return;
+      session.exited = true;
+      setTimeout(() => finish(code, signal), EXIT_DRAIN_MS).unref();
+    });
+    proc.on("close", finish);
+  }
+
+  /**
+   * The process is gone. Reject whatever the agent was going to answer, settle
+   * whatever it was asking, and only then close the sockets.
+   *
+   * The order is the point: closing the bridge rejects the in-flight prompt,
+   * which becomes a `turn_ended` carrying the stderr that explains the failure.
+   * Close the peers first and that explanation never reaches anyone — which is
+   * how a prompt to a dying agent used to just stop mid-turn.
+   */
+  private collapse(session: Session, bridge: AcpBridge, reason: string): void {
+    session.exited = true;
+    bridge.close(new Error(reason));
+    setTimeout(() => {
+      if (session.bridge !== bridge) return;
+      this.closePeers(session, 4001, truncateReason(reason));
+    }, 0).unref();
   }
 
   /** `id` lets the client name the thread it has already routed to; the caller
@@ -394,8 +392,8 @@ export class SessionManager {
     model?: string,
     effort?: string,
     id?: string,
+    configChoices?: Record<string, string | boolean>,
   ): Session {
-    const proc = this.spawnProc(profile, project, model, effort);
     const session: Session = {
       id: id ?? randomUUID(),
       profileId: profile.id,
@@ -405,55 +403,104 @@ export class SessionManager {
       effort: effort ?? "",
       title: "New thread",
       createdAt: Date.now(),
-      journalCount: 0,
+      eventCount: 0,
       stderr: [],
       stderrCount: 0,
       stderrMark: 0,
-      proc,
+      proc: null,
+      bridge: null,
       peers: new Set(),
-      routes: new Map(),
-      openRequests: new Map(),
-      nextRequestId: 1,
       detachedAt: Date.now(),
       deletedAt: null,
       exited: false,
-      promptActive: false,
-      pendingPrompts: new Set(),
-      pendingNews: new Set(),
     };
     this.sessions.set(session.id, session);
-    // Before wire(): the journal rows reference this one, so the session has to
-    // exist by the time the agent's first frame arrives.
+    // Before the bridge: the event rows reference this one, so the session has
+    // to exist by the time the agent's first update arrives.
     this.persist(session);
-    this.wire(session, proc, profile.name);
+    this.start(session, profile, project, model, effort, { configChoices });
     return session;
+  }
+
+  /** Spawn a process for this session and put an ACP client in front of it. */
+  private start(
+    session: Session,
+    profile: Profile,
+    project: Project,
+    model: string | undefined,
+    effort: string | undefined,
+    opts: {
+      load?: { acpSessionId: string };
+      restore?: import("./protocol.js").RestoreState;
+      configChoices?: Record<string, string | boolean>;
+    },
+  ): AcpBridge {
+    const proc = spawnAgent(profile, project, model, effort);
+    const bridge = new AcpBridge(this.hostFor(session), proc, {
+      cwd: project.cwd,
+      mcpServers: mcpServersFor(project),
+      ...opts,
+    });
+    session.proc = proc;
+    session.bridge = bridge; // flips the generation guard
+    session.exited = false;
+    // Not every caller awaits `ready` (create() hands the promise to its route,
+    // respawn awaits it here). Attaching a handler now keeps a failed handshake
+    // from surfacing as an unhandled rejection; the real awaiter still sees it.
+    bridge.ready.catch(() => {});
+    this.wire(session, proc, bridge, profile.name);
+    return bridge;
   }
 
   /**
    * Swap the session's agent process for one spawned with a different
    * profile/model/effort (same project) — also the revive path for sessions
-   * whose process is gone (idle-retired or pre-restart). The journal is
-   * reset — the client re-handshakes and restores the conversation via ACP
-   * session/load, and that replay becomes the new canonical journal.
+   * whose process is gone (idle-retired or pre-restart).
+   *
+   * Atomic now, and that is the change: the whole spawn → session/load →
+   * restore-the-settings sequence happens here, while it used to be three
+   * round trips the browser drove. A tab closing halfway through can no longer
+   * leave a thread half-restored.
    */
-  respawn(id: string, profile: Profile, project: Project, model?: string, effort?: string): Session {
+  async respawn(
+    id: string,
+    profile: Profile,
+    project: Project,
+    model?: string,
+    effort?: string,
+  ): Promise<Session> {
     const session = this.sessions.get(id);
     if (!session) throw new Error("unknown session");
     if (session.deletedAt !== null) throw new Error("session deleted");
+    // Captured while the old process is still up — it is the only thing that
+    // knows how the agent was configured.
+    const restore = session.bridge?.captureRestoreState();
     const oldProc = session.proc;
-    const proc = this.spawnProc(profile, project, model, effort);
-    session.proc = proc; // flips the generation guard before the old proc dies
+    const oldBridge = session.bridge;
+    session.bridge = null; // stale generation from here on
+    oldBridge?.close(new Error("respawning"));
     if (!session.exited) oldProc?.kill();
-    session.exited = false;
     session.profileId = profile.id;
     session.agentId = profile.agentId;
     session.model = model || profile.defaultModel || "";
     session.effort = effort ?? "";
-    this.clearJournal(session);
-    session.promptActive = false;
-    this.resetRouting(session);
-    this.wire(session, proc, profile.name);
+    // The load replays the entire conversation as fresh updates, so everything
+    // already journaled is about to be said again.
+    this.clearEvents(session);
+    this.resetStderr(session);
+    const bridge = this.start(session, profile, project, model, effort, {
+      load: session.acpSessionId ? { acpSessionId: session.acpSessionId } : undefined,
+      restore,
+    });
     this.persist(session);
+    try {
+      await bridge.ready;
+    } catch (error) {
+      // A handshake that never finished leaves a thread that needs reviving —
+      // the caller turns this into an {error} the client can read.
+      if (session.bridge === bridge) this.collapse(session, bridge, describe(error));
+      throw error;
+    }
     return session;
   }
 
@@ -461,26 +508,25 @@ export class SessionManager {
     return this.sessions.get(id);
   }
 
-  /**
-   * Record a model/effort change the agent accepted over ACP. No process is
-   * touched — the running agent already made the change. This only keeps the
-   * record that `respawn` rebuilds the child's env from in step with what the
-   * session is actually running, so reviving a retired thread does not quietly
-   * put it back on the model the user switched away from.
-   */
-  setSpawnState(id: string, next: { model?: string; effort?: string }): boolean {
-    const session = this.sessions.get(id);
-    if (!session) return false;
-    if (next.model !== undefined) session.model = next.model;
-    if (next.effort !== undefined) session.effort = next.effort;
-    this.persist(session);
-    return true;
+  private resetStderr(session: Session): void {
+    session.stderr = [];
+    session.stderrCount = 0;
+    session.stderrMark = 0;
   }
 
-  /** The agent's recent stderr, for a client that wants to see why a thread is
-      misbehaving. Read-only; the server's console gets it either way. */
-  stderrTail(id: string): string[] {
-    return this.sessions.get(id)?.stderr ?? [];
+  /** Stop the process but keep the thread — the opposite of purge(). */
+  private retire(session: Session): void {
+    const proc = session.proc;
+    const bridge = session.bridge;
+    session.proc = null;
+    session.bridge = null; // flips the generation guard
+    session.exited = true;
+    // Close before clearing: closing ends whatever turn was in flight, and that
+    // last event belongs to the log this is about to throw away, not the next one.
+    bridge?.close(new Error("thread retired"));
+    this.clearEvents(session);
+    this.resetStderr(session);
+    proc?.kill();
   }
 
   list() {
@@ -498,8 +544,8 @@ export class SessionManager {
       attached: s.peers.size > 0,
       peerCount: s.peers.size,
       exited: s.exited,
-      promptActive: s.promptActive,
-      cursor: s.journalCount,
+      promptActive: s.bridge?.promptActive ?? false,
+      cursor: s.eventCount,
     }));
   }
 
@@ -534,263 +580,126 @@ export class SessionManager {
     const session = this.sessions.get(id);
     if (!session) return false;
     this.closePeers(session, 4000, "session purged");
-    const proc = session.proc;
-    session.proc = null;
-    if (!session.exited) proc?.kill();
+    this.retire(session);
     this.sessions.delete(id);
-    // ON DELETE CASCADE takes the journal rows with it.
+    // ON DELETE CASCADE takes the event rows with it.
     db.delete(sessionsTable).where(eq(sessionsTable.id, id)).run();
     return true;
-  }
-
-  /** A new process (or none) invalidates every in-flight id and open request —
-      and its predecessor's output, which explains nothing about the new one. */
-  private resetRouting(session: Session): void {
-    session.routes.clear();
-    session.openRequests.clear();
-    session.nextRequestId = 1;
-    session.pendingPrompts.clear();
-    session.pendingNews.clear();
-    session.stderr = [];
-    session.stderrCount = 0;
-    session.stderrMark = 0;
-    for (const peer of session.peers) peer.inflight.clear();
   }
 
   private closePeers(session: Session, code: number, reason: string): void {
     for (const peer of session.peers) peer.ws.close(code, reason);
   }
 
-  private broadcast(session: Session, line: string, except?: Peer): void {
-    for (const peer of session.peers) if (peer !== except) peer.ws.send(line);
-  }
+  // ---- the socket ----
 
-  /** Journal + fan out a server-synthesized agent->client notification. */
-  private emitToClient(session: Session, msg: object): void {
-    const line = JSON.stringify(msg);
-    this.appendJournal(session, { d: "a", line });
-    this.broadcast(session, line);
-  }
-
-  /** Fan out a synthesized notification WITHOUT journaling it — for frames that
-      exist only to sync peers with each other, where the journal already holds
-      the underlying event and a replay would double-count it. */
-  private notifyPeers(session: Session, msg: object, except?: Peer): void {
-    if (session.peers.size === 0) return;
-    this.broadcast(session, JSON.stringify(msg), except);
-  }
-
-  /** A server-side subsystem (the task tailer) telling a thread's live peers
-      something. Not journaled: the source is durable on its own and re-read at
-      watch time, so replaying these would double-count every event. */
-  notify(id: string, method: string, params: unknown): void {
-    const session = this.sessions.get(id);
-    if (session) this.notifyPeers(session, { jsonrpc: "2.0", method, params });
-  }
-
-  /** Attach a WebSocket; replays agent frames after `cursor`, then pipes live.
-      Returns null on success, or why it refused — that string becomes the close
-      reason, and "unknown session" for all three cases was a lie in two. */
+  /**
+   * Attach a WebSocket. Replays journaled events from `cursor`, brackets them
+   * with `attached`/`caught_up` so the client can tell history from news, then
+   * hands over whatever question the agent is currently blocked on.
+   *
+   * Returns null on success, or why it refused — that string becomes the close
+   * reason, and "unknown session" for all three cases was a lie in two.
+   */
   attach(id: string, ws: WebSocket, cursor = 0): string | null {
     const session = this.sessions.get(id);
     if (!session) return "no such thread on this server";
     if (session.deletedAt !== null) return "this thread is in the trash";
     if (session.exited) return "this thread has no running agent — revive it first";
-    const peer: Peer = { ws, inflight: new Map() };
+    const peer: Peer = { ws };
     session.peers.add(peer);
     session.detachedAt = null;
-    for (const entry of this.journalFrom(session, cursor)) {
-      if (entry.d !== "a") continue;
-      // Responses carry another peer's ids — meaningless here, and the SDK
-      // would warn about an unknown id. Requests another peer already answered
-      // would raise a dead permission dialog. Notifications are the replay.
-      if (entry.res) continue;
-      if (entry.reqId !== undefined && !session.openRequests.has(entry.reqId)) continue;
-      ws.send(entry.line);
-    }
-    // An unanswered agent request is replayed whatever the cursor says. A
-    // client that reloaded reattaches from the END of the log, so the
-    // permission prompt it was showing sits below its cursor and the loop above
-    // skips it — leaving the agent blocked on a question with nothing on screen
-    // to answer it. Anything at or above the cursor already went out, so only
-    // the older ones are resent here.
-    for (const line of this.openRequestFrames(session, cursor)) ws.send(line);
-    ws.on("message", (data) => {
-      const line = data.toString();
-      this.onClientLine(session, peer, line);
+
+    this.send(peer, { ev: "attached", from: cursor, acpSessionId: session.acpSessionId ?? null });
+    for (const event of this.eventsFrom(session, cursor)) this.send(peer, event);
+    // Read in the same tick as the log it follows, so a client can't pair a
+    // stale turn state with a fresh replay window (or vice versa).
+    this.send(peer, {
+      ev: "caught_up",
+      cursor: session.eventCount,
+      promptActive: session.bridge?.promptActive ?? false,
     });
+    /* An unanswered question is sent whatever the cursor says. A client that
+       reloaded reattaches from the END of the log, and the agent is still
+       blocked — so without this it would show nothing to answer with. There is
+       no filtering to do: an answered request is not in the map. */
+    for (const event of session.bridge?.pendingEvents() ?? []) this.send(peer, event);
+
+    ws.on("message", (data) => this.onCommand(session, peer, data.toString()));
     ws.on("close", () => {
       session.peers.delete(peer);
-      // Responses to this peer's in-flight requests can no longer be delivered.
-      for (const agentId of peer.inflight.keys()) session.routes.delete(agentId);
       if (session.peers.size === 0) session.detachedAt = Date.now();
     });
     return null;
   }
 
-  private onAgentLine(session: Session, line: string): void {
-    let turnEndedUsage: unknown = undefined;
-    /** The prompt's JSON-RPC error, when the turn ended by failing. */
-    let turnEndedError: unknown = undefined;
-    const entry: JournalEntry = { d: "a", line };
-    // Where this frame goes: one peer for a response, everyone otherwise.
-    let target: Peer | undefined;
-    let out = line;
+  private onCommand(session: Session, peer: Peer, line: string): void {
+    let command: ThreadCommand;
     try {
-      const msg = JSON.parse(line);
-      if (msg.method !== undefined && msg.id !== undefined) {
-        // Agent asks the client something (permission, fs, terminal). Every peer
-        // sees it; the first answer wins and the rest are told to dismiss.
-        entry.reqId = msg.id;
-        // Both question-shaped requests name the tool call they belong to, in
-        // their own place: the permission nests it under `toolCall`, the
-        // elicitation carries it flat. Either way it is what tells the other
-        // peers WHICH card the first answer just closed.
-        session.openRequests.set(
-          msg.id,
-          msg.params?.toolCall?.toolCallId ?? msg.params?.toolCallId,
-        );
-        if (session.peers.size === 0) {
-          if (msg.method === "session/request_permission") this.events.onPermissionRequest?.(session);
-          else if (msg.method === "elicitation/create") this.events.onElicitationRequest?.(session);
-        }
-      } else if (msg.method === undefined && msg.id !== undefined) {
-        entry.res = true;
-        // The agent's stderr is spliced in once, here, and everything
-        // downstream — the requesting peer, the turn_ended fanout, the journal
-        // a later reload rebuilds from — carries the same enriched error.
-        if (msg.error) {
-          msg.error = this.enrichError(session, msg.error);
-          entry.line = JSON.stringify(msg);
-        }
-        if (session.pendingNews.delete(msg.id) && msg.result?.sessionId) {
-          session.acpSessionId = msg.result.sessionId;
-          this.persist(session);
-        }
-        if (session.pendingPrompts.delete(msg.id) && session.pendingPrompts.size === 0) {
-          session.promptActive = false;
-          turnEndedUsage = msg.result?.usage ?? null;
-          // Only the peer that sent the prompt gets the error response; the
-          // others would see a turn that ended for no visible reason, so it
-          // rides along on the fanout too.
-          if (msg.error) turnEndedError = msg.error;
-        }
-        // Restore the id the requesting peer used and send it back only there;
-        // ids are rewritten on the way in so two peers can't collide.
-        const route = session.routes.get(msg.id);
-        if (route) {
-          session.routes.delete(msg.id);
-          const clientId = route.peer.inflight.get(msg.id);
-          route.peer.inflight.delete(msg.id);
-          target = route.peer;
-          out = JSON.stringify({ ...msg, id: clientId });
-          // Session settings are shared state: only the peer that changed them
-          // sees the response, so hand the result to everyone else.
-          const configOptions = msg.result?.configOptions;
-          if (route.method === "session/set_mode" || configOptions) {
-            this.notifyPeers(
-              session,
-              {
-                jsonrpc: "2.0",
-                method: "_daedalus/peer_settings",
-                params: { sessionId: session.acpSessionId, modeId: route.modeId, configOptions },
-              },
-              route.peer,
-            );
-          }
-        }
-      }
+      command = JSON.parse(line) as ThreadCommand;
     } catch {
-      // not JSON — pipe through untouched
+      return; // not JSON — nothing to answer
     }
-    this.appendJournal(session, entry);
-    if (target) target.ws.send(out);
-    else if (!entry.res) this.broadcast(session, out);
-    if (turnEndedUsage !== undefined) {
-      // The prompt's requester may be a dead connection (client reattached
-      // mid-turn) or one of several peers: a synthetic notification carries
-      // turn end + usage to everyone listening now, and into the journal for
-      // later replays. Emitted after the response so live and replay order match.
-      this.emitToClient(session, {
-        jsonrpc: "2.0",
-        method: "_daedalus/turn_ended",
-        params: { sessionId: session.acpSessionId, usage: turnEndedUsage, error: turnEndedError },
-      });
-      if (session.peers.size === 0) this.events.onTurnEnd?.(session, turnEndedError);
+    const bridge = session.bridge;
+    if (!bridge) {
+      if ("id" in command) {
+        this.send(peer, {
+          ev: "reply",
+          id: command.id,
+          error: { code: -32603, message: "this thread has no running agent" },
+        });
+      }
+      return;
+    }
+
+    switch (command.cmd) {
+      case "answer_permission":
+      case "answer_elicitation": {
+        // First answer wins. A loser is told directly, so its card clears even
+        // though it never saw the winner's broadcast.
+        const answered = bridge.answer(command.requestId, command.response, peer);
+        if (!answered) this.send(peer, { ev: "request_answered", requestId: command.requestId });
+        return;
+      }
+      case "prompt":
+        this.run(session, peer, command.id, async () => {
+          bridge.prompt(command.text, peer);
+          if (command.text && session.title === "New thread") {
+            session.title = command.text.slice(0, 60);
+            this.persist(session);
+          }
+        });
+        return;
+      case "cancel":
+        this.run(session, peer, command.id, () => bridge.cancel());
+        return;
+      case "set_mode":
+        this.run(session, peer, command.id, () => bridge.setMode(command.modeId, peer));
+        return;
+      case "set_config_option":
+        this.run(session, peer, command.id, async () => ({
+          configOptions: await bridge.setConfigOption(command.configId, command.value, peer),
+        }));
+        return;
     }
   }
 
-  private onClientLine(session: Session, peer: Peer, line: string): void {
-    let out = line;
-    try {
-      const msg = JSON.parse(line);
-      if (msg.method !== undefined && msg.id !== undefined) {
-        // Client->agent request. Every peer numbers its own requests from 1, so
-        // rewrite to a session-unique id and remember who to route the reply to.
-        const agentId = `d${session.nextRequestId++}`;
-        session.routes.set(agentId, { peer, method: msg.method, modeId: msg.params?.modeId });
-        peer.inflight.set(agentId, msg.id);
-        if (msg.method === "session/new") session.pendingNews.add(agentId);
-        /* A load makes the agent restate the ENTIRE conversation as fresh
-           session/update notifications, so everything already journaled is
-           about to be said again. Without dropping it the log grows by a whole
-           history per load — and a client rebuilding from it renders the thread
-           once per replay, which is exactly what two peers each loading once
-           produced here. Other peers' cursors go stale, which costs nothing:
-           they are live and receiving these frames directly, and a reconnect
-           re-reads the cursor from the journal endpoint anyway. */
-        if (msg.method === "session/load") this.clearJournal(session);
-        if (msg.method === "session/prompt") {
-          session.pendingPrompts.add(agentId);
-          // First prompt of a turn marks where this turn's stderr starts, so a
-          // failure is explained by its own output and not the last one's.
-          if (!session.promptActive) session.stderrMark = session.stderrCount;
-          session.promptActive = true;
-          const text = (msg.params?.prompt ?? [])
-            .filter((b: { type: string }) => b.type === "text")
-            .map((b: { text: string }) => b.text)
-            .join(" ")
-            .trim();
-          if (text && session.title === "New thread") {
-            session.title = text.slice(0, 60);
-            this.persist(session);
-          }
-          // The other peers never see this request (it goes to the agent, not
-          // to them), so tell them a turn started and whose words started it.
-          // Not journaled: the d:"c" entry below is what replays rebuild from.
-          if (text) {
-            this.notifyPeers(
-              session,
-              {
-                jsonrpc: "2.0",
-                method: "_daedalus/peer_prompt",
-                params: { sessionId: session.acpSessionId, text },
-              },
-              peer,
-            );
-          }
-        }
-        out = JSON.stringify({ ...msg, id: agentId });
-      } else if (msg.method === undefined && msg.id !== undefined) {
-        // A peer answering an agent request. First answer wins; a slower peer's
-        // duplicate would be a second response to one JSON-RPC id, so drop it.
-        if (!session.openRequests.has(msg.id)) return;
-        const toolCallId = session.openRequests.get(msg.id);
-        session.openRequests.delete(msg.id);
-        this.notifyPeers(
-          session,
-          {
-            jsonrpc: "2.0",
-            method: "_daedalus/request_answered",
-            params: { sessionId: session.acpSessionId, toolCallId },
-          },
-          peer,
-        );
-      }
-    } catch {
-      // not JSON — pipe through untouched
-    }
-    this.appendJournal(session, { d: "c", line: out });
-    if (!session.exited) session.proc?.stdin.write(out + "\n");
+  /** One command, one reply. Failures carry the agent's stderr, so the browser
+      gets the explanation and not just the code. */
+  private run(
+    session: Session,
+    peer: Peer,
+    id: number,
+    op: () => Promise<unknown>,
+  ): void {
+    void op().then(
+      (result) => this.send(peer, { ev: "reply", id, result }),
+      (error: unknown) =>
+        this.send(peer, { ev: "reply", id, error: this.enrichError(session, toWireError(error)) }),
+    );
   }
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

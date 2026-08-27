@@ -9,7 +9,7 @@ import { api, type ServerSettings } from "./settings"
  * from disk, so there is nothing to persist — a reload re-reads it.
  *
  * Written from two directions: `watchTask` replaces a journal with the watch
- * response, and the `_daedalus/task_event` bridge notification appends lines
+ * response, and the `task_event` thread event appends lines
  * as the server's tail sees them (wired in `actions.makeCallbacks`).
  */
 

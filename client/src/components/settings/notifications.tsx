@@ -1,8 +1,18 @@
 import { toast } from "sonner"
+import { BellRingIcon } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Switch } from "@/components/ui/switch"
 import {
   requestSystemNotifications,
   setNotificationPref,
+  testThreadNotification,
   useNotificationPrefs,
   type NotificationPrefs,
 } from "@/lib/notifications"
@@ -86,6 +96,45 @@ export function NotificationsPage() {
             }}
             aria-label="System notifications"
           />
+        </Row>
+        {/* Notifications are, by design, the one thing you cannot make happen:
+            they fire for a thread you are NOT reading, from a window you are
+            NOT looking at. So the only way to see what you just configured is
+            to ask for one. This forces past both of those checks — the
+            preferences above still decide what a real event does. */}
+        <Row
+          icon={BellRingIcon}
+          title="Send a test notification"
+          subtitle="Shows one now, as if it had happened on another thread. The switches above are ignored for the test."
+        >
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button variant="outline" size="sm">
+                  Send test
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="end" className="w-56">
+              {THREAD_EVENT_ROWS.map(({ key, title }) => (
+                <DropdownMenuItem key={key} onClick={() => testThreadNotification(key)}>
+                  {title}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() =>
+                  THREAD_EVENT_ROWS.forEach(({ key }, index) =>
+                    // Spaced out: one slot holds the header notice, so four at
+                    // once would only ever show the last of them.
+                    window.setTimeout(() => testThreadNotification(key), index * 1200)
+                  )
+                }
+              >
+                One of each
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </Row>
       </Group>
       <p className="px-1 text-xs text-pretty text-muted-foreground">

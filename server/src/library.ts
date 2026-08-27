@@ -9,9 +9,9 @@ import {
 } from "./db/index.js";
 
 // Reusable building blocks projects link to by id: MCP servers are sent to the
-// agent in ACP session/new (by the client); skills are symlinked into the
-// project cwd at spawn and slash commands written into <cwd>/.claude/commands
-// (by the server — see materialize.ts).
+// agent in ACP session/new (see sessions.mcpServersFor); skills are symlinked
+// into the project cwd at spawn and slash commands written into
+// <cwd>/.claude/commands (see materialize.ts).
 //
 // Projects reference these through join tables, so deleting one here removes
 // the link everywhere it was used rather than leaving a dangling id behind.

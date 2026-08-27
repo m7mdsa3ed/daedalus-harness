@@ -19,6 +19,35 @@ import type * as acp from "@agentclientprotocol/sdk"
 const CUSTOM_ANSWER_META_KEY = "_askUserQuestionCustomAnswer"
 const CLAUDE_OPTION_META_KEY = "_claude/askUserQuestionOption"
 
+/* ── Which variant is this? ──
+   A bare `mode === "form"` check is wrong, and that is the whole reason these
+   exist: the union's custom/future variant is `{ mode: string; [k: string]:
+   unknown }`, so it carries the same tag shape and would match. The payload is
+   what actually separates them, so each guard checks the fields its variant is
+   defined by — a malformed form matches nothing and falls through to the
+   can't-render card rather than throwing halfway down the schema.
+
+   These used to be the SDK's own `CreateElicitationRequest.isForm/.isUrl`. The
+   SDK is a type-only dependency now (the server speaks ACP), and this is the
+   only runtime value the client was using it for. */
+
+export type FormElicitation = acp.ElicitationFormMode & { mode: "form"; message: string }
+export type UrlElicitation = acp.ElicitationUrlMode & { mode: "url"; message: string }
+
+export function isFormElicitation(
+  request: acp.CreateElicitationRequest
+): request is FormElicitation {
+  if (request.mode !== "form") return false
+  const schema = (request as { requestedSchema?: unknown }).requestedSchema
+  return !!schema && typeof schema === "object"
+}
+
+export function isUrlElicitation(request: acp.CreateElicitationRequest): request is UrlElicitation {
+  if (request.mode !== "url") return false
+  const { url, elicitationId } = request as { url?: unknown; elicitationId?: unknown }
+  return typeof url === "string" && typeof elicitationId === "string"
+}
+
 export interface ElicitationOption {
   value: string
   label: string

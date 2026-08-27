@@ -65,7 +65,7 @@ const sessions = new SessionManager(
 // Tails background-task journals (files an agent disclosed in a tool result)
 // and fans each new line out to the owning thread's peers — see tasks.ts.
 const tasks = new TaskTailer((sessionId, transcriptDir, event) =>
-  sessions.notify(sessionId, "_daedalus/task_event", { transcriptDir, event }),
+  sessions.taskEvent(sessionId, transcriptDir, event),
 );
 
 const app = new Hono();
@@ -206,7 +206,7 @@ app.get("/api/sessions", (c) => c.json(sessions.list()));
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 app.post("/api/sessions", async (c) => {
-  const { id, profileId, projectId, model, effort } = await c.req.json();
+  const { id, profileId, projectId, model, effort, configChoices } = await c.req.json();
   const profile = getProfile(profileId);
   // A virtual profile is resolved from its id, so an id naming an agent that
   // does not exist would otherwise reach spawn and fail there instead.
@@ -224,9 +224,23 @@ app.post("/api/sessions", async (c) => {
     }
     if (sessions.get(id)) return c.json({ error: "session already exists" }, 409);
   }
-  const session = sessions.create(profile, project, model, effort, id);
+  const session = sessions.create(profile, project, model, effort, id, configChoices);
+  /* Wait for the handshake. A 201 therefore means the agent has answered
+     session/new, its settings have been applied, and the first `session_config`
+     is already in the log — so the socket the client opens next inherits a
+     thread that is genuinely ready rather than one still booting. */
+  await session.bridge!.ready;
   return c.json({ id: session.id }, 201);
 });
+/**
+ * Swap the agent process — a new profile, model or effort — and put the
+ * conversation back. Also the revive path for a thread whose process is gone.
+ *
+ * This answers once the thread is usable: the server has spawned, handshaken,
+ * replayed the conversation through session/load and restored the settings the
+ * restart reset. It used to be three round trips the browser drove, which meant
+ * a tab closing halfway through left a half-restored thread.
+ */
 app.post("/api/sessions/:id/respawn", async (c) => {
   const session = sessions.get(c.req.param("id"));
   if (!session) return c.json({ error: "not found" }, 404);
@@ -237,20 +251,8 @@ app.post("/api/sessions/:id/respawn", async (c) => {
   }
   const project = getProject(session.projectId);
   if (!project) return c.json({ error: "unknown project" }, 404);
-  sessions.respawn(session.id, profile, project, model, effort);
+  await sessions.respawn(session.id, profile, project, model, effort);
   return c.json({ ok: true, acpSessionId: session.acpSessionId });
-});
-// The model or reasoning effort changed over ACP (session/set_config_option).
-// Metadata only: the process keeps running, and this is purely what revive
-// rebuilds its env from — without it a retired thread comes back on the model
-// the user switched away from.
-app.patch("/api/sessions/:id", async (c) => {
-  const { model, effort } = await c.req.json();
-  const ok = sessions.setSpawnState(c.req.param("id"), {
-    model: typeof model === "string" ? model : undefined,
-    effort: typeof effort === "string" ? effort : undefined,
-  });
-  return ok ? c.json({ ok: true }) : c.json({ error: "not found" }, 404);
 });
 // What the agent process has been printing. The client shows this when a thread
 // fails in a way ACP won't explain — the agent's own stack trace is the answer
@@ -259,15 +261,6 @@ app.get("/api/sessions/:id/stderr", (c) => {
   const session = sessions.get(c.req.param("id"));
   if (!session) return c.json({ error: "not found" }, 404);
   return c.json({ lines: sessions.stderrTail(session.id) });
-});
-app.get("/api/sessions/:id/journal", (c) => {
-  const session = sessions.get(c.req.param("id"));
-  if (!session) return c.json({ error: "not found" }, 404);
-  // promptActive rides along with the cursor: read in the same tick as the
-  // journal it describes, so the client can't pair a stale turn state with a
-  // fresh replay window (or vice versa).
-  const log = sessions.journal(session.id)!;
-  return c.json({ ...log, promptActive: session.promptActive });
 });
 // Delete is reversible by default: the process dies, the thread stays in the
 // list marked deleted. `?purge=1` is the irreversible one.
@@ -285,7 +278,7 @@ app.post("/api/sessions/:id/restore", (c) =>
  * the client passes the transcript dir it read out of the tool-call frame, the
  * server verifies the path names a live thread's ACP session, tails its
  * journal, and answers with everything the file holds so far. New lines then
- * arrive over the thread's WebSocket as `_daedalus/task_event`. Idempotent —
+ * arrive over the thread's WebSocket as `task_event`. Idempotent —
  * panels re-call this to keep the tail alive and to backfill after a reload.
  */
 app.post("/api/tasks/watch", async (c) => {
