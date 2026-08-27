@@ -5,7 +5,6 @@ import { describeError } from "./errors"
 // Value import, but tools.ts imports only *types* from here — erased at build,
 // so there is no runtime cycle.
 import { parseTaskNotification } from "./tools"
-import type { Board, BoardSummary, Task } from "./pm/types"
 import type {
   AgentDef,
   CommandDef,
@@ -147,14 +146,6 @@ export interface State {
   sessions: SessionMeta[]
   // Which thread is open and which screen is showing live in the URL — see lib/router.
   threads: Record<string, ThreadState>
-  /* ── PM module ──
-     Boards are small and every screen needs the list, so they load at
-     bootstrap. Their tasks do not: a board's tasks are fetched the first time
-     it is opened and cached here by board id (see actions.loadBoardTasks).
-     Slim tasks only — comments and activity have their own endpoints and are
-     lazy-fetched by the task editor, never kept in the store. */
-  boards: Board[]
-  pmTasks: Record<string, Task[]>
 }
 
 export const emptyThread: ThreadState = {
@@ -520,18 +511,8 @@ export type Action =
       commands: CommandDef[]
       agents: AgentDef[]
       sessions: SessionMeta[]
-      boards: Board[]
     }
   | { type: "sessions"; sessions: SessionMeta[] }
-  | { type: "set-boards"; boards: Board[] }
-  /* One board, merged: the list endpoint answers with board rows that carry no
-     config tables, so an upsert must never blank the columns/labels/sprints a
-     full `GET /api/boards/:id` already put here. */
-  | { type: "upsert-board"; board: Board | BoardSummary }
-  | { type: "remove-board"; boardId: string }
-  | { type: "set-pm-tasks"; boardId: string; tasks: Task[] }
-  | { type: "upsert-pm-task"; boardId: string; task: Task }
-  | { type: "remove-pm-task"; boardId: string; taskId: string }
   | { type: "draft-session"; session: SessionMeta }
   | { type: "drop-draft-session"; id: string }
   | {
@@ -568,34 +549,6 @@ export type Action =
   | { type: "usage"; id: string; usage: acp.Usage }
   | { type: "ttft"; id: string; ms: number }
 
-/**
- * A board row from a list endpoint, as a full `Board`.
- *
- * `GET /api/boards` returns rows without the per-board config tables, and
- * `POST .../archive` / `.../restore` answer the same way. `previous` is what
- * this board already had here, so the config a full fetch loaded survives a
- * list refresh instead of blinking back to empty under the open view.
- */
-function hydrateBoard(board: Board | BoardSummary, previous?: Board): Board {
-  const config = previous ?? {
-    columns: [],
-    labels: [],
-    issueTypes: [],
-    customFields: [],
-    sprints: [],
-    milestones: [],
-  }
-  return {
-    columns: config.columns,
-    labels: config.labels,
-    issueTypes: config.issueTypes,
-    customFields: config.customFields,
-    sprints: config.sprints,
-    milestones: config.milestones,
-    ...board,
-  }
-}
-
 function thread(state: State, id: string): ThreadState {
   return state.threads[id] ?? emptyThread
 }
@@ -616,64 +569,7 @@ export function reducer(state: State, action: Action): State {
         commands: action.commands,
         agents: action.agents,
         sessions: action.sessions,
-        boards: action.boards,
       }
-    case "set-boards": {
-      const previous = new Map(state.boards.map((board) => [board.id, board]))
-      return { ...state, boards: action.boards.map((b) => hydrateBoard(b, previous.get(b.id))) }
-    }
-    case "upsert-board": {
-      const previous = state.boards.find((board) => board.id === action.board.id)
-      const board = hydrateBoard(action.board, previous)
-      return {
-        ...state,
-        boards: previous
-          ? state.boards.map((b) => (b.id === board.id ? board : b))
-          : [...state.boards, board],
-      }
-    }
-    case "remove-board": {
-      // Its cached tasks go with it — nothing can ask for them again.
-      const pmTasks = Object.fromEntries(
-        Object.entries(state.pmTasks).filter(([boardId]) => boardId !== action.boardId)
-      )
-      return {
-        ...state,
-        boards: state.boards.filter((board) => board.id !== action.boardId),
-        pmTasks,
-      }
-    }
-    case "set-pm-tasks":
-      return { ...state, pmTasks: { ...state.pmTasks, [action.boardId]: action.tasks } }
-    case "upsert-pm-task": {
-      /* The one action every optimistic path uses: a drag paints the moved task
-         here before the request goes out, and the server's answer replaces it
-         through this same case. A task the board has not loaded yet is not
-         invented — there is no list for it to belong to. */
-      const tasks = state.pmTasks[action.boardId]
-      if (!tasks) return state
-      const known = tasks.some((task) => task.id === action.task.id)
-      return {
-        ...state,
-        pmTasks: {
-          ...state.pmTasks,
-          [action.boardId]: known
-            ? tasks.map((task) => (task.id === action.task.id ? action.task : task))
-            : [...tasks, action.task],
-        },
-      }
-    }
-    case "remove-pm-task": {
-      const tasks = state.pmTasks[action.boardId]
-      if (!tasks) return state
-      return {
-        ...state,
-        pmTasks: {
-          ...state.pmTasks,
-          [action.boardId]: tasks.filter((task) => task.id !== action.taskId),
-        },
-      }
-    }
     case "sessions": {
       /* The server's list is authoritative for every thread it knows about —
          but a draft is precisely one it has not been told about yet, so this
@@ -836,8 +732,6 @@ export const initialState: State = {
   agents: [],
   sessions: [],
   threads: {},
-  boards: [],
-  pmTasks: {},
 }
 
 // ---- context ----

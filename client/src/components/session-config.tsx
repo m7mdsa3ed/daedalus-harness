@@ -103,6 +103,10 @@ export function SessionConfigPopover({
       ? currentChoiceLabel(liveEffort)
       : null
 
+  /* The same three settings as one string, for the collapsed trigger's tooltip
+     and its accessible name. */
+  const triggerLabel = [modelLabel, effortLabel, modeLabel].filter(Boolean).join(" · ")
+
   /** Live ACP change: one call to the running agent, safe mid-turn. */
   const set = (option: acp.SessionConfigOption, value: string | boolean) =>
     actions
@@ -152,12 +156,17 @@ export function SessionConfigPopover({
         render={
           <Button
             variant="ghost"
-            className="h-8 gap-1.5 border-0 bg-transparent px-2 text-xs shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent"
+            /* On a phone the composer row has no width to spend on prose: the
+               trigger collapses to the icon alone (square, same 32px as every
+               other control in the row) and the settings it names move into the
+               title. The menu itself is unchanged — one tap still shows them. */
+            className="h-8 gap-1.5 border-0 bg-transparent px-2 text-xs shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent max-md:w-8 max-md:px-0"
+            title={triggerLabel}
           >
             <Settings2Icon className="size-4" />
             {/* The mode rides along in the trigger: it left the composer, and a
                 silently-active "accept edits" is the one setting you must see. */}
-            <span className="max-w-56 truncate">
+            <span className="max-w-56 truncate max-md:sr-only">
               {modelLabel}
               {effortLabel && <span className="capitalize"> · {effortLabel}</span>}
               {modeLabel && ` · ${modeLabel}`}

@@ -31,8 +31,6 @@ import {
   ServerIcon,
   ShieldCheck,
   Square,
-  SquareKanban,
-  SquarePlus,
   Sun,
   Trash2,
 } from "lucide-react"
@@ -63,16 +61,7 @@ import { customThemeValue } from "@/lib/custom-themes"
 import { togglePin, usePins } from "@/lib/pins"
 import { shortAge } from "@/lib/time"
 import { useLocation, useNavigate } from "react-router"
-import {
-  boardPath,
-  currentBoardId,
-  currentThreadId,
-  newBoardPath,
-  newTaskPath,
-  settingsPath,
-  tasksPath,
-  threadPath,
-} from "@/lib/router"
+import { currentThreadId, settingsPath, threadPath } from "@/lib/router"
 import {
   clearSettings,
   loadServers,
@@ -198,9 +187,6 @@ export function CommandPalette({
   }
 
   const sessionId = currentThreadId(location.pathname, location.search)
-  // The board the user is looking at, if any — "New task" needs one to be about.
-  const boardId = currentBoardId(location.pathname)
-  const boards = state.boards.filter((board) => !board.deletedAt && !board.templateFor)
   const meta = state.sessions.find((session) => session.id === sessionId) ?? null
   const thread: ThreadState | undefined = sessionId ? state.threads[sessionId] : undefined
   const modes = thread?.modes && thread.modes.availableModes.length > 1 ? thread.modes : null
@@ -385,53 +371,6 @@ export function CommandPalette({
                   <FolderPlus />
                   New project
                 </CommandItem>
-                <CommandItem
-                  value="new board tasks project kanban"
-                  onSelect={() => run(() => void navigate(newBoardPath()))}
-                >
-                  <SquareKanban />
-                  New board
-                </CommandItem>
-                {/* Only where it has a board to go on. */}
-                {boardId && (
-                  <CommandItem
-                    value="new task issue card ticket"
-                    onSelect={() => run(() => void navigate(newTaskPath(boardId)))}
-                  >
-                    <SquarePlus />
-                    New task
-                  </CommandItem>
-                )}
-              </CommandGroup>
-
-              {/* Boards are places to go, like threads — the archive and the
-                  templates shelf are not, so they are not offered here. */}
-              <CommandGroup heading="Boards">
-                <CommandItem
-                  value="open tasks boards pm overview hub"
-                  onSelect={() => run(() => void navigate(tasksPath()))}
-                >
-                  <SquareKanban />
-                  Open Tasks
-                </CommandItem>
-                {boards.map((board) => (
-                  <CommandItem
-                    key={board.id}
-                    value={`board ${board.name} ${board.keyPrefix}`}
-                    onSelect={() =>
-                      run(() => {
-                        setOpenMobile(false)
-                        void navigate(boardPath(board.id))
-                      })
-                    }
-                  >
-                    <SquareKanban />
-                    <span className="truncate">{board.name}</span>
-                    <span className="ml-auto shrink-0 font-mono text-[11px] text-muted-foreground">
-                      {board.keyPrefix}
-                    </span>
-                  </CommandItem>
-                ))}
               </CommandGroup>
 
               {meta && (

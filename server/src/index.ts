@@ -31,7 +31,6 @@ import {
   mcpServers,
   skills,
 } from "./library.js";
-import { pmRoutes } from "./pm/routes.js";
 import { probeAgentOptions } from "./probe.js";
 import { SessionManager } from "./sessions.js";
 import { TaskDirError, TaskTailer } from "./tasks.js";
@@ -100,9 +99,6 @@ app.use("/api/*", async (c, next) => {
   if (token !== config.token) return c.json({ error: "unauthorized" }, 401);
   return next();
 });
-
-// PM module (boards/tasks/sprints/reports) — inherits the bearer auth above.
-app.route("/api", pmRoutes);
 
 app.get("/api/agents", (c) => c.json(listAgents()));
 

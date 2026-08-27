@@ -10,40 +10,12 @@
 
    /                     home (no thread open)
    /t/<sessionId>        one thread
-   /tasks                the PM hub (board cards, my tasks, inbox)
-   /b/<boardId>/<view>   one board in one view (kanban by default)
    /settings/<section>   settings, one page per section (components/settings/) */
 import * as React from "react"
 import { matchPath, useNavigate, type NavigateFunction } from "react-router"
 
 export const threadPath = (sessionId: string) => `/t/${encodeURIComponent(sessionId)}`
 export const settingsPath = (section: string) => `/settings/${section}`
-
-/** The PM hub — every board, my tasks, the inbox. */
-export const tasksPath = () => "/tasks"
-
-/** One board. The view segment is optional: without it the board opens on its
-    own `defaultView` (or the one this device left it on — lib/pm/prefs). */
-export const boardPath = (boardId: string, view?: string) =>
-  `/b/${encodeURIComponent(boardId)}${view ? `/${view}` : ""}`
-
-/* "Create" from outside the PM module (⌘K, the sidebar) is a route, not a
-   callback: the dialogs live inside the pages, so the palette asks for the page
-   with `?new=` set and the page opens its own dialog and strips the param. */
-export const newBoardPath = () => `${tasksPath()}?new=board`
-export const newTaskPath = (boardId: string, view?: string) =>
-  `${boardPath(boardId, view)}?new=task`
-
-/** What `?new=` asks the page that just mounted to open. */
-export const pendingCreate = (search: string = location.search): "board" | "task" | null => {
-  const value = new URLSearchParams(search).get("new")
-  return value === "board" || value === "task" ? value : null
-}
-
-/** The board the URL points at, if any — the palette and the sidebar both ask. */
-export function currentBoardId(pathname: string = location.pathname): string | null {
-  return matchPath("/b/:boardId/:view?", pathname)?.params.boardId ?? null
-}
 
 /** The thread the URL points at, if any — legacy /?session= deep links too. */
 export function currentThreadId(

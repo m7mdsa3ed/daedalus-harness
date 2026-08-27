@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "test": "DAEDALUS_DATA_DIR=/tmp/daedalus-test-data tsx test/pipe.test.ts && DAEDALUS_DATA_DIR=/tmp/daedalus-test-data tsx test/pm.test.ts",
+    "test": "DAEDALUS_DATA_DIR=/tmp/daedalus-test-data tsx test/pipe.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:studio": "drizzle-kit studio"
   },

@@ -16,7 +16,6 @@ import {
   LogOut,
   MessageSquareIcon,
   Plus,
-  SquareKanban,
   ServerIcon,
   Settings2,
   Trash2,
@@ -72,16 +71,11 @@ import type { Actions } from "@/lib/actions"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router"
 import {
-  currentBoardId,
   currentThreadId,
   NavigationBridge,
   settingsPath,
-  tasksPath,
   threadPath,
 } from "@/lib/router"
-import { ErrorBoundary } from "@/components/error-boundary"
-import { PmSidebarPanel } from "@/components/pm/pm-sidebar-panels"
-import { usePmRefreshOnFocus } from "@/lib/actions"
 import { consumeNewTab, markNewTab } from "@/lib/session-tabs"
 import {
   ItemContextMenu,
@@ -116,32 +110,6 @@ import { SkillsPage } from "@/components/settings/skills"
 import { CommandsPage } from "@/components/settings/commands"
 import { ProfilesPage } from "@/components/settings/profiles"
 import { AgentsPage } from "@/components/settings/agents"
-
-/* The PM module is a whole second application — kanban, tables, charts, dnd —
-   and most sessions never open it, so it is split out of the shell bundle and
-   loaded when a /tasks or /b/ route is first visited. */
-const PmOverview = React.lazy(() => import("@/components/pm/pm-overview"))
-const PmPage = React.lazy(() => import("@/components/pm/pm-page"))
-
-/** Lazy PM route, wrapped once: a board that throws must not take the shell —
-    and the sidebar it fell out of is still there to leave by. */
-function PmRoute({ children, resetKey }: { children: React.ReactNode; resetKey?: string }) {
-  return (
-    <ErrorBoundary name="pm" resetKeys={[resetKey]}>
-      <React.Suspense
-        fallback={
-          <div className="flex min-h-0 flex-1 flex-col gap-3 p-6">
-            <Skeleton className="h-6 w-40" />
-            <Skeleton className="h-4 w-64" />
-            <Skeleton className="min-h-0 flex-1 rounded-xl" />
-          </div>
-        }
-      >
-        {children}
-      </React.Suspense>
-    </ErrorBoundary>
-  )
-}
 
 /** Swappable sidebar body. One panel per route family — see `panels` below. */
 interface SidebarPanel {
@@ -181,10 +149,7 @@ export function AppShell({
   const [resizing, setResizing] = React.useState(false)
   const palette = useCommandPalette()
   const inSettings = location.pathname.startsWith("/settings")
-  // The PM module owns two route families and one sidebar panel.
-  const boardId = currentBoardId(location.pathname)
-  const inPm = location.pathname.startsWith("/tasks") || !!boardId
-  const sessionId = inSettings || inPm ? null : currentThreadId(location.pathname, location.search)
+  const sessionId = inSettings ? null : currentThreadId(location.pathname, location.search)
   const section = sectionOf(inSettings ? (location.pathname.split("/")[2] ?? "") : "")
   // Leaving settings returns to the thread it was opened from.
   const lastThread = React.useRef<string | null>(null)
@@ -193,14 +158,11 @@ export function AppShell({
   const ready = !loading && state.projects.length > 0 && state.profiles.length > 0
   /* The homepage and an empty active thread share the same backdrop. A
      background tab going empty must not paint the foreground one. */
-  const onHomepage = !inSettings && !inPm && !sessionId
+  const onHomepage = !inSettings && !sessionId
   const heroVisible =
     onHomepage ||
     (!!active && !!sessionId && threadIsEmpty(state.threads[sessionId] ?? emptyThread, active.draft))
   const dock = useSessionDock()
-  /* Boards have no socket to tell this client they changed, so coming back to
-     the tab is when they are refetched — plus the open board's tasks. */
-  usePmRefreshOnFocus(actions, boardId ?? undefined)
   const routeSessionRef = React.useRef(sessionId)
   routeSessionRef.current = sessionId
 
@@ -286,7 +248,7 @@ export function AppShell({
   /* ── Sidebar panels ──
      The sidebar body is swappable: one entry per route family. To add a panel,
      add a route below and an entry here — the shell itself is generic. */
-  const panels: Record<"threads" | "settings" | "pm", SidebarPanel> = {
+  const panels: Record<"threads" | "settings", SidebarPanel> = {
     threads: {
       action: (
         <SidebarGroup className="px-2 py-1">
@@ -324,17 +286,8 @@ export function AppShell({
         />
       ),
     },
-    /* Boards grouped Active / Templates / Archive, plus the inbox and New
-       board — the panel owns all of that (components/pm/pm-sidebar-panels). */
-    pm: {
-      back: {
-        label: "Back to threads",
-        onClick: () => void navigate(lastThread.current ? threadPath(lastThread.current) : "/"),
-      },
-      body: <PmSidebarPanel actions={actions} />,
-    },
   }
-  const panel = panels[inSettings ? "settings" : inPm ? "pm" : "threads"]
+  const panel = panels[inSettings ? "settings" : "threads"]
 
   /* The non-settings main area. The dock outlives the route: background tabs
      keep their ACP connections and scroll positions while another thread is
@@ -427,16 +380,6 @@ export function AppShell({
             <ServerSwitcher settings={settings} onAddServer={onAddServer} />
             <SidebarMenuItem>
               <SidebarMenuButton
-                tooltip="Tasks"
-                isActive={inPm}
-                onClick={() => void navigate(tasksPath())}
-              >
-                <SquareKanban className="size-4" />
-                <span>Tasks</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-            <SidebarMenuItem>
-              <SidebarMenuButton
                 tooltip="Settings"
                 isActive={inSettings}
                 onClick={() => openSettings()}
@@ -491,9 +434,7 @@ export function AppShell({
                 <h1 className="truncate text-sm font-medium">
                   {inSettings
                     ? (SETTINGS_SECTIONS.find((s) => s.id === section)?.label ?? "Settings")
-                    : inPm
-                      ? (state.boards.find((b) => b.id === boardId)?.name ?? "Tasks")
-                      : (active?.title ?? "Daedalus")}
+                    : (active?.title ?? "Daedalus")}
                 </h1>
               )}
               {inSettings ? (
@@ -528,24 +469,6 @@ export function AppShell({
             {/* /settings/<unknown> — the sidebar still needs a page to light up. */}
             <Route path="*" element={<Navigate to="/settings/general" replace />} />
           </Route>
-          {/* The PM module. /tasks is the hub; /b/:boardId/:view? is one board,
-              defaulting to its own view when the segment is absent. */}
-          <Route
-            path="/tasks"
-            element={
-              <PmRoute>
-                <PmOverview />
-              </PmRoute>
-            }
-          />
-          <Route
-            path="/b/:boardId/:view?"
-            element={
-              <PmRoute resetKey={boardId ?? undefined}>
-                <PmPage />
-              </PmRoute>
-            }
-          />
           {/* Both thread routes render the same element so the dock (and every
               mounted transcript in it) survives switching between threads. */}
           <Route path="/t?/:sessionId?" element={threadMain} />

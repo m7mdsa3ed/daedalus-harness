@@ -1,7 +1,5 @@
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
-export * from "./pm.js";
-
 /*
  * The harness's own data. Everything that used to be a `data/*.json` file lives
  * here; `data/config.json` is the one deliberate holdout (see config.ts — it is
