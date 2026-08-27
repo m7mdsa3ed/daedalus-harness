@@ -425,6 +425,9 @@ function summarise(items: ToolItem[]): { verb: string; noun: string; count: numb
   }))
 }
 
+/** How much of a running group stays on screen without being expanded. */
+const PEEK = 3
+
 export function ToolRun({
   items,
   showTimestamps,
@@ -440,6 +443,21 @@ export function ToolRun({
   const prose = summary
     .map(({ verb, noun, count }) => `${verb} ${count} ${pluralNoun(noun, count)}`)
     .join(", ")
+
+  /* While the run is still going, the tail of it stays visible without being
+     asked for. Collapsed-by-default is right for a finished run — it is
+     history, and "read 12 files" is the whole of what you need from it — but
+     the group the agent is working in right now is the one thing on screen
+     that is actually happening, and folding it into a single counting line
+     turns a live process into a number that ticks. Three: enough to see what
+     it just did and what it is doing, few enough that the transcript is not
+     re-expanding itself behind your back.
+
+     `active` is the whole test — only the run the agent is inside has a
+     pending or in_progress step — so this needs no notion of "the last
+     group". The peek closes on its own when the run finishes. */
+  const showing = open ? items : active ? items.slice(-PEEK) : []
+  const hidden = active && !open ? items.length - showing.length : 0
 
   return (
     <div>
@@ -467,9 +485,20 @@ export function ToolRun({
           <span className="shrink-0 text-[11px] leading-6 text-destructive">{failed} failed</span>
         )}
       </button>
-      {open && (
+      {showing.length > 0 && (
+        /* One rail for both states, so expanding a peeking run grows the list
+           in place instead of swapping one layout for another. */
         <div className="mt-0.5 ml-[calc(0.75rem-1px)] space-y-0.5 border-l border-border/60 pl-2.5">
-          {items.map((item) => (
+          {hidden > 0 && (
+            <button
+              type="button"
+              onClick={() => setOpen(true)}
+              className="-mx-1 block rounded px-1 text-[11px] leading-5 text-muted-foreground/70 transition-colors hover:text-foreground"
+            >
+              {hidden} earlier {hidden === 1 ? "step" : "steps"}
+            </button>
+          )}
+          {showing.map((item) => (
             <ToolStep key={item.id} item={item} showTimestamp={showTimestamps} />
           ))}
         </div>

@@ -200,6 +200,12 @@ export function useActions(settings: ServerSettings) {
           closeCode: closeInfo?.code,
           closeReason: closeInfo?.reason,
         })
+        /* A dead socket ends any turn it was carrying. The server answers the
+           prompts an exiting agent will never answer (`failPendingRequests`)
+           and closes the peers, but it does NOT synthesize `turn_ended` for
+           them — so without this the working indicator outlives the process
+           and only a reload clears it. */
+        if (status === "closed") dispatch({ type: "turn-active", id, active: false })
       },
       onTurnActive: (active) => dispatch({ type: "turn-active", id, active }),
       onSessionConfig: (modes, configOptions) => {
@@ -518,6 +524,11 @@ export function useActions(settings: ServerSettings) {
         mcpServers: mcpFor(project),
         cursor: journal.cursor,
         acpSessionId: meta.acpSessionId,
+        /* Hand the same answer to the connection: a turn that was already
+           running is one this client cannot see the end of by watching its own
+           requests, so only `_daedalus/turn_ended` may clear it. Steering such
+           a turn is what used to lose the indicator. */
+        turnActive: journal.promptActive,
       })
     }
 

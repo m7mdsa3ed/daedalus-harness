@@ -57,6 +57,9 @@ export interface ConnectOptions {
   acpSessionId?: string
   /** Restore the conversation via ACP session/load (after a respawn). */
   load?: boolean
+  /** The server says a prompt is already in flight on this session — someone
+      else's, or this device's from before the reload. See `externalTurn`. */
+  turnActive?: boolean
 }
 
 /**
@@ -73,8 +76,17 @@ export class AcpThread {
      only reaches zero when the agent has finished with all of them, which is
      the same rule the server's `pendingPrompts` set applies. */
   private inflightPrompts = 0
+  /* A turn this connection did not start and cannot see the end of: another
+     peer prompted, or we attached to a session that was already mid-turn. Its
+     completion arrives as `_daedalus/turn_ended` and NOTHING else — so while
+     it is set, our own prompts finishing says nothing about whether the turn
+     is over, and clearing the indicator on them is a lie the user then has to
+     reload to undo. Steering is exactly how the two get mixed: a prompt of
+     ours joins a turn that is not ours, and it is normally the first of the
+     two to be answered. */
+  private externalTurn = false
   get promptActive(): boolean {
-    return this.inflightPrompts > 0
+    return this.inflightPrompts > 0 || this.externalTurn
   }
   private replaying = false
   private turnStartedAt: number | null = null
@@ -101,6 +113,9 @@ export class AcpThread {
    */
   async connect(opts: ConnectOptions): Promise<void> {
     this.callbacks.onStatus("connecting")
+    // Attaching to a session that is already answering: the turn is not ours,
+    // so only turn_ended may end it.
+    this.externalTurn = opts.turnActive ?? false
     this.clientInitiatedClose = false
     this.closeInfo = { clientInitiated: false }
     const thread = this
@@ -142,7 +157,13 @@ export class AcpThread {
       .onNotification(
         "_daedalus/turn_ended",
         (params) => params as { usage: acp.Usage | null; error?: unknown },
-        (ctx) => this.callbacks.onTurnEnded?.(ctx.params.usage, ctx.params.error)
+        (ctx) => {
+          // The server sends this once every pending prompt on the session has
+          // been answered — ours and everyone's. It is the only honest end of
+          // a turn, and the reason the flag below can be cleared here.
+          this.externalTurn = false
+          this.callbacks.onTurnEnded?.(ctx.params.usage, ctx.params.error)
+        }
       )
       // Peer sync: several devices can attach to one thread, and these two
       // frames carry what one peer does that the others would otherwise miss —
@@ -151,7 +172,10 @@ export class AcpThread {
       .onNotification(
         "_daedalus/peer_prompt",
         (params) => params as { text: string },
-        (ctx) => this.callbacks.onPeerPrompt?.(ctx.params.text)
+        (ctx) => {
+          this.externalTurn = true
+          this.callbacks.onPeerPrompt?.(ctx.params.text)
+        }
       )
       .onNotification(
         "_daedalus/request_answered",
@@ -308,7 +332,9 @@ export class AcpThread {
       return await send()
     } finally {
       this.inflightPrompts -= 1
-      if (this.inflightPrompts === 0) {
+      // `externalTurn`: our prompt joined someone else's turn (or one that
+      // predates this connection), so its answer is not the turn's end.
+      if (this.inflightPrompts === 0 && !this.externalTurn) {
         this.turnStartedAt = null
         this.callbacks.onTurnActive(false)
       }
