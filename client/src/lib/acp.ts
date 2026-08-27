@@ -66,7 +66,16 @@ export interface ConnectOptions {
  */
 export class AcpThread {
   acpSessionId: string | null = null
-  promptActive = false
+  /* How many prompt requests are in flight, not whether one is — steering
+     sends a second prompt while the first is still open, and the two can
+     answer in either order. A boolean made the FIRST response clear the
+     working indicator while the steered turn was still running; the count
+     only reaches zero when the agent has finished with all of them, which is
+     the same rule the server's `pendingPrompts` set applies. */
+  private inflightPrompts = 0
+  get promptActive(): boolean {
+    return this.inflightPrompts > 0
+  }
   private replaying = false
   private turnStartedAt: number | null = null
   readonly serverSessionId: string
@@ -284,22 +293,26 @@ export class AcpThread {
         sessionId: this.acpSessionId!,
         prompt: [{ type: "text", text }],
       })
-    if (!this.promptActive) {
-      this.promptActive = true
+    /* Steering — a prompt sent while a turn is running — takes this same path.
+       Agents that support prompt queueing accept it; the rest reject it and the
+       caller sees the error. We never cancel the running turn on the user's
+       behalf, and we never stop showing it as running just because one of its
+       prompts came back. */
+    const first = this.inflightPrompts === 0
+    this.inflightPrompts += 1
+    if (first) {
       this.turnStartedAt = performance.now()
       this.callbacks.onTurnActive(true)
-      try {
-        return await send()
-      } finally {
-        this.promptActive = false
+    }
+    try {
+      return await send()
+    } finally {
+      this.inflightPrompts -= 1
+      if (this.inflightPrompts === 0) {
         this.turnStartedAt = null
         this.callbacks.onTurnActive(false)
       }
     }
-    // Steering: a prompt while a turn is running. Agents that support prompt
-    // queueing accept it; the rest reject it and the caller sees the error —
-    // we never cancel the running turn on the user's behalf.
-    return await send()
   }
 
   async setMode(modeId: string): Promise<void> {

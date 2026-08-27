@@ -22,7 +22,6 @@ import { useStore, emptyThread, threadIsEmpty, type ThreadItem, type ThreadState
 import { useViewOptions } from "@/lib/view-options"
 import { cn } from "@/lib/utils"
 import { DraftConfigPopover, DraftScopeRow } from "./draft-config"
-import { NotificationAlert } from "./notification-alert"
 import { SessionConfigPopover } from "./session-config"
 import { SlashCommandMenu, useSlashCommands } from "./slash-commands"
 import { SessionSettingsButton } from "./session-settings"
@@ -171,9 +170,6 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
         </MessageScroller>
       </MessageScrollerProvider>
       <div className="relative">
-        {/* Travels with the composer: visible without scrolling, gone once the
-            browser has been asked (or the offer dismissed). */}
-        <NotificationAlert />
         {empty && <ThreadWelcome draft={meta?.draft} />}
         <Composer sessionId={sessionId} actions={actions} thread={thread} meta={meta} />
       </div>

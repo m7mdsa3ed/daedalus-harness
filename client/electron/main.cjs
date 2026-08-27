@@ -13,6 +13,13 @@ if (IS_WSL || process.env.ELECTRON_DISABLE_GPU) {
   app.commandLine.appendSwitch("disable-gpu-compositing")
 }
 
+/* Windows shows a notification only if it can attribute it to an installed
+   app: without an explicit AppUserModelID Chromium raises the notification and
+   the shell silently drops it, so `new Notification(...)` "works" and nothing
+   appears. Must match electron-builder's `build.appId`, and must be set before
+   any window exists. No-op on macOS/Linux. */
+if (process.platform === "win32") app.setAppUserModelId("com.daedalus.harness")
+
 let win = null
 let server = null
 
@@ -165,9 +172,17 @@ async function createWindow() {
   })
 
   // Mic access for native SpeechRecognition (voice input) + notifications.
+  const ALLOWED = ["media", "audioCapture", "notifications", "speaker-selection"]
   win.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(["media", "audioCapture", "notifications", "speaker-selection"].includes(permission))
+    callback(ALLOWED.includes(permission))
   })
+  /* The request handler answers `Notification.requestPermission()`; this one
+     answers the SYNCHRONOUS checks Chromium makes before it will even display a
+     notification it was handed. Without it the ask can succeed and the
+     notification still never render. */
+  win.webContents.session.setPermissionCheckHandler((_wc, permission) =>
+    ALLOWED.includes(permission)
+  )
 
   if (DEV_URL) {
     await waitForDevServer(DEV_URL)

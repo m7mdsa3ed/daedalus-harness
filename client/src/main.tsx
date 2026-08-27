@@ -5,11 +5,15 @@ import { BrowserRouter } from 'react-router'
 import App from './App.tsx'
 import { ErrorBoundary } from './components/error-boundary.tsx'
 import { installGlobalErrorReporting } from './lib/errors.ts'
+import { installNotificationTestHelper } from './lib/notifications.ts'
 
 // The floor under everything else: a promise nobody caught, or a listener that
 // threw outside React's tree, would otherwise vanish into the console. The
 // ErrorBoundary only sees failures that happen during a render.
 installGlobalErrorReporting()
+// `daedalus.notify()` in the console — the only way to look at a notification
+// without arranging for a turn to finish in a window you are not watching.
+installNotificationTestHelper()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

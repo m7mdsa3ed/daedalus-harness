@@ -53,10 +53,11 @@ function CommandDialog({
         <DialogDescription>{description}</DialogDescription>
       </DialogHeader>
       <DialogContent
-        className={cn(
-          "top-1/3 translate-y-0 overflow-hidden rounded-4xl! p-0",
-          className
-        )}
+        /* Centred, like every other dialog: it used to sit at top-1/3, which
+           reads as anchored to nothing once the list grows or shrinks with the
+           query. Dead-centre keeps the input under the cursor's rest position
+           at any result count. */
+        className={cn("overflow-hidden rounded-4xl! p-0", className)}
         showCloseButton={showCloseButton}
       >
         {children}

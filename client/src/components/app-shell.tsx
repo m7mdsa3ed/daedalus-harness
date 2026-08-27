@@ -30,6 +30,12 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
 import { CommandPalette, useCommandPalette } from "@/components/command-palette"
+import {
+  HeaderNotice,
+  NotificationAlert,
+  useHeaderNotice,
+  useNotificationOffer,
+} from "@/components/notification-alert"
 import { Logo } from "@/components/ui/logo"
 import {
   DropdownMenu,
@@ -148,6 +154,8 @@ export function AppShell({
   )
   const [resizing, setResizing] = React.useState(false)
   const palette = useCommandPalette()
+  const offer = useNotificationOffer()
+  const notice = useHeaderNotice()
   const inSettings = location.pathname.startsWith("/settings")
   const sessionId = inSettings ? null : currentThreadId(location.pathname, location.search)
   const section = sectionOf(inSettings ? (location.pathname.split("/")[2] ?? "") : "")
@@ -426,6 +434,15 @@ export function AppShell({
         >
           <SidebarTrigger className="-ml-1 shrink-0" />
           <Separator orientation="vertical" className="mr-1 h-4 shrink-0 sm:mr-2" />
+          {/* Both of these stand IN the header while they last: one row, one
+              subject. Nothing is stacked and nothing below moves when they go —
+              see components/notification-alert. An event outranks the offer;
+              it expires on its own, the offer waits. */}
+          {notice ? (
+            <HeaderNotice key={notice.id} />
+          ) : offer ? (
+            <NotificationAlert />
+          ) : (
           <div className="flex min-w-0 flex-1 items-center justify-between gap-2 sm:gap-3">
             <div className="flex min-w-0 items-baseline gap-2">
               {loading ? (
@@ -450,6 +467,7 @@ export function AppShell({
               )}
             </div>
           </div>
+          )}
         </header>
         <Routes>
           <Route
