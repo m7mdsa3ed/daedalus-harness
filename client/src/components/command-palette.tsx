@@ -15,6 +15,9 @@ import {
   Cpu,
   FolderIcon,
   FolderPlus,
+  FolderTreeIcon,
+  GitBranchIcon,
+  MonitorIcon,
   Gauge,
   Keyboard,
   LogOut,
@@ -23,11 +26,17 @@ import {
   Monitor,
   Moon,
   Palette,
+  PanelBottom,
   PanelLeft,
+  PanelsTopLeft,
+  Rows3,
+  SquareStack,
+  SquareTerminalIcon,
   Pin,
   PinOff,
   Plus,
   RotateCcw,
+  ScrollTextIcon,
   RotateCw,
   ServerIcon,
   ShieldCheck,
@@ -56,6 +65,8 @@ import {
   CommandShortcut,
 } from "@/components/ui/command"
 import { useSidebar } from "@/components/ui/sidebar"
+import type { WorkspaceDock } from "@/components/workspace/dock"
+import { openTerminal } from "@/components/workspace/terminal-panel"
 import { useHotkey } from "@/hooks/use-hotkey"
 import { KEYS, formatChord } from "@/lib/shortcuts"
 import { SETTINGS_SECTIONS } from "@/components/settings/sections"
@@ -154,6 +165,7 @@ export function CommandPalette({
   open,
   onOpenChange,
   actions,
+  dock,
   onNewThread,
   onNewProject,
   onShortcuts,
@@ -161,6 +173,7 @@ export function CommandPalette({
   open: boolean
   onOpenChange: (open: boolean) => void
   actions: Actions
+  dock: WorkspaceDock
   onNewThread: () => void
   onNewProject: () => void
   onShortcuts: () => void
@@ -381,6 +394,155 @@ export function CommandPalette({
                 >
                   <FolderPlus />
                   New project
+                </CommandItem>
+              </CommandGroup>
+
+              {/* The layout commands. Dragging a tab does all of this too, but a
+                  gesture is not discoverable and cannot be typed — and the two
+                  presets are the only way to get an arrangement back once it
+                  has been dragged into a shape nobody wanted. */}
+              <CommandGroup heading="Workspace">
+                {meta && (
+                  <CommandItem
+                    value="explorer files tree open project folder"
+                    onSelect={() =>
+                      run(() =>
+                        dock.openPanel(
+                          { kind: "explorer", projectId: meta.projectId },
+                          { direction: "left" }
+                        )
+                      )
+                    }
+                  >
+                    <FolderTreeIcon />
+                    File explorer
+                    <CommandShortcut>{formatChord(KEYS.explorer)}</CommandShortcut>
+                  </CommandItem>
+                )}
+                {meta && (
+                  <CommandItem
+                    value="output problems diagnostics errors log console"
+                    onSelect={() =>
+                      run(() =>
+                        dock.openPanel(
+                          { kind: "output", projectId: meta.projectId },
+                          { direction: "below" }
+                        )
+                      )
+                    }
+                  >
+                    <ScrollTextIcon />
+                    Output &amp; problems
+                    <CommandShortcut>{formatChord(KEYS.output)}</CommandShortcut>
+                  </CommandItem>
+                )}
+                {meta && (
+                  <CommandItem
+                    value="preview browser dev server localhost web"
+                    onSelect={() =>
+                      run(() =>
+                        dock.openPanel(
+                          {
+                            kind: "web",
+                            trust: "project",
+                            projectId: meta.projectId,
+                            viewId: "default",
+                          },
+                          { direction: "right" }
+                        )
+                      )
+                    }
+                  >
+                    <MonitorIcon />
+                    Preview
+                  </CommandItem>
+                )}
+                {meta && (
+                  <CommandItem
+                    value="source control git changes commit branch staging"
+                    onSelect={() =>
+                      run(() =>
+                        dock.openPanel(
+                          { kind: "source-control", projectId: meta.projectId },
+                          { direction: "left" }
+                        )
+                      )
+                    }
+                  >
+                    <GitBranchIcon />
+                    Source control
+                    <CommandShortcut>{formatChord(KEYS.sourceControl)}</CommandShortcut>
+                  </CommandItem>
+                )}
+                {meta && (
+                  <CommandItem
+                    value="terminal shell console command line"
+                    onSelect={() => run(() => void openTerminal(dock, meta.projectId))}
+                  >
+                    <SquareTerminalIcon />
+                    New terminal
+                    <CommandShortcut>{formatChord(KEYS.terminal)}</CommandShortcut>
+                  </CommandItem>
+                )}
+                <CommandItem
+                  value="split panel right side by side"
+                  onSelect={() => run(() => dock.splitActive("right"))}
+                >
+                  <PanelsTopLeft />
+                  Split right
+                  <CommandShortcut>{formatChord(KEYS.splitRight)}</CommandShortcut>
+                </CommandItem>
+                <CommandItem
+                  value="split panel down below"
+                  onSelect={() => run(() => dock.splitActive("below"))}
+                >
+                  <PanelBottom />
+                  Split down
+                </CommandItem>
+                <CommandItem
+                  value="maximize restore panel fullscreen"
+                  onSelect={() => run(() => dock.toggleMaximize())}
+                >
+                  <Square />
+                  Maximize / restore panel
+                </CommandItem>
+                <CommandItem
+                  value="stack all tabs one group"
+                  onSelect={() => run(() => dock.stackAll())}
+                >
+                  <SquareStack />
+                  Stack all tabs
+                </CommandItem>
+                <CommandItem
+                  value="layout ide preset explorer terminal"
+                  onSelect={() => run(() => dock.applyPreset("ide"))}
+                >
+                  <Rows3 />
+                  Layout: IDE
+                </CommandItem>
+                <CommandItem
+                  value="layout focus preset single maximized"
+                  onSelect={() => run(() => dock.applyPreset("focus"))}
+                >
+                  <Square />
+                  Layout: Focus
+                </CommandItem>
+                {dock.hasClosedPanels() && (
+                  <CommandItem
+                    value="reopen closed panel tab undo close"
+                    onSelect={() => run(() => dock.reopenClosed())}
+                  >
+                    <RotateCcw />
+                    Reopen closed panel
+                    <CommandShortcut>{formatChord(KEYS.reopenPanel)}</CommandShortcut>
+                  </CommandItem>
+                )}
+                <CommandItem
+                  value="reset layout workspace arrangement"
+                  onSelect={() => run(() => dock.resetLayout())}
+                >
+                  <RotateCw />
+                  Reset layout
                 </CommandItem>
               </CommandGroup>
 

@@ -102,7 +102,9 @@ function entryFor(base: CodexModel, model: ModelDef, index: number): CodexModel 
     ...rest,
     slug: model.id,
     display_name: model.label,
-    description: model.label,
+    // A models.dev-enriched profile carries a real blurb; otherwise the label
+    // is still better than nothing.
+    description: model.description ?? model.label,
     visibility: "list",
     supported_in_api: true,
     // The profile's order is the menu's order.

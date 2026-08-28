@@ -109,6 +109,10 @@ export interface BridgeOptions {
   /** Settings chosen on a draft, against the option set the agent last
       advertised. Applied right after `session/new`. */
   configChoices?: Record<string, string | boolean>;
+  /** The web-search MCP server is replacing claude-code's built-in
+      WebSearch/WebFetch. Only that agent declares those as server tools, so
+      disallow them or the model keeps calling the originals instead of ours. */
+  websearchViaMcp?: boolean;
 }
 
 export class AcpBridge {
@@ -223,10 +227,23 @@ export class AcpBridge {
     if (opts.configChoices) await this.applyChoices(opts.configChoices);
   }
 
+  /**
+   * The ACP `_meta` block carrying claude-code bridge options that this client
+   * does not model itself. `_meta` is passed through intact (it is the
+   * extensibility escape hatch), so dropping `disallowedTools` here is the only
+   * way to switch the built-in web tools off. Empty for non-claude-code agents
+   * and for sessions without the web-search server.
+   */
+  private claudeMeta(opts: BridgeOptions): Record<string, unknown> {
+    if (!opts.websearchViaMcp) return {};
+    return { claudeCode: { options: { disallowedTools: ["WebSearch", "WebFetch"] } } };
+  }
+
   private async newSession(opts: BridgeOptions): Promise<void> {
     const response = await this.connection.agent.request(acp.methods.agent.session.new, {
       cwd: opts.cwd,
       mcpServers: opts.mcpServers,
+      _meta: this.claudeMeta(opts),
     });
     this.adoptSession(response.sessionId, response.modes ?? null, response.configOptions ?? []);
   }
@@ -246,9 +263,15 @@ export class AcpBridge {
         sessionId: acpSessionId,
         cwd: opts.cwd,
         mcpServers: opts.mcpServers,
+        _meta: this.claudeMeta(opts),
       });
       this.adoptSession(acpSessionId, response?.modes ?? null, response?.configOptions ?? []);
     } catch (error) {
+      // A deliberate close (respawn, retire) is not a load failure: the bridge
+      // was shut on purpose, the fallback would be a `session/new` fired at a
+      // dead connection, and the warn would make every normal respawn read
+      // like a thread that lost its history. Only a real failure starts fresh.
+      if (this.closed) throw error;
       // Agent can't load sessions — continue with a fresh one (empty context).
       console.warn("session/load failed, starting fresh", error);
       await this.newSession(opts);

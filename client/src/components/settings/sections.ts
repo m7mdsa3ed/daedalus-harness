@@ -10,6 +10,7 @@ import {
   KeyRound,
   Palette,
   Plug,
+  Search,
   Server,
   Sparkles,
   SquareSlash,
@@ -85,6 +86,14 @@ export const SETTINGS_SECTIONS = [
     title: "Agents",
     description: "ACP runtimes registered on the server (data/agents.json).",
   },
+  {
+    id: "web-search",
+    label: "Web search",
+    icon: Search,
+    title: "Web search",
+    description:
+      "The default search/fetch backend the harness's own web-search MCP server answers against. Profiles can override it.",
+  },
 ] as const
 
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]["id"]
@@ -97,7 +106,7 @@ export const SETTINGS_NAV_GROUPS: readonly {
   label: string
   sections: readonly SettingsSectionId[]
 }[] = [
-  { label: "Preferences", sections: ["general", "appearance", "notifications"] },
+  { label: "Preferences", sections: ["general", "appearance", "notifications", "web-search"] },
   { label: "Workspace", sections: ["projects", "mcp", "skills", "commands"] },
   { label: "Agents", sections: ["profiles", "agents"] },
 ] as const

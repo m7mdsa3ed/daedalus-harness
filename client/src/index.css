@@ -21,6 +21,7 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
+  --color-composer: var(--composer);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
@@ -101,12 +102,28 @@
   --scrollbar-thumb-hover: color-mix(in oklch, var(--foreground) 28%, transparent);
   --scrollbar-track: color-mix(in oklch, var(--muted) 45%, transparent);
 
+  /* ── The composer's own surface ──
+     It is a card sitting ON the page, and in a light palette --card is usually
+     the same white as --background — the box vanishes and only its shadow says
+     it is there. So it gets a token of its own, *derived* from the palette
+     rather than added to it: every palette in styles/themes.css, and every
+     user-made one written by lib/custom-themes.ts, already defines --muted as
+     its "just off the background" surface, so mixing card toward muted tints
+     with the palette and needs no new token in any of them. Dark mode already
+     has the separation (--card is lighter than --background there), so it
+     stays exactly --card. */
+  --composer: var(--card);
+
   /* One content width for the whole session column. */
   --harness-chat-width: 748px;
   /* The composer shares the transcript's text column exactly: both sit inside a
      px-4 wrapper, so subtracting that 2rem lines their edges up at every width.
      (At -48px the composer landed 8px right of every message.) */
   --harness-composer-width: calc(var(--harness-chat-width) - 2rem);
+}
+
+:root:not(.dark) {
+  --composer: color-mix(in oklch, var(--card) 30%, var(--muted) 70%);
 }
 
 .dark {
@@ -519,6 +536,7 @@ html[data-desktop="true"]:not([data-desktop-platform="darwin"]) [data-drag-regio
 /* Fenced code: scrolls rather than stretches, sized for transcript density. */
 .prose :where(pre) {
   @apply overflow-x-auto rounded-lg border border-border/60 p-3 text-xs leading-relaxed;
+  overscroll-behavior-x: contain;
 }
 
 /* A fence used as a raw payload pane: the surrounding block already supplies
@@ -592,13 +610,87 @@ html[data-desktop="true"]:not([data-desktop-platform="darwin"]) [data-drag-regio
   color: oklch(0.8 0.1 325);
 }
 
-/* GFM tables: a wide table scrolls inside itself instead of widening the turn. */
-.prose :where(table) {
-  @apply block w-fit max-w-full overflow-x-auto text-xs;
+/* ── CodeMirror palette ──
+   The editor's theme object references these rather than literals, so a custom
+   palette moves the code colours with it. Same hues as the transcript's fenced
+   code above: a file and a diff of that file in a tool call should read as the
+   same language, not as two products. */
+:root {
+  --cm-comment: color-mix(in oklch, var(--muted-foreground) 85%, transparent);
+  --cm-keyword: oklch(0.55 0.15 285);
+  --cm-string: oklch(0.5 0.13 150);
+  --cm-number: oklch(0.55 0.13 40);
+  --cm-function: oklch(0.52 0.13 250);
+  --cm-property: oklch(0.52 0.1 210);
+  --cm-type: oklch(0.55 0.11 320);
+  --cm-punctuation: color-mix(in oklch, var(--foreground) 60%, transparent);
 }
-.prose :where(th),
-.prose :where(td) {
-  @apply px-3 py-1.5;
+.dark {
+  --cm-keyword: oklch(0.78 0.13 290);
+  --cm-string: oklch(0.8 0.13 150);
+  --cm-number: oklch(0.8 0.12 55);
+  --cm-function: oklch(0.78 0.12 245);
+  --cm-property: oklch(0.82 0.09 205);
+  --cm-type: oklch(0.8 0.1 325);
+}
+
+/* GFM tables. The scroll lives on the wrapper `<div class="harness-table">`
+   that the renderer adds (see MARKDOWN_COMPONENTS in thread-items), so the
+   table itself stays `display: table` and can still size its columns; a wide
+   one scrolls inside the turn instead of widening it. The frame is on the
+   wrapper too — a border on a scrolling element scrolls away with it. */
+.harness-table {
+  @apply my-[1em] w-full max-w-full overflow-x-auto rounded-lg border border-border/60;
+  /* A sideways swipe inside the table must not become the browser's
+     back-gesture once it reaches the end — on a phone that navigates out of
+     the thread, which is an expensive way to reach the last column. */
+  overscroll-behavior-x: contain;
+}
+/* `max-content`, NOT `width: 100%`. A table given an explicit width does not
+   overflow — it compresses, so on a narrow screen every column is squeezed to a
+   few characters and the wrapper's scrollbar never appears because there is
+   nothing to scroll. Sizing to content makes it overflow (and therefore scroll)
+   while `min-width: 100%` still fills the frame when the table is narrow. */
+.prose :where(.harness-table table) {
+  @apply my-0 text-xs;
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+}
+/* The other half of the same bargain: at `max-content` a single long token —
+   a path, a URL, an id — would otherwise set the column width and scroll for
+   screens. Capped, it wraps instead. */
+.prose :where(.harness-table th),
+.prose :where(.harness-table td) {
+  max-width: 24rem;
+}
+.prose :where(.harness-table thead) {
+  @apply bg-muted/50;
+}
+.prose :where(.harness-table th) {
+  @apply text-left font-medium;
+}
+/* Rules stay, but weighted: the header separates firmly, rows only enough to
+   track across one. Cells wrap and align to the top, so without a row line a
+   two-line cell beside a one-line cell has nothing to say where it ends. The
+   last row's line is the wrapper's border, so it is dropped. */
+.prose :where(.harness-table thead tr) {
+  @apply border-b border-border/60;
+}
+.prose :where(.harness-table tbody tr) {
+  @apply border-b border-border/40;
+}
+.prose :where(.harness-table tbody tr):last-child {
+  @apply border-b-0;
+}
+.prose :where(.harness-table th),
+.prose :where(.harness-table td) {
+  @apply px-3 py-1.5 align-top;
+}
+/* A cell wraps, but a long unbroken token in one (a path, a URL, an id) must
+   not be able to set the table's width on its own. */
+.prose :where(.harness-table td) {
+  overflow-wrap: anywhere;
 }
 
 .prose :where(a) {
@@ -611,6 +703,63 @@ html[data-desktop="true"]:not([data-desktop-platform="darwin"]) [data-drag-regio
 }
 .prose :where(input[type="checkbox"]) {
   @apply me-1.5 align-middle accent-primary;
+}
+
+/* A path, a URL or a hash in running text is a single unbreakable token, and
+   the transcript column is narrow. Without this one turn can widen the whole
+   thread — `break-word` for prose (still breaks at spaces first) and `anywhere`
+   for inline code, where there are no spaces to break at. */
+.prose {
+  overflow-wrap: break-word;
+}
+.prose :where(code):not(:where(pre code)) {
+  overflow-wrap: anywhere;
+}
+
+/* Headings, rescaled. The body here is text-xs, but the typography plugin sizes
+   headings against its own base — at prose-sm an h1 lands nearly three times
+   the body size, which in a chat turn reads as shouting. Relative ems, tight
+   enough that four levels still separate. */
+.prose :where(h1) { @apply mt-[1.4em] mb-[0.6em] text-[1.35em] leading-snug font-semibold; }
+.prose :where(h2) { @apply mt-[1.3em] mb-[0.5em] text-[1.2em] leading-snug font-semibold; }
+.prose :where(h3) { @apply mt-[1.2em] mb-[0.4em] text-[1.08em] leading-snug font-semibold; }
+.prose :where(h4, h5, h6) { @apply mt-[1.1em] mb-[0.4em] text-[1em] leading-snug font-semibold; }
+.prose > :where(h1, h2, h3, h4, h5, h6):first-child { @apply mt-0; }
+
+/* The plugin punctuates blockquotes with real quotation marks via ::before.
+   An agent quoting a log line gets a stray “ that is not in the text. */
+.prose :where(blockquote) {
+  @apply border-s-2 ps-3 not-italic;
+}
+.prose :where(blockquote p):first-of-type::before,
+.prose :where(blockquote p):last-of-type::after {
+  content: none;
+}
+
+/* An image is untrusted remote content in a chat column: bound it, and give it
+   the same frame as a code block so a broken one still reads as a slot. */
+.prose :where(img) {
+  @apply my-[1em] max-w-full rounded-md border border-border/60;
+}
+
+/* GFM footnotes are a section, not more prose — quieter, and fenced off. */
+.prose :where(.footnotes) {
+  @apply mt-6 border-t border-border/60 pt-3 text-[0.9em] text-muted-foreground;
+}
+.prose :where(.footnotes h2) {
+  @apply sr-only;
+}
+.prose :where(.footnotes li) {
+  @apply my-0.5;
+}
+.prose :where(sup a) {
+  @apply no-underline;
+}
+
+/* Strikethrough is a decision an agent is recording (a plan item dropped, a
+   line removed) — legible, not invisible. */
+.prose :where(del) {
+  @apply text-muted-foreground decoration-border;
 }
 
 /* Dockview chat workspace — map the docking chrome onto app tokens so tabs read
@@ -652,6 +801,15 @@ html .dv-tabs-and-actions-container {
   border-bottom: 1px solid var(--border);
   padding: 0 4px;
   gap: 2px;
+}
+
+/* The actions at the end of the strip (new tab, split). `dv-right-actions` is
+   laid out after the void that absorbs the leftover width, so it stays pinned
+   to the end rather than drifting along behind the last tab. */
+html .dv-right-actions-container {
+  align-items: center;
+  display: flex;
+  height: 100%;
 }
 
 html .dv-tab {

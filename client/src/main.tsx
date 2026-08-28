@@ -6,6 +6,7 @@ import App from './App.tsx'
 import { ErrorBoundary } from './components/error-boundary.tsx'
 import { installGlobalErrorReporting } from './lib/errors.ts'
 import { installNotificationTestHelper } from './lib/notifications.ts'
+import { registerPwa } from './lib/pwa.ts'
 
 // The floor under everything else: a promise nobody caught, or a listener that
 // threw outside React's tree, would otherwise vanish into the console. The
@@ -14,6 +15,10 @@ installGlobalErrorReporting()
 // `daedalus.notify()` in the console — the only way to look at a notification
 // without arranging for a turn to finish in a window you are not watching.
 installNotificationTestHelper()
+// Service worker: the offline shell, the install, and the push notifications
+// that arrive when no tab is attached. Silent no-op off https or in a browser
+// without support.
+registerPwa()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

@@ -2,6 +2,7 @@ import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
 import { liveThreads, ThreadSocket, type ThreadCallbacks } from "./thread-socket"
 import { describeError, markReported } from "./errors"
+import { appendOutput } from "./workspace/output"
 import { uuid } from "./uuid"
 import {
   alreadyAsked,
@@ -23,6 +24,7 @@ import {
   type McpServerDef,
   type Profile,
   type Project,
+  type ScheduledMessage,
   type ServerSettings,
   type SessionMeta,
   type SkillDef,
@@ -63,6 +65,13 @@ export function useActions(settings: ServerSettings) {
         detail: info.detail,
         retryText,
       })
+      /* Also to the project's Output pane. Not instead of the transcript row —
+         that stays where the user is looking — but a failure whose detail is a
+         stack trace or a compiler's complaint is exactly what a workspace pane
+         is for, and it is where a `file:line` becomes clickable. */
+      const projectId = stateRef.current.sessions.find((s) => s.id === sessionId)?.projectId
+      if (projectId)
+        appendOutput(projectId, "agent", [info.title, info.detail].filter(Boolean).join("\n"))
       return info
     }
 
@@ -76,6 +85,20 @@ export function useActions(settings: ServerSettings) {
       dispatch({ type: "sessions", sessions })
       const meta = sessions.find((s) => s.id === sessionId)
       if (!meta) throw new Error("This thread no longer exists on the server.")
+      // Deleted mid-connection (another tab, another device): reconnecting is
+      // not a thing that can succeed, so stop the backoff and say what happened
+      // once, instead of retrying a revive the server must refuse.
+      if (meta.deletedAt) {
+        reconnectAttempts.delete(sessionId)
+        dispatch({ type: "thread-status", id: sessionId, status: "closed" })
+        dispatch({
+          type: "error",
+          id: sessionId,
+          title: "This thread was deleted",
+          reason: "It moved to Trash on this server — restore it to reopen it.",
+        })
+        return
+      }
       await (silent ? connectThread(meta) : openThread(meta))
     }
 
@@ -264,7 +287,18 @@ export function useActions(settings: ServerSettings) {
       // A background task's journal grew server-side. Into the module store,
       // not the reducer: the events are keyed by transcript dir, not by
       // thread, and the panel reading them subscribes there (lib/task-events).
-      onTaskEvent: (transcriptDir, event) => appendTaskEvent(transcriptDir, event),
+      onTaskEvent: (transcriptDir, event) => {
+        appendTaskEvent(transcriptDir, event)
+        /* Also to the project's Output pane, *as well as* the transcript's own
+           task card rather than instead of it: the card is the shape of the
+           work (which agent, how far along), and Output is the running text —
+           where a `file:line` in a build's stderr becomes a clickable problem.
+           Two readings of one stream, which is the same bargain the Problems
+           filter makes. */
+        const projectId = stateRef.current.sessions.find((s) => s.id === id)?.projectId
+        const text = typeof event.message === "string" ? event.message : ""
+        if (projectId && text.trim()) appendOutput(projectId, "task", text)
+      },
     })
 
     /* Swap the agent process and put the conversation back.
@@ -344,6 +378,15 @@ export function useActions(settings: ServerSettings) {
       return thread
     }
 
+    /* Hoisted rather than left as a method on the returned object, for the same
+       reason `refreshSessions` is: `scheduleMessage` and `cancelSchedule` both
+       have to re-read the list after they change it, and a bare call to a
+       sibling method does not resolve — there is no `this` in scope here. */
+    const refreshScheduled = async () => {
+      const scheduled = await api<ScheduledMessage[]>(settings, "/api/scheduled")
+      dispatch({ type: "scheduled", scheduled })
+    }
+
     const refreshSessions = async () => {
       const sessions = await api<SessionMeta[]>(settings, "/api/sessions")
       // The server's list is the authority on what still exists, so this is the
@@ -386,6 +429,16 @@ export function useActions(settings: ServerSettings) {
         )
       }
 
+      // A deleted thread is exited with no way back through the revive path —
+      // restore is what brings it around. Throwing here also stops the
+      // reconnect backoff from re-POSTing a respawn the server must refuse,
+      // which is where the old "session deleted" retry loop came from.
+      if (meta.deletedAt) {
+        throw new Error(
+          "This thread is in Trash — restore it from the thread list to open it again."
+        )
+      }
+
       // No live process (idle-retired or the server restarted): revive it. The
       // server respawns, replays the conversation through session/load and puts
       // the settings back before it answers.
@@ -415,7 +468,7 @@ export function useActions(settings: ServerSettings) {
       refreshSessions,
 
       async bootstrap() {
-        const [profiles, projects, mcpServers, skills, commands, agents, sessions] =
+        const [profiles, projects, mcpServers, skills, commands, agents, sessions, scheduled] =
           await Promise.all([
             api<Profile[]>(settings, "/api/profiles"),
             api<Project[]>(settings, "/api/projects"),
@@ -424,6 +477,7 @@ export function useActions(settings: ServerSettings) {
             api<CommandDef[]>(settings, "/api/commands"),
             api<AgentDef[]>(settings, "/api/agents"),
             api<SessionMeta[]>(settings, "/api/sessions"),
+            api<ScheduledMessage[]>(settings, "/api/scheduled"),
           ])
         dispatch({
           type: "bootstrap",
@@ -434,6 +488,7 @@ export function useActions(settings: ServerSettings) {
           commands,
           agents,
           sessions,
+          scheduled,
         })
         return { profiles, projects, agents, sessions }
       },
@@ -464,6 +519,41 @@ export function useActions(settings: ServerSettings) {
       async refreshCommands() {
         const commands = await api<CommandDef[]>(settings, "/api/commands")
         dispatch({ type: "commands", commands })
+      },
+
+      refreshScheduled,
+
+      /**
+       * Schedule `text` to be sent to a thread's agent at `nextAt` (and again
+       * every `everyMs`). The server owns delivery (scheduler.ts), so the
+       * message goes out whether or not this tab is open — and a trashed thread
+       * never receives it. For a draft thread, the draft is materialized first
+       * (the server only schedules threads it knows), mirroring `send`.
+       */
+      async createSchedule(input: {
+        sessionId: string
+        text: string
+        nextAt: number
+        everyMs?: number | null
+      }) {
+        // A draft has no server row to schedule against — bring it into being
+        // the way sending its first message would, then schedule the real one.
+        const draft = stateRef.current.sessions.find(
+          (s) => s.id === input.sessionId && s.draft
+        )
+        if (draft) {
+          await createSession(draft)
+        }
+        await api<ScheduledMessage>(settings, "/api/scheduled", {
+          method: "POST",
+          body: JSON.stringify(input),
+        })
+        await refreshScheduled()
+      },
+
+      async cancelSchedule(id: string) {
+        await api(settings, `/api/scheduled/${id}`, { method: "DELETE" })
+        await refreshScheduled()
       },
 
       /**
@@ -589,6 +679,13 @@ export function useActions(settings: ServerSettings) {
           try {
             await createSession(draft)
           } catch (error) {
+            /* `createSession` turns the status to `connecting` before it asks
+               the server for anything, so a failure has to turn it back: it is
+               what draws the "Spawning the agent…" line, and a shimmer that
+               never resolves under the error row says the opposite of what the
+               row says. Back to `idle` — the draft is still a draft, and the
+               Retry on that row runs this again. */
+            dispatch({ type: "thread-status", id: sessionId, status: "idle" })
             recordError(sessionId, error, "Couldn't start this thread", text)
             throw error
           }

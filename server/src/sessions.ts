@@ -1,5 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { and, asc, eq, gte } from "drizzle-orm";
 import type { WebSocket } from "ws";
 import type * as acp from "@agentclientprotocol/sdk";
@@ -7,6 +9,14 @@ import { db, sessionEvents as eventsTable, sessions as sessionsTable } from "./d
 import { mcpServers as mcpLibrary } from "./library.js";
 import type { Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
+import { loadConfig } from "./config.js";
+import { WEB_SEARCH_SERVER_NAME, toMcpServerEnv } from "./websearch.js";
+import {
+  KNOWLEDGE_SERVER_NAME,
+  MEMORY_SERVER_NAME,
+  toKnowledgeServerEnv,
+  toMemoryServerEnv,
+} from "./memory-db.js";
 import { AcpBridge, spawnAgent, toWireError, type BridgeHost } from "./acp-bridge.js";
 import { JOURNALED_EVENTS, type ThreadCommand, type ThreadEvent, type WireError } from "./protocol.js";
 
@@ -54,6 +64,12 @@ export interface Session {
       only thing that forgets a thread. */
   deletedAt: number | null;
   exited: boolean;
+  /** Tail of this session's in-flight respawn chain, null when idle. A second
+      respawn — a double-click, two tabs, model then effort changed in quick
+      succession — queues behind the first instead of closing its not-yet-ready
+      bridge, which is what used to reject the first call's `await bridge.ready`
+      with the close reason and answer a fine respawn with 500 "respawning". */
+  respawnChain: Promise<Session> | null;
 }
 
 /** How much of the agent's stderr to keep. Enough for a stack trace, bounded so
@@ -98,6 +114,99 @@ export function mcpServersFor(project: Project): acp.McpServer[] {
     );
 }
 
+/**
+ * The harness's own `web-search` MCP server, synthesized at spawn from
+ * `data/config.json` — never a stored library row, so the credentials come
+ * live and a config edit is picked up on the next session/new or respawn.
+ * Null when search is not configured (a thread must not advertise tools that
+ * cannot answer). The environment is mapped onto the stdio `McpServerStdio.env`
+ * shape the agent spawns the server with.
+ */
+/** A stdio `McpServerStdio`-shaped def, but with `type` omitted — ACP's stdio
+    variant carries no discriminator, and that is the shape `session/new` takes
+    (see the `mcpServersFor` mapping). Narrowed here so `command`/`args`/`env`
+    are typed rather than buried in the `McpServer` union. */
+export type StdioMcpServer = {
+  name: string;
+  command: string;
+  args: string[];
+  env: { name: string; value: string }[];
+};
+
+/**
+ * Resolve the effective web-search config for a profile: its own override wins
+ * per field, falling back to the server-global default. Only `enabled` is
+ * required on the profile; the rest inherit. Returns the server default verbatim
+ * when the profile carries no override.
+ */
+export function resolveWebSearch(
+  profile: Pick<Profile, "webSearch">,
+  config: ReturnType<typeof loadConfig>,
+): { enabled: boolean; searchApiBaseUrl: string; searchApiToken: string; searchModel: string; fetchModel: string } | null {
+  const profileWs = profile.webSearch;
+  const serverWs = config.webSearch;
+  if (!profileWs?.enabled) return null;
+  if (!serverWs) return null;
+  return {
+    enabled: true,
+    searchApiBaseUrl: profileWs.searchApiBaseUrl || serverWs.searchApiBaseUrl,
+    searchApiToken: profileWs.searchApiToken || serverWs.searchApiToken,
+    searchModel: profileWs.searchModel || serverWs.searchModel,
+    fetchModel: profileWs.fetchModel || serverWs.fetchModel,
+  };
+}
+
+export function websearchServer(
+  profile: Pick<Profile, "webSearch">,
+  config: ReturnType<typeof loadConfig>,
+): StdioMcpServer | null {
+  const resolved = resolveWebSearch(profile, config);
+  if (!resolved) return null;
+  // `process.execPath` (node) is the executable; the compiled/tsx path to the
+  // server resolves to the directory this module runs from, so it is correct
+  // under both tsx (src/) and the built dist/.
+  return {
+    name: WEB_SEARCH_SERVER_NAME,
+    command: process.execPath,
+    args: [join(dirname(fileURLToPath(import.meta.url)), "websearch-mcp.js")],
+    env: toMcpServerEnv(resolved),
+  };
+}
+
+/**
+ * The harness's own `memory` MCP server, synthesized at spawn when the PROFILE
+ * opts in — never a stored library row. The project's id is injected into the
+ * server's env so every query is scoped to the workspace this session runs in.
+ * Null when the profile has not enabled it, mirroring `websearchServer`.
+ */
+export function memoryServer(
+  profile: Pick<Profile, "memories">,
+  project: Pick<Project, "id">,
+): StdioMcpServer | null {
+  if (!profile.memories?.enabled) return null;
+  return {
+    name: MEMORY_SERVER_NAME,
+    command: process.execPath,
+    args: [join(dirname(fileURLToPath(import.meta.url)), "memory-mcp.js")],
+    env: toMemoryServerEnv(project.id),
+  };
+}
+
+/** The harness's own `knowledge` MCP server — same opt-in and project scoping as
+    `memoryServer`, gated on its own profile toggle. */
+export function knowledgeServer(
+  profile: Pick<Profile, "knowledge">,
+  project: Pick<Project, "id">,
+): StdioMcpServer | null {
+  if (!profile.knowledge?.enabled) return null;
+  return {
+    name: KNOWLEDGE_SERVER_NAME,
+    command: process.execPath,
+    args: [join(dirname(fileURLToPath(import.meta.url)), "knowledge-mcp.js")],
+    env: toKnowledgeServerEnv(project.id),
+  };
+}
+
 export interface SessionEvents {
   /** Fired only while no client is attached — used for push notifications. */
   onPermissionRequest?: (session: Session) => void;
@@ -130,6 +239,7 @@ export class SessionManager {
         peers: new Set(),
         detachedAt: Date.now(),
         exited: true,
+        respawnChain: null,
       });
     }
 
@@ -413,6 +523,7 @@ export class SessionManager {
       detachedAt: Date.now(),
       deletedAt: null,
       exited: false,
+      respawnChain: null,
     };
     this.sessions.set(session.id, session);
     // Before the bridge: the event rows reference this one, so the session has
@@ -436,10 +547,30 @@ export class SessionManager {
     },
   ): AcpBridge {
     const proc = spawnAgent(profile, project, model, effort);
+    const mcpServers = mcpServersFor(project);
+    // The web-search MCP server replaces claude-code's built-in WebSearch/
+    // WebFetch, but only when the PROFILE opts in (and a search backend is
+    // resolvable — profile override or server default). Default is off: a
+    // profile that never set `webSearch.enabled`, or an agent that never
+    // declared the originals (codex/opencode), adds nothing and disallows
+    // nothing.
+    const wsServer = websearchServer(profile, loadConfig());
+    const websearchFromProfile = session.agentId === "claude-code" && wsServer !== null;
+    // Memory and knowledge are additive for every agent — there is no built-in
+    // to disallow (unlike web-search), so no agentId gating and no special-casing.
+    // Each is gated on its own profile toggle; enabling one never forces the other.
+    const memServer = memoryServer(profile, project);
+    const kbServer = knowledgeServer(profile, project);
+    const extra = [
+      ...(websearchFromProfile ? [wsServer!] : []),
+      ...(memServer ? [memServer] : []),
+      ...(kbServer ? [kbServer] : []),
+    ];
     const bridge = new AcpBridge(this.hostFor(session), proc, {
       cwd: project.cwd,
-      mcpServers: mcpServersFor(project),
+      mcpServers: [...extra, ...mcpServers],
       ...opts,
+      websearchViaMcp: websearchFromProfile,
     });
     session.proc = proc;
     session.bridge = bridge; // flips the generation guard
@@ -471,6 +602,36 @@ export class SessionManager {
   ): Promise<Session> {
     const session = this.sessions.get(id);
     if (!session) throw new Error("unknown session");
+    if (session.deletedAt !== null) throw new Error("session deleted");
+    // One respawn at a time, per thread. The whole spawn → session/load →
+    // restore sequence runs against a bridge that `session.bridge` already
+    // points at, so a second call before the first settles would close that
+    // half-started bridge — and its in-flight `session/load` is exactly what
+    // `close(reason)` rejects, handing the first route the close reason as a
+    // 500 while the second one's thread came up fine. Queuing keeps every
+    // respawn atomic and lets the last request win.
+    const ahead = session.respawnChain;
+    const run = (async (): Promise<Session> => {
+      await ahead?.catch(() => {}); // queue behind it, whichever way it settled
+      return this.respawnNow(session, profile, project, model, effort);
+    })();
+    session.respawnChain = run;
+    void run.finally(() => {
+      if (session.respawnChain === run) session.respawnChain = null;
+    }).catch(() => {});
+    return run;
+  }
+
+  private async respawnNow(
+    session: Session,
+    profile: Profile,
+    project: Project,
+    model?: string,
+    effort?: string,
+  ): Promise<Session> {
+    // Re-checked once the queue lets us through: the thread may have been
+    // deleted (or purged) while a first respawn was still in flight.
+    if (this.sessions.get(session.id) !== session) throw new Error("unknown session");
     if (session.deletedAt !== null) throw new Error("session deleted");
     // Captured while the old process is still up — it is the only thing that
     // knows how the agent was configured.

@@ -7,6 +7,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react"
+import { BOOT_COLORS } from "./boot-colors"
 import {
   customThemeId,
   customThemesSnapshot,
@@ -78,15 +79,37 @@ export function useCustomThemes(): CustomTheme[] {
   return useSyncExternalStore(subscribeCustomThemes, customThemesSnapshot, customThemesSnapshot)
 }
 
+/* The strip above the header — a browser's address bar, an installed app's
+   status bar — is painted by the platform from `<meta name="theme-color">`,
+   not by anything in the tree, so it only matches the app if we keep telling
+   it what the app currently looks like. `--background` is the right token:
+   nothing in the shell paints the top edge (the header is transparent and the
+   wrapper has no fill), so what shows through the safe-area inset is the page.
+
+   The value cannot be computed before the stylesheet loads, which is exactly
+   when it is needed — index.html's pre-paint script has a palette id and no
+   CSS. So each resolved colour is remembered under the palette and mode that
+   produced it, and that script reads the answer back. The map is at most two
+   entries per palette, and a stale one only survives until the palette is
+   worn again. */
+export const THEME_COLOR_KEY = "ui.themeColor"
+
 /** Tint the browser/PWA status bar with the app background for the active theme. */
-function applyThemeColor(resolved: "light" | "dark") {
+function applyThemeColor(resolved: "light" | "dark", colorTheme: ColorTheme) {
   const background = getComputedStyle(document.documentElement)
     .getPropertyValue("--background")
     .trim()
-  let content = background || (resolved === "dark" ? "#0a0a0a" : "#ffffff")
+  // Empty means the stylesheet has not landed yet. The floor is the Default
+  // palette's own background, shared with the splash and the manifest — see
+  // lib/boot-colors.
+  let content = background || BOOT_COLORS[resolved]
   try {
     const ctx = document.createElement("canvas").getContext("2d")
     if (ctx) {
+      // `oklch(...)`/`hsl(...)` is a valid theme-color, but Safari has been
+      // fussy about the newer spaces — round-tripping through a canvas is the
+      // cheapest way to hand the platform a plain rgb/hex string. A value it
+      // rejects leaves fillStyle at the sentinel, and the raw token stands.
       ctx.fillStyle = "#ff00ff"
       ctx.fillStyle = content
       if (ctx.fillStyle !== "#ff00ff") content = ctx.fillStyle
@@ -101,6 +124,19 @@ function applyThemeColor(resolved: "light" | "dark") {
     document.head.appendChild(meta)
   }
   meta.setAttribute("content", content)
+  rememberThemeColor(`${colorTheme}:${resolved}`, content)
+}
+
+function rememberThemeColor(key: string, content: string) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(THEME_COLOR_KEY) ?? "{}") as unknown
+    const map = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, string>) : {}
+    if (map[key] === content) return
+    localStorage.setItem(THEME_COLOR_KEY, JSON.stringify({ ...map, [key]: content }))
+  } catch {
+    // A status bar that is one paint behind on the next boot is not worth
+    // throwing out of an effect.
+  }
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
@@ -137,7 +173,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     document.documentElement.dataset.colorTheme = colorTheme
     localStorage.setItem("theme", theme)
     localStorage.setItem(COLOR_THEME_KEY, colorTheme)
-    applyThemeColor(resolved)
+    applyThemeColor(resolved, colorTheme)
     window.desktop?.setTitleBarTheme?.(resolved)
   }, [theme, resolved, colorTheme, customThemes])
 

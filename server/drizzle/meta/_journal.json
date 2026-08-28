@@ -50,6 +50,34 @@
       "when": 1787794412821,
       "tag": "0006_mighty_deadpool",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1787900800000,
+      "tag": "0007_earnest_light",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1787871038997,
+      "tag": "0008_lucky_swarm",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1787882892115,
+      "tag": "0009_huge_robbie_robertson",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1787917135272,
+      "tag": "0010_gigantic_ted_forrester",
+      "breakpoints": true
     }
   ]
 }

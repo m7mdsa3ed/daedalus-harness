@@ -5,12 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <link rel="icon" href="/logo.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Daedalus" />
-    <meta name="theme-color" content="#ffffff" />
+    <!-- Overwritten a few lines down from the cached palette colour, and again
+         by ThemeProvider once the stylesheet exists. This value is only what a
+         browser with the script blocked is left with. %BOOT_LIGHT% and
+         %BOOT_DARK% are substituted at build time from src/lib/boot-colors.ts. -->
+    <meta name="theme-color" content="%BOOT_LIGHT%" />
     <title>Daedalus</title>
     <script>
       (function () {
@@ -32,8 +35,26 @@
           // still arrives with the bundle, but the splash covers that gap.
           var palette = localStorage.getItem("ui.colorTheme");
           if (palette) document.documentElement.dataset.colorTheme = palette;
+          // The status bar / address bar is tinted from this meta, and the
+          // platform reads it before the stylesheet exists — so the palette's
+          // real --background cannot be computed here. ThemeProvider caches
+          // the colour it resolved under "<palette>:<mode>" (see the
+          // THEME_COLOR_KEY comment in src/lib/theme.tsx) and this reads it
+          // back, so every load after the first tints correctly instead of
+          // showing Default's black or white until React mounts.
           var meta = document.querySelector('meta[name="theme-color"]');
-          if (meta) meta.content = resolved === "dark" ? "#0a0a0a" : "#ffffff";
+          if (meta) {
+            var cached;
+            try {
+              cached = JSON.parse(localStorage.getItem("ui.themeColor") || "{}")[
+                (palette || "default") + ":" + resolved
+              ];
+            } catch (e) {}
+            // No cache yet (first ever load, or a palette worn for the first
+            // time) falls back to the Default palette's own background — not
+            // to a black that no palette actually paints.
+            meta.content = cached || (resolved === "dark" ? "%BOOT_DARK%" : "%BOOT_LIGHT%");
+          }
         } catch (e) {}
       })();
     </script>
@@ -62,12 +83,15 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        background: #ffffff;
+        /* The app's own background (src/lib/boot-colors.ts), so the
+           splash and the first paint behind it are one colour rather than two
+           near-blacks a frame apart. */
+        background: %BOOT_LIGHT%;
         --boot-fg: #0f172a;
         --boot-mark: #0f172a;
         transition: opacity 260ms ease-out;
       }
-      .dark #boot-splash { background: #0a0a0a; --boot-fg: #ffffff; --boot-mark: #f8fafc; }
+      .dark #boot-splash { background: %BOOT_DARK%; --boot-fg: #ffffff; --boot-mark: #f8fafc; }
       #boot-splash.is-leaving { opacity: 0; pointer-events: none; }
       /* The splash starts paused and the gate script below releases it. Chrome
          prerenders the root URL from the omnibox: without the gate the whole

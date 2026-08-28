@@ -93,7 +93,7 @@ export function formatChord(chord: string): string {
   return APPLE ? caps.join("") : caps.join("+")
 }
 
-export type ShortcutScope = "Global" | "Thread" | "Composer" | "Questions"
+export type ShortcutScope = "Global" | "Thread" | "Editor" | "Composer" | "Questions"
 
 export interface ShortcutDef {
   scope: ShortcutScope
@@ -118,6 +118,23 @@ export const KEYS = {
   historyNext: "down",
   /** Skip the question, reject the permission, stop the turn — in that order. */
   escape: "esc",
+  /** Workspace. Not `mod+w`: Electron gives that to close-window, and a chord
+      that closes the app when the dock is empty is not a panel shortcut. */
+  splitRight: "mod+\\",
+  reopenPanel: "mod+shift+t",
+  /** Not `mod+b` — that is the app sidebar, and the two are different panes. */
+  explorer: "mod+shift+e",
+  /** VS Code's panel chord, not its ⌃` terminal one: `matchesChord` folds Ctrl
+      into `mod` by design (⌘ on Apple, Ctrl elsewhere), so a standalone `ctrl`
+      is not part of the vocabulary — and ⌘` is macOS's own "cycle windows",
+      which this app should not be taking. */
+  terminal: "mod+j",
+  /** VS Code's, and free here. */
+  sourceControl: "mod+shift+g",
+  output: "mod+shift+u",
+  /** The editor panel's own — bound on the window when a dirty file is in
+      front, and inside the editor itself where the caret lives. */
+  save: "mod+s",
 } as const
 
 export const SHORTCUTS: ShortcutDef[] = [
@@ -126,9 +143,53 @@ export const SHORTCUTS: ShortcutDef[] = [
   { scope: "Global", label: "Toggle the sidebar", chords: [KEYS.sidebar] },
   {
     scope: "Global",
-    label: "Jump to an open thread",
+    label: "Jump to a tab in this group",
     chords: ["mod+1"],
     display: [SYMBOLS.mod + "1…9"],
+    note: "Counts the tabs in the group you are looking at, which is every open thread until the workspace is split.",
+  },
+  { scope: "Global", label: "Split the panel to the right", chords: [KEYS.splitRight] },
+  {
+    scope: "Editor",
+    label: "Save the file",
+    chords: [KEYS.save],
+    note: "Only in an editor panel, and only while it has unsaved changes — nothing else in the app claims it.",
+  },
+  {
+    scope: "Global",
+    label: "Toggle output and problems",
+    chords: [KEYS.output],
+    note: "One buffer — Problems is the lines that named a file and a line number.",
+  },
+  {
+    scope: "Global",
+    label: "Toggle source control",
+    chords: [KEYS.sourceControl],
+    note: "Staging, commits and branches for the current thread's project.",
+  },
+  {
+    scope: "Global",
+    label: "Open a terminal",
+    chords: [KEYS.terminal],
+    note: "A shell on the Daedalus server, in the current thread's project directory.",
+  },
+  {
+    scope: "Global",
+    label: "Toggle the file explorer",
+    chords: [KEYS.explorer],
+    note: "The workspace tree for the current thread's project, beside the transcript.",
+  },
+  {
+    scope: "Global",
+    label: "Reopen the last closed panel",
+    chords: [KEYS.reopenPanel],
+    note: "Walks back through the last ten, the way a browser reopens tabs.",
+  },
+  {
+    scope: "Global",
+    label: "Save the open file",
+    chords: [KEYS.save],
+    note: "When the editor panel is the one in front and the file has changes.",
   },
   { scope: "Global", label: "Keyboard shortcuts", chords: [...KEYS.help] },
 
@@ -180,4 +241,4 @@ export const SHORTCUTS: ShortcutDef[] = [
   },
 ]
 
-export const SHORTCUT_SCOPES: ShortcutScope[] = ["Global", "Thread", "Composer", "Questions"]
+export const SHORTCUT_SCOPES: ShortcutScope[] = ["Global", "Thread", "Editor", "Composer", "Questions"]

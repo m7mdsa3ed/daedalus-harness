@@ -10,6 +10,7 @@ import type {
   McpServerDef,
   Profile,
   Project,
+  ScheduledMessage,
   SessionMeta,
   SkillDef,
 } from "./settings"
@@ -170,6 +171,8 @@ export interface State {
   commands: CommandDef[]
   agents: AgentDef[]
   sessions: SessionMeta[]
+  /** Scheduled prompts on the server, one row per future/recurring delivery. */
+  scheduled: ScheduledMessage[]
   // Which thread is open and which screen is showing live in the URL — see lib/router.
   threads: Record<string, ThreadState>
 }
@@ -198,13 +201,22 @@ export const emptyThread: ThreadState = {
  * they all ask here rather than each deciding for itself. A draft counts as
  * empty on sight: it has no connection to be waiting on, and nothing is ever
  * going to arrive until someone types.
+ *
+ * `connecting` outranks `draft`, and that ordering is the whole point of the
+ * first message: `actions.send` flips the status before it POSTs, so the wash
+ * goes and the composer docks the instant the message is sent rather than two
+ * seconds later when the agent has finished spawning and the first item lands.
+ * The transcript is not empty at that moment in any sense the user cares about
+ * — the send happened — and leaving the hero up through the spawn read as the
+ * message having gone nowhere.
  */
 export function threadIsEmpty(thread: ThreadState, draft?: boolean): boolean {
   if (thread.items.length > 0) return false
+  // Already on its way to a transcript, draft or not: that reads as loading.
+  if (thread.status === "connecting") return false
   if (draft) return true
-  // Still connecting (or not yet started): that is a thread on its way to a
-  // transcript, which reads as loading rather than as empty.
-  return thread.status !== "connecting" && thread.status !== "idle"
+  // Not yet started at all.
+  return thread.status !== "idle"
 }
 
 // ---- update application (shared by live updates and journal rebuild) ----
@@ -495,8 +507,10 @@ export type Action =
       commands: CommandDef[]
       agents: AgentDef[]
       sessions: SessionMeta[]
+      scheduled?: ScheduledMessage[]
     }
   | { type: "sessions"; sessions: SessionMeta[] }
+  | { type: "scheduled"; scheduled: ScheduledMessage[] }
   | { type: "draft-session"; session: SessionMeta }
   | { type: "drop-draft-session"; id: string }
   | {
@@ -553,7 +567,10 @@ export function reducer(state: State, action: Action): State {
         commands: action.commands,
         agents: action.agents,
         sessions: action.sessions,
+        scheduled: action.scheduled ?? state.scheduled,
       }
+    case "scheduled":
+      return { ...state, scheduled: action.scheduled }
     case "sessions": {
       /* The server's list is authoritative for every thread it knows about —
          but a draft is precisely one it has not been told about yet, so this
@@ -715,6 +732,7 @@ export const initialState: State = {
   commands: [],
   agents: [],
   sessions: [],
+  scheduled: [],
   threads: {},
 }
 

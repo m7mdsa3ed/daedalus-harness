@@ -17,13 +17,25 @@ import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "driz
  *     the tail costs nothing to keep and a replay is a range scan.
  */
 
-/** One model in a profile's catalog. Nested, and only ever read as a whole. */
+/** One model in a profile's catalog. Nested, and only ever read as a whole.
+    The optional metadata past `reasoningEfforts` is filled from models.dev (or
+    an agent's own advertising) and is display/enrichment only — nothing at
+    spawn time reads it except `description`, which feeds the Codex catalog. */
 export interface ModelDef {
   id: string;
   label: string;
   contextWindow?: number;
   maxOutputTokens?: number;
   reasoningEfforts: string[];
+  /** One-line capability blurb, when known. */
+  description?: string;
+  /** USD per million tokens. */
+  pricing?: { input: number; output: number };
+  /** Input modalities, e.g. ["text", "image"]. */
+  modalities?: string[];
+  /** Provenance when enriched: "providerId/modelId" in models.dev, so the
+      entry can be re-looked-up later without guessing by id. */
+  devRef?: string;
 }
 
 /** `{name, value}` pairs — the shape the MCP library already stores. */
@@ -49,6 +61,32 @@ export const agents = sqliteTable("agents", {
   seededVersion: integer("seeded_version").notNull(),
 });
 
+export interface WebSearchProfile {
+  /** Replace the agent's built-in WebSearch/WebFetch with the harness's own
+      `web-search` MCP server. Off by default; a profile opts in. */
+  enabled: boolean;
+  /** Overrides of the server-global web-search config. Each is only the profile's
+      own value when set; empty means "inherit from the server default". The
+      token is stored (redacted on read) the way a profile's apiKey is. */
+  searchApiBaseUrl?: string;
+  searchApiToken?: string;
+  searchModel?: string;
+  fetchModel?: string;
+}
+
+/** A profile opting the agent into the harness's `memory` MCP server. Just the
+    flag — there is no per-profile config to override, unlike webSearch, so the
+    profile only says whether the tools are advertised at all. Off by default. */
+export interface MemoriesProfile {
+  enabled: boolean;
+}
+
+/** A profile opting the agent into the harness's `knowledge` MCP server. Same
+    shape as `memories` — a single enabled flag, off by default. */
+export interface KnowledgeProfile {
+  enabled: boolean;
+}
+
 export const profiles = sqliteTable("profiles", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -59,6 +97,15 @@ export const profiles = sqliteTable("profiles", {
   apiKey: text("api_key").notNull(),
   defaultModel: text("default_model").notNull(),
   models: text("models", { mode: "json" }).$type<ModelDef[]>().notNull(),
+  /** Per-profile web-search toggle. Null on rows from before the column existed
+      (treated as off — profiles opt in). */
+  webSearch: text("web_search", { mode: "json" }).$type<WebSearchProfile>(),
+  /** Opt the agent into the harness's `memory` MCP server. Null on rows from
+      before the column existed (treated as off — profiles opt in). */
+  memories: text("memories", { mode: "json" }).$type<MemoriesProfile>(),
+  /** Opt the agent into the harness's `knowledge` MCP server. Null on rows from
+      before the column existed (treated as off — profiles opt in). */
+  knowledge: text("knowledge", { mode: "json" }).$type<KnowledgeProfile>(),
 });
 
 export const projects = sqliteTable("projects", {
@@ -99,6 +146,51 @@ export const commands = sqliteTable("commands", {
   /** Markdown prompt body; `$ARGUMENTS` receives whatever follows the name. */
   content: text("content").notNull(),
 });
+
+/**
+ * A durable cross-turn memory, keyed to a project. The agent's `memory` MCP
+ * server reads and writes these; `project_id` scopes every query so nothing a
+ * workspace learns leaks into another. Search is substring `LIKE` (the "grep"
+ * contract — deliberately no vector index), ordered by recency.
+ */
+export const memories = sqliteTable(
+  "memories",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    /** The remembered fact or text. */
+    content: text("content").notNull(),
+    /** Optional tags, stored as a JSON string-array. */
+    tags: text("tags", { mode: "json" }).$type<string[]>(),
+    createdAt: integer("created_at").notNull(),
+    /** Touched on upsert — this is what recency ranking orders on. */
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("memories_project").on(t.projectId)],
+);
+
+/** A titled knowledge-base entry, keyed to a project. The `knowledge` MCP server
+    reads and writes these; same `project_id` scoping and `LIKE` search as
+    memories. Roughly one entry per topic, with a title plus body content. */
+export const knowledge = sqliteTable(
+  "knowledge",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    /** The entry's title — knowledge entries are titled where memories are not. */
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    /** Optional tags, stored as a JSON string-array. */
+    tags: text("tags", { mode: "json" }).$type<string[]>(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("knowledge_project").on(t.projectId)],
+);
 
 export const projectMcpServers = sqliteTable(
   "project_mcp_servers",
@@ -206,3 +298,52 @@ export const agentOptions = sqliteTable("agent_options", {
   options: text("options", { mode: "json" }).$type<unknown>().notNull(),
   probedAt: integer("probed_at").notNull(),
 });
+
+/**
+ * A scheduled message: send `text` to `session_id`'s agent at `nextAt`, then
+ * again every `every_ms` until cancelled. The server owns delivery — a browser
+ * tab closing must not be what stops a scheduled turn — which is why it is a
+ * row here rather than a timer in the client. `every_ms` is null for a one-shot:
+ * it fires once and the row is gone, where a recurring row is kept and advanced.
+ */
+export const scheduledMessages = sqliteTable(
+  "scheduled_messages",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    text: text("text").notNull(),
+    /** Epoch ms of the next scheduled fire. */
+    nextAt: integer("next_at").notNull(),
+    /** Recurrence interval in ms; null = one-shot. */
+    everyMs: integer("every_ms"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("scheduled_next").on(t.nextAt)],
+);
+
+/**
+ * Saved preview URLs, per project.
+ *
+ * A dev server's address is a property of the project, not of a browser tab —
+ * you want the same `localhost:5173` back on the phone that you saved on the
+ * laptop, and a panel that forgets it on every reload is one you stop using.
+ * So it lives here rather than in localStorage like the device-local stores.
+ *
+ * Only project-trust previews are stored. An external-trust page is not a
+ * project resource and must not gain one by being bookmarked.
+ */
+export const projectPreviews = sqliteTable(
+  "project_previews",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    url: text("url").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("preview_project").on(t.projectId)],
+);

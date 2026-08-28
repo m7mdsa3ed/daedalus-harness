@@ -28,6 +28,7 @@ import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"
 import { reportError } from "@/lib/errors"
+import { useThreadLinks } from "@/lib/workspace/thread-links"
 import { Message, MessageContent } from "@/components/ui/message"
 import { ToolCallSkeleton } from "@/components/ui/skeletons"
 import { DiffView } from "@/components/ui/diff-view"
@@ -247,12 +248,51 @@ function StepRow({
    what resolves but not what ships. Trimming it means driving `createLowlight`
    from a hand-rolled plugin; worth doing if the bundle ever matters more than
    the twenty lines. */
-const REHYPE = [[rehypeHighlight, { detect: false, ignoreMissing: true }]] as never
+/* How tall an inline output pane grows before it starts scrolling.
 
-function Prose({ text }: { text: string }) {
+   Viewport-relative rather than the fixed 16rem this used to be: 256px is a
+   reasonable slab on a desktop and about four lines on a phone, where it reads
+   as truncated rather than as scrollable — and a table or a fenced block inside
+   a box that short is a scroll region you have to fight. The cap still exists,
+   because an unbounded pane in a transcript pushes everything after it off the
+   screen; it is just tall enough now that scrolling is the exception. */
+const PANE_MAX_H = "max-h-[min(60vh,28rem)]"
+
+const REHYPE = [[rehypeHighlight, { detect: false, ignoreMissing: true }]] as never
+const REMARK = [remarkGfm]
+
+/* The two elements markdown cannot style from CSS alone.
+
+   A table needs a scroll container that is NOT the table: the usual fix is
+   `display: block` on the <table> itself, which does scroll but stops it being
+   a table — a block box does not stretch to its container, so `width: 100%`
+   silently does nothing and every table renders shrink-wrapped, and the header
+   borders no longer line up with the body's. Wrapping keeps `display: table`
+   and puts the overflow on a parent that is allowed to have it.
+
+   A link needs the target the renderer will not add. The transcript is a
+   long-lived surface — inside Electron and inside a PWA, following a link
+   in-place would replace the app, and the turn behind it is not something you
+   can navigate back to cheaply. Only absolute http(s) links: an in-page anchor
+   (a GFM footnote is one) must stay in the page. */
+const MARKDOWN_COMPONENTS = {
+  table: ({ node: _node, ...props }: React.ComponentProps<"table"> & { node?: unknown }) => (
+    <div className="harness-table">
+      <table {...props} />
+    </div>
+  ),
+  a: ({ node: _node, href, ...props }: React.ComponentProps<"a"> & { node?: unknown }) =>
+    /^https?:\/\//i.test(href ?? "") ? (
+      <a {...props} href={href} target="_blank" rel="noreferrer noopener" />
+    ) : (
+      <a {...props} href={href} />
+    ),
+} as never
+
+export function Prose({ text, className }: { text: string; className?: string }) {
   return (
-    <div className="prose prose-sm max-w-none">
-      <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={REHYPE}>
+    <div className={cn("prose prose-sm max-w-none", className)}>
+      <Markdown remarkPlugins={REMARK} rehypePlugins={REHYPE} components={MARKDOWN_COMPONENTS}>
         {text}
       </Markdown>
     </div>
@@ -665,7 +705,7 @@ export function ThreadItemView({
           <Message align="end" className="flex-col items-end gap-0.5 py-2">
             <MessageContent>
               <Bubble variant="tinted" align="end">
-                <BubbleContent className="rounded-2xl rounded-br-sm px-4 py-2.5 text-xs whitespace-pre-wrap">
+                <BubbleContent className="rounded-2xl rounded-br-sm px-4 py-2.5 text-sm whitespace-pre-wrap">
                   {item.text}
                 </BubbleContent>
               </Bubble>
@@ -686,7 +726,7 @@ export function ThreadItemView({
           <Message className="flex-col items-start gap-0.5 py-2">
             <MessageContent>
               <Bubble variant="ghost">
-                <BubbleContent className="text-xs leading-relaxed">
+                <BubbleContent className="text-sm leading-relaxed">
                   <AgentText text={item.text} />
                 </BubbleContent>
               </Bubble>
@@ -879,21 +919,66 @@ function ToolInput({ item }: { item: ToolItem }) {
   return <CodeBlock language="json">{JSON.stringify(input, null, 2)}</CodeBlock>
 }
 
+/**
+ * The files a tool call touched.
+ *
+ * Clickable only inside a workspace — `useThreadLinks` is null anywhere else,
+ * and a path that looks like a link and does nothing is worse than one that
+ * plainly is not. An edit also offers its diff against the last commit, which
+ * is the question you actually have about an agent's write: not "what does this
+ * file say" but "what did it just change".
+ */
+function ToolLocations({ item }: { item: ToolItem }) {
+  const links = useThreadLinks()
+  // `item.kind` is the ThreadItem discriminant ("tool"); the *tool*'s kind is
+  // what ACP reported, read through the quarantine in lib/tools.
+  const isEdit = toolKindOf(item) === "edit"
+
+  return (
+    <ul className="space-y-0.5 font-mono text-[11px] text-muted-foreground/80">
+      {item.locations.map((location, index) => {
+        const label = `${location.path}${location.line != null ? `:${location.line}` : ""}`
+        if (!links) return <li key={index} className="truncate">{label}</li>
+        return (
+          <li key={index} className="flex min-w-0 items-center gap-1.5">
+            <button
+              type="button"
+              className="min-w-0 flex-1 truncate text-left underline-offset-2 hover:text-foreground hover:underline"
+              title={`Open ${location.path}`}
+              onClick={() => links.openFile(location.path, location.line ?? undefined)}
+            >
+              {label}
+            </button>
+            {isEdit && (
+              <button
+                type="button"
+                className="shrink-0 text-[10px] whitespace-nowrap opacity-70 underline-offset-2 hover:text-foreground hover:underline hover:opacity-100"
+                title="Compare with the last commit"
+                onClick={() => links.openDiff(location.path)}
+              >
+                diff
+              </button>
+            )}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
 /** Tool output as markdown. Agents write it as markdown — tables, lists, fenced
     code — and a `pre` rendered all of that as literal pipes and backticks. */
 function ToolProse({ text }: { text: string }) {
   if (!text.trim()) return null
   return (
-    <div className="max-h-64 min-w-0 overflow-auto rounded-md border border-border/50 bg-muted/40 px-2.5 py-2">
+    <div className={cn(PANE_MAX_H, "min-w-0 overflow-auto rounded-md border border-border/50 bg-muted/40 px-2.5 py-2")}>
       {/* No size utility: the unlayered `.prose` rule in index.css sets the body
           size and outranks any `text-*` utility on this element — the
           `text-[11px]` that used to be here never applied, which is half of why
-          tool output and message prose disagreed. */}
-      <div className="prose prose-sm max-w-none">
-        <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={REHYPE}>
-          {text}
-        </Markdown>
-      </div>
+          tool output and message prose disagreed. Same <Prose> as a message for
+          the other half: one component means a table or a link cannot render
+          one way in a turn and another way in tool output. */}
+      <Prose text={text} />
     </div>
   )
 }
@@ -904,7 +989,7 @@ function ToolProse({ text }: { text: string }) {
  * theme) rather than a second highlighter wired up here, so a payload is
  * wrapped in a fence and handed over.
  */
-function Highlighted({
+export function Highlighted({
   code,
   language,
   className,
@@ -948,7 +1033,7 @@ function ShellScript({ command, className }: { command: string; className?: stri
               <span>{segment.label}</span>
               {segment.language && <span className="opacity-70">· {segment.language}</span>}
             </div>
-            <div className="max-h-64 overflow-auto px-2 py-1">
+            <div className={cn(PANE_MAX_H, "overflow-auto px-2 py-1")}>
               <Highlighted code={segment.text} language={segment.language} />
             </div>
           </div>
@@ -970,7 +1055,8 @@ function CodeBlock({
   return (
     <div
       className={cn(
-        "max-h-64 w-fit max-w-full overflow-auto rounded-md border px-2.5 py-2",
+        PANE_MAX_H,
+        "w-fit max-w-full overflow-auto rounded-md border px-2.5 py-2",
         tone === "error"
           ? "border-destructive/40 bg-destructive/5 text-destructive"
           : "border-border/50 bg-muted/40"
@@ -1070,7 +1156,8 @@ function RunDetail({ item, active }: { item: ToolItem; active: boolean }) {
       {out.trim() && (
         <pre
           className={cn(
-            "max-h-72 overflow-auto border-t border-inherit px-2.5 py-1.5 font-mono text-[11.5px] leading-relaxed break-words whitespace-pre-wrap",
+            PANE_MAX_H,
+            "overflow-auto border-t border-inherit px-2.5 py-1.5 font-mono text-[11.5px] leading-relaxed break-words whitespace-pre-wrap",
             failed ? "text-destructive" : "text-muted-foreground"
           )}
         >
@@ -1532,14 +1619,7 @@ function ToolDetail({ item, active }: { item: ToolItem; active: boolean }) {
           )}
           {item.locations.length > 0 && (
             <DetailSection label={item.locations.length === 1 ? "File" : "Files"}>
-              <ul className="space-y-0.5 font-mono text-[11px] text-muted-foreground/80">
-                {item.locations.map((location, index) => (
-                  <li key={index} className="truncate">
-                    {location.path}
-                    {location.line != null && `:${location.line}`}
-                  </li>
-                ))}
-              </ul>
+              <ToolLocations item={item} />
             </DetailSection>
           )}
           {(text.trim() || item.content.length > 0) && (
@@ -1547,7 +1627,7 @@ function ToolDetail({ item, active }: { item: ToolItem; active: boolean }) {
               <ToolContentBlocks item={item} />
               {item.content.length === 0 && (
                 <SmartBlock
-                text={truncated ? `${text}\n…` : text}
+                text={truncated ? `${text}\n\n… output truncated` : text}
                 tone={failed ? "error" : undefined}
                 language={toolLanguage(item)}
               />

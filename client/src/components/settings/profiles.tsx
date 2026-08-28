@@ -18,9 +18,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { api, type Profile, type ServerSettings } from "@/lib/settings"
+import { Switch } from "@/components/ui/switch"
+import { api, type ModelCandidate, type Profile, type ServerSettings } from "@/lib/settings"
 import { useStore } from "@/lib/store"
 import { PageHeader, Group, Row, EmptyCard, Field, FormActions } from "./primitives"
+import {
+  ModelsSection,
+  blankModelRow,
+  candidateToRow,
+  rowsToModels,
+  toModelRows,
+  type ModelRow,
+} from "./profile-models"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 
@@ -133,133 +142,9 @@ export function ProfilesPage() {
   )
 }
 
-/* ── model rows (reference: profile-models.ts) ──
-   The form edits rows and converts to ModelOption[] on save. Numbers live as
-   strings in the rows: a half-typed number is a normal editing state. */
-
-interface ModelRow {
-  uid: string
-  id: string
-  label: string
-  contextWindow: string
-  maxOutputTokens: string
-  /** Comma-separated effort levels; empty = the model has no effort control. */
-  efforts: string
-}
-
-let modelUid = 0
-const blankModelRow = (): ModelRow => ({
-  uid: `model-${++modelUid}`,
-  id: "",
-  label: "",
-  contextWindow: "",
-  maxOutputTokens: "",
-  efforts: "",
-})
-
-const toModelRows = (models: Profile["models"]): ModelRow[] =>
-  models.map((m) => ({
-    uid: `model-${++modelUid}`,
-    id: m.id,
-    // The id doubles as the label when there is nothing better; don't echo it
-    // into the field, or clearing it becomes impossible.
-    label: m.label && m.label !== m.id ? m.label : "",
-    contextWindow: m.contextWindow ? String(m.contextWindow) : "",
-    maxOutputTokens: m.maxOutputTokens ? String(m.maxOutputTokens) : "",
-    efforts: m.reasoningEfforts.join(", "),
-  }))
-
-function rowsToModels(rows: ModelRow[]): Profile["models"] {
-  const models: Profile["models"] = []
-  for (const row of rows) {
-    const id = row.id.trim()
-    if (!id) continue
-    const context = Number(row.contextWindow.trim())
-    const maxOut = Number(row.maxOutputTokens.trim())
-    models.push({
-      id,
-      label: row.label.trim() || id,
-      ...(row.contextWindow.trim() && context > 0 ? { contextWindow: Math.round(context) } : {}),
-      ...(row.maxOutputTokens.trim() && maxOut > 0 ? { maxOutputTokens: Math.round(maxOut) } : {}),
-      reasoningEfforts: row.efforts
-        .split(/[,\s]+/)
-        .map((e) => e.trim().toLowerCase())
-        .filter(Boolean),
-    })
-  }
-  return models
-}
-
-function ModelRowEditor({
-  row,
-  isDefault,
-  onChange,
-  onSetDefault,
-  onRemove,
-}: {
-  row: ModelRow
-  isDefault: boolean
-  onChange: (patch: Partial<ModelRow>) => void
-  onSetDefault: () => void
-  onRemove: () => void
-}) {
-  return (
-    <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
-      <div className="flex items-center gap-2">
-        <Input
-          value={row.id}
-          onChange={(e) => onChange({ id: e.target.value })}
-          placeholder="model id (claude-opus-5)"
-          className="flex-1 font-mono text-xs"
-        />
-        <Input
-          value={row.label}
-          onChange={(e) => onChange({ label: e.target.value })}
-          placeholder="Display name"
-          className="flex-1 text-xs"
-        />
-        <Button
-          type="button"
-          variant={isDefault ? "secondary" : "ghost"}
-          size="lg"
-          className="shrink-0"
-          title={isDefault ? "This is the default model" : "Make default"}
-          onClick={onSetDefault}
-        >
-          {isDefault ? "Default" : "Set default"}
-        </Button>
-        <Button type="button" variant="ghost" size="icon-lg" className="shrink-0" title="Remove model" onClick={onRemove}>
-          <Trash2 />
-        </Button>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          type="number"
-          value={row.contextWindow}
-          onChange={(e) => onChange({ contextWindow: e.target.value })}
-          placeholder="context"
-          title="Context window (tokens)"
-          className="w-28 text-right font-mono text-xs"
-        />
-        <Input
-          type="number"
-          value={row.maxOutputTokens}
-          onChange={(e) => onChange({ maxOutputTokens: e.target.value })}
-          placeholder="max output"
-          title="Max output tokens"
-          className="w-28 text-right font-mono text-xs"
-        />
-        <Input
-          value={row.efforts}
-          onChange={(e) => onChange({ efforts: e.target.value })}
-          placeholder="efforts: low, medium, high"
-          title="Reasoning efforts the model accepts (comma-separated)"
-          className="min-w-40 flex-1 font-mono text-xs"
-        />
-      </div>
-    </div>
-  )
-}
+/* ── model rows live in ./profile-models.tsx ──
+   The form owns the state (rows, defaultModel) and the bookkeeping that keeps
+   the default honest; that module owns the row shapes, conversions and UI. */
 
 function ProfileForm({
   profile,
@@ -278,12 +163,46 @@ function ProfileForm({
     baseUrl: profile?.baseUrl ?? "",
     apiKey: "",
     defaultModel: profile?.defaultModel ?? "",
+    webSearch: profile?.webSearch?.enabled ?? false,
+    searchApiBaseUrl: profile?.webSearch?.searchApiBaseUrl ?? "",
+    searchApiToken: "",
+    searchModel: profile?.webSearch?.searchModel ?? "",
+    fetchModel: profile?.webSearch?.fetchModel ?? "",
+    memories: profile?.memories?.enabled ?? false,
+    knowledge: profile?.knowledge?.enabled ?? false,
   }))
+  const [hasWebSearchToken, setHasWebSearchToken] = React.useState(
+    (profile?.webSearch as { hasWebSearchToken?: boolean } | undefined)?.hasWebSearchToken ?? false,
+  )
   const [rows, setRows] = React.useState<ModelRow[]>(() => toModelRows(profile?.models ?? []))
   const [busy, setBusy] = React.useState(false)
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
   const patchRow = (uid: string, patch: Partial<ModelRow>) =>
     setRows((r) => r.map((row) => (row.uid === uid ? { ...row, ...patch } : row)))
+
+  /** Renaming the default row's id keeps it the default. */
+  const handlePatch = (uid: string, patch: Partial<ModelRow>) => {
+    const row = rows.find((r) => r.uid === uid)
+    if (patch.id !== undefined && row && row.id.trim() === form.defaultModel) {
+      set({ defaultModel: patch.id.trim() })
+    }
+    patchRow(uid, patch)
+  }
+  const handleSetDefault = (uid: string) => {
+    const row = rows.find((r) => r.uid === uid)
+    if (row) set({ defaultModel: row.id.trim() === form.defaultModel ? "" : row.id.trim() })
+  }
+  const handleRemove = (uid: string) => {
+    const row = rows.find((r) => r.uid === uid)
+    if (row?.id.trim() === form.defaultModel) set({ defaultModel: "" })
+    setRows((r) => r.filter((x) => x.uid !== uid))
+  }
+  /** Imports never clobber: a candidate whose id is already listed is skipped. */
+  const importModels = (candidates: ModelCandidate[]) =>
+    setRows((r) => {
+      const have = new Set(r.map((row) => row.id.trim()).filter(Boolean))
+      return [...r, ...candidates.filter((c) => c.id && !have.has(c.id)).map(candidateToRow)]
+    })
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -298,12 +217,21 @@ function ProfileForm({
         models,
         // A default that no longer exists in the list is dropped.
         defaultModel: models.some((m) => m.id === form.defaultModel) ? form.defaultModel : "",
+        webSearch: {
+          enabled: form.webSearch,
+          ...(form.searchApiBaseUrl ? { searchApiBaseUrl: form.searchApiBaseUrl } : {}),
+          ...(form.searchApiToken ? { searchApiToken: form.searchApiToken } : {}),
+          ...(form.searchModel ? { searchModel: form.searchModel } : {}),
+          ...(form.fetchModel ? { fetchModel: form.fetchModel } : {}),
+        },
+        memories: { enabled: form.memories },
+        knowledge: { enabled: form.knowledge },
       }
-      if (profile) {
-        await api(settings, `/api/profiles/${profile.id}`, { method: "PUT", body: JSON.stringify(payload) })
-      } else {
-        await api(settings, "/api/profiles", { method: "POST", body: JSON.stringify(payload) })
-      }
+      const saved = profile
+        ? await api<Profile>(settings, `/api/profiles/${profile.id}`, { method: "PUT", body: JSON.stringify(payload) })
+        : await api<Profile>(settings, "/api/profiles", { method: "POST", body: JSON.stringify(payload) })
+      setHasWebSearchToken((saved.webSearch as { hasWebSearchToken?: boolean } | undefined)?.hasWebSearchToken ?? false)
+      setForm((f) => ({ ...f, searchApiToken: "" }))
       onDone(true)
     } catch (err) {
       reportError(err, "Couldn't save the profile")
@@ -346,34 +274,71 @@ function ProfileForm({
           <Input type="password" value={form.apiKey} onChange={(e) => set({ apiKey: e.target.value })} />
         </Field>
       </div>
+      <ModelsSection
+        rows={rows}
+        defaultModel={form.defaultModel}
+        settings={settings}
+        profileId={profile?.id ?? "new"}
+        baseUrl={form.baseUrl}
+        apiKey={form.apiKey}
+        onPatch={handlePatch}
+        onSetDefault={handleSetDefault}
+        onRemove={handleRemove}
+        onAdd={() => setRows((r) => [...r, blankModelRow()])}
+        onImport={importModels}
+      />
       <Field
-        label="Models"
-        hint="What the provider behind this profile serves. Efforts only for models that accept a reasoning-effort setting."
+        label="Web search via MCP"
+        hint="Replaces Claude Code's built-in WebSearch/WebFetch with the harness's own web-search tools. Unset fields inherit the server default in Settings › Web search."
       >
-        <div className="space-y-2">
-          {rows.map((row) => (
-            <ModelRowEditor
-              key={row.uid}
-              row={row}
-              isDefault={row.id.trim() !== "" && row.id.trim() === form.defaultModel}
-              onChange={(patch) => {
-                // Renaming the default row's id keeps it the default.
-                if (patch.id !== undefined && row.id.trim() === form.defaultModel) {
-                  set({ defaultModel: patch.id.trim() })
-                }
-                patchRow(row.uid, patch)
-              }}
-              onSetDefault={() => set({ defaultModel: row.id.trim() === form.defaultModel ? "" : row.id.trim() })}
-              onRemove={() => {
-                if (row.id.trim() === form.defaultModel) set({ defaultModel: "" })
-                setRows((r) => r.filter((x) => x.uid !== row.uid))
-              }}
+        <Switch checked={form.webSearch} onCheckedChange={(checked) => set({ webSearch: checked })} />
+      </Field>
+      {form.webSearch && (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Search API base URL" hint="Optional — overrides the server default.">
+            <Input
+              value={form.searchApiBaseUrl}
+              onChange={(e) => set({ searchApiBaseUrl: e.target.value })}
+              placeholder="http://localhost:20128"
+              className="font-mono text-xs"
             />
-          ))}
-          <Button type="button" variant="outline" size="lg" onClick={() => setRows((r) => [...r, blankModelRow()])}>
-            <Plus className="size-4" /> Add model
-          </Button>
+          </Field>
+          <Field label="Search API token" hint={hasWebSearchToken ? "Stored — leave empty to keep it." : "Optional — overrides the server default."}>
+            <Input
+              type="password"
+              value={form.searchApiToken}
+              onChange={(e) => set({ searchApiToken: e.target.value })}
+            />
+          </Field>
+          <Field label="Search model" hint="Optional — overrides the server default.">
+            <Input
+              value={form.searchModel}
+              onChange={(e) => set({ searchModel: e.target.value })}
+              placeholder="search-combo"
+              className="font-mono text-xs"
+            />
+          </Field>
+          <Field label="Fetch model" hint="Optional — overrides the server default.">
+            <Input
+              value={form.fetchModel}
+              onChange={(e) => set({ fetchModel: e.target.value })}
+              placeholder="fetch-combo"
+              className="font-mono text-xs"
+            />
+          </Field>
         </div>
+      )}
+      <Field
+        label="Memories via MCP"
+        hint="Gives the agent a durable cross-turn memory for this profile's projects. Off by default."
+      >
+        <Switch checked={form.memories} onCheckedChange={(checked) => set({ memories: checked })} />
+      </Field>
+      <Field
+        label="Knowledge base via MCP"
+        hint="Gives the agent a per-project knowledge base for this profile's projects. Off by default."
+      >
+        <Switch checked={form.knowledge} onCheckedChange={(checked) => set({ knowledge: checked })} />
       </Field>
       <FormActions busy={busy} onCancel={() => onDone(false)} />
     </form>

@@ -1,0 +1,17 @@
+/* `pnpm build` — the only place the server is *emitted*. tsconfig.json stays
+   noEmit (it is what `tsc --noEmit` and the editor typecheck, tests included);
+   this one narrows to src and writes JS to dist/.
+
+   dist/ is one level under server/, exactly like src/, so every
+   `join(dirname(fileURLToPath(import.meta.url)), "..")` in the source — data/,
+   drizzle/ — resolves to the same directory built as it does under tsx. */
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "sourceMap": true
+  },
+  "include": ["src"]
+}

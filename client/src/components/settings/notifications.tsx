@@ -17,7 +17,7 @@ import {
   type NotificationPrefs,
 } from "@/lib/notifications"
 import { loadSettings } from "@/lib/settings"
-import { setupPush } from "@/lib/push"
+import { setupPush, teardownPush } from "@/lib/push"
 import { PageHeader, Group, Row } from "./primitives"
 import { sectionMeta } from "./sections"
 
@@ -78,6 +78,11 @@ export function NotificationsPage() {
             onCheckedChange={(checked) => {
               if (!checked) {
                 setNotificationPref("system", false)
+                // Turning this off has to reach the server's token list too, or
+                // the pushes it sends while no tab is attached keep arriving —
+                // which is the loudest half of what was just switched off.
+                const settings = loadSettings()
+                if (settings) void teardownPush(settings)
                 return
               }
               void requestSystemNotifications().then((granted) => {

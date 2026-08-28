@@ -1,20 +1,20 @@
 import * as React from "react"
 import {
+  CalendarClock,
   ChevronLeft,
   ChevronRight,
-  Clock,
-  FolderIcon,
   Link as LinkIcon,
   MoreVertical,
   Pin,
   PinOff,
   SearchIcon,
   FolderPlus,
+  FolderIcon,
   Check,
   ChevronsUpDown,
+  Clock,
   ExternalLink,
   LogOut,
-  MessageSquareIcon,
   Plus,
   ServerIcon,
   Settings2,
@@ -52,8 +52,12 @@ import {
   ResponsiveDialogContent,
 } from "@/components/ui/responsive-dialog"
 import { Separator } from "@/components/ui/separator"
-import { SessionDock, useSessionDock } from "@/components/session-dock"
+import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
+import { OpenPanelMenu } from "@/components/workspace/open-panel-menu"
+import { panelId, type PanelKind } from "@/lib/workspace/panels"
+import { openTerminal } from "@/components/workspace/terminal-panel"
 import { ThreadHero } from "@/components/thread-hero"
+import { ScheduleDialog } from "@/components/schedule-dialog"
 import type { DockviewApi } from "dockview-react"
 import { SetupCardsSkeleton, SidebarGroupsSkeleton } from "@/components/ui/skeletons"
 import {
@@ -92,8 +96,8 @@ import {
 import { useHotkey } from "@/hooks/use-hotkey"
 import { togglePin, usePins } from "@/lib/pins"
 import { KEYS } from "@/lib/shortcuts"
+import { teardownPush } from "@/lib/push"
 import { loadThreadDefaults } from "@/lib/thread-defaults"
-import { shortAge } from "@/lib/time"
 import {
   loadServers,
   removeServer,
@@ -119,8 +123,21 @@ import { SkillsPage } from "@/components/settings/skills"
 import { CommandsPage } from "@/components/settings/commands"
 import { ProfilesPage } from "@/components/settings/profiles"
 import { AgentsPage } from "@/components/settings/agents"
+import { WebSearchPage } from "@/components/settings/web-search"
 
 /** Swappable sidebar body. One panel per route family — see `panels` below. */
+/** Closes the mobile sidebar sheet whenever the route changes. Desktop keeps
+    its open/collapsed state — there it is a column, not an overlay. */
+function CloseSidebarOnNavigate() {
+  const { isMobile, setOpenMobile } = useSidebar()
+  const location = useLocation()
+  const key = location.pathname + location.search
+  React.useEffect(() => {
+    if (isMobile) setOpenMobile(false)
+  }, [key, isMobile, setOpenMobile])
+  return null
+}
+
 interface SidebarPanel {
   /** Row that leaves this panel for the root one; omit on the root panel. */
   back?: { label: string; onClick: () => void }
@@ -174,9 +191,12 @@ export function AppShell({
   const heroVisible =
     onHomepage ||
     (!!active && !!sessionId && threadIsEmpty(state.threads[sessionId] ?? emptyThread, active.draft))
-  const dock = useSessionDock()
+  const dock = useWorkspaceDock()
   const routeSessionRef = React.useRef(sessionId)
   routeSessionRef.current = sessionId
+  // The project the workspace panels act on: the routed thread's own.
+  const activeProjectRef = React.useRef<string | null>(null)
+  activeProjectRef.current = active?.projectId ?? null
 
   /* The route is the source of truth for the focused tab; each mounted chat owns
      its own ACP connection, so background tabs keep streaming while hidden. */
@@ -209,8 +229,11 @@ export function AppShell({
 
   React.useEffect(() => {
     if (loading) return
-    dock.pruneMissingSessions(state.sessions.map((session) => session.id))
-  }, [loading, state.sessions, dock])
+    dock.prunePanels({
+      sessions: state.sessions.map((session) => session.id),
+      projects: state.projects.map((project) => project.id),
+    })
+  }, [loading, state.sessions, state.projects, dock])
 
   const handleDockReady = React.useCallback(
     (api: DockviewApi) => {
@@ -252,6 +275,92 @@ export function AppShell({
   // The key handler is bound once; the ref keeps it pointed at the live closure.
   const startThreadRef = React.useRef(startThread)
   startThreadRef.current = startThread
+
+  /* One opener for every workspace panel, so the tab strip's + menu, the
+     chords below and the palette cannot drift apart. Toggling rather than
+     stacking: pressing the same thing twice should put the transcript back.
+
+     Which project? The routed thread's. There is no "active project" in this
+     app — the dock is cross-project by design — so the thread in front of you
+     is what names one. */
+  const openWorkspacePanel = React.useCallback(
+    (kind: PanelKind) => {
+      const projectId = activeProjectRef.current
+      if (!projectId) return
+      if (kind === "terminal") {
+        const existing = dock
+          .listPanels()
+          .find((entry) => entry.panel.kind === "terminal" && entry.panel.projectId === projectId)
+        if (existing) dock.openPanel(existing.panel)
+        else void openTerminal(dock, projectId)
+        return
+      }
+      if (kind === "editor") {
+        // No quick-open index yet; the explorer is where you pick a file.
+        dock.openPanel({ kind: "explorer", projectId }, { direction: "left" })
+        return
+      }
+      if (kind === "web") {
+        dock.openPanel(
+          { kind: "web", trust: "project", projectId, viewId: "default" },
+          { direction: "right" }
+        )
+        return
+      }
+      const descriptor =
+        kind === "explorer"
+          ? ({ kind: "explorer", projectId } as const)
+          : kind === "source-control"
+            ? ({ kind: "source-control", projectId } as const)
+            : ({ kind: "output", projectId } as const)
+      const id = panelId(descriptor)
+      if (dock.isPanelOpen(id)) void dock.closePanel(id)
+      else dock.openPanel(descriptor, { direction: kind === "output" ? "below" : "left" })
+    },
+    [dock]
+  )
+
+  useHotkey(KEYS.explorer, (event) => {
+    event.preventDefault()
+    openWorkspacePanel("explorer")
+  })
+  useHotkey(KEYS.sourceControl, (event) => {
+    event.preventDefault()
+    openWorkspacePanel("source-control")
+  })
+  useHotkey(KEYS.output, (event) => {
+    event.preventDefault()
+    openWorkspacePanel("output")
+  })
+  useHotkey(KEYS.terminal, (event) => {
+    event.preventDefault()
+    openWorkspacePanel("terminal")
+  })
+
+  /* The + on the tab strip. Same thread-creation path as ⌘N and the sidebar —
+     `markNewTab` is the one-shot flag the route effect reads when it opens the
+     panel, so "new tab" is decided here and honoured there rather than being a
+     second way to create a thread. */
+  const newThreadInTab = React.useCallback(() => {
+    markNewTab()
+    startThreadRef.current()
+  }, [])
+
+  /* The manifest's "New thread" app shortcut (see client/vite.config.ts) can
+     only name a fixed URL, and a thread id is minted per thread — so it lands
+     on `/?new=1` and this turns that into the same thing the ⌘N chord does.
+     The marker is consumed before the thread is started, and only once: leaving
+     it in the URL would mint a second thread on every Back. */
+  const consumedNewParam = React.useRef(false)
+  React.useEffect(() => {
+    if (!ready || consumedNewParam.current) return
+    if (!new URLSearchParams(location.search).has("new")) return
+    consumedNewParam.current = true
+    // Not `navigate`: startThread navigates too, and the two in one tick race.
+    // This only has to keep Back off the marker, which replaceState does.
+    window.history.replaceState(null, "", "/")
+    startThreadRef.current()
+  }, [ready, location.search])
 
   /* ── Sidebar panels ──
      The sidebar body is swappable: one entry per route family. To add a panel,
@@ -302,7 +411,7 @@ export function AppShell({
      focused. */
   const threadMain = sessionId ? (
     <div className="flex min-h-0 flex-1">
-      <SessionDock actions={actions} onReady={handleDockReady} />
+      <WorkspaceDock actions={actions} dock={dock} onReady={handleDockReady} />
     </div>
   ) : (
     <EmptyState
@@ -331,6 +440,11 @@ export function AppShell({
           layout, and navigateTo must already have the router's navigate by
           then — the location.assign fallback would be a full reload. */}
       <NavigationBridge />
+      {/* The mobile sidebar is a sheet over the content: navigating with it open
+          leaves the destination hidden behind it. Closing lives here rather
+          than on each row because rows are not the only thing that navigates —
+          the palette, the dock and push deep links all land in the same place. */}
+      <CloseSidebarOnNavigate />
       {/* Outside the inset and under everything: the backdrop for an empty
           thread runs beneath the sidebar and the header, not just the
           transcript. `threadIsEmpty` is shared with the thread's own layout so
@@ -466,6 +580,17 @@ export function AppShell({
                 )
               )}
             </div>
+            {/* The workspace's one entry point. In the header rather than on the
+                tab strip: there is exactly one of it however the dock is split,
+                and it survives a narrow screen, which is where it matters —
+                nothing else on a phone can reach these panels. */}
+            {!inSettings && (
+              <OpenPanelMenu
+                onNewTab={newThreadInTab}
+                onOpen={openWorkspacePanel}
+                canOpenPanels={!!active}
+              />
+            )}
           </div>
           )}
         </header>
@@ -484,6 +609,7 @@ export function AppShell({
             <Route path="commands" element={<CommandsPage />} />
             <Route path="profiles" element={<ProfilesPage />} />
             <Route path="agents" element={<AgentsPage />} />
+            <Route path="web-search" element={<WebSearchPage />} />
             {/* /settings/<unknown> — the sidebar still needs a page to light up. */}
             <Route path="*" element={<Navigate to="/settings/general" replace />} />
           </Route>
@@ -497,6 +623,7 @@ export function AppShell({
         open={palette.open}
         onOpenChange={palette.setOpen}
         actions={actions}
+        dock={dock}
         onNewThread={startThread}
         onNewProject={() => setNewProjectOpen(true)}
         onShortcuts={() => shortcuts.setOpen(true)}
@@ -584,13 +711,19 @@ function SettingsNav({
 
 /* Captions, not rows. A group label used to be the same size, weight and
    colour as the threads under it, so "Recent" scanned as a thread called
-   Recent. Smaller, uppercase, tracked out and dimmer: it now reads as a label
-   for the list rather than as the first thing in it. Shared by every sidebar
-   group so the whole panel has one caption voice. */
+   Recent. Smaller, uppercase, tracked out, and one clear step below the row
+   text — /70 over the sidebar surface keeps the caption solidly legible
+   (~5:1) while staying unmistakably secondary to the full-strength rows.
+   Shared by every sidebar group so the whole panel has one caption voice:
+   one neutral, no per-group accents — wayfinding comes from position and
+   the chevron, not from colour or icons. */
 const GROUP_LABEL =
-  "h-6 gap-1.5 px-2 text-[10px] font-semibold tracking-[0.08em] uppercase text-sidebar-foreground/45 [&>svg]:size-3"
+  "h-6 gap-1.5 px-2 text-[11px] font-semibold tracking-[0.06em] uppercase text-sidebar-foreground/70"
 
 const RECENT_COUNT = 6
+
+/** Rows a long-tail group (a project, Trash) shows before its "Show more". */
+const PROJECT_PAGE_SIZE = 8
 
 function ThreadGroups({ actions }: { actions: Actions }) {
   const { state } = useStore()
@@ -633,48 +766,46 @@ function ThreadGroups({ actions }: { actions: Actions }) {
     byProject.set(session.projectId, list)
   }
 
-  /* The tiers that do not fold: they are short by construction (pins are what
-     you chose, Recent is capped) and hiding them would hide the whole point of
-     having them at the top. */
-  const group = (
-    key: string,
-    label: React.ReactNode,
-    sessions: SessionMeta[],
-    icon?: React.ReactNode
-  ) => (
-    <SidebarGroup key={key} className="mt-2 px-2 py-0 first:mt-0">
-      <SidebarGroupLabel className={GROUP_LABEL}>
-        {icon}
-        <span className="truncate">{label}</span>
-        <span className="ml-auto tabular-nums opacity-70">{sessions.length}</span>
-      </SidebarGroupLabel>
-      <SidebarGroupContent>
-        <ThreadList sessions={sessions} actions={actions} />
-      </SidebarGroupContent>
-    </SidebarGroup>
-  )
-
   /* Projects are the long tail — there can be many, and you are usually only
-     interested in one. They fold, and stay folded across reloads. No count on
-     the label: the number of old threads in a project is not a thing anyone
-     acts on, and it competed with the disclosure arrow for the same corner. */
+     interested in one. No count on the label: the number of old threads in a
+     project is not a thing anyone acts on, and it competed with the disclosure
+     arrow for the same corner. */
   const projectGroup = (projectId: string, sessions: SessionMeta[]) => (
     <FoldableGroup
       key={projectId}
       groupKey={projectId}
-      icon={<FolderIcon className="shrink-0" />}
+      icon={<FolderIcon className="size-3 shrink-0" />}
       label={state.projects.find((p) => p.id === projectId)?.name ?? "Other"}
     >
-      <ThreadList sessions={sessions} actions={actions} />
+      <ThreadList sessions={sessions} actions={actions} limit={PROJECT_PAGE_SIZE} />
     </FoldableGroup>
   )
 
   return (
     <>
-      {pinned.length > 0 &&
-        group("__pinned", "Pinned", pinned, <Pin className="size-3 shrink-0" />)}
-      {recent.length > 0 &&
-        group("__recent", "Recent", recent, <Clock className="size-3 shrink-0" />)}
+      {/* Every tier folds now — the sidebar is one uniform two-level tree of
+          items and their subitems, and fold state is remembered per tier. */}
+      {pinned.length > 0 && (
+        <FoldableGroup
+          groupKey="__pinned"
+          label="Pinned"
+          icon={<Pin className="size-3 shrink-0" />}
+          count={pinned.length}
+        >
+          <ThreadList sessions={pinned} actions={actions} />
+        </FoldableGroup>
+      )}
+      {recent.length > 0 && (
+        <FoldableGroup
+          groupKey="__recent"
+          label="Recent"
+          icon={<Clock className="size-3 shrink-0" />}
+          count={recent.length}
+        >
+          <ThreadList sessions={recent} actions={actions} />
+        </FoldableGroup>
+      )}
+      <ScheduledGroup actions={actions} />
       {[...byProject.entries()].map(([projectId, sessions]) =>
         projectGroup(projectId, sessions)
       )}
@@ -689,9 +820,142 @@ function ThreadGroups({ actions }: { actions: Actions }) {
           count={trashed.length}
           defaultOpen={false}
         >
-          <ThreadList sessions={trashed} actions={actions} trash />
+          <ThreadList sessions={trashed} actions={actions} trash limit={PROJECT_PAGE_SIZE} />
           <EmptyTrash sessions={trashed} actions={actions} />
         </FoldableGroup>
+      )}
+    </>
+  )
+}
+
+/** "In 3 days" / "every day" style line for a schedule. */
+function scheduleWhen(nextAt: number, everyMs: number | null): string {
+  const when = new Date(nextAt).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+  if (everyMs === null) return when
+  const every =
+    everyMs >= 7 * 24 * 60 * 60_000
+      ? `${Math.round(everyMs / (7 * 24 * 60 * 60_000))} week(s)`
+      : everyMs >= 24 * 60 * 60_000
+        ? `${Math.round(everyMs / (24 * 60 * 60_000))} day(s)`
+        : everyMs >= 60 * 60_000
+          ? `${Math.round(everyMs / (60 * 60_000))} hour(s)`
+          : `${Math.round(everyMs / 60_000)} min`
+  return `${when} · every ${every}`
+}
+
+/** Upcoming prompts the server will deliver even with no browser open. Lives
+    in the main sidebar, not settings: a schedule is something you watch for —
+    it names the thread it will land in, so its row opens that thread. The
+    group shows even when empty — a section that hides itself when there is
+    nothing in it is also the one place nobody can find to create the first
+    item — with the + on the label reusing the thread dialog and its picker,
+    which is why it needs a live thread to exist at all. */
+function ScheduledGroup({ actions }: { actions: Actions }) {
+  const { state } = useStore()
+  const navigate = useNavigate()
+  const { isMobile, setOpenMobile } = useSidebar()
+  const confirm = useConfirm()
+  const [creating, setCreating] = React.useState(false)
+
+  /* The picker offers the threads a schedule can legally target — the same
+     set the old settings page offered. A draft has no server row to schedule
+     against (createSchedule materializes it, but a picker row for a half
+     written thread is a promise about a thread nobody has seen). */
+  const live = state.sessions.filter((s) => !s.draft && !s.deletedAt)
+
+  const cancel = async (id: string) => {
+    if (
+      !(await confirm({
+        title: "Cancel this scheduled message?",
+        destructive: true,
+        confirmLabel: "Cancel schedule",
+      }))
+    )
+      return
+    actions.cancelSchedule(id).catch((err) => reportError(err, "Couldn't cancel the schedule"))
+  }
+
+  const open = (sessionId: string) => {
+    if (isMobile) setOpenMobile(false)
+    void navigate(threadPath(sessionId))
+  }
+
+  const titleOf = (sessionId: string) =>
+    state.sessions.find((s) => s.id === sessionId)?.title ?? "Unknown thread"
+
+  return (
+    <>
+      <FoldableGroup
+        groupKey="__scheduled"
+        label="Scheduled"
+        icon={<CalendarClock className="size-3 shrink-0" />}
+        count={state.scheduled.length > 0 ? state.scheduled.length : undefined}
+        action={
+          live.length > 0 && (
+            <button
+              type="button"
+              title="New schedule"
+              onClick={() => setCreating(true)}
+              className="grid size-4 place-items-center rounded-sm text-muted-foreground transition-colors hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Plus className="size-3.5" />
+              <span className="sr-only">New schedule</span>
+            </button>
+          )
+        }
+      >
+        {state.scheduled.length === 0 ? (
+          <p className="px-2 py-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
+            {live.length > 0
+              ? "Nothing scheduled. + adds a prompt the server sends later."
+              : "Nothing scheduled — open a thread first."}
+          </p>
+        ) : (
+          <SidebarMenu>
+          {state.scheduled.map((item) => (
+            <SidebarMenuItem key={item.id}>
+              <SidebarMenuButton
+                tooltip={`${titleOf(item.sessionId)} — ${scheduleWhen(item.nextAt, item.everyMs)}`}
+                onClick={() => open(item.sessionId)}
+                className="h-auto min-h-7 px-2 py-1"
+              >
+                {/* Two lines, because the message is the schedule's payload:
+                    a row that showed only the thread could not tell two
+                    schedules apart. The title line carries the thread, the
+                    muted line carries what will be said, and when. */}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] leading-tight">{titleOf(item.sessionId)}</span>
+                  <span className="block truncate text-[10px] leading-tight text-muted-foreground">
+                    {item.text} · {scheduleWhen(item.nextAt, item.everyMs)}
+                  </span>
+                </span>
+              </SidebarMenuButton>
+              <SidebarMenuAction
+                showOnHover
+                title="Cancel schedule"
+                onClick={() => void cancel(item.id)}
+              >
+                <Trash2 />
+                <span className="sr-only">Cancel schedule</span>
+              </SidebarMenuAction>
+            </SidebarMenuItem>
+          ))}
+          </SidebarMenu>
+        )}
+      </FoldableGroup>
+      {creating && live.length > 0 && (
+        <ScheduleDialog
+          open={creating}
+          onOpenChange={setCreating}
+          sessionId={live[0].id}
+          actions={actions}
+          sessions={live.map((s) => ({ id: s.id, title: s.title }))}
+        />
       )}
     </>
   )
@@ -733,15 +997,21 @@ function FoldableGroup({
   icon,
   count,
   defaultOpen = true,
+  action,
   children,
 }: {
   groupKey: string
   label: string
-  icon: React.ReactNode
+  icon?: React.ReactNode
   /** Printed next to the label when the number is something you act on. */
   count?: number
   /** Trash defaults closed: it is a place things go, not a place you work. */
   defaultOpen?: boolean
+  /** A control that belongs to the group itself, not to a row in it — the
+      Scheduled group's "+ new". Rendered over the chevron and only on hover:
+      it cannot live inside the label, because the label is the fold trigger
+      and a button in a button folds and fires at once. */
+  action?: React.ReactNode
   children: React.ReactNode
 }) {
   const [open, setOpen] = React.useState(
@@ -755,10 +1025,22 @@ function FoldableGroup({
 
   return (
     <Collapsible open={open} onOpenChange={toggle}>
-      <SidebarGroup className="mt-2 px-2 py-0">
+      {/* mt-4: generous separation between tiers — a collapsed label next to an
+          expanded group needs a clear gap of its own, or two groups read as
+          one. The label's own py carries the inner spacing. */}
+      <SidebarGroup className="mt-4 px-2 py-0">
+        {/* Scoped to the label row, not the whole group: hovering a row ten
+            threads deep must not rearrange the header you can no longer see. */}
+        {action && (
+          <div className="absolute top-1 right-2 z-10 flex opacity-0 transition-opacity duration-150 group-hover/label:opacity-100 focus-within:opacity-100 group-data-[collapsible=icon]:hidden">
+            {action}
+          </div>
+        )}
         <CollapsibleTrigger
           render={
-            <SidebarGroupLabel className={cn(GROUP_LABEL, "hover:text-sidebar-foreground/70")} />
+            <SidebarGroupLabel
+              className={cn(GROUP_LABEL, "group/label hover:text-sidebar-foreground/70")}
+            />
           }
         >
           {icon}
@@ -769,8 +1051,9 @@ function FoldableGroup({
           <ChevronRight
             aria-hidden
             className={cn(
-              "shrink-0 transition-transform duration-200",
+              "shrink-0 transition-[transform,opacity] duration-200",
               count == null && "ml-auto",
+              action && "group-hover/label:opacity-0",
               open && "rotate-90"
             )}
           />
@@ -836,13 +1119,24 @@ function ThreadList({
   sessions,
   actions,
   trash = false,
+  limit,
 }: {
   sessions: SessionMeta[]
   actions: Actions
   /** Rendering the Trash group: these threads are deleted, so the row restores
       instead of opening and the menu offers the two ways back out. */
   trash?: boolean
+  /** Show this many rows and a "Show more" toggle under them, instead of the
+      whole list. For the long tail — a project with last winter's threads in
+      it — not for Pinned or Recent, which are short by construction. */
+  limit?: number
 }) {
+  /* Expansion is deliberately not persisted: the reveal answers "is what I am
+     looking for down there?" and the answer resets the next visit, the same
+     way the fold defaults do. */
+  const [expanded, setExpanded] = React.useState(false)
+  const visible = limit && !expanded ? sessions.slice(0, limit) : sessions
+  const hidden = sessions.length - visible.length
   const { state } = useStore()
   const location = useLocation()
   const navigate = useNavigate()
@@ -856,11 +1150,6 @@ function ThreadList({
      client has not connected yet — for those it is the only signal there is. */
   const running = (session: SessionMeta) =>
     state.threads[session.id]?.turnActive ?? session.promptActive
-  /* Opening a thread is the list's news to report, not the transcript's: the
-     transcript used to stand in a skeleton, which claimed a shape for content
-     nobody had seen yet. Here it is one word next to the thread it belongs to. */
-  const connecting = (session: SessionMeta) =>
-    state.threads[session.id]?.status === "connecting"
 
   /* Delete stops the agent and moves the thread to Trash. Recoverable, but not
      free — the process dies and a running turn dies with it — so it asks, and
@@ -955,19 +1244,21 @@ function ThreadList({
         return (
           <ItemContextMenu key={session.id} items={items}>
             <SidebarMenuItem>
+              {/* Compact: h-7 and a 13px title — the row is a scannable index
+                  entry, not a card. The started-at date left with the native
+                  tooltip it rode on; the button's sidebar tooltip already
+                  names the thread. */}
               <SidebarMenuButton
+                size="sm"
                 tooltip={session.title}
                 isActive={activeThreadId === session.id}
                 onClick={(event) => open(session, event.metaKey || event.ctrlKey)}
+                className="h-7 px-2 text-[13px]"
               >
-                <MessageSquareIcon
-                  className={cn("size-4", (session.exited || trash) && "opacity-50")}
-                />
                 {/* A running thread says so in its own title — the same shimmer the
                     transcript's working line uses, so the two read as one state
                     rather than as two unrelated indicators. */}
                 <span
-                  title={`${session.title} · started ${new Date(session.createdAt).toLocaleString()}`}
                   className={cn(
                     "truncate",
                     (session.exited || trash) && "text-muted-foreground",
@@ -976,20 +1267,6 @@ function ThreadList({
                   )}
                 >
                   {session.title}
-                </span>
-                {/* The age sits where the row menu appears on hover, so it fades
-                    out rather than fighting it for the same corner. */}
-                <span
-                  className={cn(
-                    "ml-auto shrink-0 text-[10px] tabular-nums transition-opacity group-hover/menu-item:opacity-0 group-data-[collapsible=icon]:hidden",
-                    connecting(session)
-                      ? "harness-shimmer text-primary"
-                      : "text-muted-foreground/60"
-                  )}
-                >
-                  {connecting(session)
-                    ? "connecting"
-                    : shortAge(session.deletedAt ?? session.createdAt)}
                 </span>
               </SidebarMenuButton>
               <DropdownMenu>
@@ -1011,6 +1288,24 @@ function ThreadList({
           </ItemContextMenu>
         )
       })}
+      {/* One toggle row, styled as a quieter thread row rather than a button —
+          it expands the index you are already scanning, so it borrows the
+          list's own anatomy instead of presenting itself as a control. */}
+      {hidden > 0 && (
+        <SidebarMenuItem>
+          <button
+            type="button"
+            onClick={() => setExpanded((value) => !value)}
+            className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <ChevronRight
+              aria-hidden
+              className={cn("size-3 shrink-0 transition-transform duration-200", expanded && "rotate-90")}
+            />
+            <span>{expanded ? "Show less" : `Show ${hidden} more`}</span>
+          </button>
+        </SidebarMenuItem>
+      )}
     </SidebarMenu>
   )
 }
@@ -1221,8 +1516,19 @@ function ServerSwitcher({
           <DropdownMenuItem
             variant="destructive"
             onClick={() => {
-              removeServer(settings.id)
-              location.assign("/")
+              /* Forgetting a server has to drop this device from its push list
+                 first — the token outlives the connection, so a server nobody
+                 is connected to any more would go on notifying this device with
+                 no way left in the UI to stop it. The navigation waits, because
+                 unloading cancels the request in flight; but only briefly, since
+                 an unreachable server is one of the reasons to disconnect. */
+              void Promise.race([
+                teardownPush(settings),
+                new Promise((resolve) => setTimeout(resolve, 2000)),
+              ]).finally(() => {
+                removeServer(settings.id)
+                location.assign("/")
+              })
             }}
           >
             <LogOut className="size-4" />

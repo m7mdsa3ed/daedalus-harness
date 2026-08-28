@@ -12,6 +12,7 @@
    Preferences are device-local (localStorage), same pattern as view-options —
    what interrupts you on this device is not the server's business. */
 import { useSyncExternalStore } from "react"
+import { pushRegistration } from "./pwa"
 import { currentThreadId, navigateTo, threadPath } from "./router"
 
 export type ThreadEvent = "turnFinished" | "turnFailed" | "permissionNeeded" | "questionAsked"
@@ -276,16 +277,33 @@ export function notifyThreadEvent(
     "Notification" in window &&
     Notification.permission === "granted"
   ) {
+    const tag = `${sessionId}:${event}`
     try {
-      const notification = new Notification(label, { body, tag: `${sessionId}:${event}` })
+      const notification = new Notification(label, { body, tag })
       notification.onclick = () => {
         window.focus()
         open()
         notification.close()
       }
     } catch {
-      // Some platforms (Android Chrome) only allow notifications via a service
-      // worker registration — there FCM already covers the detached case.
+      /* Chrome on Android forbids the constructor outright ("Illegal
+         constructor. Use ServiceWorkerRegistration.showNotification()") — and
+         push does NOT cover this case, whatever it may look like: the server
+         only pushes while `peers.size === 0`, and this branch is the opposite,
+         a socket still attached from a window nobody is looking at. Left to
+         throw, the platform the PWA exists for is the one that gets silence.
+         The worker's `notificationclick` handler routes on `data.sessionId`,
+         so the click lands on the same thread this window would have opened. */
+      void pushRegistration().then((registration) =>
+        registration?.showNotification(label, {
+          body,
+          tag,
+          // Same tag, new event: without this the replacement is silent, which
+          // for "permission needed" means the second ask goes unnoticed.
+          renotify: true,
+          data: { sessionId },
+        })
+      )
     }
   }
 }

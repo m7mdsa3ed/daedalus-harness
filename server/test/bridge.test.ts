@@ -54,6 +54,9 @@ const profile: Profile = {
   apiKey: "sk-test",
   models: [],
   defaultModel: "",
+  webSearch: { enabled: false },
+  memories: { enabled: false },
+  knowledge: { enabled: false },
 };
 const project = {
   id: "w1",
@@ -250,6 +253,24 @@ assert.equal(
   true,
   "the restart put the agent's settings back",
 );
+
+// Two overlapping respawns — a double-click, two tabs, model then effort
+// changed in quick succession. The second used to close the first call's
+// not-yet-ready bridge, and `close(reason)` rejects exactly the promise the
+// first call is awaiting (`bridge.ready`), so the first route answered 500
+// "respawning" while the second one's thread came up fine. They queue now.
+{
+  const first = manager.respawn(session.id, profile, project);
+  await new Promise((r) => setTimeout(r, 30)); // first spawn is up, handshake in flight
+  const second = manager.respawn(session.id, { ...profile, name: "test3" }, project);
+  const settled = await Promise.allSettled([first, second]);
+  assert.deepEqual(
+    settled.map((r) => r.status),
+    ["fulfilled", "fulfilled"],
+    "an overlapping respawn queues behind the first instead of killing it",
+  );
+  assert.equal(session.profileId, profile.id, "the last request's profile is the one that stuck");
+}
 
 // --- failure paths ---
 

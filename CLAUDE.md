@@ -39,7 +39,18 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   `src/styles/themes.css` (one `[data-color-theme]` block per palette, light +
   dark), not in `index.css`; user-made palettes are that same token set written
   into a runtime `<style>` by `src/lib/custom-themes.ts` and edited in
-  `components/theme-builder.tsx`. ⌘K opens `components/command-palette.tsx`.
+  `components/theme-builder.tsx`. **The colour before the app exists is
+  `src/lib/boot-colors.ts`** — the address-bar tint, the inlined splash and the
+  manifest all need the background named before any stylesheet is parsed, so it
+  is written once there in hex and pulled in three ways: `lib/theme.tsx` imports
+  it as a fallback, `vite.config.ts` imports it for the manifest and substitutes
+  `%BOOT_LIGHT%`/`%BOOT_DARK%` into the static `index.html`. It is the *Default
+  palette's* `--background`, not `.dark`'s from `index.css` — ThemeProvider
+  always sets `data-color-theme`, so `.dark` alone is a state nothing paints —
+  and changing that palette in `themes.css` means changing it here. Only the
+  floor lives there: every load after the first tints from the real palette,
+  which `applyThemeColor` caches per `<palette>:<mode>` for the pre-paint script
+  in `index.html` to read back. ⌘K opens `components/command-palette.tsx`.
   Reading a tool call — inferring its kind, target, language and diff out of
   ACP's opaque `rawInput`/`rawOutput` — is quarantined in `lib/tools.ts`; the
   transcript dispatches its per-kind layouts on ACP `kind`, never on a table of
@@ -73,6 +84,20 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   reports.
 - Server: `cd server && pnpm dev` (prints token), `pnpm test` (bridge self-check against the
   fake agent: handshake, event log, replay, multi-peer, failure paths).
+- **The server is deployed built, not with tsx.** `pnpm build` emits to `server/dist/` via
+  `tsconfig.build.json` — the only place the server is emitted; `tsconfig.json` stays
+  `noEmit` because it is what the editor and `tsc --noEmit` typecheck (tests included).
+  `dist/` sits one level under `server/` exactly like `src/`, so every
+  `join(dirname(fileURLToPath(import.meta.url)), "..")` — `data/`, `drizzle/` — resolves to
+  the same directory built as it does under tsx. `pnpm serve` runs it; `pnpm pm2:start`
+  builds and (re)starts `ecosystem.config.cjs` on **port 4001**, `pm2:stop` / `pm2:logs` for
+  the rest. The port there is `DAEDALUS_PORT` in the env, not `data/config.json`: `pnpm dev`
+  reads that same file, so a port written into it would move dev too. `loadConfig` therefore
+  lets the env win for `host`/`port` and *only* those — token, FCM and idle timeout stay the
+  file's, and the token-seeding write puts the file's own port back rather than persisting
+  the override. One instance, fork mode: the agent child processes, the WebSocket peers and
+  the SQLite handle are owned by this process, and a cluster fork could not see another
+  fork's bridges.
 - Schema change: edit `server/src/db/schema.ts`, run `pnpm db:generate`, commit the SQL in
   `server/drizzle/`. `pnpm db:studio` browses the database.
 - Client: `cd client && pnpm dev` / `pnpm build` / `pnpm electron:dev` / `pnpm electron:dist:win`.
@@ -232,6 +257,63 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   and pushed by the server (`onElicitationRequest`) when no peer is attached. A URL flow that
   completes is accepted **server-side** on `elicitation/complete`: the answer is already in,
   and waiting for a browser meant an agent with no peer attached blocked forever.
+- **One service worker, and no Firebase inside it.** `client/src/sw.ts` is the whole
+  PWA: Workbox precache, an SPA navigation route bound to the precached shell, and the
+  `push`/`notificationclick` handlers. vite-plugin-pwa builds it (`strategies:
+  "injectManifest"`) and `lib/pwa.ts` registers it through `virtual:pwa-register` —
+  which is the only thing that knows the worker is `/dev-sw.js?dev-sw` as a module in
+  dev and a classic `/sw.js` in a build. Updates are `registerType: "prompt"`, not
+  auto: a new worker installs and waits, and `registerPwa` offers it as one pinned
+  sonner toast (fixed id, so an hourly re-check replaces rather than stacks) whose
+  Reload calls `updateSW(true)` — the worker only `skipWaiting()`s on that message.
+  Silently taking over would swap the precache under a page whose JS is already
+  running, so a lazy chunk it asks for next is a hash that no longer exists, and it
+  would reload the tab mid-turn. Reloading is cheap on purpose — drafts are in
+  localStorage and the turn is the server's — but it is still the user's call. The reason FCM's SDK
+  is *not* in the worker is the worker's lifecycle: the browser kills it when idle and
+  restarts it per event, so only top-level code is guaranteed to have run when a push
+  lands — and this client has no build-time config, so a config handed over at runtime
+  (postMessage, IndexedDB) races that restart and loses. FCM on the web is Web Push
+  underneath, so the worker reads the raw `push` event and needs no config at all.
+  The page still uses the SDK, to mint a token — and `getToken` must be passed
+  `serviceWorkerRegistration`, or it goes and registers a `firebase-messaging-sw.js`
+  this app does not ship — and the app it *is* passed is a **named** app per Firebase
+  project, never `getApp()`: several servers can be connected at once, each with its own
+  FCM project, and the default app is whichever was reached first, so a token minted
+  through it carries the wrong sender id and fails silently in both directions.
+  `registerPwa` unregisters the retired `firebase-messaging-sw.js`, and does it
+  **before** registering, not alongside: a registration is keyed `(origin, scope)` and
+  the old worker held the same `/` that `/sw.js` claims, so they are one object — racing
+  the two tears down the worker that just replaced it. **The payload is therefore a
+  contract, not a convention**: `server/src/push.ts` sends **data-only** messages
+  carrying `title`/`body`/`sessionId`, because a `notification` block is displayed by
+  whatever FCM code is in a worker and a device with the retired one still installed
+  would show two. It also sends them in batches of 500 (FCM rejects a larger multicast
+  outright, so one extra device would cost *everyone* the notification) with a one-hour
+  `TTL` and a `Topic` — the FNV hash of title+session, because the header caps at 32
+  URL-safe characters and a truncated UUID would collide, which here means a dropped
+  notification. Both exist for the phone that was off overnight: the push service keeps
+  only the newest message per topic, so coming back means the state of each thread
+  rather than a night of history, and nothing arrives about a turn already read.
+- **Registering for push is reversible, and the reverse has to reach the server.**
+  A token outlives the preference and the connection: turning off "System notifications"
+  or forgetting a server leaves that server pushing to the device with nothing left in
+  the UI to stop it. So `lib/push.ts` pairs `setupPush` with `teardownPush` — `DELETE
+  /api/push/register` plus `deleteToken`, skipping the latter when another connected
+  server shows the *same* cached token, since a token belongs to the Firebase project
+  and revoking it would unsubscribe that server too. The client's "already registered"
+  cache is `{token, at}` and re-POSTs weekly, because the server drops rows FCM reports
+  dead while `getToken` keeps returning the same string — an unexpiring cache is a
+  device that goes dark permanently and says nothing.
+- **`new Notification()` is not available everywhere, and push does not cover the gap.**
+  Chrome on Android forbids the constructor outright (worker-only), and the server pushes
+  *only* while `peers.size === 0` — so the in-page path in `lib/notifications.ts`, which
+  fires for a socket still attached from a window nobody is watching, is exactly the case
+  push will never reach. It falls back to `registration.showNotification`, whose click the
+  worker already routes on `data.sessionId`. Both paths pass `renotify` (declared in
+  `vite-env.d.ts`; TS's DOM lib lacks it) — with a `tag` and without it, a replacement
+  swaps the text in silence, which for a second permission ask is the same as no
+  notification at all.
 - **A key that is bound is a key that is listed.** `client/src/lib/shortcuts.ts` holds
   the chord vocabulary (`mod` = ⌘ or Ctrl), the matcher, and the `SHORTCUTS` table that
   `components/shortcuts-help.tsx` (`?` / `⌘/`, and a command-palette entry) prints — so a

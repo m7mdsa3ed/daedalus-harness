@@ -4,6 +4,7 @@
 // sidebar), and the active one is what every request in the app talks to.
 
 import { uuid } from "./uuid"
+import { clearLayout } from "./workspace/layout"
 
 export interface ServerSettings {
   id: string
@@ -96,11 +97,14 @@ export function setActiveServer(id: string): void {
   write({ ...store, activeId: id })
 }
 
-/** Forgets one connection; the next one in the list becomes active. */
+/** Forgets one connection; the next one in the list becomes active.
+    Its saved workspace layout goes with it — the key is per server, and a
+    layout nothing can reach again is a key that never gets collected. */
 export function removeServer(id: string): void {
   const store = read()
   const servers = store.servers.filter((s) => s.id !== id)
   write({ servers, activeId: store.activeId === id ? (servers[0]?.id ?? null) : store.activeId })
+  clearLayout(id)
 }
 
 /** Disconnect: forget the active connection. */
@@ -271,6 +275,21 @@ export interface Profile {
   virtual?: boolean
   models: ModelOption[]
   defaultModel: string
+  /** Replace the agent's built-in web tools with the harness's web-search MCP
+      server. A profile opts in; null means off. The rest override the server
+      default, and the token is redacted (never sent back). */
+  webSearch?: {
+    enabled: boolean
+    searchApiBaseUrl?: string
+    searchApiToken?: undefined
+    searchModel?: string
+    fetchModel?: string
+    hasWebSearchToken?: boolean
+  }
+  /** Opt the agent into the harness's `memory` MCP server. Off by default. */
+  memories?: { enabled: boolean }
+  /** Opt the agent into the harness's `knowledge` MCP server. Off by default. */
+  knowledge?: { enabled: boolean }
 }
 
 export interface ModelOption {
@@ -280,6 +299,27 @@ export interface ModelOption {
   maxOutputTokens?: number
   /** Effort levels the model accepts; empty = no effort control. */
   reasoningEfforts: string[]
+  /** One-line capability blurb, when known (models.dev or the agent). */
+  description?: string
+  /** USD per million tokens. */
+  pricing?: { input: number; output: number }
+  /** Input modalities, e.g. ["text", "image"]. */
+  modalities?: string[]
+  /** Provenance when enriched: "providerId/modelId" in models.dev. */
+  devRef?: string
+}
+
+/** A model the agent itself advertised (POST /api/profiles/:id/fetch-models),
+    or a models.dev search hit — a candidate for a profile's `models[]`. */
+export interface ModelCandidate extends ModelOption {
+  providerId?: string
+  providerName?: string
+}
+
+/** A provider in models.dev's catalog (GET /api/models-dev/providers). */
+export interface ModelsDevProvider {
+  id: string
+  name: string
 }
 
 /** Workspace a session runs in. */
@@ -331,5 +371,19 @@ export interface SessionMeta {
   /** Client-only, draft-only: settings picked against the option set the agent
       last advertised (`lib/agent-options`), replayed once session/new answers. */
   configChoices?: Record<string, string | boolean>
+}
+
+/** A scheduled prompt: the server sends `text` to `sessionId`'s agent at
+    `nextAt`, and again every `everyMs` until cancelled. The server owns
+    delivery — a browser tab closing must not stop a scheduled turn. */
+export interface ScheduledMessage {
+  id: string
+  sessionId: string
+  text: string
+  /** Epoch ms of the next scheduled fire. */
+  nextAt: number
+  /** Recurrence interval in ms; null = one-shot. */
+  everyMs: number | null
+  createdAt: number
 }
 

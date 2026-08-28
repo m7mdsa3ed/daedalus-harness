@@ -11,21 +11,23 @@ import { ResponsiveDialogFooter } from "@/components/ui/responsive-dialog"
 import { type SectionMeta } from "./sections"
 
 
-/** Page title block: icon + title + description, with room for one action. */
+/** Page title block: icon + title + description, with room for one action. On
+    mobile the action stacks full-width under the title so it never crowds the
+    text or wraps awkwardly; on sm+ it sits to the right. */
 export function PageHeader({ meta, action }: { meta: SectionMeta; action?: React.ReactNode }) {
   const Icon = meta.icon
   return (
-    <header className="mb-6 flex flex-wrap items-start justify-between gap-4 border-b pb-5">
+    <header className="mb-6 flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-start sm:justify-between">
       <div className="flex min-w-0 flex-1 items-start gap-3">
         <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border bg-card text-muted-foreground">
           <Icon className="size-4.5" />
         </span>
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight">{meta.title}</h1>
+          <h1 className="text-lg font-semibold tracking-tight sm:text-xl">{meta.title}</h1>
           <p className="mt-1 text-sm text-pretty text-muted-foreground">{meta.description}</p>
         </div>
       </div>
-      {action && <div className="shrink-0">{action}</div>}
+      {action && <div className="shrink-0 sm:ml-auto">{action}</div>}
     </header>
   )
 }

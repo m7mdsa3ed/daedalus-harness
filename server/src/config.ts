@@ -19,6 +19,24 @@ export interface FcmConfig {
   vapidKey: string;
 }
 
+/**
+ * The web-search backend the built-in `web-search` MCP server answers against.
+ * Server-global (one pair of credentials, like cc-cli's `.env`), read by the
+ * MCP server subprocess at spawn rather than baked into a library row — so a
+ * config edit here is picked up by the next `session/new` or respawn, never a
+ * stale token cached in the database.
+ */
+export interface WebSearchConfig {
+  /** The search API base URL, e.g. http://localhost:20128 */
+  searchApiBaseUrl: string;
+  /** Bearer token for the search API. Never exposed to clients. */
+  searchApiToken: string;
+  /** Model id the search API serves for `/v1/search`. */
+  searchModel: string;
+  /** Model id the search API serves for `/v1/web/fetch`. */
+  fetchModel: string;
+}
+
 export interface ServerConfig {
   token: string;
   host: string;
@@ -26,6 +44,7 @@ export interface ServerConfig {
   /** Minutes a session survives with no client attached before its process is killed. */
   sessionIdleMinutes: number;
   fcm?: FcmConfig;
+  webSearch?: WebSearchConfig;
 }
 
 /*
@@ -70,11 +89,33 @@ export function loadConfig(): ServerConfig {
   const existing = readJson<Partial<ServerConfig>>(CONFIG_PATH, {});
   const config: ServerConfig = {
     token: existing.token ?? randomBytes(24).toString("hex"),
-    host: existing.host ?? "0.0.0.0",
-    port: existing.port ?? 8791,
+    // The env wins over the file for the two bind settings, and only those: a
+    // process manager (pm2, a container) decides the port it maps, and it must
+    // not need the file edited — or, worse, rewritten under a second instance
+    // reading the same data dir. Everything else stays the file's.
+    host: process.env.DAEDALUS_HOST ?? existing.host ?? "0.0.0.0",
+    port: Number(process.env.DAEDALUS_PORT ?? process.env.PORT) || existing.port || 8791,
     sessionIdleMinutes: existing.sessionIdleMinutes ?? 30,
     ...(existing.fcm ? { fcm: existing.fcm as FcmConfig } : {}),
+    ...(existing.webSearch ? { webSearch: existing.webSearch as WebSearchConfig } : {}),
   };
-  if (!existing.token) writeJson(CONFIG_PATH, config);
+  // Seeding a token writes the file; write what the file says, not the env
+  // override, so a pm2 port does not become the on-disk default.
+  if (!existing.token) writeJson(CONFIG_PATH, { ...config, host: existing.host ?? "0.0.0.0", port: existing.port ?? 8791 });
   return config;
+}
+
+/** The stored server-global webSearch block, or undefined. Read without the
+    token-seeding write that `loadConfig` performs on first boot, and without
+    applying env overrides — this is exactly what is on disk. */
+export function readWebSearch(): WebSearchConfig | undefined {
+  return readJson<Partial<ServerConfig>>(CONFIG_PATH, {}).webSearch;
+}
+
+/** Replace the server-global webSearch block, preserving everything else in
+    config.json (token, host, port, fcm). Atomic write via `writeJson`. */
+export function saveWebSearch(input: WebSearchConfig): WebSearchConfig {
+  const existing = readJson<Partial<ServerConfig>>(CONFIG_PATH, {});
+  writeJson(CONFIG_PATH, { ...existing, webSearch: input });
+  return input;
 }

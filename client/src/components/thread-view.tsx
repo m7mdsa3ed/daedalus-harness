@@ -1,5 +1,5 @@
 import * as React from "react"
-import { ArrowUp, History, Mic, RotateCw, Square } from "lucide-react"
+import { ArrowUp, Clock, History, Mic, RotateCw, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { ActivityIndicator, ComposerPlan, ContextIndicator } from "@/components/composer-status"
@@ -27,6 +27,7 @@ import { useLocation } from "react-router"
 import { useViewOptions } from "@/lib/view-options"
 import { cn } from "@/lib/utils"
 import { DraftConfigPopover, DraftScopeRow } from "./draft-config"
+import { ScheduleDialog } from "./schedule-dialog"
 import { SessionConfigPopover } from "./session-config"
 import { SlashCommandMenu, useSlashCommands } from "./slash-commands"
 import { SessionSettingsButton } from "./session-settings"
@@ -168,7 +169,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
 
   const meta = state.sessions.find((s) => s.id === sessionId)
   /* Which transcript the keys belong to. The dock keeps every opened thread
-     mounted and navigates the URL as tabs are activated (see session-dock), so
+     mounted and navigates the URL as tabs are activated (see workspace/dock), so
      the route is the app's own answer to "which one is in front". */
   const location = useLocation()
   useThreadKeys({
@@ -210,9 +211,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   type into travel to the bottom together. */}
               {thread.status === "connecting" && (
                 <MessageScrollerItem messageId="starting">
-                  <div className="harness-shimmer py-2 text-xs text-primary">
-                    {meta?.draft ? "Starting the agent…" : "Connecting…"}
-                  </div>
+                  <StartingLine draft={meta?.draft} />
                 </MessageScrollerItem>
               )}
               {rows.map((row) => (
@@ -243,7 +242,11 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   )}
                 </MessageScrollerItem>
               ))}
-              {thread.turnActive && (
+              {/* Suppressed while `connecting`: the StartingLine above already
+                  owns the wait, and two animated lines over one message read as
+                  "we don't know what is happening" rather than as progress.
+                  `caught_up` flips the status and hands the wait back here. */}
+              {thread.turnActive && thread.status !== "connecting" && (
                 <MessageScrollerItem messageId="working">
                   <div className="py-0.5">
                     <ActivityIndicator step={thread.items.length} />
@@ -293,6 +296,37 @@ function ThreadWelcome({ draft }: { draft?: boolean }) {
           ? "Nothing is running yet — the agent starts when you send the first message."
           : "Send the first message — tool calls, plans and thinking stream in here as steps."}
       </p>
+    </div>
+  )
+}
+
+/** The one line a starting thread is allowed to say, staged through the two
+    phases the client can actually tell apart: while the draft flag holds, the
+    POST that spawns the agent and runs the handshake is in flight; once the
+    server's row has replaced it, the socket is attached and replaying the
+    journal toward `caught_up`. Distinguishing "spawning" from "stuck" matters
+    more than a third fake stage would, so past SLOW_MS the line admits the
+    wait rather than shimmering identically forever. */
+const SLOW_MS = 6_000
+
+function StartingLine({ draft }: { draft?: boolean }) {
+  const [slow, setSlow] = React.useState(false)
+  React.useEffect(() => {
+    const timer = setTimeout(() => setSlow(true), SLOW_MS)
+    return () => clearTimeout(timer)
+  }, [])
+  return (
+    <div className="py-2">
+      <div className="harness-shimmer text-xs text-primary">
+        {draft ? "Spawning the agent…" : "Connecting…"}
+      </div>
+      {slow && (
+        <div className="pt-1 text-xs text-muted-foreground">
+          {draft
+            ? "Still starting — the first launch of an agent can take a while."
+            : "Still connecting — a long conversation takes a moment to load."}
+        </div>
+      )}
     </div>
   )
 }
@@ -410,6 +444,7 @@ function Composer({
   React.useEffect(() => setText(loadDraft(sessionId)), [sessionId])
   React.useEffect(() => saveDraft(sessionId, text), [sessionId, text])
   const [reviving, setReviving] = React.useState(false)
+  const [scheduleOpen, setScheduleOpen] = React.useState(false)
   const isMobile = useIsMobile()
   const voice = useVoice((transcript) => setText((t) => (t ? t + " " : "") + transcript))
   // A draft has no socket, so "closed" never applies to it — it is waiting to be
@@ -496,7 +531,7 @@ function Composer({
         <SlashCommandMenu state={slash} />
       </ComposerStrip>
       {/* relative/z-10: the composer paints over the strip's tucked bottom edge. */}
-      <div className="relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl bg-card p-2 shadow-glass">
+      <div className="relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl bg-composer p-2 shadow-glass-lg">
         <Textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -566,6 +601,16 @@ function Composer({
               <Mic />
             </Button>
           )}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="shrink-0 rounded-lg"
+            onClick={() => setScheduleOpen(true)}
+            disabled={disabled}
+            title="Schedule a message"
+          >
+            <Clock />
+          </Button>
           {thread.turnActive && (
             <Button
               variant="ghost"
@@ -589,6 +634,13 @@ function Composer({
           </Button>
         </div>
       </div>
+      <ScheduleDialog
+        open={scheduleOpen}
+        onOpenChange={setScheduleOpen}
+        sessionId={sessionId}
+        actions={actions}
+        defaultText={text}
+      />
     </div>
   )
 }
