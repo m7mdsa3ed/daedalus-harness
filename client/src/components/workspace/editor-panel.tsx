@@ -34,6 +34,7 @@ import { useConfirm } from "@/components/confirm-dialog"
 import { CodeEditor } from "@/components/workspace/code-editor"
 import { DiffEditor } from "@/components/workspace/diff-editor"
 import { useDock } from "@/components/workspace/dock"
+import { PanelEmptyState, PanelToolbar } from "@/components/workspace/primitives"
 import { useHotkey } from "@/hooks/use-hotkey"
 import { describeError, reportError } from "@/lib/errors"
 import { KEYS } from "@/lib/shortcuts"
@@ -371,7 +372,7 @@ export function EditorPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center gap-1 border-b border-border/60 px-2 py-1">
+      <PanelToolbar>
         <span
           className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground"
           title={path}
@@ -436,7 +437,7 @@ export function EditorPanel({
         >
           <RefreshCwIcon className="size-3.5" />
         </Button>
-      </div>
+      </PanelToolbar>
 
       {conflict && (
         <ConflictBar
@@ -541,9 +542,5 @@ function ConflictBar({
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 p-8 text-center text-xs text-muted-foreground">
-      {children}
-    </div>
-  )
+  return <PanelEmptyState>{children}</PanelEmptyState>
 }

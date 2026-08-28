@@ -1,16 +1,14 @@
 import * as React from "react"
+import { Navigate, useNavigate, useParams } from "react-router"
 import { Input } from "@/components/ui/input"
 import { type ServerSettings, type SkillDef } from "@/lib/settings"
 import { useStore } from "@/lib/store"
-import { Field, FormActions } from "./primitives"
+import { FormPageHeader, PageForm, Field, FormActions } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
-import { LibrarySection, saveLibraryEntry } from "./library"
+import { LibraryImportPage, LibrarySection, saveLibraryEntry } from "./library"
 import { reportError } from "@/lib/errors"
-import {
-  ResponsiveDialogHeader,
-  ResponsiveDialogTitle,
-} from "@/components/ui/responsive-dialog"
+import { settingsPath } from "@/lib/router"
 
 export function SkillsPage() {
   const { settings, actions } = useSettingsPage()
@@ -21,14 +19,30 @@ export function SkillsPage() {
       meta={meta}
       items={state.skills}
       endpoint="/api/skills"
-      importKind="skills"
       noun="skill"
       subtitle={(s) => s.path}
       settings={settings}
       refresh={actions.refreshSkills}
-      renderForm={(skill, onDone) => <SkillForm skill={skill} settings={settings} onDone={onDone} />}
     />
   )
+}
+
+export function SkillImportPage() {
+  const { actions } = useSettingsPage()
+  return <LibraryImportPage meta={sectionMeta("skills")} kind="skills" endpoint="/api/skills" noun="skill" refresh={actions.refreshSkills} />
+}
+
+export function SkillFormPage() {
+  const { entryId } = useParams()
+  const navigate = useNavigate()
+  const { settings, actions } = useSettingsPage()
+  const { state } = useStore()
+  const skill = entryId === "new" ? null : state.skills.find((item) => item.id === entryId)
+  if (entryId !== "new" && !skill) return <Navigate to={settingsPath("skills")} replace />
+  return <SkillForm skill={skill ?? null} settings={settings} onDone={async (saved) => {
+    if (saved) await actions.refreshSkills()
+    void navigate(settingsPath("skills"))
+  }} />
 }
 
 function SkillForm({
@@ -57,10 +71,13 @@ function SkillForm({
   }
 
   return (
-    <form onSubmit={save} className="space-y-4">
-      <ResponsiveDialogHeader>
-        <ResponsiveDialogTitle>{skill ? `Edit ${skill.name}` : "New skill"}</ResponsiveDialogTitle>
-      </ResponsiveDialogHeader>
+    <>
+      <FormPageHeader
+        title={skill ? `Edit ${skill.name}` : "New skill"}
+        description="Register a reusable skill directory on the server."
+        onBack={() => onDone(false)}
+      />
+      <PageForm onSubmit={save}>
       <Field label="Name">
         <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
       </Field>
@@ -74,6 +91,7 @@ function SkillForm({
         />
       </Field>
       <FormActions busy={busy} onCancel={() => onDone(false)} />
-    </form>
+      </PageForm>
+    </>
   )
 }

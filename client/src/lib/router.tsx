@@ -16,6 +16,10 @@ import { matchPath, useNavigate, type NavigateFunction } from "react-router"
 
 export const threadPath = (sessionId: string) => `/t/${encodeURIComponent(sessionId)}`
 export const settingsPath = (section: string) => `/settings/${section}`
+export const settingsFormPath = (section: string, id: string = "new") =>
+  `/settings/${section}/${encodeURIComponent(id)}`
+export const schedulePath = (sessionId?: string) =>
+  `/schedules/new${sessionId ? `?session=${encodeURIComponent(sessionId)}` : ""}`
 
 /** The thread the URL points at, if any — legacy /?session= deep links too. */
 export function currentThreadId(

@@ -55,7 +55,6 @@ const profile: Profile = {
   models: [],
   defaultModel: "",
   webSearch: { enabled: false },
-  memories: { enabled: false },
   knowledge: { enabled: false },
 };
 const project = {

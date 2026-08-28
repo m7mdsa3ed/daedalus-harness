@@ -33,6 +33,7 @@ import { Input } from "@/components/ui/input"
 import { useConfirm } from "@/components/confirm-dialog"
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"
 import { useDock } from "@/components/workspace/dock"
+import { PanelEmptyState, PanelToolbar } from "@/components/workspace/primitives"
 import { describeError, reportError } from "@/lib/errors"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
@@ -399,15 +400,15 @@ export function ExplorerPanel({ api, params }: IDockviewPanelProps<{ projectId: 
 
   if (!project) {
     return (
-      <div className="flex h-full items-center justify-center p-6 text-center text-xs text-muted-foreground">
+      <PanelEmptyState>
         This project no longer exists.
-      </div>
+      </PanelEmptyState>
     )
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center gap-1 border-b border-border/60 px-1.5 py-1">
+      <PanelToolbar>
         <div className="relative min-w-0 flex-1">
           <SearchIcon
             aria-hidden
@@ -462,7 +463,7 @@ export function ExplorerPanel({ api, params }: IDockviewPanelProps<{ projectId: 
         <Button size="icon-xs" variant="ghost" aria-label="Refresh" className="size-6" onClick={refresh}>
           <RefreshCwIcon className="size-3.5" />
         </Button>
-      </div>
+      </PanelToolbar>
       <div className="min-h-0 flex-1 overflow-auto p-1">{renderDir("", 0)}</div>
     </div>
   )

@@ -818,3 +818,33 @@ html .dv-tab {
   height: 100%;
   padding: 0;
 }
+
+/* ── Per-thread view options ──
+   Compact density and code-wrap are presentation only, so they live here as
+   attribute-scoped overrides on the transcript column rather than as props
+   threaded through every row. Both keys are set on MessageScrollerContent. */
+
+/* Compact density: tighten the vertical rhythm without touching layout. The
+   utility classes it overrides (py-2 / py-0.5 / py-4 / gap-0.5) are only ever
+   transcript spacing here, so scoping to [data-density] can't leak elsewhere. */
+[data-density="compact"] .py-2 {
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+}
+[data-density="compact"] .py-0\.5 {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+[data-density="compact"] .py-4 {
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+
+/* Code wrap: soft-wrap fenced code and diffs instead of scrolling sideways.
+   The unified diff <pre> carries min-w-max, which would force overflow; this
+   outranks that class (attribute+element beats a single class) so wrapping wins. */
+[data-wrap="on"] pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}

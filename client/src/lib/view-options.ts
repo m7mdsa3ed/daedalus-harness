@@ -1,23 +1,55 @@
 /* ── Per-thread view options ──
-   How a transcript is *displayed* — not what it contains, and not anything the
-   agent needs to know. Local to this device, per session, so a thread you read
-   with timestamps on stays that way without imposing it on the next one or on
-   anyone else connected to the same harness.
+    How a transcript is *displayed* — not what it contains, and not anything the
+    agent needs to know. Local to this device, per session, so a thread you read
+    with timestamps on stays that way without imposing it on the next one or on
+    anyone else connected to the same harness.
 
-   Adding an option: extend DEFAULTS and add a row in session-settings.tsx.
-   Nothing else needs to change; the dialog renders whatever is declared. */
-import { useSyncExternalStore } from "react"
+    Adding an option: extend DEFAULTS, add a row in session-settings.tsx, and read
+    it where the transcript renders (via ViewOptionsContext — no prop threading). */
+import { createContext, useContext, useSyncExternalStore } from "react"
 
 export interface ViewOptions {
   /** Wall-clock time beside each message and step. */
   showTimestamps: boolean
   /** Fold runs of consecutive tool steps into one expandable block. */
   groupTools: boolean
+  /** Tighter vertical rhythm in the transcript. */
+  compactDensity: boolean
+  /** Pin to the newest content while the agent is streaming. */
+  autoScroll: boolean
+  /** Render reasoning/expanded by default instead of folded. */
+  showThinking: boolean
+  /** Soft-wrap long code and diff lines instead of scrolling. */
+  codeWrap: boolean
+  /** Wider transcript column. */
+  wideTranscript: boolean
+  /** Expand every tool call's input/output by default. */
+  showToolDetails: boolean
+  /** Render file diffs side by side instead of unified. */
+  splitDiffs: boolean
+  /** Hairline rule above each user turn. */
+  stepDividers: boolean
 }
 
 export const VIEW_DEFAULTS: ViewOptions = {
   showTimestamps: false,
   groupTools: false,
+  compactDensity: false,
+  autoScroll: true,
+  showThinking: false,
+  codeWrap: false,
+  wideTranscript: false,
+  showToolDetails: false,
+  splitDiffs: false,
+  stepDividers: false,
+}
+
+/** Carries the resolved options to the items that render the transcript, so the
+ *  deep tool/diff/thought components can read them without prop drilling. */
+export const ViewOptionsContext = createContext<ViewOptions>(VIEW_DEFAULTS)
+
+export function useViewOptionsContext(): ViewOptions {
+  return useContext(ViewOptionsContext)
 }
 
 const STORAGE_KEY = "ui.viewOptions"

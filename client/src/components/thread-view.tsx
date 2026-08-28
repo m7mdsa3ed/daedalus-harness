@@ -19,15 +19,14 @@ import { useVoice } from "@/hooks/use-voice"
 import type { Actions } from "@/lib/actions"
 import { clearDraft, loadDraft, saveDraft } from "@/lib/drafts"
 import { reportError } from "@/lib/errors"
-import { currentThreadId } from "@/lib/router"
+import { currentThreadId, schedulePath } from "@/lib/router"
 import type { SessionMeta } from "@/lib/settings"
 import { KEYS, isInteractiveTarget, isTypingTarget, matchesChord, overlayOpen } from "@/lib/shortcuts"
 import { useStore, emptyThread, threadIsEmpty, type ThreadItem, type ThreadState } from "@/lib/store"
-import { useLocation } from "react-router"
-import { useViewOptions } from "@/lib/view-options"
+import { useLocation, useNavigate } from "react-router"
+import { useViewOptions, ViewOptionsContext } from "@/lib/view-options"
 import { cn } from "@/lib/utils"
 import { DraftConfigPopover, DraftScopeRow } from "./draft-config"
-import { ScheduleDialog } from "./schedule-dialog"
 import { SessionConfigPopover } from "./session-config"
 import { SlashCommandMenu, useSlashCommands } from "./slash-commands"
 import { SessionSettingsButton } from "./session-settings"
@@ -195,13 +194,22 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
       className="relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto_minmax(0,0fr)] transition-[grid-template-rows] duration-500 ease-out data-empty:grid-rows-[minmax(0,1fr)_auto_minmax(0,1fr)]"
     >
       {/* `autoScroll` defaults to FALSE — without it the transcript never follows
-          the stream. Every direct child of Content must be an Item with a
-          `messageId`: the visibility/preservation scanner skips elements without
-          one, so unkeyed items are invisible to the scroller. */}
-      <MessageScrollerProvider autoScroll>
+           the stream. Every direct child of Content must be an Item with a
+           `messageId`: the visibility/preservation scanner skips elements without
+           one, so unkeyed items are invisible to the scroller. */}
+      <MessageScrollerProvider autoScroll={options.autoScroll}>
         <MessageScroller className="min-h-0 flex-1">
           <MessageScrollerViewport>
-            <MessageScrollerContent className="mx-auto w-full max-w-[var(--harness-chat-width)] gap-0.5 px-4 py-4">
+            <ViewOptionsContext.Provider value={options}>
+            <MessageScrollerContent
+              data-density={options.compactDensity ? "compact" : undefined}
+              data-wrap={options.codeWrap ? "on" : undefined}
+              className={cn(
+                "mx-auto w-full gap-0.5 px-4 py-4",
+                options.compactDensity && "gap-0 py-2",
+                options.wideTranscript ? "max-w-[82rem]" : "max-w-[var(--harness-chat-width)]",
+              )}
+            >
               {/* Nothing stands in while a thread connects. A skeleton claimed a
                   shape for content nobody had seen yet, and on a thread that
                   turns out to be empty it was a lie twice over. The sidebar row
@@ -214,13 +222,24 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   <StartingLine draft={meta?.draft} />
                 </MessageScrollerItem>
               )}
-              {rows.map((row) => (
+              {rows.map((row, i) => {
+                /* A hairline above each of your messages (except the first)
+                    separates one turn from the next when Turn dividers is on. */
+                const isUser = !("items" in row) && row.kind === "user"
+                const firstUser = rows.findIndex(
+                  (r) => !("items" in r) && r.kind === "user",
+                )
+                const divider = options.stepDividers && isUser && i !== firstUser
+                return (
                 /* ponytail: no scrollAnchor. Anchoring the user's message to
-                   the top of the viewport meant sending scrolled the whole
-                   transcript up and left a blank screen until the agent
-                   produced enough output to fill it back in. Autoscroll alone
-                   keeps the newest content in view without the jump. */
+                    the top of the viewport meant sending scrolled the whole
+                    transcript up and left a blank screen until the agent
+                    produced enough output to fill it back in. Autoscroll alone
+                    keeps the newest content in view without the jump. */
                 <MessageScrollerItem key={row.id} messageId={row.id}>
+                  {divider && (
+                    <div aria-hidden className="my-1.5 h-px bg-border/50 first:hidden" />
+                  )}
                   {"items" in row ? (
                     <ToolRun items={row.items} showTimestamps={options.showTimestamps} />
                   ) : (
@@ -241,7 +260,8 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                     />
                   )}
                 </MessageScrollerItem>
-              ))}
+                )
+              })}
               {/* Suppressed while `connecting`: the StartingLine above already
                   owns the wait, and two animated lines over one message read as
                   "we don't know what is happening" rather than as progress.
@@ -268,6 +288,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                 </MessageScrollerItem>
               )}
             </MessageScrollerContent>
+            </ViewOptionsContext.Provider>
           </MessageScrollerViewport>
           <MessageScrollerButton />
         </MessageScroller>
@@ -437,6 +458,8 @@ function Composer({
   thread: ThreadState
   meta?: SessionMeta
 }) {
+  const navigate = useNavigate()
+  const location = useLocation()
   /* The draft lives on this device, per session (lib/drafts). ThreadView is
      keyed by sessionId today so the initializer would be enough — the effect
      keeps it correct if that key ever goes away. */
@@ -444,7 +467,6 @@ function Composer({
   React.useEffect(() => setText(loadDraft(sessionId)), [sessionId])
   React.useEffect(() => saveDraft(sessionId, text), [sessionId, text])
   const [reviving, setReviving] = React.useState(false)
-  const [scheduleOpen, setScheduleOpen] = React.useState(false)
   const isMobile = useIsMobile()
   const voice = useVoice((transcript) => setText((t) => (t ? t + " " : "") + transcript))
   // A draft has no socket, so "closed" never applies to it — it is waiting to be
@@ -605,7 +627,9 @@ function Composer({
             variant="ghost"
             size="icon-sm"
             className="shrink-0 rounded-lg"
-            onClick={() => setScheduleOpen(true)}
+            onClick={() => void navigate(schedulePath(sessionId), {
+              state: { defaultText: text, returnTo: location.pathname + location.search },
+            })}
             disabled={disabled}
             title="Schedule a message"
           >
@@ -634,13 +658,6 @@ function Composer({
           </Button>
         </div>
       </div>
-      <ScheduleDialog
-        open={scheduleOpen}
-        onOpenChange={setScheduleOpen}
-        sessionId={sessionId}
-        actions={actions}
-        defaultText={text}
-      />
     </div>
   )
 }

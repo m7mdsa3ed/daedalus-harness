@@ -9,7 +9,7 @@
  *
  * The project id arrives through `process.env` (KNOWLEDGE_PROJECT_ID), injected
  * by the harness at spawn from the session's project. Search is substring
- * `LIKE`; there is no vector index, on purpose (see memory-db.ts).
+ * `LIKE`; there is no vector index, on purpose (see knowledge-db.ts).
  *
  * Nothing here knows about the harness or the database schema beyond the shared
  * backend — it reads env, opens the shared DB file and answers.
@@ -27,7 +27,7 @@ import {
   listKnowledge,
   openDb,
   searchKnowledge,
-} from "./memory-db.js";
+} from "./knowledge-db.js";
 
 const projectId = process.env.KNOWLEDGE_PROJECT_ID;
 if (!projectId) {
@@ -41,7 +41,7 @@ const db = openDb(process.env.DAEDALUS_DB_PATH);
 const server = new McpServer({ name: "knowledge", version: "1.0.0" });
 
 server.registerTool(
-  "kb_add",
+  "knowledge_add",
   {
     title: "Add knowledge",
     description:
@@ -69,7 +69,7 @@ server.registerTool(
 );
 
 server.registerTool(
-  "kb_search",
+  "knowledge_search",
   {
     title: "Search knowledge",
     description:
@@ -96,7 +96,7 @@ server.registerTool(
 );
 
 server.registerTool(
-  "kb_list",
+  "knowledge_list",
   {
     title: "List knowledge",
     description: "List this project's knowledge entries, newest first. Use to survey what is stored.",
@@ -121,7 +121,7 @@ server.registerTool(
 );
 
 server.registerTool(
-  "kb_delete",
+  "knowledge_delete",
   {
     title: "Delete knowledge",
     description: "Delete a knowledge entry by id. Irreversible.",

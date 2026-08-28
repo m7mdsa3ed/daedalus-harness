@@ -33,10 +33,16 @@ const PWA = [
   ["apple-touch-icon.png", 180, { rx: 0 }],
 ]
 
+// The Android status-bar glyph (NotificationOptions.badge) must be monochrome —
+// white on transparent — or Android renders nothing (a white square at best).
+// That is just the mark, no tile, so drop the rect and keep the white strokes.
+const BADGE = ["icon-badge.png", 96]
+
 const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
 const DENSITY = 384
 
 const svgString = (await readFile(ICON_SVG)).toString()
+const badgeSvg = svgString.replace(/<rect[^>]*\/>/, "")
 const isMaskable = (rx) => rx === 0
 // Maskable / Apple: the OS clips the tile to its own shape, so any
 // rounded corners here would vanish — drop the SVG's rounded rect and
@@ -63,6 +69,14 @@ for (const [name, size, opts] of PWA) {
   await writeFile(pub(name), buf)
   console.log("wrote", pub(name))
 }
+
+// Monochrome badge: white mark on transparency, no tile.
+const badgeBuf = await sharp(Buffer.from(badgeSvg), { density: DENSITY })
+  .resize(BADGE[1], BADGE[1], { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+  .png()
+  .toBuffer()
+await writeFile(pub(BADGE[0]), badgeBuf)
+console.log("wrote", pub(BADGE[0]))
 
 // .ico = a folder of bitmaps. Render each size from the master, then let
 // ImageMagick pack them — that's its one job here and it does it fine.

@@ -8,13 +8,6 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import {
-  ResponsiveDialog,
-  ResponsiveDialogContent,
-  ResponsiveDialogFooter,
-  ResponsiveDialogHeader,
-  ResponsiveDialogTitle,
-} from "@/components/ui/responsive-dialog"
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -307,7 +300,7 @@ export function ModelsSection({
         </div>
       </div>
       {importing && (
-        <ModelImportDialog
+        <ModelImportPanel
           settings={settings}
           profileId={profileId}
           baseUrl={baseUrl}
@@ -482,7 +475,7 @@ function ModelEditorFields({
    (its own /models endpoint, enriched from models.dev server-side) and
    models.dev's catalog browsed directly. */
 
-function ModelImportDialog({
+function ModelImportPanel({
   settings,
   profileId,
   baseUrl,
@@ -500,11 +493,11 @@ function ModelImportDialog({
   onClose: () => void
 }) {
   return (
-    <ResponsiveDialog open onOpenChange={(open) => !open && onClose()}>
-      <ResponsiveDialogContent className="sm:max-w-lg">
-        <ResponsiveDialogHeader>
-          <ResponsiveDialogTitle>Import models</ResponsiveDialogTitle>
-        </ResponsiveDialogHeader>
+    <section className="space-y-4 rounded-lg border bg-muted/20 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold">Import models</h3>
+        <Button type="button" variant="ghost" size="sm" onClick={onClose}>Close</Button>
+      </div>
         <Tabs defaultValue="provider">
           <TabsList>
             <TabsTrigger value="provider">From provider</TabsTrigger>
@@ -525,8 +518,7 @@ function ModelImportDialog({
             <CatalogImportTab settings={settings} existingIds={existingIds} onImport={onImport} onClose={onClose} />
           </TabsContent>
         </Tabs>
-      </ResponsiveDialogContent>
-    </ResponsiveDialog>
+    </section>
   )
 }
 
@@ -649,14 +641,14 @@ function ProviderFetchTab({
       {fetched !== null && (
         <>
           <CandidatePicker candidates={candidates} selected={selected} onToggle={setSelected} />
-          <ResponsiveDialogFooter>
+          <footer className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
             <Button type="button" variant="outline" onClick={onClose}>
               Cancel
             </Button>
             <Button type="button" disabled={selected.length === 0} onClick={importSelected}>
               Import {selected.length || ""} model{selected.length === 1 ? "" : "s"}
             </Button>
-          </ResponsiveDialogFooter>
+          </footer>
         </>
       )}
     </div>
@@ -775,14 +767,14 @@ function CatalogImportTab({
           onToggle={setSelected}
         />
       )}
-      <ResponsiveDialogFooter>
+      <footer className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
         <Button type="button" variant="outline" onClick={onClose}>
           Cancel
         </Button>
         <Button type="button" disabled={selected.length === 0} onClick={importSelected}>
           Import {selected.length || ""} model{selected.length === 1 ? "" : "s"}
         </Button>
-      </ResponsiveDialogFooter>
+      </footer>
     </div>
   )
 }

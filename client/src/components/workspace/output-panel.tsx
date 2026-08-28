@@ -16,6 +16,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useDock } from "@/components/workspace/dock"
+import { PanelEmptyState, PanelToolbar } from "@/components/workspace/primitives"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { clearOutput, sourcesIn, useOutput, type OutputRecord } from "@/lib/workspace/output"
@@ -78,15 +79,15 @@ export function OutputPanel({ api, params }: IDockviewPanelProps<{ projectId: st
 
   if (!project) {
     return (
-      <div className="flex h-full items-center justify-center p-6 text-center text-xs text-muted-foreground">
+      <PanelEmptyState>
         This project no longer exists.
-      </div>
+      </PanelEmptyState>
     )
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center gap-1 border-b border-border/60 px-1.5 py-1">
+      <PanelToolbar>
         <div className="flex shrink-0 items-center gap-0.5">
           {(["output", "problems"] as const).map((id) => (
             <Button
@@ -169,7 +170,7 @@ export function OutputPanel({ api, params }: IDockviewPanelProps<{ projectId: st
         >
           <Trash2Icon className="size-3.5" />
         </Button>
-      </div>
+      </PanelToolbar>
 
       <div
         ref={scroller}

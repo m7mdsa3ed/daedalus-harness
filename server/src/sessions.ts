@@ -11,12 +11,7 @@ import type { Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 import { loadConfig } from "./config.js";
 import { WEB_SEARCH_SERVER_NAME, toMcpServerEnv } from "./websearch.js";
-import {
-  KNOWLEDGE_SERVER_NAME,
-  MEMORY_SERVER_NAME,
-  toKnowledgeServerEnv,
-  toMemoryServerEnv,
-} from "./memory-db.js";
+import { KNOWLEDGE_SERVER_NAME, toKnowledgeServerEnv } from "./knowledge-db.js";
 import { AcpBridge, spawnAgent, toWireError, type BridgeHost } from "./acp-bridge.js";
 import { JOURNALED_EVENTS, type ThreadCommand, type ThreadEvent, type WireError } from "./protocol.js";
 
@@ -174,26 +169,11 @@ export function websearchServer(
 }
 
 /**
- * The harness's own `memory` MCP server, synthesized at spawn when the PROFILE
+ * The harness's own `knowledge` MCP server, synthesized at spawn when the PROFILE
  * opts in — never a stored library row. The project's id is injected into the
  * server's env so every query is scoped to the workspace this session runs in.
  * Null when the profile has not enabled it, mirroring `websearchServer`.
  */
-export function memoryServer(
-  profile: Pick<Profile, "memories">,
-  project: Pick<Project, "id">,
-): StdioMcpServer | null {
-  if (!profile.memories?.enabled) return null;
-  return {
-    name: MEMORY_SERVER_NAME,
-    command: process.execPath,
-    args: [join(dirname(fileURLToPath(import.meta.url)), "memory-mcp.js")],
-    env: toMemoryServerEnv(project.id),
-  };
-}
-
-/** The harness's own `knowledge` MCP server — same opt-in and project scoping as
-    `memoryServer`, gated on its own profile toggle. */
 export function knowledgeServer(
   profile: Pick<Profile, "knowledge">,
   project: Pick<Project, "id">,
@@ -556,14 +536,12 @@ export class SessionManager {
     // nothing.
     const wsServer = websearchServer(profile, loadConfig());
     const websearchFromProfile = session.agentId === "claude-code" && wsServer !== null;
-    // Memory and knowledge are additive for every agent — there is no built-in
-    // to disallow (unlike web-search), so no agentId gating and no special-casing.
-    // Each is gated on its own profile toggle; enabling one never forces the other.
-    const memServer = memoryServer(profile, project);
+    // Knowledge is additive for every agent — there is no built-in to disallow
+    // (unlike web-search), so no agentId gating and no special-casing. Gated on
+    // the profile's own toggle.
     const kbServer = knowledgeServer(profile, project);
     const extra = [
       ...(websearchFromProfile ? [wsServer!] : []),
-      ...(memServer ? [memServer] : []),
       ...(kbServer ? [kbServer] : []),
     ];
     const bridge = new AcpBridge(this.hostFor(session), proc, {

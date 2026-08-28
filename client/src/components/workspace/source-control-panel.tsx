@@ -36,6 +36,7 @@ import {
 import { useConfirm } from "@/components/confirm-dialog"
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"
 import { useDock } from "@/components/workspace/dock"
+import { PanelEmptyState, PanelToolbar } from "@/components/workspace/primitives"
 import { describeError, reportError } from "@/lib/errors"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
@@ -287,7 +288,7 @@ export function SourceControlPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center gap-1 border-b border-border/60 px-2 py-1">
+      <PanelToolbar>
         <DropdownMenu
           onOpenChange={(open) => {
             /* Loaded when the menu opens rather than from the trigger's click:
@@ -341,7 +342,7 @@ export function SourceControlPanel({
         >
           <RefreshCwIcon className="size-3.5" />
         </Button>
-      </div>
+      </PanelToolbar>
 
       {newBranch !== null && (
         <div className="flex shrink-0 items-center gap-1.5 border-b border-border/60 px-2 py-1.5">
@@ -506,9 +507,5 @@ function Section({
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 p-8 text-center text-xs text-muted-foreground">
-      {children}
-    </div>
-  )
+  return <PanelEmptyState>{children}</PanelEmptyState>
 }

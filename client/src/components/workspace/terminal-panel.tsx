@@ -23,6 +23,7 @@ import { RotateCwIcon, Trash2Icon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/confirm-dialog"
 import { useDock } from "@/components/workspace/dock"
+import { PanelNotice, PanelToolbar } from "@/components/workspace/primitives"
 import { describeError, reportError } from "@/lib/errors"
 import { loadSettings, serverName } from "@/lib/settings"
 import { useStore } from "@/lib/store"
@@ -220,7 +221,7 @@ export function TerminalPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-2 py-1">
+      <PanelToolbar>
         <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
           {/* Where this shell actually is. Not decoration — it is frequently not
               this machine, and every command here is typed on that assumption. */}
@@ -256,12 +257,12 @@ export function TerminalPanel({
         >
           <Trash2Icon className="size-3.5" />
         </Button>
-      </div>
+      </PanelToolbar>
 
       {detail && (
-        <p className="shrink-0 border-b border-border/60 bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
+        <PanelNotice>
           {detail}
-        </p>
+        </PanelNotice>
       )}
 
       <div ref={host} className="min-h-0 flex-1 overflow-hidden px-2 py-1" />

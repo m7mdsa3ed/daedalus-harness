@@ -101,11 +101,14 @@ export function DiffView({
   newText,
   path,
   className,
+  split = false,
 }: {
   oldText?: string | null
   newText: string
   path?: string
   className?: string
+  /** Render old | new side by side instead of a unified list. */
+  split?: boolean
 }) {
   const rows = React.useMemo(
     () => withContext(diffLines(oldText ?? "", newText)),
@@ -126,43 +129,93 @@ export function DiffView({
         </div>
       )}
       <div className="max-h-80 overflow-auto">
-        {/* Same body size as the rest of the transcript; `leading-5` stays, a
-            diff wants a touch more room between lines than prose does. */}
-        <pre className="min-w-max py-1 font-mono text-xs leading-5">
-          {rows.map((row, index) =>
-            row.type === "skip" ? (
-              <div
-                key={index}
-                className="my-0.5 border-y border-border/40 bg-muted/30 px-2.5 py-0.5 text-[10px] text-muted-foreground/60 select-none"
-              >
-                ⋯ {row.count} unchanged {row.count === 1 ? "line" : "lines"}
-              </div>
-            ) : (
-              <div
-                key={index}
-                className={cn(
-                  "flex whitespace-pre",
-                  row.type === "add" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-                  row.type === "del" && "bg-red-500/10 text-red-700 dark:text-red-300"
-                )}
-              >
-                <span
-                  aria-hidden
+        {split ? (
+          /* Two columns: deletions on the left, additions on the right, unchanged
+              lines on both. A row that only exists on one side leaves the other
+              cell blank so the two halves stay aligned line for line. */
+          <div className="grid grid-cols-[1fr_1fr] font-mono text-xs leading-5">
+            {rows.map((row, index) =>
+              row.type === "skip" ? (
+                <div
+                  key={index}
+                  className="col-span-2 my-0.5 border-y border-border/40 bg-muted/30 px-2.5 py-0.5 text-[10px] text-muted-foreground/60 select-none"
+                >
+                  ⋯ {row.count} unchanged {row.count === 1 ? "line" : "lines"}
+                </div>
+              ) : (
+                <DiffSplitRow key={index} row={row} />
+              )
+            )}
+          </div>
+        ) : (
+          /* Same body size as the rest of the transcript; `leading-5` stays, a
+              diff wants a touch more room between lines than prose does. */
+          <pre className="min-w-max py-1 font-mono text-xs leading-5">
+            {rows.map((row, index) =>
+              row.type === "skip" ? (
+                <div
+                  key={index}
+                  className="my-0.5 border-y border-border/40 bg-muted/30 px-2.5 py-0.5 text-[10px] text-muted-foreground/60 select-none"
+                >
+                  ⋯ {row.count} unchanged {row.count === 1 ? "line" : "lines"}
+                </div>
+              ) : (
+                <div
+                  key={index}
                   className={cn(
-                    "w-5 shrink-0 text-center select-none",
-                    row.type === "eq" && "text-muted-foreground/30"
+                    "flex whitespace-pre",
+                    row.type === "add" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+                    row.type === "del" && "bg-red-500/10 text-red-700 dark:text-red-300"
                   )}
                 >
-                  {SIGN[row.type]}
-                </span>
-                <span className={cn("pe-3", row.type === "eq" && "text-muted-foreground")}>
-                  {row.text || " "}
-                </span>
-              </div>
-            )
-          )}
-        </pre>
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "w-5 shrink-0 text-center select-none",
+                      row.type === "eq" && "text-muted-foreground/30"
+                    )}
+                  >
+                    {SIGN[row.type]}
+                  </span>
+                  <span className={cn("pe-3", row.type === "eq" && "text-muted-foreground")}>
+                    {row.text || " "}
+                  </span>
+                </div>
+              )
+            )}
+          </pre>
+        )}
       </div>
     </div>
+  )
+}
+
+/** One row of a split diff: the left cell holds deletions + unchanged lines, the
+ *  right holds additions + unchanged lines, and the side a row doesn't belong to
+ *  is left blank so the two columns stay aligned. */
+function DiffSplitRow({ row }: { row: Row }) {
+  const left = row.type === "del" || row.type === "eq" ? row : null
+  const right = row.type === "add" || row.type === "eq" ? row : null
+  return (
+    <>
+      <div
+        className={cn(
+          "whitespace-pre pe-3",
+          left?.type === "del" && "bg-red-500/10 text-red-700 dark:text-red-300",
+          left?.type === "eq" && "text-muted-foreground"
+        )}
+      >
+        {left ? (left.type === "eq" ? left.text : `- ${left.text}`) : " "}
+      </div>
+      <div
+        className={cn(
+          "whitespace-pre ps-3",
+          right?.type === "add" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+          right?.type === "eq" && "text-muted-foreground"
+        )}
+      >
+        {right ? (right.type === "eq" ? right.text : `+ ${right.text}`) : " "}
+      </div>
+    </>
   )
 }

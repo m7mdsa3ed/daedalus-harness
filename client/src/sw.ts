@@ -97,7 +97,9 @@ self.addEventListener("push", (event) => {
     self.registration.showNotification(title, {
       body,
       icon: "/icon-192.png",
-      badge: "/icon-192.png",
+      // Monochrome white-on-transparent, or Android's status bar shows nothing
+      // (a colored icon is rejected and replaced with a blank/white square).
+      badge: "/icon-badge.png",
       // Same thread, same kind of event: replace rather than stack, matching
       // what lib/notifications.ts does for the in-app ones. `renotify` is what
       // makes the replacement announce itself — silently swapping the text of a

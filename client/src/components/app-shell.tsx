@@ -47,17 +47,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import {
-  ResponsiveDialog,
-  ResponsiveDialogContent,
-} from "@/components/ui/responsive-dialog"
 import { Separator } from "@/components/ui/separator"
 import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
 import { OpenPanelMenu } from "@/components/workspace/open-panel-menu"
 import { panelId, type PanelKind } from "@/lib/workspace/panels"
 import { openTerminal } from "@/components/workspace/terminal-panel"
 import { ThreadHero } from "@/components/thread-hero"
-import { ScheduleDialog } from "@/components/schedule-dialog"
+import { SchedulePage } from "@/components/schedule-page"
 import type { DockviewApi } from "dockview-react"
 import { SetupCardsSkeleton, SidebarGroupsSkeleton } from "@/components/ui/skeletons"
 import {
@@ -84,6 +80,8 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router"
 import {
   currentThreadId,
   NavigationBridge,
+  schedulePath,
+  settingsFormPath,
   settingsPath,
   threadPath,
 } from "@/lib/router"
@@ -107,7 +105,7 @@ import {
 } from "@/lib/settings"
 import { emptyThread, threadIsEmpty, useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
-import { ProjectForm } from "@/components/settings/projects"
+import { ProjectFormPage, ProjectsPage } from "@/components/settings/projects"
 import {
   SETTINGS_NAV_GROUPS,
   SETTINGS_SECTIONS,
@@ -117,13 +115,13 @@ import { SettingsLayout } from "@/components/settings/layout"
 import { GeneralPage } from "@/components/settings/general"
 import { AppearancePage } from "@/components/settings/appearance"
 import { NotificationsPage } from "@/components/settings/notifications"
-import { ProjectsPage } from "@/components/settings/projects"
-import { McpPage } from "@/components/settings/mcp"
-import { SkillsPage } from "@/components/settings/skills"
-import { CommandsPage } from "@/components/settings/commands"
-import { ProfilesPage } from "@/components/settings/profiles"
+import { McpFormPage, McpImportPage, McpPage } from "@/components/settings/mcp"
+import { SkillFormPage, SkillImportPage, SkillsPage } from "@/components/settings/skills"
+import { CommandFormPage, CommandImportPage, CommandsPage } from "@/components/settings/commands"
+import { ProfileFormPage, ProfilesPage } from "@/components/settings/profiles"
 import { AgentsPage } from "@/components/settings/agents"
 import { WebSearchPage } from "@/components/settings/web-search"
+import { ThemeEditorPage } from "@/components/theme-builder"
 
 /** Swappable sidebar body. One panel per route family — see `panels` below. */
 /** Closes the mobile sidebar sheet whenever the route changes. Desktop keeps
@@ -167,7 +165,6 @@ export function AppShell({
   const { state } = useStore()
   const location = useLocation()
   const navigate = useNavigate()
-  const [newProjectOpen, setNewProjectOpen] = React.useState(false)
   // Sidebar width overrides the shadcn default via the same CSS var it reads.
   const [sidebarWidth, setSidebarWidth] = React.useState(
     () => localStorage.getItem(SIDEBAR_WIDTH_KEY) ?? SIDEBAR_WIDTH_DEFAULT
@@ -178,7 +175,8 @@ export function AppShell({
   const offer = useNotificationOffer()
   const notice = useHeaderNotice()
   const inSettings = location.pathname.startsWith("/settings")
-  const sessionId = inSettings ? null : currentThreadId(location.pathname, location.search)
+  const inSchedule = location.pathname.startsWith("/schedules/")
+  const sessionId = inSettings || inSchedule ? null : currentThreadId(location.pathname, location.search)
   const section = sectionOf(inSettings ? (location.pathname.split("/")[2] ?? "") : "")
   // Leaving settings returns to the thread it was opened from.
   const lastThread = React.useRef<string | null>(null)
@@ -187,7 +185,7 @@ export function AppShell({
   const ready = !loading && state.projects.length > 0 && state.profiles.length > 0
   /* The homepage and an empty active thread share the same backdrop. A
      background tab going empty must not paint the foreground one. */
-  const onHomepage = !inSettings && !sessionId
+  const onHomepage = !inSettings && !inSchedule && !sessionId
   const heroVisible =
     onHomepage ||
     (!!active && !!sessionId && threadIsEmpty(state.threads[sessionId] ?? emptyThread, active.draft))
@@ -379,7 +377,7 @@ export function AppShell({
                 </SidebarMenuButton>
               </SidebarMenuItem>
               <SidebarMenuItem>
-                <SidebarMenuButton tooltip="New project" onClick={() => setNewProjectOpen(true)} disabled={loading}>
+                <SidebarMenuButton tooltip="New project" onClick={() => void navigate(settingsFormPath("projects"))} disabled={loading}>
                   <FolderPlus className="size-4" />
                   <span>New project</span>
                 </SidebarMenuButton>
@@ -547,7 +545,7 @@ export function AppShell({
           className="relative z-30 flex h-12 shrink-0 items-center gap-1 bg-transparent px-2 sm:gap-2 sm:px-4"
         >
           <SidebarTrigger className="-ml-1 shrink-0" />
-          <Separator orientation="vertical" className="mr-1 h-4 shrink-0 sm:mr-2" />
+          <Separator orientation="vertical" className="mr-1 h-full shrink-0 sm:mr-2" />
           {/* Both of these stand IN the header while they last: one row, one
               subject. Nothing is stacked and nothing below moves when they go —
               see components/notification-alert. An event outranks the offer;
@@ -565,11 +563,15 @@ export function AppShell({
                 <h1 className="truncate text-sm font-medium">
                   {inSettings
                     ? (SETTINGS_SECTIONS.find((s) => s.id === section)?.label ?? "Settings")
-                    : (active?.title ?? "Daedalus")}
+                    : inSchedule
+                      ? "New schedule"
+                      : (active?.title ?? "Daedalus")}
                 </h1>
               )}
               {inSettings ? (
                 <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Settings</span>
+              ) : inSchedule ? (
+                <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Scheduled messages</span>
               ) : (
                 active && (
                   <span className="hidden shrink-0 truncate text-xs text-muted-foreground sm:inline">
@@ -584,7 +586,7 @@ export function AppShell({
                 tab strip: there is exactly one of it however the dock is split,
                 and it survives a narrow screen, which is where it matters —
                 nothing else on a phone can reach these panels. */}
-            {!inSettings && (
+            {!inSettings && !inSchedule && (
               <OpenPanelMenu
                 onNewTab={newThreadInTab}
                 onOpen={openWorkspacePanel}
@@ -602,17 +604,36 @@ export function AppShell({
             <Route index element={<Navigate to="general" replace />} />
             <Route path="general" element={<GeneralPage />} />
             <Route path="appearance" element={<AppearancePage />} />
+            <Route path="appearance/themes/:themeId" element={<ThemeEditorPage />} />
             <Route path="notifications" element={<NotificationsPage />} />
             <Route path="projects" element={<ProjectsPage />} />
+            <Route path="projects/:entryId" element={<ProjectFormPage />} />
             <Route path="mcp" element={<McpPage />} />
+            <Route path="mcp/import" element={<McpImportPage />} />
+            <Route path="mcp/:entryId" element={<McpFormPage />} />
             <Route path="skills" element={<SkillsPage />} />
+            <Route path="skills/import" element={<SkillImportPage />} />
+            <Route path="skills/:entryId" element={<SkillFormPage />} />
             <Route path="commands" element={<CommandsPage />} />
+            <Route path="commands/import" element={<CommandImportPage />} />
+            <Route path="commands/:entryId" element={<CommandFormPage />} />
             <Route path="profiles" element={<ProfilesPage />} />
+            <Route path="profiles/:entryId" element={<ProfileFormPage />} />
             <Route path="agents" element={<AgentsPage />} />
             <Route path="web-search" element={<WebSearchPage />} />
             {/* /settings/<unknown> — the sidebar still needs a page to light up. */}
             <Route path="*" element={<Navigate to="/settings/general" replace />} />
           </Route>
+          <Route
+            path="/schedules/new"
+            element={
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <div className="mx-auto w-full max-w-3xl px-4 pt-6 pb-16 sm:px-8">
+                  <SchedulePage actions={actions} />
+                </div>
+              </div>
+            }
+          />
           {/* Both thread routes render the same element so the dock (and every
               mounted transcript in it) survives switching between threads. */}
           <Route path="/t?/:sessionId?" element={threadMain} />
@@ -625,25 +646,10 @@ export function AppShell({
         actions={actions}
         dock={dock}
         onNewThread={startThread}
-        onNewProject={() => setNewProjectOpen(true)}
+        onNewProject={() => void navigate(settingsFormPath("projects"))}
         onShortcuts={() => shortcuts.setOpen(true)}
       />
       <ShortcutsHelp open={shortcuts.open} onOpenChange={shortcuts.setOpen} />
-      {/* Same form the settings page uses — created from the sidebar too. */}
-      <ResponsiveDialog open={newProjectOpen} onOpenChange={setNewProjectOpen}>
-        <ResponsiveDialogContent className="sm:max-w-xl">
-          {newProjectOpen && (
-            <ProjectForm
-              project={null}
-              settings={settings}
-              onDone={async (saved) => {
-                setNewProjectOpen(false)
-                if (saved) await actions.refreshProjects()
-              }}
-            />
-          )}
-        </ResponsiveDialogContent>
-      </ResponsiveDialog>
     </SidebarProvider>
   )
 }
@@ -723,7 +729,7 @@ const GROUP_LABEL =
 const RECENT_COUNT = 6
 
 /** Rows a long-tail group (a project, Trash) shows before its "Show more". */
-const PROJECT_PAGE_SIZE = 8
+const PROJECT_PAGE_SIZE = 5
 
 function ThreadGroups({ actions }: { actions: Actions }) {
   const { state } = useStore()
@@ -795,6 +801,7 @@ function ThreadGroups({ actions }: { actions: Actions }) {
           <ThreadList sessions={pinned} actions={actions} />
         </FoldableGroup>
       )}
+      <ScheduledGroup actions={actions} />
       {recent.length > 0 && (
         <FoldableGroup
           groupKey="__recent"
@@ -805,7 +812,6 @@ function ThreadGroups({ actions }: { actions: Actions }) {
           <ThreadList sessions={recent} actions={actions} />
         </FoldableGroup>
       )}
-      <ScheduledGroup actions={actions} />
       {[...byProject.entries()].map(([projectId, sessions]) =>
         projectGroup(projectId, sessions)
       )}
@@ -858,9 +864,9 @@ function scheduleWhen(nextAt: number, everyMs: number | null): string {
 function ScheduledGroup({ actions }: { actions: Actions }) {
   const { state } = useStore()
   const navigate = useNavigate()
+  const location = useLocation()
   const { isMobile, setOpenMobile } = useSidebar()
   const confirm = useConfirm()
-  const [creating, setCreating] = React.useState(false)
 
   /* The picker offers the threads a schedule can legally target — the same
      set the old settings page offered. A draft has no server row to schedule
@@ -889,7 +895,6 @@ function ScheduledGroup({ actions }: { actions: Actions }) {
     state.sessions.find((s) => s.id === sessionId)?.title ?? "Unknown thread"
 
   return (
-    <>
       <FoldableGroup
         groupKey="__scheduled"
         label="Scheduled"
@@ -900,7 +905,9 @@ function ScheduledGroup({ actions }: { actions: Actions }) {
             <button
               type="button"
               title="New schedule"
-              onClick={() => setCreating(true)}
+              onClick={() => void navigate(schedulePath(live[0].id), {
+                state: { returnTo: location.pathname + location.search },
+              })}
               className="grid size-4 place-items-center rounded-sm text-muted-foreground transition-colors hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <Plus className="size-3.5" />
@@ -948,16 +955,6 @@ function ScheduledGroup({ actions }: { actions: Actions }) {
           </SidebarMenu>
         )}
       </FoldableGroup>
-      {creating && live.length > 0 && (
-        <ScheduleDialog
-          open={creating}
-          onOpenChange={setCreating}
-          sessionId={live[0].id}
-          actions={actions}
-          sessions={live.map((s) => ({ id: s.id, title: s.title }))}
-        />
-      )}
-    </>
   )
 }
 
@@ -1232,7 +1229,7 @@ function ThreadList({
 
   return (
     <SidebarMenu>
-      {sessions.map((session) => {
+      {visible.map((session) => {
         const pinned = pins.includes(session.id)
         /* One list feeds both the hover dropdown and the right-click menu. */
         const items = trash

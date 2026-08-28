@@ -1,13 +1,8 @@
 import * as React from "react"
 import { KeyRound, Pencil, Plus, Trash2 } from "lucide-react"
+import { Navigate, useNavigate, useParams } from "react-router"
 import { reportError } from "@/lib/errors"
 import { Button } from "@/components/ui/button"
-import {
-  ResponsiveDialog,
-  ResponsiveDialogContent,
-  ResponsiveDialogHeader,
-  ResponsiveDialogTitle,
-} from "@/components/ui/responsive-dialog"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -21,7 +16,7 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { api, type ModelCandidate, type Profile, type ServerSettings } from "@/lib/settings"
 import { useStore } from "@/lib/store"
-import { PageHeader, Group, Row, EmptyCard, Field, FormActions } from "./primitives"
+import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions } from "./primitives"
 import {
   ModelsSection,
   blankModelRow,
@@ -32,6 +27,7 @@ import {
 } from "./profile-models"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
+import { settingsFormPath, settingsPath } from "@/lib/router"
 
 const UNREGISTERED = "__unregistered"
 
@@ -40,7 +36,7 @@ export function ProfilesPage() {
   const meta = sectionMeta("profiles")
   const { state } = useStore()
   const confirm = useConfirm()
-  const [editing, setEditing] = React.useState<Profile | "new" | null>(null)
+  const navigate = useNavigate()
 
   const remove = async (profile: Profile) => {
     if (!(await confirm({ title: `Delete profile "${profile.name}"?`, destructive: true, confirmLabel: "Delete" })))
@@ -54,7 +50,7 @@ export function ProfilesPage() {
   }
 
   const newButton = (
-    <Button size="lg" onClick={() => setEditing("new")}>
+    <Button size="lg" onClick={() => void navigate(settingsFormPath("profiles"))}>
       <Plus className="size-4" /> New profile
     </Button>
   )
@@ -110,7 +106,7 @@ export function ProfilesPage() {
                         no key
                       </Badge>
                     )}
-                    <Button variant="ghost" size="icon-lg" title="Edit" onClick={() => setEditing(profile)}>
+                    <Button variant="ghost" size="icon-lg" title="Edit" onClick={() => void navigate(settingsFormPath("profiles", profile.id))}>
                       <Pencil />
                     </Button>
                     <Button variant="ghost" size="icon-lg" title="Delete" onClick={() => remove(profile)}>
@@ -123,22 +119,27 @@ export function ProfilesPage() {
           </Group>
         ))
       )}
-      <ResponsiveDialog open={editing !== null} onOpenChange={(open) => !open && setEditing(null)}>
-        <ResponsiveDialogContent className="sm:max-w-xl">
-          {editing !== null && (
-            <ProfileForm
-              profile={editing === "new" ? null : editing}
-              agents={state.agents}
-              settings={settings}
-              onDone={async (saved) => {
-                if (saved) await actions.refreshProfiles()
-                setEditing(null)
-              }}
-            />
-          )}
-        </ResponsiveDialogContent>
-      </ResponsiveDialog>
     </>
+  )
+}
+
+export function ProfileFormPage() {
+  const { entryId } = useParams()
+  const navigate = useNavigate()
+  const { settings, actions } = useSettingsPage()
+  const { state } = useStore()
+  const profile = entryId === "new" ? null : state.profiles.find((item) => item.id === entryId)
+  if (entryId !== "new" && !profile) return <Navigate to={settingsPath("profiles")} replace />
+  return (
+    <ProfileForm
+      profile={profile ?? null}
+      agents={state.agents}
+      settings={settings}
+      onDone={async (saved) => {
+        if (saved) await actions.refreshProfiles()
+        void navigate(settingsPath("profiles"))
+      }}
+    />
   )
 }
 
@@ -168,7 +169,6 @@ function ProfileForm({
     searchApiToken: "",
     searchModel: profile?.webSearch?.searchModel ?? "",
     fetchModel: profile?.webSearch?.fetchModel ?? "",
-    memories: profile?.memories?.enabled ?? false,
     knowledge: profile?.knowledge?.enabled ?? false,
   }))
   const [hasWebSearchToken, setHasWebSearchToken] = React.useState(
@@ -224,7 +224,6 @@ function ProfileForm({
           ...(form.searchModel ? { searchModel: form.searchModel } : {}),
           ...(form.fetchModel ? { fetchModel: form.fetchModel } : {}),
         },
-        memories: { enabled: form.memories },
         knowledge: { enabled: form.knowledge },
       }
       const saved = profile
@@ -240,10 +239,13 @@ function ProfileForm({
   }
 
   return (
-    <form onSubmit={save} className="space-y-4">
-      <ResponsiveDialogHeader>
-        <ResponsiveDialogTitle>{profile ? `Edit ${profile.name}` : "New profile"}</ResponsiveDialogTitle>
-      </ResponsiveDialogHeader>
+    <>
+      <FormPageHeader
+        title={profile ? `Edit ${profile.name}` : "New profile"}
+        description="Configure the runtime, credentials, model catalog, and optional profile capabilities."
+        onBack={() => onDone(false)}
+      />
+      <PageForm onSubmit={save}>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Name">
           <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
@@ -329,18 +331,13 @@ function ProfileForm({
         </div>
       )}
       <Field
-        label="Memories via MCP"
-        hint="Gives the agent a durable cross-turn memory for this profile's projects. Off by default."
-      >
-        <Switch checked={form.memories} onCheckedChange={(checked) => set({ memories: checked })} />
-      </Field>
-      <Field
         label="Knowledge base via MCP"
         hint="Gives the agent a per-project knowledge base for this profile's projects. Off by default."
       >
         <Switch checked={form.knowledge} onCheckedChange={(checked) => set({ knowledge: checked })} />
       </Field>
       <FormActions busy={busy} onCancel={() => onDone(false)} />
-    </form>
+      </PageForm>
+    </>
   )
 }

@@ -1,4 +1,5 @@
 import * as React from "react"
+import { Navigate, useNavigate, useParams } from "react-router"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -10,15 +11,12 @@ import {
 } from "@/components/ui/select"
 import { type McpServerDef, type ServerSettings } from "@/lib/settings"
 import { useStore } from "@/lib/store"
-import { Field, FormActions, lines, pairs } from "./primitives"
+import { FormPageHeader, PageForm, Field, FormActions, lines, pairs } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
-import { LibrarySection, saveLibraryEntry } from "./library"
+import { LibraryImportPage, LibrarySection, saveLibraryEntry } from "./library"
 import { reportError } from "@/lib/errors"
-import {
-  ResponsiveDialogHeader,
-  ResponsiveDialogTitle,
-} from "@/components/ui/responsive-dialog"
+import { settingsPath } from "@/lib/router"
 
 export function McpPage() {
   const { settings, actions } = useSettingsPage()
@@ -29,12 +27,34 @@ export function McpPage() {
       meta={meta}
       items={state.mcpServers}
       endpoint="/api/mcp-servers"
-      importKind="mcpServers"
       noun="MCP server"
       subtitle={(s) => (s.type === "http" ? s.url : [s.command, ...s.args].join(" "))}
       settings={settings}
       refresh={actions.refreshMcpServers}
-      renderForm={(server, onDone) => <McpForm server={server} settings={settings} onDone={onDone} />}
+    />
+  )
+}
+
+export function McpImportPage() {
+  const { actions } = useSettingsPage()
+  return <LibraryImportPage meta={sectionMeta("mcp")} kind="mcpServers" endpoint="/api/mcp-servers" noun="MCP server" refresh={actions.refreshMcpServers} />
+}
+
+export function McpFormPage() {
+  const { entryId } = useParams()
+  const navigate = useNavigate()
+  const { settings, actions } = useSettingsPage()
+  const { state } = useStore()
+  const server = entryId === "new" ? null : state.mcpServers.find((item) => item.id === entryId)
+  if (entryId !== "new" && !server) return <Navigate to={settingsPath("mcp")} replace />
+  return (
+    <McpForm
+      server={server ?? null}
+      settings={settings}
+      onDone={async (saved) => {
+        if (saved) await actions.refreshMcpServers()
+        void navigate(settingsPath("mcp"))
+      }}
     />
   )
 }
@@ -83,10 +103,13 @@ function McpForm({
   }
 
   return (
-    <form onSubmit={save} className="space-y-4">
-      <ResponsiveDialogHeader>
-        <ResponsiveDialogTitle>{server ? `Edit ${server.name}` : "New MCP server"}</ResponsiveDialogTitle>
-      </ResponsiveDialogHeader>
+    <>
+      <FormPageHeader
+        title={server ? `Edit ${server.name}` : "New MCP server"}
+        description="Define how projects connect to this MCP server."
+        onBack={() => onDone(false)}
+      />
+      <PageForm onSubmit={save}>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Name" hint="How the agent addresses the server.">
           <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
@@ -153,6 +176,7 @@ function McpForm({
         </>
       )}
       <FormActions busy={busy} onCancel={() => onDone(false)} />
-    </form>
+      </PageForm>
+    </>
   )
 }

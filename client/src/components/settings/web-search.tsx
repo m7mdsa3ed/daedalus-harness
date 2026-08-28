@@ -2,7 +2,7 @@ import * as React from "react"
 import { reportError } from "@/lib/errors"
 import { api } from "@/lib/settings"
 import { Input } from "@/components/ui/input"
-import { PageHeader, Group, Field, FormActions } from "./primitives"
+import { PageForm, PageHeader, Group, Field, FormActions } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 
@@ -81,9 +81,10 @@ export function WebSearchPage() {
           No web-search backend configured yet — fill this in to give profiles a default to inherit.
         </p>
       )}
-      <form onSubmit={save} className="space-y-4">
-        <Group>
-          <Field label="Search API base URL" hint="e.g. http://localhost:20128">
+      <PageForm onSubmit={save}>
+        <Group label="Default backend">
+          <div className="grid gap-4 p-4 sm:grid-cols-2">
+            <Field label="Search API base URL" hint="e.g. http://localhost:20128">
             <Input
               value={form.searchApiBaseUrl}
               onChange={(e) => set({ searchApiBaseUrl: e.target.value })}
@@ -91,19 +92,20 @@ export function WebSearchPage() {
               className="font-mono text-xs"
               required
             />
-          </Field>
-          <Field label="Search API token" hint={hasToken ? "Stored — leave empty to keep it." : "Never sent back to clients."}>
-            <Input type="password" value={form.searchApiToken} onChange={(e) => set({ searchApiToken: e.target.value })} />
-          </Field>
-          <Field label="Search model" hint="Model the backend serves for /v1/search.">
-            <Input value={form.searchModel} onChange={(e) => set({ searchModel: e.target.value })} placeholder="search-combo" className="font-mono text-xs" required />
-          </Field>
-          <Field label="Fetch model" hint="Model the backend serves for /v1/web/fetch.">
-            <Input value={form.fetchModel} onChange={(e) => set({ fetchModel: e.target.value })} placeholder="fetch-combo" className="font-mono text-xs" required />
-          </Field>
+            </Field>
+            <Field label="Search API token" hint={hasToken ? "Stored — leave empty to keep it." : "Never sent back to clients."}>
+              <Input type="password" value={form.searchApiToken} onChange={(e) => set({ searchApiToken: e.target.value })} />
+            </Field>
+            <Field label="Search model" hint="Model the backend serves for /v1/search.">
+              <Input value={form.searchModel} onChange={(e) => set({ searchModel: e.target.value })} placeholder="search-combo" className="font-mono text-xs" required />
+            </Field>
+            <Field label="Fetch model" hint="Model the backend serves for /v1/web/fetch.">
+              <Input value={form.fetchModel} onChange={(e) => set({ fetchModel: e.target.value })} placeholder="fetch-combo" className="font-mono text-xs" required />
+            </Field>
+          </div>
         </Group>
         <FormActions busy={busy} onCancel={() => void load()} />
-      </form>
+      </PageForm>
       <p className="px-1 text-xs text-pretty text-muted-foreground">
         The token only ever leaves the server process at spawn — it is never shown back to clients and never stored in
         the database. Each profile can override these values in Settings › Profiles.

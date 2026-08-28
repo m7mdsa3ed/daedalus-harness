@@ -43,16 +43,14 @@ export const ProfileInputSchema = z.object({
     })
     .optional()
     .default({ enabled: false }),
-  /** Opt the agent into the harness's `memory` MCP server. Just the flag — there
-      is no per-profile config to override (unlike webSearch), so a profile only
-      says whether the tools are advertised at all. Off by default. */
-  memories: z.object({ enabled: z.boolean().default(false) }).optional().default({ enabled: false }),
-  /** Opt the agent into the harness's `knowledge` MCP server. Same shape. */
+  /** Opt the agent into the harness's `knowledge` MCP server. Just the flag —
+      there is no per-profile config to override (unlike webSearch), so a profile
+      only says whether the tools are advertised at all. Off by default. */
   knowledge: z.object({ enabled: z.boolean().default(false) }).optional().default({ enabled: false }),
 });
 
 export type ProfileInput = z.infer<typeof ProfileInputSchema>;
-export type Profile = Omit<ProfileInput, "webSearch" | "memories" | "knowledge"> & {
+export type Profile = Omit<ProfileInput, "webSearch" | "knowledge"> & {
   id: string;
   /** Not stored: synthesized for an agent so it can always be run as it ships.
       See `defaultProfileFor`. Nothing may edit or delete one. */
@@ -63,10 +61,8 @@ export type Profile = Omit<ProfileInput, "webSearch" | "memories" | "knowledge">
   webSearch:
     | { enabled: boolean; searchApiBaseUrl?: string; searchApiToken?: string; searchModel?: string; fetchModel?: string }
     | null;
-  /** Opt-in to the harness's `memory` MCP server. Like webSearch, a stored row
+  /** Opt-in to the harness's `knowledge` MCP server. Like webSearch, a stored row
       predating the column reads back null, treated as off. */
-  memories: { enabled: boolean } | null;
-  /** Opt-in to the harness's `knowledge` MCP server. Same. */
   knowledge: { enabled: boolean } | null;
 };
 
@@ -96,7 +92,6 @@ export function defaultProfileFor(agentId: string, _agentName?: string): Profile
     models: [],
     defaultModel: "",
     webSearch: { enabled: false },
-    memories: { enabled: false },
     knowledge: { enabled: false },
     virtual: true,
   };
@@ -112,10 +107,9 @@ export function isVirtualProfile(id: string): boolean {
 function toProfile(row: Record<string, unknown>): Profile {
   const { id, ...rest } = row;
   return {
-    ...(rest as Omit<ProfileInput, "webSearch" | "memories" | "knowledge">),
+    ...(rest as Omit<ProfileInput, "webSearch" | "knowledge">),
     id: id as string,
     webSearch: (row.webSearch as { enabled: boolean } | undefined | null) ?? { enabled: false },
-    memories: (row.memories as { enabled: boolean } | undefined | null) ?? { enabled: false },
     knowledge: (row.knowledge as { enabled: boolean } | undefined | null) ?? { enabled: false },
   };
 }

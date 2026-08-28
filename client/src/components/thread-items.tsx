@@ -52,6 +52,7 @@ import {
 import { useTaskEvents, watchTask } from "@/lib/task-events"
 import { loadSettings } from "@/lib/settings"
 import { cn } from "@/lib/utils"
+import { useViewOptionsContext } from "@/lib/view-options"
 import type { CompactionItem, PlanItem, ThreadItem, ToolItem } from "@/lib/store"
 
 /* Right-clicking text the user has selected keeps the browser's own menu —
@@ -680,6 +681,7 @@ export function ThreadItemView({
   onDismiss?: () => void
   showTimestamps?: boolean
 }) {
+  const view = useViewOptionsContext()
   switch (item.kind) {
     case "error":
       return (
@@ -777,11 +779,13 @@ export function ThreadItemView({
           label="think"
           status={null}
           mono={false}
+          defaultOpen={view.showThinking}
           target={reasoning.split("\n").find((line) => line.trim()) ?? "…"}
           detail={
-            <p className="text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground">
-              {reasoning}
-            </p>
+            <Prose
+              text={reasoning}
+              className="text-xs leading-relaxed text-muted-foreground"
+            />
           }
         />
       )
@@ -1579,12 +1583,14 @@ function ToolDetail({ item, active }: { item: ToolItem; active: boolean }) {
   }
   const edit = extractEditInput(item)
   if (edit) {
+    const view = useViewOptionsContext()
     return (
       <div className="space-y-1.5">
         <DiffView
           oldText={edit.oldText}
           newText={edit.newText}
           path={edit.path ? shortPath(edit.path, 80) : undefined}
+          split={view.splitDiffs}
         />
         {failed && <SmartBlock text={toolOutputText(item).text} tone="error" />}
       </div>
@@ -1648,6 +1654,7 @@ function ToolStep({ item, showTimestamp }: { item: ToolItem; showTimestamp?: boo
   const kind = toolKindOf(item)
   const KindIcon = KIND_ICONS[kind] ?? WrenchIcon
   const summary = toolSummary(item, active)
+  const view = useViewOptionsContext()
   const hasBody =
     item.content.length > 0 ||
     item.locations.length > 0 ||
@@ -1671,11 +1678,14 @@ function ToolStep({ item, showTimestamp }: { item: ToolItem; showTimestamp?: boo
       startedAt={item.startedAt}
       detail={hasBody || active ? <ToolDetail item={item} active={active} /> : undefined}
       /* A diff is the point of an edit — collapsing it hides the only thing
-         worth reviewing. A background task is still producing after its turn
-         ends — folded, the only live thing on screen would be invisible. Every
-         other kind stays folded: a read or a search is a fact, not something
-         you check line by line. */
-      defaultOpen={kind === "edit" || extractBackgroundTask(item) !== null}
+          worth reviewing. A background task is still producing after its turn
+          ends — folded, the only live thing on screen would be invisible. Every
+          other kind stays folded: a read or a search is a fact, not something
+          you check line by line. "Expand tool output" opens everything by
+          default, so the body is there to read without a click. */
+      defaultOpen={
+        view.showToolDetails || kind === "edit" || extractBackgroundTask(item) !== null
+      }
     />
   )
 }
@@ -1687,12 +1697,14 @@ export function ToolCallContent({ content }: { content: acp.ToolCallContent[] })
 }
 
 function ToolContentView({ content }: { content: acp.ToolCallContent }) {
+  const view = useViewOptionsContext()
   if (content.type === "diff") {
     return (
       <DiffView
         oldText={content.oldText}
         newText={content.newText}
         path={content.path ? shortPath(content.path, 80) : undefined}
+        split={view.splitDiffs}
       />
     )
   }

@@ -24,6 +24,18 @@ function formatTokens(value: number): string {
   return String(value)
 }
 
+/** Above this the agent is about to compact, so the popover says so. */
+const COMPACTION_WARN = 85
+
+/** Urgency colour for the ring and bar: calm while there is room, amber as it
+ *  fills, red at the brink. Returns both the text and fill classes so the same
+ *  tone paints the dial and the bar without a second threshold check. */
+function contextTone(percent: number): { text: string; bar: string } {
+  if (percent >= 90) return { text: "text-destructive", bar: "bg-destructive" }
+  if (percent >= COMPACTION_WARN) return { text: "text-amber-600 dark:text-amber-400", bar: "bg-amber-500" }
+  return { text: "text-emerald-600 dark:text-emerald-400", bar: "bg-emerald-500" }
+}
+
 function Ring({ percent }: { percent: number }) {
   const radius = 8.5
   const circumference = 2 * Math.PI * radius
@@ -46,11 +58,11 @@ function Ring({ percent }: { percent: number }) {
   )
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, valueClass }: { label: string; value: string; valueClass?: string }) {
   return (
     <div>
       <dt className="text-muted-foreground">{label}</dt>
-      <dd className="font-medium tabular-nums">{value}</dd>
+      <dd className={cn("font-medium tabular-nums", valueClass)}>{value}</dd>
     </div>
   )
 }
@@ -78,6 +90,7 @@ export function ContextIndicator({ thread }: { thread: ThreadState }) {
   const cached = usage?.cachedReadTokens ?? 0
   const prompt = usage ? usage.inputTokens + cached + (usage.cachedWriteTokens ?? 0) : 0
   const cacheRate = prompt > 0 ? Math.round((cached / prompt) * 100) : null
+  const tone = context ? contextTone(percent) : null
 
   return (
     <Popover>
@@ -86,7 +99,10 @@ export function ContextIndicator({ thread }: { thread: ThreadState }) {
           <Button
             variant="ghost"
             size="icon-sm"
-            className="relative shrink-0 rounded-lg text-muted-foreground hover:text-foreground"
+            className={cn(
+              "relative shrink-0 rounded-lg hover:text-foreground",
+              tone ? tone.text : "text-muted-foreground",
+            )}
             title={context ? `Context window — ${percent}% used` : "Turn stats"}
           >
             <Ring percent={percent} />
@@ -105,11 +121,27 @@ export function ContextIndicator({ thread }: { thread: ThreadState }) {
               : "Not reported by this agent"}
           </p>
         </div>
+        {context && (
+          <div
+            className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+            aria-valuenow={percent}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <div className={cn("h-full rounded-full transition-all", tone?.bar)} style={{ width: `${percent}%` }} />
+          </div>
+        )}
+        {context && percent >= COMPACTION_WARN && (
+          <p className="rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+            Context is nearly full — the agent compacts the history soon to keep the turn going.
+          </p>
+        )}
         <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
           <Stat label="Requests" value={String(requests)} />
           {context && (
             <>
-              <Stat label="Used" value={`${percent}%`} />
+              <Stat label="Used" value={`${percent}%`} valueClass={tone?.text} />
               <Stat label="Remaining" value={formatTokens(Math.max(0, context.size - context.used))} />
             </>
           )}
@@ -123,7 +155,19 @@ export function ContextIndicator({ thread }: { thread: ThreadState }) {
           {usage?.thoughtTokens ? <Stat label="Thinking" value={formatTokens(usage.thoughtTokens)} /> : null}
           {usage?.cachedReadTokens ? <Stat label="Cached" value={formatTokens(usage.cachedReadTokens)} /> : null}
           {usage?.cachedWriteTokens ? <Stat label="Cache write" value={formatTokens(usage.cachedWriteTokens)} /> : null}
-          {cacheRate !== null && <Stat label="Cache avg" value={`${cacheRate}%`} />}
+          {cacheRate !== null && (
+            <Stat
+              label="Cache avg"
+              value={`${cacheRate}%`}
+              valueClass={
+                cacheRate >= 50
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : cacheRate >= 20
+                    ? "text-amber-600 dark:text-amber-400"
+                    : "text-destructive"
+              }
+            />
+          )}
           {usage && <Stat label="Total" value={formatTokens(usage.totalTokens)} />}
           {ttftMs !== null && <Stat label="TTFT" value={`${ttftMs}ms`} />}
           {/* Cost is cumulative for the session; agents that don't price turns omit it. */}

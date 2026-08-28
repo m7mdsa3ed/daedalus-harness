@@ -3,6 +3,7 @@ import { PackageOpenIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { useDock } from "@/components/workspace/dock"
+import { PanelEmptyState } from "@/components/workspace/primitives"
 import { PANEL_SPECS, isPanelKind } from "@/lib/workspace/panels"
 
 /**
@@ -19,7 +20,7 @@ export function UnsupportedPanel({ api }: IDockviewPanelProps) {
   const name = isPanelKind(kind) ? PANEL_SPECS[kind].defaultTitle : kind
 
   return (
-    <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 p-8 text-center">
+    <PanelEmptyState className="text-foreground">
       <PackageOpenIcon className="size-6 text-muted-foreground" />
       <div className="space-y-1">
         <p className="text-sm font-medium">{name} isn't available in this version</p>
@@ -30,6 +31,6 @@ export function UnsupportedPanel({ api }: IDockviewPanelProps) {
       <Button size="sm" variant="outline" onClick={() => void dock.closePanel(api.id)}>
         Close panel
       </Button>
-    </div>
+    </PanelEmptyState>
   )
 }

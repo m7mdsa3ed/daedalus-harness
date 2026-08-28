@@ -10,6 +10,7 @@
    the snapshot taken on open, which is the undo that live editing owes you. */
 import * as React from "react"
 import { Check, Copy, Palette, Pencil, Plus, RotateCcw, Trash2, TriangleAlert } from "lucide-react"
+import { Navigate, useNavigate, useParams } from "react-router"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -24,12 +25,6 @@ import {
   ItemGroup,
   ItemTitle,
 } from "@/components/ui/item"
-import {
-  ResponsiveDialog,
-  ResponsiveDialogContent,
-  ResponsiveDialogHeader,
-  ResponsiveDialogTitle,
-} from "@/components/ui/responsive-dialog"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   contrastRatio,
@@ -46,6 +41,8 @@ import {
 } from "@/lib/custom-themes"
 import { BUILTIN_THEMES, useCustomThemes, useTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
+import { settingsPath } from "@/lib/router"
+import { FormPageHeader } from "@/components/settings/primitives"
 
 type Mode = "light" | "dark"
 const MODES: readonly Mode[] = ["light", "dark"]
@@ -56,21 +53,15 @@ const MIN_CONTRAST = 4.5
 export function ThemeGallery() {
   const { colorTheme, setColorTheme } = useTheme()
   const customThemes = useCustomThemes()
-  const [editing, setEditing] = React.useState<string | null>(null)
+  const navigate = useNavigate()
 
   /** New themes are copies — of the palette you are wearing, so "New theme"
       always starts from something you already like rather than from grey. */
   const create = (seedFrom: string) => {
-    const source = isCustomTheme(seedFrom)
-      ? customThemes.find((entry) => entry.id === customThemeId(seedFrom))
-      : undefined
-    const seeded = seedTheme(nextName(customThemes), source ? "default" : seedFrom)
-    const theme = source
-      ? { ...seeded, light: { ...source.light }, dark: { ...source.dark } }
-      : seeded
+    const theme = createTheme(seedFrom, customThemes)
     saveCustomThemes([...customThemes, theme])
     setColorTheme(customThemeValue(theme.id))
-    setEditing(theme.id)
+    void navigate(`/settings/appearance/themes/${encodeURIComponent(theme.id)}`)
   }
 
   return (
@@ -96,7 +87,7 @@ export function ThemeGallery() {
               onSelect={() => setColorTheme(value)}
               onEdit={() => {
                 setColorTheme(value)
-                setEditing(theme.id)
+                void navigate(`/settings/appearance/themes/${encodeURIComponent(theme.id)}`)
               }}
             />
           )
@@ -111,12 +102,39 @@ export function ThemeGallery() {
           New theme
         </button>
       </div>
-      <ThemeEditor
-        themeId={editing}
-        onClose={() => setEditing(null)}
-        onDuplicate={(id) => create(customThemeValue(id))}
-      />
     </>
+  )
+}
+
+function createTheme(seedFrom: string, customThemes: CustomTheme[]): CustomTheme {
+  const source = isCustomTheme(seedFrom)
+    ? customThemes.find((entry) => entry.id === customThemeId(seedFrom))
+    : undefined
+  const seeded = seedTheme(nextName(customThemes), source ? "default" : seedFrom)
+  return source
+    ? { ...seeded, light: { ...source.light }, dark: { ...source.dark } }
+    : seeded
+}
+
+export function ThemeEditorPage() {
+  const { themeId } = useParams()
+  const navigate = useNavigate()
+  const customThemes = useCustomThemes()
+  const { setColorTheme } = useTheme()
+  if (!themeId || !customThemes.some((theme) => theme.id === themeId)) {
+    return <Navigate to={settingsPath("appearance")} replace />
+  }
+  return (
+    <ThemeEditor
+      themeId={themeId}
+      onClose={() => void navigate(settingsPath("appearance"))}
+      onDuplicate={(id) => {
+        const theme = createTheme(customThemeValue(id), customThemes)
+        saveCustomThemes([...customThemes, theme])
+        setColorTheme(customThemeValue(theme.id))
+        void navigate(`/settings/appearance/themes/${encodeURIComponent(theme.id)}`, { replace: true })
+      }}
+    />
   )
 }
 
@@ -252,7 +270,7 @@ function ThemeEditor({
   onClose,
   onDuplicate,
 }: {
-  themeId: string | null
+  themeId: string
   onClose: () => void
   onDuplicate: (id: string) => void
 }) {
@@ -293,14 +311,16 @@ function ThemeEditor({
   const warnings = theme ? countWarnings(theme) : 0
   const worn = !!theme && colorTheme === customThemeValue(theme.id)
 
+  if (!theme) return null
+
   return (
-    <ResponsiveDialog open={!!theme} onOpenChange={(open) => !open && onClose()}>
-      <ResponsiveDialogContent className="sm:max-w-3xl">
-        <ResponsiveDialogHeader>
-          <ResponsiveDialogTitle>Edit theme</ResponsiveDialogTitle>
-        </ResponsiveDialogHeader>
-        {theme && (
-          <div className="-mx-1 flex max-h-[72vh] min-h-0 flex-col gap-4 overflow-y-auto px-1">
+    <>
+      <FormPageHeader
+        title={`Edit ${theme.name}`}
+        description="Tune the light and dark palettes together. Changes apply immediately on this device."
+        onBack={onClose}
+      />
+      <div className="flex min-h-0 flex-col gap-4">
             {/* Name + both samples: the pair is the unit of design, so both
                 halves stay on screen while any token is edited. */}
             <div className="space-y-3">
@@ -388,7 +408,7 @@ function ThemeEditor({
               </FieldSet>
             ))}
 
-            <div className="sticky bottom-0 -mx-1 flex flex-wrap items-center gap-2 border-t bg-popover/85 px-1 pt-3 backdrop-blur">
+            <footer className="flex flex-wrap items-center gap-2 border-t pt-4">
               <ButtonGroup>
                 <Button
                   variant="outline"
@@ -421,11 +441,9 @@ function ThemeEditor({
               <Button size="sm" className="ml-auto" onClick={onClose}>
                 <Check /> Done
               </Button>
-            </div>
+            </footer>
           </div>
-        )}
-      </ResponsiveDialogContent>
-    </ResponsiveDialog>
+    </>
   )
 }
 

@@ -6,7 +6,19 @@
 
    The list is declarative — add an entry to OPTIONS and the row appears. */
 import * as React from "react"
-import { Clock, Eye, RotateCcw, Wrench } from "lucide-react"
+import {
+  AlignHorizontalSpaceBetween,
+  AlignJustify,
+  Clock,
+  Columns2,
+  Eye,
+  ListTree,
+  RotateCcw,
+  ScrollText,
+  Text,
+  WrapText,
+  Wrench,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Item,
@@ -52,6 +64,55 @@ const OPTIONS: {
     title: "Group tool steps",
     description:
       "Fold a run of consecutive steps into one line you can open — the prose stays the thing you scroll.",
+  },
+  {
+    key: "compactDensity",
+    icon: AlignJustify,
+    title: "Compact density",
+    description: "Tighter line spacing and padding, so more of a long thread fits on screen.",
+  },
+  {
+    key: "autoScroll",
+    icon: ScrollText,
+    title: "Follow the stream",
+    description:
+      "Keep the newest content in view while the agent is responding. Turn off to read freely without being yanked to the bottom.",
+  },
+  {
+    key: "showThinking",
+    icon: Text,
+    title: "Show thinking",
+    description: "Expand the agent's reasoning steps by default instead of folding them away.",
+  },
+  {
+    key: "codeWrap",
+    icon: WrapText,
+    title: "Wrap code",
+    description: "Soft-wrap long code blocks and diffs instead of scrolling them sideways.",
+  },
+  {
+    key: "wideTranscript",
+    icon: AlignHorizontalSpaceBetween,
+    title: "Wide column",
+    description: "Let the transcript run wider than the default reading measure.",
+  },
+  {
+    key: "showToolDetails",
+    icon: ListTree,
+    title: "Expand tool output",
+    description: "Open every tool call's input and output by default, not just edits and diffs.",
+  },
+  {
+    key: "splitDiffs",
+    icon: Columns2,
+    title: "Split diffs",
+    description: "Show file edits side by side (old | new) instead of as a unified list.",
+  },
+  {
+    key: "stepDividers",
+    icon: AlignHorizontalSpaceBetween,
+    title: "Turn dividers",
+    description: "Draw a hairline above each of your messages to separate one turn from the next.",
   },
 ]
 

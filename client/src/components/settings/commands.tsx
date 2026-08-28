@@ -1,17 +1,15 @@
 import * as React from "react"
+import { Navigate, useNavigate, useParams } from "react-router"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { type CommandDef, type ServerSettings } from "@/lib/settings"
 import { useStore } from "@/lib/store"
-import { Field, FormActions } from "./primitives"
+import { FormPageHeader, PageForm, Field, FormActions } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
-import { LibrarySection, saveLibraryEntry } from "./library"
+import { LibraryImportPage, LibrarySection, saveLibraryEntry } from "./library"
 import { reportError } from "@/lib/errors"
-import {
-  ResponsiveDialogHeader,
-  ResponsiveDialogTitle,
-} from "@/components/ui/responsive-dialog"
+import { settingsPath } from "@/lib/router"
 
 export function CommandsPage() {
   const { settings, actions } = useSettingsPage()
@@ -22,16 +20,30 @@ export function CommandsPage() {
       meta={meta}
       items={state.commands}
       endpoint="/api/commands"
-      importKind="commands"
       noun="command"
       subtitle={(c) => `/${c.name}${c.argumentHint ? ` ${c.argumentHint}` : ""}`}
       settings={settings}
       refresh={actions.refreshCommands}
-      renderForm={(command, onDone) => (
-        <CommandForm command={command} settings={settings} onDone={onDone} />
-      )}
     />
   )
+}
+
+export function CommandImportPage() {
+  const { actions } = useSettingsPage()
+  return <LibraryImportPage meta={sectionMeta("commands")} kind="commands" endpoint="/api/commands" noun="command" refresh={actions.refreshCommands} />
+}
+
+export function CommandFormPage() {
+  const { entryId } = useParams()
+  const navigate = useNavigate()
+  const { settings, actions } = useSettingsPage()
+  const { state } = useStore()
+  const command = entryId === "new" ? null : state.commands.find((item) => item.id === entryId)
+  if (entryId !== "new" && !command) return <Navigate to={settingsPath("commands")} replace />
+  return <CommandForm command={command ?? null} settings={settings} onDone={async (saved) => {
+    if (saved) await actions.refreshCommands()
+    void navigate(settingsPath("commands"))
+  }} />
 }
 
 function CommandForm({
@@ -68,12 +80,13 @@ function CommandForm({
   }
 
   return (
-    <form onSubmit={save} className="space-y-4">
-      <ResponsiveDialogHeader>
-        <ResponsiveDialogTitle>
-          {command ? `Edit /${command.name}` : "New command"}
-        </ResponsiveDialogTitle>
-      </ResponsiveDialogHeader>
+    <>
+      <FormPageHeader
+        title={command ? `Edit /${command.name}` : "New command"}
+        description="Define the reusable prompt and autocomplete metadata for this slash command."
+        onBack={() => onDone(false)}
+      />
+      <PageForm onSubmit={save}>
       <Field label="Name" hint="Typed as /name in the composer; also the filename on disk.">
         <Input
           value={form.name}
@@ -112,6 +125,7 @@ function CommandForm({
         />
       </Field>
       <FormActions busy={busy} onCancel={() => onDone(false)} />
-    </form>
+      </PageForm>
+    </>
   )
 }

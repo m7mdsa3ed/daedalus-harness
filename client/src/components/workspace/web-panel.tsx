@@ -43,6 +43,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { PanelEmptyState, PanelNotice, PanelToolbar } from "@/components/workspace/primitives"
 import { reportError } from "@/lib/errors"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
@@ -160,7 +161,7 @@ export function WebPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center gap-1 border-b border-border/60 px-1.5 py-1">
+      <PanelToolbar>
         <Button
           size="icon-xs"
           variant="ghost"
@@ -270,14 +271,14 @@ export function WebPanel({
         >
           <ExternalLinkIcon className="size-3.5" />
         </Button>
-      </div>
+      </PanelToolbar>
 
       {mixedContent && (
-        <p className="shrink-0 border-b border-border/60 bg-muted/40 px-2 py-1.5 text-[11px]">
+        <PanelNotice className="text-foreground">
           This page is served over https, so the browser will not let it frame an{" "}
           <code className="font-mono">http://</code> address. Open it in a browser tab instead, or
           serve the dev server over https.
-        </p>
+        </PanelNotice>
       )}
 
       <div className="min-h-0 flex-1 overflow-auto bg-muted/20">
@@ -311,9 +312,5 @@ export function WebPanel({
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 p-8 text-center text-xs text-muted-foreground">
-      {children}
-    </div>
-  )
+  return <PanelEmptyState>{children}</PanelEmptyState>
 }

@@ -5,6 +5,7 @@ import { stream } from "hono/streaming";
 import { cors } from "hono/cors";
 import { WebSocketServer } from "ws";
 import { loadConfig, readWebSearch, saveWebSearch } from "./config.js";
+import { runProvider } from "./websearch.js";
 import { getAgent, listAgents, seedAgents } from "./registry.js";
 import {
   ProfileInputSchema,
@@ -60,6 +61,7 @@ import {
 import { stopWatching, watchProject, type WatchBatch } from "./workspace-watch.js";
 import * as git from "./git.js";
 import { createPreview, deletePreview, listPreviews } from "./previews.js";
+import { KnowledgeInputSchema, addKnowledge, deleteKnowledge, listKnowledge } from "./knowledge.js";
 import {
   attachTerminal,
   createTerminal,
@@ -414,6 +416,25 @@ app.delete("/api/projects/:projectId/previews/:previewId", (c) =>
   deletePreview(c.req.param("previewId"))
     ? c.json({ ok: true })
     : c.json({ error: "no such preview" }, 404),
+);
+
+/* Knowledge base. The same table the `knowledge` MCP server reads, exposed as a
+   REST resource so the user can see and edit it in Settings › Projects. Missing
+   project surfaces as a 404 via the `workspace()` wrapper. */
+app.get("/api/projects/:projectId/knowledge", (c) =>
+  workspace(c, () => listKnowledge(c.req.param("projectId"))),
+);
+
+app.post("/api/projects/:projectId/knowledge", async (c) => {
+  const parsed = KnowledgeInputSchema.safeParse(await c.req.json());
+  if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+  return workspace(c, () => addKnowledge(c.req.param("projectId"), parsed.data));
+});
+
+app.delete("/api/projects/:projectId/knowledge/:entryId", (c) =>
+  deleteKnowledge(c.req.param("projectId"), c.req.param("entryId"))
+    ? c.json({ ok: true })
+    : c.json({ error: "no such knowledge entry" }, 404),
 );
 
 /* Source control. Every write names its paths explicitly — there is no

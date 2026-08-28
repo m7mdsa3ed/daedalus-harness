@@ -74,15 +74,10 @@ export interface WebSearchProfile {
   fetchModel?: string;
 }
 
-/** A profile opting the agent into the harness's `memory` MCP server. Just the
-    flag — there is no per-profile config to override, unlike webSearch, so the
-    profile only says whether the tools are advertised at all. Off by default. */
-export interface MemoriesProfile {
-  enabled: boolean;
-}
-
-/** A profile opting the agent into the harness's `knowledge` MCP server. Same
-    shape as `memories` — a single enabled flag, off by default. */
+/** A profile opting the agent into the harness's `knowledge` MCP server. Just
+    the flag — there is no per-profile config to override, unlike webSearch, so
+    the profile only says whether the tools are advertised at all. Off by
+    default. */
 export interface KnowledgeProfile {
   enabled: boolean;
 }
@@ -100,9 +95,6 @@ export const profiles = sqliteTable("profiles", {
   /** Per-profile web-search toggle. Null on rows from before the column existed
       (treated as off — profiles opt in). */
   webSearch: text("web_search", { mode: "json" }).$type<WebSearchProfile>(),
-  /** Opt the agent into the harness's `memory` MCP server. Null on rows from
-      before the column existed (treated as off — profiles opt in). */
-  memories: text("memories", { mode: "json" }).$type<MemoriesProfile>(),
   /** Opt the agent into the harness's `knowledge` MCP server. Null on rows from
       before the column existed (treated as off — profiles opt in). */
   knowledge: text("knowledge", { mode: "json" }).$type<KnowledgeProfile>(),
@@ -147,33 +139,12 @@ export const commands = sqliteTable("commands", {
   content: text("content").notNull(),
 });
 
-/**
- * A durable cross-turn memory, keyed to a project. The agent's `memory` MCP
- * server reads and writes these; `project_id` scopes every query so nothing a
- * workspace learns leaks into another. Search is substring `LIKE` (the "grep"
- * contract — deliberately no vector index), ordered by recency.
- */
-export const memories = sqliteTable(
-  "memories",
-  {
-    id: text("id").primaryKey(),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
-    /** The remembered fact or text. */
-    content: text("content").notNull(),
-    /** Optional tags, stored as a JSON string-array. */
-    tags: text("tags", { mode: "json" }).$type<string[]>(),
-    createdAt: integer("created_at").notNull(),
-    /** Touched on upsert — this is what recency ranking orders on. */
-    updatedAt: integer("updated_at").notNull(),
-  },
-  (t) => [index("memories_project").on(t.projectId)],
-);
-
-/** A titled knowledge-base entry, keyed to a project. The `knowledge` MCP server
-    reads and writes these; same `project_id` scoping and `LIKE` search as
-    memories. Roughly one entry per topic, with a title plus body content. */
+/** A titled knowledge-base entry, keyed to a project. The agent's `knowledge`
+    MCP server reads and writes these; `project_id` scopes every query so
+    nothing a workspace learns leaks into another. Search is substring `LIKE`
+    (the "grep" contract — deliberately no vector index), ordered by recency.
+    Titled where a bare note would have been a separate `memories` table — the
+    two were the same thing, so they are one concept now. */
 export const knowledge = sqliteTable(
   "knowledge",
   {

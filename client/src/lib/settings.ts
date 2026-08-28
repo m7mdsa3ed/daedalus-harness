@@ -286,8 +286,6 @@ export interface Profile {
     fetchModel?: string
     hasWebSearchToken?: boolean
   }
-  /** Opt the agent into the harness's `memory` MCP server. Off by default. */
-  memories?: { enabled: boolean }
   /** Opt the agent into the harness's `knowledge` MCP server. Off by default. */
   knowledge?: { enabled: boolean }
 }

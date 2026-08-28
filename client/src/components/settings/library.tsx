@@ -4,46 +4,37 @@
 import * as React from "react"
 import { Download, Pencil, Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
+import { useNavigate } from "react-router"
 import { reportError } from "@/lib/errors"
 import { Button } from "@/components/ui/button"
-import {
-  ResponsiveDialog,
-  ResponsiveDialogContent,
-  ResponsiveDialogHeader,
-  ResponsiveDialogTitle,
-} from "@/components/ui/responsive-dialog"
 import { PickerSkeleton } from "@/components/ui/skeletons"
 import { useConfirm } from "@/components/confirm-dialog"
 import { api, type ImportCandidates, type ServerSettings } from "@/lib/settings"
-import { PageHeader, Group, Row, EmptyCard, Picker } from "./primitives"
+import { settingsFormPath, settingsPath } from "@/lib/router"
+import { PageForm, FormPageHeader, PageHeader, Group, Row, EmptyCard, Picker } from "./primitives"
 import { type SectionMeta } from "./sections"
+import { useSettingsPage } from "./layout"
 
 /** List + create/edit dialog for a library registry. Both registries share it. */
 export function LibrarySection<T extends { id: string; name: string }>({
   meta,
   items,
   endpoint,
-  importKind,
   noun,
   subtitle,
   settings,
   refresh,
-  renderForm,
 }: {
   meta: SectionMeta
   items: T[]
   endpoint: string
-  /** Which side of GET /api/import this section imports from. */
-  importKind: "mcpServers" | "skills" | "commands"
   noun: string
   subtitle: (item: T) => string
   settings: ServerSettings
   refresh: () => Promise<void>
-  renderForm: (item: T | null, onDone: (saved: boolean) => void) => React.ReactNode
 }) {
+  const navigate = useNavigate()
   const confirm = useConfirm()
-  const [editing, setEditing] = React.useState<T | "new" | null>(null)
-  const [importing, setImporting] = React.useState(false)
 
   const remove = async (item: T) => {
     if (!(await confirm({ title: `Delete "${item.name}"?`, destructive: true, confirmLabel: "Delete" }))) return
@@ -56,13 +47,13 @@ export function LibrarySection<T extends { id: string; name: string }>({
   }
 
   const newButton = (
-    <Button size="lg" onClick={() => setEditing("new")}>
+    <Button size="lg" onClick={() => void navigate(settingsFormPath(meta.id))}>
       <Plus className="size-4" /> New {noun}
     </Button>
   )
   const actions = (
     <div className="flex flex-wrap justify-end gap-2">
-      <Button size="lg" variant="outline" onClick={() => setImporting(true)}>
+      <Button size="lg" variant="outline" onClick={() => void navigate(settingsFormPath(meta.id, "import"))}>
         <Download className="size-4" /> Import
       </Button>
       {newButton}
@@ -78,7 +69,7 @@ export function LibrarySection<T extends { id: string; name: string }>({
         <Group>
           {items.map((item) => (
             <Row key={item.id} icon={meta.icon} title={item.name} subtitle={<span className="font-mono">{subtitle(item)}</span>}>
-              <Button variant="ghost" size="icon-lg" title="Edit" onClick={() => setEditing(item)}>
+              <Button variant="ghost" size="icon-lg" title="Edit" onClick={() => void navigate(settingsFormPath(meta.id, item.id))}>
                 <Pencil />
               </Button>
               <Button variant="ghost" size="icon-lg" title="Delete" onClick={() => remove(item)}>
@@ -88,31 +79,6 @@ export function LibrarySection<T extends { id: string; name: string }>({
           ))}
         </Group>
       )}
-      <ResponsiveDialog open={editing !== null} onOpenChange={(open) => !open && setEditing(null)}>
-        <ResponsiveDialogContent>
-          {editing !== null &&
-            renderForm(editing === "new" ? null : editing, async (saved) => {
-              if (saved) await refresh()
-              setEditing(null)
-            })}
-        </ResponsiveDialogContent>
-      </ResponsiveDialog>
-      <ResponsiveDialog open={importing} onOpenChange={setImporting}>
-        <ResponsiveDialogContent className="sm:max-w-xl">
-          {importing && (
-            <ImportDialog
-              kind={importKind}
-              endpoint={endpoint}
-              noun={noun}
-              settings={settings}
-              onDone={async (imported) => {
-                if (imported) await refresh()
-                setImporting(false)
-              }}
-            />
-          )}
-        </ResponsiveDialogContent>
-      </ResponsiveDialog>
     </>
   )
 }
@@ -123,19 +89,21 @@ export function LibrarySection<T extends { id: string; name: string }>({
  * selection into the library. Entries already in the library are filtered out
  * server-side.
  */
-function ImportDialog({
+export function LibraryImportPage({
+  meta,
   kind,
   endpoint,
   noun,
-  settings,
-  onDone,
+  refresh,
 }: {
+  meta: SectionMeta
   kind: "mcpServers" | "skills" | "commands"
   endpoint: string
   noun: string
-  settings: ServerSettings
-  onDone: (imported: boolean) => void
+  refresh: () => Promise<void>
 }) {
+  const { settings } = useSettingsPage()
+  const navigate = useNavigate()
   const [found, setFound] = React.useState<({ id: string; name: string; source: string } & Record<string, unknown>)[] | null>(
     null
   )
@@ -162,7 +130,8 @@ function ImportDialog({
         await api(settings, endpoint, { method: "POST", body: JSON.stringify(payload) })
       }
       toast.success(`Imported ${selected.length} ${noun}${selected.length === 1 ? "" : "s"}`)
-      onDone(true)
+      await refresh()
+      void navigate(settingsPath(meta.id))
     } catch (err) {
       reportError(err, `Couldn't import the ${noun}s`)
       setBusy(false)
@@ -172,10 +141,13 @@ function ImportDialog({
   const all = found?.map((f) => f.id) ?? []
 
   return (
-    <form onSubmit={save} className="space-y-4">
-      <ResponsiveDialogHeader>
-        <ResponsiveDialogTitle>Import {noun}s</ResponsiveDialogTitle>
-      </ResponsiveDialogHeader>
+    <>
+      <FormPageHeader
+        title={`Import ${noun}s`}
+        description="Choose definitions already configured for agents on this server. Existing library entries are hidden."
+        onBack={() => void navigate(settingsPath(meta.id))}
+      />
+      <PageForm onSubmit={save}>
       {found === null ? (
         <div className="py-2">
           <PickerSkeleton rows={4} />
@@ -212,15 +184,16 @@ function ImportDialog({
           />
         </>
       )}
-      <div className="sticky bottom-0 -mx-1 mt-2 flex justify-end gap-2 bg-gradient-to-t from-popover via-popover to-transparent px-1 pt-3 pb-1">
-        <Button type="button" variant="outline" onClick={() => onDone(false)}>
+      <footer className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
+        <Button type="button" variant="outline" onClick={() => void navigate(settingsPath(meta.id))}>
           Cancel
         </Button>
         <Button type="submit" disabled={busy || selected.length === 0}>
           {busy ? "Importing…" : selected.length ? `Import ${selected.length}` : "Import"}
         </Button>
-      </div>
-    </form>
+      </footer>
+      </PageForm>
+    </>
   )
 }
 
