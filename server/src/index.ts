@@ -35,7 +35,7 @@ import {
   skills,
 } from "./library.js";
 import { probeAgentOptions } from "./probe.js";
-import { modelsDevProviders, searchModelsDev } from "./models-dev.js";
+import { modelsDevProviders, searchModelsDev, toCandidate } from "./models-dev.js";
 import { enrichProviderModels, fetchProviderModels } from "./provider-models.js";
 import { SessionManager } from "./sessions.js";
 import {
@@ -63,15 +63,30 @@ import * as git from "./git.js";
 import { createPreview, deletePreview, listPreviews } from "./previews.js";
 import { KnowledgeInputSchema, addKnowledge, deleteKnowledge, listKnowledge } from "./knowledge.js";
 import {
+  CreateTaskSchema,
+  ReorderEntrySchema,
+  UpdateTaskSchema,
+  applyReorder,
+  createTask,
+  deleteTask,
+  getTask,
+  listTasks,
+  updateTask,
+} from "./tasks-board.js";
+import {
   attachTerminal,
   createTerminal,
   killProjectTerminals,
   killTerminal,
   listTerminals,
 } from "./terminals.js";
+import { ideStatus, reclaimAllOrphans, startIde, stopAllIdes, stopIde } from "./ide.js";
+import { parseIdePath, proxyIdeRequest, proxyIdeUpgrade } from "./ide-proxy.js";
 import { Push } from "./push.js";
 
 const config = loadConfig();
+// Editors this process did not start and cannot manage — see reclaimAllOrphans.
+reclaimAllOrphans();
 // Adds only the built-in agents this install has never been offered; a user's
 // edits and deletions are left alone. See registry.seedAgents.
 seedAgents();
@@ -251,12 +266,24 @@ app.post("/api/profiles/:id/fetch-models", async (c) => {
  * models.dev, proxied. The full catalog is ~4.4 MB, so the client searches
  * server-side and gets trimmed entries; an unreachable upstream is a 502 the
  * UI renders as "enrichment unavailable", not an editor-breaking error.
+ *
+ * The reason travels with the 502. A bare `catch {}` here reported "couldn't
+ * reach models.dev" for a fetch that failed inside this process — a DNS answer
+ * this host can't route, a TLS trust store, an aborted read — and that message
+ * sends everyone to check whether models.dev is up when the answer is on this
+ * side. `detail` is the thrown message; the log line is the whole error.
  */
+function modelsDevUnreachable(c: Context, err: unknown) {
+  console.error("models.dev request failed", err);
+  const detail = err instanceof Error ? (err.cause instanceof Error ? `${err.message}: ${err.cause.message}` : err.message) : String(err);
+  return c.json({ error: "couldn't reach models.dev", detail }, 502);
+}
+
 app.get("/api/models-dev/providers", async (c) => {
   try {
     return c.json({ providers: await modelsDevProviders() });
-  } catch {
-    return c.json({ error: "couldn't reach models.dev" }, 502);
+  } catch (err) {
+    return modelsDevUnreachable(c, err);
   }
 });
 
@@ -264,9 +291,10 @@ app.get("/api/models-dev/search", async (c) => {
   try {
     const provider = c.req.query("provider") || undefined;
     const limit = Math.min(Number(c.req.query("limit")) || 50, 200);
-    return c.json({ models: await searchModelsDev(c.req.query("q") ?? "", { provider, limit }) });
-  } catch {
-    return c.json({ error: "couldn't reach models.dev" }, 502);
+    const hits = await searchModelsDev(c.req.query("q") ?? "", { provider, limit });
+    return c.json({ models: hits.map(toCandidate) });
+  } catch (err) {
+    return modelsDevUnreachable(c, err);
   }
 });
 
@@ -521,6 +549,32 @@ app.delete("/api/projects/:projectId/terminals/:terminalId", (c) =>
     : c.json({ error: "no such terminal" }, 404),
 );
 
+/* The embedded editor. These three are the authenticated half — they say
+   whether a VS Code is running for a project and start or stop one. The editor
+   itself is not served from here: it answers on `/ide/<key>/…` below, outside
+   `/api`, because an iframe cannot send an Authorization header and the key in
+   the path is what stands in for one (see ide.ts). */
+app.get("/api/projects/:projectId/ide", (c) =>
+  workspace(c, () => ideStatus(c.req.param("projectId"))),
+);
+
+app.post("/api/projects/:projectId/ide", (c) =>
+  workspace(c, () => startIde(c.req.param("projectId"))),
+);
+
+app.delete("/api/projects/:projectId/ide", (c) =>
+  workspace(c, () => {
+    stopIde(c.req.param("projectId"));
+    return ideStatus(c.req.param("projectId"));
+  }),
+);
+
+/* The editor's own traffic. Authorized by the unguessable key in the path and
+   by nothing else — deliberately, since every asset under it is a relative URL
+   the browser resolves on its own. `parseIdePath` is the only thing that turns
+   one into a loopback port, and a key it does not know is a 404. */
+app.all("/ide/*", (c) => proxyIdeRequest(c.req.raw));
+
 /* File events as an NDJSON stream rather than SSE: EventSource cannot set an
    Authorization header, and the alternative is the bearer token in a URL — in
    history, in logs, in whatever proxy is in front. `fetch` reads this fine. */
@@ -663,7 +717,15 @@ app.post("/api/sessions/:id/respawn", async (c) => {
   const project = getProject(session.projectId);
   if (!project) return c.json({ error: "unknown project" }, 404);
   await sessions.respawn(session.id, profile, project, model, effort);
-  return c.json({ ok: true, acpSessionId: session.acpSessionId });
+  return c.json({
+    ok: true,
+    acpSessionId: session.liveAcpSessionId ?? session.acpSessionId,
+    // The load was refused and this thread came up empty. The caller has just
+    // been told the respawn succeeded, which on its own reads as "your history
+    // is back" — it isn't, and the transcript it points at may still be
+    // recoverable, so say which id could not be loaded.
+    ...(session.historyLost ? { historyLost: session.historyLost } : {}),
+  });
 });
 // What the agent process has been printing. The client shows this when a thread
 // fails in a way ACP won't explain — the agent's own stack trace is the answer
@@ -709,6 +771,42 @@ app.post("/api/scheduled", async (c) => {
 });
 app.delete("/api/scheduled/:id", (c) =>
   deleteScheduled(c.req.param("id")) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404),
+);
+
+/* Tasks board. A standalone, top-level resource — no project/session/agent
+   scoping yet, per "no connection between the agents and the board, initially".
+   The whole board is small (a few hundred rows at most), so every mutation
+   answers with the full list and the client reconciles from it rather than
+   trying to diff. */
+app.get("/api/tasks", (c) => c.json(listTasks()));
+
+app.post("/api/tasks", async (c) => {
+  const parsed = CreateTaskSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+  return c.json(createTask(parsed.data), 201);
+});
+
+app.patch("/api/tasks/:id", async (c) => {
+  const parsed = UpdateTaskSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+  const updated = updateTask(c.req.param("id"), parsed.data);
+  if (!updated) return c.json({ error: "not found" }, 404);
+  return c.json(updated);
+});
+
+/* Whole-board reorder + status moves, one request. The body is the board's new
+   column-by-column order; the server commits it atomically. */
+app.post("/api/tasks/reorder", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { entries?: unknown; board?: unknown };
+  const entries = Array.isArray(body.entries) ? body.entries : [];
+  const parsed = z.array(ReorderEntrySchema).safeParse(entries);
+  if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+  const board = typeof body.board === "string" && body.board.trim() ? body.board : "default";
+  return c.json(applyReorder(parsed.data, board));
+});
+
+app.delete("/api/tasks/:id", (c) =>
+  deleteTask(c.req.param("id")) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404),
 );
 
 /**
@@ -765,6 +863,15 @@ const server = serve({ fetch: app.fetch, hostname: config.host, port: config.por
 const wss = new WebSocketServer({ noServer: true });
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url ?? "/", "http://localhost");
+  /* The editor's socket is not one of ours: VS Code's whole session — the
+     extension host, the file watcher, every keystroke — rides it, and this
+     server has nothing to say about the protocol. It is tunnelled to the
+     loopback code-server before the token check, because the key already in
+     its path is that request's credential (see ide.ts). */
+  if (parseIdePath(url.pathname)) {
+    proxyIdeUpgrade(req, socket, head);
+    return;
+  }
   if (url.pathname !== "/ws" && url.pathname !== "/terminal") {
     // Destroying the socket leaves the browser with a bare "connection failed".
     // An HTTP response at least names the problem in the network panel.
@@ -789,7 +896,11 @@ server.on("upgrade", (req, socket, head) => {
     }
     const sessionId = url.searchParams.get("sessionId") ?? "";
     const cursor = Number(url.searchParams.get("cursor") ?? 0) || 0;
-    const refused = sessions.attach(sessionId, ws, cursor);
+    // Opt-in, because an older client would drop a `replay` frame it does not
+    // know — and with it the `caught_up` inside, so the thread would hang
+    // half-connected forever rather than merely render slowly.
+    const batch = url.searchParams.get("batch") === "1";
+    const refused = sessions.attach(sessionId, ws, cursor, batch);
     if (refused) ws.close(4004, refused);
   });
 });
@@ -800,6 +911,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
     stopWatching();
     killProjectTerminals();
+    stopAllIdes();
     stopScheduler();
     process.exit(0);
   });

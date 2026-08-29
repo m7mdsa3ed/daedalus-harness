@@ -34,7 +34,7 @@ export function ProjectsPage() {
   }
 
   const newButton = (
-    <Button size="lg" onClick={() => void navigate(settingsFormPath("projects"))}>
+    <Button onClick={() => void navigate(settingsFormPath("projects"))}>
       <Plus className="size-4" /> New project
     </Button>
   )

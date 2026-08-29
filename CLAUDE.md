@@ -52,9 +52,30 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   which `applyThemeColor` caches per `<palette>:<mode>` for the pre-paint script
   in `index.html` to read back. ⌘K opens `components/command-palette.tsx`.
   Reading a tool call — inferring its kind, target, language and diff out of
-  ACP's opaque `rawInput`/`rawOutput` — is quarantined in `lib/tools.ts`; the
-  transcript dispatches its per-kind layouts on ACP `kind`, never on a table of
-  vendor tool names. `components/ui/diff-view.tsx` is a dependency-free line LCS.
+  ACP's opaque `rawInput`/`rawOutput` — is quarantined in `lib/tools.ts`, and
+  **drawing** one is `components/tool-views.tsx` on top of the primitives in
+  `components/tool-parts.tsx` (which exists so those two and `thread-items.tsx`
+  can share a pane without importing each other). No component matches on a
+  vendor tool name: `toolViewOf` picks the layout and the matching `extract*`
+  supplies the fields, so a new runtime's tool is one file's edit. ACP `kind`
+  still decides the layout *family* — it is the part that is protocol — but it
+  is too coarse on its own, because the three runtimes describe the same act
+  three ways: a checklist arrives as tool input under `think` from Claude Code,
+  under `other` from OpenCode and as a real ACP plan from Codex; an MCP call
+  arrives under `execute` from Codex (`mcp.<server>.<tool>`, `{server, tool,
+  arguments}`) and as `mcp__server__tool` from the others; a web search arrives
+  under `search`, which is also where ripgrep lives. Each of those rendered as
+  a JSON dump or a wrong-shaped pane before it had a view — as did a
+  `MultiEdit`, whose hunks are one level down in an array. The loudest of them
+  is **the terminal**: Codex announces every shell command as `content:
+  [{type:"terminal"}]` and streams the bytes through `_meta.terminal_output_delta`
+  on later updates, *whether or not the client claimed the capability* — the
+  content block is a handle, not a payload, and `_meta` is merged key-wise per
+  update, so drawing it printed the literal `[terminal]` and kept only the last
+  chunk. `applyTerminalMeta` accumulates the chunks onto `ToolItem.terminal` in
+  the store reducer, which is also what makes replay work, since a replayed
+  thread runs the same reducer over the same journaled updates.
+  `components/ui/diff-view.tsx` is a dependency-free line LCS.
   Device-local, per-session state lives in its own tiny stores — `lib/drafts.ts`
   (unsent prompts), `lib/pins.ts` (pinned threads), `lib/view-options.ts`
   (timestamps/tool grouping) — all pruned from `refreshSessions`. The shelf above
@@ -143,6 +164,24 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   load-bearing: without it a reload re-fires a desktop — and, with nobody watching, a push —
   notification for every turn in the thread. `session_config` carries **absolute** state,
   which is what makes it safe to journal and broadcast at once; never make it a delta.
+  The replay travels in **bulk** — one `replay` frame per `REPLAY_CHUNK_SIZE` events rather
+  than one frame per event — because the browser woke, parsed and re-rendered once per
+  frame, and that, not the range scan, was what made a long thread visibly rebuild itself.
+  It is a container, not a fifth journaled kind: `attached`/`caught_up` still bracket it and
+  `thread-socket.ts` unrolls it back through the same switch, so there is still one parser.
+  It is **opt-in** (`?batch=1`, which `wsUrl` sets): a client that predates the shape would
+  drop the frame, and with it the `caught_up` inside, leaving a thread that never finishes
+  connecting rather than one that merely renders slowly. The client folds it to match: the
+  bracket also opens and closes a **buffer** in `makeCallbacks`, so the whole history is one
+  `batch` action — one commit — rather than one render per event of a transcript nobody has
+  looked at yet. Which is why everything thread-scoped in there goes through `send`, never
+  `dispatch` (a direct dispatch jumps the queue and lands ahead of the `thread-reset` still
+  sitting in the buffer — `recordError` takes the sink as an argument for exactly that
+  reason), and why a socket that dies mid-replay flushes too: `caught_up` is the ordinary
+  exit from the replay, not the only one. It also means a callback cannot read the state its
+  own replay is building — `session_config` leaves `configOptions` out to mean *unchanged*
+  and the **reducer** resolves it, because the value the callback would have read has not
+  been committed yet.
 - ACP schema is the source for modes/config options/usage — render generically, don't
   hardcode per-agent knowledge in the client.
 - **The profile decides who owns the model.** A profile that lists `models[]` has
@@ -223,6 +262,41 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   An empty thread centres its composer over an animated wash (`styles/thread-hero.css`) and
   docks it on the first message — both driven by one `data-empty` flag on a grid whose
   spacer row animates `1fr` → `0fr`.
+- **An agent's session id is earned, not announced — and a refused `session/load` never
+  replaces one.** The conversation lives in the agent's store; `sessions.acp_session_id` is
+  the only pointer to it, so what is written there is the one thing a thread cannot get
+  wrong. What is written is therefore **ranked, not withheld** — `acp_session_id` plus
+  `acp_session_provisional`, both in `AcpBridge` + `SessionManager.hostFor`. An id from
+  `session/new` is written down immediately but flagged *provisional*: agents create the
+  session in memory and flush their transcript lazily (codex's rollout file appears seconds
+  later, and only once a turn records something), so nothing yet proves it loadable. A turn
+  settling on it (`onSessionDurable` ← `settleTurn`) or a `session/load` that answers
+  (`adoptSession(…, proven)`) clears the flag, and from then on **only another proven id may
+  replace it** — a bare `session/new` never can. Withholding the unproven id entirely was
+  the older rule and it was worse: a process killed before its first turn settled — a `tsx
+  watch` restart, a crash — left the thread pointing at *nothing*, while the agent's rollout
+  sat on disk with the whole conversation in it and no id anywhere to reach it by. A blank
+  thread with no error, and the only repair a manual hunt through
+  `~/.claude/projects/…/*.jsonl` for the orphan. A provisional id costs nothing to keep,
+  because the failure it risks is already handled: when `session/load` is refused the bridge
+  falls back to `session/new` (the thread has to be usable) and, if the refused id was
+  **proven**, it stays on the record and the refusal is reported — `host.onHistoryLost` →
+  `Session.historyLost` → the `attached` event → an error row in the transcript
+  (`actions.makeCallbacks.onAttached`). That rule was not hypothetical either: the fallback
+  used to persist its own fresh id, so one transient refusal overwrote the pointer to a
+  transcript still sitting on disk — and because that replacement had no rollout either, the
+  *next* revive failed and replaced it in turn. A chain of ghosts, each one the reason for
+  the next, with the real conversation orphaned at the head of it. A load can fail for
+  reasons that heal (the agent was mid-write, it was upgraded, the cwd moved); keeping the id
+  means the next revive tries again instead of burning it. A refused **provisional** id is
+  the mirror case — no turn ever committed to it, so there is no transcript to strand: it
+  yields to the fallback silently, and `onHistoryLost` drops it rather than putting an error
+  on every thread that was interrupted before its first turn.
+  Note that the event log does **not** cover this gap: `SessionManager`'s constructor
+  deletes every row of `session_events` at boot, so a restart leaves `session/load` as the
+  only route back to a transcript. `list()` and the respawn route report `liveAcpSessionId ??
+  acpSessionId` — "what is this thread on right now" — which is also what `tasks.ts` matches
+  transcript directories against.
 - **A capability we don't advertise is a feature the agent turns off.** The `initialize`
   handshake in `server/src/acp-bridge.ts` is not a formality: claude-agent-acp puts `AskUserQuestion` on
   the session's `disallowedTools` unless the client claims `elicitation.form`, so without it
@@ -349,6 +423,35 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   `close(reason)` (called after `EXIT_DRAIN_MS`) has both the reason and the output.
   `GET /api/sessions/:id/stderr` exposes the tail. `app.onError` turns every route throw
   into the `{ error }` shape the client already parses.
+- **The IDE panel is a whole VS Code, and the harness owns the process.** The `ide`
+  panel kind frames `code-server`, spawned per project by `server/src/ide.ts` and reached
+  only through `server/src/ide-proxy.ts`. It is not a richer `editor` panel — that one is
+  this app's own CodeMirror over the workspace filesystem API, with its theme, its save
+  path and its close guard; nothing inside the frame is ours to draw. Pointing an iframe
+  at `localhost:8080` was never an option: the page may be on a phone or behind
+  `dev:tunnel`, where `localhost` is that device, so the only address the browser can be
+  given is the harness's own. So code-server binds `127.0.0.1` on an ephemeral port with
+  `--auth none`, and what is exposed is `/ide/<key>/…` — **a capability in the path, not a
+  header and not a cookie**. An iframe cannot set `Authorization`, and every asset, font
+  and WebSocket code-server asks for afterwards is a *relative* URL, so the credential has
+  to be somewhere the browser repeats on its own; a cookie would need `SameSite=None;
+  Secure` (the app's origin and the server's are different — Vite, a tunnel, Electron) and
+  plain-http localhost refuses that. The key is 24 random bytes, minted by the
+  authenticated `POST /api/projects/:id/ide`, held in memory, dead with the instance. The
+  proxy strips the prefix before forwarding, which is code-server's documented sub-path
+  shape, and it does three things on purpose: drops hop-by-hop headers, **drops
+  `x-frame-options` and the `frame-ancestors` directive** (code-server refuses framing,
+  which is right for the internet and wrong for the one caller that exists), and
+  re-prefixes a `location` — a redirect to `/?folder=…` would otherwise walk the iframe out
+  of the prefix and lose the key. The upgrade half is not optional: VS Code's whole session
+  rides one WebSocket, so `/ide/*` is tunnelled in `server.on("upgrade")` **before** the
+  token check, as raw piped sockets rather than a second `ws` server — this end has nothing
+  to say about the protocol, and re-encoding frames would cost a copy per keystroke.
+  Opening the panel starts the editor; closing it does not stop one (an extension host, a
+  build and an unsaved buffer are what you close a laptop on) — `IDLE_MS` without proxy
+  traffic sweeps it, and Stop is how you mean it now. Singleton per project because the
+  server is: two extension hosts writing one `.vscode` is a corruption. A missing binary is
+  a state, not an error — the panel prints the install command and never runs one.
 - Test agent: `server/test/fake-agent.mjs` (registered as `fake-echo`), drives the UI without
   credentials. It answers raw NDJSON, which the SDK on the other end is happy with — it
   validates inbound `session/update` params but not responses.

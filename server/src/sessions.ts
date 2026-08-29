@@ -13,7 +13,15 @@ import { loadConfig } from "./config.js";
 import { WEB_SEARCH_SERVER_NAME, toMcpServerEnv } from "./websearch.js";
 import { KNOWLEDGE_SERVER_NAME, toKnowledgeServerEnv } from "./knowledge-db.js";
 import { AcpBridge, spawnAgent, toWireError, type BridgeHost } from "./acp-bridge.js";
-import { JOURNALED_EVENTS, type ThreadCommand, type ThreadEvent, type WireError } from "./protocol.js";
+import {
+  JOURNALED_EVENTS,
+  REPLAY_CHUNK_SIZE,
+  type HistoryLost,
+  type JournaledEvent,
+  type ThreadCommand,
+  type ThreadEvent,
+  type WireError,
+} from "./protocol.js";
 
 /** One attached client. Several may share a session; they are subscribers to
     one server-side ACP client, not ACP clients themselves — which is why a peer
@@ -30,7 +38,25 @@ export interface Session {
   model: string;
   effort: string;
   title: string;
+  /** The thread's recorded conversation — what a revive calls `session/load`
+      with, and the field that is written to the database. */
   acpSessionId?: string;
+  /** Whether `acpSessionId` is still unproven: an id `session/new` returned
+      that no turn has committed to. It is written down all the same — a thread
+      whose process died mid-first-turn used to keep *nothing*, which left the
+      agent's rollout orphaned on disk and the thread permanently blank — but it
+      is the only id a later `session/new` may overwrite, and a load it refuses
+      is reported as nothing at all rather than as a lost history. */
+  acpSessionProvisional: boolean;
+  /** The session the *running* process is on. Usually the same string; they
+      differ for exactly as long as a proven id is being kept against an
+      unproven one — a thread whose `session/load` was refused and fell back.
+      Not persisted; goes with the process. */
+  liveAcpSessionId: string | null;
+  /** Why this process has no conversation in it, when that is the case. Set by
+      the bridge's failed `session/load`, handed to every peer on attach, and
+      cleared by the next spawn — the same lifetime as the process it describes. */
+  historyLost: HistoryLost | null;
   createdAt: number;
   /** Events ever journaled for this session. `cursor` is an index into this,
       not into any array — the log itself is a table (see appendEvent), so
@@ -210,6 +236,8 @@ export class SessionManager {
       this.sessions.set(row.id, {
         ...row,
         acpSessionId: row.acpSessionId ?? undefined,
+        liveAcpSessionId: null,
+        historyLost: null,
         eventCount: 0,
         stderr: [],
         stderrCount: 0,
@@ -253,6 +281,7 @@ export class SessionManager {
         effort: s.effort,
         title: s.title,
         acpSessionId: s.acpSessionId ?? null,
+        acpSessionProvisional: s.acpSessionProvisional,
         createdAt: s.createdAt,
         deletedAt: s.deletedAt,
       };
@@ -281,14 +310,14 @@ export class SessionManager {
   }
 
   /** Events from `cursor` on, in order. A range scan on (session_id, seq). */
-  private eventsFrom(session: Session, cursor: number): ThreadEvent[] {
+  private eventsFrom(session: Session, cursor: number): JournaledEvent[] {
     return db
       .select({ payload: eventsTable.payload })
       .from(eventsTable)
       .where(and(eq(eventsTable.sessionId, session.id), gte(eventsTable.seq, cursor)))
       .orderBy(asc(eventsTable.seq))
       .all()
-      .map((row) => row.payload as ThreadEvent);
+      .map((row) => row.payload as JournaledEvent);
   }
 
   private clearEvents(session: Session): void {
@@ -397,9 +426,55 @@ export class SessionManager {
       onPermissionRequest: () => this.events.onPermissionRequest?.(session),
       onElicitationRequest: () => this.events.onElicitationRequest?.(session),
       onTurnEnd: (error) => this.events.onTurnEnd?.(session, error),
-      onAcpSessionId: (acpSessionId) => {
-        session.acpSessionId = acpSessionId;
+      /* Two callbacks where there was one, and the gap between them is the
+         point — but the gap is about *precedence*, not about whether to write
+         anything down. A session the agent has just created exists in its
+         memory and nowhere else, so its id is unproven until a turn commits to
+         it; withholding it entirely, though, is how a thread killed inside that
+         window (a restart, a crash, `tsx watch`) ended up pointing at nothing
+         while the agent's rollout sat on disk with the whole conversation in
+         it, reachable by no one. So an unproven id IS persisted — flagged
+         provisional, which makes it the one id the next `session/new` is
+         allowed to replace. A proven id (a load that answered, or a turn that
+         committed) is never replaced on the strength of a `session/new`. */
+      onAcpSessionId: (acpSessionId, proven) => {
+        session.liveAcpSessionId = acpSessionId;
+        if (proven) {
+          // The agent found this session and read it back: nothing outranks it.
+          if (session.acpSessionId === acpSessionId && !session.acpSessionProvisional) return;
+          session.acpSessionId = acpSessionId;
+          session.acpSessionProvisional = false;
+        } else {
+          // Fresh session. Take the slot only when what is in it is unproven.
+          if (session.acpSessionId && !session.acpSessionProvisional) return;
+          session.acpSessionId = acpSessionId;
+          session.acpSessionProvisional = true;
+        }
         this.persist(session);
+      },
+      onSessionDurable: () => {
+        const live = session.liveAcpSessionId;
+        if (!live) return;
+        if (live === session.acpSessionId && !session.acpSessionProvisional) return;
+        session.acpSessionId = live;
+        session.acpSessionProvisional = false;
+        session.historyLost = null; // superseded: this session is the thread now
+        this.persist(session);
+      },
+      /* Recorded, not broadcast. A load only ever runs inside a spawn, and a
+         spawn is either a revive (no peers yet) or a respawn (whose
+         `clearEvents` forces every peer to reconnect anyway) — so the peers
+         that need to hear it are the ones about to attach, and `attached` is
+         where they hear it. Re-sending `attached` to a live peer would reset a
+         transcript and then never close the replay it opened. */
+      onHistoryLost: (lost) => {
+        /* A provisional id never had a turn behind it, so a refusal to load it
+           is the agent saying "I never wrote that down" — which is the truth
+           about an empty thread, not the loss of a conversation. Reporting it
+           would put an error row at the top of every thread that was killed
+           before its first turn ever finished. */
+        if (session.acpSessionProvisional) return;
+        session.historyLost = lost;
       },
       onSpawnStateChange: (next) => {
         if (next.model !== undefined) session.model = next.model;
@@ -492,6 +567,9 @@ export class SessionManager {
       model: model || profile.defaultModel || "",
       effort: effort ?? "",
       title: "New thread",
+      acpSessionProvisional: false,
+      liveAcpSessionId: null,
+      historyLost: null,
       createdAt: Date.now(),
       eventCount: 0,
       stderr: [],
@@ -544,6 +622,11 @@ export class SessionManager {
       ...(websearchFromProfile ? [wsServer!] : []),
       ...(kbServer ? [kbServer] : []),
     ];
+    // Both belong to the process about to be replaced, and the handshake below
+    // is what fills them in again — a stale "history lost" would outlive the
+    // load that failed and mark a thread that has just been restored fine.
+    session.liveAcpSessionId = null;
+    session.historyLost = null;
     const bridge = new AcpBridge(this.hostFor(session), proc, {
       cwd: project.cwd,
       mcpServers: [...extra, ...mcpServers],
@@ -660,6 +743,11 @@ export class SessionManager {
     session.proc = null;
     session.bridge = null; // flips the generation guard
     session.exited = true;
+    // The live session goes with the process. What the thread reverts to is the
+    // recorded id — which, if this process never committed a turn, is still the
+    // one with a transcript behind it.
+    session.liveAcpSessionId = null;
+    session.historyLost = null;
     // Close before clearing: closing ends whatever turn was in flight, and that
     // last event belongs to the log this is about to throw away, not the next one.
     bridge?.close(new Error("thread retired"));
@@ -677,7 +765,11 @@ export class SessionManager {
       model: s.model,
       effort: s.effort,
       title: s.title,
-      acpSessionId: s.acpSessionId,
+      /* The session anything asking today would mean: a task transcript's
+         directory is named after the process's session, not after the one the
+         thread will settle on. The recorded id is the fallback for a thread
+         with no process. */
+      acpSessionId: s.liveAcpSessionId ?? s.acpSessionId,
       createdAt: s.createdAt,
       deletedAt: s.deletedAt,
       attached: s.peers.size > 0,
@@ -740,7 +832,7 @@ export class SessionManager {
    * Returns null on success, or why it refused — that string becomes the close
    * reason, and "unknown session" for all three cases was a lie in two.
    */
-  attach(id: string, ws: WebSocket, cursor = 0): string | null {
+  attach(id: string, ws: WebSocket, cursor = 0, batch = false): string | null {
     const session = this.sessions.get(id);
     if (!session) return "no such thread on this server";
     if (session.deletedAt !== null) return "this thread is in the trash";
@@ -749,8 +841,34 @@ export class SessionManager {
     session.peers.add(peer);
     session.detachedAt = null;
 
-    this.send(peer, { ev: "attached", from: cursor, acpSessionId: session.acpSessionId ?? null });
-    for (const event of this.eventsFrom(session, cursor)) this.send(peer, event);
+    /* A cursor past the end of the journal means the log shrank under the
+       client — a respawn or retirement clears it, and the id the client saved
+       is no longer a position in it. Asking for a delta then would append
+       nothing onto a transcript the client still believes is current, which is
+       worse than the full rebuild it is being asked to avoid. So clamp to 0
+       and let `attached.from` tell the truth: `from: 0` is the client's cue to
+       reset and rebuild. */
+    if (cursor > session.eventCount) cursor = 0;
+
+    this.send(peer, {
+      ev: "attached",
+      from: cursor,
+      acpSessionId: session.liveAcpSessionId ?? session.acpSessionId ?? null,
+      ...(session.historyLost ? { historyLost: session.historyLost } : {}),
+    });
+    const history = this.eventsFrom(session, cursor);
+    /* Same events, same order, still inside the bracket — `batch` only decides
+       how many frames carry them. One per event is a wake-up, a parse and a
+       render each on the client, which is what made a long thread visibly
+       rebuild itself; a client that says it can unroll a chunk gets the whole
+       replay in a handful of frames instead. */
+    if (batch) {
+      for (let i = 0; i < history.length; i += REPLAY_CHUNK_SIZE) {
+        this.send(peer, { ev: "replay", events: history.slice(i, i + REPLAY_CHUNK_SIZE) });
+      }
+    } else {
+      for (const event of history) this.send(peer, event);
+    }
     // Read in the same tick as the log it follows, so a client can't pair a
     // stale turn state with a fresh replay window (or vice versa).
     this.send(peer, {

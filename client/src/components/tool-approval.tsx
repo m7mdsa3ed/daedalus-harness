@@ -13,6 +13,8 @@ import {
 } from "./agent-request"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import type { PendingPermission } from "@/lib/store"
+import { extractPlanProposalFromPermission, toolDescription } from "@/lib/tools"
+import { Prose } from "./tool-parts"
 import { KIND_ICONS, KIND_LABELS, ToolCallContent } from "./thread-items"
 
 /* ── Permission card ──
@@ -87,6 +89,10 @@ export function InlineToolApproval({ permission }: { permission: PendingPermissi
   const { request, resolve } = permission
   const call = request.toolCall
   const kind = call.kind ?? "other"
+  /* Codex asks "Implement this plan?" as a `switch_mode` permission whose
+     `rawInput.plan` is the whole markdown proposal — the point of the card.
+     Detect it and render the plan as prose, not as a JSON dump of the wrapper. */
+  const plan = extractPlanProposalFromPermission(call)
   const KindIcon = KIND_ICONS[kind] ?? WrenchIcon
   const input = prettyJson(call.rawInput)
   const output = prettyJson(call.rawOutput)
@@ -107,11 +113,17 @@ export function InlineToolApproval({ permission }: { permission: PendingPermissi
            scanned on, at caption weight. */
         aside={
           <span className="shrink-0 text-[10px] tracking-wide text-muted-foreground/70">
-            {KIND_LABELS[kind] ?? KIND_LABELS.other}
+            {plan ? "plan" : (KIND_LABELS[kind] ?? KIND_LABELS.other)}
           </span>
         }
       >
-        {call.title || call.name || call.toolCallId}
+        {/* Same rule as a step row: the agent's own sentence about the call
+            beats the raw command it typed, which is the ACP title for a Bash
+            run. Nothing is lost — the command is in the arguments below. */}
+        {toolDescription({ meta: call._meta, rawInput: call.rawInput }) ||
+          call.title ||
+          call.name ||
+          call.toolCallId}
       </AgentRequestHeader>
 
       <AgentRequestBody>
@@ -133,8 +145,13 @@ export function InlineToolApproval({ permission }: { permission: PendingPermissi
         )}
 
         {/* What's actually being approved: the diff or output if the agent sent
-            one, otherwise the arguments — never nothing. */}
-        {content.length > 0 ? (
+            one, otherwise the arguments — never nothing. A plan approval is the
+            plan itself, so it wins over both. */}
+        {plan ? (
+          <AgentRequestWell className="px-3 py-3">
+            <Prose text={plan} />
+          </AgentRequestWell>
+        ) : content.length > 0 ? (
           <ToolCallContent content={content} />
         ) : (
           input && (

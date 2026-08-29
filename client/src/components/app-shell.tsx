@@ -8,7 +8,6 @@ import {
   Pin,
   PinOff,
   SearchIcon,
-  FolderPlus,
   FolderIcon,
   Check,
   ChevronsUpDown,
@@ -18,6 +17,7 @@ import {
   Plus,
   ServerIcon,
   Settings2,
+  SquareKanban,
   Trash2,
   Undo2,
 } from "lucide-react"
@@ -31,12 +31,6 @@ import {
 } from "@/components/ui/collapsible"
 import { CommandPalette, useCommandPalette } from "@/components/command-palette"
 import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
-import {
-  HeaderNotice,
-  NotificationAlert,
-  useHeaderNotice,
-  useNotificationOffer,
-} from "@/components/notification-alert"
 import { Logo } from "@/components/ui/logo"
 import {
   DropdownMenu,
@@ -48,12 +42,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Separator } from "@/components/ui/separator"
+import { AgentIcon } from "@/components/agent-icon"
 import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
 import { OpenPanelMenu } from "@/components/workspace/open-panel-menu"
 import { panelId, type PanelKind } from "@/lib/workspace/panels"
 import { openTerminal } from "@/components/workspace/terminal-panel"
-import { ThreadHero } from "@/components/thread-hero"
 import { SchedulePage } from "@/components/schedule-page"
+import { TasksBoard } from "@/components/tasks-board"
 import type { DockviewApi } from "dockview-react"
 import { SetupCardsSkeleton, SidebarGroupsSkeleton } from "@/components/ui/skeletons"
 import {
@@ -78,6 +73,7 @@ import type { Actions } from "@/lib/actions"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router"
 import {
+  boardPath,
   currentThreadId,
   NavigationBridge,
   schedulePath,
@@ -103,7 +99,7 @@ import {
   type ServerSettings,
   type SessionMeta,
 } from "@/lib/settings"
-import { emptyThread, threadIsEmpty, useStore } from "@/lib/store"
+import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { ProjectFormPage, ProjectsPage } from "@/components/settings/projects"
 import {
@@ -172,23 +168,17 @@ export function AppShell({
   const [resizing, setResizing] = React.useState(false)
   const palette = useCommandPalette()
   const shortcuts = useShortcutsHelp()
-  const offer = useNotificationOffer()
-  const notice = useHeaderNotice()
   const inSettings = location.pathname.startsWith("/settings")
   const inSchedule = location.pathname.startsWith("/schedules/")
-  const sessionId = inSettings || inSchedule ? null : currentThreadId(location.pathname, location.search)
+  const inBoard = location.pathname.startsWith("/board")
+  const sessionId =
+    inSettings || inSchedule || inBoard ? null : currentThreadId(location.pathname, location.search)
   const section = sectionOf(inSettings ? (location.pathname.split("/")[2] ?? "") : "")
   // Leaving settings returns to the thread it was opened from.
   const lastThread = React.useRef<string | null>(null)
   if (sessionId) lastThread.current = sessionId
   const active = state.sessions.find((s) => s.id === sessionId)
   const ready = !loading && state.projects.length > 0 && state.profiles.length > 0
-  /* The homepage and an empty active thread share the same backdrop. A
-     background tab going empty must not paint the foreground one. */
-  const onHomepage = !inSettings && !inSchedule && !sessionId
-  const heroVisible =
-    onHomepage ||
-    (!!active && !!sessionId && threadIsEmpty(state.threads[sessionId] ?? emptyThread, active.draft))
   const dock = useWorkspaceDock()
   const routeSessionRef = React.useRef(sessionId)
   routeSessionRef.current = sessionId
@@ -305,6 +295,15 @@ export function AppShell({
         )
         return
       }
+      if (kind === "ide") {
+        /* Centre, not a side rail: it is a whole editor, and a full VS Code in
+           a 280px column is not a workspace. It also does not toggle — closing
+           the panel would leave the server process running with nothing on
+           screen saying so, and reopening it is a fresh iframe load of an
+           entire IDE. Focus what is there instead. */
+        dock.openPanel({ kind: "ide", projectId })
+        return
+      }
       const descriptor =
         kind === "explorer"
           ? ({ kind: "explorer", projectId } as const)
@@ -365,27 +364,9 @@ export function AppShell({
      add a route below and an entry here — the shell itself is generic. */
   const panels: Record<"threads" | "settings", SidebarPanel> = {
     threads: {
-      action: (
-        <SidebarGroup className="px-2 py-1">
-          <SidebarGroupLabel className={GROUP_LABEL}>Create</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton tooltip="New thread" onClick={startThread} disabled={loading}>
-                  <Plus className="size-4" />
-                  <span>New thread</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton tooltip="New project" onClick={() => void navigate(settingsFormPath("projects"))} disabled={loading}>
-                  <FolderPlus className="size-4" />
-                  <span>New project</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      ),
+      // No action here: New thread now lives in the sidebar header, and the
+      // thread list starts directly under it. `New project` stays reachable
+      // from /settings/projects and the command palette.
       body: loading ? <SidebarGroupsSkeleton /> : <ThreadGroups actions={actions} />,
     },
     settings: {
@@ -423,9 +404,6 @@ export function AppShell({
   return (
     <SidebarProvider
       data-resizing={resizing || undefined}
-      /* Tells the shell's surfaces to go translucent while the hero shows —
-         see styles/thread-hero.css. */
-      data-hero={heroVisible || undefined}
       style={{
         "--sidebar-width": sidebarWidth,
         height: "100dvh",
@@ -443,11 +421,6 @@ export function AppShell({
           than on each row because rows are not the only thing that navigates —
           the palette, the dock and push deep links all land in the same place. */}
       <CloseSidebarOnNavigate />
-      {/* Outside the inset and under everything: the backdrop for an empty
-          thread runs beneath the sidebar and the header, not just the
-          transcript. `threadIsEmpty` is shared with the thread's own layout so
-          the two can never disagree about when it shows. */}
-      <ThreadHero visible={heroVisible} />
       <Sidebar collapsible="icon">
         <SidebarHeader className="gap-2 p-3 group-data-[collapsible=icon]:p-2">
           <div data-drag-region className="flex items-center gap-2 px-1 group-data-[collapsible=icon]:px-0">
@@ -462,6 +435,19 @@ export function AppShell({
                 Daedalus
               </span>
             </button>
+            {/* New thread lives here, compact and with the brand — the one
+                create affordance, beside search and the same ⌘N the palette
+                advertises. Hidden when collapsed, like search. */}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => startThreadRef.current()}
+              title="New thread (⌘N)"
+              className="ml-auto shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden"
+            >
+              <Plus />
+              <span className="sr-only">New thread</span>
+            </Button>
             {/* Search sits with the brand, not in the thread header: it searches
                 the whole app, so it belongs to the app's corner. */}
             <Button
@@ -469,7 +455,7 @@ export function AppShell({
               size="icon-sm"
               onClick={() => palette.setOpen(true)}
               title="Search threads and commands (⌘K)"
-              className="ml-auto shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden"
+              className="shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden"
             >
               <SearchIcon />
               <span className="sr-only">Search threads and commands</span>
@@ -498,6 +484,16 @@ export function AppShell({
         <SidebarFooter className="p-3 group-data-[collapsible=icon]:p-2">
           <SidebarMenu>
             <ServerSwitcher settings={settings} onAddServer={onAddServer} />
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip="Tasks board"
+                isActive={inBoard}
+                onClick={() => void navigate(boardPath())}
+              >
+                <SquareKanban className="size-4" />
+                <span>Tasks</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
             <SidebarMenuItem>
               <SidebarMenuButton
                 tooltip="Settings"
@@ -546,15 +542,6 @@ export function AppShell({
         >
           <SidebarTrigger className="-ml-1 shrink-0" />
           <Separator orientation="vertical" className="mr-1 h-full shrink-0 sm:mr-2" />
-          {/* Both of these stand IN the header while they last: one row, one
-              subject. Nothing is stacked and nothing below moves when they go —
-              see components/notification-alert. An event outranks the offer;
-              it expires on its own, the offer waits. */}
-          {notice ? (
-            <HeaderNotice key={notice.id} />
-          ) : offer ? (
-            <NotificationAlert />
-          ) : (
           <div className="flex min-w-0 flex-1 items-center justify-between gap-2 sm:gap-3">
             <div className="flex min-w-0 items-baseline gap-2">
               {loading ? (
@@ -565,13 +552,17 @@ export function AppShell({
                     ? (SETTINGS_SECTIONS.find((s) => s.id === section)?.label ?? "Settings")
                     : inSchedule
                       ? "New schedule"
-                      : (active?.title ?? "Daedalus")}
+                      : inBoard
+                        ? "Tasks"
+                        : (active?.title ?? "Daedalus")}
                 </h1>
               )}
               {inSettings ? (
                 <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Settings</span>
               ) : inSchedule ? (
                 <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Scheduled messages</span>
+              ) : inBoard ? (
+                <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Board</span>
               ) : (
                 active && (
                   <span className="hidden shrink-0 truncate text-xs text-muted-foreground sm:inline">
@@ -586,7 +577,7 @@ export function AppShell({
                 tab strip: there is exactly one of it however the dock is split,
                 and it survives a narrow screen, which is where it matters —
                 nothing else on a phone can reach these panels. */}
-            {!inSettings && !inSchedule && (
+            {!inSettings && !inSchedule && !inBoard && (
               <OpenPanelMenu
                 onNewTab={newThreadInTab}
                 onOpen={openWorkspacePanel}
@@ -594,7 +585,6 @@ export function AppShell({
               />
             )}
           </div>
-          )}
         </header>
         <Routes>
           <Route
@@ -631,6 +621,14 @@ export function AppShell({
                 <div className="mx-auto w-full max-w-3xl px-4 pt-6 pb-16 sm:px-8">
                   <SchedulePage actions={actions} />
                 </div>
+              </div>
+            }
+          />
+          <Route
+            path="/board"
+            element={
+              <div className="flex min-h-0 flex-1 flex-col">
+                <TasksBoard settings={settings} />
               </div>
             }
           />
@@ -715,16 +713,15 @@ function SettingsNav({
    shared, and one person pinning a thread should not reorder anyone else's
    sidebar. */
 
-/* Captions, not rows. A group label used to be the same size, weight and
-   colour as the threads under it, so "Recent" scanned as a thread called
-   Recent. Smaller, uppercase, tracked out, and one clear step below the row
-   text — /70 over the sidebar surface keeps the caption solidly legible
-   (~5:1) while staying unmistakably secondary to the full-strength rows.
-   Shared by every sidebar group so the whole panel has one caption voice:
-   one neutral, no per-group accents — wayfinding comes from position and
-   the chevron, not from colour or icons. */
+/* Group titles, not rows. A label used to be the same size, weight and colour
+   as the threads under it, so "Recent" scanned as a thread called Recent.
+   Smaller, uppercase, tracked out, and darker than the rows beneath — /80 over
+   the sidebar surface keeps it legible while the rows stay full-strength.
+   Shared by every sidebar group so the whole panel has one title voice: one
+   neutral, no per-group accents — wayfinding comes from position and the
+   chevron, not from colour or icons. */
 const GROUP_LABEL =
-  "h-6 gap-1.5 px-2 text-[11px] font-semibold tracking-[0.06em] uppercase text-sidebar-foreground/70"
+  "flex h-6 gap-1.5 px-2 text-[11px] font-bold tracking-[0.06em] uppercase text-sidebar-foreground/80"
 
 const RECENT_COUNT = 6
 
@@ -832,6 +829,20 @@ function ThreadGroups({ actions }: { actions: Actions }) {
       )}
     </>
   )
+}
+
+/** Relative time for a thread row: "just now", "5m", "2h", "3d", else a short
+    date. Nothing counts as a date prettier than the scannable index needs. */
+function timeAgo(ts: number): string {
+  const elapsed = Date.now() - ts
+  const minute = 60_000
+  const hour = 60 * minute
+  const day = 24 * hour
+  if (elapsed < minute) return "just now"
+  if (elapsed < hour) return `${Math.floor(elapsed / minute)}m`
+  if (elapsed < day) return `${Math.floor(elapsed / hour)}h`
+  if (elapsed < 7 * day) return `${Math.floor(elapsed / day)}d`
+  return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" })
 }
 
 /** "In 3 days" / "every day" style line for a schedule. */
@@ -1147,6 +1158,17 @@ function ThreadList({
      client has not connected yet — for those it is the only signal there is. */
   const running = (session: SessionMeta) =>
     state.threads[session.id]?.turnActive ?? session.promptActive
+  /* A thread is waiting on you when the agent has raised a question
+     (elicitation) or an approval (permission) that is still open. Both live
+     only on a thread this client has connected — there is no server snapshot
+     for the same reason `promptActive` is only a running hint — so this is
+     best-effort and correct whenever a tab has the thread open. */
+  const waiting = (session: SessionMeta) => {
+    const thread = state.threads[session.id]
+    return !!thread && (!!thread.permission || !!thread.elicitation)
+  }
+  const projectNameOf = (projectId: string) =>
+    state.projects.find((p) => p.id === projectId)?.name ?? "Other"
 
   /* Delete stops the agent and moves the thread to Trash. Recoverable, but not
      free — the process dies and a running turn dies with it — so it asks, and
@@ -1241,30 +1263,56 @@ function ThreadList({
         return (
           <ItemContextMenu key={session.id} items={items}>
             <SidebarMenuItem>
-              {/* Compact: h-7 and a 13px title — the row is a scannable index
-                  entry, not a card. The started-at date left with the native
-                  tooltip it rode on; the button's sidebar tooltip already
-                  names the thread. */}
+              {/* Two-line row: the title, then a muted context line that carries
+                  the agent's mark (small), the project and then when it was
+                  touched. Collapsed mode keeps only the mark. */}
               <SidebarMenuButton
                 size="sm"
                 tooltip={session.title}
                 isActive={activeThreadId === session.id}
                 onClick={(event) => open(session, event.metaKey || event.ctrlKey)}
-                className="h-7 px-2 text-[13px]"
+                className="h-auto min-h-9 items-start px-2 py-1.5 text-[13px] group-data-[collapsible=icon]:items-center"
               >
-                {/* A running thread says so in its own title — the same shimmer the
-                    transcript's working line uses, so the two read as one state
-                    rather than as two unrelated indicators. */}
-                <span
-                  className={cn(
-                    "truncate",
-                    (session.exited || trash) && "text-muted-foreground",
-                    trash && "line-through",
-                    running(session) && "harness-shimmer text-primary"
-                  )}
-                >
-                  {session.title}
+                <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
+                  <span
+                    className={cn(
+                      "block truncate",
+                      (session.exited || trash) && "text-muted-foreground",
+                      trash && "line-through"
+                    )}
+                  >
+                    {session.title}
+                  </span>
+                  <span
+                    className={cn(
+                      "flex items-center gap-1 truncate text-[11px] leading-tight",
+                      waiting(session) ? "font-medium text-amber-600 dark:text-amber-400" : "text-muted-foreground"
+                    )}
+                  >
+                    <AgentIcon agentId={session.agentId} className="size-3" />
+                    {/* The live/waiting badge rides the metadata line, not the
+                        title: a running turn is a primary dot, a thread waiting
+                        on the user is an amber dot — the one you must act on. A
+                        removed thread stays quiet. */}
+                    {running(session) && (
+                      <span
+                        aria-hidden
+                        className="harness-node-active size-1.5 shrink-0 rounded-full bg-primary"
+                      />
+                    )}
+                    <span className="truncate">
+                      {waiting(session)
+                        ? "Needs you"
+                        : `${projectNameOf(session.projectId)} · ${timeAgo(session.createdAt)}`}
+                    </span>
+                  </span>
                 </span>
+                {/* Collapsed mode holds the mark — the text column below hides,
+                    and the button is otherwise empty. */}
+                <AgentIcon
+                  agentId={session.agentId}
+                  className="size-4 hidden group-data-[collapsible=icon]:inline-block"
+                />
               </SidebarMenuButton>
               <DropdownMenu>
                 <DropdownMenuTrigger

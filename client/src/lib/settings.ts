@@ -207,6 +207,9 @@ export function wsUrl(settings: ServerSettings, sessionId: string, cursor: numbe
   url.searchParams.set("token", settings.token)
   url.searchParams.set("sessionId", sessionId)
   url.searchParams.set("cursor", String(cursor))
+  // Ask for the replay in bulk. Older servers ignore the parameter and stream
+  // it one event at a time, which this client still handles.
+  url.searchParams.set("batch", "1")
   return url.toString()
 }
 

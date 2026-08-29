@@ -1,59 +1,42 @@
 import * as React from "react"
-import Markdown from "react-markdown"
-import remarkGfm from "remark-gfm"
-import rehypeHighlight from "rehype-highlight"
 import type * as acp from "@agentclientprotocol/sdk"
-import {
-  ArrowLeftRightIcon,
-  BrainIcon,
-  FileTextIcon,
-  FoldVerticalIcon,
-  GlobeIcon,
-  ChevronRightIcon,
-  CopyIcon,
-  CornerDownRightIcon,
-  ListTodoIcon,
-  PencilLineIcon,
-  PlayIcon,
-  RotateCwIcon,
-  SearchIcon,
-  SquareTerminalIcon,
-  Trash2Icon,
-  ToggleLeftIcon,
-  TriangleAlertIcon,
-  WrenchIcon,
-} from "lucide-react"
+import { FoldVerticalIcon, ListTodoIcon, PlayIcon, RotateCwIcon, TriangleAlertIcon, WrenchIcon } from "lucide-react"
+import { ChevronRightIcon, CopyIcon } from "lucide-react"
 import { toast } from "sonner"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"
 import { reportError } from "@/lib/errors"
-import { useThreadLinks } from "@/lib/workspace/thread-links"
 import { Message, MessageContent } from "@/components/ui/message"
-import { ToolCallSkeleton } from "@/components/ui/skeletons"
-import { DiffView } from "@/components/ui/diff-view"
+/* The tool-call layouts and the boxes they are built from live in their own
+   files — see the header comment on each. This one keeps the transcript's own
+   rows: a message, a step, a plan, a compaction. */
 import {
-  extractBackgroundTask,
-  extractEditInput,
-  shortPath,
-  splitCommand,
+  ContentBlockView,
+  KIND_ICONS,
+  KIND_LABELS,
+  Prose,
+  SmartBlock,
+  Timestamp,
+  ToolCallContent,
+} from "@/components/tool-parts"
+import { ToolDetail, TodoList, toolHasDetail, toolOpensByDefault } from "@/components/tool-views"
+import {
   parseTaskNotification,
-  taskAgentRows,
-  taskFindings,
-  toolLanguage,
+  shortPath,
   toolKindOf,
-  toolOutputText,
-  toolPrimaryText,
   toolSummary,
-  toolTarget,
-  type BackgroundTask,
+  toolHeading,
   type TaskNotification,
+  type TodoEntry,
 } from "@/lib/tools"
-import { useTaskEvents, watchTask } from "@/lib/task-events"
-import { loadSettings } from "@/lib/settings"
 import { cn } from "@/lib/utils"
 import { useViewOptionsContext } from "@/lib/view-options"
 import type { CompactionItem, PlanItem, ThreadItem, ToolItem } from "@/lib/store"
+
+/* Re-exported so the approval card and the editor panel keep importing the
+   transcript's vocabulary from the transcript, not from its internals. */
+export { KIND_ICONS, KIND_LABELS, Prose, Timestamp, ToolCallContent }
 
 /* Right-clicking text the user has selected keeps the browser's own menu —
    native Copy works there. Ours only claims clicks on unselected content.
@@ -79,30 +62,6 @@ function copyText(text: string) {
    kind is demoted to a right-hand label so those form their own scan column.
    Everything a step produced is collapsed behind the row until clicked. */
 
-export const KIND_LABELS: Record<string, string> = {
-  read: "read",
-  edit: "edit",
-  delete: "delete",
-  move: "move",
-  search: "search",
-  execute: "run",
-  think: "think",
-  fetch: "fetch",
-  switch_mode: "mode",
-  other: "tool",
-}
-
-export const KIND_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-  read: FileTextIcon,
-  edit: PencilLineIcon,
-  delete: Trash2Icon,
-  move: ArrowLeftRightIcon,
-  search: SearchIcon,
-  execute: SquareTerminalIcon,
-  think: BrainIcon,
-  fetch: GlobeIcon,
-  switch_mode: ToggleLeftIcon,
-}
 
 
 function useElapsed(startedAt: number, active: boolean): number | null {
@@ -126,8 +85,15 @@ function formatElapsed(ms: number): string {
     : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
 }
 
-function StepRow({
+/* Memoized: one per transcript row, and a streaming turn re-renders the whole
+   list if nothing stops it. The reducer leaves untouched items referentially
+   stable, so memo lets a chunk re-render only the tail. `target`, `label` and
+   `metric` arrive as ReactNode from the caller and are rebuilt on every render
+   of the kind components below — those wrap this in memo too, so the node props
+   they pass are rebuilt once per kind render, not unusably often. */
+const StepRow = React.memo(function StepRow({
   target,
+  caption,
   label,
   status,
   metric,
@@ -135,9 +101,13 @@ function StepRow({
   startedAt,
   mono = true,
   defaultOpen = false,
+  openSetting,
   icon: Icon,
 }: {
   target: React.ReactNode
+  /** A second, quieter line under the target — the literal thing invoked when
+      the target is the agent's prose *about* it (see `toolHeading`). */
+  caption?: string
   label: string
   status: string | null
   metric?: React.ReactNode
@@ -146,12 +116,37 @@ function StepRow({
   mono?: boolean
   /** Start expanded — edits show their diff without a click (see ToolStep). */
   defaultOpen?: boolean
+  /** The view option behind `defaultOpen`, when one of them is. Changing it
+      re-applies `defaultOpen` to a row that is already on screen; see below for
+      why that is a separate prop rather than just watching `defaultOpen`. */
+  openSetting?: boolean
   /** Leading mark. On an expandable row it swaps for a chevron on hover, so
       the disclosure affordance appears where the eye already is instead of at
       the far end of the line. */
   icon?: React.ComponentType<{ className?: string }>
 }) {
   const [open, setOpen] = React.useState(defaultOpen)
+  /* `useState` reads its argument once, so a `defaultOpen` that later changes
+     is thrown away — which is why "Show thinking" and "Expand tool output"
+     appeared to do nothing: the context update reached every row and every row
+     ignored it, so only steps that mounted *after* the flip honoured it.
+
+     The re-sync is keyed on the option, NOT on `defaultOpen`. `defaultOpen` for
+     a tool is `showToolDetails || toolOpensByDefault(item)`, and the second
+     half flips on its own mid-stream — a call is `generic` until its input
+     arrives and an `edit` once it does — so watching the whole expression would
+     yank rows open as they stream and re-open ones you had just collapsed.
+     Watching the setting means a row you closed by hand stays closed until you
+     actually change the setting again. Turning the setting *off* re-applies
+     `defaultOpen` too, which lands on the natural default rather than closing
+     everything: an edit goes back to showing its diff, a read goes back to
+     folded. */
+  const latestDefault = React.useRef(defaultOpen)
+  latestDefault.current = defaultOpen
+  React.useEffect(() => {
+    // Same value on mount, so React bails out without a second render.
+    setOpen(latestDefault.current)
+  }, [openSetting])
   const expandable = detail !== undefined && detail !== null && detail !== false
   const active = status === "in_progress" || status === "pending"
   const failed = status === "failed"
@@ -164,22 +159,27 @@ function StepRow({
         disabled={!expandable}
         onClick={() => setOpen((o) => !o)}
         className={cn(
-          // items-center, not items-baseline: the target span is `truncate`
+          // items-start, not items-baseline: the target span is `truncate`
           // (overflow: hidden), so its baseline is its bottom edge — baseline
           // alignment lifted the title ~5px above the "edit"/"run" label. Every
-          // child is leading-6, so centring lines them up exactly.
+          // child is a leading-6 line box (the icon is given the same height),
+          // so starting them lines them up exactly — and a row that grew a
+          // caption keeps its label and metric pinned to the first line rather
+          // than drifting to the middle of two, which `items-center` did.
           // The width is calc(100% + 12px) so the -mx-1.5/px-1.5 hover bleed
           // cancels on BOTH sides: a `w-full` box only shifts left under a
           // negative start margin, which left the row's content edge 12px shy
           // of the right edge that messages run to.
-          "group/step -mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-start transition-colors duration-150",
+          "group/step -mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-start gap-2 rounded-md px-1.5 py-0.5 text-start transition-colors duration-150",
           expandable && "hover:bg-muted/40"
         )}
       >
         {Icon && (
           <span
             className={cn(
-              "relative flex size-3.5 shrink-0 items-center justify-center",
+              // h-6, not size-3.5: the mark has to occupy a whole line box, or
+              // `items-start` would hang it off the top of the text it marks.
+              "relative flex h-6 w-3.5 shrink-0 items-center justify-center",
               failed ? "text-destructive" : active ? "text-primary" : "text-muted-foreground/60"
             )}
           >
@@ -202,15 +202,27 @@ function StepRow({
         )}
         {/* Steps are what the agent did, not what it said: the whole row sits at
             caption weight so prose stays the thing you read. */}
-        <span
-          className={cn(
-            "min-w-0 flex-1 truncate text-xs leading-6",
-            mono && "font-mono",
-            failed ? "text-destructive" : "text-muted-foreground",
-            active && "harness-shimmer"
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span
+            className={cn(
+              "min-w-0 truncate text-xs leading-6",
+              mono && "font-mono",
+              failed ? "text-destructive" : "text-muted-foreground",
+              active && "harness-shimmer"
+            )}
+          >
+            {target}
+          </span>
+          {/* The command under its description. One notch quieter and one notch
+              smaller than the title, and always mono — it is the literal thing
+              that ran, so it is read as code even when the line above it is
+              prose. `-mt-1` claws back the slack in the two leadings so the
+              pair reads as one row rather than as two. */}
+          {caption && (
+            <span className="-mt-1 min-w-0 truncate font-mono text-[11px] leading-5 text-muted-foreground/55">
+              {caption}
+            </span>
           )}
-        >
-          {target}
         </span>
 
         {elapsedMs !== null && elapsedMs >= 2000 && (
@@ -236,69 +248,9 @@ function StepRow({
       {expandable && open && <div className="mt-1 mb-2.5 min-w-0 space-y-2">{detail}</div>}
     </div>
   )
-}
+})
+StepRow.displayName = "StepRow"
 
-/* Prose palette + code/table styling live in index.css, so both themes come
-   from the app tokens — no prose-invert needed. */
-/* `detect: false` — highlight.js only colours a fence that declares its
-   language. Left to guess, it cheerfully "detects" a shell transcript as Perl
-   and paints a log file at random, which is worse than no colour at all.
-
-   ponytail: this pulls lowlight's whole `common` grammar set (~180KB gzipped),
-   because rehype-highlight imports it statically — passing `languages` narrows
-   what resolves but not what ships. Trimming it means driving `createLowlight`
-   from a hand-rolled plugin; worth doing if the bundle ever matters more than
-   the twenty lines. */
-/* How tall an inline output pane grows before it starts scrolling.
-
-   Viewport-relative rather than the fixed 16rem this used to be: 256px is a
-   reasonable slab on a desktop and about four lines on a phone, where it reads
-   as truncated rather than as scrollable — and a table or a fenced block inside
-   a box that short is a scroll region you have to fight. The cap still exists,
-   because an unbounded pane in a transcript pushes everything after it off the
-   screen; it is just tall enough now that scrolling is the exception. */
-const PANE_MAX_H = "max-h-[min(60vh,28rem)]"
-
-const REHYPE = [[rehypeHighlight, { detect: false, ignoreMissing: true }]] as never
-const REMARK = [remarkGfm]
-
-/* The two elements markdown cannot style from CSS alone.
-
-   A table needs a scroll container that is NOT the table: the usual fix is
-   `display: block` on the <table> itself, which does scroll but stops it being
-   a table — a block box does not stretch to its container, so `width: 100%`
-   silently does nothing and every table renders shrink-wrapped, and the header
-   borders no longer line up with the body's. Wrapping keeps `display: table`
-   and puts the overflow on a parent that is allowed to have it.
-
-   A link needs the target the renderer will not add. The transcript is a
-   long-lived surface — inside Electron and inside a PWA, following a link
-   in-place would replace the app, and the turn behind it is not something you
-   can navigate back to cheaply. Only absolute http(s) links: an in-page anchor
-   (a GFM footnote is one) must stay in the page. */
-const MARKDOWN_COMPONENTS = {
-  table: ({ node: _node, ...props }: React.ComponentProps<"table"> & { node?: unknown }) => (
-    <div className="harness-table">
-      <table {...props} />
-    </div>
-  ),
-  a: ({ node: _node, href, ...props }: React.ComponentProps<"a"> & { node?: unknown }) =>
-    /^https?:\/\//i.test(href ?? "") ? (
-      <a {...props} href={href} target="_blank" rel="noreferrer noopener" />
-    ) : (
-      <a {...props} href={href} />
-    ),
-} as never
-
-export function Prose({ text, className }: { text: string; className?: string }) {
-  return (
-    <div className={cn("prose prose-sm max-w-none", className)}>
-      <Markdown remarkPlugins={REMARK} rehypePlugins={REHYPE} components={MARKDOWN_COMPONENTS}>
-        {text}
-      </Markdown>
-    </div>
-  )
-}
 
 /* Explanatory agents emit their insight box as two backticked rule lines around
    the body — as markdown that's a pair of code chips with a wall of dashes.
@@ -390,24 +342,114 @@ function AgentText({ text }: { text: string }) {
     cut = block.end
   }
   if (cut < text.length) parts.push(<Prose key={cut} text={text.slice(cut)} />)
+
   return <div className="space-y-3">{parts}</div>
 }
 
-/** HH:MM in the reader's locale; the full stamp is in the tooltip. Renders
-    nothing without a time — replayed history has none to show (see store). */
-export function Timestamp({ at, className }: { at?: number; className?: string }) {
-  if (!at) return null
-  const date = new Date(at)
+const compactTokens = (n: number): string =>
+  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${Math.round(n / 1000)}k` : String(n)
+
+/**
+ * A background task reporting back.
+ *
+ * The runtime announces the end of the task as a synthetic user turn holding a
+ * `<task-notification>` block (parsed in lib/tools). It is the other half of
+ * the launch — the Workflow row started it, this says how it went — so it gets
+ * a card of its own rather than a rule, and the failures are the point of it:
+ * an audit where every stage died on a rate limit produced nothing, and the
+ * only honest way to show that is to say so.
+ */
+const TaskNotificationCard = React.memo(function TaskNotificationCard({
+  task,
+  at,
+  showTimestamp,
+}: {
+  task: TaskNotification
+  at?: number
+  showTimestamp?: boolean
+}) {
+  const [open, setOpen] = React.useState(false)
+  const failed = task.failures.length > 0
+  /* Every stage of a fan-out usually fails for ONE reason (a rate limit, a
+     dead endpoint). Listing it five times buries the sentence; the stages that
+     share a message are named together in front of it. */
+  const grouped = React.useMemo(() => {
+    const byMessage = new Map<string, string[]>()
+    for (const failure of task.failures) {
+      byMessage.set(failure.message, [...(byMessage.get(failure.message) ?? []), failure.label])
+    }
+    return [...byMessage.entries()].map(([message, labels]) => ({ message, labels }))
+  }, [task.failures])
+
+  const stats = [
+    task.agentCount !== undefined && `${task.agentCount} agents`,
+    task.agentsDone ? `${task.agentsDone} finished` : null,
+    task.agentsError ? `${task.agentsError} failed` : null,
+    task.durationMs !== undefined && formatElapsed(task.durationMs),
+    task.subagentTokens !== undefined && `${compactTokens(task.subagentTokens)} tokens`,
+  ].filter((entry): entry is string => typeof entry === "string")
+
   return (
-    <time
-      dateTime={date.toISOString()}
-      title={date.toLocaleString()}
-      className={cn("shrink-0 text-[10px] tabular-nums text-muted-foreground/60", className)}
+    <div
+      className={cn(
+        "my-2 rounded-xl border px-3 py-2.5 text-xs",
+        failed ? "border-destructive/30 bg-destructive/5" : "border-border/60 bg-muted/30"
+      )}
     >
-      {date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
-    </time>
+      <div className="flex items-start gap-2">
+        {failed ? (
+          <TriangleAlertIcon className="mt-px size-3.5 shrink-0 text-destructive" />
+        ) : (
+          <ListTodoIcon className="mt-px size-3.5 shrink-0 text-muted-foreground" />
+        )}
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <p className={cn("font-medium", failed ? "text-destructive" : "text-foreground")}>
+            {task.summary ?? "Background task finished"}
+          </p>
+          {stats.length > 0 && (
+            <p className="text-[11px] tabular-nums text-muted-foreground">{stats.join(" · ")}</p>
+          )}
+          {grouped.map(({ message, labels }, index) => (
+            <div key={index} className="space-y-0.5">
+              <p className="flex flex-wrap gap-1">
+                {labels.map((label) => (
+                  <span
+                    key={label}
+                    className="rounded bg-destructive/10 px-1.5 py-px font-mono text-[10px] text-destructive"
+                  >
+                    {label}
+                  </span>
+                ))}
+              </p>
+              <p className="text-[11px] text-muted-foreground">{message}</p>
+            </div>
+          ))}
+          {task.result && (
+            <button
+              type="button"
+              onClick={() => setOpen((value) => !value)}
+              className="flex items-center gap-1 text-[11px] text-muted-foreground/80 hover:text-foreground"
+            >
+              <ChevronRightIcon className={cn("size-3 transition-transform", open && "rotate-90")} />
+              {open ? "Hide result" : "Show result"}
+            </button>
+          )}
+          {open && task.result && <SmartBlock text={task.result} />}
+          {/* The per-agent journal is still on disk, and the panel on the
+              launch row above is already tailing it — so this says where the
+              detail lives rather than repeating it here. */}
+          {task.transcriptDir && (
+            <p className="truncate font-mono text-[10px] text-muted-foreground/50" title={task.transcriptDir}>
+              {shortPath(task.transcriptDir, 60)}
+            </p>
+          )}
+          {showTimestamp && <Timestamp at={at} />}
+        </div>
+      </div>
+    </div>
   )
-}
+})
+TaskNotificationCard.displayName = "TaskNotificationCard"
 
 /** A run of consecutive tool steps, folded into one row (view-options). */
 export interface ToolRunGroup {
@@ -470,7 +512,7 @@ function summarise(items: ToolItem[]): { verb: string; noun: string; count: numb
 /** How much of a running group stays on screen without being expanded. */
 const PEEK = 3
 
-export function ToolRun({
+export const ToolRun = React.memo(function ToolRun({
   items,
   showTimestamps,
 }: {
@@ -555,7 +597,8 @@ export function ToolRun({
       )}
     </div>
   )
-}
+})
+ToolRun.displayName = "ToolRun"
 
 /**
  * A failure, in the flow of the conversation. Loud enough not to be missed and
@@ -565,7 +608,7 @@ export function ToolRun({
  * for debugging, and putting it on screen unbidden buries the sentence that
  * actually helps. Retry re-sends the exact prompt that died.
  */
-function ErrorRow({
+const ErrorRow = React.memo(function ErrorRow({
   item,
   onRetry,
   onDismiss,
@@ -664,9 +707,15 @@ function ErrorRow({
       </div>
     </ItemContextMenu>
   )
-}
+})
+ErrorRow.displayName = "ErrorRow"
 
-export function ThreadItemView({
+/* Memoized — the transcript's row discriminator, and the thing that makes
+   memo work up the tree: `item` is referentially stable for everything the
+   reducer did not touch, so a streaming chunk re-renders only the changed rows
+   instead of all n. The `useViewOptionsContext` inside reads the same
+   context value across a re-render storm, so it does not break memo. */
+export const ThreadItemView = React.memo(function ThreadItemView({
   item,
   onContinue,
   onRetry,
@@ -773,6 +822,8 @@ export function ThreadItemView({
     }
     case "thought": {
       const reasoning = item.text.trim()
+      const preview = (reasoning.split("\n").find((line) => line.trim()) ?? "…")
+        .replace(/[`*_~]/g, "")
 
       return (
         <StepRow
@@ -780,7 +831,8 @@ export function ThreadItemView({
           status={null}
           mono={false}
           defaultOpen={view.showThinking}
-          target={reasoning.split("\n").find((line) => line.trim()) ?? "…"}
+          openSetting={view.showThinking}
+          target={preview}
           detail={
             <Prose
               text={reasoning}
@@ -797,13 +849,14 @@ export function ThreadItemView({
     case "compaction":
       return <CompactionStep item={item} showTimestamp={showTimestamps} />
   }
-}
+})
+ThreadItemView.displayName = "ThreadItemView"
 
 /** A context compaction, in the place in the transcript where it happened —
     the marker saying the history above it is no longer what the agent can see.
     A step row like any other, with the retained summary folded behind it: the
     summary is the only part anyone reads twice, and it can be long. */
-function CompactionStep({
+const CompactionStep = React.memo(function CompactionStep({
   item,
   showTimestamp,
 }: {
@@ -843,830 +896,44 @@ function CompactionStep({
       detail={detail}
     />
   )
-}
-
-/* Agents stream output as many small text blocks (one per result, per line).
-   Rendering a bordered box per block turns six one-liners into six panels —
-   consecutive text is one stream, so it gets one block. */
-function mergeText(content: acp.ToolCallContent[]): acp.ToolCallContent[] {
-  const merged: acp.ToolCallContent[] = []
-  for (const part of content) {
-    const prev = merged[merged.length - 1]
-    if (
-      part.type === "content" &&
-      part.content.type === "text" &&
-      prev?.type === "content" &&
-      prev.content.type === "text"
-    ) {
-      merged[merged.length - 1] = {
-        ...prev,
-        content: { ...prev.content, text: `${prev.content.text}\n${part.content.text}` },
-      }
-    } else {
-      merged.push(part)
-    }
-  }
-  return merged
-}
-
-/** A captioned block inside a step's detail. The three sections used to run
-    together as undifferentiated grey, so you could not tell what the tool was
-    asked from what it answered. */
-function DetailSection({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <section className="min-w-0 space-y-1">
-      <h4 className="text-[10px] font-semibold tracking-[0.08em] uppercase text-muted-foreground/50">
-        {label}
-      </h4>
-      {children}
-    </section>
-  )
-}
-
-const isScalar = (value: unknown) =>
-  value === null || ["string", "number", "boolean"].includes(typeof value)
-
-/** What the tool was called with. A flat object — the overwhelmingly common
-    shape — becomes a key/value table, because `{"command":"pnpm build"}` is
-    JSON noise around the one word you wanted. Anything nested falls back to
-    pretty-printed JSON rather than to a lossy summary. */
-function ToolInput({ item }: { item: ToolItem }) {
-  const input = item.rawInput
-  const language = toolLanguage(item)
-  if (input === null || input === undefined) return null
-  if (typeof input === "string") {
-    return input.trim() ? <CodeBlock language={language}>{input}</CodeBlock> : null
-  }
-  if (isScalar(input)) return <CodeBlock language={language}>{String(input)}</CodeBlock>
-
-  const entries =
-    typeof input === "object" && !Array.isArray(input)
-      ? Object.entries(input as Record<string, unknown>)
-      : null
-  if (entries && entries.length > 0 && entries.every(([, value]) => isScalar(value))) {
-    return (
-      /* Body tier, not caption tier: these are the tool's actual arguments —
-         the thing you read — so they match message prose. `text-[11px]` is for
-         labels and counters. */
-      <dl className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 font-mono text-xs">
-        {entries.map(([key, value]) => (
-          <React.Fragment key={key}>
-            <dt className="text-muted-foreground/60">{key}</dt>
-            <dd className="min-w-0 break-words whitespace-pre-wrap text-foreground/80">
-              {value === null ? "null" : String(value)}
-            </dd>
-          </React.Fragment>
-        ))}
-      </dl>
-    )
-  }
-  return <CodeBlock language="json">{JSON.stringify(input, null, 2)}</CodeBlock>
-}
-
-/**
- * The files a tool call touched.
- *
- * Clickable only inside a workspace — `useThreadLinks` is null anywhere else,
- * and a path that looks like a link and does nothing is worse than one that
- * plainly is not. An edit also offers its diff against the last commit, which
- * is the question you actually have about an agent's write: not "what does this
- * file say" but "what did it just change".
- */
-function ToolLocations({ item }: { item: ToolItem }) {
-  const links = useThreadLinks()
-  // `item.kind` is the ThreadItem discriminant ("tool"); the *tool*'s kind is
-  // what ACP reported, read through the quarantine in lib/tools.
-  const isEdit = toolKindOf(item) === "edit"
-
-  return (
-    <ul className="space-y-0.5 font-mono text-[11px] text-muted-foreground/80">
-      {item.locations.map((location, index) => {
-        const label = `${location.path}${location.line != null ? `:${location.line}` : ""}`
-        if (!links) return <li key={index} className="truncate">{label}</li>
-        return (
-          <li key={index} className="flex min-w-0 items-center gap-1.5">
-            <button
-              type="button"
-              className="min-w-0 flex-1 truncate text-left underline-offset-2 hover:text-foreground hover:underline"
-              title={`Open ${location.path}`}
-              onClick={() => links.openFile(location.path, location.line ?? undefined)}
-            >
-              {label}
-            </button>
-            {isEdit && (
-              <button
-                type="button"
-                className="shrink-0 text-[10px] whitespace-nowrap opacity-70 underline-offset-2 hover:text-foreground hover:underline hover:opacity-100"
-                title="Compare with the last commit"
-                onClick={() => links.openDiff(location.path)}
-              >
-                diff
-              </button>
-            )}
-          </li>
-        )
-      })}
-    </ul>
-  )
-}
-
-/** Tool output as markdown. Agents write it as markdown — tables, lists, fenced
-    code — and a `pre` rendered all of that as literal pipes and backticks. */
-function ToolProse({ text }: { text: string }) {
-  if (!text.trim()) return null
-  return (
-    <div className={cn(PANE_MAX_H, "min-w-0 overflow-auto rounded-md border border-border/50 bg-muted/40 px-2.5 py-2")}>
-      {/* No size utility: the unlayered `.prose` rule in index.css sets the body
-          size and outranks any `text-*` utility on this element — the
-          `text-[11px]` that used to be here never applied, which is half of why
-          tool output and message prose disagreed. Same <Prose> as a message for
-          the other half: one component means a table or a link cannot render
-          one way in a turn and another way in tool output. */}
-      <Prose text={text} />
-    </div>
-  )
-}
-
-/**
- * Syntax-coloured code with no chrome of its own — the caller supplies the box.
- * Highlighting rides on the Markdown renderer's own plugin (one pipeline, one
- * theme) rather than a second highlighter wired up here, so a payload is
- * wrapped in a fence and handed over.
- */
-export function Highlighted({
-  code,
-  language,
-  className,
-}: {
-  code: string
-  language?: string
-  className?: string
-}) {
-  // A payload containing its own fence would break out of ours; leave it plain.
-  if (!language || code.includes("```")) {
-    return <pre className={cn("font-mono text-xs whitespace-pre-wrap", className)}>{code}</pre>
-  }
-  return (
-    <div className={cn("harness-code-bare prose prose-sm max-w-none", className)}>
-      <Markdown rehypePlugins={REHYPE}>{"```" + language + "\n" + code.replace(/\n$/, "") + "\n```"}</Markdown>
-    </div>
-  )
-}
-
-/**
- * A shell command, with any heredoc bodies lifted out into their own blocks.
- * `python3 - <<'PY'` is two languages in one string; rendering it as one paints
- * the Python in shell colours and hides where the script starts and stops. The
- * body's box IS its terminator, so the closing delimiter line is absorbed
- * rather than left dangling under the block.
- */
-function ShellScript({ command, className }: { command: string; className?: string }) {
-  const segments = React.useMemo(() => splitCommand(command), [command])
-  if (segments.length <= 1) {
-    return <Highlighted code={command} language="bash" className={className} />
-  }
-  return (
-    <div className={cn("min-w-0 space-y-1", className)}>
-      {segments.map((segment, index) =>
-        segment.kind === "shell" ? (
-          <Highlighted key={index} code={segment.text} language="bash" />
-        ) : (
-          <div key={index} className="overflow-hidden rounded border border-border/50 bg-background/50">
-            <div className="flex items-center gap-1.5 border-b border-border/50 px-2 py-0.5 font-mono text-[10px] text-muted-foreground/70">
-              <CornerDownRightIcon aria-hidden className="size-3 shrink-0" />
-              <span>{segment.label}</span>
-              {segment.language && <span className="opacity-70">· {segment.language}</span>}
-            </div>
-            <div className={cn(PANE_MAX_H, "overflow-auto px-2 py-1")}>
-              <Highlighted code={segment.text} language={segment.language} />
-            </div>
-          </div>
-        )
-      )}
-    </div>
-  )
-}
-
-function CodeBlock({
-  children,
-  tone,
-  language,
-}: {
-  children: string
-  tone?: "error"
-  language?: string
-}) {
-  return (
-    <div
-      className={cn(
-        PANE_MAX_H,
-        "w-fit max-w-full overflow-auto rounded-md border px-2.5 py-2",
-        tone === "error"
-          ? "border-destructive/40 bg-destructive/5 text-destructive"
-          : "border-border/50 bg-muted/40"
-      )}
-    >
-      {/* Errors stay uncoloured: a stack trace highlighted as code competes with
-          the destructive tint that is the actual signal. */}
-      {tone !== "error" && language === "bash" ? (
-        <ShellScript command={children} />
-      ) : (
-        <Highlighted code={children} language={tone === "error" ? undefined : language} />
-      )}
-    </div>
-  )
-}
-
-const LOOKS_LIKE_MARKDOWN = /(^|\n)\s*(#{1,6} |[-*+] |\d+\. |> |\|)|\*\*|```/
-
-/** Payload of unknown shape: JSON as fenced JSON, markdown as markdown, and
-    anything else verbatim. Guessing wrong on prose is cheap; guessing wrong on
-    a log file mangles it, so the plain block is the default. */
-function SmartBlock({
-  text,
-  tone,
-  language,
-}: {
-  text: string
-  tone?: "error"
-  language?: string
-}) {
-  const trimmed = text.trim()
-  if (!trimmed) return null
-  const isJson =
-    (trimmed.startsWith("{") || trimmed.startsWith("[")) &&
-    (() => {
-      try {
-        JSON.parse(trimmed)
-        return true
-      } catch {
-        return false
-      }
-    })()
-  if (tone !== "error" && (isJson || LOOKS_LIKE_MARKDOWN.test(trimmed))) {
-    return <ToolProse text={isJson ? "```json\n" + trimmed + "\n```" : trimmed} />
-  }
-  return (
-    <CodeBlock tone={tone} language={language}>
-      {text}
-    </CodeBlock>
-  )
-}
-
-/* Output past this many characters is cut, with a button to take the cap off.
-   A scroll container alone still pays to lay out every line of a 5MB log. */
-const OUTPUT_LIMIT = 8_000
-
-function useShowAll(text: string, limit = OUTPUT_LIMIT): [string, boolean, () => void] {
-  const [all, setAll] = React.useState(false)
-  const over = !all && text.length > limit
-  return [over ? `${text.slice(0, limit).trimEnd()}\n…` : text, over, () => setAll(true)]
-}
-
-function ShowAll({ onClick }: { onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
-    >
-      Show everything
-    </button>
-  )
-}
-
-const PANE = "overflow-hidden rounded-md border border-border/50 bg-muted/30"
+})
+CompactionStep.displayName = "CompactionStep"
 
 // ─── Per-kind layouts ────────────────────────────────────────────────────────
 
-/**
- * A shell run: the command on a `$` line, its stream underneath behind a
- * hairline. One pane, so the command and what it printed read as one event —
- * which is what a shell run is.
- */
-function RunDetail({ item, active }: { item: ToolItem; active: boolean }) {
-  const command = toolPrimaryText(item) ?? toolTarget(item)
-  const failed = item.status === "failed"
-  const [out, over, showAll] = useShowAll(toolOutputText(item, 200_000).text)
 
-  return (
-    <div className={cn(PANE, failed && "border-destructive/40 bg-destructive/5")}>
-      <div className="flex items-start gap-2 px-2.5 py-1.5 font-mono text-[11.5px] leading-relaxed">
-        <span aria-hidden className="shrink-0 leading-relaxed select-none text-muted-foreground/60">
-          $
-        </span>
-        <ShellScript command={command} className="min-w-0 flex-1" />
-      </div>
-      {out.trim() && (
-        <pre
-          className={cn(
-            PANE_MAX_H,
-            "overflow-auto border-t border-inherit px-2.5 py-1.5 font-mono text-[11.5px] leading-relaxed break-words whitespace-pre-wrap",
-            failed ? "text-destructive" : "text-muted-foreground"
-          )}
-        >
-          {out}
-        </pre>
-      )}
-      {/* Running with nothing printed yet: breathing lines, not an empty pane. */}
-      {!out.trim() && active && <ToolCallSkeleton className="border-t border-inherit p-2.5" />}
-      {over && <ShowAll onClick={showAll} />}
-    </div>
-  )
-}
 
-/**
- * A file read: numbered lines, starting at the requested offset so the numbers
- * match the editor. Reading a file is the one case where "which line" is the
- * whole point, and a flat pre throws that away.
- */
-function ReadDetail({ item }: { item: ToolItem }) {
-  const input =
-    item.rawInput && typeof item.rawInput === "object" && !Array.isArray(item.rawInput)
-      ? (item.rawInput as Record<string, unknown>)
-      : null
-  const first = typeof input?.offset === "number" ? input.offset : 1
-  const [body, over, showAll] = useShowAll(toolOutputText(item, 200_000).text)
-  if (!body.trim()) return null
 
-  const lines = body.split("\n")
-  // Agents often return content already prefixed with `NNN\t`; don't number twice.
-  const preNumbered = lines.length > 1 && /^\s*\d+\t/.test(lines[0])
-
-  const language = toolLanguage(item)
-
-  return (
-    <div className={PANE}>
-      {/* The gutter is a sibling column, not a prefix on each line: that keeps
-          the code a single fence the highlighter can colour, and `whitespace-pre`
-          on both halves means one screen line per source line, so the numbers
-          stay aligned. */}
-      <div className="flex max-h-80 overflow-auto">
-        {!preNumbered && (
-          <pre
-            aria-hidden
-            className="shrink-0 py-1 pe-3 ps-2 text-end font-mono text-[11.5px] leading-5 tabular-nums whitespace-pre text-muted-foreground/45 select-none"
-          >
-            {lines.map((_, index) => first + index).join("\n")}
-          </pre>
-        )}
-        <div className="min-w-max flex-1 py-1 pe-3">
-          <Highlighted
-            code={body}
-            language={language}
-            className="[&_pre]:whitespace-pre [&_pre]:leading-5 [&_pre]:text-[11.5px]"
-          />
-        </div>
-      </div>
-      {over && <ShowAll onClick={showAll} />}
-    </div>
-  )
-}
-
-/** Highlight every occurrence of the search pattern inside one result line. */
-function MarkedLine({ text, pattern }: { text: string; pattern: string | null }) {
-  if (!pattern) return <>{text}</>
-  // The pattern is a regex the agent wrote; compiling it is the point, but a
-  // bad one must not take the transcript down with it.
-  let re: RegExp
-  try {
-    re = new RegExp(`(${pattern})`, "gi")
-  } catch {
-    return <>{text}</>
-  }
-  return (
-    <>
-      {text.split(re).map((part, index) =>
-        index % 2 === 1 ? (
-          <mark key={index} className="bg-primary/20 text-foreground">
-            {part}
-          </mark>
-        ) : (
-          <React.Fragment key={index}>{part}</React.Fragment>
-        )
-      )}
-    </>
-  )
-}
-
-const MAX_MATCHES = 200
-
-/**
- * Search hits as located matches, not a wall of text. `path:line:match` is
- * split so the paths form a scannable column and the matched text reads as
- * content — the shape ripgrep output actually has.
- */
-function SearchDetail({ item }: { item: ToolItem }) {
-  const input =
-    item.rawInput && typeof item.rawInput === "object" && !Array.isArray(item.rawInput)
-      ? (item.rawInput as Record<string, unknown>)
-      : null
-  const pick = (key: string) => (typeof input?.[key] === "string" ? (input[key] as string) : null)
-  const pattern = pick("pattern") ?? pick("query")
-  const scope = pick("path") ?? pick("glob")
-  const lines = toolOutputText(item, 60_000)
-    .text.split("\n")
-    .filter((line) => line.trim().length > 0)
-  const shown = lines.slice(0, MAX_MATCHES)
-
-  return (
-    <div className="space-y-1">
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px]">
-        {pattern && <code className="font-mono text-foreground">{pattern}</code>}
-        {scope && (
-          <span className="font-mono text-muted-foreground">in {shortPath(scope, 44)}</span>
-        )}
-        <span className="text-muted-foreground/70">
-          {lines.length} {lines.length === 1 ? "match" : "matches"}
-        </span>
-      </div>
-      {shown.length > 0 && (
-        <div className={cn(PANE, "max-h-80 overflow-auto")}>
-          <ul className="divide-y divide-border/40 font-mono text-[11.5px]">
-            {shown.map((line, index) => {
-              const match = /^(.*?):(\d+):(.*)$/.exec(line)
-              return (
-                <li key={index} className="flex gap-2 px-2.5 py-1">
-                  {match ? (
-                    <>
-                      <span className="shrink-0 text-muted-foreground/70">
-                        {shortPath(match[1], 42)}
-                        <span className="text-muted-foreground/40">:{match[2]}</span>
-                      </span>
-                      <span className="min-w-0 flex-1 truncate">
-                        <MarkedLine text={match[3].trim()} pattern={pattern} />
-                      </span>
-                    </>
-                  ) : (
-                    <span className="min-w-0 flex-1 truncate text-muted-foreground">{line}</span>
-                  )}
-                </li>
-              )
-            })}
-          </ul>
-          {lines.length > shown.length && (
-            <div className="px-2.5 py-1 text-[11px] text-muted-foreground/60">
-              …and {lines.length - shown.length} more
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** A fetch: the URL as a link first, because that is the thing you want to open. */
-function FetchDetail({ item }: { item: ToolItem }) {
-  const input =
-    item.rawInput && typeof item.rawInput === "object" && !Array.isArray(item.rawInput)
-      ? (item.rawInput as Record<string, unknown>)
-      : null
-  const pick = (key: string) => (typeof input?.[key] === "string" ? (input[key] as string) : null)
-  const url = pick("url")
-  const query = pick("query") ?? pick("prompt")
-  const { text } = toolOutputText(item, 20_000)
-
-  return (
-    <div className="space-y-1.5">
-      {url && (
-        <a
-          href={/^https?:\/\//.test(url) ? url : undefined}
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center gap-1.5 font-mono text-[11px] text-primary hover:underline"
-        >
-          <GlobeIcon className="size-3 shrink-0" />
-          <span className="truncate">{url}</span>
-        </a>
-      )}
-      {query && !url && <div className="text-[11px] text-muted-foreground">“{query}”</div>}
-      <SmartBlock text={text} />
-    </div>
-  )
-}
-
-/** Keeps the server's tail alive through quiet stretches (a subagent can run
-    for many minutes between journal lines) and backfills anything a missed
-    notification or a reload dropped. The push stream is the fast path; this is
-    the floor under it. */
-const TASK_REFRESH_MS = 90_000
-
-/**
- * Live progress of a background task — work the agent launched and left
- * running past the end of the turn (a Claude Code workflow, say). The turn is
- * over, so no ACP frame will ever carry this; the events come off the server's
- * tail of the task's own journal on disk. Mounting the panel starts that tail
- * (`/api/tasks/watch`), and the module store it fills is keyed by transcript
- * dir, so every peer and every remount reads the same journal.
- */
-function TaskProgress({ task }: { task: BackgroundTask }) {
-  const events = useTaskEvents(task.transcriptDir)
-  const [unreachable, setUnreachable] = React.useState(false)
-  React.useEffect(() => {
-    const settings = loadSettings()
-    if (!settings) return
-    let cancelled = false
-    const ask = () =>
-      watchTask(settings, task.transcriptDir).then(
-        () => !cancelled && setUnreachable(false),
-        () => !cancelled && setUnreachable(true)
-      )
-    void ask()
-    const timer = setInterval(() => void ask(), TASK_REFRESH_MS)
-    return () => {
-      cancelled = true
-      clearInterval(timer)
-    }
-  }, [task.transcriptDir])
-
-  const rows = taskAgentRows(events)
-  const findings = taskFindings(rows)
-  const finished = rows.filter((row) => row.done).length
-
-  if (rows.length === 0) {
-    return (
-      <p className={cn("text-[11px] text-muted-foreground/70", !unreachable && "harness-shimmer")}>
-        {unreachable
-          ? "Couldn't follow this task's journal on the server."
-          : "Waiting for the task's journal…"}
-      </p>
-    )
-  }
-  return (
-    <div className="space-y-1.5">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
-        {task.summary && (
-          <span className="min-w-0 flex-1 truncate text-muted-foreground">{task.summary}</span>
-        )}
-        <span className="shrink-0 tabular-nums text-muted-foreground/70">
-          {finished}/{rows.length} agents finished
-        </span>
-      </div>
-      <ul className="space-y-0.5">
-        {rows.map((row, index) => (
-          <li key={row.agentId} className="flex items-center gap-2 text-[11px]">
-            <span
-              className={cn(
-                "size-1.5 shrink-0 rounded-full",
-                row.failed
-                  ? "bg-destructive"
-                  : row.done
-                    ? "bg-primary"
-                    : "harness-node-active bg-primary"
-              )}
-            />
-            {/* The journal's agent ids are hashes; their order is the readable
-                identity. The real id stays on the tooltip for cross-reference
-                with the transcript dir. */}
-            <span
-              title={row.agentId}
-              className={cn("font-mono", row.done ? "text-muted-foreground" : "harness-shimmer")}
-            >
-              agent {index + 1}
-            </span>
-            <span className={cn("text-[10px]", row.failed ? "text-destructive" : "text-muted-foreground/60")}>
-              {row.failed ? "failed" : row.done ? "finished" : "running"}
-            </span>
-          </li>
-        ))}
-      </ul>
-      {findings.length > 0 && (
-        <div className={cn(PANE, "max-h-56 overflow-auto")}>
-          <ul className="divide-y divide-border/40">
-            {findings.map((title, index) => (
-              <li key={index} className="px-2.5 py-1 text-[11px] text-muted-foreground">
-                {title}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  )
-}
-
-const compactTokens = (n: number): string =>
-  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${Math.round(n / 1000)}k` : String(n)
-
-/**
- * A background task reporting back.
- *
- * The runtime announces the end of the task as a synthetic user turn holding a
- * `<task-notification>` block (parsed in lib/tools). It is the other half of
- * the launch — the Workflow row started it, this says how it went — so it gets
- * a card of its own rather than a rule, and the failures are the point of it:
- * an audit where every stage died on a rate limit produced nothing, and the
- * only honest way to show that is to say so.
- */
-function TaskNotificationCard({
-  task,
-  at,
+const ToolStep = React.memo(function ToolStep({
+  item,
   showTimestamp,
 }: {
-  task: TaskNotification
-  at?: number
-  showTimestamp?: boolean
+  item: ToolItem;
+  showTimestamp?: boolean;
 }) {
-  const [open, setOpen] = React.useState(false)
-  const failed = task.failures.length > 0
-  /* Every stage of a fan-out usually fails for ONE reason (a rate limit, a
-     dead endpoint). Listing it five times buries the sentence; the stages that
-     share a message are named together in front of it. */
-  const grouped = React.useMemo(() => {
-    const byMessage = new Map<string, string[]>()
-    for (const failure of task.failures) {
-      byMessage.set(failure.message, [...(byMessage.get(failure.message) ?? []), failure.label])
-    }
-    return [...byMessage.entries()].map(([message, labels]) => ({ message, labels }))
-  }, [task.failures])
-
-  const stats = [
-    task.agentCount !== undefined && `${task.agentCount} agents`,
-    task.agentsDone ? `${task.agentsDone} finished` : null,
-    task.agentsError ? `${task.agentsError} failed` : null,
-    task.durationMs !== undefined && formatElapsed(task.durationMs),
-    task.subagentTokens !== undefined && `${compactTokens(task.subagentTokens)} tokens`,
-  ].filter((entry): entry is string => typeof entry === "string")
-
-  return (
-    <div
-      className={cn(
-        "my-2 rounded-xl border px-3 py-2.5 text-xs",
-        failed ? "border-destructive/30 bg-destructive/5" : "border-border/60 bg-muted/30"
-      )}
-    >
-      <div className="flex items-start gap-2">
-        {failed ? (
-          <TriangleAlertIcon className="mt-px size-3.5 shrink-0 text-destructive" />
-        ) : (
-          <ListTodoIcon className="mt-px size-3.5 shrink-0 text-muted-foreground" />
-        )}
-        <div className="min-w-0 flex-1 space-y-1.5">
-          <p className={cn("font-medium", failed ? "text-destructive" : "text-foreground")}>
-            {task.summary ?? "Background task finished"}
-          </p>
-          {stats.length > 0 && (
-            <p className="text-[11px] tabular-nums text-muted-foreground">{stats.join(" · ")}</p>
-          )}
-          {grouped.map(({ message, labels }, index) => (
-            <div key={index} className="space-y-0.5">
-              <p className="flex flex-wrap gap-1">
-                {labels.map((label) => (
-                  <span
-                    key={label}
-                    className="rounded bg-destructive/10 px-1.5 py-px font-mono text-[10px] text-destructive"
-                  >
-                    {label}
-                  </span>
-                ))}
-              </p>
-              <p className="text-[11px] text-muted-foreground">{message}</p>
-            </div>
-          ))}
-          {task.result && (
-            <button
-              type="button"
-              onClick={() => setOpen((value) => !value)}
-              className="flex items-center gap-1 text-[11px] text-muted-foreground/80 hover:text-foreground"
-            >
-              <ChevronRightIcon className={cn("size-3 transition-transform", open && "rotate-90")} />
-              {open ? "Hide result" : "Show result"}
-            </button>
-          )}
-          {open && task.result && <SmartBlock text={task.result} />}
-          {/* The per-agent journal is still on disk, and the panel on the
-              launch row above is already tailing it — so this says where the
-              detail lives rather than repeating it here. */}
-          {task.transcriptDir && (
-            <p className="truncate font-mono text-[10px] text-muted-foreground/50" title={task.transcriptDir}>
-              {shortPath(task.transcriptDir, 60)}
-            </p>
-          )}
-          {showTimestamp && <Timestamp at={at} />}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/** Diffs and inline content blocks — the payload a code block cannot show. */
-function ToolContentBlocks({ item }: { item: ToolItem }) {
-  if (item.content.length === 0) return null
-  return (
-    <div className="space-y-2">
-      {mergeText(item.content).map((block, index) => (
-        <ToolContentView key={index} content={block} />
-      ))}
-    </div>
-  )
-}
-
-/**
- * The body of an expanded step. Dispatch is on the ACP `kind` (or the kind
- * inferred from the tool's name) rather than on a table of vendor tool names:
- * `kind` is the part of this that is actually protocol, and every runtime that
- * sends it gets the right layout for free.
- */
-function ToolDetail({ item, active }: { item: ToolItem; active: boolean }) {
-  const failed = item.status === "failed"
-  const kind = toolKindOf(item)
-
-  // An edit is its diff, whichever tool produced it and wherever it arrived.
-  const diffs = item.content.filter((block) => block.type === "diff")
-  if (diffs.length > 0) {
-    return (
-      <div className="space-y-1.5">
-        <ToolContentBlocks item={item} />
-        {failed && <SmartBlock text={toolOutputText(item).text} tone="error" />}
-      </div>
-    )
-  }
-  const edit = extractEditInput(item)
-  if (edit) {
-    const view = useViewOptionsContext()
-    return (
-      <div className="space-y-1.5">
-        <DiffView
-          oldText={edit.oldText}
-          newText={edit.newText}
-          path={edit.path ? shortPath(edit.path, 80) : undefined}
-          split={view.splitDiffs}
-        />
-        {failed && <SmartBlock text={toolOutputText(item).text} tone="error" />}
-      </div>
-    )
-  }
-
-  switch (kind) {
-    case "execute":
-      return <RunDetail item={item} active={active} />
-    case "read":
-      return <ReadDetail item={item} />
-    case "search":
-      return <SearchDetail item={item} />
-    case "fetch":
-      return <FetchDetail item={item} />
-    default: {
-      // Everything else, MCP tools included: what went in, what came back.
-      const { text, truncated } = toolOutputText(item)
-      const hasInput = JSON.stringify(item.rawInput ?? null) !== "null"
-      const task = extractBackgroundTask(item)
-      return (
-        <>
-          {task && (
-            <DetailSection label={task.workflowName ? `Task · ${task.workflowName}` : "Background task"}>
-              <TaskProgress task={task} />
-            </DetailSection>
-          )}
-          {hasInput && (
-            <DetailSection label="Input">
-              <ToolInput item={item} />
-            </DetailSection>
-          )}
-          {item.locations.length > 0 && (
-            <DetailSection label={item.locations.length === 1 ? "File" : "Files"}>
-              <ToolLocations item={item} />
-            </DetailSection>
-          )}
-          {(text.trim() || item.content.length > 0) && (
-            <DetailSection label={failed ? "Error" : active ? "Output so far" : "Output"}>
-              <ToolContentBlocks item={item} />
-              {item.content.length === 0 && (
-                <SmartBlock
-                text={truncated ? `${text}\n\n… output truncated` : text}
-                tone={failed ? "error" : undefined}
-                language={toolLanguage(item)}
-              />
-              )}
-            </DetailSection>
-          )}
-          {!text.trim() && item.content.length === 0 && active && (
-            <ToolCallSkeleton className="py-1" />
-          )}
-        </>
-      )
-    }
-  }
-}
-
-function ToolStep({ item, showTimestamp }: { item: ToolItem; showTimestamp?: boolean }) {
   const active = item.status === "in_progress" || item.status === "pending"
   const kind = toolKindOf(item)
   const KindIcon = KIND_ICONS[kind] ?? WrenchIcon
   const summary = toolSummary(item, active)
   const view = useViewOptionsContext()
-  const hasBody =
-    item.content.length > 0 ||
-    item.locations.length > 0 ||
-    JSON.stringify(item.rawInput ?? null) !== "null" ||
-    toolOutputText(item, 1).text.length > 0
+  /* Both of these are `tool-views`' to answer, not this row's: whether an
+     expansion would hold anything, and whether it should start open, both
+     depend on which layout the call resolved to — and a chevron that opens an
+     empty box is worse than no chevron. "Expand tool output" overrides the
+     second, so the body is there to read without a click. */
+  const hasBody = toolHasDetail(item)
+  /* What the agent said it was doing beats what it typed: a Bash call carries
+     both, and the command truncates to nothing useful in a row this wide. */
+  const heading = toolHeading(item)
 
   return (
     <StepRow
       label={KIND_LABELS[kind] ?? KIND_LABELS.other}
       status={item.status}
       icon={KindIcon}
-      target={toolTarget(item)}
+      target={heading.title}
+      caption={heading.detail}
+      mono={!heading.prose}
       metric={
         <span className="flex items-center gap-1.5">
           {/* The closed row already says what happened, so opening it is for
@@ -1677,97 +944,24 @@ function ToolStep({ item, showTimestamp }: { item: ToolItem; showTimestamp?: boo
       }
       startedAt={item.startedAt}
       detail={hasBody || active ? <ToolDetail item={item} active={active} /> : undefined}
-      /* A diff is the point of an edit — collapsing it hides the only thing
-          worth reviewing. A background task is still producing after its turn
-          ends — folded, the only live thing on screen would be invisible. Every
-          other kind stays folded: a read or a search is a fact, not something
-          you check line by line. "Expand tool output" opens everything by
-          default, so the body is there to read without a click. */
-      defaultOpen={
-        view.showToolDetails || kind === "edit" || extractBackgroundTask(item) !== null
-      }
+      defaultOpen={view.showToolDetails || toolOpensByDefault(item)}
+      openSetting={view.showToolDetails}
     />
   )
-}
+})
+ToolStep.displayName = "ToolStep"
 
-/** Everything a tool call produced, rendered the way the transcript renders it.
-    Shared with the approval card so a diff looks the same before and after. */
-export function ToolCallContent({ content }: { content: acp.ToolCallContent[] }) {
-  return mergeText(content).map((part, i) => <ToolContentView key={i} content={part} />)
-}
 
-function ToolContentView({ content }: { content: acp.ToolCallContent }) {
-  const view = useViewOptionsContext()
-  if (content.type === "diff") {
-    return (
-      <DiffView
-        oldText={content.oldText}
-        newText={content.newText}
-        path={content.path ? shortPath(content.path, 80) : undefined}
-        split={view.splitDiffs}
-      />
-    )
-  }
-  if (content.type === "content") return <ContentBlockView block={content.content} />
-  return <div className="text-[11px] text-muted-foreground">[{content.type}]</div>
-}
+/** ACP's own plan entries, in the shape `TodoList` draws. The two vocabularies
+    already agree on `content` and on all three statuses; this is the cast that
+    says so. */
+const toTodo = (entry: acp.PlanEntry): TodoEntry => ({
+  content: entry.content,
+  status: entry.status,
+  priority: entry.priority,
+})
 
-/** The non-text halves of an ACP ContentBlock. These used to fall through to a
-    `[content]` placeholder, which hid an image the tool actually returned. */
-function ContentBlockView({ block }: { block: acp.ContentBlock }) {
-  switch (block.type) {
-    case "text":
-      return <SmartBlock text={block.text} />
-    case "image":
-      return (
-        <img
-          src={`data:${block.mimeType};base64,${block.data}`}
-          alt=""
-          className="max-h-64 w-fit max-w-full rounded-md border border-border/50 object-contain"
-        />
-      )
-    case "audio":
-      return (
-        <audio
-          controls
-          src={`data:${block.mimeType};base64,${block.data}`}
-          className="w-full max-w-sm"
-        />
-      )
-    case "resource_link":
-      return (
-        <a
-          href={block.uri}
-          target="_blank"
-          rel="noreferrer"
-          className="block truncate font-mono text-[11px] text-primary underline-offset-2 hover:underline"
-          title={block.description ?? block.uri}
-        >
-          {block.name || block.uri}
-        </a>
-      )
-    case "resource":
-      // Text resources are the readable half; a blob is bytes, so it gets a
-      // line saying what it is rather than a screenful of base64.
-      return "text" in block.resource ? (
-        <div className="min-w-0 space-y-1">
-          <p className="truncate font-mono text-[10px] text-muted-foreground/60">
-            {block.resource.uri}
-          </p>
-          <CodeBlock>{block.resource.text}</CodeBlock>
-        </div>
-      ) : (
-        <p className="truncate font-mono text-[11px] text-muted-foreground/80">
-          {block.resource.uri}
-          {block.resource.mimeType ? ` · ${block.resource.mimeType}` : ""}
-        </p>
-      )
-    default:
-      return null
-  }
-}
-
-function PlanStep({ item }: { item: PlanItem }) {
+const PlanStep = React.memo(function PlanStep({ item }: { item: PlanItem }) {
   /* A plan the agent wrote as prose, or parked in a file. Neither has entries,
      so there is no progress to count and nothing to tick off — the content IS
      the plan. Rendering it as an empty checklist (which is what happened before
@@ -1804,44 +998,13 @@ function PlanStep({ item }: { item: PlanItem }) {
       mono={false}
       target={next?.content ?? "all steps complete"}
       metric={`${done}/${item.entries.length}`}
-      detail={
-        <ul className="space-y-1">
-          {item.entries.map((entry, i) => (
-            <li key={i} className="flex items-start gap-2 text-xs">
-              <span
-                className={cn(
-                  "mt-1.5 size-1.5 shrink-0 rounded-full",
-                  entry.status === "completed"
-                    ? "bg-primary"
-                    : entry.status === "in_progress"
-                      ? "harness-node-active bg-primary"
-                      : "bg-muted-foreground/40"
-                )}
-              />
-              <span
-                className={cn(
-                  "min-w-0",
-                  entry.status === "completed"
-                    ? "text-muted-foreground line-through"
-                    : entry.status === "in_progress"
-                      ? "text-foreground"
-                      : "text-muted-foreground"
-                )}
-              >
-                {entry.content}
-                {/* ACP carries a priority per entry and we were dropping it.
-                    Only "high" earns ink — medium is the default nobody needs
-                    telling about, and low marking itself out would be noise. */}
-                {entry.priority === "high" && entry.status !== "completed" ? (
-                  <span className="ml-1.5 text-[10px] uppercase tracking-wide text-primary/70">
-                    high
-                  </span>
-                ) : null}
-              </span>
-            </li>
-          ))}
-        </ul>
-      }
+      /* The same drawing a `TodoWrite` gets. Codex sends its checklist down
+         ACP's plan channel and Claude Code and OpenCode send theirs as tool
+         input, and a reader should not be able to tell which — where the list
+         was read from is `lib/tools`' problem, not a difference in how a
+         checklist looks. */
+      detail={<TodoList todos={item.entries.map(toTodo)} />}
     />
   )
-}
+})
+PlanStep.displayName = "PlanStep"

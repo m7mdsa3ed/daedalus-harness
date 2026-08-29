@@ -33,6 +33,7 @@ import { SessionSettingsButton } from "./session-settings"
 import { InlineElicitation } from "./elicitation-form"
 import { InlineToolApproval, primaryPermissionOption } from "./tool-approval"
 import { ThreadItemView, ToolRun, type ToolRunGroup } from "./thread-items"
+import { ThreadRail } from "./thread-rail"
 
 /** Consecutive tool steps become one ToolRunGroup; everything else passes
     through untouched. Runs of one stay ungrouped — a lone step wrapped in a
@@ -150,11 +151,22 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
      the turn is over, the agent is still there, and nothing has been said
      since. Anything older is history, and history does not get a button. */
   const options = useViewOptions(sessionId)
-  const visible = thread.items.filter((item) => item.kind !== "plan")
+  /* Memoised separately: `.filter` would hand `rows` a fresh array every render
+     even when nothing changed, and `rows`' memo depends on it. Two stable layers
+     (items → visible → rows) is what lets a streaming update — which mutates one
+     item in place via the reducer's new-array-of-old-refs — leave every unchanged
+     row's identity alone so the memo below actually skips them. */
+  const visible = React.useMemo(
+    () => thread.items.filter((item) => item.kind !== "plan"),
+    [thread.items]
+  )
   /* Grouping folds a *run* of steps into one row. It is computed here, not in
      the reducer: it is a way of looking at the transcript, not a change to it,
      and toggling it must not touch a single item. */
-  const rows = options.groupTools ? groupToolRuns(visible) : visible
+  const rows = React.useMemo(
+    () => (options.groupTools ? groupToolRuns(visible) : visible),
+    [options.groupTools, visible]
+  )
   const last = visible[visible.length - 1]
   const resumable =
     last?.kind === "notice" && !thread.turnActive && thread.status !== "closed"
@@ -236,7 +248,18 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                     transcript up and left a blank screen until the agent
                     produced enough output to fill it back in. Autoscroll alone
                     keeps the newest content in view without the jump. */
-                <MessageScrollerItem key={row.id} messageId={row.id}>
+                /* data-settled gates content-visibility (see index.css). It is
+                    set only while a turn is NOT streaming: content-visibility
+                    lays off-screen items out at a placeholder, so scrollHeight
+                    is only trustworthy when nothing is about to grow — and
+                    autoscroll reads scrollHeight. With autoScroll engaged
+                    (turnActive) every row stays fully measured; a quiet thread
+                    can then bound its DOM for the off-screen bulk. */
+                <MessageScrollerItem
+                  key={row.id}
+                  messageId={row.id}
+                  data-settled={!thread.turnActive ? "true" : undefined}
+                >
                   {divider && (
                     <div aria-hidden className="my-1.5 h-px bg-border/50 first:hidden" />
                   )}
@@ -291,6 +314,11 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
             </ViewOptionsContext.Provider>
           </MessageScrollerViewport>
           <MessageScrollerButton />
+          {/* Inside the Root, not the Viewport: it is an overlay on the
+              transcript, and it needs the Provider above it for
+              `scrollToMessage`/`currentAnchorId`. It draws nothing under two
+              turns, so a short thread pays for it only in a hook call. */}
+          {options.turnRail && <ThreadRail items={visible} wide={options.wideTranscript} />}
         </MessageScroller>
       </MessageScrollerProvider>
       <div className="relative">

@@ -47,13 +47,13 @@ export function LibrarySection<T extends { id: string; name: string }>({
   }
 
   const newButton = (
-    <Button size="lg" onClick={() => void navigate(settingsFormPath(meta.id))}>
+    <Button onClick={() => void navigate(settingsFormPath(meta.id))}>
       <Plus className="size-4" /> New {noun}
     </Button>
   )
   const actions = (
     <div className="flex flex-wrap justify-end gap-2">
-      <Button size="lg" variant="outline" onClick={() => void navigate(settingsFormPath(meta.id, "import"))}>
+      <Button variant="outline" onClick={() => void navigate(settingsFormPath(meta.id, "import"))}>
         <Download className="size-4" /> Import
       </Button>
       {newButton}

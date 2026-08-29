@@ -6,6 +6,14 @@ import { api, type ModelCandidate, type ModelsDevProvider, type ServerSettings }
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxTrigger,
+} from "@/components/ui/combobox"
 import { Textarea } from "@/components/ui/textarea"
 import {
   Select,
@@ -328,47 +336,6 @@ function ModelEditorFields({
   settings: ServerSettings
   onPatch: (patch: Partial<ModelRow>) => void
 }) {
-  const [filling, setFilling] = React.useState(false)
-  const [fillState, setFillState] = React.useState<"idle" | "filled" | "miss">("idle")
-
-  // A new id is a new lookup; a stale "filled"/"miss" would describe the old one.
-  React.useEffect(() => setFillState("idle"), [row.id])
-
-  /** Look the id up on models.dev and fill only the fields still empty —
-      overwriting hand-entered values silently is the failure mode, so nothing
-      here clobbers. */
-  const fill = async () => {
-    const id = row.id.trim()
-    if (!id) return
-    setFilling(true)
-    try {
-      const { models } = await api<{ models: ModelCandidate[] }>(
-        settings,
-        `/api/models-dev/search?q=${encodeURIComponent(id)}&limit=1`,
-      )
-      const hit = models[0]
-      if (!hit || hit.id.toLowerCase() !== id.toLowerCase()) {
-        setFillState("miss")
-        return
-      }
-      const patch: Partial<ModelRow> = { devRef: `${hit.providerId}/${hit.id}` }
-      if (!row.label.trim() || row.label.trim() === id) patch.label = hit.label === hit.id ? "" : hit.label
-      if (!row.contextWindow.trim() && hit.contextWindow) patch.contextWindow = String(hit.contextWindow)
-      if (!row.maxOutputTokens.trim() && hit.maxOutputTokens) patch.maxOutputTokens = String(hit.maxOutputTokens)
-      if (!row.efforts.trim() && hit.reasoningEfforts.length) patch.efforts = hit.reasoningEfforts.join(", ")
-      if (!row.description.trim() && hit.description) patch.description = hit.description
-      if (!row.pricingInput.trim() && hit.pricing) patch.pricingInput = String(hit.pricing.input)
-      if (!row.pricingOutput.trim() && hit.pricing) patch.pricingOutput = String(hit.pricing.output)
-      if (!row.modalities.trim() && hit.modalities?.length) patch.modalities = hit.modalities.join(", ")
-      onPatch(patch)
-      setFillState("filled")
-    } catch (err) {
-      reportError(err, "Couldn't look the model up on models.dev")
-    } finally {
-      setFilling(false)
-    }
-  }
-
   return (
     <div className="space-y-3 border-t bg-muted/20 p-3">
       <div className="grid gap-3 sm:grid-cols-2">
@@ -455,17 +422,178 @@ function ModelEditorFields({
           </Field>
         </div>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" variant="outline" size="sm" disabled={filling || !row.id.trim()} onClick={fill}>
-          {filling ? "Looking up…" : "Fill from models.dev"}
-        </Button>
-        {fillState === "filled" && (
-          <span className="text-xs text-muted-foreground">Matched — applied to the empty fields.</span>
-        )}
-        {fillState === "miss" && (
-          <span className="text-xs text-muted-foreground">No models.dev match for this id.</span>
-        )}
-      </div>
+      <ModelsDevMatch row={row} settings={settings} onPatch={onPatch} />
+    </div>
+  )
+}
+
+/* ── models.dev match ──
+   Metadata is looked up by *searching*, never by an exact-id fill. Two reasons,
+   and the old one-shot button lost to both: a gateway serves its own ids
+   ("oc/hy3-free"), which models.dev has never heard of even though the model
+   behind them is in the catalog under its real name — an exact match can only
+   report a miss it has no way to resolve; and the catalog is a 4.4 MB upstream
+   fetch that fails transiently, which the button turned into an error toast
+   over an editor that then knew nothing more than before. A dropdown makes both
+   the same thing: type, look, pick — and a failed fetch is a Retry inside the
+   popup instead of a dead end.
+
+   The search runs server-side (the catalog never reaches the browser) and is
+   seeded with the row's own id on open, because the server scores an exact id
+   match first — when the gateway *does* use the catalog's id, the top row is
+   already the answer and the extra typing never happens. */
+
+function ModelsDevMatch({
+  row,
+  settings,
+  onPatch,
+}: {
+  row: ModelRow
+  settings: ServerSettings
+  onPatch: (patch: Partial<ModelRow>) => void
+}) {
+  const [open, setOpen] = React.useState(false)
+  const [query, setQuery] = React.useState("")
+  const [results, setResults] = React.useState<ModelCandidate[]>([])
+  const [state, setState] = React.useState<"idle" | "loading" | "ready" | "failed">("idle")
+  // Bumped to re-run the search with the query unchanged — the Retry button.
+  const [attempt, setAttempt] = React.useState(0)
+
+  React.useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    setState("loading")
+    const timer = setTimeout(() => {
+      const params = new URLSearchParams({ limit: "30" })
+      if (query.trim()) params.set("q", query.trim())
+      api<{ models: ModelCandidate[] }>(settings, `/api/models-dev/search?${params}`)
+        .then((r) => {
+          if (cancelled) return
+          setResults(r.models)
+          setState("ready")
+        })
+        .catch((err) => {
+          if (cancelled) return
+          // The popup says so itself; a toast on every keystroke of a dead
+          // upstream is noise on top of an answer already on screen.
+          setResults([])
+          setState("failed")
+          console.warn("models.dev search failed", err)
+        })
+    }, 250)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [settings, query, open, attempt])
+
+  /** Apply a hit the user pointed at. The id is never touched — it is the
+      gateway's, and it is what the agent is spawned with — and a label the user
+      typed survives. Everything else is a *fact about the model just chosen*, so
+      it replaces what is there: the no-clobber rule protected hand-entered
+      values from a lookup nobody asked for, and this is the opposite. */
+  const apply = (hit: ModelCandidate) => {
+    // Every field is coerced on the way in. A row's fields are the strings a
+    // controlled `<Input>` is given and `rowsToModels` calls `.trim()` on, so a
+    // field the response happened not to carry must land as "", never undefined
+    // — that is a blank input and a crash on the next keystroke, one bug apart.
+    const label = hit.label ?? ""
+    const patch: Partial<ModelRow> = {
+      devRef: hit.devRef ?? (hit.providerId ? `${hit.providerId}/${hit.id}` : hit.id),
+      contextWindow: hit.contextWindow ? String(hit.contextWindow) : "",
+      maxOutputTokens: hit.maxOutputTokens ? String(hit.maxOutputTokens) : "",
+      efforts: (hit.reasoningEfforts ?? []).join(", "),
+      description: hit.description ?? "",
+      pricingInput: hit.pricing ? String(hit.pricing.input) : "",
+      pricingOutput: hit.pricing ? String(hit.pricing.output) : "",
+      modalities: (hit.modalities ?? []).join(", "),
+    }
+    if (!row.label.trim() || row.label.trim() === row.id.trim())
+      patch.label = label === hit.id ? "" : label
+    onPatch(patch)
+    setOpen(false)
+  }
+
+  const matched = row.devRef.trim()
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Combobox
+        items={results}
+        filter={null}
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next)
+          // Seed on open, so the row's own id is the first thing searched.
+          if (next) setQuery(row.id.trim())
+        }}
+        inputValue={query}
+        // The combobox resets its own input on close and clear; a non-string
+        // reaching state is a `.trim()` away from throwing in the effect above.
+        onInputValueChange={(value) => setQuery(typeof value === "string" ? value : "")}
+        itemToStringLabel={(hit: ModelCandidate | null) => hit?.label || hit?.id || ""}
+        onValueChange={(hit: ModelCandidate | null) => hit && apply(hit)}
+      >
+        <ComboboxTrigger render={<Button type="button" variant="outline" size="sm" />}>
+          {matched ? "Change models.dev match" : "Match on models.dev"}
+        </ComboboxTrigger>
+        <ComboboxContent>
+          <ComboboxInput showTrigger={false} placeholder="Search models.dev…" />
+          <ComboboxList>
+            {results.map((hit) => (
+              <ComboboxItem key={`${hit.providerId ?? "?"}:${hit.id}`} value={hit}>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm">{hit.label || hit.id}</span>
+                  <span className="block truncate font-mono text-[11px] text-muted-foreground">
+                    {hit.providerName ? `${hit.providerName} · ` : ""}
+                    {hit.id}
+                  </span>
+                  {(hit.contextWindow || hit.pricing || hit.reasoningEfforts.length > 0) && (
+                    <span className="block truncate text-[11px] text-muted-foreground">
+                      {[
+                        hit.contextWindow ? `${formatTokens(hit.contextWindow)} ctx` : "",
+                        hit.pricing
+                          ? `$${trimNum(hit.pricing.input)}/$${trimNum(hit.pricing.output)}`
+                          : "",
+                        hit.reasoningEfforts.length
+                          ? `efforts: ${hit.reasoningEfforts.join(" · ")}`
+                          : "",
+                      ]
+                        .filter(Boolean)
+                        .join("  ·  ")}
+                    </span>
+                  )}
+                </span>
+              </ComboboxItem>
+            ))}
+          </ComboboxList>
+          {state !== "ready" || results.length === 0 ? (
+            <div className="px-3 py-3 text-center text-xs text-pretty text-muted-foreground">
+              {state === "loading" ? (
+                "Searching…"
+              ) : state === "failed" ? (
+                <>
+                  models.dev is unreachable right now.{" "}
+                  <button
+                    type="button"
+                    className="underline underline-offset-2"
+                    onClick={() => setAttempt((n) => n + 1)}
+                  >
+                    Retry
+                  </button>
+                </>
+              ) : (
+                "No match — try the model's real name rather than the id this provider serves it under."
+              )}
+            </div>
+          ) : null}
+        </ComboboxContent>
+      </Combobox>
+      {matched && (
+        <span className="font-mono text-xs text-muted-foreground">
+          matched <span className="text-foreground">{matched}</span>
+        </span>
+      )}
     </div>
   )
 }

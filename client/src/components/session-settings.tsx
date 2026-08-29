@@ -14,6 +14,7 @@ import {
   Eye,
   ListTree,
   RotateCcw,
+  Rows3,
   ScrollText,
   Text,
   WrapText,
@@ -113,6 +114,13 @@ const OPTIONS: {
     icon: AlignHorizontalSpaceBetween,
     title: "Turn dividers",
     description: "Draw a hairline above each of your messages to separate one turn from the next.",
+  },
+  {
+    key: "turnRail",
+    icon: Rows3,
+    title: "Turn rail",
+    description:
+      "Tick marks down the right edge, one per message you sent. Hover one to preview that turn, click it to jump there.",
   },
 ]
 

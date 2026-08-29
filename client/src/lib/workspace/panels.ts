@@ -1,10 +1,18 @@
 /* ── Panel vocabulary ──
-   What the dock can hold, and how a panel is named. Seven kinds, because a
+   What the dock can hold, and how a panel is named. Eight kinds, because a
    panel type is an interaction surface and not a data source: a diff is the
    editor looking at a file two ways, a browser is the preview at a different
    trust level, and a problems list is the output buffer filtered to the records
    that carry a location. Merging them is what keeps the registry, the palette
    and the close rules from having three near-copies of each other.
+
+   `ide` is the one that does not merge, and the reason is the same rule read
+   the other way: it is not a richer `editor`, it is a different *program*. The
+   editor panel is this app's own — CodeMirror over the workspace filesystem
+   API, with the harness's theme, its save path and its close guard. The IDE
+   panel is a whole VS Code running on the server, framed. Nothing inside it is
+   ours to draw, guard or restyle, so folding the two would mean one component
+   with two disjoint halves and a boolean.
 
    A descriptor IS the panel's params. Dockview serializes params verbatim into
    localStorage, so this file is a storage schema as much as a type: ids and
@@ -20,6 +28,7 @@ export type PanelKind =
   | "source-control"
   | "web"
   | "output"
+  | "ide"
 
 /** Whether a web panel is looking at a project's own dev server or the wider
     internet. It is carried on the descriptor so the panel cannot decide for
@@ -37,6 +46,7 @@ export type PanelDescriptor =
   | { kind: "source-control"; projectId: string }
   | { kind: "web"; trust: WebTrust; viewId: string; projectId?: string; url?: string }
   | { kind: "output"; projectId: string }
+  | { kind: "ide"; projectId: string }
 
 export interface PanelSpec {
   /** One per project — opening it again focuses what is there. */
@@ -57,6 +67,11 @@ export const PANEL_SPECS: Record<PanelKind, PanelSpec> = {
   "source-control": { singleton: true, defaultTitle: "Source control", implemented: true },
   web: { singleton: false, defaultTitle: "Preview", implemented: true },
   output: { singleton: true, defaultTitle: "Output", implemented: true },
+  /* Singleton per project because the *server* is: one code-server per
+     project directory, since two extension hosts writing one `.vscode` is a
+     corruption rather than a race. A second panel would frame the same
+     process anyway. */
+  ide: { singleton: true, defaultTitle: "VS Code", implemented: true },
 }
 
 export const PANEL_KINDS = Object.keys(PANEL_SPECS) as PanelKind[]
@@ -89,6 +104,8 @@ export function panelId(panel: PanelDescriptor): string {
         : `web:${panel.projectId}:${panel.viewId}`
     case "output":
       return `output:${panel.projectId}`
+    case "ide":
+      return `ide:${panel.projectId}`
   }
 }
 
@@ -159,5 +176,7 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
     }
     case "output":
       return projectId ? { kind: "output", projectId } : null
+    case "ide":
+      return projectId ? { kind: "ide", projectId } : null
   }
 }

@@ -69,8 +69,8 @@ export async function setupPush(settings: ServerSettings): Promise<void> {
     if (!config?.firebase) return
     if (!("serviceWorker" in navigator) || !("Notification" in window)) return
     // Never prompts. Asking belongs to a user gesture — the enable-notifications
-    // alert in the thread view (components/notification-alert) or the settings
-    // toggle — which calls back into setupPush once permission is granted.
+    // toast's Enable action or the settings toggle — which calls back into
+    // setupPush once permission is granted.
     if (Notification.permission !== "granted") return
 
     // Push needs a worker to subscribe through, and off https there is none.

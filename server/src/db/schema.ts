@@ -218,6 +218,14 @@ export const sessions = sqliteTable(
     title: text("title").notNull(),
     /** The agent's own session id — what `session/load` is called with. */
     acpSessionId: text("acp_session_id"),
+    /** True while `acpSessionId` is an id the agent handed out but no turn has
+        committed to yet. Such an id is written down anyway — losing it is how a
+        thread ends up with no pointer to anything at all — but it is the one id
+        a later `session/new` is allowed to replace, and a load that refuses it
+        is not a lost history, just a session the agent never flushed. */
+    acpSessionProvisional: integer("acp_session_provisional", { mode: "boolean" })
+      .notNull()
+      .default(false),
     createdAt: integer("created_at").notNull(),
     /** Epoch ms this thread was deleted; null = live. Deleted threads keep
         their row (and their acpSessionId) so a delete stays undoable. */
@@ -317,4 +325,52 @@ export const projectPreviews = sqliteTable(
     createdAt: integer("created_at").notNull(),
   },
   (t) => [index("preview_project").on(t.projectId)],
+);
+
+/**
+ * A task on the tasks board.
+ *
+ * Standalone for now: a genuinely top-level resource, not scoped to a session,
+ * project or agent. The board is user-managed; wiring tasks to agent turns (the
+ * "no connection between the agents and the board, initially" promise) is a
+ * later step, and the schema deliberately holds no foreign keys so nothing here
+ * has to be rethought when that arrives.
+ *
+ * `status` and `board` are distinct: a status is what the task IS (todo /
+ * in_progress / done / blocked), while the board is which column it sits in on
+ * the kanban. For the default single-board app they collapse, but keeping them
+ * apart means reorder/drag is a pure column+order operation that never has to
+ * guess at a status, and a future multi-board read (filter by board, not by
+ * migrating statuses) stays a simple column add.
+ */
+export const tasks = sqliteTable(
+  "tasks",
+  {
+    id: text("id").primaryKey(),
+    board: text("board").notNull().default("default"),
+    title: text("title").notNull(),
+    /** Markdown body; null = none. */
+    description: text("description"),
+    status: text("status", {
+      enum: ["todo", "in_progress", "done", "blocked"],
+    })
+      .notNull()
+      .default("todo"),
+    priority: text("priority", { enum: ["low", "medium", "high", "urgent"] })
+      .notNull()
+      .default("medium"),
+    /** Free text tag names, stored as a JSON string-array. */
+    labels: text("labels", { mode: "json" }).$type<string[]>().notNull().default([]),
+    /** Who it is assigned to; free text (no user system yet). */
+    assignee: text("assignee"),
+    /** Epoch ms due timestamp; null = no due date. */
+    dueAt: integer("due_at"),
+    /** Sticky note for within-column ordering on the kanban. */
+    note: text("note"),
+    /** Position within the column, for a stable manual order. */
+    order: integer("order").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("tasks_board_order").on(t.board, t.status, t.order)],
 );

@@ -127,6 +127,22 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       },
     });
   else if (msg.method === "session/load") {
+    /* A session this agent has no record of. Real agents answer exactly like
+       this — codex says "no rollout found for thread id …" — and it is the
+       failure that used to cost a thread its history, because the client's
+       fallback `session/new` overwrote the id it had just failed to load. */
+    if (msg.params?.sessionId !== "acp-123") {
+      out({
+        jsonrpc: "2.0",
+        id: msg.id,
+        error: {
+          code: -32603,
+          message: "Internal error",
+          data: { details: `no rollout found for thread id ${msg.params?.sessionId}` },
+        },
+      });
+      return;
+    }
     // Replay a tiny conversation, then answer — mirrors ACP loadSession.
     out({
       jsonrpc: "2.0",

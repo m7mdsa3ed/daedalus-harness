@@ -1,6 +1,6 @@
 import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
-import { liveThreads, ThreadSocket, type ThreadCallbacks } from "./thread-socket"
+import { AgentError, liveThreads, ThreadSocket, type ThreadCallbacks } from "./thread-socket"
 import { describeError, markReported } from "./errors"
 import { appendOutput } from "./workspace/output"
 import { uuid } from "./uuid"
@@ -30,7 +30,7 @@ import {
   type SkillDef,
   type CommandDef,
 } from "./settings"
-import { emptyThread, useStore } from "./store"
+import { emptyThread, useStore, type Action } from "./store"
 
 const RECONNECT_MAX_ATTEMPTS = 5
 const RECONNECT_BASE_DELAY_MS = 500
@@ -38,6 +38,13 @@ const RECONNECT_MAX_DELAY_MS = 8000
 const NON_RECONNECTABLE_CLOSE_CODES = new Set([4000, 4002, 4004])
 const reconnectAttempts = new Map<string, number>()
 const reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>()
+/** The last journal cursor this client has folded into a thread's state, keyed
+    by session id. On a reconnect to an *alive* process this is what lets us ask
+    for the delta instead of rebuilding the transcript from zero — a full
+    replay of a long thread is thousands of events the client already has in
+    memory. Reset to 0 (pull it out) whenever the thread is respawned, since a
+    respawn clears the server's journal. */
+const journalCursors = new Map<string, number>()
 
 /** Side-effectful operations: REST calls + ACP thread lifecycle. */
 export function useActions(settings: ServerSettings) {
@@ -50,14 +57,24 @@ export function useActions(settings: ServerSettings) {
        toast: the transcript is where the user is looking, it survives the four
        seconds a toast lives, and it is the only place that can offer the one
        useful next step (send that prompt again). */
-    const recordError = (sessionId: string, err: unknown, context: string, retryText?: string) => {
+    const recordError = (
+      sessionId: string,
+      err: unknown,
+      context: string,
+      retryText?: string,
+      /* Where the row goes. Everything but the replay wants it committed now;
+         the replay wants it in the same fold as the transcript it belongs to,
+         or the error lands in a thread that is about to be reset out from
+         under it. */
+      emit: (action: Action) => void = dispatch,
+    ) => {
       const info = describeError(err)
       console.error(`[${context}]`, err)
       // It has a home in the transcript now; the global net must not re-toast it
       // if a caller lets the rethrow escape.
       markReported(err)
       if (info.kind === "cancelled") return info
-      dispatch({
+      emit({
         type: "error",
         id: sessionId,
         title: context,
@@ -144,162 +161,239 @@ export function useActions(settings: ServerSettings) {
 
     /* `owner` is filled in by startThread the moment the socket exists — see the
        guard in onStatus. */
-    const makeCallbacks = (id: string, owner: { thread?: ThreadSocket }): ThreadCallbacks => ({
-      onUpdate: (update, historyReplay) =>
-        dispatch({ type: "update", id, update, allowUserChunks: historyReplay }),
-      /* The agent is blocked on this question until somebody answers it. The
-         server holds its promise now, so `resolve` is a message rather than a
-         callback: it names the request the server minted, which is also how a
-         peer's answer is matched against this card. */
-      onPermission: (requestId, request) => {
-        notifyThreadEvent("permissionNeeded", id, titleOf(id), request.toolCall?.title ?? undefined)
-        dispatch({
-          type: "permission",
-          id,
-          permission: {
-            requestId,
-            request,
-            resolve: (response) => {
-              dispatch({ type: "permission", id, permission: null })
-              owner.thread?.answerPermission(requestId, response)
-            },
-          },
-        })
-      },
-      onElicitation: (requestId, request) => {
-        notifyThreadEvent("questionAsked", id, titleOf(id), request.message)
-        dispatch({
-          type: "elicitation",
-          id,
-          elicitation: {
-            requestId,
-            request,
-            resolve: (response) => {
-              dispatch({ type: "elicitation", id, elicitation: null })
-              owner.thread?.answerElicitation(requestId, response)
-            },
-          },
-        })
-      },
-      /* Somebody else settled this question — another device answered it, or
-         the agent's process died holding it. Either way the card is stale and
-         the answer is no longer ours to give. */
-      onRequestAnswered: (requestId) => {
-        const thread = stateRef.current.threads[id]
-        if (thread?.permission?.requestId === requestId) {
-          dispatch({ type: "permission", id, permission: null })
-        }
-        if (thread?.elicitation?.requestId === requestId) {
-          dispatch({ type: "elicitation", id, elicitation: null })
-        }
-      },
-      onStatus: (status, closeInfo) => {
-        /* A respawn or a reconnect installs a new socket for this same session
-           id while the old one is still closing. The old instance's closing
-           status is about a connection nobody is using — letting it through
-           marks the live thread dead and, worse, books a reconnect against it. */
-        if (owner.thread && liveThreads.get(id) !== owner.thread) return
-        if (status === "connected") {
-          reconnectAttempts.delete(id)
-        } else if (
-          status === "closed" &&
-          !closeInfo?.clientInitiated &&
-          !NON_RECONNECTABLE_CLOSE_CODES.has(closeInfo?.code ?? 0)
-        ) {
-          // The close frame's reason is the server's own account of what
-          // happened ("agent exited (1)") — carry it into the give-up message.
-          scheduleReconnect(
+    const makeCallbacks = (id: string, owner: { thread?: ThreadSocket }): ThreadCallbacks => {
+      /* The replay is a few thousand events, and dispatching each one commits a
+         render of a transcript nobody has looked at yet — which is what made a
+         long thread visibly rebuild itself line by line. So between `attached`
+         and `caught_up` the actions go into a list instead, and the whole
+         history lands as one `batch`. Nothing else changes: the callbacks below
+         run in the same order on the same events, and a live socket (buffer
+         null) still commits every action the moment it arrives.
+
+         Two rules keep it honest. Everything thread-scoped goes through `send`,
+         never `dispatch` — a stray direct dispatch would jump the queue and land
+         before the `thread-reset` that is still sitting in the buffer. And any
+         exit from the replay flushes: `caught_up` is the ordinary one, a socket
+         that dies mid-replay is the other, and without the second the history
+         would be dropped on the floor along with the close status. */
+      let buffer: Action[] | null = null
+      const send = (action: Action) => {
+        if (buffer) buffer.push(action)
+        else dispatch(action)
+      }
+      /* The one hot dispatch: an agent streams text as dozens of chunks a
+         second, and each one is a full state update. Marking it a transition
+         lets React treat it as interruptible — a burst of chunks coalesces into
+         the frames the display can actually show instead of one render per
+         token. Everything else stays urgent (a permission appearing, a status
+         flip, a turn ending) and goes through `send`. */
+      const sendStream = (action: Action) => {
+        if (buffer) buffer.push(action)
+        else React.startTransition(() => dispatch(action))
+      }
+      const flush = () => {
+        const pending = buffer
+        buffer = null
+        if (pending?.length) dispatch({ type: "batch", actions: pending })
+      }
+      return {
+        onUpdate: (update, historyReplay) =>
+          sendStream({ type: "update", id, update, allowUserChunks: historyReplay }),
+        /* The agent is blocked on this question until somebody answers it. The
+           server holds its promise now, so `resolve` is a message rather than a
+           callback: it names the request the server minted, which is also how a
+           peer's answer is matched against this card. */
+        onPermission: (requestId, request) => {
+          notifyThreadEvent("permissionNeeded", id, titleOf(id), request.toolCall?.title ?? undefined)
+          send({
+            type: "permission",
             id,
-            closeInfo?.reason
-              ? new Error(`${closeInfo.reason}${closeInfo.code ? ` (${closeInfo.code})` : ""}`)
-              : undefined
-          )
-        }
-        dispatch({
-          type: "thread-status",
-          id,
-          status,
-          closeCode: closeInfo?.code,
-          closeReason: closeInfo?.reason,
-        })
-        /* A dead socket ends any turn it was carrying. The server does answer
-           the prompts an exiting agent never will — but if the close beats the
-           `turn_ended` to this tab, the working indicator would outlive the
-           process and only a reload would clear it. */
-        if (status === "closed") dispatch({ type: "turn-active", id, active: false })
-      },
-      /* The session's whole settings state, from wherever it changed: the
-         handshake, this device, or another one. It is absolute, so applying it
-         twice is the same as applying it once. */
-      onSessionConfig: (modes, modeId, configOptions) => {
-        if (modes !== undefined || configOptions !== undefined) {
-          dispatch({
-            type: "session-config",
-            id,
-            modes: modes ?? null,
-            configOptions: configOptions ?? stateRef.current.threads[id]?.configOptions ?? [],
+            permission: {
+              requestId,
+              request,
+              resolve: (response) => {
+                send({ type: "permission", id, permission: null })
+                owner.thread?.answerPermission(requestId, response)
+              },
+            },
           })
-        } else if (modeId) {
-          dispatch({ type: "mode", id, modeId })
-        }
-        /* Remember what this profile's agent offers. A draft has no process to
-           ask, so without this a new thread cannot show a single setting until
-           it has already started — see lib/agent-options. */
-        const profileId = stateRef.current.sessions.find((s) => s.id === id)?.profileId
-        if (profileId && configOptions && configOptions.length > 0) {
-          saveAgentOptions(profileId, configOptions)
-        }
-      },
-      onTtft: (ms) => dispatch({ type: "ttft", id, ms }),
-      onTurnEnded: (usage, error, promptText, catchingUp) => {
-        dispatch({ type: "turn-active", id, active: false })
-        if (usage) dispatch({ type: "usage", id, usage })
-        if (error) {
-          // Recorded in the transcript either way — a failure that survived a
-          // reload is still the answer to the message above it, and carries the
-          // text so the row can offer Retry.
-          const info = recordError(id, error, "The agent couldn't answer this message", promptText)
-          if (!catchingUp && info.kind !== "cancelled") {
-            notifyThreadEvent("turnFailed", id, titleOf(id), info.title)
+        },
+        onElicitation: (requestId, request) => {
+          notifyThreadEvent("questionAsked", id, titleOf(id), request.message)
+          send({
+            type: "elicitation",
+            id,
+            elicitation: {
+              requestId,
+              request,
+              resolve: (response) => {
+                send({ type: "elicitation", id, elicitation: null })
+                owner.thread?.answerElicitation(requestId, response)
+              },
+            },
+          })
+        },
+        /* Somebody else settled this question — another device answered it, or
+           the agent's process died holding it. Either way the card is stale and
+           the answer is no longer ours to give. */
+        onRequestAnswered: (requestId) => {
+          const thread = stateRef.current.threads[id]
+          if (thread?.permission?.requestId === requestId) {
+            send({ type: "permission", id, permission: null })
           }
-        } else if (!catchingUp) {
-          // Notifying on replay would re-announce every turn in the thread on
-          // every reload — on a phone, as a push.
-          notifyThreadEvent("turnFinished", id, titleOf(id))
-        }
-      },
-      /* A turn began on words this device did not type — either another peer
-         prompted, or this is the replay rebuilding the transcript. Only the
-         first is live activity. */
-      onTurnStarted: (text, catchingUp) => {
-        dispatch({ type: "user-message", id, text })
-        dispatch({ type: "session-title", id, title: text.slice(0, 60) })
-        if (!catchingUp) dispatch({ type: "turn-active", id, active: true })
-      },
-      // The replay is about to start: everything on screen is about to be said
-      // again, from the beginning.
-      onAttached: () =>
-        dispatch({ type: "thread-reset", id, thread: { ...emptyThread, status: "connecting" } }),
-      // A turn may still be running server-side; `turn_ended` clears it.
-      onCaughtUp: (_cursor, promptActive) => {
-        if (promptActive) dispatch({ type: "turn-active", id, active: true })
-      },
-      // A background task's journal grew server-side. Into the module store,
-      // not the reducer: the events are keyed by transcript dir, not by
-      // thread, and the panel reading them subscribes there (lib/task-events).
-      onTaskEvent: (transcriptDir, event) => {
-        appendTaskEvent(transcriptDir, event)
-        /* Also to the project's Output pane, *as well as* the transcript's own
-           task card rather than instead of it: the card is the shape of the
-           work (which agent, how far along), and Output is the running text —
-           where a `file:line` in a build's stderr becomes a clickable problem.
-           Two readings of one stream, which is the same bargain the Problems
-           filter makes. */
-        const projectId = stateRef.current.sessions.find((s) => s.id === id)?.projectId
-        const text = typeof event.message === "string" ? event.message : ""
-        if (projectId && text.trim()) appendOutput(projectId, "task", text)
-      },
-    })
+          if (thread?.elicitation?.requestId === requestId) {
+            send({ type: "elicitation", id, elicitation: null })
+          }
+        },
+        onStatus: (status, closeInfo) => {
+          /* A respawn or a reconnect installs a new socket for this same session
+             id while the old one is still closing. The old instance's closing
+             status is about a connection nobody is using — letting it through
+             marks the live thread dead and, worse, books a reconnect against it. */
+          if (owner.thread && liveThreads.get(id) !== owner.thread) return
+          if (status === "connected") {
+            reconnectAttempts.delete(id)
+          } else if (
+            status === "closed" &&
+            !closeInfo?.clientInitiated &&
+            !NON_RECONNECTABLE_CLOSE_CODES.has(closeInfo?.code ?? 0)
+          ) {
+            // The close frame's reason is the server's own account of what
+            // happened ("agent exited (1)") — carry it into the give-up message.
+            scheduleReconnect(
+              id,
+              closeInfo?.reason
+                ? new Error(`${closeInfo.reason}${closeInfo.code ? ` (${closeInfo.code})` : ""}`)
+                : undefined
+            )
+          }
+          send({
+            type: "thread-status",
+            id,
+            status,
+            closeCode: closeInfo?.code,
+            closeReason: closeInfo?.reason,
+          })
+          /* A dead socket ends any turn it was carrying. The server does answer
+             the prompts an exiting agent never will — but if the close beats the
+             `turn_ended` to this tab, the working indicator would outlive the
+             process and only a reload would clear it. */
+          if (status === "closed") send({ type: "turn-active", id, active: false })
+          /* Last, so the status and whatever history was already buffered commit
+             together: a close during the replay is the one exit `caught_up`
+             never gets to make. */
+          if (status !== "connected") flush()
+        },
+        /* The session's whole settings state, from wherever it changed: the
+           handshake, this device, or another one. It is absolute, so applying it
+           twice is the same as applying it once. */
+        onSessionConfig: (modes, modeId, configOptions) => {
+          if (modes !== undefined || configOptions !== undefined) {
+            /* Left out means unchanged, and the reducer is what resolves it:
+               inside a batched replay this action is not committed yet, so
+               reading the current value here would read the thread as it was
+               before the replay began. */
+            send({ type: "session-config", id, modes: modes ?? null, configOptions })
+          } else if (modeId) {
+            send({ type: "mode", id, modeId })
+          }
+          /* Remember what this profile's agent offers. A draft has no process to
+             ask, so without this a new thread cannot show a single setting until
+             it has already started — see lib/agent-options. */
+          const profileId = stateRef.current.sessions.find((s) => s.id === id)?.profileId
+          if (profileId && configOptions && configOptions.length > 0) {
+            saveAgentOptions(profileId, configOptions)
+          }
+        },
+        onTtft: (ms) => send({ type: "ttft", id, ms }),
+        onTurnEnded: (usage, error, promptText, catchingUp) => {
+          send({ type: "turn-active", id, active: false })
+          if (usage) send({ type: "usage", id, usage })
+          if (error) {
+            // Recorded in the transcript either way — a failure that survived a
+            // reload is still the answer to the message above it, and carries the
+            // text so the row can offer Retry.
+            const info = recordError(
+              id,
+              error,
+              "The agent couldn't answer this message",
+              promptText,
+              send,
+            )
+            if (!catchingUp && info.kind !== "cancelled") {
+              notifyThreadEvent("turnFailed", id, titleOf(id), info.title)
+            }
+          } else if (!catchingUp) {
+            // Notifying on replay would re-announce every turn in the thread on
+            // every reload — on a phone, as a push.
+            notifyThreadEvent("turnFinished", id, titleOf(id))
+          }
+        },
+        /* A turn began on words this device did not type — either another peer
+           prompted, or this is the replay rebuilding the transcript. Only the
+           first is live activity. */
+        onTurnStarted: (text, catchingUp) => {
+          send({ type: "user-message", id, text })
+          send({ type: "session-title", id, title: text.slice(0, 60) })
+          if (!catchingUp) send({ type: "turn-active", id, active: true })
+        },
+        // The replay is about to start. `from` is where it begins: 0 is a full
+        // rebuild (the usual case, and the only one the server can tell apart
+        // from "brand new"), anything else is a delta — a reconnect to a thread
+        // this device already has most of in memory, so the transcript is kept
+        // and only the gap is appended.
+        onAttached: (from, historyLost) => {
+          buffer = []
+          const resuming = from > 0
+          /* Keep what is on screen when resuming; replace it otherwise. A reset
+             would throw away the transcript a delta is about to extend, and a
+             delta appended onto a stale transcript would double-render whatever
+             the server re-sends. `from === 0` therefore means "start over",
+             matching the server's own clamp. The status is left to the socket's
+             `onStatus` flow (connecting → connected) and only committed at
+             `caught_up`; touching it here would race the connect() we are
+             inside. */
+          if (!resuming) {
+            send({ type: "thread-reset", id, thread: { ...emptyThread, status: "connecting" } })
+          }
+          /* The agent would not reload this conversation, so the replay about
+             to arrive is empty. Said here rather than left to look like a quiet
+             thread — and through `send`, so it lands inside the same fold as
+             the (empty) transcript it belongs to rather than ahead of the reset
+             above. Repeated on every reattach because the server holds it for
+             as long as the process that failed the load is the one running. */
+          if (historyLost)
+            recordError(
+              id,
+              new AgentError(historyLost.error),
+              "Couldn't restore this thread's history",
+              undefined,
+              send
+            )
+        },
+        // A turn may still be running server-side; `turn_ended` clears it.
+        onCaughtUp: (cursor, promptActive) => {
+          journalCursors.set(id, cursor)
+          if (promptActive) send({ type: "turn-active", id, active: true })
+          flush()
+        },
+        // A background task's journal grew server-side. Into the module store,
+        // not the reducer: the events are keyed by transcript dir, not by
+        // thread, and the panel reading them subscribes there (lib/task-events).
+        onTaskEvent: (transcriptDir, event) => {
+          appendTaskEvent(transcriptDir, event)
+          /* Also to the project's Output pane, *as well as* the transcript's own
+             task card rather than instead of it: the card is the shape of the
+             work (which agent, how far along), and Output is the running text —
+             where a `file:line` in a build's stderr becomes a clickable problem.
+             Two readings of one stream, which is the same bargain the Problems
+             filter makes. */
+          const projectId = stateRef.current.sessions.find((s) => s.id === id)?.projectId
+          const text = typeof event.message === "string" ? event.message : ""
+          if (projectId && text.trim()) appendOutput(projectId, "task", text)
+        },
+      }
+    }
 
     /* Swap the agent process and put the conversation back.
        The one move that needs this: profile, model and effort are all filled
@@ -324,6 +418,10 @@ export function useActions(settings: ServerSettings) {
           body: JSON.stringify(body),
         })
         await refreshSessions()
+        /* The respawn clears the server's journal, so the saved cursor is past
+           its end. Drop it so the attach below is a clean `from: 0` rebuild
+           instead of relying on the server's clamp. */
+        journalCursors.delete(meta.id)
         // The event log was rebuilt by the load replay; attaching from 0 reads it.
         await startThread(meta.id)
       } catch (error) {
@@ -376,6 +474,17 @@ export function useActions(settings: ServerSettings) {
       liveThreads.set(id, thread)
       await thread.connect({ cursor })
       return thread
+    }
+
+    /** The journal position to resume a reconnect from. 0 when this device has
+        never folded this thread's journal (fresh connect or a page reload), or
+        when the agent is about to be respawned — a respawn clears the journal,
+        so a stale saved cursor would point past its end, which the server
+        clamps back to 0 anyway. A value > 0 is the delta: "I already have this
+        much; give me the rest." */
+    const resumeCursor = (meta: SessionMeta): number => {
+      if (meta.exited) return 0
+      return journalCursors.get(meta.id) ?? 0
     }
 
     /* Hoisted rather than left as a method on the returned object, for the same
@@ -452,16 +561,24 @@ export function useActions(settings: ServerSettings) {
           }),
         })
         await refreshSessions()
+        /* Respawn cleared the server's journal; a saved cursor now points past
+           its end. Dropping it makes the attach below a clean `from: 0` rebuild
+           rather than leaning on the server's clamp. */
+        journalCursors.delete(meta.id)
       }
 
-      /* Attach from the beginning of the log, always. The replay is bracketed
-         (`attached` resets the thread, `caught_up` ends it), and it carries the
-         same events the live socket sends — so there is no second parser here
-         and no cursor to keep in step. `caught_up` also carries whether a turn
-         is still running, read server-side in the same tick as the log it
-         follows: `meta.promptActive` is a snapshot from the last /api/sessions
-         fetch, and stale-false loses the indicator while stale-true strands it. */
-      await startThread(meta.id)
+      /* Attach from where this device last stopped, or the beginning of the log
+         if it never filled this thread (or the journal was just cleared). The
+         replay is bracketed (`attached` resets or extends, `caught_up` ends
+         it), and it carries the same events the live socket sends — so there is
+         no second parser here and no cursor to keep in step. A delta (`from >
+         0`) keeps the transcript on screen and appends only the gap, which is
+         what makes a reconnect to a long thread cheap. `caught_up` also carries
+         whether a turn is still running, read server-side in the same tick as
+         the log it follows: `meta.promptActive` is a snapshot from the last
+         /api/sessions fetch, and stale-false loses the indicator while
+         stale-true strands it. */
+      await startThread(meta.id, resumeCursor(meta))
     }
 
     return {

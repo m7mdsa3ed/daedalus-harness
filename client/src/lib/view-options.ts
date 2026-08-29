@@ -4,8 +4,28 @@
     with timestamps on stays that way without imposing it on the next one or on
     anyone else connected to the same harness.
 
-    Adding an option: extend DEFAULTS, add a row in session-settings.tsx, and read
-    it where the transcript renders (via ViewOptionsContext — no prop threading). */
+    Adding an option:
+      1. add the field to `ViewOptions` and a value to `VIEW_DEFAULTS` — the
+         interface is what types `session-settings.tsx`, so a typo is a build
+         error rather than a switch that does nothing;
+      2. add a row to `OPTIONS` in `session-settings.tsx` (declarative — the
+         list renders itself);
+      3. read it where the transcript renders, through `ViewOptionsContext`
+         (`useViewOptionsContext`), not by threading props. Deep components —
+         diffs, tool panes — are the reason the context exists.
+
+    Step 3 has one trap, and it has caught two of these already. Read the value
+    during **render**. An option handed to a `useState` initialiser is read once
+    and every later change is silently discarded, so the switch appears dead on
+    everything already on screen and works only on rows that mount afterwards —
+    which reads as "sometimes". If an option must seed component state, the
+    component has to re-sync when the option itself changes; `StepRow`'s
+    `openSetting` prop in `thread-items.tsx` is the worked example, including
+    why it watches the option rather than the derived value.
+
+    CSS-only options are the cheap path and don't have that problem: set a data
+    attribute on the transcript column (`data-density`, `data-wrap` on
+    MessageScrollerContent) and write the rule in index.css. */
 import { createContext, useContext, useSyncExternalStore } from "react"
 
 export interface ViewOptions {
@@ -29,6 +49,8 @@ export interface ViewOptions {
   splitDiffs: boolean
   /** Hairline rule above each user turn. */
   stepDividers: boolean
+  /** Tick marks down the right edge, one per user turn, to jump between them. */
+  turnRail: boolean
 }
 
 export const VIEW_DEFAULTS: ViewOptions = {
@@ -42,6 +64,7 @@ export const VIEW_DEFAULTS: ViewOptions = {
   showToolDetails: false,
   splitDiffs: false,
   stepDividers: false,
+  turnRail: true,
 }
 
 /** Carries the resolved options to the items that render the transcript, so the

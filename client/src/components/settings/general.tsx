@@ -23,7 +23,6 @@ export function GeneralPage() {
         <Row title="Disconnect" subtitle="Forget this server's URL and token on this device. Other servers stay.">
           <Button
             variant="outline"
-            size="lg"
             onClick={() => {
               clearSettings()
               location.assign("/")

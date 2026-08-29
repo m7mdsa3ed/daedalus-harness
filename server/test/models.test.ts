@@ -46,6 +46,27 @@ const FIXTURE = {
     name: "Provider B",
     models: { "smart-2": { id: "smart-2", name: "B's Smart 2" } },
   },
+  /* The community file's real shapes, which the reader must survive rather than
+     trust. models.dev ships `values: [null, "low", …]` for "no effort" on the
+     sarvam models, and one `.trim()` on that null failed the whole catalog —
+     every provider, every search, 502 as "couldn't reach models.dev". */
+  provC: {
+    id: "provC",
+    name: "Provider C",
+    models: {
+      "ragged-1": {
+        id: "ragged-1",
+        name: null,
+        description: 7,
+        limit: { context: "200000", output: 0 },
+        modalities: { input: ["text", null] },
+        reasoning_options: [null, { type: "effort", values: [null, "Low", "low"] }],
+      },
+      // Free is a price, not a missing one: it is why a profile points at a gateway.
+      "free-1": { id: "free-1", name: "Free One", cost: { input: 0, output: 0 } },
+      "gone-1": null,
+    },
+  },
 };
 
 /** Provider endpoints, canned per URL. Anything unknown reaching fetch here
@@ -61,7 +82,7 @@ globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
   return new Response(hit.body === undefined ? null : JSON.stringify(hit.body), { status: hit.status });
 }) as typeof fetch;
 
-const { searchModelsDev, modelsDevProviders } = await import("../src/models-dev.js");
+const { searchModelsDev, modelsDevProviders, toCandidate } = await import("../src/models-dev.js");
 const {
   parseProviderModels,
   fetchProviderModels,
@@ -108,7 +129,36 @@ await test("modelsDevProviders lists providers by name", async () => {
   assert.deepEqual(await modelsDevProviders(), [
     { id: "provA", name: "Provider A" },
     { id: "provB", name: "Provider B" },
+    { id: "provC", name: "Provider C" },
   ]);
+});
+
+await test("a malformed catalog entry costs that entry, never the catalog", async () => {
+  // The catalog answered at all: one bad field used to throw out of the
+  // normalize loop and take every provider with it.
+  const [ragged] = await searchModelsDev("ragged-1");
+  assert.equal(ragged.name, "ragged-1", "a null name falls back to the id");
+  assert.equal(ragged.description, undefined, "a non-string description is dropped");
+  assert.equal(ragged.contextWindow, undefined, "a stringy limit is not a number");
+  assert.equal(ragged.maxOutputTokens, undefined, "zero is not a limit");
+  assert.deepEqual(ragged.reasoningEfforts, ["low"], "the null effort is skipped, the rest deduped");
+  assert.deepEqual(ragged.modalities, ["text"]);
+  // A model that is not an object at all is simply absent.
+  assert.deepEqual(await searchModelsDev("gone-1"), []);
+  const [free] = await searchModelsDev("free-1");
+  assert.deepEqual(free.pricing, { input: 0, output: 0 }, "free is a price");
+});
+
+await test("toCandidate answers in the client's ModelCandidate shape", async () => {
+  const [hit] = await searchModelsDev("smart-2");
+  const candidate = toCandidate(hit);
+  // `label`, not `name` — the field every client reader looks for — and the
+  // provenance already assembled, so an import carries where it came from.
+  assert.equal(candidate.label, "Smart 2");
+  assert.equal(candidate.devRef, "provA/smart-2");
+  assert.equal("name" in candidate, false);
+  assert.equal(candidate.contextWindow, 200000);
+  assert.deepEqual(candidate.reasoningEfforts, ["low", "high"]);
 });
 
 // --- the provider's own /models endpoint ---

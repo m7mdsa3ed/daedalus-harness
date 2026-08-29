@@ -11,6 +11,7 @@
    send one, and return null rather than guessing when neither answers.
 
    Ported from /var/www/mawared-off/social-live-agent/ai-agent-web. */
+import type * as acp from "@agentclientprotocol/sdk"
 import type { ToolItem } from "./store"
 
 export type ToolKind = NonNullable<ToolItem["toolKind"]>
@@ -72,10 +73,15 @@ const NAME_KINDS: Record<string, ToolKind> = {
   todoread: "other",
 }
 
-/** The kind to render a call as: the protocol's answer, else the name's. */
-export function toolKindOf(item: Pick<ToolItem, "title" | "toolKind">): ToolKind {
+/** The kind to render a call as: the protocol's answer, else the name's.
+
+    The name is read through `toolIdentity` (defined below, next to the rest of
+    the vendor-shape readers) rather than off the title alone: Claude Code's
+    titles are prose, so a call whose kind the adapter omitted used to fall all
+    the way through to "other" even though its name was sitting in `_meta`. */
+export function toolKindOf(item: Pick<ToolItem, "title" | "toolKind" | "meta">): ToolKind {
   if (item.toolKind) return item.toolKind
-  const name = toolNameOf(item)
+  const name = toolIdentity(item)
   if (!name) return "other"
   return NAME_KINDS[name.replace(/^mcp__/, "")] ?? "other"
 }
@@ -85,10 +91,15 @@ export function toolKindOf(item: Pick<ToolItem, "title" | "toolKind">): ToolKind
  * MCP-provided tools. Null for ordinary tool names.
  */
 export function parseMcpToolName(name: string): { server: string; tool: string } | null {
+  const words = (value: string) => value.replace(/_/g, " ").trim()
+  // Codex's form. Its separator is a dot and a server name may not contain
+  // one, so the first two segments are the whole answer and the rest of the
+  // tool name (which may itself contain dots) is kept intact.
+  const dotted = /^mcp\.([^.]+)\.(.+)$/.exec(name)
+  if (dotted) return { server: words(dotted[1]), tool: words(dotted[2]) }
   if (!name.startsWith("mcp__")) return null
   const rest = name.slice("mcp__".length)
   const sep = rest.indexOf("__")
-  const words = (value: string) => value.replace(/_/g, " ").trim()
   if (sep <= 0) return { server: words(rest), tool: "" }
   return { server: words(rest.slice(0, sep)), tool: words(rest.slice(sep + 2)) }
 }
@@ -152,18 +163,79 @@ const TARGET_KEYS = [
  * no tool name in front of it. The kind icon already says what happened, so
  * repeating "bash" before the command only costs horizontal space.
  */
-export function toolTarget(item: Pick<ToolItem, "title" | "rawInput">): string {
+export function toolTarget(item: Pick<ToolItem, "title" | "rawInput" | "meta" | "toolKind">): string {
+  // An MCP call names its server first whichever runtime sent it, and its
+  // arguments are the server's business — `{"server":"crm","tool":"search"}`
+  // is not a target, it is the address of one.
+  const mcp = extractMcpCall(item)
+  if (mcp) return mcp.tool ? `${mcp.server} · ${mcp.tool}` : mcp.server
   const input = asRecord(item.rawInput)
   if (input) {
-    for (const key of TARGET_KEYS) {
+    /* A search is about its pattern, not about the directory it ran in:
+       `pattern` sits after `path` in the general order (a read IS about its
+       path), so a search reorders the two rather than the table doing it for
+       everyone. */
+    const keys =
+      toolKindOf(item) === "search"
+        ? ["pattern", "query", ...TARGET_KEYS]
+        : TARGET_KEYS
+    for (const key of keys) {
       const value = str(input[key])
       if (!value) continue
       if (key.toLowerCase().includes("path")) return shortPath(value, 72)
       return firstLine(value)
     }
   }
-  const name = toolNameOf(item)
-  return name ? toolDisplayName(name) : item.title
+  /* The title beats the tool's own name whenever it is prose — "Update TODOs:
+     rewire the reducer" says more than "todowrite", and every adapter writes
+     one. The name is the answer only when the title IS the name, which is what
+     NAME_RE is testing. */
+  const name = toolIdentity(item)
+  if (!name || !NAME_RE.test(item.title.trim())) {
+    return item.title.trim() ? firstLine(item.title) : (name ? toolDisplayName(name) : item.title)
+  }
+  return toolDisplayName(name)
+}
+
+/**
+ * The sentence the agent wrote about the call, when it sent one apart from the
+ * thing it invoked.
+ *
+ * Claude Code's `Bash` carries a `description` in its input and repeats it on
+ * `_meta.claudeCode.title`, while ACP's `title` and the input's `command` are
+ * both the raw shell line: "Show recent git history and remote" is what the
+ * agent meant to do, `git log --oneline -20 && echo "---BRANCH---" && …` is
+ * what it typed. The sentence is the better row title — a 200-character
+ * one-liner truncates to `git log --oneline -20 && echo "---BRA…`, which says
+ * nothing the `run` label had not already said.
+ */
+export function toolDescription(item: { meta?: unknown; rawInput?: unknown }): string | null {
+  const meta = str(asRecord(asRecord(item.meta)?.claudeCode)?.title)
+  return meta ?? str(asRecord(item.rawInput)?.description)
+}
+
+/**
+ * What a step row prints: the description as the title when there is one, with
+ * the thing actually invoked underneath it. `detail` is absent when the two
+ * would say the same thing — a `Task` names itself with its description and
+ * nothing else, so repeating it as a second line is just a taller row.
+ */
+export interface ToolHeading {
+  title: string
+  /** The command/path/pattern, when the title is prose *about* it. */
+  detail?: string
+  /** The title is a sentence, not an identifier — don't set it in mono. */
+  prose: boolean
+}
+
+export function toolHeading(
+  item: Pick<ToolItem, "title" | "rawInput" | "meta" | "toolKind">
+): ToolHeading {
+  const target = toolTarget(item)
+  const description = toolDescription(item)
+  if (!description) return { title: target, prose: false }
+  const title = firstLine(description)
+  return { title, detail: title === target ? undefined : target, prose: true }
 }
 
 /** The most useful single string in the input, if any — the "command". */
@@ -362,9 +434,28 @@ export function stringifyOutput(
   } else {
     const record = asRecord(value)
     // The common single-field wrappers: {output}, {stdout}, {text}, {result}.
-    const unwrapped = record
-      ? (str(record.output) ?? str(record.stdout) ?? str(record.text) ?? str(record.result))
-      : null
+    /* The single-field wrappers a runtime puts its output inside:
+       `{output}`, `{stdout, stderr}`, `{text}`, `{result}`, and Codex's
+       `{formatted_output, exit_code}` — printing the JSON around any of them
+       shows the reader the envelope instead of the letter.
+
+       `text`, not `str`: an empty string is a real answer here — a command
+       that printed nothing — and treating it as absent fell through to
+       stringifying the wrapper, so a silent success rendered as
+       `{"formatted_output": "", "exit_code": 0}`. */
+    const text_ = (key: string): string | null =>
+      record && typeof record[key] === "string" ? (record[key] as string) : null
+    const streams = record
+      ? ["stdout", "stderr"]
+          .map(text_)
+          .filter((part): part is string => part !== null && part.length > 0)
+      : []
+    const unwrapped =
+      text_("output") ??
+      text_("formatted_output") ??
+      (streams.length > 0 ? streams.join("\n") : (text_("stdout") ?? text_("stderr"))) ??
+      text_("text") ??
+      text_("result")
     text = unwrapped ?? safeJson(value)
   }
   return text.length > max
@@ -383,6 +474,15 @@ function safeJson(value: unknown): string {
 /** The text a tool produced: `rawOutput` when the agent sent one, else the
     text it streamed into `content`. */
 export function toolOutputText(item: ToolItem, max = 20_000): { text: string; truncated: boolean } {
+  // A terminal's stream beats both, and beats them even mid-run: it is the
+  // only source that exists while the command is still printing, and at the
+  // end it is the same bytes `rawOutput.formatted_output` repeats.
+  if (item.terminal && item.terminal.data.length > 0) {
+    const data = item.terminal.data
+    return data.length > max
+      ? { text: data.slice(0, max), truncated: true }
+      : { text: data, truncated: false }
+  }
   if (item.rawOutput !== undefined && item.rawOutput !== null) {
     return stringifyOutput(item.rawOutput, max)
   }
@@ -604,8 +704,17 @@ export function toolSummary(item: ToolItem, active: boolean): string | null {
         { added: 0, removed: 0 }
       )
     : (() => {
-        const edit = extractEditInput(item)
-        return edit ? diffStats(edit.oldText, edit.newText) : null
+        // Every hunk, not just the first: a MultiEdit's churn is the sum of
+        // its edits, and a Write's is the whole file it created.
+        const edits = extractEdits(item)
+        if (edits.length === 0) return null
+        return edits.reduce(
+          (total, edit) => {
+            const stats = diffStats(edit.oldText, edit.newText)
+            return { added: total.added + stats.added, removed: total.removed + stats.removed }
+          },
+          { added: 0, removed: 0 }
+        )
       })()
   if (churn) return `+${churn.added} −${churn.removed}`
 
@@ -619,4 +728,626 @@ export function toolSummary(item: ToolItem, active: boolean): string | null {
 
   const line = (active ? lines[lines.length - 1] : lines[0]).trim()
   return line.length > 44 ? `${line.slice(0, 44)}…` : line
+}
+
+// ─── Vendor identity ─────────────────────────────────────────────────────────
+
+/* Everything below reads *which tool this was*, not just what ACP called it.
+   Three runtimes name the same act three ways — Claude Code's `TodoWrite`,
+   OpenCode's `todowrite` and Codex's `update_plan` are one checklist; `Edit`,
+   `edit` and `apply_patch` are one write — and ACP's `kind` deliberately does
+   not distinguish them. `kind` still decides the *layout family* (that is the
+   part that is protocol); the name decides which of the specialised views
+   inside a family applies, and a name nobody recognises falls back to the
+   family. Same quarantine rule as the rest of this file: the transcript asks
+   questions here, it never matches on a vendor string itself. */
+
+/**
+ * The tool's own identifier, lowercased.
+ *
+ * `title` is prose for most Claude Code calls ("Read package.json"), so the
+ * name has to come from the meta channel the adapter puts it on; Codex names
+ * its MCP calls `mcp.<server>.<tool>` in the title and OpenCode sends the bare
+ * identifier. Null when nothing in the payload looks like a name.
+ */
+export function toolIdentity(item: Pick<ToolItem, "title" | "meta">): string | null {
+  const claude = str(asRecord(asRecord(item.meta)?.claudeCode)?.toolName)
+  if (claude) return claude.toLowerCase()
+  const title = item.title.trim()
+  // Codex's MCP form: `mcp.<server>.<tool>`, which NAME_RE rejects (dots).
+  if (/^mcp\.[^.\s]+\.\S+$/.test(title)) return title.toLowerCase()
+  return NAME_RE.test(title) ? title.toLowerCase() : null
+}
+
+/** The identity with any MCP prefix stripped — `edit`, `todowrite`, `task`. */
+const bareIdentity = (item: Pick<ToolItem, "title" | "meta">): string | null => {
+  const name = toolIdentity(item)
+  return name ? name.replace(/^mcp__/, "") : null
+}
+
+const isOneOf = (item: Pick<ToolItem, "title" | "meta">, names: string[]): boolean => {
+  const name = bareIdentity(item)
+  return name !== null && names.includes(name)
+}
+
+// ─── Terminal streams ────────────────────────────────────────────────────────
+
+/**
+ * A shell run that arrives as a terminal rather than as content.
+ *
+ * Codex announces every command as `content: [{type:"terminal"}]` and then
+ * streams the bytes through `_meta.terminal_output_delta` on later updates —
+ * unconditionally, whether or not the client claimed the terminal capability.
+ * Nothing in ACP's own fields carries that output, so a client that only reads
+ * `content`/`rawOutput` shows an empty box for the entire run and a
+ * `{formatted_output, exit_code}` blob at the end.
+ *
+ * The deltas are *deltas*: `_meta` is merged key-wise per update, so the last
+ * chunk would be the only chunk that survived. They are accumulated into the
+ * item as they arrive instead — which is also what makes replay work, since a
+ * replayed thread runs the same reducer over the same journaled updates.
+ */
+export interface TerminalState {
+  /** Everything the command has printed so far. */
+  data: string
+  /** Set once the process exits; `null` means "exited, no code reported". */
+  exitCode?: number | null
+  /** Signal name, when the runtime reported one. */
+  signal?: string | null
+}
+
+export function applyTerminalMeta(
+  prev: TerminalState | undefined,
+  meta: unknown
+): TerminalState | undefined {
+  const record = asRecord(meta)
+  if (!record) return prev
+  let next = prev
+
+  const append = (chunk: string | null) => {
+    if (chunk === null) return
+    next = { ...(next ?? { data: "" }), data: (next?.data ?? "") + chunk }
+  }
+
+  // A snapshot replaces; a delta appends. Codex sends whichever mode the
+  // client's capabilities selected, and the completion update may repeat the
+  // whole aggregated output as a snapshot — replacing is what keeps that from
+  // doubling the log.
+  const snapshot = asRecord(record.terminal_output)
+  if (snapshot) next = { ...(next ?? { data: "" }), data: str(snapshot.data) ?? "" }
+  append(str(asRecord(record.terminal_output_delta)?.data))
+  // MCP servers stream progress notifications the same way. It is log output
+  // for the same call, so it lands in the same buffer rather than inventing a
+  // second pane nobody would look at.
+  const mcpDelta = str(asRecord(record.mcp_output_delta)?.data)
+  if (mcpDelta !== null) append(next?.data ? `\n${mcpDelta}` : mcpDelta)
+
+  const exit = asRecord(record.terminal_exit)
+  if (exit) {
+    next = {
+      ...(next ?? { data: "" }),
+      exitCode: typeof exit.exit_code === "number" ? exit.exit_code : null,
+      signal: str(exit.signal),
+    }
+  }
+  return next
+}
+
+/** True when the agent said "this call is a terminal" — the content block is a
+    handle, not a payload, so rendering it as one prints `[terminal]`. */
+export const hasTerminalContent = (item: Pick<ToolItem, "content">): boolean =>
+  item.content.some((block) => block.type === "terminal")
+
+// ─── Todo lists ──────────────────────────────────────────────────────────────
+
+/**
+ * The agent's checklist, however its runtime spells one.
+ *
+ * Claude Code's `TodoWrite` and OpenCode's `todowrite` both pass the whole list
+ * as tool *input* and return nothing worth reading, and neither maps to ACP's
+ * `plan` channel — so without this the most-repeated call in a long thread
+ * renders as a JSON dump of the same array over and over. Codex is the
+ * exception and needs nothing here: it sends a real ACP plan, which the
+ * transcript already draws as a plan.
+ *
+ * Field names differ (`activeForm` vs `content`, an `id`/`priority` OpenCode
+ * carries and Claude does not) and so does the status vocabulary, so both are
+ * normalised onto ACP's own three statuses — the ones `PlanStep` already
+ * knows how to colour.
+ */
+export interface TodoEntry {
+  content: string
+  status: "pending" | "in_progress" | "completed"
+  priority?: "high" | "medium" | "low"
+}
+
+const TODO_STATUS: Record<string, TodoEntry["status"]> = {
+  pending: "pending",
+  todo: "pending",
+  not_started: "pending",
+  queued: "pending",
+  in_progress: "in_progress",
+  active: "in_progress",
+  running: "in_progress",
+  started: "in_progress",
+  completed: "completed",
+  done: "completed",
+  complete: "completed",
+  // A cancelled item is finished, not pending — folding it into `completed`
+  // keeps the counter honest without inventing a fourth colour.
+  cancelled: "completed",
+  canceled: "completed",
+  skipped: "completed",
+}
+
+const TODO_PRIORITY = new Set(["high", "medium", "low"])
+
+function readTodoList(value: unknown): TodoEntry[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null
+  const todos: TodoEntry[] = []
+  for (const entry of value) {
+    const record = asRecord(entry)
+    if (!record) continue
+    // `activeForm` is the present-tense phrasing Claude Code sends alongside
+    // the imperative one; it is the better label while the item is running.
+    const status = TODO_STATUS[String(record.status ?? "").toLowerCase()] ?? "pending"
+    const content =
+      (status === "in_progress" ? str(record.activeForm) : null) ??
+      str(record.content) ??
+      str(record.text) ??
+      str(record.title) ??
+      str(record.task) ??
+      str(record.activeForm)
+    if (!content) continue
+    const priority = String(record.priority ?? "").toLowerCase()
+    todos.push({
+      content,
+      status,
+      priority: TODO_PRIORITY.has(priority) ? (priority as TodoEntry["priority"]) : undefined,
+    })
+  }
+  return todos.length > 0 ? todos : null
+}
+
+export function extractTodos(item: Pick<ToolItem, "title" | "meta" | "rawInput" | "rawOutput">): TodoEntry[] | null {
+  const input = asRecord(item.rawInput)
+  // The list lives in the input; the output is an acknowledgement. Read the
+  // output only as a fallback, for a runtime that echoes the list back and
+  // sends no input at all.
+  return (
+    readTodoList(input?.todos) ??
+    readTodoList(input?.todo_list) ??
+    readTodoList(input?.items) ??
+    readTodoList(asRecord(item.rawOutput)?.todos) ??
+    (isOneOf(item, ["todowrite", "todoread", "todo_write", "update_plan"])
+      ? readTodoList(item.rawInput)
+      : null)
+  )
+}
+
+// ─── Edits ───────────────────────────────────────────────────────────────────
+
+/**
+ * Every before/after pair a write carries, in order.
+ *
+ * `extractEditInput` answers the single-hunk case; this one also covers the
+ * two shapes that used to fall through to a JSON dump: a `MultiEdit`, whose
+ * hunks are an array nested one level down and which is therefore the *only*
+ * kind of edit the transcript could not draw, and a whole-file `Write`, whose
+ * "before" is the absence of a file rather than a field.
+ */
+export function extractEdits(item: Pick<ToolItem, "title" | "meta" | "rawInput" | "locations">): EditInputDiff[] {
+  const input = asRecord(item.rawInput)
+  if (!input) return []
+  const path =
+    str(input.file_path) ?? str(input.filePath) ?? str(input.path) ?? item.locations[0]?.path
+
+  const nested = input.edits ?? input.replacements ?? input.changes
+  if (Array.isArray(nested)) {
+    const hunks = nested.flatMap((entry) => {
+      const record = asRecord(entry)
+      if (!record) return []
+      const oldText = str(record.old_string) ?? str(record.oldString) ?? str(record.old_str)
+      const newText = str(record.new_string) ?? str(record.newString) ?? str(record.new_str)
+      if (oldText === null || newText === null) return []
+      return [{
+        oldText,
+        newText,
+        path: str(record.file_path) ?? str(record.filePath) ?? path ?? undefined,
+      }]
+    })
+    if (hunks.length > 0) return hunks
+  }
+
+  const single = extractEditInput(item)
+  if (single) return [single]
+
+  // A create: the whole file is the "after" and there is no "before". Guarded
+  // on the tool actually being a write — plenty of calls carry a `content`
+  // field that is not a file body.
+  const content = str(input.content) ?? str(input.new_source)
+  if (content !== null && isOneOf(item, ["write", "writefile", "write_file", "create_file"])) {
+    return [{ oldText: "", newText: content, path: path ?? undefined }]
+  }
+  return []
+}
+
+// ─── MCP calls ───────────────────────────────────────────────────────────────
+
+/**
+ * A call into an MCP server, in either of the two forms runtimes send.
+ *
+ * Claude Code and OpenCode flatten the server into the tool name
+ * (`mcp__<server>__<tool>`) and pass the arguments as the raw input; Codex
+ * keeps them apart — `mcp.<server>.<tool>` as the title, `{server, tool,
+ * arguments}` as the input, `{result, error}` as the output, and `kind:
+ * "execute"`, which is what used to route an MCP call into the shell layout
+ * and print a `$` prompt in front of nothing.
+ */
+export interface McpCall {
+  server: string
+  tool: string
+  arguments?: unknown
+  result?: unknown
+  error?: unknown
+}
+
+export function extractMcpCall(
+  item: Pick<ToolItem, "title" | "meta" | "rawInput"> & { rawOutput?: unknown }
+): McpCall | null {
+  const input = asRecord(item.rawInput)
+  const output = asRecord(item.rawOutput)
+  const flagged = asRecord(item.meta)?.is_mcp_tool_call === true
+
+  const server = str(input?.server)
+  const tool = str(input?.tool)
+  if (server && tool && (flagged || "arguments" in (input ?? {}))) {
+    return {
+      server,
+      tool,
+      arguments: input?.arguments,
+      result: output?.result,
+      error: output?.error ?? undefined,
+    }
+  }
+
+  const name = toolIdentity(item)
+  if (!name) return null
+  const dotted = /^mcp\.([^.]+)\.(.+)$/.exec(name)
+  if (dotted) {
+    return {
+      server: dotted[1],
+      tool: dotted[2],
+      arguments: item.rawInput,
+      result: output?.result ?? item.rawOutput,
+      error: output?.error ?? undefined,
+    }
+  }
+  const parsed = parseMcpToolName(name)
+  if (!parsed) return null
+  return { server: parsed.server, tool: parsed.tool, arguments: item.rawInput, result: item.rawOutput }
+}
+
+// ─── Subagents ───────────────────────────────────────────────────────────────
+
+/**
+ * Work handed to another agent. All three runtimes have one and none of them
+ * agree: Claude Code's `Task`/`Agent` carries `{description, prompt,
+ * subagent_type}` and reports as `kind: "think"`, OpenCode's `task` is the
+ * same shape, and Codex describes a subagent's *lifecycle* through `_meta`
+ * instead — a start/interact/interrupt activity against a thread id, with no
+ * prompt on it at all.
+ *
+ * The prompt is the interesting half and it is long, so it is returned
+ * separately from the one-line description rather than concatenated into it.
+ */
+export interface SubagentCall {
+  /** Which agent — `code-reviewer`, or the leaf of Codex's agent path. */
+  agentType?: string
+  description?: string
+  prompt?: string
+  model?: string
+  /** Codex only: `started` | `interacted` | `interrupted`. */
+  activity?: string
+  threadId?: string
+}
+
+export function extractSubagent(item: Pick<ToolItem, "title" | "meta" | "rawInput">): SubagentCall | null {
+  const codex = asRecord(asRecord(asRecord(item.meta)?.codex)?.subagent)
+  if (codex) {
+    const path = str(codex.path)
+    return {
+      agentType: path?.split("/").filter(Boolean).at(-1) ?? undefined,
+      activity: str(codex.activity) ?? undefined,
+      threadId: str(codex.threadId) ?? undefined,
+    }
+  }
+  const collab = asRecord(asRecord(asRecord(item.meta)?.codex)?.collaboration)
+  const input = asRecord(item.rawInput)
+  if (collab) {
+    return {
+      agentType: str(collab.tool) ?? undefined,
+      prompt: str(input?.prompt) ?? undefined,
+      threadId: str(collab.senderThreadId) ?? undefined,
+    }
+  }
+  if (!isOneOf(item, ["task", "agent", "subagent", "dispatch_agent"])) return null
+  return {
+    agentType: str(input?.subagent_type) ?? str(input?.subagentType) ?? str(input?.agent) ?? undefined,
+    description: str(input?.description) ?? undefined,
+    prompt: str(input?.prompt) ?? undefined,
+    model: str(input?.model) ?? undefined,
+  }
+}
+
+// ─── Web search ──────────────────────────────────────────────────────────────
+
+/**
+ * A search of the web, as opposed to a search of the repo — two different acts
+ * that ACP files under one `kind`. Codex reports its browsing as `kind:
+ * "search"`, which sent it into the ripgrep layout: a "matches" counter over
+ * prose, and `path:line:` splitting applied to sentences.
+ *
+ * Codex also uses this one call for three different actions (a query, opening
+ * a page, finding within a page), which is why `action` is separate from
+ * `query` rather than folded into it.
+ */
+export interface WebSearchCall {
+  query?: string
+  /** `search` | `openPage` | `findInPage`, when the runtime distinguishes. */
+  action?: string
+  url?: string
+  pattern?: string
+  allowedDomains?: string[]
+  blockedDomains?: string[]
+  results: { title: string; url: string }[]
+}
+
+const strList = (value: unknown): string[] | undefined => {
+  if (!Array.isArray(value)) return undefined
+  const out = value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+  return out.length > 0 ? out : undefined
+}
+
+/** `Title (https://…)` — the one line format every runtime's web results use
+    once they reach ACP, because that is what the adapters format them into. */
+const HIT_RE = /^(.*?)\s*\((https?:\/\/[^\s)]+)\)\s*$/
+
+function webResults(item: Pick<ToolItem, "rawOutput" | "content">): { title: string; url: string }[] {
+  const structured = asRecord(item.rawOutput)?.results
+  if (Array.isArray(structured)) {
+    const hits = structured.flatMap((entry) => {
+      const record = asRecord(entry)
+      const title = str(record?.title)
+      const url = str(record?.url)
+      return title && url ? [{ title, url }] : []
+    })
+    if (hits.length > 0) return hits
+  }
+  return stringifyOutput(item.rawOutput ?? textOf(item.content), 40_000)
+    .text.split("\n")
+    .flatMap((line) => {
+      const hit = HIT_RE.exec(line.trim())
+      return hit && hit[1] ? [{ title: hit[1], url: hit[2] }] : []
+    })
+}
+
+const textOf = (content: ToolItem["content"]): string =>
+  content
+    .map((block) => (block.type === "content" && block.content.type === "text" ? block.content.text : ""))
+    .filter(Boolean)
+    .join("\n")
+
+export function extractWebSearch(item: ToolItem): WebSearchCall | null {
+  const input = asRecord(item.rawInput)
+  const action = asRecord(input?.action)
+  const codex = str(input?.type) === "webSearch" || action !== null
+  const named = isOneOf(item, ["websearch", "web_search", "search_web", "exa_search"])
+  if (!codex && !named) return null
+
+  const queries = strList(action?.queries)
+  return {
+    query:
+      str(action?.query) ??
+      (queries ? queries.join(", ") : null) ??
+      str(input?.query) ??
+      undefined,
+    action: str(action?.type) ?? undefined,
+    url: str(action?.url) ?? str(input?.url) ?? undefined,
+    pattern: str(action?.pattern) ?? undefined,
+    allowedDomains: strList(input?.allowed_domains),
+    blockedDomains: strList(input?.blocked_domains),
+    results: webResults(item),
+  }
+}
+
+// ─── Questions, findings, plans, skills ──────────────────────────────────────
+
+/**
+ * The questions an `AskUserQuestion` call is asking.
+ *
+ * This is the *record* of a question, not the live one — a question the user
+ * still has to answer arrives as an `elicitation/create` request and is drawn
+ * by `elicitation-form.tsx`. What lands in the transcript afterwards is the
+ * tool call, and left generic it renders as a nested JSON blob of the exact
+ * thing the user was just shown a form for.
+ */
+export interface ToolQuestion {
+  question: string
+  header?: string
+  multiSelect?: boolean
+  options: { label: string; description?: string }[]
+}
+
+export function extractQuestions(item: Pick<ToolItem, "title" | "meta" | "rawInput">): ToolQuestion[] | null {
+  if (!isOneOf(item, ["askuserquestion", "ask_user_question", "question", "ask"])) return null
+  const raw = asRecord(item.rawInput)?.questions
+  if (!Array.isArray(raw)) return null
+  const questions = raw.flatMap((entry) => {
+    const record = asRecord(entry)
+    const question = str(record?.question)
+    if (!question) return []
+    const options = Array.isArray(record?.options)
+      ? record.options.flatMap((option) => {
+          const opt = asRecord(option)
+          const label = str(opt?.label)
+          return label ? [{ label, description: str(opt?.description) ?? undefined }] : []
+        })
+      : []
+    return [{
+      question,
+      header: str(record?.header) ?? undefined,
+      multiSelect: record?.multiSelect === true,
+      options,
+    }]
+  })
+  return questions.length > 0 ? questions : null
+}
+
+/** A `ReportFindings` call: a review's results, which are a table and not prose. */
+export interface ToolFinding {
+  file: string
+  line?: number
+  summary: string
+  category?: string
+  verdict?: string
+  severity?: string
+}
+
+export function extractFindings(item: Pick<ToolItem, "title" | "meta" | "rawInput">): ToolFinding[] | null {
+  if (!isOneOf(item, ["reportfindings", "report_findings"])) return null
+  const raw = asRecord(item.rawInput)?.findings
+  if (!Array.isArray(raw)) return null
+  // An empty array is a real answer — "reviewed, found nothing" — so it is
+  // returned as an empty list rather than as null.
+  return raw.flatMap((entry) => {
+    const record = asRecord(entry)
+    const file = str(record?.file)
+    const summary = str(record?.short_summary) ?? str(record?.summary)
+    if (!file || !summary) return []
+    return [{
+      file,
+      line: typeof record?.line === "number" ? record.line : undefined,
+      summary,
+      category: str(record?.category) ?? undefined,
+      verdict: str(record?.verdict) ?? undefined,
+      severity: str(record?.severity) ?? undefined,
+    }]
+  })
+}
+
+/** An `ExitPlanMode` call: the plan the agent is asking permission to run. It
+    is markdown, and it is the entire point of the call. */
+export function extractPlanProposal(item: Pick<ToolItem, "title" | "meta" | "rawInput" | "toolKind">): string | null {
+  if (item.toolKind !== "switch_mode" && !isOneOf(item, ["exitplanmode", "exit_plan_mode"])) {
+    return null
+  }
+  const input = asRecord(item.rawInput)
+  return str(input?.plan) ?? str(input?.markdown) ?? null
+}
+
+/** A plan proposal carried by a *live* permission request, not a settled tool
+    item. Same condition as `extractPlanProposal` but reads a `ToolCallUpdate`
+    — the shape ACP uses on the pending question — where the kind is `kind`, not
+    `toolKind`. A codex plan approval arrives exactly like this: kind
+    `switch_mode`, title "Implement this plan?", `rawInput: { plan: markdown }`.
+    Without this the approval card rendered the plan as a raw JSON dump. */
+export function extractPlanProposalFromPermission(
+  toolCall: Pick<acp.ToolCallUpdate, "kind" | "title" | "name" | "rawInput">
+): string | null {
+  if (toolCall.kind !== "switch_mode" && !/^(exit_plan_mode|exitplanmode|plan)$/.test(toolCall.name?.toLowerCase() ?? "")) {
+    return null
+  }
+  const input = asRecord(toolCall.rawInput)
+  return str(input?.plan) ?? str(input?.markdown) ?? null
+}
+
+/** A `Skill` load: which packaged workflow the agent pulled in, and with what. */
+export interface SkillLoad {
+  name: string
+  args?: string
+}
+
+export function extractSkill(item: Pick<ToolItem, "title" | "meta" | "rawInput">): SkillLoad | null {
+  if (!isOneOf(item, ["skill", "loadskill", "load_skill"])) return null
+  const input = asRecord(item.rawInput)
+  const name = str(input?.skill) ?? str(input?.name)
+  return name ? { name, args: str(input?.args) ?? undefined } : null
+}
+
+// ─── Search options ──────────────────────────────────────────────────────────
+
+/**
+ * The flags a repo search actually ran with. Claude Code's `Grep` carries nine
+ * of them (`-i`, `-n`, `-A`/`-B`/`-C`, `output_mode`, `head_limit`, `glob`,
+ * `type`, `multiline`) as separate input keys, and a layout that reads only
+ * `pattern` and `path` silently claims a case-insensitive search with two
+ * lines of context was a plain one.
+ */
+export function searchFlags(item: Pick<ToolItem, "rawInput">): string[] {
+  const input = asRecord(item.rawInput)
+  if (!input) return []
+  const flags: string[] = []
+  if (input["-i"] === true) flags.push("case-insensitive")
+  if (input.multiline === true) flags.push("multiline")
+  for (const key of ["-A", "-B", "-C"] as const) {
+    if (typeof input[key] === "number") flags.push(`${key} ${input[key]}`)
+  }
+  const mode = str(input.output_mode)
+  if (mode && mode !== "content") flags.push(mode.replace(/_/g, " "))
+  const type = str(input.type)
+  if (type) flags.push(`type ${type}`)
+  if (typeof input.head_limit === "number") flags.push(`first ${input.head_limit}`)
+  return flags
+}
+
+// ─── View selection ──────────────────────────────────────────────────────────
+
+/**
+ * Which layout a call gets. One switch, evaluated in priority order, so the
+ * transcript component has a single place to dispatch on and the ordering
+ * decisions (a todo list beats its `think` kind; a terminal beats everything,
+ * because its content block is a handle rather than a payload) are stated once
+ * here rather than implied by the nesting of ifs in a component.
+ *
+ * The tail of the list is the ACP `kind` — unchanged, and still the answer for
+ * every agent that sends one and every tool nobody has taught this file about.
+ */
+export type ToolView =
+  | "todos"
+  | "edit"
+  | "terminal"
+  | "mcp"
+  | "subagent"
+  | "websearch"
+  | "questions"
+  | "findings"
+  | "plan"
+  | "skill"
+  | "execute"
+  | "read"
+  | "search"
+  | "fetch"
+  | "generic"
+
+export function toolViewOf(item: ToolItem): ToolView {
+  // A diff is the point of the call whatever produced it, and an edit's own
+  // content block is already the diff — so both edit paths answer first.
+  if (item.content.some((block) => block.type === "diff")) return "edit"
+  if (extractEdits(item).length > 0) return "edit"
+  if (extractTodos(item)) return "todos"
+  if (extractPlanProposal(item) !== null) return "plan"
+  if (extractQuestions(item)) return "questions"
+  if (extractFindings(item)) return "findings"
+  if (extractSubagent(item)) return "subagent"
+  if (extractSkill(item)) return "skill"
+  if (extractWebSearch(item)) return "websearch"
+  if (extractMcpCall(item)) return "mcp"
+  // Only after the specialised views: Codex files a terminal under `execute`
+  // and an MCP call under `execute` too, and both want their own layout.
+  if (hasTerminalContent(item)) return "terminal"
+
+  const kind = toolKindOf(item)
+  if (kind === "execute" || kind === "read" || kind === "search" || kind === "fetch") return kind
+  return "generic"
 }

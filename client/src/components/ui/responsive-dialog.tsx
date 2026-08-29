@@ -19,11 +19,19 @@ import {
 import { Button } from "@/components/ui/button"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
-import { X } from "lucide-react"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { Cancel01Icon } from "@hugeicons/core-free-icons"
 
-/* One modal API: a Dialog on desktop, a bottom Drawer on mobile.
-   Parts mirror the Dialog parts; the mobile flag flows through context so
-   every part picks its counterpart without prop drilling. */
+/* One modal API: a centered Dialog on desktop, a bottom-sheet Drawer on mobile.
+   The mobile flag flows through context so every part picks its counterpart
+   without prop drilling, and the parts mirror the base Dialog/Drawer parts so
+   styling and behavior stay consistent with the rest of the UI.
+
+   Layout invariant: header and footer are `shrink-0` so they keep their size,
+   while the body is collected into a single `flex-1 min-h-0 overflow-y-auto`
+   region that scrolls between them. No sticky positioning, so a short dialog
+   (header + footer, no body) collapses to exactly its content instead of
+   leaving a stray band of padding. */
 
 const MobileCtx = React.createContext(false)
 
@@ -47,35 +55,60 @@ function ResponsiveDialog({
   )
 }
 
+/* Pull the header and footer out of the children so the body in between can be
+   wrapped in the single scroll region the layout invariant needs. */
+function partitionChildren(children: React.ReactNode) {
+  const all = React.Children.toArray(children)
+  const headerIndex = all.findIndex(
+    (child) => React.isValidElement(child) && child.type === ResponsiveDialogHeader
+  )
+  const footerIndex = all.findIndex(
+    (child) => React.isValidElement(child) && child.type === ResponsiveDialogFooter
+  )
+  const header = headerIndex >= 0 ? all[headerIndex] : null
+  const footer = footerIndex >= 0 ? all[footerIndex] : null
+  const body = all.filter((_, index) => index !== headerIndex && index !== footerIndex)
+  return { header, body, footer }
+}
+
 function ResponsiveDialogContent({
   className,
   children,
   ...props
 }: React.ComponentProps<typeof DialogContent>) {
   const isMobile = React.useContext(MobileCtx)
+  const { header, body, footer } = partitionChildren(children)
+
   if (isMobile) {
-    /* The drawer sizes itself from its own CSS vars and its inner Content is a
-       flex column with overflow-hidden — so the scroll region has to be
-       `flex-1 min-h-0`, or a tall form is clipped with no way to reach the
-       buttons. `className` is desktop sizing (max-w/max-h/overflow): on a bottom
-       sheet it left-aligns the panel and fights those vars, so it stays behind. */
     return (
       <DrawerContent>
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          {children}
+        {/* Header and footer stay put (shrink-0); only this region scrolls. */}
+        {header}
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-4">
+          {body}
         </div>
+        {footer}
       </DrawerContent>
     )
   }
-  /* Width has to be set at the `sm:` breakpoint: DialogContent's own
-     `sm:max-w-sm` beats any plain `max-w-*` a caller passes, so widths given
-     here (and by callers) are all `sm:`-prefixed for tailwind-merge to resolve. */
+
   return (
     <DialogContent
-      className={cn("max-h-[85svh] overflow-y-auto sm:max-w-lg", className)}
+      /* Bounded height + internal scroll: base DialogContent's `grid gap-6`
+         and `p-6` are dropped so the panel becomes a flex column whose body
+         region scrolls. Widths stay `sm:`-prefixed so tailwind-merge resolves
+         the base `sm:max-w-md`. */
+      className={cn(
+        "flex max-h-[85svh] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg",
+        className
+      )}
       {...props}
     >
-      {children}
+      {header}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6">
+        {body}
+      </div>
+      {footer}
     </DialogContent>
   )
 }
@@ -90,7 +123,7 @@ function ResponsiveDialogHeader({
     return (
       <DrawerHeader
         className={cn(
-          "sticky top-0 z-20 -mx-4 gap-1 border-b border-border/60 bg-popover/95 px-4 py-4 pr-14 group-data-[swipe-axis=y]/drawer-popup:text-left supports-backdrop-filter:backdrop-blur-xl",
+          "shrink-0 gap-1 border-b border-border/60 px-4 py-4 pr-14 text-left",
           className
         )}
         {...props}
@@ -106,7 +139,7 @@ function ResponsiveDialogHeader({
             />
           }
         >
-          <X />
+          <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
           <span className="sr-only">Close</span>
         </DrawerClose>
       </DrawerHeader>
@@ -115,7 +148,7 @@ function ResponsiveDialogHeader({
   return (
     <DialogHeader
       className={cn(
-        "sticky -top-6 z-20 -mx-6 -mt-6 gap-1.5 border-b border-border/60 bg-popover/95 px-6 py-5 pr-14 supports-backdrop-filter:backdrop-blur-xl",
+        "shrink-0 gap-1.5 border-b border-border/60 px-6 py-5 pr-14",
         className
       )}
       {...props}
@@ -130,7 +163,8 @@ function ResponsiveDialogTitle({
   ...props
 }: React.ComponentProps<typeof DialogTitle>) {
   const isMobile = React.useContext(MobileCtx)
-  const titleClassName = cn("text-lg leading-tight font-semibold", className)
+  // Mirrors base DialogTitle / DrawerTitle typography.
+  const titleClassName = cn("font-heading text-base font-medium", className)
   return isMobile ? (
     <DrawerTitle className={titleClassName} {...props} />
   ) : (
@@ -143,7 +177,8 @@ function ResponsiveDialogDescription({
   ...props
 }: React.ComponentProps<typeof DialogDescription>) {
   const isMobile = React.useContext(MobileCtx)
-  const descriptionClassName = cn("max-w-[65ch] leading-relaxed", className)
+  // Mirrors base DialogDescription / DrawerDescription typography.
+  const descriptionClassName = cn("text-sm text-muted-foreground", className)
   return isMobile ? (
     <DrawerDescription className={descriptionClassName} {...props} />
   ) : (
@@ -151,32 +186,26 @@ function ResponsiveDialogDescription({
   )
 }
 
-function ResponsiveDialogFooter({ className, ...props }: React.ComponentProps<"footer">) {
+function ResponsiveDialogFooter({
+  className,
+  ...props
+}: React.ComponentProps<"footer">) {
   const isMobile = React.useContext(MobileCtx)
-  /* A confirmation has a header and a footer and nothing in between, and the
-     space meant for the body does not disappear on its own: DialogContent is a
-     grid with `gap-6`, and this footer adds `mt-2` on top of it, so the two
-     bars sit ~2rem apart with nothing between them reading as a stray band of
-     padding. A footer that *directly follows* the header has no body to be
-     separated from, so it cancels both — the bars meet at their borders and
-     the dialog is exactly as tall as what it says. Adjacent-sibling, so any
-     real content between them restores the spacing by itself. */
-  return isMobile ? (
-    <DrawerFooter
-      className={cn(
-        "sticky bottom-[calc(-1*max(1rem,env(safe-area-inset-bottom)))] z-20 -mx-4 -mb-[max(1rem,env(safe-area-inset-bottom))] mt-2 border-t border-border/60 bg-popover/95 px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] supports-backdrop-filter:backdrop-blur-xl",
-        "[[data-slot=drawer-header]+&]:mt-0",
-        className
-      )}
-      {...props}
-    />
-  ) : (
+  if (isMobile) {
+    return (
+      <DrawerFooter
+        className={cn(
+          "shrink-0 gap-2 border-t border-border/60 px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]",
+          className
+        )}
+        {...props}
+      />
+    )
+  }
+  return (
     <DialogFooter
       className={cn(
-        "sticky -bottom-6 z-20 -mx-6 -mb-6 mt-2 border-t border-border/60 bg-popover/95 px-6 py-4 supports-backdrop-filter:backdrop-blur-xl",
-        // -mt-6 cancels the grid's own gap-6; a margin cannot make a gap
-        // smaller, but a negative one pulls the row back over it.
-        "[[data-slot=dialog-header]+&]:-mt-6",
+        "shrink-0 gap-2 border-t border-border/60 px-6 py-4",
         className
       )}
       {...props}

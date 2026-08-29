@@ -20,6 +20,7 @@ export const settingsFormPath = (section: string, id: string = "new") =>
   `/settings/${section}/${encodeURIComponent(id)}`
 export const schedulePath = (sessionId?: string) =>
   `/schedules/new${sessionId ? `?session=${encodeURIComponent(sessionId)}` : ""}`
+export const boardPath = () => `/board`
 
 /** The thread the URL points at, if any — legacy /?session= deep links too. */
 export function currentThreadId(

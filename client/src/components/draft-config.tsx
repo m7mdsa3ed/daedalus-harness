@@ -1,6 +1,7 @@
 import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
-import { BotIcon, FolderIcon, Settings2Icon } from "lucide-react"
+import { BotIcon, FolderIcon } from "lucide-react"
+import { AgentIcon } from "@/components/agent-icon"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -174,7 +175,7 @@ export function DraftConfigPopover({
   meta: SessionMeta
   actions: Actions
 }) {
-  const { state, profile, configure } = useDraft(meta, actions)
+  const { state, profile, agent, configure } = useDraft(meta, actions)
   const agentProfiles = state.profiles.filter((p) => p.agentId === profile?.agentId)
   const models = profile?.models ?? []
   const resolvedModel = models.find((m) => m.id === (meta.model || profile?.defaultModel))
@@ -249,7 +250,7 @@ export function DraftConfigPopover({
             className="h-8 gap-1.5 border-0 bg-transparent px-2 text-xs shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent max-md:w-8 max-md:px-0"
             title={[modelLabel, effortLabel].filter(Boolean).join(" · ")}
           >
-            <Settings2Icon className="size-4" />
+            <AgentIcon agentId={agent?.id ?? profile?.agentId} className="size-4" />
             <span className="max-w-56 truncate max-md:sr-only">
               {modelLabel}
               {effortLabel && <span className="capitalize"> · {effortLabel}</span>}

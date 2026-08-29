@@ -15,7 +15,8 @@ import {
 } from "@/components/ui/collapsible"
 import { Logo } from "@/components/ui/logo"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import type { PlanItem, ThreadState } from "@/lib/store"
+import { extractTodos, toolViewOf } from "@/lib/tools"
+import type { PlanItem, ThreadState, ToolItem } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
 function formatTokens(value: number): string {
@@ -186,35 +187,49 @@ export function ContextIndicator({ thread }: { thread: ThreadState }) {
   )
 }
 
+/** One checklist row, in the shape both a plan entry and a todo entry reduce
+    to. The two surfaces read from different channels but draw the same row. */
+interface ChecklistRowData {
+  content: string
+  status: "completed" | "in_progress" | "pending"
+}
+
 /**
- * The plan above the composer. Collapsed it is one line — what the agent is on
- * now, and a segment per step so the *shape* of the plan is visible at a
- * glance: how many steps there are, how many are behind you, which one is
- * live. Expanded it is the whole checklist, in place.
+ * One expanding row of a checklist, on the strip. Both the plan above the
+ * composer and a `TodoWrite` checklist are the same object to a reader — "here
+ * is the work the agent has ahead of it, and how far it is" — so this owns the
+ * whole collapsible that either surface would otherwise have each written a
+ * copy of: a ring of progress and a truncated current step when closed, the
+ * full list when open.
  *
- * ponytail: this used to hide the list behind a popover. A popover is for
- * things you consult; a plan is something you watch, so it opens downward into
- * the page instead of floating over it.
+ * The list owns no inner scroll. It is read in one piece — which step follows
+ * which is most of the information in it — and a list that scrolls inside a
+ * shelf that is itself inside a scrolling page gives you two wheels doing
+ * different things over one line of text. The transcript above is the flexible
+ * track (`minmax(0,1fr)`), so an open list takes its room from the conversation
+ * and gives it straight back on collapse; the composer never moves. It is
+ * opened by hand and closes the same way, so a long one is on screen because it
+ * was asked for.
  */
-export function ComposerPlan({ thread }: { thread: ThreadState }) {
+function ChecklistCollapsible({
+  percent,
+  completed,
+  total,
+  current,
+  running,
+  rows,
+}: {
+  percent: number
+  completed: number
+  total: number
+  current?: string
+  running: boolean
+  rows: ChecklistRowData[]
+}) {
   const [open, setOpen] = useState(false)
-  const plan = thread.items.find((item): item is PlanItem => item.kind === "plan")
-  if (!plan || plan.entries.length === 0) return null
-
-  const total = plan.entries.length
-  const completed = plan.entries.filter((entry) => entry.status === "completed").length
-  const current = plan.entries.find((entry) => entry.status === "in_progress")
-    ?? plan.entries.find((entry) => entry.status !== "completed")
-  const running = current?.status === "in_progress"
   const done = completed === total
-  const percent = Math.round((completed / total) * 100)
-
   return (
-    <Collapsible
-      open={open}
-      onOpenChange={setOpen}
-      className="w-full"
-    >
+    <Collapsible open={open} onOpenChange={setOpen} className="w-full">
       <CollapsibleTrigger
         render={
           <button
@@ -241,7 +256,7 @@ export function ComposerPlan({ thread }: { thread: ThreadState }) {
             running ? "harness-shimmer text-primary" : "text-muted-foreground"
           )}
         >
-          {current?.content ?? "All steps complete"}
+          {current ?? "All steps complete"}
         </span>
         {/* The count and the chevron are one cluster, not two things that
             happened to end up next to each other: they share a tighter gap than
@@ -267,33 +282,23 @@ export function ComposerPlan({ thread }: { thread: ThreadState }) {
         <span className="sr-only">{open ? "Hide steps" : "Show all steps"}</span>
       </CollapsibleTrigger>
       <CollapsibleContent className="harness-collapse">
-        {/* Full height, no inner scroll. A plan is read in one piece — which
-            step follows which is most of the information in it — and a list
-            that scrolls inside a shelf that is itself inside a scrolling page
-            gives you two wheels doing different things over one line of text.
-            The transcript above is the flexible track (`minmax(0,1fr)`), so an
-            open plan takes its room from the conversation and gives it straight
-            back on collapse; the composer never moves. It is opened by hand and
-            closes the same way, so a long one is on screen because it was
-            asked for.
-
-            A plan step IS a transcript step, so it is built like one: a
+        {/* A checklist step IS a transcript step, so it is built like one: a
             `size-3.5` status icon on the first line, `text-xs leading-6` beside
             it, nothing boxed. The Item kit gave every row its own padded,
             rounded, sometimes-filled surface — a list of little cards stacked
             inside a shelf that is itself inside the composer, three frames deep
             for one line of text each. */}
         <ul className="space-y-0.5 border-t border-border/40 px-2 py-1.5">
-          {plan.entries.map((entry, index) => (
-            <li key={`${entry.content}-${index}`} className="flex items-start gap-2 text-xs">
+          {rows.map((row, index) => (
+            <li key={`${row.content}-${index}`} className="flex items-start gap-2 text-xs">
               {/* `size-6`, the ring's width, so a step's icon sits under the
                   ring's centre and its text starts on the same column as the
                   current-step line above it. Without the box the list was
                   indented ten pixels left of the row it expands from. */}
               <span className="grid size-6 shrink-0 place-items-center">
-                {entry.status === "completed" ? (
+                {row.status === "completed" ? (
                   <CheckCircle2Icon aria-hidden className="size-3.5 text-primary" />
-                ) : entry.status === "in_progress" ? (
+                ) : row.status === "in_progress" ? (
                   <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin text-primary" />
                 ) : (
                   <CircleDashedIcon aria-hidden className="size-3.5 text-muted-foreground/60" />
@@ -302,20 +307,98 @@ export function ComposerPlan({ thread }: { thread: ThreadState }) {
               <span
                 className={cn(
                   "min-w-0 flex-1 leading-6",
-                  entry.status === "completed"
+                  row.status === "completed"
                     ? "text-muted-foreground line-through opacity-70"
-                    : entry.status === "in_progress"
+                    : row.status === "in_progress"
                       ? "text-foreground"
                       : "text-muted-foreground"
                 )}
               >
-                {entry.content}
+                {row.content}
               </span>
             </li>
           ))}
         </ul>
       </CollapsibleContent>
     </Collapsible>
+  )
+}
+
+/**
+ * The plan above the composer. Collapsed it is one line — what the agent is on
+ * now, and a segment per step so the *shape* of the plan is visible at a
+ * glance: how many steps there are, how many are behind you, which one is
+ * live. Expanded it is the whole checklist, in place.
+ *
+ * ponytail: this used to hide the list behind a popover. A popover is for
+ * things you consult; a plan is something you watch, so it opens downward into
+ * the page instead of floating over it.
+ */
+export function ComposerPlan({ thread }: { thread: ThreadState }) {
+  const plan = thread.items.find((item): item is PlanItem => item.kind === "plan")
+  if (!plan || plan.entries.length === 0) return null
+
+  const total = plan.entries.length
+  const completed = plan.entries.filter((entry) => entry.status === "completed").length
+  const current = plan.entries.find((entry) => entry.status === "in_progress")
+    ?? plan.entries.find((entry) => entry.status !== "completed")
+  const percent = Math.round((completed / total) * 100)
+
+  return (
+    <ChecklistCollapsible
+      percent={percent}
+      completed={completed}
+      total={total}
+      current={current?.content}
+      running={current?.status === "in_progress"}
+      rows={plan.entries.map((entry) => ({
+        content: entry.content,
+        status:
+          entry.status === "completed"
+            ? "completed"
+            : entry.status === "in_progress"
+              ? "in_progress"
+              : "pending",
+      }))}
+    />
+  )
+}
+
+/**
+ * The agent's checklist, when it arrives through a tool call instead of ACP's
+ * `plan` channel. Claude Code's `TodoWrite` and OpenCode's `todowrite` both
+ * send the list as tool *input* and return nothing worth reading, and neither
+ * maps to ACP's `plan` channel — so without this the shelf has no surface for
+ * the most-repeated call in a long thread, while Codex's own plan (a real ACP
+ * plan) is drawn by ComposerPlan on the same track. The reader should not be
+ * able to tell which runtime wrote it: a checklist is a checklist.
+ *
+ * `toolViewOf` is the single place that says "this call IS a todo list"; the
+ * newest such call wins, so an agent revising its list mid-turn replaces the
+ * shelf in place rather than stacking a row for every revision.
+ */
+export function ComposerTodo({ thread }: { thread: ThreadState }) {
+  const todoItem = [...thread.items]
+    .reverse()
+    .find((item): item is ToolItem => item.kind === "tool" && toolViewOf(item) === "todos")
+  const todos = todoItem ? extractTodos(todoItem) : null
+  if (!todos || todos.length === 0) return null
+
+  const total = todos.length
+  const completed = todos.filter((todo) => todo.status === "completed").length
+  const current = todos.find((todo) => todo.status === "in_progress")
+    ?? todos.find((todo) => todo.status !== "completed")
+  const percent = Math.round((completed / total) * 100)
+
+  return (
+    <ChecklistCollapsible
+      percent={percent}
+      completed={completed}
+      total={total}
+      current={current?.content}
+      running={current?.status === "in_progress"}
+      rows={todos.map((todo) => ({ content: todo.content, status: todo.status }))}
+    />
   )
 }
 

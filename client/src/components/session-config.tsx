@@ -1,5 +1,5 @@
 import type * as acp from "@agentclientprotocol/sdk"
-import { Settings2Icon } from "lucide-react"
+import { AgentIcon } from "@/components/agent-icon"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
 import {
@@ -51,6 +51,7 @@ export function SessionConfigPopover({
   const confirm = useConfirm()
   const meta = state.sessions.find((s) => s.id === sessionId)
   const profile = state.profiles.find((p) => p.id === meta?.profileId)
+  const agent = state.agents.find((a) => a.id === profile?.agentId)
   // Called before the early return below: hooks cannot be conditional.
   // Sibling profiles of the same agent stand in while this one has no
   // remembered set — the profile owns only model and effort, so the rest of
@@ -163,7 +164,7 @@ export function SessionConfigPopover({
             className="h-8 gap-1.5 border-0 bg-transparent px-2 text-xs shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent max-md:w-8 max-md:px-0"
             title={triggerLabel}
           >
-            <Settings2Icon className="size-4" />
+            <AgentIcon agentId={agent?.id ?? profile.agentId} className="size-4" />
             {/* The mode rides along in the trigger: it left the composer, and a
                 silently-active "accept edits" is the one setting you must see. */}
             <span className="max-w-56 truncate max-md:sr-only">

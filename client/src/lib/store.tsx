@@ -3,7 +3,7 @@ import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
 // Value import, but tools.ts imports only *types* from here — erased at build,
 // so there is no runtime cycle.
-import { parseTaskNotification } from "./tools"
+import { applyTerminalMeta, parseTaskNotification, type TerminalState } from "./tools"
 import type {
   AgentDef,
   CommandDef,
@@ -46,6 +46,12 @@ export interface ToolItem {
       `toolResponse` is how a background task discloses its transcript dir).
       Read only in lib/tools, where agent-specific shapes are quarantined. */
   meta?: Record<string, unknown>
+  /** Bytes a runtime streamed through the terminal channel rather than
+      through `content`. Codex announces every shell command as a terminal
+      handle and sends the output as `_meta.terminal_output_delta` chunks, so
+      this is accumulated here — `meta` is merged key-wise per update, which
+      would keep only the last chunk. Read through `lib/tools`. */
+  terminal?: TerminalState
   /** Epoch ms the call appeared; drives the live elapsed counter. */
   startedAt: number
   /** Wall-clock stamp, live only — see TextItem.at. */
@@ -333,6 +339,7 @@ export function applySessionUpdate(
         content: update.content ?? [],
         locations: update.locations ?? [],
         meta: metaOf(update),
+        terminal: applyTerminalMeta(undefined, metaOf(update)),
         startedAt: Date.now(),
         at,
       }
@@ -354,6 +361,7 @@ export function applySessionUpdate(
           content: update.content ?? i.content,
           locations: update.locations ?? i.locations,
           meta: mergeMeta(i.meta, metaOf(update)),
+          terminal: applyTerminalMeta(i.terminal, metaOf(update)),
         }
       })
     case "plan": {
@@ -541,11 +549,27 @@ export type Action =
   | { type: "permission"; id: string; permission: PendingPermission | null }
   | { type: "elicitation"; id: string; elicitation: PendingElicitation | null }
   | { type: "session-title"; id: string; title: string }
-  | { type: "session-config"; id: string; modes: acp.SessionModeState | null; configOptions: acp.SessionConfigOption[] }
+  /** Absolute state, with one hole: an event may carry modes and leave the
+      options out, which means "unchanged" and not "none". The reducer is where
+      that is resolved, because during a batched replay the caller cannot read
+      the current value — it has not been committed yet. */
+  | {
+      type: "session-config"
+      id: string
+      modes: acp.SessionModeState | null
+      configOptions?: acp.SessionConfigOption[]
+    }
   | { type: "mode"; id: string; modeId: string }
   | { type: "config-options"; id: string; configOptions: acp.SessionConfigOption[] }
   | { type: "usage"; id: string; usage: acp.Usage }
   | { type: "ttft"; id: string; ms: number }
+  /** A run of actions folded into one commit. The replay is the only thing
+      that sends it: rebuilding a long thread is a few thousand of the actions
+      above, and dispatching them one at a time is a few thousand renders of a
+      transcript nobody has seen yet. Folding costs the same reducer work and
+      one render. It carries no semantics of its own — whatever is inside means
+      exactly what it means on its own. */
+  | { type: "batch"; actions: Action[] }
 
 function thread(state: State, id: string): ThreadState {
   return state.threads[id] ?? emptyThread
@@ -557,6 +581,8 @@ function withThread(state: State, id: string, patch: Partial<ThreadState>): Stat
 
 export function reducer(state: State, action: Action): State {
   switch (action.type) {
+    case "batch":
+      return action.actions.reduce(reducer, state)
     case "bootstrap":
       return {
         ...state,
@@ -706,7 +732,10 @@ export function reducer(state: State, action: Action): State {
         ),
       }
     case "session-config":
-      return withThread(state, action.id, { modes: action.modes, configOptions: action.configOptions })
+      return withThread(state, action.id, {
+        modes: action.modes,
+        configOptions: action.configOptions ?? thread(state, action.id).configOptions,
+      })
     case "mode": {
       const t = thread(state, action.id)
       return t.modes

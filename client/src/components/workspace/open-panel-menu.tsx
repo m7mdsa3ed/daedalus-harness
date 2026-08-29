@@ -31,6 +31,11 @@ const OPENABLE: { kind: PanelKind; label: string; chord?: string }[] = [
   { kind: "terminal", label: "Terminal", chord: KEYS.terminal },
   { kind: "output", label: "Output & problems", chord: KEYS.output },
   { kind: "web", label: "Preview" },
+  /* No chord, like Preview: every plausible one is either already taken here
+     or is a browser's own (⌘⇧I is devtools, ⌘⇧V is paste-as-plain-text in the
+     composer), and a global binding that fights the browser is worse than a
+     menu entry. */
+  { kind: "ide", label: "VS Code" },
 ]
 
 export function OpenPanelMenu({

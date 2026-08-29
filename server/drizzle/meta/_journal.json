@@ -85,6 +85,20 @@
       "when": 1787922896849,
       "tag": "0011_confused_queen_noir",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1787948002199,
+      "tag": "0012_hard_frog_thor",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1787971716166,
+      "tag": "0013_cute_black_tarantula",
+      "breakpoints": true
     }
   ]
 }

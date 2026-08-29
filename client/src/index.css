@@ -5,7 +5,6 @@
 @import "@fontsource-variable/roboto";
 @import "@fontsource-variable/figtree";
 @import "./styles/themes.css";
-@import "./styles/thread-hero.css";
 @plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
@@ -520,9 +519,19 @@ html[data-desktop="true"]:not([data-desktop-platform="darwin"]) [data-drag-regio
   --tw-prose-code: var(--foreground);
   --tw-prose-pre-code: var(--foreground);
   --tw-prose-pre-bg: color-mix(in oklch, var(--muted) 55%, transparent);
-  --tw-prose-th-borders: var(--border);
-  --tw-prose-td-borders: var(--border);
+   --tw-prose-th-borders: var(--border);
+   --tw-prose-td-borders: var(--border);
+ }
+
+/* TipTap placeholder inside the task editor — match input placeholder colour. */
+.task-editor .tiptap p.is-editor-empty:first-child::before {
+  color: var(--muted-foreground);
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
 }
+
 
 /* Inline code as a chip — and without the plugin's literal backticks. */
 .prose :where(code):not(:where(pre code)) {
@@ -632,6 +641,19 @@ html[data-desktop="true"]:not([data-desktop-platform="darwin"]) [data-drag-regio
   --cm-function: oklch(0.78 0.12 245);
   --cm-property: oklch(0.82 0.09 205);
   --cm-type: oklch(0.8 0.1 325);
+}
+
+/* A transcript row that is *not* the streaming tail. `content-visibility: auto`
+   lets the browser skip layout for off-screen rows — the whole win of a long
+   thread — and `contain-intrinsic-size: auto` tells it to remember each one's
+   last real height, so collapsing them does not distort scrollHeight the way a
+   fixed placeholder would. Set only when no turn is streaming (a `data-settled`
+   attribute on the item), because a row mid-growth must stay measured: the
+   scroller reads scrollHeight to follow the stream, and a placeholder height
+   would make the autoscroll target jump. See thread-view.tsx. */
+[data-message-scroller-content] [data-message-id][data-settled] {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 48px;
 }
 
 /* GFM tables. The scroll lives on the wrapper `<div class="harness-table">`

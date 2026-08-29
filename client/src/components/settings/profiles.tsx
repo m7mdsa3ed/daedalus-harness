@@ -50,7 +50,7 @@ export function ProfilesPage() {
   }
 
   const newButton = (
-    <Button size="lg" onClick={() => void navigate(settingsFormPath("profiles"))}>
+    <Button onClick={() => void navigate(settingsFormPath("profiles"))}>
       <Plus className="size-4" /> New profile
     </Button>
   )

@@ -24,6 +24,24 @@ export interface WireError {
   data?: unknown;
 }
 
+/**
+ * A `session/load` the agent refused.
+ *
+ * The thread is live either way — the bridge falls back to a fresh session —
+ * but its conversation is not in it, and saying nothing is how a thread that
+ * lost its history looks merely empty. Carried on `attached` rather than
+ * journaled because it is a fact about THIS process: the id it failed on is
+ * still the thread's (see AcpBridge.loadSession), so the next revive tries the
+ * same load again and a transient failure heals itself.
+ */
+export interface HistoryLost {
+  /** The id the load was attempted with. Still recorded against the thread,
+      still the only way back — which is the whole point of reporting it rather
+      than quietly replacing it. */
+  acpSessionId: string;
+  error: WireError;
+}
+
 /** What a respawn has to put back: the agent's configuration minus the two
     settings the profile owns. See AcpBridge.captureRestoreState. */
 export interface RestoreState {
@@ -44,7 +62,8 @@ export type ThreadCommand =
   | { id: number; cmd: "set_mode"; modeId: string }
   | { id: number; cmd: "set_config_option"; configId: string; value: string | boolean }
   | { cmd: "answer_permission"; requestId: string; response: acp.RequestPermissionResponse }
-  | { cmd: "answer_elicitation"; requestId: string; response: acp.CreateElicitationResponse };
+  | { cmd: "answer_elicitation"; requestId: string; response: acp.CreateElicitationResponse }
+  | { id: number; cmd: "load_earlier"; before: number };
 
 // ---- server -> client ----
 
@@ -56,6 +75,9 @@ export type JournaledEvent = Extract<
 >;
 
 export type ThreadEventKind = JournaledEvent["ev"];
+
+/** How many journaled events ride in one `replay` frame. */
+export const REPLAY_CHUNK_SIZE = 500;
 
 export const JOURNALED_EVENTS: readonly ThreadEventKind[] = [
   "update",
@@ -70,8 +92,28 @@ export type ThreadEvent =
      replayed `turn_ended` from a live one, and every reload would re-fire a
      desktop (and, with nobody watching, a push) notification for a turn that
      finished hours ago. */
-  | { ev: "attached"; from: number; acpSessionId: string | null }
+  | {
+      ev: "attached";
+      from: number;
+      acpSessionId: string | null;
+      /** Set when this process came up on an empty session because the thread's
+          conversation could not be loaded. Absent is the normal case. */
+      historyLost?: HistoryLost;
+    }
   | { ev: "caught_up"; cursor: number; promptActive: boolean }
+  /** The replay, in bulk. A container, not a fifth journaled kind: the events
+      inside are the same events a live socket receives and the client unrolls
+      them through the same dispatch, so `attached`/`caught_up` still bracket
+      the history exactly as before. It exists because a long thread is a few
+      thousand frames, and a browser wakes up, parses and re-renders once per
+      frame — the replay was the socket's cost, not the database's. Sent only
+      to a client that asked for it (`?batch=1` on the socket): a client that
+      did not gets the events one by one and must not be handed a shape it
+      would drop on the floor, since dropping the replay drops `caught_up`
+      with it and the thread would never finish connecting. Chunked at
+      `REPLAY_CHUNK_SIZE`, so a very long thread is a handful of frames rather
+      than one enormous string held whole on both ends. */
+  | { ev: "replay"; events: JournaledEvent[] }
 
   /* ---- journaled ---- */
   /** `historyReplay` is set for the updates a `session/load` streams back. The

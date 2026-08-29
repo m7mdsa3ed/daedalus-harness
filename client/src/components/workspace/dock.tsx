@@ -28,6 +28,7 @@ import "dockview-react/dist/styles/dockview.css"
 import { ChatPanel } from "@/components/workspace/chat-panel"
 import { EditorPanel } from "@/components/workspace/editor-panel"
 import { ExplorerPanel } from "@/components/workspace/explorer-panel"
+import { IdePanel } from "@/components/workspace/ide-panel"
 import { OutputPanel } from "@/components/workspace/output-panel"
 import { PanelTab } from "@/components/workspace/panel-tab"
 import { SourceControlPanel } from "@/components/workspace/source-control-panel"
@@ -575,6 +576,7 @@ export function WorkspaceDock({
     map["source-control"] = SourceControlPanel as React.FC<IDockviewPanelProps>
     map.web = WebPanel as React.FC<IDockviewPanelProps>
     map.output = OutputPanel as React.FC<IDockviewPanelProps>
+    map.ide = IdePanel as React.FC<IDockviewPanelProps>
     return map
   }, [actions])
 

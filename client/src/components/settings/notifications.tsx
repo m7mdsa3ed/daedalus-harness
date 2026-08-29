@@ -130,8 +130,8 @@ export function NotificationsPage() {
               <DropdownMenuItem
                 onClick={() =>
                   THREAD_EVENT_ROWS.forEach(({ key }, index) =>
-                    // Spaced out: one slot holds the header notice, so four at
-                    // once would only ever show the last of them.
+                    // Spaced out so the stack is readable rather than a pile of
+                    // four toasts all landing in the same instant.
                     window.setTimeout(() => testThreadNotification(key), index * 1200)
                   )
                 }

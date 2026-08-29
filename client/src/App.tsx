@@ -4,6 +4,7 @@ import { ConfirmProvider } from "@/components/confirm-dialog"
 import { ConnectScreen } from "@/components/connect-screen"
 import { Toaster } from "@/components/ui/sonner"
 import { useActions } from "@/lib/actions"
+import { refreshNotificationOffer } from "@/lib/notifications"
 import { setupPush } from "@/lib/push"
 import { loadSettings, type ServerSettings } from "@/lib/settings"
 import { initialState, reducer, StoreContext } from "@/lib/store"
@@ -58,7 +59,12 @@ function Connected({
       .bootstrap()
       .then(() => setupPush(settings))
       .catch((err) => reportError(err, "Couldn't load anything from the server"))
-      .finally(() => setLoaded(true))
+      .finally(() => {
+        setLoaded(true)
+        // The enable-notifications offer is now a persistent toast, not a header
+        // row — show it once the page is up and the Toaster can render it.
+        refreshNotificationOffer()
+      })
   }, [actions, settings])
 
   return (

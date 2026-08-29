@@ -1,5 +1,5 @@
 import type * as acp from "@agentclientprotocol/sdk"
-import type { ThreadCommand, ThreadEvent, WireError } from "@daedalus/protocol"
+import type { HistoryLost, ThreadCommand, ThreadEvent, WireError } from "@daedalus/protocol"
 import { wsUrl, type ServerSettings } from "./settings"
 
 /**
@@ -61,8 +61,11 @@ export interface ThreadCallbacks {
     catchingUp: boolean
   ) => void
   /** The replay is about to start, from this position. `from` is 0 for every
-      connect the client makes today, which is what makes it a full rebuild. */
-  onAttached: (from: number) => void
+      connect the client makes today, which is what makes it a full rebuild.
+      `historyLost` is set when the agent refused to reload this thread's
+      conversation — the replay that follows is an empty transcript, and the
+      only difference between that and a brand new thread is this field. */
+  onAttached: (from: number, historyLost?: HistoryLost) => void
   /** The replay is over; everything after this is live. `promptActive` is read
       server-side in the same tick as the log it follows, so it cannot pair a
       stale turn state with a fresh replay window. */
@@ -165,11 +168,19 @@ export class ThreadSocket {
     switch (event.ev) {
       case "attached":
         this.catchingUp = true
-        this.callbacks.onAttached(event.from)
+        this.callbacks.onAttached(event.from, event.historyLost)
         return
       case "caught_up":
         this.catchingUp = false
         this.callbacks.onCaughtUp(event.cursor, event.promptActive)
+        return
+      /* The replay, arriving whole. Unrolled through this same switch so there
+         is no second parser: `catchingUp` is already true (the `attached` that
+         precedes it set it), the callbacks see exactly what a one-frame-per-
+         event server would have sent, and only the number of times the browser
+         wakes up to receive it changed. */
+      case "replay":
+        for (const journaled of event.events) this.handle(journaled)
         return
       case "update":
         this.callbacks.onUpdate(event.update, event.historyReplay)

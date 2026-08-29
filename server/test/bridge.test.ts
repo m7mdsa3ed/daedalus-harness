@@ -81,7 +81,13 @@ const manager = new SessionManager({}, 1);
 
 const session = manager.create(profile, project);
 await session.bridge!.ready;
-assert.equal(session.acpSessionId, "acp-123", "the server ran session/new itself");
+assert.equal(session.liveAcpSessionId, "acp-123", "the server ran session/new itself");
+// It is recorded straight away — a thread that keeps no id at all is a thread
+// whose rollout, if the agent did flush one, nothing can ever find again — but
+// it is recorded as *provisional*: no turn has committed to it, so it is the
+// one id a later session/new is allowed to take the slot from.
+assert.equal(session.acpSessionId, "acp-123", "a fresh session id is written down");
+assert.equal(session.acpSessionProvisional, true, "…but not yet as a proven one");
 
 const ws1 = new MockWs();
 assert.equal(manager.attach(session.id, ws1 as never), null, "attach should succeed");
@@ -96,6 +102,9 @@ assert.ok(ws1.of("caught_up")[0], "the replay is closed off");
 send(ws1, { id: 1, cmd: "prompt", text: "hello fake agent" });
 await waitFor(() => ws1.of("turn_ended").length === 1, "turn end");
 assert.equal(session.title, "hello fake agent", "the title is sniffed from the first prompt");
+// The turn is what makes the session findable again, so now it is proven.
+assert.equal(session.acpSessionId, "acp-123", "a session with a turn in it is recorded");
+assert.equal(session.acpSessionProvisional, false, "a turn promotes the id to a proven one");
 assert.equal(session.bridge!.promptActive, false);
 assert.ok(ws1.of("update").length > 0, "the transcript streamed");
 assert.deepEqual(
@@ -123,6 +132,24 @@ assert.deepEqual(
   "…and the log is what the live socket said, bar the peer's own prompt",
 );
 assert.equal(ws2.of("caught_up")[0].cursor, session.eventCount);
+
+// --- the same replay, batched into one frame ---
+// `?batch=1` changes the number of frames and nothing else: the bracket still
+// brackets, and what is inside is the log in order.
+const ws2b = new MockWs();
+assert.equal(manager.attach(session.id, ws2b as never, 0, true), null, "attach should succeed");
+assert.equal(ws2b.events[0].ev, "attached");
+assert.equal(ws2b.events[ws2b.events.length - 1].ev, "caught_up");
+assert.equal(journaled(ws2b).length, 0, "no journaled event rode on its own frame");
+const batched = ws2b.of("replay");
+assert.equal(batched.length, 1, "one chunk holds a log this short");
+assert.deepEqual(
+  batched.flatMap((r) => r.events),
+  manager.journal(session.id)!.events,
+  "the batched replay is the same log the one-at-a-time replay sent",
+);
+assert.equal(ws2b.of("caught_up")[0].cursor, session.eventCount);
+ws2b.close();
 
 // Cursor skips already-seen events; only the bracket is left.
 const ws3 = new MockWs();
@@ -426,6 +453,62 @@ assert.equal(manager.list().find((s) => s.id === logged.id)?.deletedAt, null);
 assert.ok(manager.purge(logged.id));
 assert.equal(manager.journal(logged.id), undefined, "purge forgets the thread");
 
+// --- a refused session/load must not cost the thread its history ---
+
+// The thread has a conversation the agent knows about...
+const orphan = manager.create(profile, project);
+await orphan.bridge!.ready;
+const orphanWs = new MockWs();
+manager.attach(orphan.id, orphanWs as never);
+send(orphanWs, { id: 1, cmd: "prompt", text: "remember this" });
+await waitFor(() => orphanWs.of("turn_ended").length === 1, "the turn that records the session");
+assert.equal(orphan.acpSessionId, "acp-123");
+
+// ...and then a revive asks for one the agent cannot find. It comes back on a
+// fresh session — the thread stays usable — but the id it failed on is still
+// the thread's, because that id is the only pointer to a transcript which is
+// very often still in the agent's store. Replacing it is what turned one
+// refusal into a thread that could never find its history again.
+orphan.acpSessionId = "acp-gone";
+await manager.respawn(orphan.id, profile, project);
+assert.equal(orphan.acpSessionId, "acp-gone", "the failed id is kept, not overwritten");
+assert.equal(orphan.liveAcpSessionId, "acp-123", "the process runs on the fallback session");
+assert.ok(orphan.historyLost, "the refusal is recorded rather than swallowed");
+assert.equal(orphan.historyLost!.acpSessionId, "acp-gone");
+assert.match(String((orphan.historyLost!.error.data as { details?: string }).details), /no rollout/);
+
+// And the peer is told, so an empty transcript cannot pass for a quiet one.
+const orphanWs2 = new MockWs();
+manager.attach(orphan.id, orphanWs2 as never);
+assert.ok(
+  (orphanWs2.events[0] as { historyLost?: unknown }).historyLost,
+  "attach carries the lost history",
+);
+
+// A turn on the fallback session is what finally moves the record: there is
+// something to load now, and the old id has proven it leads nowhere.
+send(orphanWs2, { id: 1, cmd: "prompt", text: "start over" });
+await waitFor(() => orphanWs2.of("turn_ended").length === 1, "the turn on the new session");
+assert.equal(orphan.acpSessionId, "acp-123", "a session with a turn in it takes over the record");
+assert.equal(orphan.historyLost, null, "and the warning goes with it");
+assert.ok(manager.purge(orphan.id));
+
+// --- the same refusal, on an id no turn ever committed to ---
+
+// The mirror image: a provisional id has no transcript behind it by
+// definition, so a refusal to load it strands nothing. It is replaced without
+// argument, and it is NOT reported as lost history — otherwise every thread
+// killed before its first turn finished would come back wearing an error.
+const unproven = manager.create(profile, project);
+await unproven.bridge!.ready;
+assert.equal(unproven.acpSessionProvisional, true);
+unproven.acpSessionId = "acp-gone";
+await manager.respawn(unproven.id, profile, project);
+assert.equal(unproven.acpSessionId, "acp-123", "an unproven id yields to the fallback");
+assert.equal(unproven.acpSessionProvisional, true, "which is itself still unproven");
+assert.equal(unproven.historyLost, null, "and nothing was lost to report");
+assert.ok(manager.purge(unproven.id));
+
 // --- persistence across a restart ---
 
 const session2 = manager.create(profile, project);
@@ -434,8 +517,16 @@ const manager2 = new SessionManager({}, 1);
 const restored = manager2.list().find((s) => s.id === session2.id);
 assert.ok(restored, "session survives a manager restart");
 assert.equal(restored!.exited, true);
+// The restart killed it before any turn settled — the window that used to
+// throw the id away. The agent may well have flushed the session anyway (they
+// do it lazily, not never), so the provisional id survives the restart and the
+// revive tries to load it rather than starting a stranger.
+assert.equal(restored!.acpSessionId, "acp-123", "an unproven id still survives a restart");
 const revived = await manager2.respawn(session2.id, profile, project);
 assert.equal(revived.exited, false);
+assert.equal(revived.acpSessionId, "acp-123", "and the revive loaded it");
+assert.equal(revived.acpSessionProvisional, false, "a load that answered proves the id");
+assert.equal(revived.historyLost, null);
 assert.ok(manager2.purge(session2.id));
 assert.ok(manager.purge(session2.id));
 

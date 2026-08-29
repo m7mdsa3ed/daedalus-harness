@@ -6,7 +6,7 @@ import { materializeProject } from "./materialize.js";
 import type { Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 import { getAgent, resolveSpawn } from "./registry.js";
-import type { RestoreState, ThreadEvent, WireError } from "./protocol.js";
+import type { HistoryLost, RestoreState, ThreadEvent, WireError } from "./protocol.js";
 import type { Peer } from "./sessions.js";
 
 /**
@@ -92,10 +92,23 @@ export interface BridgeHost {
   onPermissionRequest(): void;
   onElicitationRequest(): void;
   onTurnEnd(error?: unknown): void;
-  /** The agent accepted a `session/new`, or a model/effort change. Both are
-      things `respawn` rebuilds the child's env from, so the record has to keep
-      up or reviving a retired thread puts it back on the wrong model. */
-  onAcpSessionId(acpSessionId: string): void;
+  /** The agent accepted a `session/new` or a `session/load`: this is the
+      session the running process is on. `proven` says which — a load that
+      answered is the strongest evidence an id can have (the agent found the
+      transcript and read it back), while a fresh `session/new` id is one the
+      agent holds in memory and may never flush. */
+  onAcpSessionId(acpSessionId: string, proven: boolean): void;
+  /** A turn has committed to the current session, so the agent has written it
+      to its own store and a later `session/load` can find it.
+      Until this fires the id is a promise, not a record: agents create the
+      session in memory and flush their transcript lazily, so a process killed
+      before its first turn (a server restart, a crash) leaves an id nothing can
+      ever load. Such an id is still written down — see `acpSessionProvisional`;
+      what this callback buys is the right to keep it against the next one. */
+  onSessionDurable(): void;
+  /** `session/load` was refused. The thread runs on a fresh session from here,
+      but the id it failed on stays the thread's record of itself. */
+  onHistoryLost(lost: HistoryLost): void;
   onSpawnStateChange(next: { model?: string; effort?: string }): void;
 }
 
@@ -245,7 +258,7 @@ export class AcpBridge {
       mcpServers: opts.mcpServers,
       _meta: this.claudeMeta(opts),
     });
-    this.adoptSession(response.sessionId, response.modes ?? null, response.configOptions ?? []);
+    this.adoptSession(response.sessionId, response.modes ?? null, response.configOptions ?? [], false);
   }
 
   /**
@@ -254,6 +267,20 @@ export class AcpBridge {
    * is why `historyReplay` is set around it: those updates are the transcript
    * being restated, not new activity, and the reducer on the other end needs to
    * know that to accept the user messages among them.
+   *
+   * The failure path is the delicate one. Falling back to a fresh session keeps
+   * the thread usable, but the fallback's id must NOT replace the id that was
+   * loaded: that id is the only pointer to a transcript which, more often than
+   * not, is still sitting in the agent's store — a load can fail because the
+   * agent was restarted mid-write, because it is a different agent, or because
+   * it had not flushed the rollout yet. Overwriting it turned one transient
+   * refusal into a thread that could never find its history again, and worse,
+   * into a *chain*: each replacement id was itself unloadable, so the next
+   * revive failed and replaced it too. The old id therefore stays on the record
+   * until a turn proves the new session durable (see `onSessionDurable`), and
+   * the refusal is reported instead of swallowed. The one id the fallback may
+   * take over is a *provisional* one — an id no turn ever committed to, which
+   * by definition has no transcript behind it to strand.
    */
   private async loadSession(opts: BridgeOptions): Promise<void> {
     const acpSessionId = opts.load!.acpSessionId;
@@ -265,15 +292,18 @@ export class AcpBridge {
         mcpServers: opts.mcpServers,
         _meta: this.claudeMeta(opts),
       });
-      this.adoptSession(acpSessionId, response?.modes ?? null, response?.configOptions ?? []);
+      this.adoptSession(acpSessionId, response?.modes ?? null, response?.configOptions ?? [], true);
     } catch (error) {
       // A deliberate close (respawn, retire) is not a load failure: the bridge
       // was shut on purpose, the fallback would be a `session/new` fired at a
       // dead connection, and the warn would make every normal respawn read
       // like a thread that lost its history. Only a real failure starts fresh.
       if (this.closed) throw error;
-      // Agent can't load sessions — continue with a fresh one (empty context).
-      console.warn("session/load failed, starting fresh", error);
+      // Agent can't load this session — continue with a fresh one (empty
+      // context), and say so: a thread that quietly forgot its conversation
+      // looks exactly like a thread that never had one.
+      console.warn(`session/load failed for ${acpSessionId}, starting fresh`, error);
+      this.host.onHistoryLost({ acpSessionId, error: this.host.enrichError(toWireError(error)) });
       await this.newSession(opts);
     } finally {
       this.historyReplay = false;
@@ -284,11 +314,12 @@ export class AcpBridge {
     acpSessionId: string,
     modes: acp.SessionModeState | null,
     configOptions: acp.SessionConfigOption[],
+    proven: boolean,
   ): void {
     this.acpSessionId = acpSessionId;
     this.modes = modes;
     this.configOptions = configOptions;
-    this.host.onAcpSessionId(acpSessionId);
+    this.host.onAcpSessionId(acpSessionId, proven);
     this.emitConfig();
   }
 
@@ -464,6 +495,12 @@ export class AcpBridge {
     // that empties the set ends it.
     if (--this.inflight > 0) return;
     this.turnStartedAt = null;
+    /* The session has content now, so the agent has written it down and a later
+       `session/load` can find it. Before this point its id is unloadable, and
+       recording an unloadable id is how a thread loses the transcript it had.
+       Reported even for a failed turn: the prompt still reached the agent, and
+       what makes the session findable is that it recorded anything at all. */
+    if (this.acpSessionId) this.host.onSessionDurable();
     this.host.emit({ ev: "turn_ended", seq: 0, usage, error, promptText: text });
     if (this.host.peerCount() === 0) this.host.onTurnEnd(error);
   }

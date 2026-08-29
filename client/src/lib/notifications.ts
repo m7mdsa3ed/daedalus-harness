@@ -4,16 +4,22 @@
    permission. Two channels, layered by how far away the user is:
 
      - looking at the thread            → nothing (the transcript/dialog says it)
-     - app open, elsewhere              → the header becomes the notice
+     - app open, elsewhere              → a sonner toast (this module)
      - window hidden                    → system notification too (if granted)
      - no client attached at all        → the SERVER sends FCM push (push.ts on
                                           the server; this module is not involved)
 
+   The in-app toast is the same normal sonner toast the rest of the app raises
+   (the "Moved to Trash" one), not a header takeover — a notification should not
+   displace the thread title you are reading.
+
    Preferences are device-local (localStorage), same pattern as view-options —
    what interrupts you on this device is not the server's business. */
+import { toast } from "sonner"
 import { useSyncExternalStore } from "react"
 import { pushRegistration } from "./pwa"
 import { currentThreadId, navigateTo, threadPath } from "./router"
+import { loadSettings } from "./settings"
 
 export type ThreadEvent = "turnFinished" | "turnFailed" | "permissionNeeded" | "questionAsked"
 
@@ -88,8 +94,8 @@ export function useNotificationPrefs(): NotificationPrefs {
 }
 
 /** Ask the browser for OS-notification permission; true when granted. Called
-    from a click — the thread alert or the settings toggle — never unprompted:
-    browsers downgrade prompts that don't come from a gesture. */
+    from a click — the settings toggle — never unprompted: browsers downgrade
+    prompts that don't come from a gesture. */
 export async function requestSystemNotifications(): Promise<boolean> {
   if (!("Notification" in window)) return false
   if (Notification.permission === "granted") return true
@@ -102,10 +108,11 @@ export async function requestSystemNotifications(): Promise<boolean> {
 /* ── The enable-notifications offer ──
    Whether the app should still be ASKING for permission: the browser has never
    been asked (permission is "default") and the user hasn't waved the offer
-   away. Rendered as an alert above the composer (components/notification-alert)
-   and re-checked whenever permission or the dismissal changes. */
+   away. It surfaces as a persistent sonner toast, and is re-checked whenever
+   permission or the dismissal changes. */
 
 const OFFER_DISMISSED_KEY = "ui.notifications.offerDismissed"
+const OFFER_TOAST_ID = "enable-notifications-offer"
 
 function computeOffer(): boolean {
   if (!("Notification" in window)) return false
@@ -117,16 +124,49 @@ function computeOffer(): boolean {
   }
 }
 
-let offerCache = computeOffer()
-const offerListeners = new Set<() => void>()
+/** The persistent toast that stands in for the old header offer. One fixed id
+    so a refresh replaces rather than stacks; an action rides a click so
+    setupPush stays gesture-gated. */
+function showNotificationOffer(): void {
+  toast("Turn on notifications?", {
+    id: OFFER_TOAST_ID,
+    description: "Get told when a turn finishes, fails or needs you — even in the background.",
+    duration: Infinity,
+    action: {
+      label: "Enable",
+      onClick: () => {
+        void requestSystemNotifications().then((granted) => {
+          // Whether granted, denied or settled, the offer's answer changed —
+          // recompute so the toast either clears (denied) or hands the OS
+          // notification layer over (granted).
+          refreshNotificationOffer()
+          if (!granted) return
+          // Permission is the gate for both layers: now that it is open,
+          // register this device for server push too (a no-op if FCM isn't
+          // configured). Imported lazily to avoid a cycle with push.ts.
+          void import("./push").then(({ setupPush }) => {
+            const settings = loadSettings()
+            if (settings) void setupPush(settings)
+          })
+        })
+      },
+    },
+  })
+}
+
+/** Recompute the offer and apply it — the toast shows when the offer is live
+    and dismisses when it is not. Single place the cache and the toast are
+    reconciled from, so the two never disagree. */
+function syncOffer(): void {
+  const next = computeOffer()
+  if (next) showNotificationOffer()
+  else toast.dismiss(OFFER_TOAST_ID)
+}
 
 /** Recompute after anything that can change the answer (a permission prompt
     settled, the dismissal was stored). */
 export function refreshNotificationOffer(): void {
-  const next = computeOffer()
-  if (next === offerCache) return
-  offerCache = next
-  for (const listener of offerListeners) listener()
+  syncOffer()
 }
 
 export function dismissNotificationOffer(): void {
@@ -135,26 +175,13 @@ export function dismissNotificationOffer(): void {
   } catch {
     // Worst case the offer shows again next load.
   }
-  refreshNotificationOffer()
+  syncOffer()
 }
 
-export function useNotificationOffer(): boolean {
-  return useSyncExternalStore(
-    (listener) => {
-      offerListeners.add(listener)
-      return () => {
-        offerListeners.delete(listener)
-      }
-    },
-    () => offerCache,
-    () => offerCache
-  )
-}
-
-/** Un-dismiss the offer and forget the answer, so the header row that asks for
-    permission can be looked at again. Only clears OUR dismissal — a browser
-    permission already granted or denied is the browser's to reset, and the
-    console tells you when that is what is hiding the row. */
+/** Un-dismiss the offer and forget the answer, so the persistent toast can be
+    looked at again. Only clears OUR dismissal — a browser permission already
+    granted or denied is the browser's to reset, and the console tells you when
+    that is what is hiding the row. */
 export function resetNotificationOffer(): void {
   try {
     localStorage.removeItem(OFFER_DISMISSED_KEY)
@@ -165,72 +192,9 @@ export function resetNotificationOffer(): void {
   if ("Notification" in window && Notification.permission !== "default") {
     console.info(
       `[daedalus] Offer reset, but Notification.permission is "${Notification.permission}" — ` +
-        "the row stays hidden until the site's notification permission is set back to Ask in browser settings."
+        "the offer stays dismissed until the site's notification permission is set back to Ask in browser settings."
     )
   }
-}
-
-/* ── The header notice ──
-   One slot, not a queue: two events land a second apart and the second is the
-   one worth reading, so a new notice replaces the one on screen rather than
-   waiting behind it. It expires on its own — a notification you have to close
-   is a chore — and the header goes back to being a title. */
-
-export interface HeaderNotice {
-  /** New identity per notice, so the row can re-animate when it is replaced. */
-  id: number
-  event: ThreadEvent
-  label: string
-  body: string
-  sessionId: string
-}
-
-/** Long enough to read a thread title and an error line, short enough that the
-    header is not a notification bar. Matches the old toast's duration. */
-const NOTICE_MS = 8000
-
-let noticeCache: HeaderNotice | null = null
-let noticeSeq = 0
-let noticeTimer: number | undefined
-const noticeListeners = new Set<() => void>()
-
-function emitNotice(): void {
-  for (const listener of noticeListeners) listener()
-}
-
-export function pushHeaderNotice(notice: Omit<HeaderNotice, "id">): void {
-  noticeCache = { ...notice, id: ++noticeSeq }
-  window.clearTimeout(noticeTimer)
-  noticeTimer = window.setTimeout(dismissHeaderNotice, NOTICE_MS)
-  emitNotice()
-}
-
-export function dismissHeaderNotice(): void {
-  window.clearTimeout(noticeTimer)
-  noticeTimer = undefined
-  if (noticeCache === null) return
-  noticeCache = null
-  emitNotice()
-}
-
-export function useHeaderNotice(): HeaderNotice | null {
-  return useSyncExternalStore(
-    (listener) => {
-      noticeListeners.add(listener)
-      return () => {
-        noticeListeners.delete(listener)
-      }
-    },
-    () => noticeCache,
-    () => noticeCache
-  )
-}
-
-/** Open the thread a notice is about, and clear it — the transcript is now
-    saying what the header was standing in for. */
-export function openHeaderNotice(notice: HeaderNotice): void {
-  dismissHeaderNotice()
-  navigateTo(threadPath(notice.sessionId))
 }
 
 /** The user is looking at this thread right now — telling them is noise. */
@@ -240,6 +204,11 @@ function isViewing(sessionId: string): boolean {
     document.visibilityState === "visible" &&
     document.hasFocus()
   )
+}
+
+/** Open the thread a notice is about. */
+function openThread(sessionId: string): void {
+  navigateTo(threadPath(sessionId))
 }
 
 /**
@@ -252,7 +221,7 @@ export function notifyThreadEvent(
   title: string,
   detail?: string,
   /* Testing only (see `installNotificationTestHelper`): skip the two checks
-     that decide WHETHER to interrupt, so the header row and the OS notification
+     that decide WHETHER to interrupt, so the toast and the OS notification
      can be looked at from the thread you are already on. Nothing about how they
      render changes — it is the same call the real events make. */
   force = false
@@ -263,14 +232,20 @@ export function notifyThreadEvent(
   const label = EVENT_LABELS[event]
   const body = [title, detail].filter(Boolean).join(" — ")
 
-  /* In-app, the header IS the notification. A toast floats over the transcript
-     you are reading and takes a corner of the screen hostage; the header is one
-     row that is always there, never scrolls, and is already saying which thread
-     you are on — which is exactly what the notification is about. So the event
-     borrows it, and the title comes back when the notice expires. */
-  pushHeaderNotice({ event, label, body, sessionId })
+  /* In-app, a normal sonner toast. The actionable events — the ones that are
+     waiting on the user — carry an "Open" affordance (and, for a failure, an
+     error tone); a turn that merely finished needs no button. */
+  const actionable = event === "permissionNeeded" || event === "questionAsked" || event === "turnFailed"
+  const toastOpts: Parameters<typeof toast>[1] = {
+    description: body,
+    ...(actionable
+      ? { action: { label: "Open", onClick: () => openThread(sessionId) } }
+      : {}),
+  }
+  if (event === "turnFailed") toast.error(label, toastOpts)
+  else toast(label, toastOpts)
 
-  // The header can't be seen from another window or a minimized app; an OS
+  // The toast can't be seen from another window or a minimized app; an OS
   // notification can. `tag` collapses repeats for the same thread+event.
   if (
     (force || (cache.system && (document.visibilityState === "hidden" || !document.hasFocus()))) &&
@@ -282,7 +257,7 @@ export function notifyThreadEvent(
       const notification = new Notification(label, { body, tag })
       notification.onclick = () => {
         window.focus()
-        open()
+        openThread(sessionId)
         notification.close()
       }
     } catch {
@@ -317,9 +292,9 @@ export function notifyThreadEvent(
      daedalus.notify()                  // turnFinished on the current thread
      daedalus.notify("turnFailed")      // any ThreadEvent, error styling and all
      daedalus.notify("permissionNeeded", { title: "Some thread", detail: "rm -rf" })
-     daedalus.notify("questionAsked", { system: false })   // header row only
+     daedalus.notify("questionAsked", { system: false })   // toast only
      daedalus.notifyAll()               // one of each, spaced out
-     daedalus.resetNotificationOffer()  // bring back the header's enable row
+     daedalus.resetNotificationOffer()  // bring back the enable toast
 
    It forces past the "is the user already looking at this?" and preference
    checks — that is the whole point — so it is a way to SEE the UI, not a way to
@@ -343,8 +318,8 @@ export function testThreadNotification(
   const detail = options.detail ?? TEST_DETAIL[event]
   const title = options.title ?? "Test thread"
   if (options.system === false) {
-    // The header row alone: same call with the OS layer left to its normal
-    // rules, which a focused window fails.
+    // The toast alone: same call with the OS layer left to its normal rules,
+    // which a focused window fails.
     const saved = cache.system
     cache = { ...cache, system: false }
     try {
@@ -379,7 +354,6 @@ export function installNotificationTestHelper(): void {
     requestSystemNotifications,
     resetNotificationOffer,
     dismissNotificationOffer,
-    dismissHeaderNotice,
   }
   window.daedalus = { ...window.daedalus, ...api }
 }

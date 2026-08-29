@@ -3,7 +3,6 @@ import { KeyRound, Loader2, Server, Tag, TriangleAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ThreadHero } from "@/components/thread-hero"
 import { describeError } from "@/lib/errors"
 import { saveSettings, serverName, type ServerSettings } from "@/lib/settings"
 
@@ -68,16 +67,7 @@ export function ConnectScreen({
       data-drag-region
       className="relative flex min-h-svh items-center justify-center overflow-hidden p-6"
     >
-      {/* The same shader the empty-thread hero runs, coloured from the same
-          theme tokens — the first screen of the app and its emptiest one now
-          sit on one surface instead of each inventing an ornament. `visible`
-          is a constant here: there is nothing on this screen for it to defer
-          to, so it fades in on mount and lives as long as the screen does. */}
-      <ThreadHero visible />
-      {/* The panel steps back to let it through, the way the shell's surfaces
-          do under `[data-hero]` — tinted rather than cleared, because the form
-          has to stay readable over whatever the shader is doing beneath it. */}
-      <div className="relative grid w-full max-w-4xl overflow-hidden rounded-2xl border bg-card/75 shadow-glass-lg backdrop-blur-2xl backdrop-saturate-150 lg:grid-cols-[1.1fr_1fr]">
+      <div className="relative grid w-full max-w-4xl overflow-hidden rounded-2xl border bg-card shadow-glass-lg lg:grid-cols-[1.1fr_1fr]">
         <section className="hidden flex-col justify-between gap-10 border-r bg-muted/20 p-10 lg:flex">
           <div className="flex items-center gap-2.5">
             <img src="/logo.svg" alt="" className="size-8" />

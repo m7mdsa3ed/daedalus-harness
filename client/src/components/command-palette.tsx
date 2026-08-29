@@ -11,6 +11,7 @@
 import * as React from "react"
 import {
   ArrowLeft,
+  CodeXmlIcon,
   Copy,
   Cpu,
   FolderIcon,
@@ -41,6 +42,7 @@ import {
   ServerIcon,
   ShieldCheck,
   Square,
+  SquareKanban,
   Sun,
   Trash2,
 } from "lucide-react"
@@ -75,7 +77,7 @@ import { customThemeValue } from "@/lib/custom-themes"
 import { togglePin, usePins } from "@/lib/pins"
 import { shortAge } from "@/lib/time"
 import { useLocation, useNavigate } from "react-router"
-import { currentThreadId, settingsPath, threadPath } from "@/lib/router"
+import { boardPath, currentThreadId, settingsPath, threadPath } from "@/lib/router"
 import {
   clearSettings,
   loadServers,
@@ -395,6 +397,13 @@ export function CommandPalette({
                   <FolderPlus />
                   New project
                 </CommandItem>
+                <CommandItem
+                  value="tasks board kanban todos todo list"
+                  onSelect={() => run(() => void navigate(boardPath()))}
+                >
+                  <SquareKanban />
+                  Tasks board
+                </CommandItem>
               </CommandGroup>
 
               {/* The layout commands. Dragging a tab does all of this too, but a
@@ -455,6 +464,17 @@ export function CommandPalette({
                   >
                     <MonitorIcon />
                     Preview
+                  </CommandItem>
+                )}
+                {meta && (
+                  <CommandItem
+                    value="vscode vs code ide editor code-server full editor"
+                    onSelect={() =>
+                      run(() => dock.openPanel({ kind: "ide", projectId: meta.projectId }))
+                    }
+                  >
+                    <CodeXmlIcon />
+                    VS Code
                   </CommandItem>
                 )}
                 {meta && (
