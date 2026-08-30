@@ -414,13 +414,27 @@ export class SessionManager {
       db.transaction((tx) => {
         for (const row of rows) tx.insert(eventsTable).values(row).run();
       });
-    } catch (error) {
-      /* A thread purged between the append and this flush takes its rows with
-         it (the foreign key cascades), and the insert then fails on a session
-         that no longer exists. Nothing is owed an error here — the log it would
-         have belonged to is gone — but a throw on a setImmediate callback is an
-         uncaught exception, so it is reported and dropped. */
-      console.error("[journal] couldn't write buffered events", error);
+    } catch {
+      /* One bad row must not cost every other thread its tick. A batch is a
+         transaction, so a single failure rolls the whole thing back — and the
+         rows in it belong to whatever threads happened to be streaming at the
+         same moment, which is the wrong blast radius for a fault that is always
+         about one session. The usual cause is a thread purged between the
+         append and this flush: its rows went with it (the foreign key cascades)
+         and nothing is owed an error, because the log they belonged to no
+         longer exists. So retry row by row and report only what actually fails.
+         A throw here would be an uncaught exception — this runs on a
+         setImmediate, with no caller to catch it. */
+      for (const row of rows) {
+        try {
+          db.insert(eventsTable).values(row).run();
+        } catch (error) {
+          console.error(
+            `[journal] dropped event ${row.seq} of session ${row.sessionId.slice(0, 8)}`,
+            error,
+          );
+        }
+      }
     }
   }
 

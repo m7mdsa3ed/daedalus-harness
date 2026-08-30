@@ -575,6 +575,14 @@ assert.ok(manager.purge(unproven.id));
 
 const session2 = manager.create(profile, project);
 await session2.bridge!.ready;
+/* Stop the first manager's process for this thread before standing the second
+   one up. A restart is one manager replacing another, not two of them sharing a
+   database — and now that the event log survives a boot, two live managers mean
+   two writers appending to one thread's log at seqs neither can see the other
+   assigning. The unique index catches it, which is the index doing its job on a
+   situation that only this test could create (the real server is one process
+   owning the database — see CLAUDE.md). */
+manager.retire(manager.get(session2.id)!);
 const manager2 = new SessionManager({}, 1);
 const restored = manager2.list().find((s) => s.id === session2.id);
 assert.ok(restored, "session survives a manager restart");
