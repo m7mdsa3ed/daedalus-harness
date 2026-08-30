@@ -133,6 +133,11 @@ export interface BridgeOptions {
   /** Settings chosen on a draft, against the option set the agent last
       advertised. Applied right after `session/new`. */
   configChoices?: Record<string, string | boolean>;
+  /** The model and effort of a thread whose profile carries no catalog, to be
+      put back over ACP rather than through the process env — see
+      `applyAgentOwned`. Empty for a profile that owns the catalog: there these
+      two ARE the env, and `resolveSpawn` has already placed them. */
+  agentOwned?: { model?: string; effort?: string };
   /** The web-search MCP server is replacing claude-code's built-in
       WebSearch/WebFetch. Only that agent declares those as server tools, so
       disallow them or the model keeps calling the originals instead of ours. */
@@ -262,6 +267,7 @@ export class AcpBridge {
 
     // Only now is there something to apply settings to.
     if (opts.restore) await this.applyRestore(opts.restore);
+    if (opts.agentOwned) await this.applyAgentOwned(opts.agentOwned);
     if (opts.configChoices) await this.applyChoices(opts.configChoices);
   }
 
@@ -410,6 +416,41 @@ export class AcpBridge {
         await this.setConfigOption(option.id, option.currentValue);
       } catch (error) {
         console.warn(`couldn't restore ${option.id} after the restart`, error);
+      }
+    }
+  }
+
+  /**
+   * Put back the model and effort of a thread whose profile has no catalog.
+   *
+   * These are the two settings `applyRestore` deliberately drops, because for a
+   * profile that owns a catalog they are process env and a respawn has already
+   * placed them. A profile with no `models[]` is the opposite case: the agent
+   * owns them, the value is an id out of the agent's OWN selector, and the only
+   * thing that understands such an id is the selector it came from. Writing one
+   * into the env instead is what broke a revived Default-profile thread —
+   * claude-code's `opus[1m]` landing in ANTHROPIC_MODEL (and, pinned alongside
+   * it, the sonnet/opus/fable alias vars) resolves to nothing the API serves,
+   * and every turn died with `model_not_found`.
+   *
+   * By category, not by id: the record is "this thread runs on this model", and
+   * which config id carries the model is the agent's business — it can differ
+   * between agents and across upgrades. Best-effort like the rest of restore: a
+   * value the agent no longer offers costs the pick, not the thread.
+   */
+  private async applyAgentOwned(state: { model?: string; effort?: string }): Promise<void> {
+    const wanted = [
+      ["model", state.model],
+      ["thought_level", state.effort],
+    ] as const;
+    for (const [category, value] of wanted) {
+      if (!value) continue;
+      const option = this.configOptions.find((o) => o.type === "select" && o.category === category);
+      if (!option || option.type !== "select" || option.currentValue === value) continue;
+      try {
+        await this.setConfigOption(option.id, value);
+      } catch (error) {
+        console.warn(`couldn't put ${category} back to ${value} after the restart`, error);
       }
     }
   }

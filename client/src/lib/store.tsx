@@ -171,6 +171,16 @@ export interface ThreadState {
   /** Time to first update of the last turn, ms. */
   ttftMs: number | null
   history: HistoryState
+  /** No agent process behind this thread: what is on screen was served from the
+      server's journal. The transcript is real and complete, but nothing can be
+      sent until the thread is revived — which `actions.send` does on its own. */
+  archived: boolean
+  /** Journaled events older than the transcript, still on the server. > 0 only
+      for a thread long enough to have been windowed; `actions.loadEarlier`
+      fetches the next page and re-folds. */
+  earlier: number
+  /** A `load_earlier` is in flight — the button says so and does not stack. */
+  loadingEarlier: boolean
 }
 
 export interface State {
@@ -208,6 +218,9 @@ export const emptyThread: ThreadState = {
     checkpoints: [],
     branches: [],
   },
+  archived: false,
+  earlier: 0,
+  loadingEarlier: false,
 }
 
 /**
@@ -552,6 +565,15 @@ export type Action =
       closeReason?: string
     }
   | { type: "turn-active"; id: string; active: boolean }
+  /** Windowing/archive bookkeeping, all of it absolute — set from `attached`
+      and from the end of a re-fold, never accumulated. */
+  | {
+      type: "thread-window"
+      id: string
+      archived?: boolean
+      earlier?: number
+      loadingEarlier?: boolean
+    }
   | { type: "update"; id: string; update: acp.SessionUpdate; allowUserChunks?: boolean }
   | { type: "user-message"; id: string; text: string; turnId?: string }
   | { type: "tag-user-turn"; id: string; turnId: string }
@@ -684,6 +706,12 @@ export function reducer(state: State, action: Action): State {
       return { ...state, commands: action.commands }
     case "thread-reset":
       return { ...state, threads: { ...state.threads, [action.id]: action.thread } }
+    case "thread-window":
+      return withThread(state, action.id, {
+        ...(action.archived !== undefined ? { archived: action.archived } : {}),
+        ...(action.earlier !== undefined ? { earlier: action.earlier } : {}),
+        ...(action.loadingEarlier !== undefined ? { loadingEarlier: action.loadingEarlier } : {}),
+      })
     case "thread-status":
       // Only a close carries a code; clear it otherwise so a stale reason can't
       // leak into the banner of the next connection.

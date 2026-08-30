@@ -36,6 +36,12 @@ const RECONNECT_MAX_ATTEMPTS = 5
 const RECONNECT_BASE_DELAY_MS = 500
 const RECONNECT_MAX_DELAY_MS = 8000
 const NON_RECONNECTABLE_CLOSE_CODES = new Set([4000, 4002, 4004])
+/** `revive: true` means "this thread needs a running agent" — spawn one rather
+    than serving its journal read-only. Opening a thread does not set it;
+    reconnecting, reviving and sending all do. */
+interface ConnectOpts {
+  revive?: boolean
+}
 const reconnectAttempts = new Map<string, number>()
 const reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>()
 /** The last journal cursor this client has folded into a thread's state, keyed
@@ -116,7 +122,20 @@ export function useActions(settings: ServerSettings) {
         })
         return
       }
-      await (silent ? connectThread(meta) : openThread(meta))
+      /* Always `revive`, on every reconnect path. Opening a thread from the UI
+         may serve its archive read-only, but a reconnect never should: the
+         socket closed because the process died (or was taken over), and the
+         thread the user is looking at was live a moment ago. Attaching to the
+         journal instead would turn a crash into a silently read-only thread. */
+      await (silent
+        ? connectThread(meta, { revive: true })
+        : openThread(meta, { revive: true }))
+    }
+
+    /** Put an agent process back under a thread that has none. */
+    const revive = async (sessionId: string) => {
+      reconnectAttempts.delete(sessionId)
+      await reconnectThread(sessionId)
     }
 
     const scheduleReconnect = (sessionId: string, lastError?: unknown) => {
@@ -337,25 +356,24 @@ export function useActions(settings: ServerSettings) {
           send({ type: "session-title", id, title: text.slice(0, 60) })
           if (!catchingUp) send({ type: "turn-active", id, active: true })
         },
-        // The replay is about to start. `from` is where it begins: 0 is a full
-        // rebuild (the usual case, and the only one the server can tell apart
-        // from "brand new"), anything else is a delta — a reconnect to a thread
-        // this device already has most of in memory, so the transcript is kept
-        // and only the gap is appended.
-        onAttached: (from, history, historyLost) => {
+        /* The replay is about to start. `resumed` decides what happens to what
+           is already on screen: a resume is a delta this device asked for and
+           the transcript is kept and extended, anything else replaces it. That
+           used to be read off `from > 0`, which stopped being enough once the
+           server could pick a `from` of its own for a windowed attach — a case
+           where `from` is large and the transcript must still be replaced. */
+        onAttached: ({ resumed, earlier, archived }, history, historyLost) => {
           buffer = []
-          const resuming = from > 0
           /* Keep what is on screen when resuming; replace it otherwise. A reset
              would throw away the transcript a delta is about to extend, and a
              delta appended onto a stale transcript would double-render whatever
-             the server re-sends. `from === 0` therefore means "start over",
-             matching the server's own clamp. The status is left to the socket's
-             `onStatus` flow (connecting → connected) and only committed at
-             `caught_up`; touching it here would race the connect() we are
-             inside. */
-          if (!resuming) {
+             the server re-sends. The status is left to the socket's `onStatus`
+             flow (connecting → connected) and only committed at `caught_up`;
+             touching it here would race the connect() we are inside. */
+          if (!resumed) {
             send({ type: "thread-reset", id, thread: { ...emptyThread, status: "connecting" } })
           }
+          send({ type: "thread-window", id, archived, earlier })
           send({ type: "history-state", id, history })
           /* The agent would not reload this conversation, so the replay about
              to arrive is empty. Said here rather than left to look like a quiet
@@ -376,6 +394,28 @@ export function useActions(settings: ServerSettings) {
         onCaughtUp: (cursor, promptActive) => {
           journalCursors.set(id, cursor)
           if (promptActive) send({ type: "turn-active", id, active: true })
+          flush()
+        },
+        /* A page of older history arrived and the socket is about to fold the
+           widened window from the start. Everything but the items is carried
+           over rather than reset to `emptyThread`: the agent may be mid-turn or
+           holding a question open while someone scrolls back, and a question
+           that vanished because the transcript above it grew would be a real
+           loss. Only `items` is rebuilt, because only `items` is what the fold
+           produces. */
+        onRewind: () => {
+          buffer = []
+          const current = stateRef.current.threads[id] ?? emptyThread
+          send({ type: "thread-reset", id, thread: { ...current, items: [] } })
+        },
+        /* The re-fold is committed as one render. `turnActive` is put back
+           afterwards because the fold derives it from the events it saw, and a
+           turn this device started itself has no `turn_started` in the log to
+           re-derive it from — the prompter is the one peer that never gets one. */
+        onRewound: (earlier) => {
+          const active = stateRef.current.threads[id]?.turnActive ?? false
+          send({ type: "thread-window", id, earlier, loadingEarlier: false })
+          if (active) send({ type: "turn-active", id, active: true })
           flush()
         },
         onHistoryState: (history) => send({ type: "history-state", id, history }),
@@ -527,16 +567,16 @@ export function useActions(settings: ServerSettings) {
     /** Connect (or reattach to) a thread; the caller navigates to its route.
         Every failure below lands in the thread itself before it propagates, so
         a caller that only logs still leaves the user something to read. */
-    const openThread = async (meta: SessionMeta) => {
+    const openThread = async (meta: SessionMeta, opts: ConnectOpts = {}) => {
       try {
-        await connectThread(meta)
+        await connectThread(meta, opts)
       } catch (error) {
         recordError(meta.id, error, "Couldn't connect to this thread")
         throw error
       }
     }
 
-    const connectThread = async (meta: SessionMeta) => {
+    const connectThread = async (meta: SessionMeta, opts: ConnectOpts = {}) => {
       // A draft has no server session and no agent process — there is nothing to
       // connect to until the first message brings it into existence.
       if (meta.draft) return
@@ -559,9 +599,24 @@ export function useActions(settings: ServerSettings) {
         )
       }
 
-      // No live process (idle-retired or the server restarted): revive it. The
-      // server respawns, replays the conversation through session/load and puts
-      // the settings back before it answers.
+      /* No live process (idle-retired, or the server restarted). Two ways back,
+         and which one is right depends on what the user is about to do.
+
+         If the server still holds this thread's journal (`cursor > 0`), opening
+         it is a *read*, and a read does not need an agent: attach, replay the
+         archive, and show it read-only. Spawning a process and making it
+         re-narrate the whole conversation through `session/load` — several
+         seconds and a child process — to look at yesterday's work was the cost
+         this avoids. Sending a message is what needs the agent, and
+         `actions.send` revives on its own when that happens.
+
+         With no journal (pruned by retention, or a thread from before the
+         archive existed) there is nothing to read, so the revive happens here
+         exactly as it always did. */
+      if (meta.exited && meta.cursor > 0 && !opts.revive) {
+        await startThread(meta.id, 0)
+        return
+      }
       if (meta.exited) {
         await api(settings, `/api/sessions/${meta.id}/respawn`, {
           method: "POST",
@@ -787,8 +842,26 @@ export function useActions(settings: ServerSettings) {
       },
 
       async reviveThread(sessionId: string) {
-        reconnectAttempts.delete(sessionId)
-        await reconnectThread(sessionId)
+        await revive(sessionId)
+      },
+
+      /**
+       * Fetch the page of history above the transcript and fold it in.
+       *
+       * The socket owns the mechanics (it is the only thing holding the events
+       * the re-fold needs); this only guards against stacking two pages and
+       * marks the button busy while one is in flight.
+       */
+      async loadEarlier(sessionId: string) {
+        const thread = liveThreads.get(sessionId)
+        if (!thread || stateRef.current.threads[sessionId]?.loadingEarlier) return
+        dispatch({ type: "thread-window", id: sessionId, loadingEarlier: true })
+        try {
+          await thread.loadEarlier()
+        } catch (error) {
+          dispatch({ type: "thread-window", id: sessionId, loadingEarlier: false })
+          reportError(error, "Couldn't load earlier messages")
+        }
       },
 
       /**
@@ -815,6 +888,21 @@ export function useActions(settings: ServerSettings) {
                Retry on that row runs this again. */
             dispatch({ type: "thread-status", id: sessionId, status: "idle" })
             recordError(sessionId, error, "Couldn't start this thread", text)
+            throw error
+          }
+        }
+        /* An archived thread is attached, but to the journal rather than to an
+           agent — reading it needed no process, and this is the moment that
+           stops being true. Revive before the prompt rather than refusing it:
+           the user typed into a thread that looked open, and "revive it and
+           send again" is a step the client can take on their behalf. The revive
+           respawns, `session/load`s, and re-attaches, so the socket read below
+           is deliberately taken afterwards. */
+        if (stateRef.current.threads[sessionId]?.archived) {
+          try {
+            await revive(sessionId)
+          } catch (error) {
+            recordError(sessionId, error, "Couldn't restart this thread's agent", text)
             throw error
           }
         }

@@ -91,6 +91,9 @@ export type ThreadCommand =
   | { id: number; cmd: "set_config_option"; configId: string; value: string | boolean }
   | { cmd: "answer_permission"; requestId: string; response: acp.RequestPermissionResponse }
   | { cmd: "answer_elicitation"; requestId: string; response: acp.CreateElicitationResponse }
+  /** Fetch the page of journaled events immediately before `before` (a seq).
+      Answered with `EarlierPage`. Only useful to a client that asked for a
+      windowed attach — see `attached.earlier`. */
   | { id: number; cmd: "load_earlier"; before: number }
   | { id: number; cmd: "revert"; checkpointId: string }
   | { id: number; cmd: "recover_branch"; branchId: string };
@@ -106,8 +109,34 @@ export type JournaledEvent = Extract<
 
 export type ThreadEventKind = JournaledEvent["ev"];
 
-/** How many journaled events ride in one `replay` frame. */
+/** The most journaled events that ride in one `replay` frame. A frame is cut on
+    whichever limit is reached first, this or `REPLAY_CHUNK_BYTES`. */
 export const REPLAY_CHUNK_SIZE = 500;
+
+/**
+ * The most payload bytes that ride in one `replay` frame.
+ *
+ * A count on its own is the wrong budget, because journaled events are not the
+ * same size: most `update`s are a few hundred bytes of streamed text, but a
+ * codex tool call carries its terminal output in `_meta.terminal_output_delta`,
+ * a `MultiEdit` carries every hunk, and a diff carries both sides of the file.
+ * Five hundred of those is a multi-megabyte frame — held whole as a string on
+ * this end while it is built and on the browser's end while it is parsed, which
+ * is exactly the spike bulk replay was introduced to remove.
+ */
+export const REPLAY_CHUNK_BYTES = 256 * 1024;
+
+/** How many journaled events one `load_earlier` page returns. */
+export const EARLIER_PAGE_SIZE = 250;
+
+/** The answer to `load_earlier`: a page of history older than what the client
+    has, plus how much older history is still behind it. */
+export interface EarlierPage {
+  events: JournaledEvent[];
+  /** Journaled events before `events[0]` that were not sent. 0 = this is the
+      head of the log and there is nothing left to ask for. */
+  earlier: number;
+}
 
 export const JOURNALED_EVENTS: readonly ThreadEventKind[] = [
   "update",
@@ -124,7 +153,26 @@ export type ThreadEvent =
      finished hours ago. */
   | {
       ev: "attached";
+      /** The seq the replay starts at. */
       from: number;
+      /** Whether `from` is the client's OWN cursor — i.e. the replay continues
+          the transcript already on screen rather than replacing it.
+
+          This used to be read off `from > 0`, which held only while every
+          non-zero `from` came from the client. A windowed attach breaks that:
+          the server picks a `from` in the middle of the log for a client that
+          has nothing, and the two cases want opposite handling — one appends,
+          the other resets. So the server states which it is instead of leaving
+          the client to infer it from a number that now has two sources. */
+      resumed: boolean;
+      /** Journaled events before `from` that were NOT sent and are still on the
+          server, fetchable with `load_earlier`. 0 for an ordinary attach (the
+          replay is the whole log) and for a resume (the client has them). */
+      earlier: number;
+      /** No agent process behind this thread: the transcript is being served
+          from the journal alone. Commands will be refused until it is revived,
+          which is what the composer says instead of pretending otherwise. */
+      archived: boolean;
       acpSessionId: string | null;
       /** Set when this process came up on an empty session because the thread's
           conversation could not be loaded. Absent is the normal case. */

@@ -247,6 +247,16 @@ export const sessions = sqliteTable(
  * parser: one for live `session/update` notifications and another that sniffed
  * JSON-RPC out of the replayed log. Now live and replay are the same events, so
  * they take the same path on the other end and there is one parser.
+ *
+ * **It is a cache for reading, never a source for resuming.** The conversation
+ * lives in the agent's own store and comes back through `session/load`; what is
+ * here is only what the browser was told about it. So a revive clears this log
+ * and refills it from the load replay (`SessionManager.respawnNow`), and nothing
+ * ever reconstructs a thread's state *for the agent* out of these rows. The rule
+ * used to be enforced by deleting the whole table at boot, which also meant a
+ * retired thread could not be *read* without spawning a process to re-narrate
+ * it. Keeping the rows separates the two: reading is free, resuming still goes
+ * through the agent.
  */
 export const sessionEvents = sqliteTable(
   "session_events",
@@ -261,10 +271,50 @@ export const sessionEvents = sqliteTable(
         "turn_ended". It duplicates `payload.ev`, which is the point — the table
         stays readable in db:studio and filterable without parsing JSON. */
     kind: text("kind").notNull(),
-    /** The event exactly as the socket sends it (see src/protocol.ts). */
+    /** The event exactly as the socket sends it (see src/protocol.ts).
+        Stored as text and *read back as text* on the replay path: it is already
+        the JSON the browser needs, so parsing it here only to stringify it again
+        per peer is work with no reader. */
     payload: text("payload", { mode: "json" }).$type<unknown>().notNull(),
+    /** Epoch ms this event was journaled. The log outlives its process now, so
+        something has to say how old an archive is — this is what the retention
+        sweep reads (`SessionManager.pruneJournals`). Defaulted in SQL rather
+        than left nullable so the column can be added to a table that already
+        has rows in it. */
+    at: integer("at").notNull().default(0),
   },
   (t) => [uniqueIndex("session_events_seq").on(t.sessionId, t.seq)],
+);
+
+/**
+ * A compact usage ledger for the harness-provided web-search MCP server.
+ *
+ * The transcript already contains the tool input and output. This table is
+ * intentionally metadata-only so aggregate usage can be inspected without
+ * copying queries, fetched URLs, response bodies or credentials into a second
+ * store. Names are snapshotted because usage should remain intelligible after
+ * a profile, project or thread is removed.
+ */
+export const webSearchUsage = sqliteTable(
+  "web_search_usage",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull(),
+    toolCallId: text("tool_call_id").notNull(),
+    tool: text("tool", { enum: ["search", "fetch"] }).notNull(),
+    status: text("status").notNull(),
+    threadTitle: text("thread_title").notNull(),
+    profileId: text("profile_id").notNull(),
+    profileName: text("profile_name").notNull(),
+    projectId: text("project_id").notNull(),
+    projectName: text("project_name").notNull(),
+    startedAt: integer("started_at").notNull(),
+    completedAt: integer("completed_at"),
+  },
+  (t) => [
+    uniqueIndex("web_search_usage_call").on(t.sessionId, t.toolCallId),
+    index("web_search_usage_started").on(t.startedAt),
+  ],
 );
 
 /** Durable restore points created before logical agent turns. Snapshot content

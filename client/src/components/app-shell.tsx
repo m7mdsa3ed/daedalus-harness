@@ -91,7 +91,7 @@ import { useHotkey } from "@/hooks/use-hotkey"
 import { togglePin, usePins } from "@/lib/pins"
 import { KEYS } from "@/lib/shortcuts"
 import { teardownPush } from "@/lib/push"
-import { loadThreadDefaults } from "@/lib/thread-defaults"
+import { defaultsForProfile, loadThreadDefaults } from "@/lib/thread-defaults"
 import {
   loadServers,
   removeServer,
@@ -210,8 +210,7 @@ export function AppShell({
     actions.newDraftThread({
       project,
       profile,
-      model: defaults.model,
-      effort: defaults.effort,
+      ...defaultsForProfile(defaults, profile.id),
       id: sessionId,
     })
   }, [sessionId, state.sessions, state.projects, state.profiles, ready, actions, dock])
@@ -256,8 +255,7 @@ export function AppShell({
     const id = actions.newDraftThread({
       project,
       profile,
-      model: defaults.model,
-      effort: defaults.effort,
+      ...defaultsForProfile(defaults, profile.id),
     })
     void navigate(threadPath(id))
   }

@@ -1,6 +1,24 @@
 import type * as acp from "@agentclientprotocol/sdk"
-import type { HistoryLost, HistoryState, ThreadCommand, ThreadEvent, WireError } from "@daedalus/protocol"
+import type {
+  EarlierPage,
+  HistoryLost,
+  HistoryState,
+  JournaledEvent,
+  ThreadCommand,
+  ThreadEvent,
+  WireError,
+} from "@daedalus/protocol"
 import { wsUrl, type ServerSettings } from "./settings"
+
+/**
+ * How much of a thread's tail to ask for on a fresh attach.
+ *
+ * Generous on purpose: the point is not to make every thread lazy, it is to
+ * stop a months-old archive from costing its whole history to open at the end.
+ * Below this the transcript arrives whole and `earlier` is 0, so nothing about
+ * the ordinary thread changes — no button, no paging, no retained raw events.
+ */
+export const REPLAY_WINDOW = 1500
 
 /**
  * The browser's end of one thread.
@@ -60,12 +78,31 @@ export interface ThreadCallbacks {
     promptText: string | undefined,
     catchingUp: boolean
   ) => void
-  /** The replay is about to start, from this position. `from` is 0 for every
-      connect the client makes today, which is what makes it a full rebuild.
-      `historyLost` is set when the agent refused to reload this thread's
-      conversation — the replay that follows is an empty transcript, and the
-      only difference between that and a brand new thread is this field. */
-  onAttached: (from: number, history: HistoryState, historyLost?: HistoryLost) => void
+  /** The replay is about to start.
+
+      `resumed` says whether it continues the transcript already on screen (this
+      device's own cursor) or replaces it. It is the server's word rather than
+      an inference from `from > 0`, because `from` now has two sources: this
+      device's cursor, and a window the server chose for a thread too long to
+      send whole.
+
+      `earlier` is how many journaled events sit *before* the replay and were
+      not sent — 0 for everything but a windowed attach. `archived` means there
+      is no agent process behind the thread and what follows is the journal
+      alone. `historyLost` is set when the agent refused to reload this thread's
+      conversation: the replay that follows is an empty transcript, and the only
+      difference between that and a brand new thread is this field. */
+  onAttached: (
+    info: { from: number; resumed: boolean; earlier: number; archived: boolean },
+    history: HistoryState,
+    historyLost?: HistoryLost
+  ) => void
+  /** A `load_earlier` page arrived and the transcript is about to be re-folded
+      from the start of the widened window. Brackets the re-fold with
+      `onRewound` exactly as `attached`/`caught_up` bracket a replay — same
+      buffer, same one commit, same suppressed notifications. */
+  onRewind: () => void
+  onRewound: (earlier: number) => void
   onHistoryState: (history: HistoryState) => void
   onHistoryReset: (history: HistoryState) => void
   /** The replay is over; everything after this is live. `promptActive` is read
@@ -93,8 +130,25 @@ export class ThreadSocket {
   private closeInfo: ThreadCloseInfo = { clientInitiated: false }
   /** True between `attached` and `caught_up`: everything in that window is
       history, and history must not raise notifications for turns that finished
-      hours ago. */
+      hours ago. Also true across a re-fold, for the same reason. */
   private catchingUp = false
+  /**
+   * The journaled events this socket has folded, kept so a `load_earlier` page
+   * can be folded in *front* of them.
+   *
+   * Only retained when the server said history was hidden (`earlier > 0`), and
+   * that condition is the whole design: the reducer builds the transcript by
+   * appending, so an older event cannot be inserted into it — the only way to
+   * place one correctly is to fold the whole widened window again from the
+   * start. Doing that needs the events, and keeping them costs roughly a second
+   * copy of the transcript. A thread that arrived whole can never page back, so
+   * it pays none of it.
+   */
+  private raw: JournaledEvent[] | null = null
+  /** The seq of the earliest event this socket holds, and how many are behind
+      it on the server. */
+  private windowFrom = 0
+  private earlier = 0
 
   constructor(serverSessionId: string, settings: ServerSettings, callbacks: ThreadCallbacks) {
     this.serverSessionId = serverSessionId
@@ -106,12 +160,25 @@ export class ThreadSocket {
     return this.ws !== null
   }
 
+  /** How many journaled events are still on the server, ahead of the oldest one
+      this socket holds. 0 means the transcript on screen is the whole thread. */
+  get earlierAvailable(): number {
+    return this.earlier
+  }
+
   /** Resolves once the replay is done and the thread is live. */
   connect(opts: { cursor?: number } = {}): Promise<void> {
     this.callbacks.onStatus("connecting")
     this.clientInitiatedClose = false
     this.closeInfo = { clientInitiated: false }
-    const ws = new WebSocket(wsUrl(this.settings, this.serverSessionId, opts.cursor ?? 0))
+    const cursor = opts.cursor ?? 0
+    /* A resume asks for a delta it already knows the size of, so windowing it
+       would hide events this device is actually missing. The server refuses to
+       window a resume for the same reason; sending 0 keeps the two ends saying
+       the same thing rather than relying on one of them to correct the other. */
+    const ws = new WebSocket(
+      wsUrl(this.settings, this.serverSessionId, cursor, cursor > 0 ? 0 : REPLAY_WINDOW)
+    )
     this.ws = ws
 
     return new Promise<void>((resolve, reject) => {
@@ -168,10 +235,26 @@ export class ThreadSocket {
 
   private handle(event: ThreadEvent): void {
     switch (event.ev) {
-      case "attached":
+      case "attached": {
         this.catchingUp = true
-        this.callbacks.onAttached(event.from, event.history, event.historyLost)
+        /* An older server does not send these three. `from > 0` was the only
+           signal it had, and for such a server it still means exactly what it
+           used to — it never windows, so a non-zero `from` can only be this
+           device's own cursor. */
+        const resumed = event.resumed ?? event.from > 0
+        const earlier = event.earlier ?? 0
+        this.windowFrom = event.from
+        this.earlier = earlier
+        // Only worth carrying the events when there is something to fold them
+        // in front of; see `raw`.
+        if (!resumed) this.raw = earlier > 0 ? [] : null
+        this.callbacks.onAttached(
+          { from: event.from, resumed, earlier, archived: event.archived ?? false },
+          event.history,
+          event.historyLost
+        )
         return
+      }
       case "caught_up":
         this.catchingUp = false
         this.callbacks.onCaughtUp(event.cursor, event.promptActive)
@@ -185,16 +268,11 @@ export class ThreadSocket {
         for (const journaled of event.events) this.handle(journaled)
         return
       case "update":
-        this.callbacks.onUpdate(event.update, event.historyReplay)
-        return
       case "session_config":
-        this.callbacks.onSessionConfig(event.modes, event.modeId, event.configOptions)
-        return
       case "turn_started":
-        this.callbacks.onTurnStarted(event.turnId, event.text, this.catchingUp)
-        return
       case "turn_ended":
-        this.callbacks.onTurnEnded(event.usage, event.error, event.promptText, this.catchingUp)
+        this.raw?.push(event)
+        this.fold(event)
         return
       case "permission":
         this.callbacks.onPermission(event.requestId, event.request)
@@ -228,6 +306,26 @@ export class ThreadSocket {
     }
   }
 
+  /** Put one journaled event through its callback. Split out of `handle` so a
+      re-fold can replay the events this socket already holds without recording
+      them a second time. */
+  private fold(event: JournaledEvent): void {
+    switch (event.ev) {
+      case "update":
+        this.callbacks.onUpdate(event.update, event.historyReplay)
+        return
+      case "session_config":
+        this.callbacks.onSessionConfig(event.modes, event.modeId, event.configOptions)
+        return
+      case "turn_started":
+        this.callbacks.onTurnStarted(event.turnId, event.text, this.catchingUp)
+        return
+      case "turn_ended":
+        this.callbacks.onTurnEnded(event.usage, event.error, event.promptText, this.catchingUp)
+        return
+    }
+  }
+
   // ---- commands ----
 
   /**
@@ -250,6 +348,45 @@ export class ThreadSocket {
 
   async cancel(): Promise<void> {
     await this.request((id) => ({ id, cmd: "cancel" }))
+  }
+
+  /**
+   * Fetch the page of history before the oldest event on screen and re-fold the
+   * transcript around it.
+   *
+   * The re-fold is the whole subtlety. The reducer builds the transcript by
+   * appending — a tool call updates the item it already made, a compaction
+   * upserts by id — so an older event cannot simply be prepended to the result;
+   * it has to be folded in its own place, which means folding everything after
+   * it again too. So this brackets the work the same way a replay is bracketed:
+   * `onRewind` clears the items and opens the buffer, every held event goes
+   * through the same callbacks in order, `onRewound` commits it as one render.
+   * `catchingUp` stays true throughout, so re-folding a turn that failed hours
+   * ago does not re-notify anybody about it.
+   *
+   * Answered by the journal, not by the agent, so it works on an archived
+   * thread — which is where paging back mostly happens.
+   */
+  async loadEarlier(): Promise<void> {
+    if (this.earlier <= 0 || !this.raw) return
+    const page = (await this.request((id) => ({
+      id,
+      cmd: "load_earlier",
+      before: this.windowFrom,
+    }))) as EarlierPage
+    if (!this.raw) return // reattached under us; that replay is the authority
+    const held = this.raw
+    this.raw = [...page.events, ...held]
+    this.windowFrom -= page.events.length
+    this.earlier = page.earlier
+    this.callbacks.onRewind()
+    this.catchingUp = true
+    try {
+      for (const event of this.raw) this.fold(event)
+    } finally {
+      this.catchingUp = false
+      this.callbacks.onRewound(this.earlier)
+    }
   }
 
   async setMode(modeId: string): Promise<void> {

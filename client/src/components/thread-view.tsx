@@ -1,5 +1,5 @@
 import * as React from "react"
-import { ArrowUp, Clock, History, Mic, RotateCw, Square } from "lucide-react"
+import { Archive, ArrowUp, ChevronUp, Clock, History, Mic, RotateCw, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import {
@@ -249,6 +249,25 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
               {thread.status === "connecting" && (
                 <MessageScrollerItem messageId="starting">
                   <StartingLine draft={meta?.draft} />
+                </MessageScrollerItem>
+              )}
+              {/* The transcript begins in the middle: this thread was long
+                  enough that the server sent only its tail. The rest is still
+                  there and comes back a page at a time. */}
+              {thread.earlier > 0 && (
+                <MessageScrollerItem messageId="earlier">
+                  <div className="mb-2 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={thread.loadingEarlier}
+                      onClick={() => void actions.loadEarlier(sessionId)}
+                    >
+                      <ChevronUp className={cn("size-4", thread.loadingEarlier && "animate-pulse")} />
+                      {thread.loadingEarlier ? "Loading…" : "Load earlier messages"}
+                    </Button>
+                    <span>{thread.earlier} earlier</span>
+                  </div>
                 </MessageScrollerItem>
               )}
               {rows.map((row, i) => {
@@ -577,6 +596,16 @@ function Composer({
         </div>
       )}
       <ComposerStrip>
+        {/* Read from the journal, with no agent behind it. Said rather than
+            enforced: the composer stays live because sending is what revives
+            the thread (see actions.send), and a box you cannot type into would
+            make the user go looking for a button to press first. */}
+        {thread.archived && (
+          <ComposerStripItem className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-muted-foreground">
+            <Archive className="size-3 shrink-0" />
+            <span>This thread's agent isn't running. Sending a message starts it again.</span>
+          </ComposerStripItem>
+        )}
         {thread.history.conflict && (
           <ComposerStripItem className="px-3 py-1.5 text-[11px] text-destructive">
             {thread.history.conflict}

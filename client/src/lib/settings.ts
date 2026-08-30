@@ -201,7 +201,12 @@ export async function api<T>(
   }
 }
 
-export function wsUrl(settings: ServerSettings, sessionId: string, cursor: number): string {
+export function wsUrl(
+  settings: ServerSettings,
+  sessionId: string,
+  cursor: number,
+  window: number
+): string {
   const url = new URL("/ws", settings.url)
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
   url.searchParams.set("token", settings.token)
@@ -210,6 +215,10 @@ export function wsUrl(settings: ServerSettings, sessionId: string, cursor: numbe
   // Ask for the replay in bulk. Older servers ignore the parameter and stream
   // it one event at a time, which this client still handles.
   url.searchParams.set("batch", "1")
+  /* Ask for only the tail of a very long thread, and page the rest back on
+     demand (`load_earlier`). Also ignored by an older server, which sends the
+     whole log — the same transcript, just paid for up front. */
+  if (window > 0) url.searchParams.set("window", String(window))
   return url.toString()
 }
 

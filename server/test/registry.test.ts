@@ -67,6 +67,15 @@ const claudeEnv = {
 };
 const claudeAgent = { id: "claude-code", name: "Claude Code", command: "claude-agent-acp", args: [], env: claudeEnv };
 
+/* The seeded shape (seed 6): every key that names a model carries the 1M
+   conditional, which `resolveSpawn` fills from the catalog. */
+const MODEL = "{model}{longContext?[1m]}";
+const SMALL = "{smallModel}{longContext?[1m]}";
+const suffixedAgent = {
+  ...claudeAgent,
+  env: { ...claudeEnv, ANTHROPIC_MODEL: MODEL, ANTHROPIC_DEFAULT_OPUS_MODEL: MODEL, ANTHROPIC_SMALL_FAST_MODEL: SMALL },
+};
+
 /* ── resolveSpawn ───────────────────────────────────────────────────────── */
 
 test("the small-model keys fall back to the session model", () => {
@@ -106,6 +115,41 @@ test("the Default profile names no model at all", () => {
   assert.deepEqual(env, {});
 });
 
+/* ── the 1M conditional ─────────────────────────────────────────────────── */
+
+test("a 1M catalog model gets the [1m] suffix on every key that names it", () => {
+  // Claude Code opts into the long-context beta BY THE ID, not by a window
+  // number: without the suffix a 1M model quietly runs at 200k.
+  const profile = profileWith({
+    models: [{ id: "gw/big", label: "Big", contextWindow: 1_000_000, reasoningEfforts: [] }],
+  });
+  const { env } = resolveSpawn(suffixedAgent, profile, project);
+  assert.equal(env.ANTHROPIC_MODEL, "gw/big[1m]");
+  // The alias and side-job keys too: they are pinned to the same id, and a
+  // session that drops to 200k on plan mode's sonnet switch is the same bug.
+  assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, "gw/big[1m]");
+  assert.equal(env.ANTHROPIC_SMALL_FAST_MODEL, "gw/big[1m]");
+});
+
+test("a smaller window, an uncatalogued model and the Default profile get no suffix", () => {
+  const { env: small } = resolveSpawn(suffixedAgent, profileWith(), project);
+  assert.equal(small.ANTHROPIC_MODEL, "gw/big"); // catalogued at no window
+  // A model the profile does not list has no window to read, so no suffix.
+  const { env: unknown } = resolveSpawn(suffixedAgent, profileWith(), project, "gw/other");
+  assert.equal(unknown.ANTHROPIC_MODEL, "gw/other");
+  // And with no model at all the whole key prunes away, suffix included —
+  // `{model}{longContext?[1m]}` must not resolve to a bare "[1m]".
+  assert.deepEqual(resolveSpawn(suffixedAgent, virtualProfile, project).env, {});
+});
+
+test("an id that already carries [1m] is not given a second one", () => {
+  const profile = profileWith({
+    models: [{ id: "opus[1m]", label: "Opus 1M", contextWindow: 1_000_000, reasoningEfforts: [] }],
+    defaultModel: "opus[1m]",
+  });
+  assert.equal(resolveSpawn(suffixedAgent, profile, project).env.ANTHROPIC_MODEL, "opus[1m]");
+});
+
 test("a user's own value for the key survives resolution", () => {
   const agent = { ...claudeAgent, env: { ...claudeEnv, ANTHROPIC_SMALL_FAST_MODEL: "pinned-by-hand" } };
   const { env } = resolveSpawn(agent, profileWith(), project);
@@ -143,11 +187,11 @@ test("a fresh install gets the built-ins, pointed at {smallModel}", () => {
   resetAgents([]);
   seedAgents();
   const claude = getAgent("claude-code");
-  assert.equal(claude?.env.ANTHROPIC_SMALL_FAST_MODEL, "{smallModel}");
-  assert.equal(claude?.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, "{smallModel}");
-  assert.equal(claude?.env.ANTHROPIC_DEFAULT_SONNET_MODEL, "{model}");
-  assert.equal(claude?.env.ANTHROPIC_DEFAULT_OPUS_MODEL, "{model}");
-  assert.equal(claude?.env.ANTHROPIC_DEFAULT_FABLE_MODEL, "{model}");
+  assert.equal(claude?.env.ANTHROPIC_SMALL_FAST_MODEL, SMALL);
+  assert.equal(claude?.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, SMALL);
+  assert.equal(claude?.env.ANTHROPIC_DEFAULT_SONNET_MODEL, MODEL);
+  assert.equal(claude?.env.ANTHROPIC_DEFAULT_OPUS_MODEL, MODEL);
+  assert.equal(claude?.env.ANTHROPIC_DEFAULT_FABLE_MODEL, MODEL);
   assert.ok(getAgent("codex"));
   assert.ok(getAgent("opencode"));
 });
@@ -168,8 +212,8 @@ test("the backfill moves a seed-3 row off {model} and keeps the user's edits", (
   ]);
   seedAgents();
   const claude = getAgent("claude-code");
-  assert.equal(claude?.env.ANTHROPIC_SMALL_FAST_MODEL, "{smallModel}");
-  assert.equal(claude?.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, "{smallModel}");
+  assert.equal(claude?.env.ANTHROPIC_SMALL_FAST_MODEL, SMALL);
+  assert.equal(claude?.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, SMALL);
   // Never a wholesale replacement: what the user put in the template is theirs.
   assert.equal(claude?.env.MY_OWN, "keep me");
   assert.equal(claude?.env.ANTHROPIC_BASE_URL, "{baseUrl}");
@@ -179,12 +223,13 @@ test("the backfill adds the keys to a row that predates them", () => {
   resetAgents([{ id: "claude-code", seededVersion: 1, env: { ANTHROPIC_MODEL: "{model}" } }]);
   seedAgents();
   const claude = getAgent("claude-code");
-  assert.equal(claude?.env.ANTHROPIC_SMALL_FAST_MODEL, "{smallModel}");
+  assert.equal(claude?.env.ANTHROPIC_SMALL_FAST_MODEL, SMALL);
   // Seed 5's alias keys arrive on the same jump — an install stamped 1 never
-  // saw seed 4 on its own.
-  assert.equal(claude?.env.ANTHROPIC_DEFAULT_SONNET_MODEL, "{model}");
-  assert.equal(claude?.env.ANTHROPIC_DEFAULT_OPUS_MODEL, "{model}");
-  assert.equal(claude?.env.ANTHROPIC_DEFAULT_FABLE_MODEL, "{model}");
+  // saw seed 4 on its own — and seed 6's 1M conditional rides along on all of
+  // them, which is the only thing that turns the long-context beta on.
+  assert.equal(claude?.env.ANTHROPIC_DEFAULT_SONNET_MODEL, MODEL);
+  assert.equal(claude?.env.ANTHROPIC_DEFAULT_OPUS_MODEL, MODEL);
+  assert.equal(claude?.env.ANTHROPIC_DEFAULT_FABLE_MODEL, MODEL);
 });
 
 test("a value that is neither missing nor {model} is left alone", () => {

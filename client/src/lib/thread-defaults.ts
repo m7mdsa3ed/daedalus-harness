@@ -26,6 +26,26 @@ export function loadThreadDefaults(): ThreadDefaults {
   }
 }
 
+/**
+ * The half of the defaults that is only meaningful inside a profile.
+ *
+ * `projectId`/`profileId` degrade to a fallback on their own — a deleted
+ * project just means the first one. Model and effort cannot: they name ids in
+ * the remembered *profile's* catalog, so once the fallback picks a different
+ * profile they name something that profile has never heard of, and it is passed
+ * straight through to the agent's env at spawn (a codex model id filling
+ * claude-code's ANTHROPIC_MODEL). Carry them only when the remembered profile
+ * is the one actually resolved — the same rule the `configure-draft` reducer
+ * already applies to `configChoices`.
+ */
+export function defaultsForProfile(
+  defaults: ThreadDefaults,
+  profileId: string
+): Pick<ThreadDefaults, "model" | "effort"> {
+  if (defaults.profileId !== profileId) return {}
+  return { model: defaults.model, effort: defaults.effort }
+}
+
 export function saveThreadDefaults(next: ThreadDefaults): void {
   try {
     localStorage.setItem(KEY, JSON.stringify(next))

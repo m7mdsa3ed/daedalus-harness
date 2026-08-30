@@ -115,7 +115,7 @@ const SMALL_MODEL_VARS = ["ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_SMALL_FAST
  * put there is theirs and survives.
  */
 function withSmallModelKeys(env: Record<string, string>): Record<string, string> {
-  return { ...Object.fromEntries(SMALL_MODEL_VARS.map((k) => [k, "{smallModel}"])), ...env };
+  return { ...Object.fromEntries(SMALL_MODEL_VARS.map((k) => [k, modelVar("smallModel")])), ...env };
 }
 
 /**
@@ -129,7 +129,7 @@ function withSmallModelKeys(env: Record<string, string>): Record<string, string>
 function withSmallModelVar(env: Record<string, string>): Record<string, string> {
   const out = withSmallModelKeys(env);
   for (const key of SMALL_MODEL_VARS) {
-    if (out[key] === "{model}") out[key] = "{smallModel}";
+    if (out[key] === "{model}") out[key] = modelVar("smallModel");
   }
   return out;
 }
@@ -168,7 +168,42 @@ const ALIAS_MODEL_VARS = [
 /** Pin Claude Code's model aliases to the selected model. New in seed 5;
     `backfill` merges the keys into rows that predate them. */
 function withAliasModelKeys(env: Record<string, string>): Record<string, string> {
-  return { ...Object.fromEntries(ALIAS_MODEL_VARS.map((k) => [k, "{model}"])), ...env };
+  return { ...Object.fromEntries(ALIAS_MODEL_VARS.map((k) => [k, modelVar("model")])), ...env };
+}
+
+/**
+ * Claude Code's 1M-context window is opted into **by the model id**, not by a
+ * number: the CLI reads a `[1m]` suffix off the id it is given, strips it, and
+ * sends the long-context beta on every request. Nothing else turns it on — an
+ * env var carrying the window (the shape Codex uses) is not read here — so a
+ * profile whose model declares a 1M `contextWindow` was silently running on the
+ * default 200k, and the agent reported that as the window it had.
+ *
+ * So every key that names the model for Claude Code carries the suffix
+ * conditionally: `{longContext?[1m]}` emits it only when the *selected* model's
+ * catalog entry says the window is a million or more (`resolveSpawn`), and
+ * resolves to nothing otherwise — including for a profile with no catalog,
+ * where the model itself already prunes away. It rides the alias and side-job
+ * keys too, because those are pinned to the same id and a 1M session that
+ * quietly drops to 200k on a plan-mode switch is the same bug again.
+ */
+const LONG_CONTEXT_MARKER = "[1m]";
+const LONG_CONTEXT_SUFFIX = `{longContext?${LONG_CONTEXT_MARKER}}`;
+
+/** The model id a Claude Code env key should carry, 1M suffix included. */
+function modelVar(name: "model" | "smallModel"): string {
+  return `{${name}}${LONG_CONTEXT_SUFFIX}`;
+}
+
+/** Append the 1M conditional to keys an older seed wrote as a bare `{model}`
+    / `{smallModel}`. Only those exact values: anything else is a real choice. */
+function withLongContextSuffix(env: Record<string, string>): Record<string, string> {
+  const out = { ...env };
+  for (const key of [...SMALL_MODEL_VARS, ...ALIAS_MODEL_VARS, "ANTHROPIC_MODEL"]) {
+    if (out[key] === "{model}") out[key] = modelVar("model");
+    else if (out[key] === "{smallModel}") out[key] = modelVar("smallModel");
+  }
+  return out;
 }
 
 /** Model and effort are env at spawn for all three agents we ship. */
@@ -191,12 +226,15 @@ const SPAWN_CATEGORIES: Record<string, "model" | "effort"> = {
  */
 const DEFAULT_AGENTS: SeedAgent[] = [
   {
-    since: 5,
+    since: 6,
     introduced: 1,
-    // Seed 4 moved the haiku keys to {smallModel}; seed 5 adds the alias keys.
-    // One backfill applies both, because an install stamped below 4 jumps
-    // straight here and never sees the seed-4 rule on its own.
-    backfill: (existing) => ({ env: withAliasModelKeys(withSmallModelVar(existing.env)) }),
+    // Seed 4 moved the haiku keys to {smallModel}; seed 5 added the alias keys;
+    // seed 6 appends the 1M conditional to all of them. One backfill applies
+    // all three, because an install stamped below 4 jumps straight here and
+    // never sees the earlier rules on its own.
+    backfill: (existing) => ({
+      env: withLongContextSuffix(withAliasModelKeys(withSmallModelVar(existing.env))),
+    }),
     id: "claude-code",
     name: "Claude Code",
     command: "claude-agent-acp",
@@ -205,7 +243,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
       withSmallModelKeys({
         ANTHROPIC_API_KEY: "{apiKey}",
         ANTHROPIC_BASE_URL: "{baseUrl}",
-        ANTHROPIC_MODEL: "{model}",
+        ANTHROPIC_MODEL: modelVar("model"),
       }),
     ),
     spawnCategories: SPAWN_CATEGORIES,
@@ -410,6 +448,16 @@ export function resolveSpawn(
        keeps its own choice, as it does for the model itself. */
     smallModel: resolvedModel,
     effort: effort ?? "",
+    /* Drives `{longContext?[1m]}` on every key that names a model for Claude
+       Code. Non-empty = emit the suffix (see `fill`), so this is the *catalog's*
+       answer to "is this a 1M model": nothing else turns the beta on. Empty
+       whenever the profile has no entry for the selected model — the model
+       itself prunes away there too — and empty for an id that already carries
+       the suffix, since a `sonnet[1m][1m]` names nothing. */
+    longContext:
+      (modelMeta?.contextWindow ?? 0) >= 1_000_000 && !resolvedModel.endsWith(LONG_CONTEXT_MARKER)
+        ? "1"
+        : "",
     contextWindow: modelMeta?.contextWindow ? String(modelMeta.contextWindow) : "null",
     maxOutputTokens: modelMeta?.maxOutputTokens ? String(modelMeta.maxOutputTokens) : "null",
     cwd: project.cwd,

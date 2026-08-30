@@ -462,11 +462,54 @@ assert.deepEqual(
   "…including a user message per turn",
 );
 
+// --- a retired thread keeps its log, and can be read from it ---
+
+// Retiring stops the process; it does not throw the transcript away. That is
+// what lets an idle-retired thread be opened and read without spawning an agent
+// to re-narrate it — the log is a cache for reading, and only a revive (which
+// is about to re-narrate the conversation for real) clears it.
+const archivedCursor = manager.journal(logged.id)!.cursor;
+assert.ok(archivedCursor > 0, "the thread has a log to keep");
+manager.retire(manager.get(logged.id)!);
+assert.equal(manager.journal(logged.id)!.cursor, archivedCursor, "retiring keeps the log");
+const reader = new MockWs();
+assert.equal(manager.attach(logged.id, reader as never, 0), null, "an archive can be attached to");
+const attached = reader.of("attached")[0];
+assert.equal(attached.archived, true, "…and says it has no agent behind it");
+assert.equal(attached.resumed, false);
+assert.equal(
+  journaled(reader).length,
+  archivedCursor,
+  "the whole archive replays with no process running",
+);
+// Commands still need an agent — reading is the only thing the journal serves.
+send(reader, { id: 900, cmd: "prompt", text: "nope" });
+await waitFor(() => reader.of("reply").length === 1, "a prompt to an archive is refused");
+assert.match(String(reader.of("reply")[0].error?.message), /no running agent/);
+// …except paging back through it, which is a read.
+send(reader, { id: 901, cmd: "load_earlier", before: 10 });
+await waitFor(() => reader.of("reply").length === 2, "load_earlier is answered from the journal");
+const page = reader.of("reply")[1].result as { events: unknown[]; earlier: number };
+assert.equal(page.events.length, 10, "the page ends where the window began");
+assert.equal(page.earlier, 0, "…and nothing is left above it");
+
+// --- windowed attach: only the tail, with the rest fetchable ---
+const windowed = new MockWs();
+assert.equal(manager.attach(logged.id, windowed as never, 0, true, { window: 5 }), null);
+const windowAttach = windowed.of("attached")[0];
+assert.equal(windowAttach.from, archivedCursor - 5, "the replay starts near the end");
+assert.equal(windowAttach.earlier, archivedCursor - 5, "…and says how much it withheld");
+assert.equal(windowAttach.resumed, false, "a window is not a resume — the client must reset");
+assert.equal(
+  windowed.of("replay").flatMap((r) => r.events).length,
+  5,
+  "only the tail was sent",
+);
+
 // Soft delete keeps the row and refuses new attachments; restore undoes it.
 assert.ok(manager.softDelete(logged.id));
 assert.equal(manager.list().find((s) => s.id === logged.id)?.deletedAt !== null, true);
 assert.equal(manager.attach(logged.id, new MockWs() as never, 0), "this thread is in the trash");
-assert.equal(manager.journal(logged.id)!.cursor, 0, "retiring clears the log");
 assert.ok(manager.restore(logged.id));
 assert.equal(manager.list().find((s) => s.id === logged.id)?.deletedAt, null);
 assert.ok(manager.purge(logged.id));

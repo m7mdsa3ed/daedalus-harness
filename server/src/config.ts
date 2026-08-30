@@ -43,6 +43,13 @@ export interface ServerConfig {
   port: number;
   /** Minutes a session survives with no client attached before its process is killed. */
   sessionIdleMinutes: number;
+  /** Days a *retired* thread's event log is kept so the transcript can be read
+      back without spawning an agent. Only ever applied to threads with no live
+      process: a running thread's log is what its peers are attached to, and
+      trimming the head of one would hand the next attach a transcript that
+      silently starts in the middle. 0 disables the archive entirely, which is
+      the pre-archive behaviour. Defaults to 30. */
+  sessionJournalRetentionDays: number;
   fcm?: FcmConfig;
   webSearch?: WebSearchConfig;
   history?: {
@@ -106,6 +113,7 @@ export function loadConfig(): ServerConfig {
     host: process.env.DAEDALUS_HOST ?? existing.host ?? "0.0.0.0",
     port: Number(process.env.DAEDALUS_PORT ?? process.env.PORT) || existing.port || 8791,
     sessionIdleMinutes: existing.sessionIdleMinutes ?? 30,
+    sessionJournalRetentionDays: existing.sessionJournalRetentionDays ?? 30,
     ...(existing.fcm ? { fcm: existing.fcm as FcmConfig } : {}),
     ...(existing.webSearch ? { webSearch: existing.webSearch as WebSearchConfig } : {}),
     ...(existing.history ? { history: existing.history } : {}),

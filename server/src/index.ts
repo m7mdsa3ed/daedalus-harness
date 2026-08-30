@@ -6,6 +6,7 @@ import { cors } from "hono/cors";
 import { WebSocketServer } from "ws";
 import { loadConfig, readWebSearch, saveWebSearch } from "./config.js";
 import { runProvider } from "./websearch.js";
+import { getWebSearchUsage } from "./websearch-usage.js";
 import { getAgent, listAgents, seedAgents } from "./registry.js";
 import {
   ProfileInputSchema,
@@ -112,6 +113,7 @@ const sessions = new SessionManager(
         .catch(console.error),
   },
   config.sessionIdleMinutes,
+  config.sessionJournalRetentionDays,
 );
 // Tails background-task journals (files an agent disclosed in a tool result)
 // and fans each new line out to the owning thread's peers — see tasks.ts.
@@ -901,7 +903,11 @@ server.on("upgrade", (req, socket, head) => {
     // know — and with it the `caught_up` inside, so the thread would hang
     // half-connected forever rather than merely render slowly.
     const batch = url.searchParams.get("batch") === "1";
-    const refused = sessions.attach(sessionId, ws, cursor, batch);
+    // Also opt-in, and for a sharper reason than `batch`: a windowed replay is
+    // a transcript that begins in the middle, and a client that cannot ask for
+    // the rest (`load_earlier`) must never be handed one.
+    const window = Number(url.searchParams.get("window") ?? 0) || 0;
+    const refused = sessions.attach(sessionId, ws, cursor, batch, { window });
     if (refused) ws.close(4004, refused);
   });
 });
