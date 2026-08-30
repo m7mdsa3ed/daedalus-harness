@@ -25,8 +25,12 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   express: a project's MCP/skill links are **join tables with `ON DELETE CASCADE`**, so a
   dangling id cannot exist and nothing filters for one any more; and the **event log is a
   table** (`session_events`) keyed `(session_id, seq)` rather than an unbounded in-memory
-  array, so `cursor` is a monotonic seq, a replay is a range scan, and a long thread costs no
-  RAM. `data/config.json`
+  array, so `cursor` is a monotonic seq, a replay is a paged range scan, and a long thread
+  costs no RAM — outliving its process, which is what makes a retired thread readable
+  without one. Writes are buffered and flushed on the next tick in one transaction (a
+  streaming turn is thousands of events, and the serialization belongs off the emit path);
+  every read and every delete flushes first, so nothing can observe a log missing its
+  newest events. `data/config.json`
   is the deliberate holdout — bootstrap (host/port/token/FCM path), hand-editable, and needed
   before any database exists.
 - `client/` — Vite + React 19 + Tailwind v4 + shadcn (Base UI, NOT Radix: compose triggers
@@ -170,13 +174,32 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   forwards them whole.
 - **Live and replay are one code path.** `attached` and `caught_up` bracket the replay, and
   everything between them is the same event the live socket sends, so the client has no
-  second parser and no cursor to keep in step (it always attaches from 0). The bracket is
+  second parser. The bracket is
   load-bearing: without it a reload re-fires a desktop — and, with nobody watching, a push —
   notification for every turn in the thread. `session_config` carries **absolute** state,
   which is what makes it safe to journal and broadcast at once; never make it a delta.
-  The replay travels in **bulk** — one `replay` frame per `REPLAY_CHUNK_SIZE` events rather
-  than one frame per event — because the browser woke, parsed and re-rendered once per
-  frame, and that, not the range scan, was what made a long thread visibly rebuild itself.
+  **Where the replay starts has three sources and only one meaning per attach**, which is
+  why `attached` states it rather than leaving it to be inferred from `from > 0`: a fresh
+  attach starts at 0; a *resume* starts at this device's own cursor (`journalCursors` /
+  `resumeCursor` in `actions.ts`, so a dropped socket costs a delta and not the thread); and
+  a *windowed* attach starts wherever the server chose, because the thread was longer than
+  `REPLAY_WINDOW`. The first two replace the transcript, the third also replaces it — but
+  `from` is large in the second and third alike, so `resumed` is a field and not a
+  comparison. `earlier` says how much was withheld, and `load_earlier` fetches it a page at
+  a time. Folding one of those pages is the awkward part: the reducer only appends, so an
+  older event cannot be inserted into a built transcript — `ThreadSocket.loadEarlier`
+  re-folds the whole widened window through the same callbacks inside the same buffer, which
+  is why the socket keeps its raw journaled events, and why it only keeps them when
+  `earlier > 0` (a thread that arrived whole can never page back and pays nothing).
+  The replay travels in **bulk** — one `replay` frame per `REPLAY_CHUNK_SIZE` events *or*
+  `REPLAY_CHUNK_BYTES`, whichever runs out first — because the browser woke, parsed and
+  re-rendered once per frame, and that, not the range scan, was what made a long thread
+  visibly rebuild itself. The byte budget is the half that matters for a thread full of
+  terminal output or large diffs, where 500 events is a multi-megabyte frame held whole on
+  both ends. The frames are built from the payload column **as text** and put straight on
+  the socket: it is already the JSON the browser needs, so parsing it to re-serialize it
+  once per peer is work with no reader — and the scan is paged, so a replay costs a page of
+  memory rather than the whole transcript.
   It is a container, not a fifth journaled kind: `attached`/`caught_up` still bracket it and
   `thread-socket.ts` unrolls it back through the same switch, so there is still one parser.
   It is **opt-in** (`?batch=1`, which `wsUrl` sets): a client that predates the shape would
@@ -319,9 +342,21 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   the mirror case — no turn ever committed to it, so there is no transcript to strand: it
   yields to the fallback silently, and `onHistoryLost` drops it rather than putting an error
   on every thread that was interrupted before its first turn.
-  Note that the event log does **not** cover this gap: `SessionManager`'s constructor
-  deletes every row of `session_events` at boot, so a restart leaves `session/load` as the
-  only route back to a transcript. `list()` and the respawn route report `liveAcpSessionId ??
+  Note that the event log does **not** cover this gap, and the distinction is the whole
+  reason it can be kept at all: **the journal is a cache for reading, never a source for
+  resuming.** It survives a restart now, so a retired thread can be *opened and read* with no
+  process at all — `attach` serves the archive and marks it `archived`, `openThread` takes
+  that path when `meta.cursor > 0`, and `actions.send` is what revives, because sending is
+  the moment a reader becomes a user. But nothing ever reconstructs a thread's state *for the
+  agent* out of these rows: a revive is still `session/load`, and `respawnNow` clears the log
+  before the load refills it so the two accounts can never be stitched together. That rule
+  used to be enforced by deleting the table at boot, which also made reading yesterday's work
+  cost a spawn. Reconnect paths always revive (`ConnectOpts.revive`) — a socket that dropped
+  because the process died must not come back silently read-only. Retention is
+  `sessionJournalRetentionDays` (default 30) and only ever drops **whole** logs of threads
+  with **no live process**: trimming the head of a live one would hand the next full attach a
+  transcript that silently begins in the middle, and dropping a whole archive is safe because
+  the thread just falls back to reviving. `list()` and the respawn route report `liveAcpSessionId ??
   acpSessionId` — "what is this thread on right now" — which is also what `tasks.ts` matches
   transcript directories against.
 - **A capability we don't advertise is a feature the agent turns off.** The `initialize`
