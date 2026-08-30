@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, count, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, lt } from "drizzle-orm";
 import type * as acp from "@agentclientprotocol/sdk";
 import type { SessionUpdate } from "./protocol.js";
 import { db, webSearchUsage } from "./db/index.js";
@@ -42,11 +42,26 @@ function toolOf(update: Extract<acp.SessionUpdate, { sessionUpdate: "tool_call" 
 const isTerminalStatus = (status: string): boolean =>
   status === "completed" || status === "failed" || status === "cancelled";
 
-/** Record live calls only. SessionManager excludes ACP history replay before calling this. */
-export function recordWebSearchUsage(context: WebSearchUsageContext, update: SessionUpdate): void {
+/**
+ * Record live calls only. SessionManager excludes ACP history replay before
+ * calling this.
+ *
+ * `live` is the session's set of in-flight search/fetch toolCallIds, owned by
+ * the caller and maintained here: without it every streamed frame of every
+ * tool on a websearch-enabled thread issued a no-op UPDATE. A `tool_call` that
+ * isn't a search/fetch never touches the database, and a `tool_call_update`
+ * for a call not in the set is dropped before any SQL is built.
+ */
+export function recordWebSearchUsage(
+  context: WebSearchUsageContext,
+  update: SessionUpdate,
+  live: Set<string>,
+): void {
   if (update.sessionUpdate === "tool_call") {
     const tool = toolOf(update);
     if (!tool) return;
+    if (isTerminalStatus(update.status ?? "pending")) live.delete(update.toolCallId);
+    else live.add(update.toolCallId);
     const now = Date.now();
     const status = update.status ?? "pending";
     db.insert(webSearchUsage)
@@ -73,6 +88,8 @@ export function recordWebSearchUsage(context: WebSearchUsageContext, update: Ses
   }
 
   if (update.sessionUpdate !== "tool_call_update" || !update.status) return;
+  if (!live.has(update.toolCallId)) return;
+  if (isTerminalStatus(update.status)) live.delete(update.toolCallId);
   const now = Date.now();
   db.update(webSearchUsage)
     .set({
@@ -84,6 +101,13 @@ export function recordWebSearchUsage(context: WebSearchUsageContext, update: Ses
       eq(webSearchUsage.toolCallId, update.toolCallId),
     ))
     .run();
+}
+
+/** Drop ledger rows older than `cutoff` (epoch ms). Rides the same hourly
+    sweep as the journal retention — the ledger is metadata about transcripts
+    whose archives are pruned on the same clock. */
+export function pruneWebSearchUsage(cutoff: number): number {
+  return db.delete(webSearchUsage).where(lt(webSearchUsage.startedAt, cutoff)).run().changes;
 }
 
 export function getWebSearchUsage(limit = 50) {

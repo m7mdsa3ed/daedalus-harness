@@ -224,6 +224,25 @@ test("the backfill moves a seed-3 row off {model} and keeps the user's edits", (
   assert.equal(claude?.env.ANTHROPIC_BASE_URL, "{gatewayUrl}");
 });
 
+test("seed 9 moves Codex's provider base_url onto the shim, only when it is the seeded slot", () => {
+  const seededTemplate = '{"model":"{model}","model_providers":{"daedalus":{"base_url":"{baseUrl}","wire_api":"{baseUrl?responses}"}}}';
+  resetAgents([
+    { id: "codex", seededVersion: 8, env: { CODEX_CONFIG: seededTemplate } },
+    { id: "claude-code", seededVersion: 8, env: {} },
+    { id: "opencode", seededVersion: 8, env: {} },
+  ]);
+  seedAgents();
+  const moved = getAgent("codex")?.env.CODEX_CONFIG ?? "";
+  assert.ok(moved.includes('"base_url":"{gatewayUrl}"'));
+  assert.ok(!moved.includes('"base_url":"{baseUrl}"'));
+  // The catalog key rides along for a row that never got it.
+  assert.ok(moved.includes("model_catalog_json"));
+  // A hand-written URL is the user's.
+  resetAgents([{ id: "codex", seededVersion: 8, env: { CODEX_CONFIG: '{"model_providers":{"daedalus":{"base_url":"https://my.gw/v1"}}}' } }]);
+  seedAgents();
+  assert.ok(getAgent("codex")?.env.CODEX_CONFIG.includes('"base_url":"https://my.gw/v1"'));
+});
+
 test("a base URL the user wrote by hand is not moved onto the shim", () => {
   resetAgents([{ id: "claude-code", seededVersion: 7, env: { ANTHROPIC_BASE_URL: "https://my.gw/v1" } }]);
   seedAgents();

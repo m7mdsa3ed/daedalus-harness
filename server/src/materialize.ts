@@ -3,12 +3,13 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   rmSync,
   symlinkSync,
   lstatSync,
   writeFileSync,
 } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { commands as commandLibrary, skills as skillLibrary, type CommandDef } from "./library.js";
 import type { LinkSet } from "./db/links.js";
 
@@ -32,24 +33,62 @@ export function materializeWorkspace(cwd: string, links: Pick<LinkSet, "skillIds
   materializeCommands(cwd, links.commandIds);
 }
 
+/* The skills directory is shared with symlinks the user made by hand, so —
+   like the commands sweep and its marker below — only links this harness wrote
+   are ours to delete. A manifest in the directory records their names; links
+   whose targets resolve into the library's known skill paths are also
+   recognized, which covers directories written before the manifest existed. */
+const SKILLS_MANIFEST = ".daedalus-managed.json";
+
+function readSkillsManifest(path: string): string[] {
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 function materializeSkills(cwd: string, skillIds: string[]): void {
-  const paths = skillLibrary
-    .list()
-    .filter((s) => skillIds.includes(s.id))
-    .map((s) => s.path);
+  const all = skillLibrary.list();
+  const paths = all.filter((s) => skillIds.includes(s.id)).map((s) => s.path);
   const skillsDir = join(cwd, ".claude", "skills");
   mkdirSync(skillsDir, { recursive: true });
-  // Remove stale daedalus-managed symlinks, then link the effective skills.
+  const manifestPath = join(skillsDir, SKILLS_MANIFEST);
+  const managed = new Set(readSkillsManifest(manifestPath));
+  const known = new Set(all.map((s) => resolve(s.path)));
+  // Remove stale daedalus-managed symlinks — and only those: a symlink the
+  // user made by hand is not in the manifest and points outside the library.
   for (const entry of readdirSync(skillsDir)) {
+    if (entry === SKILLS_MANIFEST) continue;
     const path = join(skillsDir, entry);
-    if (lstatSync(path).isSymbolicLink()) rmSync(path);
+    let target = "";
+    try {
+      if (!lstatSync(path).isSymbolicLink()) continue;
+      const raw = readlinkSync(path);
+      target = isAbsolute(raw) ? resolve(raw) : resolve(dirname(path), raw);
+    } catch {
+      continue; // unreadable entry — not ours to touch
+    }
+    if (managed.has(entry) || known.has(target)) rmSync(path);
   }
+  const written: string[] = [];
   for (const skillPath of paths) {
     const target = resolve(skillPath);
     if (!existsSync(target)) continue;
     const link = join(skillsDir, basename(target));
-    if (!existsSync(link)) symlinkSync(target, link);
+    // Anything still holding this name survived the sweep, so it is the
+    // user's — their entry wins, and it must not be claimed in the manifest.
+    if (existsSync(link)) continue;
+    try {
+      symlinkSync(target, link);
+      written.push(basename(target));
+    } catch {
+      // e.g. a hand-made dangling symlink with this name — not ours, leave it
+    }
   }
+  if (written.length > 0) writeFileSync(manifestPath, JSON.stringify(written.sort()) + "\n");
+  else rmSync(manifestPath, { force: true });
 }
 
 /* Command bodies live in the database, not on disk, so these are written files

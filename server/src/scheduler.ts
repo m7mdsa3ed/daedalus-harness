@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, lte } from "drizzle-orm";
+import { and, asc, eq, lt, lte } from "drizzle-orm";
 import { db, scheduledMessages as scheduledTable } from "./db/index.js";
 import { getProfile } from "./profiles.js";
 import { getProject } from "./projects.js";
@@ -39,10 +39,38 @@ export function createScheduled(input: ScheduledMessageInput): ScheduledMessage 
     text: input.text,
     nextAt: input.nextAt,
     everyMs: input.everyMs ?? null,
+    enabled: 1,
+    skippedAt: null,
+    lastError: null,
+    skipCount: 0,
     createdAt: Date.now(),
   };
   db.insert(scheduledTable).values(row).run();
   return row;
+}
+
+export interface ScheduledPatch {
+  text?: string;
+  nextAt?: number;
+  /** null clears the recurrence (one-shot from here on). */
+  everyMs?: number | null;
+  enabled?: boolean;
+}
+
+/**
+ * Edit a schedule in place. Any edit also resets the skip state — the user
+ * touching the row is the signal that whatever made it undeliverable (a
+ * trashed thread, a typo'd time) has been dealt with, so the sweep tries again.
+ */
+export function updateScheduled(id: string, patch: ScheduledPatch): ScheduledMessage | undefined {
+  const set: Partial<ScheduledMessage> = { skippedAt: null, lastError: null, skipCount: 0 };
+  if (patch.text !== undefined) set.text = patch.text;
+  if (patch.nextAt !== undefined) set.nextAt = patch.nextAt;
+  if (patch.everyMs !== undefined) set.everyMs = patch.everyMs;
+  if (patch.enabled !== undefined) set.enabled = patch.enabled ? 1 : 0;
+  const changed = db.update(scheduledTable).set(set).where(eq(scheduledTable.id, id)).run().changes;
+  if (changed === 0) return undefined;
+  return db.select().from(scheduledTable).where(eq(scheduledTable.id, id)).get();
 }
 
 export function deleteScheduled(id: string): boolean {
@@ -59,16 +87,34 @@ export function deleteScheduled(id: string): boolean {
  * A trashed or vanished thread does NOT get scheduled turns: the row is left
  * where it is (not advanced, not consumed) so the user can fix the thread or
  * cancel the schedule, rather than the server silently firing forever at a
- * thread nobody can see.
+ * thread nobody can see. Each such sweep stamps `skippedAt`/`lastError` and
+ * counts the skip; past MAX_SCHEDULE_SKIPS the sweep stops selecting the row
+ * (it stays listable, and any PATCH resets the count) instead of re-matching
+ * it every 15 seconds forever.
  */
+export const MAX_SCHEDULE_SKIPS = 20;
+
 function deliver(row: ScheduledMessage, manager: SessionManager): void {
   const session = manager.get(row.sessionId);
-  if (!session || session.deletedAt !== null) return;
+  if (!session || session.deletedAt !== null) {
+    db.update(scheduledTable)
+      .set({
+        skippedAt: Date.now(),
+        lastError: session ? "the thread is in the trash" : "the thread no longer exists",
+        skipCount: row.skipCount + 1,
+      })
+      .where(eq(scheduledTable.id, row.id))
+      .run();
+    return;
+  }
 
   if (row.everyMs !== null) {
     let nextAt = row.nextAt + row.everyMs;
     while (nextAt <= Date.now()) nextAt += row.everyMs;
-    db.update(scheduledTable).set({ nextAt }).where(eq(scheduledTable.id, row.id)).run();
+    db.update(scheduledTable)
+      .set({ nextAt, skippedAt: null, lastError: null, skipCount: 0 })
+      .where(eq(scheduledTable.id, row.id))
+      .run();
   } else {
     db.delete(scheduledTable).where(eq(scheduledTable.id, row.id)).run();
   }
@@ -118,7 +164,11 @@ export function startScheduler(manager: SessionManager): void {
       const due = db
         .select()
         .from(scheduledTable)
-        .where(and(lte(scheduledTable.nextAt, Date.now())))
+        .where(and(
+          lte(scheduledTable.nextAt, Date.now()),
+          eq(scheduledTable.enabled, 1),
+          lt(scheduledTable.skipCount, MAX_SCHEDULE_SKIPS),
+        ))
         .orderBy(asc(scheduledTable.nextAt))
         .all();
       for (const row of due) deliver(row, manager);

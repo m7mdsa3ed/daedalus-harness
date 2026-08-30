@@ -15,6 +15,7 @@ import {
   type AgentOptionSet,
 } from "./agent-options"
 import { pruneDrafts } from "./drafts"
+import { defaultToolPicks, loadThreadDefaults } from "./thread-defaults"
 import { appendTaskEvent } from "./task-events"
 import { notifyThreadEvent } from "./notifications"
 import { prunePins } from "./pins"
@@ -22,11 +23,13 @@ import { pruneViewOptions } from "./view-options"
 import {
   api,
   profileAgentIds,
+  updateScheduled,
   type AgentDef,
   type McpServerDef,
   type Profile,
   type Project,
   type ScheduledMessage,
+  type ScheduledPatch,
   type ServerSettings,
   type SessionMeta,
   type SkillDef,
@@ -46,6 +49,24 @@ interface ConnectOpts {
 }
 const reconnectAttempts = new Map<string, number>()
 const reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>()
+/** Threads parked until the network (or the user) comes back: the backoff gave
+    up, or `navigator.onLine` said an attempt could not succeed. The `online`
+    and visibilitychange listeners below reset their counters and retry at
+    once — a laptop waking from sleep should not wait out a dead backoff. */
+const reconnectWaiting = new Set<string>()
+/** What the window listeners call. Bound inside `useActions` (it needs the
+    closure's `reconnectThread`); one Connected mounts at a time, so the last
+    binding is the live one. */
+let retryWaitingThreads: (() => void) | null = null
+let networkListenersInstalled = false
+const installNetworkListeners = () => {
+  if (networkListenersInstalled || typeof window === "undefined") return
+  networkListenersInstalled = true
+  window.addEventListener("online", () => retryWaitingThreads?.())
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") retryWaitingThreads?.()
+  })
+}
 /** The last journal cursor this client has folded into a thread's state, keyed
     by session id. On a reconnect to an *alive* process this is what lets us ask
     for the delta instead of rebuilding the transcript from zero — a full
@@ -53,6 +74,25 @@ const reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>()
     memory. Reset to 0 (pull it out) whenever the thread is respawned, since a
     respawn clears the server's journal. */
 const journalCursors = new Map<string, number>()
+
+/** Everything device-local a thread accumulates OUTSIDE the store — cursor,
+    backoff state, the live socket. Module-level, so it outlives React and,
+    without this, outlives the thread too: deleting or pruning a session left
+    its entries behind forever. Called for every id the server no longer
+    reports, and on the deleted-thread reconnect branch. */
+const dropThreadRuntime = (sessionId: string) => {
+  journalCursors.delete(sessionId)
+  reconnectAttempts.delete(sessionId)
+  reconnectWaiting.delete(sessionId)
+  const timer = reconnectTimers.get(sessionId)
+  if (timer) clearTimeout(timer)
+  reconnectTimers.delete(sessionId)
+  const socket = liveThreads.get(sessionId)
+  if (socket) {
+    socket.close()
+    liveThreads.delete(sessionId)
+  }
+}
 
 /** Side-effectful operations: REST calls + ACP thread lifecycle. */
 export function useActions(settings: ServerSettings) {
@@ -116,7 +156,7 @@ export function useActions(settings: ServerSettings) {
       // User-initiated (or backoff-driven) reattach: drop any half-open socket so
       // openThread's `connected` short-circuit can't skip the reconnect.
       liveThreads.get(sessionId)?.close()
-      const sessions = await api<SessionMeta[]>(settings, "/api/sessions")
+      const sessions = await api<SessionMeta[]>(settings, "/api/sessions?deleted=1")
       dispatch({ type: "sessions", sessions })
       const meta = sessions.find((s) => s.id === sessionId)
       if (!meta) throw new Error("This thread no longer exists on the server.")
@@ -124,7 +164,7 @@ export function useActions(settings: ServerSettings) {
       // not a thing that can succeed, so stop the backoff and say what happened
       // once, instead of retrying a revive the server must refuse.
       if (meta.deletedAt) {
-        reconnectAttempts.delete(sessionId)
+        dropThreadRuntime(sessionId)
         dispatch({ type: "thread-status", id: sessionId, status: "closed" })
         dispatch({
           type: "error",
@@ -147,13 +187,25 @@ export function useActions(settings: ServerSettings) {
     /** Put an agent process back under a thread that has none. */
     const revive = async (sessionId: string) => {
       reconnectAttempts.delete(sessionId)
+      reconnectWaiting.delete(sessionId)
       await reconnectThread(sessionId)
     }
 
     const scheduleReconnect = (sessionId: string, lastError?: unknown) => {
       if (reconnectTimers.has(sessionId)) return
+      /* Offline, every attempt is a guaranteed failure that burns the budget
+         against a network that cannot answer. Park the thread instead — the
+         `online` listener retries it the moment there is a network to try. */
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        reconnectWaiting.add(sessionId)
+        dispatch({ type: "thread-status", id: sessionId, status: "connecting" })
+        return
+      }
       const attempt = (reconnectAttempts.get(sessionId) ?? 0) + 1
       if (attempt > RECONNECT_MAX_ATTEMPTS) {
+        // Parked, not abandoned: coming back online or refocusing the tab
+        // resets the counter and tries again without waiting for the user.
+        reconnectWaiting.add(sessionId)
         // Giving up silently is how a thread ends up looking merely quiet.
         // Say so, in the thread, where the Revive button already lives.
         const info = lastError ? describeError(lastError) : undefined
@@ -169,10 +221,13 @@ export function useActions(settings: ServerSettings) {
 
       reconnectAttempts.set(sessionId, attempt)
       dispatch({ type: "thread-status", id: sessionId, status: "connecting" })
-      const delayMs = Math.min(
+      const backoff = Math.min(
         RECONNECT_BASE_DELAY_MS * 2 ** (attempt - 1),
         RECONNECT_MAX_DELAY_MS,
       )
+      /* Jitter, so every thread a server restart dropped does not knock again
+         in the same instant on every device. */
+      const delayMs = backoff + Math.random() * backoff * 0.5
       reconnectTimers.set(
         sessionId,
         setTimeout(() => {
@@ -185,6 +240,31 @@ export function useActions(settings: ServerSettings) {
         }, delayMs),
       )
     }
+
+    /* The network (or the user's attention) came back. Everything parked — and
+       everything still sitting out a backoff timer — gets its counter reset
+       and one immediate try; a failure re-enters `scheduleReconnect` and the
+       ordinary backoff resumes from attempt one. */
+    retryWaitingThreads = () => {
+      if (typeof navigator !== "undefined" && !navigator.onLine) return
+      const ids = new Set([...reconnectWaiting, ...reconnectTimers.keys()])
+      reconnectWaiting.clear()
+      for (const id of ids) {
+        const timer = reconnectTimers.get(id)
+        if (timer) {
+          clearTimeout(timer)
+          reconnectTimers.delete(id)
+        }
+        reconnectAttempts.delete(id)
+        dispatch({ type: "thread-status", id, status: "connecting" })
+        void reconnectThread(id, true).catch((error) => {
+          console.warn(`Reconnecting thread ${id} failed`, error)
+          dispatch({ type: "thread-status", id, status: "closed" })
+          scheduleReconnect(id, error)
+        })
+      }
+    }
+    installNetworkListeners()
 
     /** The thread's title, for a notification about it. */
     const titleOf = (id: string) =>
@@ -284,6 +364,7 @@ export function useActions(settings: ServerSettings) {
           if (owner.thread && liveThreads.get(id) !== owner.thread) return
           if (status === "connected") {
             reconnectAttempts.delete(id)
+            reconnectWaiting.delete(id)
           } else if (
             status === "closed" &&
             !closeInfo?.clientInitiated &&
@@ -564,7 +645,7 @@ export function useActions(settings: ServerSettings) {
     }
 
     const refreshSessions = async () => {
-      const sessions = await api<SessionMeta[]>(settings, "/api/sessions")
+      const sessions = await api<SessionMeta[]>(settings, "/api/sessions?deleted=1")
       // The server's list is the authority on what still exists, so this is the
       // one place that can tell a stale draft from a live one — except for
       // threads the server has never been told about. A draft thread is exactly
@@ -577,6 +658,23 @@ export function useActions(settings: ServerSettings) {
       pruneDrafts(ids)
       prunePins(ids)
       pruneViewOptions(ids)
+      /* The module-level maps leak the same way the device-local stores do — a
+         cursor, a backoff timer or a live socket for a thread the server no
+         longer reports is never coming back on its own. Same authority, same
+         sweep. (A trashed thread is still in the list, so its socket is not
+         torn down here; the deleted-branch in reconnectThread owns that.) */
+      const live = new Set(ids)
+      const stale = new Set<string>()
+      for (const key of [
+        ...liveThreads.keys(),
+        ...journalCursors.keys(),
+        ...reconnectAttempts.keys(),
+        ...reconnectTimers.keys(),
+        ...reconnectWaiting,
+      ]) {
+        if (!live.has(key)) stale.add(key)
+      }
+      for (const key of stale) dropThreadRuntime(key)
       dispatch({ type: "sessions", sessions })
     }
 
@@ -675,7 +773,7 @@ export function useActions(settings: ServerSettings) {
             api<SkillDef[]>(settings, "/api/skills"),
             api<CommandDef[]>(settings, "/api/commands"),
             api<AgentDef[]>(settings, "/api/agents"),
-            api<SessionMeta[]>(settings, "/api/sessions"),
+            api<SessionMeta[]>(settings, "/api/sessions?deleted=1"),
             api<ScheduledMessage[]>(settings, "/api/scheduled"),
           ])
         dispatch({
@@ -750,6 +848,16 @@ export function useActions(settings: ServerSettings) {
         await refreshScheduled()
       },
 
+      /**
+       * Edit a schedule in place — text, time, recurrence, or pause/resume
+       * (`enabled`). Any patch also resets the row's skip state server-side,
+       * so resuming a parked schedule is just `{ enabled: true }`.
+       */
+      async updateSchedule(id: string, patch: ScheduledPatch) {
+        await updateScheduled(settings, id, patch)
+        await refreshScheduled()
+      },
+
       async cancelSchedule(id: string) {
         await api(settings, `/api/scheduled/${id}`, { method: "DELETE" })
         await refreshScheduled()
@@ -776,6 +884,11 @@ export function useActions(settings: ServerSettings) {
       }) {
         const { project, profile, model, effort } = opts
         const id = opts.id ?? uuid()
+        /* The library picks come from the same remembered defaults the agent
+           does — read here rather than by each caller, so a reload that
+           re-adopts an unsent draft gets its MCP servers, skills and commands
+           back along with its profile. */
+        const tools = defaultToolPicks(loadThreadDefaults())
         dispatch({
           type: "draft-session",
           session: {
@@ -793,9 +906,7 @@ export function useActions(settings: ServerSettings) {
             promptActive: false,
             cursor: 0,
             draft: true,
-            mcpServerIds: [],
-            skillIds: [],
-            commandIds: [],
+            ...tools,
           },
         })
         dispatch({ type: "thread-reset", id, thread: { ...emptyThread } })
@@ -866,6 +977,7 @@ export function useActions(settings: ServerSettings) {
           reconnectTimers.delete(sessionId)
         }
         reconnectAttempts.delete(sessionId)
+        reconnectWaiting.delete(sessionId)
         await reconnectThread(sessionId)
       },
 

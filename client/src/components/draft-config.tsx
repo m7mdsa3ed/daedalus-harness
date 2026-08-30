@@ -159,10 +159,13 @@ function DraftToolsMenu({ meta, actions }: { meta: SessionMeta; actions: Actions
     skillIds: meta.skillIds ?? [],
     commandIds: meta.commandIds ?? [],
   }
-  const toggle = (key: keyof typeof own, id: string, on: boolean) =>
-    actions.configureDraft(meta.id, {
-      [key]: on ? [...own[key].filter((x) => x !== id), id] : own[key].filter((x) => x !== id),
-    })
+  const toggle = (key: keyof typeof own, id: string, on: boolean) => {
+    const next = on ? [...own[key].filter((x) => x !== id), id] : own[key].filter((x) => x !== id)
+    actions.configureDraft(meta.id, { [key]: next })
+    // Remembered like the agent is: a reload rebuilds the draft from these,
+    // and the next thread starts with the same kit.
+    saveThreadDefaults({ ...own, [key]: next })
+  }
   const extra = own.mcpServerIds.length + own.skillIds.length + own.commandIds.length
   const total =
     extra + inherited.mcpServerIds.size + inherited.skillIds.size + inherited.commandIds.size

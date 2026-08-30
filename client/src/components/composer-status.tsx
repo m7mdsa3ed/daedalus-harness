@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   BotIcon,
   CheckCircle2Icon,
@@ -18,7 +18,8 @@ import {
 import { Logo } from "@/components/ui/logo"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useStripSummary } from "@/components/composer-strip"
-import { extractSubagent, extractTodos, isSubagentLaunch, toolViewOf } from "@/lib/tools"
+import { extractSubagent, extractTodos, toolHeading, toolViewOf } from "@/lib/tools"
+import { activeSubagents, buildRows } from "@/lib/transcript-rows"
 import type { PlanItem, ThreadState, ToolItem } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
@@ -434,34 +435,26 @@ interface RunningAgent {
 }
 
 /**
- * The subagents at work right now, read off the transcript: an announced
- * session (`SubagentItem`) still `running`, or a launch tool call (a Task, a
- * Codex spawn) still in flight. Nested ones count too — a worker's worker is
- * still a worker — which is why this walks every item rather than the
- * top-level rows.
+ * The subagents at work right now. One reading, shared with the transcript:
+ * `buildRows` decides which subagent group is `active` (see `subagentActive`
+ * in lib/transcript-rows — the turn, the head, its children, and for a
+ * background launch whether its owner has spoken since), and this is that
+ * list flattened, nested workers included, with each head read for a name
+ * and a brief.
  */
-export function runningAgents(items: ThreadState["items"]): RunningAgent[] {
-  const out: RunningAgent[] = []
-  for (const item of items) {
-    if (item.kind === "subagent") {
-      if (item.state === "running") {
-        out.push({ id: item.id, task: item.task || item.name, name: item.name, startedAt: item.startedAt })
-      }
-    } else if (
-      item.kind === "tool" &&
-      (item.status === "in_progress" || item.status === "pending") &&
-      isSubagentLaunch(item)
-    ) {
-      const call = extractSubagent(item)
-      out.push({
-        id: item.id,
-        task: call?.description ?? call?.prompt?.split("\n")[0] ?? item.title,
-        name: call?.agentType,
-        startedAt: item.startedAt,
-      })
+export function runningAgents(thread: Pick<ThreadState, "items" | "turnActive">): RunningAgent[] {
+  return activeSubagents(buildRows(thread.items, false, thread.turnActive)).map(({ head }) => {
+    if (head.kind === "subagent") {
+      return { id: head.id, task: head.task || head.name, name: head.name, startedAt: head.startedAt }
     }
-  }
-  return out
+    const call = extractSubagent(head)
+    return {
+      id: head.id,
+      task: call?.description ?? call?.prompt?.split("\n")[0] ?? head.title,
+      name: call?.agentType,
+      startedAt: head.startedAt,
+    }
+  })
 }
 
 /** Ticks once a second while `active`, so an elapsed time can be drawn live. */
@@ -487,7 +480,8 @@ const formatElapsed = (ms: number): string =>
  * a live count, not a history.
  */
 export function ComposerAgents({ thread }: { thread: ThreadState }) {
-  const agents = runningAgents(thread.items)
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the two fields it reads
+  const agents = useMemo(() => runningAgents(thread), [thread.items, thread.turnActive])
   const [open, setOpen] = useState(false)
   const now = useNow(agents.length > 0)
   const count = agents.length
@@ -550,18 +544,37 @@ export function ComposerAgents({ thread }: { thread: ThreadState }) {
   )
 }
 
-const WORKING_WORDS = [
-  "Thinking", "Pondering", "Cogitating", "Musing", "Scheming", "Brewing",
-  "Wandering", "Tinkering", "Puzzling", "Noodling", "Percolating", "Conjuring",
-  "Untangling", "Ruminating", "Deliberating", "Spelunking",
-]
+/**
+ * What the working line says, read off the thread: the one thing the turn is
+ * doing right now, so the line is a status and not a mood. In order of what
+ * the reader most needs to know — a question waiting on them, workers out,
+ * the step in flight (its own heading, so "Read store.tsx" here matches the
+ * row above), prose or thought still streaming — and "Working" when the turn
+ * is open but nothing has been announced yet.
+ */
+export function workingMessage(thread: ThreadState): string {
+  if (thread.permission) return "Waiting for your approval"
+  if (thread.elicitation) return "Waiting for your answer"
+  const agents = runningAgents(thread)
+  if (agents.length > 0) return `${agents.length} ${agents.length === 1 ? "agent" : "agents"} running`
+  const items = thread.items
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i]
+    if (item.kind !== "tool" || item.parentId) continue
+    if (item.status !== "in_progress" && item.status !== "pending") continue
+    const heading = toolHeading(item)
+    if (heading.file) return `${heading.title} ${heading.file}`
+    if (heading.detail && !heading.prose) return `${heading.title} ${heading.detail}`
+    return heading.title
+  }
+  const last = items.at(-1)
+  if (last?.kind === "thought") return "Thinking"
+  if (last?.kind === "agent") return "Writing"
+  return "Working"
+}
 
-export function ActivityIndicator({ step }: { step: number }) {
-  // Random start per turn (the indicator mounts with the turn), then walk the
-  // list by a stride coprime to its length: every step is a new word, and the
-  // whole list is used before any repeat. No timers, no state per step.
-  const [seed] = useState(() => Math.floor(Math.random() * WORKING_WORDS.length))
-  const word = WORKING_WORDS[(seed + step * 7) % WORKING_WORDS.length]
+export function ActivityIndicator({ thread }: { thread: ThreadState }) {
+  const message = workingMessage(thread)
 
   return (
     <div
@@ -569,16 +582,17 @@ export function ActivityIndicator({ step }: { step: number }) {
       className="inline-flex items-center gap-2 text-primary"
       role="status"
     >
-      {/* The mark traces itself for as long as the turn runs — the same three
-          paths the boot splash draws, so starting a turn rhymes with starting
-          the app. size-4 sits on the step row's 1.5rem line box. */}
+      {/* The mark glints for as long as the turn runs — the same sweep the
+          sidebar's mark makes every few seconds, run continuously here — so
+          starting a turn rhymes with the mark that is always on screen.
+          size-4 sits on the step row's 1.5rem line box. */}
       <Logo working className="size-4 shrink-0" />
       {/* ponytail: one flat text node — the shimmer paints a background clipped to
           text, and background-image doesn't inherit, so a nested span goes blank. */}
       {/* leading-6 matches a step row's line box, so the working line keeps the
           transcript's vertical rhythm. */}
-      <span aria-hidden className="harness-shimmer text-xs leading-6">
-        {word}…
+      <span aria-hidden className="harness-shimmer truncate text-xs leading-6">
+        {message}…
       </span>
     </div>
   )

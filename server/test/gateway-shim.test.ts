@@ -13,6 +13,9 @@ import { db, profiles as profilesTable } from "../src/db/index.js";
 import {
   chatCompletionToMessage,
   configureGatewayShim,
+  flattenNamespaces,
+  renamespaceCalls,
+  renamespaceSse,
   gatewayUrlFor,
   isChatCompletion,
   normalizeMessagesResponse,
@@ -118,6 +121,109 @@ await test("normalize leaves a correct reply and a non-JSON body exactly as they
   assert.equal((JSON.parse(fixed.body) as { type: string }).type, "message");
 });
 
+/* ── Codex's tool namespaces ── */
+
+const namespaced = {
+  model: "m",
+  tools: [
+    { type: "function", name: "exec_command", parameters: {} },
+    {
+      type: "namespace",
+      name: "mcp__web_search",
+      description: "web",
+      tools: [
+        { type: "function", name: "web_search", parameters: { type: "object" } },
+        { type: "function", name: "web_fetch", parameters: { type: "object" } },
+      ],
+    },
+    { type: "web_search" },
+  ],
+  input: [
+    { type: "message", role: "user", content: "hi" },
+    { type: "function_call", name: "web_search", namespace: "mcp__web_search", call_id: "c1", arguments: "{}" },
+    { type: "function_call_output", call_id: "c1", output: "…" },
+  ],
+};
+
+await test("namespace tools flatten to prefixed functions; a request without any is left alone", () => {
+  const flat = flattenNamespaces(namespaced)!;
+  assert.deepEqual(flat.namespaces, ["mcp__web_search"]);
+  assert.deepEqual(
+    (flat.body.tools as { type: string; name?: string }[]).map((t) => [t.type, t.name]),
+    [
+      ["function", "exec_command"],
+      ["function", "mcp__web_search__web_search"],
+      ["function", "mcp__web_search__web_fetch"],
+      ["web_search", undefined],
+    ],
+  );
+  // The member keeps its schema; the namespace's own description is not a tool.
+  assert.deepEqual((flat.body.tools as Record<string, unknown>[])[1]!.parameters, { type: "object" });
+  // The earlier call in the transcript is flattened the same way, namespace dropped.
+  assert.deepEqual((flat.body.input as unknown[])[1], {
+    type: "function_call",
+    name: "mcp__web_search__web_search",
+    call_id: "c1",
+    arguments: "{}",
+  });
+  assert.equal(flattenNamespaces({ model: "m", tools: [{ type: "function", name: "x" }], input: [] }), null);
+  assert.equal(flattenNamespaces("nope"), null);
+});
+
+await test("a flat call is put back under its namespace wherever it appears; longest prefix wins", () => {
+  const ns = ["mcp__web_search", "mcp__web"];
+  const fixed = renamespaceCalls(
+    {
+      type: "response.completed",
+      response: {
+        output: [
+          { type: "function_call", name: "mcp__web_search__web_search", call_id: "c1", arguments: "{}" },
+          { type: "function_call", name: "mcp__web__fetch", call_id: "c2", arguments: "{}" },
+          { type: "function_call", name: "exec_command", call_id: "c3", arguments: "{}" },
+          { type: "function_call", name: "other", namespace: "already", call_id: "c4" },
+          { type: "message", content: [{ type: "output_text", text: "mcp__web_search__web_search" }] },
+        ],
+      },
+    },
+    ns,
+  ) as Record<string, any>;
+  assert.deepEqual(
+    fixed.response.output.slice(0, 4).map((o: Record<string, unknown>) => [o.name, o.namespace]),
+    [
+      ["web_search", "mcp__web_search"],
+      ["fetch", "mcp__web"],
+      ["exec_command", undefined],
+      ["other", "already"],
+    ],
+  );
+  // Prose is not a call.
+  assert.equal(fixed.response.output[4].content[0].text, "mcp__web_search__web_search");
+});
+
+await test("the SSE transform rewrites each event, survives a split inside one, and passes non-JSON through", async () => {
+  const sse =
+    'event: response.created\ndata: {"type":"response.created"}\n\n' +
+    'event: response.output_item.done\ndata: {"type":"response.output_item.done","item":{"type":"function_call","name":"mcp__web_search__web_search","call_id":"c1","arguments":"{}"}}\n\n' +
+    ": keep-alive\n\n" +
+    "data: [DONE]\n\n";
+  const cut = 70; // inside the second event
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      const enc = new TextEncoder();
+      c.enqueue(enc.encode(sse.slice(0, cut)));
+      c.enqueue(enc.encode(sse.slice(cut)));
+      c.close();
+    },
+  }).pipeThrough(renamespaceSse(["mcp__web_search"]));
+  const out = await new Response(stream).text();
+  const blocks = out.split("\n\n");
+  assert.equal(blocks[0], 'event: response.created\ndata: {"type":"response.created"}');
+  const item = JSON.parse(blocks[1]!.split("\ndata: ")[1]!).item;
+  assert.deepEqual(item, { type: "function_call", name: "web_search", call_id: "c1", arguments: "{}", namespace: "mcp__web_search" });
+  assert.equal(blocks[2], ": keep-alive");
+  assert.equal(blocks[3], "data: [DONE]");
+});
+
 await test("the path grammar", () => {
   assert.deepEqual(parseGatewayPath("/gw/k/p1/claude-code/v1/messages"), {
     key: "k",
@@ -161,6 +267,25 @@ const fake = createServer((req, res) => {
       res.end(JSON.stringify(completion));
       return;
     }
+    if (req.url?.includes("/responses")) {
+      // A gateway that speaks flat functions only: echoes back a call to the
+      // first `mcp__…` function it was offered, by its flat name.
+      const tools = (JSON.parse(body) as { tools?: { type: string; name?: string }[] }).tools ?? [];
+      const mcp = tools.find((t) => t.type === "function" && t.name?.startsWith("mcp__"));
+      const item = mcp
+        ? { type: "function_call", name: mcp.name, call_id: "c1", arguments: "{}" }
+        : { type: "message", role: "assistant", content: [{ type: "output_text", text: "no mcp tool offered" }] };
+      const wantsStream = /"stream"\s*:\s*true/.test(body);
+      if (wantsStream) {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write(`event: response.output_item.done\ndata: ${JSON.stringify({ type: "response.output_item.done", item })}\n\n`);
+        res.end(`event: response.completed\ndata: ${JSON.stringify({ type: "response.completed", response: { output: [item] } })}\n\n`);
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ id: "r1", object: "response", output: [item] }));
+      return;
+    }
     if (req.url?.includes("/broken")) {
       res.writeHead(400, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: { message: "insufficient credits" } }));
@@ -185,7 +310,7 @@ db.insert(profilesTable)
   .values({
     id: "gw-test",
     name: "gw",
-    agents: { "claude-code": {} },
+    agents: { "claude-code": {}, codex: {} },
     baseUrl: `http://127.0.0.1:${fakePort}/v1/`,
     apiKey: "sk",
     models: [],
@@ -223,6 +348,42 @@ await test("a streaming reply is piped through untouched", async () => {
   });
   assert.equal(res.headers.get("content-type"), "text/event-stream");
   assert.match(await res.text(), /^event: message_start\n/);
+});
+
+const codexBase = gatewayUrlFor("gw-test", "codex", "x");
+
+await test("Codex's namespace tools reach the gateway flat and its call comes back namespaced (SSE)", async () => {
+  const res = await fetch(`${codexBase}/v1/responses`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: "Bearer sk" },
+    body: JSON.stringify({ ...namespaced, stream: true }),
+  });
+  assert.equal(res.headers.get("content-type"), "text/event-stream");
+  const text = await res.text();
+  const sent = JSON.parse(seen.at(-1)!.body) as typeof namespaced;
+  // What the gateway saw: functions only, the transcript's call flattened to match.
+  assert.ok(sent.tools.every((t) => t.type !== "namespace"));
+  assert.ok(sent.tools.some((t) => t.name === "mcp__web_search__web_search"));
+  assert.equal((sent.input[1] as { name: string }).name, "mcp__web_search__web_search");
+  assert.equal(seen.at(-1)!.headers.authorization, "Bearer sk");
+  // What Codex sees: the call under its namespace, in both events.
+  const events = text.split("\n\n").filter(Boolean).map((b) => JSON.parse(b.split("\ndata: ")[1]!));
+  assert.deepEqual(events[0].item, { type: "function_call", name: "web_search", call_id: "c1", arguments: "{}", namespace: "mcp__web_search" });
+  assert.equal(events[1].response.output[0].namespace, "mcp__web_search");
+});
+
+await test("…and in a buffered JSON reply; a request with no namespace is forwarded untouched", async () => {
+  const res = await fetch(`${codexBase}/v1/responses`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(namespaced),
+  });
+  const reply = (await res.json()) as { output: { name: string; namespace?: string }[] };
+  assert.deepEqual([reply.output[0]!.name, reply.output[0]!.namespace], ["web_search", "mcp__web_search"]);
+  const plain = JSON.stringify({ model: "m", tools: [{ type: "function", name: "exec_command" }], input: [] });
+  const res2 = await fetch(`${codexBase}/v1/responses`, { method: "POST", headers: { "content-type": "application/json" }, body: plain });
+  assert.equal(seen.at(-1)!.body, plain);
+  assert.equal(((await res2.json()) as { output: { type: string }[] }).output[0]!.type, "message");
 });
 
 await test("an error keeps its status and body; other paths pass through", async () => {

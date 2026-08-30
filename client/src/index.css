@@ -21,6 +21,7 @@
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-composer: var(--composer);
+  --color-surface: var(--surface);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
@@ -113,6 +114,16 @@
      stays exactly --card. */
   --composer: var(--card);
 
+  /* ── The main surface ──
+     What the thread (and every page) sits on, inside the sidebar's tinted
+     ground. Light: the card colour — white on most palettes — the way both
+     desktop apps separate the two. Dark: --card is the *lighter* of the two
+     tones in every palette, and the reading surface should be the darker one,
+     with the composer (which stays --card) and the sidebar lifting off it
+     rather than sinking into it. Derived, like --composer, so no palette or
+     user-made theme needs a new token. */
+  --surface: var(--card);
+
   /* One content width for the whole session column. */
   --harness-chat-width: 748px;
   /* The composer shares the transcript's text column exactly: both sit inside a
@@ -122,10 +133,14 @@
 }
 
 :root:not(.dark) {
-  --composer: color-mix(in oklch, var(--card) 30%, var(--muted) 70%);
+  /* Muted alone reads as barely-off-white on most palettes, so a touch of the
+     foreground sets the box one visible step below the page — a touch only:
+     more than this and the box reads as a grey slab rather than a surface. */
+  --composer: color-mix(in oklch, var(--muted) 97%, var(--foreground) 3%);
 }
 
 .dark {
+  --surface: var(--background);
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -385,28 +400,27 @@
 }
 
 /* ── The mark, working ──
-   The labyrinth traces itself while a turn streams: one lit segment runs each
-   ring, the two counter-rotating, and the centre breathes. pathLength="1" on
-   the paths (Logo's `animated` prop) normalises the two very different ring
-   lengths, so one dash rule drives both. */
-@keyframes harness-logo-trace {
-  from { stroke-dashoffset: 1; }
-  to { stroke-dashoffset: 0; }
+   The labyrinth glints while a turn streams: the same sweep the sidebar's
+   idle mark makes once every few seconds (below), run back to back — a small
+   gap chases once around each ring while the centre blinks. One animation
+   vocabulary for the mark, at two cadences. pathLength="1" on the paths
+   normalises the two very different ring lengths, so one dash rule drives
+   both. */
+@keyframes harness-logo-working-ring {
+  0%, 100% { stroke-dasharray: 1 0; stroke-dashoffset: 0; }
+  12% { stroke-dasharray: 0.84 0.16; stroke-dashoffset: 0; }
+  88% { stroke-dasharray: 0.84 0.16; stroke-dashoffset: -1; }
 }
-@keyframes harness-logo-core {
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 1; }
+@keyframes harness-logo-working-core {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
 }
 .harness-logo-working [data-logo~="ring"] {
-  stroke-dasharray: 0.34 0.66;
-  animation: harness-logo-trace 1.8s linear infinite;
+  animation: harness-logo-working-ring 2.2s linear infinite;
 }
-.harness-logo-working [data-logo~="ring-inner"] {
-  animation-duration: 1.2s;
-  animation-direction: reverse;
-}
+.harness-logo-working [data-logo~="ring-inner"] { animation-delay: 140ms; }
 .harness-logo-working [data-logo~="core"] {
-  animation: harness-logo-core 1.8s ease-in-out infinite;
+  animation: harness-logo-working-core 2.2s ease-in-out infinite;
 }
 
 /* ── Idle glint ──

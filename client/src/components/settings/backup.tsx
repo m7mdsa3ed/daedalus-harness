@@ -77,7 +77,9 @@ function peek(text: string): BundlePeek {
     server chose, so it goes to fetch directly. */
 async function downloadBackup(settings: ServerSettings, opts: { secrets: boolean; journals: boolean }) {
   const url = new URL("/api/backup", settings.url)
-  if (!opts.secrets) url.searchParams.set("secrets", "0")
+  // The server defaults secrets to OFF now; carrying them needs the explicit
+  // opt-in. Sent both ways so the intent is never left to a default.
+  url.searchParams.set("secrets", opts.secrets ? "1" : "0")
   if (!opts.journals) url.searchParams.set("journals", "0")
   const res = await fetch(url, { headers: { authorization: `Bearer ${settings.token}` } })
   if (!res.ok) {

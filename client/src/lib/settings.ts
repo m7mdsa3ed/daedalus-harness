@@ -437,6 +437,36 @@ export interface ScheduledMessage {
   nextAt: number
   /** Recurrence interval in ms; null = one-shot. */
   everyMs: number | null
+  /** 1 = active; 0 = paused (the sweep never selects it). SQLite boolean. */
+  enabled: number
+  /** Epoch ms of the last sweep that could not deliver, or null. */
+  skippedAt: number | null
+  /** Why the last sweep skipped it (trashed/vanished thread), or null. */
+  lastError: string | null
+  /** Consecutive undeliverable sweeps; past the server's cap (20) the row is
+      parked — still listed, never selected — until a patch resets it. */
+  skipCount: number
   createdAt: number
+}
+
+/** `PATCH /api/scheduled/:id` body. Any patch — even a bare pause/resume —
+    also resets the row's skip state server-side, so "Resume" on a parked
+    schedule is just `{enabled: true}`. `everyMs: null` clears the recurrence. */
+export interface ScheduledPatch {
+  text?: string
+  nextAt?: number
+  everyMs?: number | null
+  enabled?: boolean
+}
+
+export async function updateScheduled(
+  settings: ServerSettings,
+  id: string,
+  patch: ScheduledPatch
+): Promise<ScheduledMessage> {
+  return api<ScheduledMessage>(settings, `/api/scheduled/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  })
 }
 

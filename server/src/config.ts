@@ -113,6 +113,16 @@ export function loadConfig(): ServerConfig {
   return config;
 }
 
+/** `loadConfig()`, once. `loadConfig` re-reads and re-parses config.json on
+    every call, which is fine at boot and wasteful on every spawn
+    (`SessionManager.serversFor`). The file is bootstrap and hand-edited only
+    while the server is down — the one runtime writer is `saveWebSearch`, which
+    invalidates this cache, so a web-search edit still reaches the next spawn. */
+let cachedConfig: ServerConfig | null = null;
+export function getConfig(): ServerConfig {
+  return (cachedConfig ??= loadConfig());
+}
+
 /** The stored server-global webSearch block, or undefined. Read without the
     token-seeding write that `loadConfig` performs on first boot, and without
     applying env overrides — this is exactly what is on disk. */
@@ -125,5 +135,6 @@ export function readWebSearch(): WebSearchConfig | undefined {
 export function saveWebSearch(input: WebSearchConfig): WebSearchConfig {
   const existing = readJson<Partial<ServerConfig>>(CONFIG_PATH, {});
   writeJson(CONFIG_PATH, { ...existing, webSearch: input });
+  cachedConfig = null; // the next getConfig() re-reads what was just written
   return input;
 }

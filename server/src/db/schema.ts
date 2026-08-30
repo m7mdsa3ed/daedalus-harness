@@ -379,49 +379,8 @@ export const webSearchUsage = sqliteTable(
   ],
 );
 
-/** Durable restore points created before logical agent turns. Snapshot content
-    lives in data/history; SQLite keeps ownership, branch and ACP pointers. */
-export const historyCheckpoints = sqliteTable(
-  "history_checkpoints",
-  {
-    id: text("id").primaryKey(),
-    turnId: text("turn_id").notNull().unique(),
-    sessionId: text("session_id")
-      .notNull()
-      .references(() => sessions.id, { onDelete: "cascade" }),
-    promptText: text("prompt_text").notNull(),
-    parentAcpSessionId: text("parent_acp_session_id").notNull(),
-    childAcpSessionId: text("child_acp_session_id").notNull(),
-    preSnapshotId: text("pre_snapshot_id").notNull(),
-    postManifest: text("post_manifest", { mode: "json" }).$type<unknown>(),
-    parentCheckpointId: text("parent_checkpoint_id"),
-    branchId: text("branch_id"),
-    status: text("status").notNull(),
-    createdAt: integer("created_at").notNull(),
-    completedAt: integer("completed_at"),
-  },
-  (t) => [index("history_checkpoints_session").on(t.sessionId, t.createdAt)],
-);
-
-/** Retained branch heads. A revert never deletes the child ACP session or the
-    workspace state it displaced; this row is the recovery handle for both. */
-export const historyBranches = sqliteTable(
-  "history_branches",
-  {
-    id: text("id").primaryKey(),
-    sessionId: text("session_id")
-      .notNull()
-      .references(() => sessions.id, { onDelete: "cascade" }),
-    sourceCheckpointId: text("source_checkpoint_id").notNull(),
-    acpSessionId: text("acp_session_id").notNull(),
-    workspaceSnapshotId: text("workspace_snapshot_id").notNull(),
-    label: text("label").notNull(),
-    status: text("status").notNull(),
-    createdAt: integer("created_at").notNull(),
-    recoveredAt: integer("recovered_at"),
-  },
-  (t) => [index("history_branches_session").on(t.sessionId, t.createdAt)],
-);
+/* The `history_checkpoints` / `history_branches` tables lived here until the
+   checkpoint controller was deleted; migration 0027 drops them. */
 
 export const pushTokens = sqliteTable("push_tokens", {
   token: text("token").primaryKey(),
@@ -459,6 +418,17 @@ export const scheduledMessages = sqliteTable(
     nextAt: integer("next_at").notNull(),
     /** Recurrence interval in ms; null = one-shot. */
     everyMs: integer("every_ms"),
+    /** 1 = the sweep delivers it; 0 = paused (kept, skipped). Integer rather
+        than boolean mode so the API shape is explicit about what is stored. */
+    enabled: integer("enabled").notNull().default(1),
+    /** Epoch ms of the last sweep that could not deliver (missing/trashed
+        thread); null once a delivery succeeds or the row is edited. */
+    skippedAt: integer("skipped_at"),
+    /** Why the last skip happened, for GET /api/scheduled. */
+    lastError: text("last_error"),
+    /** Consecutive skips. Past MAX_SCHEDULE_SKIPS the sweep stops selecting
+        the row instead of re-matching it every 15s forever; any PATCH resets. */
+    skipCount: integer("skip_count").notNull().default(0),
     createdAt: integer("created_at").notNull(),
   },
   (t) => [index("scheduled_next").on(t.nextAt)],

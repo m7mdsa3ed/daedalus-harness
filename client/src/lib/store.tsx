@@ -9,6 +9,7 @@ import {
   parentToolIdOf,
   parseTaskNotification,
   subagentItemId,
+  toolNameOf,
   type TerminalState,
 } from "./tools"
 import type {
@@ -44,6 +45,12 @@ export interface ToolItem {
   kind: "tool"
   id: string
   title: string
+  /** The tool's own name, when the call was *announced* under one — OpenCode
+      sends `websearch`, Codex `mcp.<server>.<tool>` — and a later update
+      retitled it in prose (`Exa Web Search "…"`). `title` follows the updates,
+      so the reader is told what the row is; this keeps what it *was*, which is
+      what `lib/tools` matches on. Never overwritten by an update. */
+  name?: string
   status: string
   toolKind?: string
   /** Whatever the agent passed the tool — the only thing that identifies the call. */
@@ -301,6 +308,17 @@ export function threadIsEmpty(thread: ThreadState, draft?: boolean): boolean {
 
 // ---- update application (shared by live updates and journal rebuild) ----
 
+/* Synthetic ids used to be positional (`${kind}-${items.length}`), which
+   collides the moment an item is *removed* (`drop-user-message`,
+   `dismiss-error`): the next mint reuses a length already spent, so two rows
+   share a React key and a dismiss deletes both. A module counter never
+   repeats. Replay determinism is unaffected: a replay or re-fold rebuilds
+   `items` wholesale in one commit, and nothing matches a synthetic id across
+   runs — tool calls keep the agent's own toolCallId, plans and compactions
+   carry their protocol ids, and notices dedupe by text. */
+let itemSeq = 0
+const mintItemId = (kind: string): string => `${kind}-${++itemSeq}`
+
 function appendText(
   items: ThreadItem[],
   kind: TextItem["kind"],
@@ -315,7 +333,7 @@ function appendText(
   if (last && last.kind === kind && last.parentId === parentId) {
     return [...items.slice(0, -1), { ...last, text: last.text + text }]
   }
-  return [...items, { kind, id: `${kind}-${items.length}`, text, at, parentId }]
+  return [...items, { kind, id: mintItemId(kind), text, at, parentId }]
 }
 
 /* Agents write a synthetic user turn when a prompt is cancelled, so the model
@@ -400,7 +418,7 @@ export function applySessionUpdate(
            identical text is the same completion — the way a repeated tool_call
            is the same call by its toolCallId. */
         if (items.some((item) => item.kind === "notice" && item.text === text)) return items
-        return [...items, { kind: "notice", id: `notice-${items.length}`, text, at }]
+        return [...items, { kind: "notice", id: mintItemId("notice"), text, at }]
       }
       // Live prompts push user messages locally, so the agent echo is skipped —
       // EXCEPT during a session/load replay, where chunks are the only source.
@@ -412,7 +430,7 @@ export function applySessionUpdate(
       // its Continue button) appears immediately; on replay the agent's own
       // wording rebuilds the transcript and supersedes it.
       if (synthetic) {
-        return [...items, { kind: "notice", id: `notice-${items.length}`, text: synthetic[1], at }]
+        return [...items, { kind: "notice", id: mintItemId("notice"), text: synthetic[1], at }]
       }
       return appendText(items, "user", update.content.text, at)
     }
@@ -421,6 +439,7 @@ export function applySessionUpdate(
         kind: "tool",
         id: update.toolCallId,
         title: update.title,
+        name: toolNameOf(update) ?? undefined,
         status: update.status ?? "pending",
         toolKind: update.kind ?? undefined,
         rawInput: update.rawInput,
@@ -439,6 +458,7 @@ export function applySessionUpdate(
          knows which Task it serves and be told on a later update — so an
          owner once learned is never forgotten. */
       item.parentId = owner ?? existing?.parentId
+      item.name = item.name ?? existing?.name
       if (existing) {
         return items.map((i) => (i.kind === "tool" && i.id === item.id ? item : i))
       }
@@ -633,7 +653,7 @@ function settleTools(items: ThreadItem[]): ThreadItem[] {
 }
 
 export function pushUserMessage(items: ThreadItem[], text: string, at?: number, turnId?: string): ThreadItem[] {
-  return [...items, { kind: "user", id: `user-${items.length}`, text, at, turnId }]
+  return [...items, { kind: "user", id: mintItemId("user"), text, at, turnId }]
 }
 
 /** null only when neither side reported the field — keeps optional stats hidden. */
@@ -898,7 +918,7 @@ export function reducer(state: State, action: Action): State {
       const items = thread(state, action.id).items
       if (items[items.length - 1]?.kind === "notice") return state
       return withThread(state, action.id, {
-        items: [...items, { kind: "notice", id: `notice-${items.length}`, text: action.text, at: Date.now() }],
+        items: [...items, { kind: "notice", id: mintItemId("notice"), text: action.text, at: Date.now() }],
       })
     }
     case "error": {
@@ -920,7 +940,7 @@ export function reducer(state: State, action: Action): State {
           ...items,
           {
             kind: "error",
-            id: `error-${items.length}`,
+            id: mintItemId("error"),
             title: action.title,
             reason: action.reason,
             detail: action.detail,
@@ -981,11 +1001,45 @@ export const initialState: State = {
 
 // ---- context ----
 
-export const StoreContext = React.createContext<{
+/* Two contexts, not one. A single `{ state, dispatch }` provider allocated a
+   fresh object per dispatch, so every `useStore()` consumer re-rendered on
+   every streamed token — including the settings pages that only ever read
+   `dispatch`. `dispatch` from useReducer is referentially stable for the life
+   of the reducer, so a consumer that subscribes to it alone never re-renders
+   on state. `useStore()` stays for the wide callers; new code should reach for
+   the narrower `useStoreState()` / `useDispatch()`. */
+export const StateContext = React.createContext<State>(initialState)
+export const DispatchContext = React.createContext<React.Dispatch<Action>>(() => {})
+
+export function StoreProvider({
+  state,
+  dispatch,
+  children,
+}: {
   state: State
   dispatch: React.Dispatch<Action>
-}>({ state: initialState, dispatch: () => {} })
+  children: React.ReactNode
+}) {
+  return (
+    <DispatchContext.Provider value={dispatch}>
+      <StateContext.Provider value={state}>{children}</StateContext.Provider>
+    </DispatchContext.Provider>
+  )
+}
 
-export function useStore() {
-  return React.useContext(StoreContext)
+export function useStoreState(): State {
+  return React.useContext(StateContext)
+}
+
+export function useDispatch(): React.Dispatch<Action> {
+  return React.useContext(DispatchContext)
+}
+
+export function useStore(): { state: State; dispatch: React.Dispatch<Action> } {
+  const state = useStoreState()
+  const dispatch = useDispatch()
+  /* Memoized on `state` identity so existing `useStore()` consumers get the
+     exact per-commit object they always did — no worse, and one context split
+     away from better once they migrate to the pieces above. */
+  return React.useMemo(() => ({ state, dispatch }), [state, dispatch])
 }

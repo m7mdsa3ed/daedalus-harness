@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, like } from "drizzle-orm";
 import { z } from "zod";
-import { db, profiles as profilesTable, type ProfileAgentLink } from "./db/index.js";
+import { agentOptions as agentOptionsTable, db, profiles as profilesTable, type ProfileAgentLink } from "./db/index.js";
 import { PROFILE_LINKS, emptyLinks, linksOf, readLinks, writeLinks } from "./db/links.js";
 
 // A profile is the PROVIDER configuration used in a session (credentials,
@@ -208,6 +208,11 @@ export function updateProfile(id: string, input: ProfileInput): Profile | undefi
   db.transaction((tx) => {
     tx.update(profilesTable).set(columnsOf(updated)).where(eq(profilesTable.id, id)).run();
     writeLinks(tx, PROFILE_LINKS, id, updated);
+    /* The probe cache is keyed `profileId:agentId:cwd`, and the answer depends
+       on what was just edited (a new base URL is a new gateway catalog, a new
+       key may change what it serves). A stale row would keep answering the
+       draft menu until someone found `?refresh=1`. */
+    tx.delete(agentOptionsTable).where(like(agentOptionsTable.key, `${id}:%`)).run();
   });
   return getProfile(id);
 }

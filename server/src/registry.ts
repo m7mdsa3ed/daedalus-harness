@@ -224,6 +224,21 @@ function withGatewayUrl(env: Record<string, string>): Record<string, string> {
   return env.ANTHROPIC_BASE_URL === "{baseUrl}" ? { ...env, ANTHROPIC_BASE_URL: "{gatewayUrl}" } : env;
 }
 
+/**
+ * The same move for Codex, inside its CODEX_CONFIG template: the provider's
+ * `base_url` goes through the shim, which is where Codex's `namespace` tools
+ * are flattened for a gateway that cannot read them (gateway-shim.ts). The
+ * `{baseUrl?…}` conditionals around it stay keyed on the raw URL — the shim
+ * URL is empty exactly when that is. Textual, like `withCodexCatalogKey`, and
+ * for the same reason; only the exact seeded slot moves.
+ */
+function withCodexGatewayUrl(env: Record<string, string>): Record<string, string> {
+  const template = env.CODEX_CONFIG;
+  if (!template) return env;
+  const seeded = '"base_url":"{baseUrl}"';
+  return template.includes(seeded) ? { ...env, CODEX_CONFIG: template.replace(seeded, '"base_url":"{gatewayUrl}"') } : env;
+}
+
 /** Model and effort are env at spawn for all three agents we ship. */
 const SPAWN_CATEGORIES: Record<string, "model" | "effort"> = {
   model: "model",
@@ -273,8 +288,9 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // through CODEX_CONFIG (JSON merged into the Codex session config): a
     // profile Base URL generates a "daedalus" model_providers entry; with no
     // base URL the whole block prunes away and Codex uses its default
-    // provider. wire_api is "responses" — edit to "chat" for
-    // chat-completions-only gateways.
+    // provider. wire_api is "responses" — the only one codex still accepts
+    // (0.148 refuses "chat"); a chat-completions-only gateway is reached
+    // through the harness's shim, which is also what base_url points at.
     // MODEL_PROVIDER repeats the choice because codex-acp's session/load path
     // (getResumeModelProvider) ignores CODEX_CONFIG.model_provider and falls
     // back to "openai" — without it every revived thread 401s on api.openai.com.
@@ -283,10 +299,11 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // Seed 7 re-runs the same backfill: rows were found without the key (an
     // env edit in Settings pastes whatever template the user had), and a seed
     // already stamped never looks again. The merge is idempotent, so a row
-    // that still has the key is left exactly as it is.
-    since: 7,
+    // that still has the key is left exactly as it is. Seed 9 routes the
+    // provider's base_url through the gateway shim (withCodexGatewayUrl).
+    since: 9,
     introduced: 2,
-    backfill: (existing) => ({ env: withCodexCatalogKey(existing.env) }),
+    backfill: (existing) => ({ env: withCodexGatewayUrl(withCodexCatalogKey(existing.env)) }),
     id: "codex",
     name: "Codex",
     command: "codex-acp",
@@ -296,7 +313,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
       CODEX_API_KEY: "{apiKey}",
       MODEL_PROVIDER: "{baseUrl?daedalus}",
       CODEX_CONFIG:
-        '{"model":"{model}","model_reasoning_effort":"{effort}","model_context_window":{contextWindow},"model_max_output_tokens":{maxOutputTokens},"model_catalog_json":"{codexModelCatalog}","model_provider":"{baseUrl?daedalus}","model_providers":{"daedalus":{"name":"{baseUrl?Daedalus gateway}","base_url":"{baseUrl}","env_key":"{baseUrl?CODEX_API_KEY}","wire_api":"{baseUrl?responses}"}}}',
+        '{"model":"{model}","model_reasoning_effort":"{effort}","model_context_window":{contextWindow},"model_max_output_tokens":{maxOutputTokens},"model_catalog_json":"{codexModelCatalog}","model_provider":"{baseUrl?daedalus}","model_providers":{"daedalus":{"name":"{baseUrl?Daedalus gateway}","base_url":"{gatewayUrl}","env_key":"{baseUrl?CODEX_API_KEY}","wire_api":"{baseUrl?responses}"}}}',
     },
   },
   {

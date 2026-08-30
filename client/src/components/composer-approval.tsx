@@ -42,6 +42,7 @@ import { ComposerStripItem, useStripSummary } from "./composer-strip"
 import { FileBadge, Prose } from "./tool-parts"
 import { KIND_ICONS, KIND_LABELS, ToolCallContent } from "./thread-items"
 import type { PendingPermission } from "@/lib/store"
+import { isTypingTarget } from "@/lib/shortcuts"
 import { extractPlanProposalFromPermission, toolDescription, toolHeading } from "@/lib/tools"
 import { cn } from "@/lib/utils"
 
@@ -117,6 +118,21 @@ export function ComposerApproval({ permission }: { permission: PendingPermission
   useStripSummary(
     permission ? { id: "approval", icon: ShieldQuestionIcon, label: "Permission needed", urgent: true } : null
   )
+  /* When the card mounts (a new request — keyed on its id, so a second ask
+     refocuses), move focus to the primary option so Enter/Space answer it
+     without a pointer trip — unless the user is mid-keystroke in an input,
+     where stealing focus would eat what they were typing. `isTypingTarget` is
+     the same guard the digit shortcuts use. The buttons render in the same
+     commit as the request, so the post-render effect finds them. */
+  const optionsRef = React.useRef<HTMLDivElement>(null)
+  const requestId = permission?.requestId
+  React.useEffect(() => {
+    if (!requestId || isTypingTarget(document.activeElement)) return
+    const target =
+      optionsRef.current?.querySelector<HTMLButtonElement>("[data-primary-option]") ??
+      optionsRef.current?.querySelector<HTMLButtonElement>("button")
+    target?.focus()
+  }, [requestId])
   if (!permission) return null
   const { request, resolve } = permission
   const call = request.toolCall
@@ -156,7 +172,14 @@ export function ComposerApproval({ permission }: { permission: PendingPermission
   })
 
   return (
-    <ComposerStripItem>
+    /* A live region: the card appears mid-turn with no focus change of its own,
+       so without the announcement a screen reader never hears that the agent
+       stopped to ask. Assertive because the turn is blocked on the answer. */
+    <ComposerStripItem
+      role="group"
+      aria-live="assertive"
+      aria-label={`Permission needed: ${heading}`}
+    >
       <Collapsible open={open} onOpenChange={setOpen} className="w-full">
         <CollapsibleTrigger
           render={
@@ -292,7 +315,7 @@ export function ComposerApproval({ permission }: { permission: PendingPermission
           to the tempting one. The action row sits OUTSIDE the collapsible so
           the buttons are always reachable, even while the evidence above them
           is what a reader is looking at. */}
-      <div className="flex flex-wrap items-center gap-2 px-2 pb-1.5">
+      <div ref={optionsRef} className="flex flex-wrap items-center gap-2 px-2 pb-1.5">
         {request.options.map((option, index) => {
           const primary = option.optionId === primaryId
           const rejecting = option.kind.startsWith("reject")
@@ -302,6 +325,7 @@ export function ComposerApproval({ permission }: { permission: PendingPermission
             <Button
               key={option.optionId}
               size="sm"
+              data-primary-option={primary ? "" : undefined}
               variant={
                 primary ? "default" : rejecting ? "destructive" : allowing ? "secondary" : "outline"
               }

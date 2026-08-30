@@ -193,7 +193,13 @@ async function runProbe(profile: Profile, agentId: string, project: Project): Pr
     ]);
   } finally {
     clearTimeout(expire!);
-    // connectWith closes the connection; the process is ours to end.
-    proc.kill();
+    // connectWith closes the connection; the process is ours to end. SIGTERM
+    // first, then SIGKILL for an agent that ignores it — the same pair ide.ts
+    // uses, because a wedged probe child otherwise outlives the request that
+    // spawned it.
+    proc.kill("SIGTERM");
+    setTimeout(() => {
+      if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
+    }, 5000).unref?.();
   }
 }

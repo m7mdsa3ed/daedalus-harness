@@ -53,6 +53,30 @@ import { ThreadRail } from "./thread-rail"
  * strip that grows while the answer is still streaming is noise under the
  * cursor — so `turnActive` is part of the input.
  */
+/* A finished turn is immutable — items are append-only and a changed item is a
+   new object — so its extraction (JSON-parsing every tool's rawOutput and
+   regex-scanning every message) is done once and remembered against the turn's
+   first item. Only the last, unfinished turn ever changes, and it is skipped
+   while `turnActive` anyway, so a streamed token now costs O(1 turn) instead
+   of O(thread). Keyed on the item *object* in a WeakMap: a replay's re-fold
+   replaces the objects, which makes a stale entry unreachable rather than
+   wrong, and a closed thread's entries collect with its items. The len/last
+   check catches a turn that gained items without changing its head. */
+const TURN_SOURCES_CACHE = new WeakMap<
+  ThreadItem,
+  { len: number; last: ThreadItem; sources: TurnSources }
+>()
+
+function cachedTurnSources(turn: ThreadItem[]): TurnSources {
+  const first = turn[0]
+  const last = turn[turn.length - 1]
+  const hit = TURN_SOURCES_CACHE.get(first)
+  if (hit && hit.len === turn.length && hit.last === last) return hit.sources
+  const sources = turnSources(turn)
+  TURN_SOURCES_CACHE.set(first, { len: turn.length, last, sources })
+  return sources
+}
+
 function withTurnSources(items: ThreadItem[], turnActive: boolean): Map<string, TurnSources> {
   const after = new Map<string, TurnSources>()
   const byId = new Map(items.map((item) => [item.id, item]))
@@ -73,7 +97,7 @@ function withTurnSources(items: ThreadItem[], turnActive: boolean): Map<string, 
     if (index === turns.length - 1 && turnActive) return
     const last = turn[turn.length - 1]
     if (!last || turn[0].kind !== "user") return
-    const sources = turnSources(turn)
+    const sources = cachedTurnSources(turn)
     if (sources.sources.length > 0) after.set(rootOf(last).id, sources)
   })
   return after
@@ -187,8 +211,8 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
      are ways of looking at the transcript, not changes to it, and toggling
      the option must not touch a single item. See lib/transcript-rows. */
   const rows = React.useMemo(
-    () => buildRows(visible, options.groupTools),
-    [options.groupTools, visible]
+    () => buildRows(visible, options.groupTools, thread.turnActive),
+    [options.groupTools, visible, thread.turnActive]
   )
   /* Where a Sources strip goes: after the item that ends each finished turn.
      Keyed by that item's id so the lookup below is one map hit per row, and
@@ -198,6 +222,9 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
     [visible, thread.turnActive]
   )
   const sourcesFor = (row: Row): TurnSources | undefined => sourcesAfter.get(rowTailId(row))
+  /* Hoisted out of the map below: `findIndex` inside `rows.map` was O(n²) per
+     render, re-scanned on every streamed token. */
+  const firstUserIndex = React.useMemo(() => rows.findIndex((r) => r.kind === "user"), [rows])
   const last = visible[visible.length - 1]
   const resumable =
     last?.kind === "notice" && !thread.turnActive && thread.status !== "closed"
@@ -288,8 +315,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                 /* A hairline above each of your messages (except the first)
                     separates one turn from the next when Turn dividers is on. */
                 const isUser = row.kind === "user"
-                const firstUser = rows.findIndex((r) => r.kind === "user")
-                const divider = options.stepDividers && isUser && i !== firstUser
+                const divider = options.stepDividers && isUser && i !== firstUserIndex
                 return (
                 /* ponytail: no scrollAnchor. Anchoring the user's message to
                     the top of the viewport meant sending scrolled the whole
@@ -338,7 +364,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
               {thread.turnActive && thread.status !== "connecting" && (
                 <MessageScrollerItem messageId="working">
                   <div className="py-0.5">
-                    <ActivityIndicator step={thread.items.length} />
+                    <ActivityIndicator thread={thread} />
                   </div>
                 </MessageScrollerItem>
               )}
@@ -420,7 +446,14 @@ function StartingLine({ draft }: { draft?: boolean }) {
 }
 
 /** Close codes the server attaches to the socket (see server/src/sessions.ts):
-    4000 killed, 4001 agent exited, 4002 replaced by another connection, 4004 unknown. */
+    4000 killed, 4001 agent exited, 4002 replaced by another connection, 4004 unknown.
+    Anything else — `undefined`, or a bare 1006 — is a socket that closed with
+    no word from the server at all: the server process went away (a restart, a
+    crash loop), or the network did. That case used to be filed under "the
+    agent process exited", which named a cause the client had no evidence for
+    and sent people looking at the agent when the server had just rebooted.
+    The recovery is the same either way (`reconnectThread` revives only when
+    the process is actually gone), so only the words differ. */
 function closedState(code: number | undefined) {
   if (code === 4002)
     return {
@@ -429,14 +462,26 @@ function closedState(code: number | undefined) {
       label: "Reconnect",
       busyLabel: "Reconnecting…",
     }
+  if (code === 4000 || code === 4004)
+    return {
+      takeover: false,
+      message: "This thread is no longer running on the server — the conversation is restored on revive.",
+      label: "Revive",
+      busyLabel: "Reviving…",
+    }
+  if (code === 4001)
+    return {
+      takeover: false,
+      message: "The agent process exited — the conversation is restored on revive.",
+      label: "Revive",
+      busyLabel: "Reviving…",
+    }
   return {
     takeover: false,
     message:
-      code === 4000 || code === 4004
-        ? "This thread is no longer running on the server — the conversation is restored on revive."
-        : "The agent process exited — the conversation is restored on revive.",
-    label: "Revive",
-    busyLabel: "Reviving…",
+      "Lost the connection to the server — it may have restarted. Reconnecting picks the thread back up.",
+    label: "Reconnect",
+    busyLabel: "Reconnecting…",
   }
 }
 
@@ -447,10 +492,33 @@ function closedState(code: number | undefined) {
    screen above the box. Walking back stashes whatever was half-typed; Escape,
    and walking forward off the end, put it back. */
 function usePromptHistory(items: ThreadItem[], setText: (text: string) => void) {
-  const history = React.useMemo(
-    () => items.flatMap((item) => (item.kind === "user" && item.text ? [item.text] : [])),
-    [items]
-  )
+  /* The list only changes when a user message is added (or its item object
+     replaced) — never per streamed token — but `items` is a new array on every
+     token, so a memo keyed on it re-scanned the transcript constantly. Keyed
+     instead on the count and the identity of the last user item: the reducer
+     replaces an item object whenever its content changes, so the pair is an
+     exact fingerprint of the user turns. */
+  const cache = React.useRef<{ count: number; last: ThreadItem | null; history: string[] }>({
+    count: -1,
+    last: null,
+    history: [],
+  })
+  let userCount = 0
+  let lastUser: ThreadItem | null = null
+  for (const item of items) {
+    if (item.kind === "user" && item.text) {
+      userCount++
+      lastUser = item
+    }
+  }
+  if (userCount !== cache.current.count || lastUser !== cache.current.last) {
+    cache.current = {
+      count: userCount,
+      last: lastUser,
+      history: items.flatMap((item) => (item.kind === "user" && item.text ? [item.text] : [])),
+    }
+  }
+  const history = cache.current.history
   /** null = not browsing. Otherwise an index into `history`. */
   const [index, setIndex] = React.useState<number | null>(null)
   const stash = React.useRef("")
@@ -680,6 +748,7 @@ function Composer({
             e.preventDefault()
             send()
           }}
+          aria-label="Message the agent"
           placeholder={
             disabled
               ? "Session ended"

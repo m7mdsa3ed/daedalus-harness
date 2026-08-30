@@ -35,8 +35,6 @@ import { readWebSearch, saveWebSearch, type WebSearchConfig } from "./config.js"
  *     restore onto another machine must not adopt the first one's bind address,
  *     and the token is what the person restoring already holds.
  *   - `agent_options` — a probe cache keyed by cwd, regenerated on demand.
- *   - `history_*` — rows that only mean something next to snapshot files on
- *     disk that the bundle does not carry.
  *
  * Secrets are opt-out, not opt-in, because a backup that loses its credentials
  * is half a backup: `includeSecrets: false` blanks a profile's `apiKey`, every

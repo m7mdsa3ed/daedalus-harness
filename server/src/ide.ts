@@ -41,6 +41,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import { DATA_DIR } from "./config.js";
+import { safeKeyEqual } from "./gateway-shim.js";
 import { WorkspaceError, projectRoot } from "./workspace-fs.js";
 
 /** Editors running at once. Each is a full VS Code — an extension host, a file
@@ -514,7 +515,14 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
     Touching `lastActivity` here is what keeps a watched editor from being swept
     out from under the person watching it. */
 export function ideTarget(key: string): { port: number; projectId: string } | null {
-  const projectId = byKey.get(key);
+  /* Compared entry by entry in constant time rather than looked up: the key is
+     the route's whole credential, and a hash-map hit/miss answers faster for a
+     near-match than a miss, which is a byte-by-byte oracle. The map is a
+     handful of entries, so the walk costs nothing. */
+  let projectId: string | undefined;
+  for (const [candidate, project] of byKey) {
+    if (safeKeyEqual(candidate, key)) projectId = project;
+  }
   const ide = projectId ? instances.get(projectId) : undefined;
   if (!ide || ide.state !== "ready") return null;
   ide.lastActivity = Date.now();

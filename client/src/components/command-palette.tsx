@@ -85,6 +85,7 @@ import {
   setActiveServer,
   type SessionMeta,
 } from "@/lib/settings"
+import { searchThreads, snippetParts, type SearchResult } from "@/lib/search"
 import { useStore, type ThreadItem, type ThreadState } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import {
@@ -225,6 +226,31 @@ export function CommandPalette({
     setQuery("")
     setPage(next)
   }
+
+  /* Full-text hits from the server, debounced behind the query. The palette's
+     own lists filter locally; the transcripts live in SQLite, so "Messages" is
+     the one group that asks the server — 250ms after the last keystroke, with
+     the previous request aborted so a slow answer cannot overwrite a newer
+     one. Failures stay quiet: a search box that toasts while you type is
+     noise, and the thread list above still works. */
+  const [messageHits, setMessageHits] = React.useState<SearchResult[]>([])
+  const search = page === "root" ? query.trim() : ""
+  React.useEffect(() => {
+    if (!open || search.length < 2) {
+      setMessageHits([])
+      return
+    }
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => {
+      searchThreads(search, controller.signal)
+        .then(setMessageHits)
+        .catch(() => {}) // aborted, offline, or an old server without the route
+    }, 250)
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
+  }, [open, search])
 
   const sessionId = currentThreadId(location.pathname, location.search)
   const meta = state.sessions.find((session) => session.id === sessionId) ?? null
@@ -716,6 +742,27 @@ export function CommandPalette({
                 </CommandGroup>
               )}
 
+              {messageHits.length > 0 && search.length >= 2 && (
+                <CommandGroup heading="Messages">
+                  {messageHits.map((hit) => (
+                    <MessageHitRow
+                      key={`${hit.sessionId}:${hit.seq}`}
+                      hit={hit}
+                      // The current query rides in the value so cmdk's filter —
+                      // which never saw the transcript — cannot drop a row the
+                      // server already matched.
+                      query={search}
+                      onSelect={() =>
+                        run(() => {
+                          setOpenMobile(false)
+                          void navigate(threadPath(hit.sessionId))
+                        })
+                      }
+                    />
+                  ))}
+                </CommandGroup>
+              )}
+
               <CommandGroup heading="Go to">
                 {SETTINGS_SECTIONS.map((section) => (
                   <SectionItem key={section.id} section={section} onSelect={run} />
@@ -890,6 +937,49 @@ function ThreadItemRow({
         <FolderIcon className="size-3" />
         {project}
         <span className="tabular-nums opacity-70">· {shortAge(session.createdAt)}</span>
+      </span>
+    </CommandItem>
+  )
+}
+
+/** One full-text hit: thread title, the snippet with its matches emphasised
+    (decoded from marker codepoints into spans — never markup), the project on
+    the trailing edge. Selecting opens the thread; the transcript's own
+    windowed replay takes it from there. */
+function MessageHitRow({
+  hit,
+  query,
+  onSelect,
+}: {
+  hit: SearchResult
+  query: string
+  onSelect: () => void
+}) {
+  return (
+    <CommandItem
+      value={`message ${hit.sessionId} ${hit.seq} ${query}`}
+      onSelect={onSelect}
+      className="items-start"
+    >
+      <MessageSquareIcon className="mt-0.5" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">{hit.title}</span>
+        <span className="block truncate text-[11px] text-muted-foreground">
+          {snippetParts(hit.snippet).map((part, i) =>
+            part.match ? (
+              <span key={i} className="font-semibold text-foreground">
+                {part.text}
+              </span>
+            ) : (
+              <React.Fragment key={i}>{part.text}</React.Fragment>
+            )
+          )}
+        </span>
+      </span>
+      <span className="ml-auto flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+        <FolderIcon className="size-3" />
+        {hit.projectName || "Other"}
+        <span className="tabular-nums opacity-70">· {shortAge(hit.at)}</span>
       </span>
     </CommandItem>
   )

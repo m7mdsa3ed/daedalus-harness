@@ -22,6 +22,7 @@ import { wsUrl, type ServerSettings } from "./settings"
  */
 export const REPLAY_WINDOW_STEPS = 60
 
+
 /**
  * The browser's end of one thread.
  *
@@ -155,6 +156,8 @@ export class ThreadSocket {
       holds, and how many steps (turns) are behind it on the server. */
   private windowFrom = 0
   private earlier = 0
+  /** The `loadEarlier` in flight, if any — see the re-entrancy note there. */
+  private earlierInFlight: Promise<void> | null = null
 
   constructor(serverSessionId: string, settings: ServerSettings, callbacks: ThreadCallbacks) {
     this.serverSessionId = serverSessionId
@@ -189,6 +192,11 @@ export class ThreadSocket {
 
     return new Promise<void>((resolve, reject) => {
       let settled = false
+      /* No timer on the replay: a long thread legitimately takes longer than
+         any fixed budget to stream, and a deadline here turned a slow replay
+         into "Couldn't connect to this thread" for a socket that was healthy
+         and mid-stream. The promise still settles on `caught_up` or on the
+         socket closing (below), so it cannot hang. */
       const done = (error?: unknown) => {
         if (settled) return
         settled = true
@@ -409,8 +417,20 @@ export class ThreadSocket {
    * Answered by the journal, not by the agent, so it works on an archived
    * thread — which is where paging back mostly happens.
    */
-  async loadEarlier(): Promise<void> {
-    if (this.earlier <= 0 || !this.raw) return
+  loadEarlier(): Promise<void> {
+    /* Not re-entrant: two overlapping pages would both splice `raw` and move
+       `windowFrom`, folding the same turns in twice. A second caller shares
+       the page already on its way instead. */
+    if (this.earlierInFlight) return this.earlierInFlight
+    if (this.earlier <= 0 || !this.raw) return Promise.resolve()
+    const inFlight = this.fetchEarlier().finally(() => {
+      if (this.earlierInFlight === inFlight) this.earlierInFlight = null
+    })
+    this.earlierInFlight = inFlight
+    return inFlight
+  }
+
+  private async fetchEarlier(): Promise<void> {
     const page = (await this.request((id) => ({
       id,
       cmd: "load_earlier",

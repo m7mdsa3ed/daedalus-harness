@@ -33,6 +33,10 @@ export interface SubagentGroup {
   kind: "subagent-group"
   id: string
   head: ToolItem | SubagentItem
+  /** Whether this subagent is at work right now — the one reading of it, so
+      the rail's shimmer, the count above the composer and the working line
+      all agree. See `subagentActive`. */
+  active: boolean
   children: Row[]
 }
 
@@ -51,9 +55,73 @@ export function rowTailId(row: Row): string {
  * Nesting does not depend on the grouping option — a subagent's rail is not
  * a preference, it is where its steps belong.
  */
-export function buildRows(items: ThreadItem[], groupTools: boolean): Row[] {
-  const nested = nestSubagents(items, groupTools)
+export function buildRows(items: ThreadItem[], groupTools: boolean, turnActive = false): Row[] {
+  const nested = nestSubagents(items, groupTools, turnActive)
   return groupTools ? groupToolRuns(nested) : nested
+}
+
+/** Every subagent at work, at any depth — a worker's worker is a worker. */
+export function activeSubagents(rows: Row[]): SubagentGroup[] {
+  const out: SubagentGroup[] = []
+  for (const row of rows) {
+    if (row.kind !== "subagent-group") continue
+    if (row.active) out.push(row)
+    out.push(...activeSubagents(row.children))
+  }
+  return out
+}
+
+const inFlight = (item: ThreadItem): boolean =>
+  item.kind === "tool"
+    ? item.status === "in_progress" || item.status === "pending"
+    : item.kind === "subagent" && item.state === "running"
+
+/**
+ * Is this subagent still at work? Read off the transcript, because the
+ * runtimes give the client no one signal for it:
+ *
+ * - Nothing runs outside a turn. Turn end is the one boundary every runtime
+ *   shares (Claude Code holds the turn open until its background subagents
+ *   settle), so an archived thread, or one whose turn ended, has no workers.
+ * - A worker whose *child* is at work is at work — a nested group that is
+ *   active, or a step under it still in flight.
+ * - An RFD session says so itself: `state: "running"` until the terminal
+ *   `subagent_state_update`.
+ * - A launch call that is still open (a sync `Task`, OpenCode's `task`) is a
+ *   child still working; one that failed is over; one that completed is over
+ *   too — its report is in the result — *unless it was a background launch*.
+ *   Claude Code's background `Task` answers "started" at once and the child's
+ *   steps keep arriving under it, and the runtime never says when the child
+ *   finishes (the CLI's task-notification never crosses ACP). What does
+ *   cross is its consequence: the parent is idle while it waits, and only
+ *   the notification wakes it — so the owner producing anything *after* the
+ *   child's last word is the child's report having landed. Until the owner
+ *   speaks, the child is running; a child whose next step arrives after all
+ *   flips straight back, since its last word moves past the owner's.
+ */
+function subagentActive(
+  head: ToolItem | SubagentItem,
+  kids: ThreadItem[],
+  children: Row[],
+  items: ThreadItem[],
+  indexOf: Map<ThreadItem, number>,
+  turnActive: boolean
+): boolean {
+  if (!turnActive) return false
+  if (kids.some(inFlight)) return true
+  if (children.some((row) => row.kind === "subagent-group" && row.active)) return true
+  if (head.kind === "subagent") return head.state === "running"
+  if (inFlight(head)) return true
+  if (head.status !== "completed") return false
+  if (!extractSubagent(head)?.background) return false
+  const last = kids.length > 0 ? Math.max(...kids.map((kid) => indexOf.get(kid) ?? -1)) : indexOf.get(head) ?? -1
+  const owner = head.parentId
+  for (let i = last + 1; i < items.length; i++) {
+    const item = items[i]
+    if (item.parentId !== owner) continue
+    if (item.kind === "agent" || item.kind === "thought" || item.kind === "tool") return false
+  }
+  return true
 }
 
 /**
@@ -71,7 +139,7 @@ export function buildRows(items: ThreadItem[], groupTools: boolean): Row[] {
  * is a subagent step with an empty rail, not a generic tool row) and every
  * RFD session item, which is a subagent by definition.
  */
-function nestSubagents(items: ThreadItem[], groupTools: boolean): Row[] {
+function nestSubagents(items: ThreadItem[], groupTools: boolean, turnActive: boolean): Row[] {
   const heads = new Set<string>()
   for (const item of items) {
     if (item.kind === "tool" || item.kind === "subagent") heads.add(item.id)
@@ -90,6 +158,8 @@ function nestSubagents(items: ThreadItem[], groupTools: boolean): Row[] {
   }
   adoptProjectedChildren(items, heads, byParent, claimed)
   groupCodexLifecycle(items, byParent, claimed)
+  const indexOf = new Map<ThreadItem, number>()
+  items.forEach((item, index) => indexOf.set(item, index))
 
   const build = (list: ThreadItem[], ancestry: Set<string>): Row[] => {
     const rows: Row[] = []
@@ -107,10 +177,12 @@ function nestSubagents(items: ThreadItem[], groupTools: boolean): Row[] {
       const next = new Set(ancestry)
       next.add(item.id)
       const children = build(kids, next)
+      const head = item as ToolItem | SubagentItem
       rows.push({
         kind: "subagent-group",
         id: item.id,
-        head: item as ToolItem | SubagentItem,
+        head,
+        active: subagentActive(head, kids, children, items, indexOf, turnActive),
         children: groupTools ? groupToolRuns(children) : children,
       })
     }
@@ -181,13 +253,17 @@ function groupCodexLifecycle(
     }
   }
   if (starts.length === 0 && spawns.length === 0) return
+  // Positions, once: `items.indexOf` inside the find below was O(n) per
+  // candidate per spawn — O(n²) on a transcript with many lifecycle rows.
+  const indexOf = new Map<ThreadItem, number>()
+  items.forEach((item, index) => indexOf.set(item, index))
   // A spawn with no receiver on record takes the next unclaimed start.
   const taken = new Set<string>()
   for (const spawn of spawns) {
     if ([...headByThread.values()].includes(spawn.id)) continue
-    const after = items.indexOf(spawn)
+    const after = indexOf.get(spawn)!
     const start = starts.find(
-      (s) => !taken.has(s.threadId) && !headByThread.has(s.threadId) && items.indexOf(s.item) > after
+      (s) => !taken.has(s.threadId) && !headByThread.has(s.threadId) && indexOf.get(s.item)! > after
     )
     if (start) {
       headByThread.set(start.threadId, spawn.id)

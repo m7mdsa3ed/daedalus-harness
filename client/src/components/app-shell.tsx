@@ -128,7 +128,7 @@ export function AppShell({
   const palette = useCommandPalette()
   const shortcuts = useShortcutsHelp()
   const inSettings = location.pathname.startsWith("/settings")
-  const inSchedule = location.pathname.startsWith("/schedules/")
+  const inSchedule = location.pathname.startsWith("/schedules")
   const inBoard = location.pathname.startsWith("/board")
   const sessionId =
     inSettings || inSchedule || inBoard ? null : currentThreadId(location.pathname, location.search)
@@ -487,10 +487,12 @@ export function AppShell({
           className="absolute inset-y-0 right-0 z-20 hidden w-1.5 cursor-col-resize hover:bg-sidebar-border md:block"
         />
       </Sidebar>
-      {/* The main surface is the card colour — white on a light palette — over
-          the sidebar's tinted ground, the way both desktop apps separate the two.
-          The header below has no colour of its own, so it takes this one. */}
-      <SidebarInset className="relative flex h-full min-h-0 flex-col overflow-hidden bg-card text-card-foreground">
+      {/* The main surface: --surface (index.css) — the card colour, white on a
+          light palette, over the sidebar's tinted ground the way both desktop
+          apps separate the two; the darker --background in dark mode, where
+          the card tone is the lighter one. The header below has no colour of
+          its own, so it takes this one. */}
+      <SidebarInset className="relative flex h-full min-h-0 flex-col overflow-hidden bg-surface text-card-foreground">
         {/* ponytail: no bg/blur/border — the header shares the inset surface, so
             under Electron vibrancy it shows the OS blur instead of its own band. */}
         <header
@@ -508,7 +510,7 @@ export function AppShell({
                   {inSettings
                     ? (SETTINGS_SECTIONS.find((s) => s.id === section)?.label ?? "Settings")
                     : inSchedule
-                      ? "New schedule"
+                      ? (location.pathname.endsWith("/new") ? "New schedule" : "Schedules")
                       : inBoard
                         ? "Tasks"
                         : (active?.title ?? "Daedalus")}
@@ -580,16 +582,21 @@ export function AppShell({
             {/* /settings/<unknown> — the sidebar still needs a page to light up. */}
             <Route path="*" element={<Navigate to="/settings/general" replace />} />
           </Route>
-          <Route
-            path="/schedules/new"
-            element={
-              <div className="min-h-0 flex-1 overflow-y-auto">
-                <div className="mx-auto w-full max-w-3xl px-4 pt-6 pb-16 sm:px-8">
-                  <SchedulePage actions={actions} />
+          {/* /schedules is the list, /schedules/new the creation form — one
+              component reads the path (see SchedulePage). */}
+          {["/schedules", "/schedules/new"].map((path) => (
+            <Route
+              key={path}
+              path={path}
+              element={
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <div className="mx-auto w-full max-w-3xl px-4 pt-6 pb-16 sm:px-8">
+                    <SchedulePage actions={actions} />
+                  </div>
                 </div>
-              </div>
-            }
-          />
+              }
+            />
+          ))}
           <Route
             path="/board"
             element={

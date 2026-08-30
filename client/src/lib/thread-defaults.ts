@@ -18,6 +18,14 @@ export interface ThreadDefaults {
   agentId?: string
   model?: string
   effort?: string
+  /** The library picks the last draft made on its composer strip — the MCP
+      servers, skills and slash commands it brought on top of its profile's.
+      Remembered so a reload (which rebuilds an unsent draft from these
+      defaults) does not silently drop them, and so the next thread starts
+      with the same kit. Ids, so a row since deleted simply matches nothing. */
+  mcpServerIds?: string[]
+  skillIds?: string[]
+  commandIds?: string[]
 }
 
 export function loadThreadDefaults(): ThreadDefaults {
@@ -79,9 +87,25 @@ export function resolveThreadStart(
   return profile && first ? { profile, agentId: first } : null
 }
 
+/** The library picks, as the arrays a draft carries — every key present, so
+    a caller can spread it over a `SessionMeta` without a fallback each. */
+export function defaultToolPicks(
+  defaults: ThreadDefaults
+): Required<Pick<ThreadDefaults, "mcpServerIds" | "skillIds" | "commandIds">> {
+  const ids = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : []
+  return {
+    mcpServerIds: ids(defaults.mcpServerIds),
+    skillIds: ids(defaults.skillIds),
+    commandIds: ids(defaults.commandIds),
+  }
+}
+
+/** Merges over what is remembered: a caller that knows about the agent should
+    not have to know about the tool picks to keep them, and vice versa. */
 export function saveThreadDefaults(next: ThreadDefaults): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(next))
+    localStorage.setItem(KEY, JSON.stringify({ ...loadThreadDefaults(), ...next }))
   } catch {
     // A convenience, not a setting: losing it costs one extra pick.
   }

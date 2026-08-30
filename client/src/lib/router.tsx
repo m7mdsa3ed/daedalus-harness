@@ -18,6 +18,7 @@ export const threadPath = (sessionId: string) => `/t/${encodeURIComponent(sessio
 export const settingsPath = (section: string) => `/settings/${section}`
 export const settingsFormPath = (section: string, id: string = "new") =>
   `/settings/${section}/${encodeURIComponent(id)}`
+export const schedulesPath = () => `/schedules`
 export const schedulePath = (sessionId?: string) =>
   `/schedules/new${sessionId ? `?session=${encodeURIComponent(sessionId)}` : ""}`
 export const boardPath = () => `/board`

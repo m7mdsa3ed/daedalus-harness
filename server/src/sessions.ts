@@ -2,10 +2,10 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { and, asc, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { WebSocket } from "ws";
 import type * as acp from "@agentclientprotocol/sdk";
-import { db, sessionEvents as eventsTable, sessions as sessionsTable } from "./db/index.js";
+import { db, sessions as sessionsTable } from "./db/index.js";
 import { SESSION_LINKS, emptyLinks, linksOf, readLinks, unionLinks, writeLinks, type LinkSet } from "./db/links.js";
 import { materializeWorkspace } from "./materialize.js";
 import { mcpServers as mcpLibrary } from "./library.js";
@@ -13,21 +13,18 @@ import type { Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 import { getProfile } from "./profiles.js";
 import { getProject } from "./projects.js";
-import { loadConfig } from "./config.js";
+import { getConfig, loadConfig } from "./config.js";
 import { WEB_SEARCH_SERVER_NAME, toMcpServerEnv } from "./websearch.js";
-import { recordWebSearchUsage } from "./websearch-usage.js";
+import { pruneWebSearchUsage, recordWebSearchUsage } from "./websearch-usage.js";
 import { KNOWLEDGE_SERVER_NAME, toKnowledgeServerEnv } from "./knowledge-db.js";
-import { AcpBridge, spawnAgent, toWireError, type BridgeHost } from "./acp-bridge.js";
+import { AcpBridge, spawnAgent, type BridgeHost } from "./acp-bridge.js";
+import { deleteSearchIndex } from "./search.js";
+import { SessionJournal } from "./session-journal.js";
+import { SessionSocket } from "./session-socket.js";
 import {
-  EARLIER_PAGE_STEPS,
   JOURNALED_EVENTS,
-  REPLAY_CHUNK_BYTES,
-  REPLAY_CHUNK_SIZE,
-  type EarlierPage,
   type HistoryLost,
-  type JournaledEvent,
   type PromptReply,
-  type ThreadCommand,
   type ThreadEvent,
   type WireError,
 } from "./protocol.js";
@@ -85,8 +82,8 @@ export interface Session {
   historyLost: HistoryLost | null;
   createdAt: number;
   /** Events ever journaled for this session. `cursor` is an index into this,
-      not into any array — the log itself is a table (see appendEvent), so
-      nothing about a long thread is held in memory. */
+      not into any array — the log itself is a table (see session-journal.ts),
+      so nothing about a long thread is held in memory. */
   eventCount: number;
   /** null = no live process (loaded from disk / retired); revive via respawn. */
   proc: ChildProcessWithoutNullStreams | null;
@@ -124,6 +121,10 @@ export interface Session {
   queueChain: Promise<unknown> | null;
   /** True only while this process has the profile-provided web-search MCP. */
   websearchViaMcp: boolean;
+  /** toolCallIds of in-flight web-search/fetch calls, so a streamed update for
+      any *other* tool never touches the usage ledger. Owned by the process —
+      reset with it. */
+  websearchCalls: Set<string>;
 }
 
 /** How much of the agent's stderr to keep. Enough for a stack trace, bounded so
@@ -254,6 +255,11 @@ export interface SessionEvents {
 export class SessionManager {
   private sessions = new Map<string, Session>();
 
+  /** The event-journal concern — the buffered writes, the reads that flush
+      first, the turn-boundary math and the replay framing — extracted to
+      session-journal.ts. The manager decides when; the journal knows the table. */
+  private log = new SessionJournal(db);
+
   constructor(
     private events: SessionEvents = {},
     idleMinutes = 30,
@@ -299,15 +305,7 @@ export class SessionManager {
    * (`replace` mode) is dropped.
    */
   reload(): void {
-    this.flushWrites();
-    const counts = new Map(
-      db
-        .select({ sessionId: eventsTable.sessionId, next: sql<number>`max(${eventsTable.seq}) + 1` })
-        .from(eventsTable)
-        .groupBy(eventsTable.sessionId)
-        .all()
-        .map((row) => [row.sessionId, row.next] as const),
-    );
+    const counts = this.log.nextSeqBySession();
     const rows = db.select().from(sessionsTable).all();
     const links = readLinks(SESSION_LINKS, rows.map((r) => r.id));
     const seen = new Set<string>();
@@ -325,9 +323,8 @@ export class SessionManager {
         liveAcpSessionId: null,
         historyLost: null,
         /* Picked up where the last process left it, because the rows it wrote
-           are still there. Restoring this is not bookkeeping — `appendEvent`
-           stamps from it and the (session_id, seq) index is unique, so a count
-           that restarted at 0 would collide on the first event of the revive. */
+           are still there — see SessionJournal.nextSeqBySession for why a
+           count that restarted at 0 would collide. */
         eventCount: counts.get(row.id) ?? 0,
         stderr: [],
         stderrCount: 0,
@@ -341,6 +338,7 @@ export class SessionManager {
         queueChain: null,
         // Belongs to a process, and there is none until this thread is revived.
         websearchViaMcp: false,
+        websearchCalls: new Set(),
       });
     }
     for (const [id, session] of this.sessions) {
@@ -362,6 +360,22 @@ export class SessionManager {
       this.closePeers(session, 4000, "session reloaded");
       if (!session.exited) this.retire(session);
     }
+  }
+
+  /**
+   * The process is exiting. Retire every live session — which kills the agent
+   * children instead of orphaning them and journals each turn's last event —
+   * and land whatever `appendEvent` buffered for the next tick, which a bare
+   * `process.exit()` would silently drop. Idempotent; the signal handler in
+   * index.ts awaits a bounded drain after calling this so the SIGTERM→SIGKILL
+   * escalation timers elsewhere get a chance to fire.
+   */
+  shutdown(): void {
+    for (const session of this.sessions.values()) {
+      this.closePeers(session, 4000, "server shutting down");
+      if (!session.exited) this.retire(session);
+    }
+    this.log.flush();
   }
 
   /**
@@ -430,241 +444,7 @@ export class SessionManager {
     materializeWorkspace(project.cwd, unionLinks(...sets));
   }
 
-  // ---- the event log ----
-
-  /**
-   * Journaled events not yet written to SQLite.
-   *
-   * The seq is assigned synchronously in `appendEvent` and the row is written a
-   * tick later, which is safe because nothing reads the log through anything but
-   * `flushWrites` first — and worth doing because a streaming turn is thousands
-   * of events. One INSERT each is one transaction each: cheap individually under
-   * WAL, but the surrounding work (building the statement, serializing the
-   * payload) is per-event too, and a turn's worth of it lands on the same tick
-   * as the fan-out the browser is waiting for. Batched, a turn is a handful of
-   * commits and the serialization happens off the emit path.
-   *
-   * The exposure is one tick of events on a hard crash. That was already the
-   * bargain (`synchronous = NORMAL` trades the fsync for the OS's word), and the
-   * journal is a cache for reading, not the conversation — the agent still has
-   * that, and a revive re-reads it.
-   */
-  private pendingWrites: (typeof eventsTable.$inferInsert)[] = [];
-  private flushScheduled = false;
-
-  /** Append one event to the session's log and stamp it with its seq. */
-  private appendEvent(session: Session, event: ThreadEvent): ThreadEvent {
-    const seq = session.eventCount++;
-    const stamped = { ...event, seq } as ThreadEvent;
-    this.pendingWrites.push({
-      sessionId: session.id,
-      seq,
-      kind: event.ev,
-      payload: stamped,
-      at: Date.now(),
-    });
-    if (!this.flushScheduled) {
-      this.flushScheduled = true;
-      setImmediate(() => this.flushWrites()).unref();
-    }
-    return stamped;
-  }
-
-  /**
-   * Land the buffered rows. Called before every read of the log and before every
-   * delete from it, so no caller can observe a journal that is missing its most
-   * recent events — and on the next tick after an append, so an idle server is
-   * never holding one.
-   */
-  private flushWrites(): void {
-    this.flushScheduled = false;
-    if (this.pendingWrites.length === 0) return;
-    const rows = this.pendingWrites;
-    this.pendingWrites = [];
-    try {
-      db.transaction((tx) => {
-        for (const row of rows) tx.insert(eventsTable).values(row).run();
-      });
-    } catch {
-      /* One bad row must not cost every other thread its tick. A batch is a
-         transaction, so a single failure rolls the whole thing back — and the
-         rows in it belong to whatever threads happened to be streaming at the
-         same moment, which is the wrong blast radius for a fault that is always
-         about one session. The usual cause is a thread purged between the
-         append and this flush: its rows went with it (the foreign key cascades)
-         and nothing is owed an error, because the log they belonged to no
-         longer exists. So retry row by row and report only what actually fails.
-         A throw here would be an uncaught exception — this runs on a
-         setImmediate, with no caller to catch it. */
-      for (const row of rows) {
-        try {
-          db.insert(eventsTable).values(row).run();
-        } catch (error) {
-          console.error(
-            `[journal] dropped event ${row.seq} of session ${row.sessionId.slice(0, 8)}`,
-            error,
-          );
-        }
-      }
-    }
-  }
-
-  /** Events in `[from, from + limit)`, in order. A range scan on (session_id,
-      seq). Parsed — the replay path deliberately does not use this; see
-      `replayFrames`. */
-  private eventsFrom(session: Session, from: number, limit?: number): JournaledEvent[] {
-    this.flushWrites();
-    const query = db
-      .select({ payload: eventsTable.payload })
-      .from(eventsTable)
-      .where(and(eq(eventsTable.sessionId, session.id), gte(eventsTable.seq, from)))
-      .orderBy(asc(eventsTable.seq));
-    const rows = limit === undefined ? query.all() : query.limit(limit).all();
-    return rows.map((row) => row.payload as JournaledEvent);
-  }
-
-  /**
-   * The replay, as frames ready to put on a socket.
-   *
-   * Two things are deliberate here. The rows come back as **text**, not as
-   * parsed objects: the payload column already holds exactly the JSON the
-   * browser needs, so parsing it to re-serialize it once per peer is work with
-   * no reader. And the scan is **paged**, so a long thread's replay is bounded
-   * by a page rather than by the thread — `.all()` over the whole range put the
-   * entire transcript in memory at attach time, which is the cost the table was
-   * introduced to remove, merely moved from steady-state to connect-time.
-   *
-   * A frame is cut on whichever budget runs out first, count or bytes. Bytes is
-   * the one that matters for a thread full of terminal output or large diffs;
-   * count is what keeps a chatty-but-small thread from being one frame.
-   */
-  private *replayFrames(session: Session, from: number, batch: boolean): Generator<string> {
-    this.flushWrites();
-    let cursor = from;
-    let frame: string[] = [];
-    let bytes = 0;
-    const cut = function* (): Generator<string> {
-      if (frame.length === 0) return;
-      yield `{"ev":"replay","events":[${frame.join(",")}]}`;
-      frame = [];
-      bytes = 0;
-    };
-    for (;;) {
-      const page = db
-        .select({ payload: sql<string>`cast(${eventsTable.payload} as text)` })
-        .from(eventsTable)
-        .where(and(eq(eventsTable.sessionId, session.id), gte(eventsTable.seq, cursor)))
-        .orderBy(asc(eventsTable.seq))
-        .limit(REPLAY_CHUNK_SIZE)
-        .all();
-      if (page.length === 0) break;
-      cursor += page.length;
-      for (const row of page) {
-        // A client that did not ask for bulk gets the events one at a time; it
-        // would drop a `replay` frame it does not know, and `caught_up` rides
-        // inside that frame, so the thread would never finish connecting.
-        if (!batch) {
-          yield row.payload;
-          continue;
-        }
-        if (frame.length >= REPLAY_CHUNK_SIZE || bytes + row.payload.length > REPLAY_CHUNK_BYTES) {
-          yield* cut();
-        }
-        frame.push(row.payload);
-        bytes += row.payload.length;
-      }
-      if (page.length < REPLAY_CHUNK_SIZE) break;
-    }
-    yield* cut();
-  }
-
-  /* ---- step-paging ---- */
-
-  /** A **step** is a turn, and a turn begins at its journaled `turn_started` —
-      the one structural event the server interprets without parsing an update
-      payload. `from`/`before` are therefore always the seq of a `turn_started`,
-      so a replay or a page is whole turns, never a cut inside one. */
-
-  /** The `turn_started` seqs strictly before `before`, newest first, capped at
-      `limit`. */
-  private turnStartsBefore(session: Session, before: number, limit: number): number[] {
-    this.flushWrites();
-    return db
-      .select({ seq: eventsTable.seq })
-      .from(eventsTable)
-      .where(and(
-        eq(eventsTable.sessionId, session.id),
-        eq(eventsTable.kind, "turn_started"),
-        lt(eventsTable.seq, before),
-      ))
-      .orderBy(desc(eventsTable.seq))
-      .limit(limit)
-      .all()
-      .map((row) => row.seq);
-  }
-
-  /** How many turns the log holds. */
-  private turnCount(session: Session): number {
-    this.flushWrites();
-    const row = db
-      .select({ count: sql<number>`count(*)` })
-      .from(eventsTable)
-      .where(and(eq(eventsTable.sessionId, session.id), eq(eventsTable.kind, "turn_started")))
-      .get();
-    return Number(row?.count ?? 0);
-  }
-
-  /** How many turns lie before `before`. */
-  private countTurnsBefore(session: Session, before: number): number {
-    this.flushWrites();
-    const row = db
-      .select({ count: sql<number>`count(*)` })
-      .from(eventsTable)
-      .where(and(
-        eq(eventsTable.sessionId, session.id),
-        eq(eventsTable.kind, "turn_started"),
-        lt(eventsTable.seq, before),
-      ))
-      .get();
-    return Number(row?.count ?? 0);
-  }
-
-  /** The seq of the `index`-th `turn_started` (0-based, oldest first), or null
-      when the log has fewer than `index + 1` turns. */
-  private turnStartAt(session: Session, index: number): number | null {
-    this.flushWrites();
-    const row = db
-      .select({ seq: eventsTable.seq })
-      .from(eventsTable)
-      .where(and(eq(eventsTable.sessionId, session.id), eq(eventsTable.kind, "turn_started")))
-      .orderBy(asc(eventsTable.seq))
-      .offset(index)
-      .limit(1)
-      .get();
-    return row?.seq ?? null;
-  }
-
-  /** The page of whole turns immediately before `before`, plus how many turns
-      are still behind it. Empty when `before` is already the head of the log. */
-  private earlierPage(session: Session, before: number): EarlierPage {
-    if (before <= 0) return { events: [], earlier: 0 };
-    const starts = this.turnStartsBefore(session, before, EARLIER_PAGE_STEPS).reverse();
-    if (starts.length === 0) return { events: [], earlier: 0 };
-    const first = starts[0];
-    return {
-      events: this.eventsFrom(session, first, before - first),
-      earlier: this.countTurnsBefore(session, first),
-    };
-  }
-
-  private clearEvents(session: Session): void {
-    /* Drop this session's buffered rows rather than writing them: they belong
-       to the log being thrown away, and landing them after the delete would
-       leave orphans that the next append then collides with on seq. */
-    this.pendingWrites = this.pendingWrites.filter((row) => row.sessionId !== session.id);
-    db.delete(eventsTable).where(eq(eventsTable.sessionId, session.id)).run();
-    session.eventCount = 0;
-  }
+  // ---- the event log (see session-journal.ts for the table itself) ----
 
   /**
    * Drop the archives of retired threads nobody has touched in a while.
@@ -680,31 +460,32 @@ export class SessionManager {
   private pruneJournals(): void {
     const days = this.journalRetentionDays;
     if (days < 0) return;
-    this.flushWrites();
     const cutoff = days === 0 ? Date.now() : Date.now() - days * 86_400_000;
     const live = [...this.sessions.values()].filter((s) => !s.exited).map((s) => s.id);
-    const stale = db
-      .select({ sessionId: eventsTable.sessionId, newest: sql<number>`max(${eventsTable.at})` })
-      .from(eventsTable)
-      .groupBy(eventsTable.sessionId)
-      .having(sql`max(${eventsTable.at}) < ${cutoff}`)
-      .all()
-      .map((row) => row.sessionId)
-      .filter((id) => !live.includes(id));
-    if (stale.length === 0) return;
-    db.delete(eventsTable).where(inArray(eventsTable.sessionId, stale)).run();
-    for (const id of stale) {
+    for (const id of this.log.prune(cutoff, live)) {
       const session = this.sessions.get(id);
       if (session) session.eventCount = 0;
     }
-    console.log(`[journal] dropped ${stale.length} retired thread archive(s)`);
+    /* The web-search usage ledger ages out on the same clock: it is metadata
+       about transcripts whose archives were just judged by this cutoff. */
+    const usageDropped = pruneWebSearchUsage(cutoff);
+    if (usageDropped > 0) console.log(`[journal] dropped ${usageDropped} web-search usage row(s)`);
+    /* And so does the trash. A soft delete keeps the row so a delete stays
+       undoable, but "undoable" was never meant to mean "immortal" — a thread
+       trashed longer than the retention window is purged for good. Only with a
+       positive window: `0` means "no archive", not "empty the trash at boot". */
+    if (days > 0) {
+      for (const session of [...this.sessions.values()]) {
+        if (session.deletedAt !== null && session.deletedAt < cutoff) this.purge(session.id);
+      }
+    }
   }
 
   /** Everything this session has journaled, and the cursor that follows it. */
   journal(id: string): { cursor: number; events: ThreadEvent[] } | undefined {
     const session = this.sessions.get(id);
     if (!session) return undefined;
-    return { cursor: session.eventCount, events: this.eventsFrom(session, 0) };
+    return { cursor: session.eventCount, events: this.log.eventsFrom(session.id, 0) };
   }
 
   // ---- fan-out ----
@@ -732,9 +513,9 @@ export class SessionManager {
         profileName: session.profile?.name ?? session.profileId,
         projectId: session.projectId,
         projectName: session.project?.name ?? session.projectId,
-      }, event.update);
+      }, event.update, session.websearchCalls);
     }
-    const out = JOURNALED.has(event.ev) ? this.appendEvent(session, event) : event;
+    const out = JOURNALED.has(event.ev) ? this.log.append(session, event) : event;
     if (session.peers.size === 0) return;
     const line = JSON.stringify(out);
     for (const peer of session.peers) if (peer !== except) peer.ws.send(line);
@@ -993,6 +774,7 @@ export class SessionManager {
       respawnChain: null,
       queueChain: null,
       websearchViaMcp: false,
+      websearchCalls: new Set(),
     };
     this.sessions.set(session.id, session);
     // Before the bridge: the event rows reference this one, so the session has
@@ -1036,6 +818,7 @@ export class SessionManager {
     );
     const { mcpServers, websearchViaMcp } = this.serversFor(session, profile, project);
     session.websearchViaMcp = websearchViaMcp;
+    session.websearchCalls = new Set(); // in-flight calls went with the old process
     // Both belong to the process about to be replaced, and the handshake below
     // is what fills them in again — a stale "history lost" would outlive the
     // load that failed and mark a thread that has just been restored fine.
@@ -1066,7 +849,10 @@ export class SessionManager {
     mcpServers: acp.McpServer[];
     websearchViaMcp: boolean;
   } {
-    const mcpServers = mcpServersFor(this.effectiveLinks(session, profile), project, loadConfig());
+    // getConfig, not loadConfig: this runs on every spawn, and re-reading and
+    // re-parsing config.json each time bought nothing — saveWebSearch is the
+    // only runtime writer and it invalidates the cache.
+    const mcpServers = mcpServersFor(this.effectiveLinks(session, profile), project, getConfig());
     return {
       mcpServers,
       websearchViaMcp: mcpServers.some((s) => s.name === WEB_SEARCH_SERVER_NAME),
@@ -1139,7 +925,7 @@ export class SessionManager {
     session.effort = effort ?? "";
     // The load replays the entire conversation as fresh updates, so everything
     // already journaled is about to be said again.
-    this.clearEvents(session);
+    this.log.clear(session);
     this.resetStderr(session);
     const bridge = this.start(session, profile, project, model, effort, {
       load: session.acpSessionId ? { acpSessionId: session.acpSessionId } : undefined,
@@ -1162,6 +948,25 @@ export class SessionManager {
   }
 
   /**
+   * The bridge a prompt may be put on, once it exists and is ready.
+   *
+   * `start()` sets `session.bridge` before the handshake resolves, so a
+   * command arriving between a (re)spawn and its `session/new` answer used to
+   * hit a bridge that could not take a prompt yet — the scheduler already
+   * awaited `bridge.ready` for exactly this; now every prompt path does. An
+   * in-flight respawn is waited out first (whichever way it settles) so the
+   * bridge read afterwards is the one that survived it.
+   */
+  private async whenSpawnable(session: Session): Promise<AcpBridge> {
+    await session.respawnChain?.catch(() => {});
+    const bridge = session.bridge;
+    if (!bridge) throw new Error("this thread has no running agent");
+    await bridge.ready;
+    if (session.bridge !== bridge) throw new Error("the agent process is gone");
+    return bridge;
+  }
+
+  /**
    * Dispatch a logical prompt from any source (socket or scheduler).
    *
    * While a turn is running the words are QUEUED, not sent — unless `steer`
@@ -1178,8 +983,8 @@ export class SessionManager {
     opts: { steer?: boolean } = {},
   ): Promise<PromptReply> {
     const session = this.sessions.get(id);
-    const bridge = session?.bridge;
-    if (!session || !bridge) throw new Error("this thread has no running agent");
+    if (!session) throw new Error("this thread has no running agent");
+    const bridge = await this.whenSpawnable(session);
     if (bridge.promptActive && !opts.steer) {
       const item = enqueue(session.id, text);
       this.emitQueue(session);
@@ -1267,8 +1072,7 @@ export class SessionManager {
       old steering path (`inflight++`). On an idle thread it simply starts one. */
   async queueSteer(id: string, itemId: string): Promise<{ turnId: string }> {
     const session = this.requireSession(id);
-    const bridge = session.bridge;
-    if (!bridge) throw new Error("this thread has no running agent");
+    const bridge = await this.whenSpawnable(session);
     const item = listQueue(session.id).find((entry) => entry.id === itemId);
     if (!item) throw new Error("that queued message is gone");
     const result = this.startTurn(session, bridge, item.text, undefined);
@@ -1302,8 +1106,7 @@ export class SessionManager {
   }
 
   private async queueSendNowNow(session: Session, itemId?: string): Promise<{ turnId: string }> {
-    const bridge = session.bridge;
-    if (!bridge) throw new Error("this thread has no running agent");
+    const bridge = await this.whenSpawnable(session);
     const all = listQueue(session.id);
     const items = itemId ? all.filter((item) => item.id === itemId) : all;
     if (items.length === 0) throw new Error("nothing is queued");
@@ -1356,7 +1159,7 @@ export class SessionManager {
        to re-narrate the conversation and the two accounts could otherwise be
        stitched together. */
     bridge?.close(new Error("thread retired"));
-    this.flushWrites();
+    this.log.flush();
     this.resetStderr(session);
     proc?.kill();
   }
@@ -1420,8 +1223,10 @@ export class SessionManager {
     this.closePeers(session, 4000, "session purged");
     this.retire(session);
     this.sessions.delete(id);
-    // ON DELETE CASCADE takes the event rows with it.
+    // ON DELETE CASCADE takes the event rows with it; the FTS rows have no
+    // foreign key (virtual table), so they go by hand.
     db.delete(sessionsTable).where(eq(sessionsTable.id, id)).run();
+    deleteSearchIndex([id]);
     return true;
   }
 
@@ -1431,13 +1236,28 @@ export class SessionManager {
 
   // ---- the socket ----
 
+  /** The wire — attach bracket, replay windowing, command dispatch — lives in
+      session-socket.ts, behind a port of exactly the methods it needs. */
+  private socket = new SessionSocket({
+    getSession: (id) => this.sessions.get(id),
+    journal: this.log,
+    prompt: (id, text, peer, opts) => this.prompt(id, text, peer, opts),
+    queueAdd: (id, text) => this.queueAdd(id, text),
+    queueSendNow: (id, itemId) => this.queueSendNow(id, itemId),
+    queueSteer: (id, itemId) => this.queueSteer(id, itemId),
+    queueUpdate: (id, itemId, text) => this.queueUpdate(id, itemId, text),
+    queueRemove: (id, itemId) => this.queueRemove(id, itemId),
+    queueClear: (id) => this.queueClear(id),
+    enrichError: (session, error) => this.enrichError(session, error),
+  });
+
   /**
    * Attach a WebSocket. Replays journaled events from `cursor`, brackets them
    * with `attached`/`caught_up` so the client can tell history from news, then
    * hands over whatever question the agent is currently blocked on.
    *
    * Returns null on success, or why it refused — that string becomes the close
-   * reason, and "unknown session" for all three cases was a lie in two.
+   * reason. The mechanics live in SessionSocket.attach.
    */
   attach(
     id: string,
@@ -1446,187 +1266,7 @@ export class SessionManager {
     batch = false,
     opts: { window?: number } = {},
   ): string | null {
-    const session = this.sessions.get(id);
-    if (!session) return "no such thread on this server";
-    if (session.deletedAt !== null) return "this thread is in the trash";
-    /* A thread with no process is served read-only from its journal — but only
-       if there IS one. An archive that was pruned, or a thread from before the
-       archive existed, has nothing to show, and replaying nothing would render
-       a blank transcript for a conversation that is still sitting in the
-       agent's store. That is the case the old refusal was always about, so it
-       is still the answer: the client reads it and revives. */
-    if (session.exited && session.eventCount === 0) {
-      return "this thread has no running agent — revive it first";
-    }
-    const peer: Peer = { ws };
-    session.peers.add(peer);
-    session.detachedAt = null;
-
-    /* A cursor past the end of the journal means the log shrank under the
-       client — a respawn or retirement clears it, and the id the client saved
-       is no longer a position in it. Asking for a delta then would append
-       nothing onto a transcript the client still believes is current, which is
-       worse than the full rebuild it is being asked to avoid. So clamp to 0
-       and let `attached.from` tell the truth: `from: 0` is the client's cue to
-       reset and rebuild. */
-    if (cursor > session.eventCount) cursor = 0;
-    const resumed = cursor > 0;
-
-    /* A client that named a window wants the tail, not the thread: an archive
-       hundreds of turns long is opened to read the end of it, and paying for
-       all of it to look at the last screen is the cost windowing removes. The
-       rest stays on the server and is fetched backwards with `load_earlier`.
-       The window is counted in **steps** (turns), and the replay starts at the
-       `turn_started` of the first step it includes — a transcript that begins
-       in the middle of a turn would re-fold into a half turn the reducer has
-       never seen opened. `earlier` says how many whole steps were withheld.
-       Never applied to a resume — the client is asking for a delta it already
-       knows the size of, and windowing that would hide events it is missing. */
-    const window = opts.window && opts.window > 0 ? opts.window : 0;
-    const from = resumed
-      ? cursor
-      : window
-        ? this.turnStartAt(session, Math.max(0, this.turnCount(session) - window)) ?? 0
-        : 0;
-
-    this.send(peer, {
-      ev: "attached",
-      from,
-      resumed,
-      earlier: resumed ? 0 : this.countTurnsBefore(session, from),
-      archived: session.bridge === null,
-      acpSessionId: session.liveAcpSessionId ?? session.acpSessionId ?? null,
-      ...(session.historyLost ? { historyLost: session.historyLost } : {}),
-    });
-    /* Same events, same order, still inside the bracket — `batch` only decides
-       how many frames carry them. One per event is a wake-up, a parse and a
-       render each on the client, which is what made a long thread visibly
-       rebuild itself; a client that says it can unroll a chunk gets the whole
-       replay in a handful of frames instead. Frames come out pre-serialized
-       (see `replayFrames`), so they go straight onto the socket. */
-    for (const frame of this.replayFrames(session, from, batch)) peer.ws.send(frame);
-    // Read in the same tick as the log it follows, so a client can't pair a
-    // stale turn state with a fresh replay window (or vice versa).
-    this.send(peer, {
-      ev: "caught_up",
-      cursor: session.eventCount,
-      promptActive: session.bridge?.promptActive ?? false,
-      queue: listQueue(session.id),
-    });
-    /* An unanswered question is sent whatever the cursor says. A client that
-       reloaded reattaches from the END of the log, and the agent is still
-       blocked — so without this it would show nothing to answer with. There is
-       no filtering to do: an answered request is not in the map. */
-    for (const event of session.bridge?.pendingEvents() ?? []) this.send(peer, event);
-
-    ws.on("message", (data) => this.onCommand(session, peer, data.toString()));
-    ws.on("close", () => {
-      session.peers.delete(peer);
-      if (session.peers.size === 0) session.detachedAt = Date.now();
-    });
-    return null;
-  }
-
-  private onCommand(session: Session, peer: Peer, line: string): void {
-    let command: ThreadCommand;
-    try {
-      command = JSON.parse(line) as ThreadCommand;
-    } catch {
-      return; // not JSON — nothing to answer
-    }
-    /* Answered before the bridge check, and it is the only command that is:
-       paging back through history is a read of the journal, and an archived
-       thread — one with no process at all — is exactly where someone is doing
-       it. Requiring an agent for it would mean spawning one to scroll. */
-    if (command.cmd === "load_earlier") {
-      this.send(peer, { ev: "reply", id: command.id, result: this.earlierPage(session, command.before) });
-      return;
-    }
-    /* The queue edits, for the same reason: a queue parked on a thread whose
-       process is gone is still the user's words, and taking one back should
-       not cost a spawn. */
-    switch (command.cmd) {
-      case "queue_update":
-        this.run(session, peer, command.id, async () => {
-          this.queueUpdate(session.id, command.itemId, command.text);
-          return {};
-        });
-        return;
-      case "queue_remove":
-        this.run(session, peer, command.id, async () => {
-          this.queueRemove(session.id, command.itemId);
-          return {};
-        });
-        return;
-      case "queue_clear":
-        this.run(session, peer, command.id, async () => {
-          this.queueClear(session.id);
-          return {};
-        });
-        return;
-    }
-    const bridge = session.bridge;
-    if (!bridge) {
-      if ("id" in command) {
-        this.send(peer, {
-          ev: "reply",
-          id: command.id,
-          error: { code: -32603, message: "this thread has no running agent" },
-        });
-      }
-      return;
-    }
-
-    switch (command.cmd) {
-      case "answer_permission":
-      case "answer_elicitation": {
-        // First answer wins. A loser is told directly, so its card clears even
-        // though it never saw the winner's broadcast.
-        const answered = bridge.answer(command.requestId, command.response, peer);
-        if (!answered) this.send(peer, { ev: "request_answered", requestId: command.requestId });
-        return;
-      }
-      case "prompt":
-        this.run(session, peer, command.id, () =>
-          this.prompt(session.id, command.text, peer, { steer: command.steer }),
-        );
-        return;
-      case "queue_add":
-        this.run(session, peer, command.id, async () => this.queueAdd(session.id, command.text));
-        return;
-      case "queue_send_now":
-        this.run(session, peer, command.id, () => this.queueSendNow(session.id, command.itemId));
-        return;
-      case "queue_steer":
-        this.run(session, peer, command.id, () => this.queueSteer(session.id, command.itemId));
-        return;
-      case "cancel":
-        this.run(session, peer, command.id, () => bridge.cancel());
-        return;
-      case "set_mode":
-        this.run(session, peer, command.id, () => bridge.setMode(command.modeId, peer));
-        return;
-      case "set_config_option":
-        this.run(session, peer, command.id, async () => ({
-          configOptions: await bridge.setConfigOption(command.configId, command.value, peer),
-        }));
-        return;
-    }
-  }
-
-  /** One command, one reply. Failures carry the agent's stderr, so the browser
-      gets the explanation and not just the code. */
-  private run(
-    session: Session,
-    peer: Peer,
-    id: number,
-    op: () => Promise<unknown>,
-  ): void {
-    void op().then(
-      (result) => this.send(peer, { ev: "reply", id, result }),
-      (error: unknown) =>
-        this.send(peer, { ev: "reply", id, error: this.enrichError(session, toWireError(error)) }),
-    );
+    return this.socket.attach(id, ws, cursor, batch, opts);
   }
 }
 

@@ -118,6 +118,16 @@ function entryFor(base: CodexModel, model: ModelDef, index: number): CodexModel 
     })),
     // No efforts listed is a real answer: this model has no reasoning control.
     default_reasoning_level: efforts[0] ?? null,
+    // The flagship runs its MCP servers in *code mode* (`tool_mode:
+    // "code_mode_only"`, codex-cli 0.148+): the tools are folded into a
+    // namespace the model drives through `codex-code-mode-host`, not offered
+    // as `mcp__<server>__<tool>` functions. That is a contract with GPT-5.6
+    // and the real Responses API; a gateway model gets the namespace, calls
+    // it as a function and codex answers `unsupported call: mcp__web_search`
+    // — the harness's own web search, linked and running, unreachable. Every
+    // non-flagship built-in carries `null` here, which is plain function
+    // calling; a gateway model is described like those.
+    tool_mode: null,
   };
 }
 

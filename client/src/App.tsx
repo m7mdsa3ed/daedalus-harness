@@ -7,7 +7,7 @@ import { useActions } from "@/lib/actions"
 import { refreshNotificationOffer } from "@/lib/notifications"
 import { setupPush } from "@/lib/push"
 import { loadSettings, type ServerSettings } from "@/lib/settings"
-import { initialState, reducer, StoreContext } from "@/lib/store"
+import { initialState, reducer, StoreProvider } from "@/lib/store"
 import { ThemeProvider, useTheme } from "@/lib/theme"
 import { reportError } from "@/lib/errors"
 
@@ -21,7 +21,7 @@ function App() {
   return (
     <ThemeProvider>
       <ConfirmProvider>
-        <StoreContext.Provider value={{ state, dispatch }}>
+        <StoreProvider state={state} dispatch={dispatch}>
           {settings && !adding ? (
             <Connected key={settings.id} settings={settings} onAddServer={() => setAdding(true)} />
           ) : (
@@ -34,7 +34,7 @@ function App() {
             />
           )}
           <ThemedToaster />
-        </StoreContext.Provider>
+        </StoreProvider>
       </ConfirmProvider>
     </ThemeProvider>
   )
