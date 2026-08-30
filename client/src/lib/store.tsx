@@ -1,10 +1,16 @@
 /* eslint-disable react-refresh/only-export-components */
 import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
-import type { HistoryState } from "@daedalus/protocol"
+import type { QueuedMessage, SessionUpdate, SubagentState } from "@daedalus/protocol"
 // Value import, but tools.ts imports only *types* from here — erased at build,
 // so there is no runtime cycle.
-import { applyTerminalMeta, parseTaskNotification, type TerminalState } from "./tools"
+import {
+  applyTerminalMeta,
+  parentToolIdOf,
+  parseTaskNotification,
+  subagentItemId,
+  type TerminalState,
+} from "./tools"
 import type {
   AgentDef,
   CommandDef,
@@ -29,6 +35,9 @@ export interface TextItem {
   at?: number
   /** Logical turn restore point, present on user messages. */
   turnId?: string
+  /** The item this belongs to when it is a subagent's, not the thread's — see
+      `SubagentItem`. */
+  parentId?: string
 }
 
 export interface ToolItem {
@@ -59,6 +68,41 @@ export interface ToolItem {
   startedAt: number
   /** Wall-clock stamp, live only — see TextItem.at. */
   at?: number
+  /** The item this call belongs to when a subagent made it: the Task that
+      launched the subagent (Claude Code), or the `subagent:<sessionId>` item
+      of the child session it ran in. Derived from vendor `_meta` through
+      `lib/tools.parentToolIdOf`, or from the session id an update arrived on.
+      The store stays FLAT — every item sits in `items` in arrival order, so the
+      reducer, replay, `settleTools` and every consumer that walks the list are
+      untouched — and nesting is a way of looking at it, built at view time by
+      `lib/transcript-rows`. */
+  parentId?: string
+}
+
+/**
+ * A subagent's session, announced by the agent (the ACP subagent RFD's
+ * `subagent_spawned`), or a child session a runtime names in `_meta` before
+ * any tool call has claimed it. The row a child's work groups under when no
+ * tool call launched it — Codex's children have no Task; the spawn IS the
+ * announcement. Upserted by `subagent:<subagentSessionId>`, so the first
+ * update fixes its place and the terminal `subagent_state_update` patches it
+ * where it sits. `parentId` is set when the spawn arrived on another child's
+ * session — that is how the RFD nests.
+ */
+export interface SubagentItem {
+  kind: "subagent"
+  /** `subagent:<sessionId>`. */
+  id: string
+  sessionId: string
+  name: string
+  /** What was delegated, in the agent's words — descriptive, not a prompt. */
+  task: string
+  /** `running` until the parent reports otherwise. */
+  state: "running" | SubagentState
+  capabilities: { cancel?: boolean; close?: boolean }
+  startedAt: number
+  at?: number
+  parentId?: string
 }
 
 /**
@@ -83,6 +127,9 @@ export interface PlanItem {
   markdown?: string
   /** A plan that lives in a file (`plan_update` type `file`). */
   uri?: string
+  /** A subagent's own plan — see ToolItem.parentId. The id carries the owner
+      too (`plan@<parentId>`), so a child's plan can never replace the thread's. */
+  parentId?: string
 }
 
 /**
@@ -104,6 +151,9 @@ export interface ErrorItem {
   /** The prompt this failure killed. Present => the row offers Retry. */
   retryText?: string
   at?: number
+  /** Never set today — errors are the thread's — but every item carries the
+      field so the row builder can read it without narrowing per kind. */
+  parentId?: string
 }
 
 /**
@@ -128,9 +178,12 @@ export interface CompactionItem {
   /** Why it failed. Only ever set alongside `status: "failed"`. */
   error?: string
   at?: number
+  /** A subagent's own compaction (an RFD child session has a context of its
+      own to compact) — see ToolItem.parentId. */
+  parentId?: string
 }
 
-export type ThreadItem = TextItem | ToolItem | PlanItem | ErrorItem | CompactionItem
+export type ThreadItem = TextItem | ToolItem | PlanItem | ErrorItem | CompactionItem | SubagentItem
 
 export interface PendingPermission {
   /** The server's id for the question, so an answer from another device can be
@@ -158,6 +211,10 @@ export interface ThreadState {
   turnActive: boolean
   permission: PendingPermission | null
   elicitation: PendingElicitation | null
+  /** Messages waiting for the running turn to end, in order. The server's
+      list, whole — every change arrives as the `queue` event, this device's
+      own included (the ids are minted there). */
+  queue: QueuedMessage[]
   /** Permission-mode state (e.g. default / acceptEdits / plan) from the agent. */
   modes: acp.SessionModeState | null
   /** Agent config options (model, thinking level, …). */
@@ -170,14 +227,13 @@ export interface ThreadState {
   context: acp.UsageUpdate | null
   /** Time to first update of the last turn, ms. */
   ttftMs: number | null
-  history: HistoryState
   /** No agent process behind this thread: what is on screen was served from the
       server's journal. The transcript is real and complete, but nothing can be
       sent until the thread is revived — which `actions.send` does on its own. */
   archived: boolean
-  /** Journaled events older than the transcript, still on the server. > 0 only
+  /** Steps (turns) older than the transcript, still on the server. > 0 only
       for a thread long enough to have been windowed; `actions.loadEarlier`
-      fetches the next page and re-folds. */
+      fetches the next page of whole turns and re-folds. */
   earlier: number
   /** A `load_earlier` is in flight — the button says so and does not stack. */
   loadingEarlier: boolean
@@ -205,19 +261,13 @@ export const emptyThread: ThreadState = {
   turnActive: false,
   permission: null,
   elicitation: null,
+  queue: [],
   modes: null,
   configOptions: [],
   availableCommands: [],
   usage: null,
   context: null,
   ttftMs: null,
-  history: {
-    strategy: "unsupported",
-    available: false,
-    busy: false,
-    checkpoints: [],
-    branches: [],
-  },
   archived: false,
   earlier: 0,
   loadingEarlier: false,
@@ -255,13 +305,17 @@ function appendText(
   items: ThreadItem[],
   kind: TextItem["kind"],
   text: string,
-  at?: number
+  at?: number,
+  parentId?: string
 ): ThreadItem[] {
   const last = items[items.length - 1]
-  if (last && last.kind === kind) {
+  /* Same kind AND same owner: a subagent's prose and the parent's resuming
+     after it are two runs, not one. Without the second test the parent's next
+     sentence was glued onto the child's last one — inside the child's rail. */
+  if (last && last.kind === kind && last.parentId === parentId) {
     return [...items.slice(0, -1), { ...last, text: last.text + text }]
   }
-  return [...items, { kind, id: `${kind}-${items.length}`, text, at }]
+  return [...items, { kind, id: `${kind}-${items.length}`, text, at, parentId }]
 }
 
 /* Agents write a synthetic user turn when a prompt is cancelled, so the model
@@ -305,21 +359,32 @@ function mergeMeta(
 
 export function applySessionUpdate(
   items: ThreadItem[],
-  update: acp.SessionUpdate,
-  allowUserChunks = false
+  update: SessionUpdate,
+  allowUserChunks = false,
+  sessionId?: string
 ): ThreadItem[] {
   /* `allowUserChunks` is set only by the replay path, so it doubles as "this is
      history": replayed items get no timestamp rather than the reload's. */
   const at = allowUserChunks ? undefined : Date.now()
+  /* Whose item this is. An update that arrived on a subagent's session (the
+     RFD: `sessionId` names the child) belongs to that child's `SubagentItem`;
+     otherwise the vendor `_meta` may name a parent (Claude Code's Task, or the
+     child session OpenCode projects); otherwise it is the thread's own. */
+  const owner = sessionId ? subagentItemId(sessionId) : parentToolIdOf(metaOf(update))
   switch (update.sessionUpdate) {
     case "agent_message_chunk":
     case "agent_thought_chunk": {
       if (update.content.type !== "text") return items
       const kind = update.sessionUpdate === "agent_message_chunk" ? "agent" : "thought"
-      return appendText(items, kind, update.content.text, at)
+      return appendText(items, kind, update.content.text, at, owner)
     }
     case "user_message_chunk": {
       if (update.content.type !== "text") return items
+      /* A subagent's "user" turns are its tool results and the brief it was
+         handed, echoed by the runtime for the model's benefit. Nobody typed
+         them and the brief is already on the parent, so they are dropped
+         rather than counted as prompts by everything that counts prompts. */
+      if (owner) return items
       /* A background task announcing that it finished. The runtime injects it
          as a user turn so the model reads it on its next turn, but nobody
          typed it and no local push mirrors it — so unlike an ordinary user
@@ -367,7 +432,14 @@ export function applySessionUpdate(
         startedAt: Date.now(),
         at,
       }
-      if (items.some((i) => i.kind === "tool" && i.id === item.id)) {
+      const existing = items.find((i): i is ToolItem => i.kind === "tool" && i.id === item.id)
+      /* A re-announced call is replaced wholesale, bar one thing it may have
+         learned since: who it belongs to. Claude Code's attribution is
+         best-effort — a child's `tool_call` can go out before the runtime
+         knows which Task it serves and be told on a later update — so an
+         owner once learned is never forgotten. */
+      item.parentId = owner ?? existing?.parentId
+      if (existing) {
         return items.map((i) => (i.kind === "tool" && i.id === item.id ? item : i))
       }
       return [...items, item]
@@ -375,6 +447,7 @@ export function applySessionUpdate(
     case "tool_call_update":
       return items.map((i) => {
         if (i.kind !== "tool" || i.id !== update.toolCallId) return i
+        const meta = mergeMeta(i.meta, metaOf(update))
         return {
           ...i,
           title: update.title ?? i.title,
@@ -384,15 +457,21 @@ export function applySessionUpdate(
           rawOutput: update.rawOutput ?? i.rawOutput,
           content: update.content ?? i.content,
           locations: update.locations ?? i.locations,
-          meta: mergeMeta(i.meta, metaOf(update)),
+          meta,
           terminal: applyTerminalMeta(i.terminal, metaOf(update)),
+          // From the MERGED meta: a later update that repeats `toolName`
+          // without the parent must not lose an attribution already learned.
+          parentId: (sessionId ? owner : parentToolIdOf(meta)) ?? i.parentId,
         }
       })
     case "plan": {
-      // The legacy channel: one plan per session, replaced wholesale each time.
-      const plan: PlanItem = { kind: "plan", id: "plan", entries: update.entries }
-      return items.some((i) => i.kind === "plan" && i.id === "plan")
-        ? items.map((i) => (i.kind === "plan" && i.id === "plan" ? plan : i))
+      // The legacy channel: one plan per session, replaced wholesale each
+      // time — per owner: a subagent's plan is its own, keyed apart so it can
+      // never replace the thread's.
+      const id = owner ? `plan@${owner}` : "plan"
+      const plan: PlanItem = { kind: "plan", id, entries: update.entries, parentId: owner }
+      return items.some((i) => i.kind === "plan" && i.id === id)
+        ? items.map((i) => (i.kind === "plan" && i.id === id ? plan : i))
         : [...items, plan]
     }
     case "plan_update": {
@@ -401,7 +480,12 @@ export function applySessionUpdate(
          to merge. An unknown variant is dropped rather than rendered as an
          empty plan. */
       const content = update.plan
-      const base = { kind: "plan" as const, id: `plan:${content.planId}`, entries: [] }
+      const base = {
+        kind: "plan" as const,
+        id: owner ? `plan:${content.planId}@${owner}` : `plan:${content.planId}`,
+        entries: [],
+        parentId: owner,
+      }
       const plan: PlanItem | null =
         content.type === "items"
           ? { ...base, entries: content.entries }
@@ -421,7 +505,7 @@ export function applySessionUpdate(
          value that happens to clear too. Conflating "absent" with "empty" here
          would wipe a streamed summary the moment the terminal update lands
          without one — which is exactly how agents send it. */
-      const id = `compaction:${update.compactionId}`
+      const id = owner ? `compaction:${update.compactionId}@${owner}` : `compaction:${update.compactionId}`
       const existing = items.find(
         (i): i is CompactionItem => i.kind === "compaction" && i.id === id
       )
@@ -436,6 +520,7 @@ export function applySessionUpdate(
         summary,
         error,
         at: existing?.at ?? at,
+        parentId: existing?.parentId ?? owner,
       }
       return existing
         ? items.map((i) => (i.kind === "compaction" && i.id === id ? item : i))
@@ -446,17 +531,47 @@ export function applySessionUpdate(
          only between the `in_progress` update and the terminal one, so a chunk
          for an id we have never seen is a stray — dropped rather than made into
          a headless summary with no status to describe it. */
-      const id = `compaction:${update.compactionId}`
+      const id = owner ? `compaction:${update.compactionId}@${owner}` : `compaction:${update.compactionId}`
       return items.map((i) =>
         i.kind === "compaction" && i.id === id
           ? { ...i, summary: [...i.summary, update.content] }
           : i
       )
     }
-    case "plan_removed":
+    case "plan_removed": {
       // The agent abandoned this plan; leaving it on screen would describe work
       // nobody is doing any more.
-      return items.filter((i) => !(i.kind === "plan" && i.id === `plan:${update.planId}`))
+      const id = owner ? `plan:${update.planId}@${owner}` : `plan:${update.planId}`
+      return items.filter((i) => !(i.kind === "plan" && i.id === id))
+    }
+    case "subagent_spawned": {
+      /* The RFD's announcement. Sent on the parent's session — so `owner` here
+         is the parent when the parent is itself a child, and undefined at the
+         top — and it precedes every update of the child's, which is what lets
+         the reducer file those under an item that already exists. Upsert:
+         a `session/load` restates spawns it has already sent. */
+      const id = subagentItemId(update.subagentSessionId)
+      const existing = items.find((i): i is SubagentItem => i.kind === "subagent" && i.id === id)
+      const item: SubagentItem = {
+        kind: "subagent",
+        id,
+        sessionId: update.subagentSessionId,
+        name: update.name,
+        task: update.task,
+        capabilities: update.capabilities ?? {},
+        state: existing?.state ?? "running",
+        startedAt: existing?.startedAt ?? Date.now(),
+        at: existing?.at ?? at,
+        parentId: owner ?? existing?.parentId,
+      }
+      return existing
+        ? items.map((i) => (i.kind === "subagent" && i.id === id ? item : i))
+        : [...items, item]
+    }
+    case "subagent_state_update": {
+      const id = subagentItemId(update.subagentSessionId)
+      return items.map((i) => (i.kind === "subagent" && i.id === id ? { ...i, state: update.state } : i))
+    }
     default:
       return items
   }
@@ -465,9 +580,20 @@ export function applySessionUpdate(
 /** Session-level (non-transcript) updates applied to ThreadState. */
 function applyMetaUpdate(
   thread: ThreadState,
-  update: acp.SessionUpdate,
-  allowUserChunks = false
+  update: SessionUpdate,
+  allowUserChunks = false,
+  sessionId?: string
 ): ThreadState {
+  /* A subagent's session-level state is its own — its mode, its options, its
+     context window. None of it describes the thread, so none of it reaches
+     ThreadState; only its transcript does. */
+  const sessionLevel =
+    update.sessionUpdate === "current_mode_update" ||
+    update.sessionUpdate === "config_option_update" ||
+    update.sessionUpdate === "available_commands_update" ||
+    update.sessionUpdate === "usage_update" ||
+    update.sessionUpdate === "session_info_update"
+  if (sessionId && sessionLevel) return thread
   switch (update.sessionUpdate) {
     case "current_mode_update":
       return thread.modes
@@ -480,7 +606,7 @@ function applyMetaUpdate(
     case "usage_update":
       return { ...thread, context: update }
     default:
-      return { ...thread, items: applySessionUpdate(thread.items, update, allowUserChunks) }
+      return { ...thread, items: applySessionUpdate(thread.items, update, allowUserChunks, sessionId) }
   }
 }
 
@@ -495,6 +621,12 @@ function settleTools(items: ThreadItem[]): ThreadItem[] {
     }
     if (item.kind === "compaction" && item.status === "in_progress") {
       return { ...item, status: "failed" as acp.CompactionStatus }
+    }
+    /* The RFD's own word for a child whose outcome the agent can no longer
+       report: not failed, not cancelled — unknown. The turn ending is exactly
+       that for any child still marked running. */
+    if (item.kind === "subagent" && item.state === "running") {
+      return { ...item, state: "disconnected" }
     }
     return item
   })
@@ -548,7 +680,12 @@ export type Action =
   | {
       type: "configure-draft"
       id: string
-      next: Partial<Pick<SessionMeta, "projectId" | "profileId" | "agentId" | "model" | "effort">>
+      next: Partial<
+        Pick<
+          SessionMeta,
+          "projectId" | "profileId" | "agentId" | "model" | "effort" | "mcpServerIds" | "skillIds" | "commandIds"
+        >
+      >
     }
   | { type: "draft-config-option"; id: string; configId: string; value: string | boolean }
   | { type: "profiles"; profiles: Profile[] }
@@ -574,10 +711,16 @@ export type Action =
       earlier?: number
       loadingEarlier?: boolean
     }
-  | { type: "update"; id: string; update: acp.SessionUpdate; allowUserChunks?: boolean }
+  /** `sessionId` names a subagent's session when the update is a child's —
+      see the `update` event in protocol.ts. Absent = the thread's own. */
+  | { type: "update"; id: string; update: SessionUpdate; allowUserChunks?: boolean; sessionId?: string }
   | { type: "user-message"; id: string; text: string; turnId?: string }
   | { type: "tag-user-turn"; id: string; turnId: string }
-  | { type: "history-state"; id: string; history: HistoryState }
+  /** Take back an optimistic user bubble: the server queued the words instead
+      of sending them, and the queue row is where they show now. */
+  | { type: "drop-user-message"; id: string }
+  /** The whole queue, absolute. */
+  | { type: "queue"; id: string; items: QueuedMessage[] }
   | { type: "notice"; id: string; text: string }
   | { type: "error"; id: string; title: string; reason?: string; detail?: string; retryText?: string }
   | { type: "dismiss-error"; id: string; itemId: string }
@@ -612,24 +755,6 @@ function thread(state: State, id: string): ThreadState {
 
 function withThread(state: State, id: string, patch: Partial<ThreadState>): State {
   return { ...state, threads: { ...state.threads, [id]: { ...thread(state, id), ...patch } } }
-}
-
-function tagHistoryTurns(items: ThreadItem[], history: HistoryState): ThreadItem[] {
-  let from = 0
-  let changed = false
-  const next = [...items]
-  for (const checkpoint of history.checkpoints) {
-    const index = next.findIndex(
-      (item, i) => i >= from && item.kind === "user" && !item.turnId && item.text.trim() === checkpoint.promptText.trim()
-    )
-    if (index < 0) continue
-    const item = next[index]
-    if (item.kind !== "user") continue
-    next[index] = { ...item, turnId: checkpoint.turnId }
-    from = index + 1
-    changed = true
-  }
-  return changed ? next : items
 }
 
 export function reducer(state: State, action: Action): State {
@@ -730,7 +855,12 @@ export function reducer(state: State, action: Action): State {
         ...state,
         threads: {
           ...state.threads,
-          [action.id]: applyMetaUpdate(thread(state, action.id), action.update, action.allowUserChunks),
+          [action.id]: applyMetaUpdate(
+            thread(state, action.id),
+            action.update,
+            action.allowUserChunks,
+            action.sessionId
+          ),
         },
       }
     case "user-message":
@@ -745,11 +875,23 @@ export function reducer(state: State, action: Action): State {
         items: items.map((item, i) => i === index && item.kind === "user" ? { ...item, turnId: action.turnId } : item),
       })
     }
-    case "history-state":
-      return withThread(state, action.id, {
-        history: action.history,
-        items: tagHistoryTurns(thread(state, action.id).items, action.history),
-      })
+    case "drop-user-message": {
+      const items = thread(state, action.id).items
+      // The same untagged bubble `tag-user-turn` would have stamped — the
+      // last one, since an optimistic message is always the newest thing.
+      let index = -1
+      for (let i = items.length - 1; i >= 0; i--) {
+        const item = items[i]
+        if (item.kind === "user" && !item.turnId) {
+          index = i
+          break
+        }
+      }
+      if (index < 0) return state
+      return withThread(state, action.id, { items: items.filter((_, i) => i !== index) })
+    }
+    case "queue":
+      return withThread(state, action.id, { queue: action.items })
     case "notice": {
       // Never two rules in a row: cancelling an already-cancelled turn is one
       // interruption, and the transcript should say so once.

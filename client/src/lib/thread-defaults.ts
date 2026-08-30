@@ -7,11 +7,15 @@
    Nothing prunes this. The ids it holds go stale when a profile or project is
    deleted, and the readers all resolve with a fallback — a dangling id costs a
    default, never a crash. */
+import { profileAgentIds, profileSupports, type Profile } from "@/lib/settings"
+
 const KEY = "ui.newThread"
 
 export interface ThreadDefaults {
   projectId?: string
   profileId?: string
+  /** Which of the profile's agents answered last time. */
+  agentId?: string
   model?: string
   effort?: string
 }
@@ -44,6 +48,35 @@ export function defaultsForProfile(
 ): Pick<ThreadDefaults, "model" | "effort"> {
   if (defaults.profileId !== profileId) return {}
   return { model: defaults.model, effort: defaults.effort }
+}
+
+/**
+ * The (profile, agent) pair a new thread opens on.
+ *
+ * Both halves are remembered, and each degrades on its own: the profile you
+ * last used may be gone, or may no longer be configured for the agent you last
+ * used. The agent is the stickier habit — when the remembered profile cannot
+ * serve it, the first profile that can (the agent's virtual Default sorts
+ * first) is picked over switching agents. With nothing usable remembered, the
+ * first profile and its first agent. Null only when there are no profiles at
+ * all, which is the "set up a project" empty state.
+ */
+export function resolveThreadStart(
+  defaults: ThreadDefaults,
+  profiles: readonly Profile[]
+): { profile: Profile; agentId: string } | null {
+  const remembered = profiles.find((p) => p.id === defaults.profileId)
+  const agentId = defaults.agentId
+  if (remembered && agentId && profileSupports(remembered, agentId)) {
+    return { profile: remembered, agentId }
+  }
+  if (agentId) {
+    const serving = profiles.find((p) => profileSupports(p, agentId))
+    if (serving) return { profile: serving, agentId }
+  }
+  const profile = remembered ?? profiles[0]
+  const first = profile && profileAgentIds(profile)[0]
+  return profile && first ? { profile, agentId: first } : null
 }
 
 export function saveThreadDefaults(next: ThreadDefaults): void {

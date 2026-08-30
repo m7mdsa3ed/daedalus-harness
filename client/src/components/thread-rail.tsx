@@ -50,7 +50,8 @@ export function railTicks(items: ThreadItem[]): Tick[] {
   for (const item of items) {
     if (item.kind === "user") {
       ticks.push({ id: item.id, n: ticks.length + 1, text: item.text, reply: "" })
-    } else if (item.kind === "agent" && ticks.length > 0) {
+    } else if (item.kind === "agent" && !item.parentId && ticks.length > 0) {
+      // The thread's own reply — a subagent's prose is its report, not the answer.
       const tick = ticks[ticks.length - 1]
       tick.reply = tick.reply ? `${tick.reply}\n${item.text}` : item.text
     }

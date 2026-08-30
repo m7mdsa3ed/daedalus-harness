@@ -64,8 +64,6 @@ function importLegacyJson(): void {
     id: string;
     name?: string;
     cwd?: string;
-    mcpServerIds?: string[];
-    skillIds?: string[];
   }
   interface LegacySession {
     id: string;
@@ -81,7 +79,13 @@ function importLegacyJson(): void {
   }
 
   const agents = readJson<(typeof schema.agents.$inferSelect)[]>(legacy("agents.json"), []);
-  const profiles = readJson<(typeof schema.profiles.$inferSelect)[]>(legacy("profiles.json"), []);
+  // Pre-SQLite profiles bound to one agent (`agentId`); today's row names a
+  // set. The import writes the old binding as a one-entry map.
+  type LegacyProfile = Omit<typeof schema.profiles.$inferSelect, "agents"> & {
+    agentId?: string;
+    agents?: Record<string, schema.ProfileAgentLink>;
+  };
+  const profiles = readJson<LegacyProfile[]>(legacy("profiles.json"), []);
   const projects = readJson<LegacyProject[]>(legacy("projects.json"), []);
   const mcp = readJson<(typeof schema.mcpServers.$inferSelect)[]>(legacy("mcp-servers.json"), []);
   const skills = readJson<(typeof schema.skills.$inferSelect)[]>(legacy("skills.json"), []);
@@ -111,7 +115,7 @@ function importLegacyJson(): void {
         .values({
           id: profile.id,
           name: profile.name,
-          agentId: profile.agentId,
+          agents: profile.agents ?? (profile.agentId ? { [profile.agentId]: {} } : {}),
           baseUrl: profile.baseUrl ?? "",
           apiKey: profile.apiKey ?? "",
           defaultModel: profile.defaultModel ?? "",
@@ -127,28 +131,14 @@ function importLegacyJson(): void {
     for (const skill of skills) {
       db.insert(schema.skills).values({ ...skill }).onConflictDoNothing().run();
     }
-    // Projects before their links, and the links only for library entries that
-    // actually exist — the JSON files had no way to enforce that, so a stale id
-    // in an old file is exactly what this import is likely to be handed.
-    const haveMcp = new Set(mcp.map((s) => s.id));
-    const haveSkill = new Set(skills.map((s) => s.id));
+    // A pre-SQLite project also carried MCP/skill id lists; those are not
+    // imported — projects link nothing now (links belong to profiles and
+    // threads), and a stale id in an old file is exactly what they held.
     for (const project of projects) {
       db.insert(schema.projects)
         .values({ id: project.id, name: project.name ?? "", cwd: project.cwd ?? "" })
         .onConflictDoNothing()
         .run();
-      for (const id of (project.mcpServerIds ?? []).filter((x) => haveMcp.has(x))) {
-        db.insert(schema.projectMcpServers)
-          .values({ projectId: project.id, mcpServerId: id })
-          .onConflictDoNothing()
-          .run();
-      }
-      for (const id of (project.skillIds ?? []).filter((x) => haveSkill.has(x))) {
-        db.insert(schema.projectSkills)
-          .values({ projectId: project.id, skillId: id })
-          .onConflictDoNothing()
-          .run();
-      }
     }
     for (const session of sessions) {
       db.insert(schema.sessions)

@@ -51,14 +51,16 @@ export function Row({
   subtitle,
   children,
 }: {
-  icon?: LucideIcon
+  /** A Lucide component, or an already-rendered element (a profile's logo). */
+  icon?: LucideIcon | React.ReactElement
   title: React.ReactNode
   subtitle?: React.ReactNode
   children?: React.ReactNode
 }) {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 sm:flex-nowrap">
-      {Icon && <Icon className="size-4 shrink-0 text-muted-foreground" />}
+      {Icon &&
+        (React.isValidElement(Icon) ? Icon : <Icon className="size-4 shrink-0 text-muted-foreground" />)}
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium">{title}</div>
         {subtitle && <div className="mt-0.5 text-xs break-all text-muted-foreground">{subtitle}</div>}

@@ -30,7 +30,11 @@ const str = (value: unknown): string | null =>
    package.json") for most agents, but several send the bare identifier
    ("Bash", "mcp__crm__search"). Treat the title as a name only when it looks
    like one, so a prose title never gets matched against the table below. */
-const NAME_RE = /^(mcp__)?[A-Za-z_][A-Za-z0-9_]*$/
+/* Hyphens and dots are part of a name too: an MCP server is registered as
+   `web-search`, so its tools arrive as `mcp__web-search__web_search`, and a
+   pattern that stopped at `[A-Za-z0-9_]` read that as prose — which made it
+   the row's title, verbatim. Prose has spaces; a name does not. */
+const NAME_RE = /^(mcp__)?[A-Za-z_][\w.-]*$/
 
 export function toolNameOf(item: Pick<ToolItem, "title">): string | null {
   const title = item.title.trim()
@@ -64,9 +68,17 @@ const NAME_KINDS: Record<string, ToolKind> = {
   search: "search",
   find: "search",
   webfetch: "fetch",
+  web_fetch: "fetch",
   fetch: "fetch",
+  fetch_url: "fetch",
+  fetch_page: "fetch",
+  read_url: "fetch",
   websearch: "fetch",
   web_search: "fetch",
+  search_web: "fetch",
+  exa_search: "fetch",
+  brave_web_search: "fetch",
+  tavily_search: "fetch",
   task: "other",
   agent: "other",
   todowrite: "other",
@@ -80,10 +92,30 @@ const NAME_KINDS: Record<string, ToolKind> = {
     titles are prose, so a call whose kind the adapter omitted used to fall all
     the way through to "other" even though its name was sitting in `_meta`. */
 export function toolKindOf(item: Pick<ToolItem, "title" | "toolKind" | "meta">): ToolKind {
-  if (item.toolKind) return item.toolKind
-  const name = toolIdentity(item)
-  if (!name) return "other"
-  return NAME_KINDS[name.replace(/^mcp__/, "")] ?? "other"
+  /* `other` is the protocol saying nothing, not saying "other": Claude Code
+     files every MCP tool under it, so a name that does say something — a
+     `web_fetch`, a `search` — is the better answer and gets the icon. Any
+     other kind the agent sent stands. */
+  if (item.toolKind && item.toolKind !== "other") return item.toolKind
+  const name = bareIdentity(item)
+  if (!name) return item.toolKind ?? "other"
+  return NAME_KINDS[name] ?? item.toolKind ?? "other"
+}
+
+/**
+ * The tool's own name with any MCP server prefix removed — `web_search` out of
+ * `mcp__web-search__web_search` (Claude Code, OpenCode) or
+ * `mcp.web-search.web_search` (Codex). An MCP server's tool is named by what
+ * it does exactly as a built-in is, and every reader below that asks "is this a
+ * web search" wants that name, not the server's. Bare names pass through.
+ */
+export function toolLeafName(name: string): string {
+  const dotted = /^mcp\.[^.]+\.(.+)$/.exec(name)
+  if (dotted) return dotted[1]
+  if (!name.startsWith("mcp__")) return name
+  const rest = name.slice("mcp__".length)
+  const sep = rest.indexOf("__")
+  return sep === -1 ? rest : rest.slice(sep + 2)
 }
 
 /**
@@ -164,6 +196,12 @@ const TARGET_KEYS = [
  * repeating "bash" before the command only costs horizontal space.
  */
 export function toolTarget(item: Pick<ToolItem, "title" | "rawInput" | "meta" | "toolKind">): string {
+  /* A web search is about its query and a fetch about its page, whichever
+     server answered — these come before the MCP rule below, which would
+     otherwise print `web-search · web search` for every one of them. */
+  const web = webInput(item)
+  if (web?.query) return `“${firstLine(web.query)}”`
+  if (web?.url) return displayUrl(web.url)
   // An MCP call names its server first whichever runtime sent it, and its
   // arguments are the server's business — `{"server":"crm","tool":"search"}`
   // is not a target, it is the address of one.
@@ -334,6 +372,16 @@ export function toolHeading(
   }
 ): ToolHeading {
   const target = toolTarget({ ...item, title: item.title ?? "" })
+  /* The web has its own two verbs, and they beat whatever the agent titled
+     the call: Claude Code's built-in `WebSearch` titles itself `"query"` in
+     quotes and the harness's server `mcp__web-search__web_search`, and one
+     row should read the same as the other. A search is not a "Fetch" (the
+     kind the name table files it under, for the globe icon) and a page is
+     not a file, so neither goes through the badge logic below: the query or
+     the address IS the row. */
+  const web = webInput({ ...item, title: item.title ?? "" })
+  if (web?.query) return { title: `Search the web for ${target}`, prose: true }
+  if (web?.url) return { title: `Fetch ${target}`, prose: false }
   const description = toolDescription(item)
   /* The file badge: if the target IS a file, that is the chip, and the
      description's own mention of the path is cut so the sentence doesn't repeat
@@ -895,10 +943,14 @@ export function toolIdentity(item: Pick<ToolItem, "title" | "meta">): string | n
   return NAME_RE.test(title) ? title.toLowerCase() : null
 }
 
-/** The identity with any MCP prefix stripped — `edit`, `todowrite`, `task`. */
+/** The identity with any MCP server prefix stripped — `edit`, `todowrite`,
+    `task`, and `web_search` out of `mcp__web-search__web_search`. It used to
+    cut only the literal `mcp__`, which left `web-search__web_search` — a name
+    nothing recognised, so the harness's own search server fell through to the
+    generic MCP layout: an arguments table and one block of text. */
 const bareIdentity = (item: Pick<ToolItem, "title" | "meta">): string | null => {
   const name = toolIdentity(item)
-  return name ? name.replace(/^mcp__/, "") : null
+  return name ? toolLeafName(name) : null
 }
 
 const isOneOf = (item: Pick<ToolItem, "title" | "meta">, names: string[]): boolean => {
@@ -1183,40 +1235,172 @@ export interface SubagentCall {
   description?: string
   prompt?: string
   model?: string
-  /** Codex only: `started` | `interacted` | `interrupted`. */
+  /** Codex (legacy) only: `started` | `interacted` | `interrupted`. */
   activity?: string
+  /** Codex (legacy): the thread the row is about. On a lifecycle row that is
+      the CHILD; on a collaboration row it is the SENDER — the parent — and
+      the children are `receiverThreadIds`. */
   threadId?: string
+  /** Codex (legacy) collaboration rows: which of the multi-agent tools —
+      `spawnAgent`, `sendInput`, `closeAgent`, … */
+  tool?: string
+  receiverThreadIds?: string[]
+  /** Codex (legacy): this row is the child's start — the anchor the other
+      rows about the same thread group under. */
+  started?: boolean
+  /** Claude Code: how long the subagent ran, from its last progress beat. */
+  elapsedSeconds?: number
+  /** OpenCode: the child session the task ran in, and how it ended. */
+  sessionId?: string
+  state?: string
+  /** OpenCode: the report, unwrapped from the `<task>` block the runtime
+      returns it in — the raw output is that XML. */
+  result?: string
 }
 
-export function extractSubagent(item: Pick<ToolItem, "title" | "meta" | "rawInput">): SubagentCall | null {
+/**
+ * This is a subagent's launch — the row the child's work groups under —
+ * rather than merely a row *about* one. The distinction only matters for
+ * Codex's legacy lifecycle rows, where "Interact with subagent x" is about a
+ * child that "Start subagent x" already introduced.
+ */
+export function isSubagentLaunch(item: Pick<ToolItem, "title" | "meta" | "rawInput">): boolean {
+  const call = extractSubagent(item)
+  if (!call) return false
+  if (call.activity !== undefined) return call.started === true
+  if (call.tool !== undefined) return call.tool === "spawnAgent"
+  return true
+}
+
+export function extractSubagent(item: Pick<ToolItem, "title" | "meta" | "rawInput" | "rawOutput">): SubagentCall | null {
   const codex = asRecord(asRecord(asRecord(item.meta)?.codex)?.subagent)
   if (codex) {
     const path = str(codex.path)
+    const activity = str(codex.activity) ?? undefined
     return {
       agentType: path?.split("/").filter(Boolean).at(-1) ?? undefined,
-      activity: str(codex.activity) ?? undefined,
+      activity,
       threadId: str(codex.threadId) ?? undefined,
+      started: activity === "started",
     }
   }
   const collab = asRecord(asRecord(asRecord(item.meta)?.codex)?.collaboration)
   const input = asRecord(item.rawInput)
   if (collab) {
+    const receivers = collab.receiverThreadIds ?? input?.receiverThreadIds
     return {
       agentType: str(collab.tool) ?? undefined,
+      tool: str(collab.tool) ?? undefined,
       prompt: str(input?.prompt) ?? undefined,
+      model: str(input?.model) ?? undefined,
       threadId: str(collab.senderThreadId) ?? undefined,
+      receiverThreadIds: Array.isArray(receivers)
+        ? receivers.filter((id): id is string => typeof id === "string")
+        : undefined,
     }
   }
-  if (!isOneOf(item, ["task", "agent", "subagent", "dispatch_agent"])) return null
+  const claude = asRecord(asRecord(item.meta)?.claudeCode)
+  const response = asRecord(claude?.toolResponse)
+  if (claude?.subagent !== true && !isOneOf(item, ["task", "agent", "subagent", "dispatch_agent"])) {
+    return null
+  }
+  /* OpenCode wraps the child's report in `<task id state>…<task_result>…`
+     and reports the child session in `rawOutput.metadata`; Claude Code's
+     `rawOutput` is the report itself. */
+  const output = asRecord(item.rawOutput)
+  const wrapper = parseTaskWrapper(str(output?.output))
+  const model = asRecord(asRecord(output?.metadata)?.model)
+  const elapsed = response?.elapsedTimeSeconds
   return {
-    agentType: str(input?.subagent_type) ?? str(input?.subagentType) ?? str(input?.agent) ?? undefined,
+    agentType:
+      str(input?.subagent_type) ??
+      str(input?.subagentType) ??
+      str(input?.agent) ??
+      str(response?.subagentType) ??
+      undefined,
     description: str(input?.description) ?? undefined,
     prompt: str(input?.prompt) ?? undefined,
-    model: str(input?.model) ?? undefined,
+    model: str(input?.model) ?? str(model?.modelID) ?? undefined,
+    elapsedSeconds: typeof elapsed === "number" ? elapsed : undefined,
+    sessionId: wrapper?.id ?? str(asRecord(output?.metadata)?.sessionId) ?? undefined,
+    state: wrapper?.state,
+    result: wrapper?.result,
   }
 }
 
-// ─── Web search ──────────────────────────────────────────────────────────────
+/**
+ * OpenCode's task output: `<task id="ses_x" state="completed">…<task_result>
+ * …</task_result></task>` (or `<task_error>`). Tolerates an unterminated block
+ * — the same bargain `TASK_NOTIFICATION_RE` makes — so a report renders while
+ * it is still streaming. Null when the text is not that block, which is what
+ * lets every other runtime's plain-text report through untouched.
+ */
+const TASK_WRAPPER_RE = /^\s*<task\b([^>]*)>([\s\S]*?)(?:<\/task>|$)/
+const attr = (attrs: string, name: string): string | undefined =>
+  new RegExp(`\\b${name}="([^"]*)"`).exec(attrs)?.[1]
+
+export function parseTaskWrapper(
+  text: string | null | undefined
+): { id?: string; state?: string; result?: string } | null {
+  if (!text) return null
+  const match = TASK_WRAPPER_RE.exec(text)
+  if (!match) return null
+  const body = match[2]
+  const result = tagText(body, "task_result") ?? tagText(body, "task_error") ?? body.trim()
+  return {
+    id: attr(match[1], "id"),
+    state: attr(match[1], "state"),
+    result: result || undefined,
+  }
+}
+
+// ─── Nesting ─────────────────────────────────────────────────────────────────
+
+/**
+ * The transcript item an update belongs to, when it is a subagent's and not
+ * the thread's own — read out of the vendor `_meta` that says so.
+ *
+ * Two shapes. Claude Code stamps a child's every update with
+ * `_meta.claudeCode.parentToolUseId`, the `toolCallId` of the Task that
+ * launched it — so the owner is that tool item. OpenCode (from its
+ * `acp-subagent-events` branch) projects a child session onto the root with
+ * `_meta["opencode/child-session"] = {id, parentID, depth, title}` — no tool
+ * call names the child, so the owner is the child session itself, under the
+ * same `subagent:<sessionId>` id the store gives a session announced by the
+ * ACP subagent RFD. Codex's RFD-native children never come through here: their
+ * updates arrive on the child's own session id, which the store reads first.
+ *
+ * Called from the reducer, the way `applyTerminalMeta` is: the store passes
+ * `_meta` through and does not read it.
+ */
+export function parentToolIdOf(meta: unknown): string | undefined {
+  const record = asRecord(meta)
+  const claude = str(asRecord(record?.claudeCode)?.parentToolUseId)
+  if (claude) return claude
+  const opencode = str(asRecord(record?.["opencode/child-session"])?.id)
+  if (opencode) return subagentItemId(opencode)
+  return undefined
+}
+
+/** The item id of a subagent session — the RFD's `subagentSessionId`, or the
+    child session OpenCode names in `_meta`. One scheme for both so a `task`
+    tool that later reports its child session id can be matched to it. */
+export const subagentItemId = (sessionId: string): string => `subagent:${sessionId}`
+
+/**
+ * A child tool's title without the parent's name in front of it. OpenCode's
+ * projection prefixes every child tool call with the child's title —
+ * `Explore: printf hello` — which reads twice inside a rail that is already
+ * headed by that name.
+ */
+export function childToolTitle(item: Pick<ToolItem, "title" | "meta">): string {
+  const child = asRecord(asRecord(item.meta)?.["opencode/child-session"])
+  const prefix = str(child?.title)
+  if (prefix && item.title.startsWith(`${prefix}: `)) return item.title.slice(prefix.length + 2)
+  return item.title
+}
+
+// ─── Web search and web fetch ────────────────────────────────────────────────
 
 /**
  * A search of the web, as opposed to a search of the repo — two different acts
@@ -1227,7 +1411,20 @@ export function extractSubagent(item: Pick<ToolItem, "title" | "meta" | "rawInpu
  * Codex also uses this one call for three different actions (a query, opening
  * a page, finding within a page), which is why `action` is separate from
  * `query` rather than folded into it.
+ *
+ * The runtime does not matter: Claude Code's built-in `WebSearch`, OpenCode's
+ * `websearch`, Codex's browsing and any MCP server whose tool is called
+ * `web_search` (the harness's own included) all read the same way here, and
+ * the result list is parsed out of whatever shape the tool answered in.
  */
+export interface WebResult {
+  title: string
+  url: string
+  /** The snippet under the link, when the tool returned one. Whitespace is
+      collapsed — a snippet arrives as page text with paragraph breaks in it. */
+  snippet?: string
+}
+
 export interface WebSearchCall {
   query?: string
   /** `search` | `openPage` | `findInPage`, when the runtime distinguishes. */
@@ -1236,8 +1433,56 @@ export interface WebSearchCall {
   pattern?: string
   allowedDomains?: string[]
   blockedDomains?: string[]
-  results: { title: string; url: string }[]
+  results: WebResult[]
+  /** What the tool wrote *besides* the result list — Claude Code's built-in
+      `WebSearch` answers the query in prose after its links, and a fetcher
+      that summarises returns only prose. Never a copy of the result lines. */
+  summary?: string
+  /** The tool's own failure text, when it folded an error into its output
+      instead of failing the call (the harness's server does exactly that so
+      the agent can react). */
+  error?: string
 }
+
+/** A page read off the web: Claude Code's `WebFetch`, OpenCode's `webfetch`,
+    an MCP `web_fetch`, or anything ACP filed under `kind: "fetch"` with a URL. */
+export interface WebFetchCall {
+  url: string
+  /** What the agent asked of the page (Claude Code's `WebFetch` carries a
+      `prompt` and answers it, rather than returning the page). */
+  prompt?: string
+  /** The page as the tool returned it — markdown for most fetchers. */
+  text: string
+  truncated: boolean
+}
+
+const WEB_SEARCH_NAMES = [
+  "websearch",
+  "web_search",
+  "search_web",
+  "web-search",
+  "exa_search",
+  "brave_web_search",
+  "brave_search",
+  "tavily_search",
+  "google_search",
+  "bing_search",
+  "duckduckgo_search",
+  "perplexity_search",
+]
+
+const WEB_FETCH_NAMES = [
+  "webfetch",
+  "web_fetch",
+  "fetch_url",
+  "fetch_page",
+  "web-fetch",
+  "read_url",
+  "read_page",
+  "exa_fetch",
+  "tavily_extract",
+  "fetch",
+]
 
 const strList = (value: unknown): string[] | undefined => {
   if (!Array.isArray(value)) return undefined
@@ -1245,27 +1490,161 @@ const strList = (value: unknown): string[] | undefined => {
   return out.length > 0 ? out : undefined
 }
 
-/** `Title (https://…)` — the one line format every runtime's web results use
-    once they reach ACP, because that is what the adapters format them into. */
-const HIT_RE = /^(.*?)\s*\((https?:\/\/[^\s)]+)\)\s*$/
+const isHttp = (value: string | null | undefined): value is string =>
+  typeof value === "string" && /^https?:\/\//i.test(value)
 
-function webResults(item: Pick<ToolItem, "rawOutput" | "content">): { title: string; url: string }[] {
-  const structured = asRecord(item.rawOutput)?.results
-  if (Array.isArray(structured)) {
-    const hits = structured.flatMap((entry) => {
-      const record = asRecord(entry)
-      const title = str(record?.title)
-      const url = str(record?.url)
-      return title && url ? [{ title, url }] : []
-    })
-    if (hits.length > 0) return hits
+/** A URL as a row prints it: host plus a trimmed path, no scheme, no query. */
+export function displayUrl(url: string, max = 60): string {
+  try {
+    const parsed = new URL(url)
+    const path = parsed.pathname === "/" ? "" : parsed.pathname.replace(/\/$/, "")
+    const shown = `${parsed.host.replace(/^www\./, "")}${path}`
+    return shown.length > max ? `${shown.slice(0, max - 1)}…` : shown
+  } catch {
+    return url.length > max ? `${url.slice(0, max - 1)}…` : url
   }
-  return stringifyOutput(item.rawOutput ?? textOf(item.content), 40_000)
-    .text.split("\n")
-    .flatMap((line) => {
-      const hit = HIT_RE.exec(line.trim())
-      return hit && hit[1] ? [{ title: hit[1], url: hit[2] }] : []
-    })
+}
+
+/** The host a URL belongs to, `www.` dropped — what a source chip is labelled
+    with. Empty for a string that is not a URL. */
+export function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "")
+  } catch {
+    return ""
+  }
+}
+
+/**
+ * The query or the address a web call was made with, read off the input alone
+ * — enough for a row heading, which has no output yet. Null for anything that
+ * is not a web search or a web fetch.
+ */
+export function webInput(
+  item: Pick<ToolItem, "title" | "meta" | "rawInput" | "toolKind">
+): { query?: string; url?: string } | null {
+  const input = asRecord(item.rawInput)
+  const action = asRecord(input?.action)
+  const codex = str(input?.type) === "webSearch" || action !== null
+  if (codex || isOneOf(item, WEB_SEARCH_NAMES)) {
+    const queries = strList(action?.queries)
+    const query =
+      str(action?.query) ?? (queries ? queries.join(", ") : null) ?? str(input?.query) ?? undefined
+    const url = str(action?.url) ?? str(input?.url) ?? undefined
+    return { query, url }
+  }
+  const url = str(input?.url)
+  if (isHttp(url) && (isOneOf(item, WEB_FETCH_NAMES) || toolKindOf(item) === "fetch")) return { url }
+  return null
+}
+
+/** `Title (https://…)` — one line per hit, which is how the ACP adapters
+    format a runtime's native results. */
+const HIT_RE = /^(.*?)\s*\((https?:\/\/[^\s)]+)\)\s*$/
+/** `[Title](https://…)`, optionally as a list item. */
+const MD_LINK_RE = /^(?:[-*+]|\d+\.)?\s*\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/
+/** `N. Title` — the head of a numbered block whose next line is the URL and
+    whose remaining lines are the snippet: the harness's own server and the
+    cc-cli proxy both write results this way. */
+const NUMBERED_RE = /^\s*(\d+)\.\s+(.+)$/
+
+const collapse = (text: string): string => text.replace(/\s+/g, " ").trim()
+
+/** Results as a structured list, in any of the shapes a tool answers with:
+    `[{title, url, description|snippet}]` flat, or Claude Code's native
+    `[{content: [{title, url}]}]` where each entry holds one page of hits. */
+function structuredResults(value: unknown): WebResult[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((entry) => {
+    const record = asRecord(entry)
+    if (!record) return []
+    if (Array.isArray(record.content)) return structuredResults(record.content)
+    const title = str(record.title)
+    const url = str(record.url)
+    if (!title || !isHttp(url)) return []
+    const snippet = str(record.description) ?? str(record.snippet) ?? str(record.text)
+    return [{ title, url, ...(snippet ? { snippet: collapse(snippet) } : {}) }]
+  })
+}
+
+/** Results out of prose: numbered blocks first (they carry snippets), then
+    the two one-line forms. Each parser only answers when it finds something,
+    so a page's text — which is not a result list — yields nothing. */
+export function parseWebResults(text: string): WebResult[] {
+  const lines = text.split("\n")
+  const numbered: WebResult[] = []
+  let current: { title: string; url?: string; snippet: string[] } | null = null
+  const flush = () => {
+    if (current?.url) {
+      const snippet = collapse(current.snippet.join(" "))
+      numbered.push({ title: current.title, url: current.url, ...(snippet ? { snippet } : {}) })
+    }
+    current = null
+  }
+  for (const raw of lines) {
+    const head = NUMBERED_RE.exec(raw)
+    if (head && (current === null || current.url !== undefined)) {
+      flush()
+      current = { title: head[2].trim(), snippet: [] }
+      continue
+    }
+    if (!current) continue
+    const line = raw.trim()
+    if (current.url === undefined) {
+      if (isHttp(line)) current.url = line
+      else current.title = collapse(`${current.title} ${line}`)
+      continue
+    }
+    current.snippet.push(line)
+  }
+  flush()
+  if (numbered.length > 0) return numbered
+
+  return lines.flatMap((raw) => {
+    const line = raw.trim()
+    const hit = HIT_RE.exec(line) ?? MD_LINK_RE.exec(line)
+    return hit && hit[1] ? [{ title: hit[1].trim(), url: hit[2] }] : []
+  })
+}
+
+/** Where a runtime puts a search's structured answer: `rawOutput` for most,
+    and `_meta.claudeCode.toolResponse` for Claude Code's built-in `WebSearch`,
+    whose `results[]` mixes `{content: [{title, url}]}` pages with the prose
+    strings of its own answer. */
+function webOutputRecord(item: Pick<ToolItem, "rawOutput" | "meta">): Record<string, unknown> | null {
+  return asRecord(item.rawOutput) ?? asRecord(asRecord(asRecord(item.meta)?.claudeCode)?.toolResponse)
+}
+
+function webResults(item: Pick<ToolItem, "rawOutput" | "content" | "meta">): WebResult[] {
+  const output = webOutputRecord(item)
+  const structured = structuredResults(output?.results ?? output?.hits ?? output?.data)
+  if (structured.length > 0) return structured
+  return parseWebResults(stringifyOutput(item.rawOutput ?? textOf(item.content), 60_000).text)
+}
+
+/** The prose a search tool wrote around its links: the strings among a
+    structured `results[]`, else the output text with the result lines cut
+    out. Empty when the output was nothing but the list. */
+function webSummary(item: Pick<ToolItem, "rawOutput" | "content" | "meta">, results: WebResult[]): string | undefined {
+  const structured = webOutputRecord(item)?.results
+  if (Array.isArray(structured)) {
+    const prose = structured.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+    if (prose.length > 0) return prose.join("\n\n").trim()
+  }
+  if (results.length === 0) return undefined
+  const urls = new Set(results.map((hit) => hit.url))
+  const lines = stringifyOutput(item.rawOutput ?? textOf(item.content), 60_000).text.split("\n")
+  const rest = lines.filter((raw) => {
+    const line = raw.trim()
+    const hit = HIT_RE.exec(line) ?? MD_LINK_RE.exec(line)
+    if (hit && urls.has(hit[2])) return false
+    if (NUMBERED_RE.test(line) || urls.has(line)) return false
+    return true
+  })
+  // A numbered block's snippet lines are not prose either; only keep what is
+  // left when the list itself was the one-line form.
+  const text = rest.join("\n").trim()
+  return text && !results.some((hit) => hit.snippet && text.includes(hit.snippet.slice(0, 40))) ? text : undefined
 }
 
 const textOf = (content: ToolItem["content"]): string =>
@@ -1274,14 +1653,21 @@ const textOf = (content: ToolItem["content"]): string =>
     .filter(Boolean)
     .join("\n")
 
+/** A tool that folded its failure into its output rather than failing the
+    call — the harness's own server does, so the agent can react. */
+const foldedError = (text: string): string | undefined => {
+  const line = text.trim().split("\n")[0] ?? ""
+  return /^error:/i.test(line) ? line.replace(/^error:\s*/i, "") : undefined
+}
+
 export function extractWebSearch(item: ToolItem): WebSearchCall | null {
   const input = asRecord(item.rawInput)
   const action = asRecord(input?.action)
   const codex = str(input?.type) === "webSearch" || action !== null
-  const named = isOneOf(item, ["websearch", "web_search", "search_web", "exa_search"])
-  if (!codex && !named) return null
+  if (!codex && !isOneOf(item, WEB_SEARCH_NAMES)) return null
 
   const queries = strList(action?.queries)
+  const results = webResults(item)
   return {
     query:
       str(action?.query) ??
@@ -1291,9 +1677,24 @@ export function extractWebSearch(item: ToolItem): WebSearchCall | null {
     action: str(action?.type) ?? undefined,
     url: str(action?.url) ?? str(input?.url) ?? undefined,
     pattern: str(action?.pattern) ?? undefined,
-    allowedDomains: strList(input?.allowed_domains),
-    blockedDomains: strList(input?.blocked_domains),
-    results: webResults(item),
+    allowedDomains: strList(input?.allowed_domains ?? input?.allowedDomains),
+    blockedDomains: strList(input?.blocked_domains ?? input?.blockedDomains),
+    results,
+    summary: webSummary(item, results),
+    error: results.length === 0 ? foldedError(toolOutputText(item, 2_000).text) : undefined,
+  }
+}
+
+export function extractWebFetch(item: ToolItem): WebFetchCall | null {
+  const web = webInput(item)
+  if (!web?.url || web.query) return null
+  const input = asRecord(item.rawInput)
+  const { text, truncated } = toolOutputText(item, 60_000)
+  return {
+    url: web.url,
+    prompt: str(input?.prompt) ?? undefined,
+    text,
+    truncated,
   }
 }
 
@@ -1456,6 +1857,7 @@ export type ToolView =
   | "mcp"
   | "subagent"
   | "websearch"
+  | "webfetch"
   | "questions"
   | "findings"
   | "plan"
@@ -1478,6 +1880,7 @@ export function toolViewOf(item: ToolItem): ToolView {
   if (extractSubagent(item)) return "subagent"
   if (extractSkill(item)) return "skill"
   if (extractWebSearch(item)) return "websearch"
+  if (extractWebFetch(item)) return "webfetch"
   if (extractMcpCall(item)) return "mcp"
   // Only after the specialised views: Codex files a terminal under `execute`
   // and an MCP call under `execute` too, and both want their own layout.

@@ -21,13 +21,6 @@ writeJson(join(process.env.DAEDALUS_DATA_DIR!, "agents.json"), [
     args: [join(dirname(fileURLToPath(import.meta.url)), "fake-agent.mjs")],
     env: { FAKE_KEY: "{apiKey}", FAKE_EMPTY: "{baseUrl}" },
   },
-  {
-    id: "fake-no-fork",
-    name: "Fake without history",
-    command: "node",
-    args: [join(dirname(fileURLToPath(import.meta.url)), "fake-agent.mjs")],
-    env: { FAKE_NO_FORK: "1" },
-  },
 ]);
 
 const { SessionManager } = await import("../src/sessions.js");
@@ -56,23 +49,22 @@ class MockWs extends EventEmitter {
 const profile: Profile = {
   id: "p1",
   name: "test",
-  agentId: "fake",
+  agents: { fake: {} },
   baseUrl: "",
   apiKey: "sk-test",
   models: [],
   defaultModel: "",
   smallModel: "",
-  webSearch: { enabled: false },
-  knowledge: { enabled: false },
+  logoUrl: "",
+  mcpServerIds: [],
+  skillIds: [],
+  commandIds: [],
 };
 const project = {
   id: "w1",
   name: "test-ws",
   cwd: "/tmp/daedalus-test-data/ws",
   description: null,
-  mcpServerIds: [],
-  skillIds: [],
-  commandIds: [],
 };
 
 const send = (ws: MockWs, command: ThreadCommand) =>
@@ -87,7 +79,7 @@ const manager = new SessionManager({}, 1);
 
 // --- the handshake happens server-side, before anyone attaches ---
 
-const session = manager.create(profile, project);
+const session = manager.create(profile, "fake", project);
 await session.bridge!.ready;
 assert.equal(session.liveAcpSessionId, "acp-123", "the server ran session/new itself");
 // It is recorded straight away — a thread that keeps no id at all is a thread
@@ -119,6 +111,38 @@ assert.equal(session.acpSessionId, "acp-123", "the first turn runs on the sessio
 assert.equal(session.acpSessionProvisional, false, "a turn promotes the id to a proven one");
 assert.equal(session.bridge!.promptActive, false);
 assert.ok(ws1.of("update").length > 0, "the transcript streamed");
+// --- subagents, both mechanisms ---
+// claude-agent-acp's: the child's prose is sent only to a client that claimed
+// `_meta["subagent-transcript"]` at initialize, so seeing it at all is the
+// assertion that the handshake did — and that `_meta` reaches the host whole.
+const meta = (e: { update: { _meta?: unknown } }) =>
+  (e.update._meta as { claudeCode?: { parentToolUseId?: string } } | undefined)?.claudeCode;
+assert.ok(
+  ws1.of("update").some((e) => e.update.sessionUpdate === "agent_message_chunk" && meta(e)?.parentToolUseId === "t7"),
+  "a subagent's prose arrives, attributed to its Task",
+);
+assert.ok(
+  ws1.of("update").some(
+    (e) => e.update.sessionUpdate === "tool_call_update" && e.update.toolCallId === "t7a" && meta(e)?.parentToolUseId === "t7",
+  ),
+  "a late attribution rides the update, verbatim",
+);
+// The RFD's: the agent sends these only to a client that claimed `subagents`;
+// the SDK's parser would have dropped `subagent_spawned` as an unknown variant;
+// and the child's own updates are told apart by the session id they came on.
+assert.ok(
+  ws1.of("update").some((e) => e.update.sessionUpdate === "subagent_spawned"),
+  "the RFD's spawn update survives the SDK's closed union",
+);
+assert.deepEqual(
+  ws1.of("update").filter((e) => e.sessionId !== undefined).map((e) => e.sessionId),
+  ["sub-1", "sub-1"],
+  "the child's updates carry its session id, the thread's own carry none",
+);
+assert.ok(
+  ws1.of("update").some((e) => e.update.sessionUpdate === "subagent_state_update"),
+  "…and the child's terminal state arrives on the parent",
+);
 assert.deepEqual(
   ws1.of("reply").map((r) => r.id),
   [1],
@@ -129,11 +153,11 @@ assert.equal(ws1.of("turn_started").length, 0);
 assert.ok(ws1.of("ttft")[0], "time to first update is measured server-side");
 assert.ok(ws1.of("turn_ended")[0].usage, "usage rides the turn end");
 
-// --- and the second turn, which is the first one there is a checkpoint for ---
+// --- and a second turn on the same session ---
 
 send(ws1, { id: 2, cmd: "prompt", text: "and again" });
 await waitFor(() => ws1.of("turn_ended").length === 2, "the second turn");
-assert.equal(session.acpSessionId, "acp-fork-1", "now the fork carries the conversation");
+assert.equal(session.acpSessionId, "acp-123", "the session id is unchanged");
 assert.equal(session.acpSessionProvisional, false);
 
 // --- reattach: the journaled events come back, in order ---
@@ -145,6 +169,10 @@ assert.equal(manager.attach(session.id, ws2 as never, 0), null, "attach should s
 const journaled = (ws: MockWs) =>
   ws.events.filter((e) => e.ev === "update" || e.ev === "session_config" || e.ev === "turn_started" || e.ev === "turn_ended");
 assert.deepEqual(journaled(ws2), manager.journal(session.id)!.events, "a replay is the log");
+assert.ok(
+  ws2.of("update").some((e) => e.sessionId === "sub-1"),
+  "a child's session id is journaled with its update, so a replay nests it again",
+);
 assert.deepEqual(
   journaled(ws2).filter((e) => e.ev !== "turn_started"),
   journaled(ws1),
@@ -218,21 +246,121 @@ assert.equal(b.of("turn_ended").length, 2);
 assert.equal(session.bridge!.promptActive, false);
 
 // Steering: a second prompt sent mid-turn must not end the turn early — the
-// indicator belongs to the whole turn, not to the first prompt in it.
+// indicator belongs to the whole turn, not to the first prompt in it. It has
+// to say `steer` now: a bare prompt sent mid-turn is queued instead.
 const before2 = a.of("turn_ended").length;
 send(a, { id: 4, cmd: "prompt", text: "one" });
-send(a, { id: 5, cmd: "prompt", text: "two" });
+send(a, { id: 5, cmd: "prompt", text: "two", steer: true });
 await waitFor(() => a.of("turn_ended").length >= before2 + 1, "the steered turn ends");
 await new Promise((r) => setTimeout(r, 200));
 assert.equal(a.of("turn_ended").length, before2 + 1, "two prompts, exactly one turn end");
+
+// --- the queue ---
+
+const allow = { outcome: { outcome: "selected", optionId: "allow" } } as const;
+const lastQueue = (ws: MockWs) => ws.of("queue").at(-1)?.items ?? [];
+const park = async (n: number) => {
+  send(a, { id: 1000 + n, cmd: "prompt", text: "needs permission" });
+  await waitFor(() => b.of("permission").length === n, `turn ${n} parks on a permission`);
+  return b.of("permission").at(-1)!.requestId;
+};
+
+// A prompt sent while a turn is running is queued, not steered. The reply says
+// so, and the queue reaches every peer — the one that asked included — as the
+// whole list, because the ids are the server's.
+const qEnded = a.of("turn_ended").length;
+const qStarted = a.of("turn_started").length;
+let permission = await park(2);
+send(b, { id: 21, cmd: "prompt", text: "queued one" });
+await waitFor(() => b.of("reply").some((r) => r.id === 21), "the busy prompt is answered");
+const queuedReply = b.of("reply").find((r) => r.id === 21)!.result as { queued?: boolean; itemId?: string };
+assert.equal(queuedReply.queued, true, "a mid-turn prompt is queued");
+assert.equal(lastQueue(a).length, 1, "the other peer sees the queue");
+assert.equal(lastQueue(b).length, 1, "…and so does the one that asked");
+assert.equal(a.of("turn_started").length, qStarted, "nothing was sent to the agent");
+send(a, { id: 22, cmd: "queue_add", text: "queued two" });
+await waitFor(() => lastQueue(a).length === 2, "queue_add appends");
+send(b, { id: 23, cmd: "queue_update", itemId: lastQueue(a)[0].id, text: "queued one!" });
+await waitFor(() => lastQueue(a)[0]?.text === "queued one!", "an edit reaches every peer");
+assert.deepEqual(lastQueue(a).map((i) => i.text), ["queued one!", "queued two"], "in order");
+// The turn ends cleanly: everything queued goes out as ONE prompt, with no
+// origin peer — so both peers draw the bubble from turn_started.
+send(b, { cmd: "answer_permission", requestId: permission, response: allow });
+await waitFor(() => a.of("turn_ended").length >= qEnded + 2, "the parked turn and the drained turn end");
+const ended = a.of("turn_ended").slice(qEnded);
+assert.equal(ended[0].continued, true, "the turn before a drain says the queue follows it");
+assert.equal(ended[1].continued, undefined, "the drained turn is followed by nothing");
+assert.equal(a.of("turn_started").at(-1)!.text, "queued one!\n\nqueued two", "combined, blank-line separated");
+assert.equal(b.of("turn_started").at(-1)!.text, "queued one!\n\nqueued two", "…on every peer");
+assert.deepEqual(lastQueue(a), [], "the queue is empty after the drain");
+const journalAfterDrain = manager.journal(session.id)!.events;
+const continuedAt = journalAfterDrain.findIndex((e) => e.ev === "turn_ended" && e.continued);
+assert.equal(journalAfterDrain[continuedAt + 1].ev, "turn_started", "the drain is journaled right after the turn it follows");
+
+// "Send now" on one item: the running turn is cancelled, that item goes out in
+// its place, the rest stays queued — and drains when the new turn ends.
+permission = await park(3);
+send(a, { id: 31, cmd: "queue_add", text: "a1" });
+send(a, { id: 32, cmd: "queue_add", text: "b1" });
+await waitFor(() => lastQueue(a).length === 2, "two queued");
+const sEnded = b.of("turn_ended").length;
+const sStarted = b.of("turn_started").length;
+send(a, { id: 33, cmd: "queue_send_now", itemId: lastQueue(a)[1].id });
+await waitFor(() => a.of("reply").some((r) => r.id === 33), "send now answers once the new turn is dispatched");
+assert.ok("turnId" in (a.of("reply").find((r) => r.id === 33)!.result as object), "…with the new turn's id");
+const cancelled = b.of("turn_ended")[sEnded];
+assert.equal(cancelled.error, undefined, "a cancelled turn is not a failure");
+assert.equal(cancelled.continued, undefined, "…and does not drain the queue on its own");
+assert.equal(b.of("turn_started")[sStarted].text, "b1", "only the chosen item was sent");
+// The fake answers b1 in the same tick, so a1 may already have drained by
+// now: what is asserted is the sequence the queue went through, not a snapshot.
+await waitFor(() => b.of("turn_ended").length >= sEnded + 3, "b1 ends cleanly and a1 follows");
+const queueHistory = a.of("queue").map((q) => q.items.map((i) => i.text).join(","));
+const afterSendNow = queueHistory.lastIndexOf("a1,b1");
+assert.deepEqual(queueHistory.slice(afterSendNow + 1), ["a1", ""], "the rest stayed queued until b1's turn ended");
+assert.equal(b.of("turn_ended")[sEnded + 1].continued, true);
+assert.equal(b.of("turn_started")[sStarted + 1].text, "a1", "the remainder drained after the sent-now turn");
+assert.deepEqual(lastQueue(a), []);
+
+// Steer: inject one queued item into the running turn without stopping it.
+permission = await park(4);
+send(a, { id: 41, cmd: "queue_add", text: "s1" });
+await waitFor(() => lastQueue(a).length === 1, "one queued");
+const stEnded = a.of("turn_ended").length;
+send(b, { id: 42, cmd: "queue_steer", itemId: lastQueue(a)[0].id });
+await waitFor(() => b.of("reply").some((r) => r.id === 42), "steer is answered");
+assert.equal(a.of("turn_started").at(-1)!.text, "s1", "the steered item reached every peer");
+assert.deepEqual(lastQueue(b), [], "…and left the queue");
+assert.equal(session.bridge!.promptActive, true, "steering keeps the turn open");
+send(a, { cmd: "answer_permission", requestId: permission, response: allow });
+await waitFor(() => a.of("turn_ended").length === stEnded + 1, "the turn ends");
+await new Promise((r) => setTimeout(r, 200));
+assert.equal(a.of("turn_ended").length, stEnded + 1, "a steer plus its turn is one turn end");
+
+// Stop parks the queue: nothing auto-follows a cancelled turn.
+await park(5);
+send(a, { id: 51, cmd: "queue_add", text: "parked" });
+await waitFor(() => lastQueue(a).length === 1, "one queued");
+const pEnded = a.of("turn_ended").length;
+const pStarted = a.of("turn_started").length;
+send(a, { id: 52, cmd: "cancel" });
+await waitFor(() => a.of("turn_ended").length === pEnded + 1, "stop ends the turn");
+await new Promise((r) => setTimeout(r, 200));
+assert.equal(a.of("turn_ended").at(-1)!.continued, undefined, "a stop is not a continuation");
+assert.equal(a.of("turn_started").length, pStarted, "nothing was sent after the stop");
+assert.deepEqual(lastQueue(a).map((i) => i.text), ["parked"], "the queue is still there");
+send(a, { id: 53, cmd: "queue_clear" });
+await waitFor(() => lastQueue(a).length === 0, "clear empties it");
+assert.equal(session.bridge!.promptActive, false);
 
 // Compaction. The fake agent stays silent about it unless the client claimed
 // `session.compaction` at initialize, so seeing the updates at all is the
 // assertion that we advertise it — and they are ordinary `update` events, which
 // is what puts them in the journal and back on screen after a reload.
 const beforeCompact = b.of("update").length;
+const beforeCompactEnded = a.of("turn_ended").length;
 send(a, { id: 6, cmd: "prompt", text: "please compact" });
-await waitFor(() => a.of("turn_ended").length >= 4, "the compaction turn ends");
+await waitFor(() => a.of("turn_ended").length > beforeCompactEnded, "the compaction turn ends");
 const compactionUpdates = b
   .of("update")
   .slice(beforeCompact)
@@ -284,7 +412,7 @@ send(tuner, { id: 7, cmd: "set_config_option", configId: "model", value: "smart"
 await waitFor(() => session.model === "smart", "a model change reaches the spawn record");
 tuner.close();
 
-await manager.respawn(session.id, { ...profile, name: "test2", defaultModel: "m2" }, project);
+await manager.respawn(session.id, { ...profile, name: "test2", defaultModel: "m2" }, "fake", project);
 assert.equal(session.model, "m2");
 assert.equal(session.exited, false);
 assert.ok(session.eventCount > 0, "the load replay refilled the log it cleared");
@@ -305,9 +433,9 @@ assert.equal(
 // first call is awaiting (`bridge.ready`), so the first route answered 500
 // "respawning" while the second one's thread came up fine. They queue now.
 {
-  const first = manager.respawn(session.id, profile, project);
+  const first = manager.respawn(session.id, profile, "fake", project);
   await new Promise((r) => setTimeout(r, 30)); // first spawn is up, handshake in flight
-  const second = manager.respawn(session.id, { ...profile, name: "test3" }, project);
+  const second = manager.respawn(session.id, { ...profile, name: "test3" }, "fake", project);
   const settled = await Promise.allSettled([first, second]);
   assert.deepEqual(
     settled.map((r) => r.status),
@@ -348,7 +476,7 @@ watcher.close();
 
 // An agent that dies holding a turn: the in-flight prompt is answered rather
 // than left hanging until the socket eventually closes.
-await manager.respawn(session.id, profile, project);
+await manager.respawn(session.id, profile, "fake", project);
 const doomed = new MockWs();
 assert.equal(manager.attach(session.id, doomed as never, 0), null);
 send(doomed, { id: 9, cmd: "prompt", text: "now crash" });
@@ -369,7 +497,7 @@ for (const [, reason] of doomed.closes) {
   assert.ok(Buffer.byteLength(reason ?? "", "utf8") <= 123, `close reason too long: ${reason}`);
 }
 
-await manager.respawn(session.id, profile, project);
+await manager.respawn(session.id, profile, "fake", project);
 
 // Soft delete keeps the row (and the acpSessionId that revives it); restore
 // puts it back as a plain retired thread; purge is what actually forgets.
@@ -396,7 +524,7 @@ assert.equal(manager.list().find((s) => s.id === session.id), undefined, "purge 
 // agent is blocked on it, and nothing else would ever ask again. It is not in
 // the log at all: it lives in the bridge's pending map, for exactly as long as
 // the agent is waiting.
-const reloading = manager.create(profile, project);
+const reloading = manager.create(profile, "fake", project);
 await reloading.bridge!.ready;
 const before = new MockWs();
 assert.equal(manager.attach(reloading.id, before as never, 0), null, "attach should succeed");
@@ -441,7 +569,7 @@ assert.equal(reloading.bridge, null, "purge retires the bridge with the process"
 
 // The log is a table, so a replay reaching further back than anything held in
 // memory has to come back whole and in order.
-const logged = manager.create(profile, project);
+const logged = manager.create(profile, "fake", project);
 await logged.bridge!.ready;
 const bulk = new MockWs();
 assert.equal(manager.attach(logged.id, bulk as never, 0), null, "attach should succeed");
@@ -486,25 +614,65 @@ assert.equal(
 send(reader, { id: 900, cmd: "prompt", text: "nope" });
 await waitFor(() => reader.of("reply").length === 1, "a prompt to an archive is refused");
 assert.match(String(reader.of("reply")[0].error?.message), /no running agent/);
-// …except paging back through it, which is a read.
-send(reader, { id: 901, cmd: "load_earlier", before: 10 });
+// …except paging back through it, which is a read. Pages are cut in **steps**
+// (turns): `before` and `from` are always the seq of a `turn_started`, and a
+// page is whole turns however many events each one journaled.
+const turnStarts = manager
+  .journal(logged.id)!
+  .events.filter((e) => e.ev === "turn_started")
+  .map((e) => (e as { seq: number }).seq);
+assert.equal(turnStarts.length, 25);
+send(reader, { id: 901, cmd: "load_earlier", before: turnStarts[3] });
 await waitFor(() => reader.of("reply").length === 2, "load_earlier is answered from the journal");
-const page = reader.of("reply")[1].result as { events: unknown[]; earlier: number };
-assert.equal(page.events.length, 10, "the page ends where the window began");
+const page = reader.of("reply")[1].result as { events: { seq: number }[]; earlier: number };
+assert.equal(page.events[0].seq, turnStarts[0], "the page begins at a turn boundary");
+assert.equal(page.events.length, turnStarts[3] - turnStarts[0], "…and ends where the window began");
 assert.equal(page.earlier, 0, "…and nothing is left above it");
+send(reader, { id: 902, cmd: "load_earlier", before: turnStarts[0] });
+await waitFor(() => reader.of("reply").length === 3, "the head of the log");
+assert.deepEqual(reader.of("reply")[2].result, { events: [], earlier: 0 }, "nothing before the first step");
 
-// --- windowed attach: only the tail, with the rest fetchable ---
+// --- windowed attach: only the tail, in whole steps, with the rest fetchable ---
 const windowed = new MockWs();
 assert.equal(manager.attach(logged.id, windowed as never, 0, true, { window: 5 }), null);
 const windowAttach = windowed.of("attached")[0];
-assert.equal(windowAttach.from, archivedCursor - 5, "the replay starts near the end");
-assert.equal(windowAttach.earlier, archivedCursor - 5, "…and says how much it withheld");
+assert.equal(windowAttach.from, turnStarts[20], "the replay starts at the 5th-last turn");
+assert.equal(windowAttach.earlier, 20, "…and says how many steps it withheld");
 assert.equal(windowAttach.resumed, false, "a window is not a resume — the client must reset");
 assert.equal(
   windowed.of("replay").flatMap((r) => r.events).length,
-  5,
+  archivedCursor - turnStarts[20],
   "only the tail was sent",
 );
+// Paging back from the window's edge hands over the 20 steps before it — one
+// page's worth — so the head is reached in one ask.
+send(windowed, { id: 903, cmd: "load_earlier", before: windowAttach.from });
+await waitFor(() => windowed.of("reply").length === 1, "a page before the window");
+const tailPage = windowed.of("reply")[0].result as { events: { seq: number }[]; earlier: number };
+assert.equal(tailPage.events[0].seq, turnStarts[0]);
+assert.equal(tailPage.events.length, turnStarts[20] - turnStarts[0]);
+assert.equal(tailPage.earlier, 0);
+
+// --- the queue outlives the process ---
+
+// A parked queue is a row, not process state: a fresh manager reads it back,
+// hands it over on attach, and lets it be edited with no agent to spawn.
+const { enqueue, listQueue } = await import("../src/queue.js");
+const parked = enqueue(logged.id, "after restart");
+const restarted = new SessionManager({}, 1);
+const survivor = new MockWs();
+assert.equal(restarted.attach(logged.id, survivor as never, 0), null, "an archive can be attached to");
+assert.deepEqual(
+  survivor.of("caught_up")[0].queue?.map((i) => i.text),
+  ["after restart"],
+  "the queue survives a restart and rides on caught_up",
+);
+send(survivor, { id: 70, cmd: "queue_update", itemId: parked.id, text: "after restart!" });
+await waitFor(() => survivor.of("reply").some((r) => r.id === 70), "a parked queue is editable with no process");
+assert.equal(listQueue(logged.id)[0].text, "after restart!");
+send(survivor, { id: 71, cmd: "queue_remove", itemId: parked.id });
+await waitFor(() => survivor.of("queue").at(-1)?.items.length === 0, "…and emptied");
+assert.deepEqual(listQueue(logged.id), []);
 
 // Soft delete keeps the row and refuses new attachments; restore undoes it.
 assert.ok(manager.softDelete(logged.id));
@@ -518,7 +686,7 @@ assert.equal(manager.journal(logged.id), undefined, "purge forgets the thread");
 // --- a refused session/load must not cost the thread its history ---
 
 // The thread has a conversation the agent knows about...
-const orphan = manager.create(profile, project);
+const orphan = manager.create(profile, "fake", project);
 await orphan.bridge!.ready;
 const orphanWs = new MockWs();
 manager.attach(orphan.id, orphanWs as never);
@@ -532,7 +700,7 @@ assert.equal(orphan.acpSessionId, "acp-123");
 // very often still in the agent's store. Replacing it is what turned one
 // refusal into a thread that could never find its history again.
 orphan.acpSessionId = "acp-gone";
-await manager.respawn(orphan.id, profile, project);
+await manager.respawn(orphan.id, profile, "fake", project);
 assert.equal(orphan.acpSessionId, "acp-gone", "the failed id is kept, not overwritten");
 assert.equal(orphan.liveAcpSessionId, "acp-123", "the process runs on the fallback session");
 assert.ok(orphan.historyLost, "the refusal is recorded rather than swallowed");
@@ -561,11 +729,11 @@ assert.ok(manager.purge(orphan.id));
 // definition, so a refusal to load it strands nothing. It is replaced without
 // argument, and it is NOT reported as lost history — otherwise every thread
 // killed before its first turn finished would come back wearing an error.
-const unproven = manager.create(profile, project);
+const unproven = manager.create(profile, "fake", project);
 await unproven.bridge!.ready;
 assert.equal(unproven.acpSessionProvisional, true);
 unproven.acpSessionId = "acp-gone";
-await manager.respawn(unproven.id, profile, project);
+await manager.respawn(unproven.id, profile, "fake", project);
 assert.equal(unproven.acpSessionId, "acp-123", "an unproven id yields to the fallback");
 assert.equal(unproven.acpSessionProvisional, true, "which is itself still unproven");
 assert.equal(unproven.historyLost, null, "and nothing was lost to report");
@@ -573,7 +741,7 @@ assert.ok(manager.purge(unproven.id));
 
 // --- persistence across a restart ---
 
-const session2 = manager.create(profile, project);
+const session2 = manager.create(profile, "fake", project);
 await session2.bridge!.ready;
 /* Stop the first manager's process for this thread before standing the second
    one up. A restart is one manager replacing another, not two of them sharing a
@@ -592,7 +760,7 @@ assert.equal(restored!.exited, true);
 // do it lazily, not never), so the provisional id survives the restart and the
 // revive tries to load it rather than starting a stranger.
 assert.equal(restored!.acpSessionId, "acp-123", "an unproven id still survives a restart");
-const revived = await manager2.respawn(session2.id, profile, project);
+const revived = await manager2.respawn(session2.id, profile, "fake", project);
 assert.equal(revived.exited, false);
 assert.equal(revived.acpSessionId, "acp-123", "and the revive loaded it");
 assert.equal(revived.acpSessionProvisional, false, "a load that answered proves the id");
@@ -686,122 +854,31 @@ assert.ok(seeded.some((a) => a.id === "fake"), "seeding leaves the user's own ag
 seedAgents();
 assert.equal(listAgents().length, seeded.length, "seeding twice adds nothing");
 
-// Library deletions cascade into the projects that linked them, instead of
+// Library deletions cascade into the profiles that linked them, instead of
 // leaving an id behind for a reader to filter out.
 const { mcpServers } = await import("../src/library.js");
-const { createProject, getProject } = await import("../src/projects.js");
+const { createProfile, getProfile } = await import("../src/profiles.js");
 const server1 = mcpServers.create({ type: "stdio", name: "s1", command: "true", args: [], env: [] });
-const linked = createProject({ name: "p", cwd: "/tmp", description: null, mcpServerIds: [server1.id], skillIds: [], commandIds: [] });
-assert.deepEqual(getProject(linked.id)!.mcpServerIds, [server1.id]);
+const profileInput = {
+  name: "linked",
+  agents: { fake: {} },
+  baseUrl: "",
+  apiKey: "sk-test",
+  models: [],
+  defaultModel: "",
+  smallModel: "",
+  logoUrl: "",
+  mcpServerIds: [server1.id],
+  skillIds: [],
+  commandIds: [],
+};
+const linkedProfile = createProfile(profileInput);
+assert.deepEqual(getProfile(linkedProfile.id)!.mcpServerIds, [server1.id]);
 mcpServers.remove(server1.id);
-assert.deepEqual(getProject(linked.id)!.mcpServerIds, [], "the link went with the server");
+assert.deepEqual(getProfile(linkedProfile.id)!.mcpServerIds, [], "the link went with the server");
 // A stale id in a request links nothing rather than failing the whole write.
-const stale = createProject({ name: "q", cwd: "/tmp", description: null, mcpServerIds: ["gone"], skillIds: [], commandIds: [] });
-assert.deepEqual(getProject(stale.id)!.mcpServerIds, []);
-
-const unsupportedSession = manager.create({ ...profile, id: "p-no-fork", agentId: "fake-no-fork" }, project);
-await unsupportedSession.bridge!.ready;
-const unsupportedWs = new MockWs();
-manager.attach(unsupportedSession.id, unsupportedWs as never);
-assert.equal(unsupportedWs.of("attached")[0]!.history.available, false);
-assert.equal(unsupportedWs.of("attached")[0]!.history.strategy, "unsupported");
-send(unsupportedWs, { id: 99, cmd: "prompt", text: "still works" });
-await waitFor(() => unsupportedWs.of("turn_ended").length === 1, "unsupported agent turn");
-assert.equal(unsupportedWs.of("history_state").length, 0, "no restore points are invented");
-assert.ok(manager.purge(unsupportedSession.id));
-
-// --- generic history checkpoints restore ACP and workspace state together ---
-
-writeFileSync(join(project.cwd, "history-original.txt"), "original\n");
-writeFileSync(join(project.cwd, "history-delete.txt"), "keep me\n");
-const historySession = manager.create(profile, project);
-await historySession.bridge!.ready;
-const historyWs = new MockWs();
-manager.attach(historySession.id, historyWs as never);
-// One turn to make the session forkable — the agent has to have written it
-// down before it can branch from it — and to prove the unforkable first turn
-// costs nothing but its checkpoint: the prompt still runs.
-send(historyWs, { id: 98, cmd: "prompt", text: "warm up" });
-await waitFor(() => historyWs.of("turn_ended").length === 1, "the unforkable first turn");
-assert.equal(historyWs.of("reply").find((event) => event.id === 98)!.error, undefined);
-assert.equal(
-  historyWs.of("history_state").at(-1)!.history.checkpoints.length,
-  0,
-  "nothing to revert to before the first turn",
-);
-send(historyWs, { id: 100, cmd: "prompt", text: "edit workspace" });
-await waitFor(() => historyWs.of("turn_ended").length === 2, "history turn end");
-await waitFor(
-  () => historyWs.of("history_state").some((event) => event.history.checkpoints.length === 1),
-  "completed history checkpoint",
-);
-const checkpoint = historyWs.of("history_state").at(-1)!.history.checkpoints[0]!;
-assert.equal(readFileSync(join(project.cwd, "history-original.txt"), "utf8"), "changed by agent\n");
-assert.equal(existsSync(join(project.cwd, ".history-created")), true);
-assert.equal(existsSync(join(project.cwd, "history-delete.txt")), false);
-
-send(historyWs, { id: 101, cmd: "revert", checkpointId: checkpoint.id });
-await waitFor(() => historyWs.of("reply").some((event) => event.id === 101), "revert reply");
-assert.equal(historyWs.of("reply").find((event) => event.id === 101)!.error, undefined);
-assert.equal(readFileSync(join(project.cwd, "history-original.txt"), "utf8"), "original\n");
-assert.equal(readFileSync(join(project.cwd, "history-delete.txt"), "utf8"), "keep me\n");
-assert.equal(existsSync(join(project.cwd, ".history-created")), false);
-assert.equal(existsSync(join(project.cwd, "history-binary.bin")), false);
-assert.ok(historyWs.of("history_reset")[0], "all peers reset before ACP history is replayed");
-assert.equal(historyWs.of("history_state").at(-1)!.history.branches.length, 1, "discarded child branch is retained");
-
-const discardedBranch = historyWs.of("history_state").at(-1)!.history.branches[0]!;
-send(historyWs, { id: 105, cmd: "recover_branch", branchId: discardedBranch.id });
-await waitFor(() => historyWs.of("reply").some((event) => event.id === 105), "branch recovery reply");
-assert.equal(historyWs.of("reply").find((event) => event.id === 105)!.error, undefined);
-assert.equal(readFileSync(join(project.cwd, "history-original.txt"), "utf8"), "changed by agent\n");
-const revertedBranch = historyWs.of("history_state").at(-1)!.history.branches.find(
-  (branch) => branch.label === "Branch before recovery",
-)!;
-send(historyWs, { id: 106, cmd: "recover_branch", branchId: revertedBranch.id });
-await waitFor(() => historyWs.of("reply").some((event) => event.id === 106), "reverted branch recovery reply");
-assert.equal(historyWs.of("reply").find((event) => event.id === 106)!.error, undefined);
-assert.equal(readFileSync(join(project.cwd, "history-original.txt"), "utf8"), "original\n");
-
-// Steering shares the restore point created for the logical turn.
-send(historyWs, { id: 102, cmd: "prompt", text: "one" });
-send(historyWs, { id: 103, cmd: "prompt", text: "two" });
-await waitFor(() => historyWs.of("turn_ended").length === 3, "steered history turn end");
-await waitFor(
-  () => historyWs.of("history_state").at(-1)?.history.checkpoints.length === 1,
-  "one checkpoint for steering",
-);
-const steeredCheckpoint = historyWs.of("history_state").at(-1)!.history.checkpoints[0]!;
-
-// An edit outside the known branch head is never overwritten.
-writeFileSync(join(project.cwd, "intervening.txt"), "mine\n");
-send(historyWs, { id: 104, cmd: "revert", checkpointId: steeredCheckpoint.id });
-await waitFor(() => historyWs.of("reply").some((event) => event.id === 104), "conflict reply");
-assert.ok(historyWs.of("reply").find((event) => event.id === 104)!.error, "the conflict rejects the command");
-assert.equal(readFileSync(join(project.cwd, "intervening.txt"), "utf8"), "mine\n");
-assert.match(historyWs.of("history_state").at(-1)!.history.conflict!, /changed after the last agent turn/);
-assert.ok(manager.purge(historySession.id));
-
-// --- a checkpoint that cannot be taken costs its checkpoint, not the turn ---
-
-// Forcing the durability flag makes the bridge ask for a fork the agent will
-// refuse — the exact failure that used to reach the user as "the agent couldn't
-// find that resource", naming a session id it had minted a moment earlier, with
-// their message never sent at all.
-const refusedSession = manager.create(profile, project);
-await refusedSession.bridge!.ready;
-refusedSession.bridge!.sessionDurable = true;
-const refusedWs = new MockWs();
-manager.attach(refusedSession.id, refusedWs as never);
-send(refusedWs, { id: 200, cmd: "prompt", text: "go on anyway" });
-await waitFor(() => refusedWs.of("turn_ended").length === 1, "the uncheckpointed turn still runs");
-assert.equal(refusedWs.of("reply").find((event) => event.id === 200)!.error, undefined);
-assert.match(
-  refusedWs.of("history_state").at(-1)!.history.conflict!,
-  /not checkpointed/,
-  "and the thread is told why it has no restore point",
-);
-assert.ok(manager.purge(refusedSession.id));
+const staleProfile = createProfile({ ...profileInput, name: "stale", mcpServerIds: ["gone"] });
+assert.deepEqual(getProfile(staleProfile.id)!.mcpServerIds, []);
 
 console.log("bridge.test.ts OK");
 process.exit(0);

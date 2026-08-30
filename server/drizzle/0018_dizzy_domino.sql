@@ -1,0 +1,1 @@
+ALTER TABLE `profiles` ADD `logo_url` text;

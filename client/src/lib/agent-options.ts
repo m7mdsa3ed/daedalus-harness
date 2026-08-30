@@ -7,9 +7,11 @@ import type * as acp from "@agentclientprotocol/sdk"
    configure until it started, which is after the point where configuring it was
    any use.
 
-   This holds the option set for each profile, from two sources: whatever a live
-   session last advertised, and — when nothing has been seen yet — a one-shot
-   spawn asking the question directly (`POST /api/profiles/:id/options`). Picks
+   This holds the option set for each (profile, agent) pair — a profile may
+   serve several agents, and what codex offers on a gateway is not what Claude
+   Code offers on it — from two sources: whatever a live session last
+   advertised, and — when nothing has been seen yet — a one-shot spawn asking
+   the question directly (`POST /api/profiles/:id/options`). Picks
    made against it are replayed with `session/set_config_option` once the
    session really exists (see `createSession` in lib/actions).
 
@@ -20,12 +22,16 @@ import type * as acp from "@agentclientprotocol/sdk"
    for reasoning models). So it is a *starting* point; the real set replaces it
    the moment a session answers. */
 
-const STORAGE_KEY = "ui.agentOptions.v2"
+const STORAGE_KEY = "ui.agentOptions.v3"
+
+/** The store's key for one (profile, agent) pair. Every reader and writer
+    below takes this rather than a bare profile id. */
+export const optionKey = (profileId: string, agentId: string): string => `${profileId}:${agentId}`
 
 /** A pick made on a draft, waiting for a session to apply it to. */
 export type ConfigChoices = Record<string, string | boolean>
 
-/** What is known about one profile's agent. */
+/** What is known about one agent on one profile. */
 export interface AgentOptionSet {
   /** The set advertised with whatever model was selected when we looked. */
   base: acp.SessionConfigOption[]
@@ -81,17 +87,18 @@ function subscribe(listener: () => void): () => void {
   }
 }
 
-export const loadAgentOptions = (profileId: string): AgentOptionSet =>
-  isSet(cache[profileId]) ? cache[profileId] : EMPTY
+/** `key` is always an `optionKey(profileId, agentId)`. */
+export const loadAgentOptions = (key: string): AgentOptionSet =>
+  isSet(cache[key]) ? cache[key] : EMPTY
 
 /** Learned from a live session: authoritative for the model it is sitting on. */
-export function saveAgentOptions(profileId: string, options: acp.SessionConfigOption[]): void {
+export function saveAgentOptions(key: string, options: acp.SessionConfigOption[]): void {
   if (options.length === 0) return
-  const known = loadAgentOptions(profileId)
+  const known = loadAgentOptions(key)
   const model = selectedModel(options)
   write({
     ...cache,
-    [profileId]: {
+    [key]: {
       base: options,
       byModel: model ? { ...known.byModel, [model]: options } : known.byModel,
     },
@@ -99,12 +106,12 @@ export function saveAgentOptions(profileId: string, options: acp.SessionConfigOp
 }
 
 /** Learned from a probe: the whole map in one go (see server/src/probe.ts). */
-export function saveProbedOptions(profileId: string, probed: AgentOptionSet): void {
+export function saveProbedOptions(key: string, probed: AgentOptionSet): void {
   if (probed.base.length === 0) return
-  const known = loadAgentOptions(profileId)
+  const known = loadAgentOptions(key)
   write({
     ...cache,
-    [profileId]: { base: probed.base, byModel: { ...known.byModel, ...probed.byModel } },
+    [key]: { base: probed.base, byModel: { ...known.byModel, ...probed.byModel } },
   })
 }
 
@@ -116,30 +123,30 @@ export const optionsForModel = (
 
 /** Reactive read — the menu re-renders when a probe or a live session fills it.
 
-    `fallbackIds` are sibling profiles of the *same agent*, tried in order when
-    this profile has not answered yet. A profile owns only the model list and
+    `fallbackKeys` are the *same agent* on sibling profiles, tried in order when
+    this pair has not answered yet. A profile owns only the model list and
     effort — every other option belongs to the agent — so a sibling's answer
     (typically the virtual Default profile's) is the agent's answer, and a
     freshly created provider profile shows the agent's options immediately
-    instead of a blank menu. Display-only: the profile's own probe still runs
-    and its entry replaces the borrowed one the moment it lands. */
+    instead of a blank menu. Display-only: the pair's own probe still runs and
+    its entry replaces the borrowed one the moment it lands. */
 export function useAgentOptions(
-  profileId: string,
-  fallbackIds: readonly string[] = []
+  key: string,
+  fallbackKeys: readonly string[] = []
 ): AgentOptionSet {
   const store = useSyncExternalStore(subscribe, snapshot, snapshot)
-  const own = store[profileId]
+  const own = store[key]
   if (isSet(own) && own.base.length > 0) return own
-  for (const id of fallbackIds) {
-    const sibling = store[id]
+  for (const fallback of fallbackKeys) {
+    const sibling = store[fallback]
     if (isSet(sibling) && sibling.base.length > 0) return sibling
   }
   return EMPTY
 }
 
-/** Has this profile already been asked (or is being asked) this page-load? */
-export const alreadyAsked = (profileId: string): boolean => asked.has(profileId)
-export const markAsked = (profileId: string): void => void asked.add(profileId)
+/** Has this pair already been asked (or is being asked) this page-load? */
+export const alreadyAsked = (key: string): boolean => asked.has(key)
+export const markAsked = (key: string): void => void asked.add(key)
 
 /** Apply a draft's picks to a remembered set, so the menu shows what was chosen
     rather than what the agent last happened to be on. */
@@ -161,9 +168,12 @@ export function withChoices(
   })
 }
 
-/** Drop the cache for profiles that no longer exist. */
+/** Drop the cache for profiles that no longer exist. Keys are
+    `<profileId>:<agentId>`, so a profile's entries are the ones under its id. */
 export function pruneAgentOptions(profileIds: Iterable<string>): void {
   const live = new Set(profileIds)
-  const kept = Object.fromEntries(Object.entries(cache).filter(([id]) => live.has(id)))
+  const kept = Object.fromEntries(
+    Object.entries(cache).filter(([key]) => live.has(key.slice(0, key.lastIndexOf(":"))))
+  )
   if (Object.keys(kept).length !== Object.keys(cache).length) write(kept)
 }

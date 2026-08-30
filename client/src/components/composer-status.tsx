@@ -1,9 +1,11 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
+  BotIcon,
   CheckCircle2Icon,
   CheckIcon,
   ChevronDownIcon,
   CircleDashedIcon,
+  ListChecksIcon,
   LoaderCircleIcon,
 } from "lucide-react"
 
@@ -15,7 +17,8 @@ import {
 } from "@/components/ui/collapsible"
 import { Logo } from "@/components/ui/logo"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { extractTodos, toolViewOf } from "@/lib/tools"
+import { useStripSummary } from "@/components/composer-strip"
+import { extractSubagent, extractTodos, isSubagentLaunch, toolViewOf } from "@/lib/tools"
 import type { PlanItem, ThreadState, ToolItem } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
@@ -212,6 +215,8 @@ interface ChecklistRowData {
  * was asked for.
  */
 function ChecklistCollapsible({
+  summaryId,
+  summaryLabel,
   percent,
   completed,
   total,
@@ -219,6 +224,8 @@ function ChecklistCollapsible({
   running,
   rows,
 }: {
+  summaryId: string
+  summaryLabel: string
   percent: number
   completed: number
   total: number
@@ -228,6 +235,13 @@ function ChecklistCollapsible({
 }) {
   const [open, setOpen] = useState(false)
   const done = completed === total
+  /* On the strip's collapsed line this is a count, not a step: "Plan 2/5" is
+     what a glance wants, and the step it is on is one click away. */
+  useStripSummary({
+    id: summaryId,
+    icon: ListChecksIcon,
+    label: `${summaryLabel} ${completed}/${total}`,
+  })
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="w-full">
       <CollapsibleTrigger
@@ -346,6 +360,8 @@ export function ComposerPlan({ thread }: { thread: ThreadState }) {
 
   return (
     <ChecklistCollapsible
+      summaryId="plan"
+      summaryLabel="Plan"
       percent={percent}
       completed={completed}
       total={total}
@@ -380,7 +396,10 @@ export function ComposerPlan({ thread }: { thread: ThreadState }) {
 export function ComposerTodo({ thread }: { thread: ThreadState }) {
   const todoItem = [...thread.items]
     .reverse()
-    .find((item): item is ToolItem => item.kind === "tool" && toolViewOf(item) === "todos")
+    // Not a subagent's: a child's checklist is its own, drawn in its rail,
+    // and letting it win here handed the composer shelf to whichever worker
+    // wrote last.
+    .find((item): item is ToolItem => item.kind === "tool" && !item.parentId && toolViewOf(item) === "todos")
   const todos = todoItem ? extractTodos(todoItem) : null
   if (!todos || todos.length === 0) return null
 
@@ -392,6 +411,8 @@ export function ComposerTodo({ thread }: { thread: ThreadState }) {
 
   return (
     <ChecklistCollapsible
+      summaryId="todos"
+      summaryLabel="Todos"
       percent={percent}
       completed={completed}
       total={total}
@@ -399,6 +420,133 @@ export function ComposerTodo({ thread }: { thread: ThreadState }) {
       running={current?.status === "in_progress"}
       rows={todos.map((todo) => ({ content: todo.content, status: todo.status }))}
     />
+  )
+}
+
+/** One subagent still at work, whichever way its runtime announced it. */
+interface RunningAgent {
+  id: string
+  /** What it was asked — the Task's description, or the RFD's `task`. */
+  task: string
+  /** Who it is — `code-reviewer`, the RFD's `name`. */
+  name?: string
+  startedAt: number
+}
+
+/**
+ * The subagents at work right now, read off the transcript: an announced
+ * session (`SubagentItem`) still `running`, or a launch tool call (a Task, a
+ * Codex spawn) still in flight. Nested ones count too — a worker's worker is
+ * still a worker — which is why this walks every item rather than the
+ * top-level rows.
+ */
+export function runningAgents(items: ThreadState["items"]): RunningAgent[] {
+  const out: RunningAgent[] = []
+  for (const item of items) {
+    if (item.kind === "subagent") {
+      if (item.state === "running") {
+        out.push({ id: item.id, task: item.task || item.name, name: item.name, startedAt: item.startedAt })
+      }
+    } else if (
+      item.kind === "tool" &&
+      (item.status === "in_progress" || item.status === "pending") &&
+      isSubagentLaunch(item)
+    ) {
+      const call = extractSubagent(item)
+      out.push({
+        id: item.id,
+        task: call?.description ?? call?.prompt?.split("\n")[0] ?? item.title,
+        name: call?.agentType,
+        startedAt: item.startedAt,
+      })
+    }
+  }
+  return out
+}
+
+/** Ticks once a second while `active`, so an elapsed time can be drawn live. */
+function useNow(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!active) return
+    setNow(Date.now())
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [active])
+  return now
+}
+
+const formatElapsed = (ms: number): string =>
+  ms < 60_000 ? `${Math.max(0, Math.round(ms / 1000))}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
+
+/**
+ * How many subagents are running, above the composer. A subagent's rail is
+ * somewhere up in the transcript — often scrolled past, sometimes folded — so
+ * while workers are out the shelf says how many, and opens to who they are
+ * and how long each has been at it. Gone the moment none are running: it is
+ * a live count, not a history.
+ */
+export function ComposerAgents({ thread }: { thread: ThreadState }) {
+  const agents = runningAgents(thread.items)
+  const [open, setOpen] = useState(false)
+  const now = useNow(agents.length > 0)
+  const count = agents.length
+  const label = `${count} ${count === 1 ? "agent" : "agents"} running`
+  useStripSummary(count > 0 ? { id: "agents", icon: BotIcon, label } : null)
+  if (count === 0) return null
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="w-full">
+      <CollapsibleTrigger
+        render={
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 px-2 py-1.5 text-left transition-colors hover:bg-accent/40"
+          />
+        }
+      >
+        <span className="relative grid size-6 shrink-0 place-items-center text-primary">
+          <BotIcon aria-hidden className="size-3.5" />
+        </span>
+        <span className="harness-shimmer min-w-0 flex-1 truncate text-xs text-primary">
+          {label}
+          <span className="text-muted-foreground">
+            {" · "}
+            {agents.map((agent) => agent.name ?? agent.task).join(", ")}
+          </span>
+        </span>
+        <span className="flex shrink-0 items-center gap-1.5">
+          <span className="grid size-4 place-items-center">
+            <ChevronDownIcon
+              aria-hidden
+              className={cn(
+                "size-3.5 text-muted-foreground transition-transform duration-200",
+                open && "rotate-180"
+              )}
+            />
+          </span>
+        </span>
+        <span className="sr-only">{open ? "Hide agents" : "Show running agents"}</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="harness-collapse">
+        <ul className="space-y-0.5 border-t border-border/40 px-2 py-1.5">
+          {agents.map((agent) => (
+            <li key={agent.id} className="flex items-start gap-2 text-xs">
+              <span className="grid size-6 shrink-0 place-items-center">
+                <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin text-primary" />
+              </span>
+              <span className="min-w-0 flex-1 truncate leading-6 text-foreground">
+                {agent.name && <span className="font-mono text-muted-foreground">{agent.name} </span>}
+                {agent.task}
+              </span>
+              <span className="shrink-0 text-[11px] leading-6 tabular-nums text-muted-foreground/60">
+                {formatElapsed(now - agent.startedAt)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 

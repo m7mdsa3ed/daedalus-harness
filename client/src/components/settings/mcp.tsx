@@ -9,7 +9,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { type McpServerDef, type ServerSettings } from "@/lib/settings"
+import { api, mcpSubtitle, type McpServerDef, type ServerSettings } from "@/lib/settings"
+import { Button } from "@/components/ui/button"
+import { BookOpenIcon, GlobeIcon } from "lucide-react"
 import { useStore } from "@/lib/store"
 import { FormPageHeader, PageForm, Field, FormActions, lines, pairs } from "./primitives"
 import { sectionMeta } from "./sections"
@@ -22,15 +24,48 @@ export function McpPage() {
   const { settings, actions } = useSettingsPage()
   const meta = sectionMeta("mcp")
   const { state } = useStore()
+
+  /* The harness's own two servers, added with one press rather than typed in:
+     there is nothing to type — the row is a handle, and the command, env and
+     credentials are synthesized at spawn. Idempotent server-side (fixed id),
+     and hidden once present, since a second copy is the same row. */
+  const has = (kind: "web-search" | "knowledge") =>
+    state.mcpServers.some((s) => s.type === "builtin" && s.builtin === kind)
+  const inject = async (kind: "web-search" | "knowledge") => {
+    try {
+      await api(settings, `/api/mcp-servers/builtin/${kind}`, { method: "POST" })
+      await actions.refreshMcpServers()
+    } catch (err) {
+      reportError(err, `Couldn't add the ${kind} server`)
+    }
+  }
+  const builtins = (
+    <>
+      {!has("web-search") && (
+        <Button variant="outline" onClick={() => void inject("web-search")} title="The harness's web search + fetch tools, on the backend in Settings › Web search">
+          <GlobeIcon className="size-4" /> Add web search
+        </Button>
+      )}
+      {!has("knowledge") && (
+        <Button variant="outline" onClick={() => void inject("knowledge")} title="A per-project knowledge base the agent can read and write">
+          <BookOpenIcon className="size-4" /> Add knowledge base
+        </Button>
+      )}
+    </>
+  )
+
   return (
     <LibrarySection
       meta={meta}
       items={state.mcpServers}
       endpoint="/api/mcp-servers"
       noun="MCP server"
-      subtitle={(s) => (s.type === "http" ? s.url : [s.command, ...s.args].join(" "))}
+      subtitle={mcpSubtitle}
       settings={settings}
       refresh={actions.refreshMcpServers}
+      extraActions={builtins}
+      // A built-in has nothing to edit — it is resolved at spawn, not stored.
+      editable={(s) => s.type !== "builtin"}
     />
   )
 }
@@ -46,7 +81,10 @@ export function McpFormPage() {
   const { settings, actions } = useSettingsPage()
   const { state } = useStore()
   const server = entryId === "new" ? null : state.mcpServers.find((item) => item.id === entryId)
-  if (entryId !== "new" && !server) return <Navigate to={settingsPath("mcp")} replace />
+  // A built-in is not editable (see McpPage); a stale link lands on the list.
+  if ((entryId !== "new" && !server) || server?.type === "builtin") {
+    return <Navigate to={settingsPath("mcp")} replace />
+  }
   return (
     <McpForm
       server={server ?? null}
@@ -70,7 +108,7 @@ function McpForm({
 }) {
   const [form, setForm] = React.useState(() => ({
     name: server?.name ?? "",
-    type: server?.type ?? "stdio",
+    type: (server?.type === "http" ? "http" : "stdio") as "stdio" | "http",
     command: server?.type === "stdio" ? server.command : "",
     args: server?.type === "stdio" ? server.args.join("\n") : "",
     env: server?.type === "stdio" ? server.env.map((e) => `${e.name}=${e.value}`).join("\n") : "",

@@ -1,48 +1,10 @@
 import * as React from "react"
-import {
-  CalendarClock,
-  ChevronLeft,
-  ChevronRight,
-  Link as LinkIcon,
-  MoreVertical,
-  Pin,
-  PinOff,
-  SearchIcon,
-  FolderIcon,
-  Check,
-  ChevronsUpDown,
-  Clock,
-  ExternalLink,
-  LogOut,
-  Plus,
-  ServerIcon,
-  Settings2,
-  SquareKanban,
-  Trash2,
-  Undo2,
-} from "lucide-react"
-import { toast } from "sonner"
-import { reportError } from "@/lib/errors"
+import { ChevronLeft, Plus, ServerIcon, Settings2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible"
 import { CommandPalette, useCommandPalette } from "@/components/command-palette"
 import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
 import { Logo } from "@/components/ui/logo"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { Separator } from "@/components/ui/separator"
-import { AgentIcon } from "@/components/agent-icon"
 import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
 import { OpenPanelMenu } from "@/components/workspace/open-panel-menu"
 import { panelId, type PanelKind } from "@/lib/workspace/panels"
@@ -61,7 +23,6 @@ import {
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
-  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
@@ -70,35 +31,19 @@ import {
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { Actions } from "@/lib/actions"
-import { useConfirm } from "@/components/confirm-dialog"
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router"
 import {
-  boardPath,
   currentThreadId,
   NavigationBridge,
-  schedulePath,
   settingsFormPath,
   settingsPath,
   threadPath,
 } from "@/lib/router"
 import { consumeNewTab, markNewTab } from "@/lib/session-tabs"
-import {
-  ItemContextMenu,
-  renderMenuItems,
-  type MenuItemSpec,
-} from "@/components/item-context-menu"
 import { useHotkey } from "@/hooks/use-hotkey"
-import { togglePin, usePins } from "@/lib/pins"
 import { KEYS } from "@/lib/shortcuts"
-import { teardownPush } from "@/lib/push"
-import { defaultsForProfile, loadThreadDefaults } from "@/lib/thread-defaults"
-import {
-  loadServers,
-  removeServer,
-  setActiveServer,
-  type ServerSettings,
-  type SessionMeta,
-} from "@/lib/settings"
+import { defaultsForProfile, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
+import { type ServerSettings } from "@/lib/settings"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { ProjectFormPage, ProjectsPage } from "@/components/settings/projects"
@@ -109,7 +54,7 @@ import {
 } from "@/components/settings/sections"
 import { SettingsLayout } from "@/components/settings/layout"
 import { GeneralPage } from "@/components/settings/general"
-import { AppPage } from "@/components/settings/app"
+import { KnowledgePage } from "@/components/settings/knowledge"
 import { AppearancePage } from "@/components/settings/appearance"
 import { NotificationsPage } from "@/components/settings/notifications"
 import { McpFormPage, McpImportPage, McpPage } from "@/components/settings/mcp"
@@ -118,7 +63,20 @@ import { CommandFormPage, CommandImportPage, CommandsPage } from "@/components/s
 import { ProfileFormPage, ProfilesPage } from "@/components/settings/profiles"
 import { AgentsPage } from "@/components/settings/agents"
 import { WebSearchPage } from "@/components/settings/web-search"
+import { BackupPage } from "@/components/settings/backup"
 import { ThemeEditorPage } from "@/components/theme-builder"
+import { GROUP, GROUP_LABEL, MENU, ROW, SidebarNav, ThreadSidebar, TIER } from "@/components/thread-sidebar"
+
+/** The address without its scheme — what identifies a server on a footer row
+    the width of a sidebar. */
+function serverHost(url: string): string {
+  try {
+    const u = new URL(url)
+    return u.host + (u.pathname !== "/" ? u.pathname.replace(/\/$/, "") : "")
+  } catch {
+    return url
+  }
+}
 
 /** Swappable sidebar body. One panel per route family — see `panels` below. */
 /** Closes the mobile sidebar sheet whenever the route changes. Desktop keeps
@@ -205,12 +163,12 @@ export function AppShell({
     if (!ready) return
     const defaults = loadThreadDefaults()
     const project = state.projects.find((p) => p.id === defaults.projectId) ?? state.projects[0]
-    const profile = state.profiles.find((p) => p.id === defaults.profileId) ?? state.profiles[0]
-    if (!project || !profile) return
+    const start = resolveThreadStart(defaults, state.profiles)
+    if (!project || !start) return
     actions.newDraftThread({
       project,
-      profile,
-      ...defaultsForProfile(defaults, profile.id),
+      ...start,
+      ...defaultsForProfile(defaults, start.profile.id),
       id: sessionId,
     })
   }, [sessionId, state.sessions, state.projects, state.profiles, ready, actions, dock])
@@ -250,12 +208,12 @@ export function AppShell({
     if (!ready) return openSettings("projects")
     const defaults = loadThreadDefaults()
     const project = state.projects.find((p) => p.id === defaults.projectId) ?? state.projects[0]
-    const profile = state.profiles.find((p) => p.id === defaults.profileId) ?? state.profiles[0]
-    if (!project || !profile) return openSettings("projects")
+    const start = resolveThreadStart(defaults, state.profiles)
+    if (!project || !start) return openSettings("projects")
     const id = actions.newDraftThread({
       project,
-      profile,
-      ...defaultsForProfile(defaults, profile.id),
+      ...start,
+      ...defaultsForProfile(defaults, start.profile.id),
     })
     void navigate(threadPath(id))
   }
@@ -363,10 +321,13 @@ export function AppShell({
      add a route below and an entry here — the shell itself is generic. */
   const panels: Record<"threads" | "settings", SidebarPanel> = {
     threads: {
-      // No action here: New thread now lives in the sidebar header, and the
-      // thread list starts directly under it. `New project` stays reachable
-      // from /settings/projects and the command palette.
-      body: loading ? <SidebarGroupsSkeleton /> : <ThreadGroups actions={actions} />,
+      // The fixed nav rows (New thread, Search, Tasks) sit above the list,
+      // the way the Codex and Claude desktop sidebars open. `New project`
+      // stays reachable from /settings/projects and the command palette.
+      action: (
+        <SidebarNav onNewThread={() => startThreadRef.current()} onSearch={() => palette.setOpen(true)} />
+      ),
+      body: loading ? <SidebarGroupsSkeleton /> : <ThreadSidebar actions={actions} />,
     },
     settings: {
       back: {
@@ -429,45 +390,25 @@ export function AppShell({
               aria-label="Go to homepage"
               className="flex shrink-0 items-center gap-2 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <Logo className="size-7 shrink-0" />
+              <Logo idle className="size-6 shrink-0" />
               <span className="brand-script text-xl leading-none group-data-[collapsible=icon]:hidden">
                 Daedalus
               </span>
             </button>
-            {/* New thread lives here, compact and with the brand — the one
-                create affordance, beside search and the same ⌘N the palette
-                advertises. Hidden when collapsed, like search. */}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => startThreadRef.current()}
-              title="New thread (⌘N)"
-              className="ml-auto shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden"
-            >
-              <Plus />
-              <span className="sr-only">New thread</span>
-            </Button>
-            {/* Search sits with the brand, not in the thread header: it searches
-                the whole app, so it belongs to the app's corner. */}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => palette.setOpen(true)}
-              title="Search threads and commands (⌘K)"
-              className="shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden"
-            >
-              <SearchIcon />
-              <span className="sr-only">Search threads and commands</span>
-            </Button>
           </div>
         </SidebarHeader>
         <SidebarContent className="gap-0">
           {panel.back ? (
-            <SidebarGroup className="px-2 py-1">
+            <SidebarGroup className={GROUP}>
               <SidebarGroupContent>
-                <SidebarMenu>
+                <SidebarMenu className={MENU}>
                   <SidebarMenuItem>
-                    <SidebarMenuButton tooltip={panel.back.label} onClick={panel.back.onClick}>
+                    <SidebarMenuButton
+                      size="sm"
+                      tooltip={panel.back.label}
+                      onClick={panel.back.onClick}
+                      className={ROW}
+                    >
                       <ChevronLeft className="size-4" />
                       <span>{panel.back.label}</span>
                     </SidebarMenuButton>
@@ -480,26 +421,40 @@ export function AppShell({
           )}
           {panel.body}
         </SidebarContent>
-        <SidebarFooter className="p-3 group-data-[collapsible=icon]:p-2">
-          <SidebarMenu>
-            <ServerSwitcher settings={settings} onAddServer={onAddServer} />
+        <SidebarFooter className="p-2">
+          <SidebarMenu className={MENU}>
+            {/* The "account" row, as both desktop apps end their sidebar: the
+                server this client is on, name over address. Managing it
+                (switch, rename, add, forget) is Settings › General — a
+                settings job, not a footer menu's. */}
             <SidebarMenuItem>
               <SidebarMenuButton
-                tooltip="Tasks board"
-                isActive={inBoard}
-                onClick={() => void navigate(boardPath())}
+                size="lg"
+                tooltip={`${settings.name} · ${settings.url}`}
+                isActive={location.pathname === settingsPath("general")}
+                onClick={() => void navigate(settingsPath("general"))}
+                className="h-11 px-2"
               >
-                <SquareKanban className="size-4" />
-                <span>Tasks</span>
+                <span className="grid size-7 shrink-0 place-items-center rounded-md bg-sidebar-accent text-sidebar-foreground/80">
+                  <ServerIcon className="size-4" />
+                </span>
+                <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
+                  <span className="block truncate text-[13px] font-medium leading-tight">{settings.name}</span>
+                  <span className="block truncate text-[11px] leading-tight text-muted-foreground">
+                    {serverHost(settings.url)}
+                  </span>
+                </span>
               </SidebarMenuButton>
             </SidebarMenuItem>
             <SidebarMenuItem>
               <SidebarMenuButton
+                size="sm"
                 tooltip="Settings"
                 isActive={inSettings}
                 onClick={() => openSettings()}
+                className={ROW}
               >
-                <Settings2 className="size-4" />
+                <Settings2 />
                 <span>Settings</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
@@ -532,7 +487,10 @@ export function AppShell({
           className="absolute inset-y-0 right-0 z-20 hidden w-1.5 cursor-col-resize hover:bg-sidebar-border md:block"
         />
       </Sidebar>
-      <SidebarInset className="relative flex h-full min-h-0 flex-col overflow-hidden">
+      {/* The main surface is the card colour — white on a light palette — over
+          the sidebar's tinted ground, the way both desktop apps separate the two.
+          The header below has no colour of its own, so it takes this one. */}
+      <SidebarInset className="relative flex h-full min-h-0 flex-col overflow-hidden bg-card text-card-foreground">
         {/* ponytail: no bg/blur/border — the header shares the inset surface, so
             under Electron vibrancy it shows the OS blur instead of its own band. */}
         <header
@@ -588,11 +546,18 @@ export function AppShell({
         <Routes>
           <Route
             path="/settings"
-            element={<SettingsLayout settings={settings} actions={actions} loading={loading} />}
+            element={
+              <SettingsLayout
+                settings={settings}
+                actions={actions}
+                onAddServer={onAddServer}
+                loading={loading}
+              />
+            }
           >
             <Route index element={<Navigate to="general" replace />} />
             <Route path="general" element={<GeneralPage />} />
-            <Route path="app" element={<AppPage />} />
+            <Route path="knowledge" element={<KnowledgePage />} />
             <Route path="appearance" element={<AppearancePage />} />
             <Route path="appearance/themes/:themeId" element={<ThemeEditorPage />} />
             <Route path="notifications" element={<NotificationsPage />} />
@@ -611,6 +576,7 @@ export function AppShell({
             <Route path="profiles/:entryId" element={<ProfileFormPage />} />
             <Route path="agents" element={<AgentsPage />} />
             <Route path="web-search" element={<WebSearchPage />} />
+            <Route path="backup" element={<BackupPage />} />
             {/* /settings/<unknown> — the sidebar still needs a page to light up. */}
             <Route path="*" element={<Navigate to="/settings/general" replace />} />
           </Route>
@@ -670,18 +636,20 @@ function SettingsNav({
   return (
     <>
       {SETTINGS_NAV_GROUPS.map((group) => (
-        <SidebarGroup key={group.label} className="px-2 py-1">
+        <SidebarGroup key={group.label} className={cn(TIER, GROUP)}>
           <SidebarGroupLabel className={GROUP_LABEL}>{group.label}</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
+            <SidebarMenu className={MENU}>
               {SETTINGS_SECTIONS.filter((entry) =>
                 group.sections.includes(entry.id)
               ).map((entry) => (
                 <SidebarMenuItem key={entry.id}>
                   <SidebarMenuButton
+                    size="sm"
                     tooltip={entry.label}
                     isActive={entry.id === section}
                     onClick={() => select(entry.id)}
+                    className={ROW}
                   >
                     <entry.icon className="size-4" />
                     <span>{entry.label}</span>
@@ -696,717 +664,6 @@ function SettingsNav({
   )
 }
 
-
-/* ── Sidebar thread list ──
-   Three tiers, and a thread appears in exactly one of them:
-
-     Pinned   the ones you said matter, from every project
-     Recent   the newest of what is left, project-agnostic
-     <project>  everything older, grouped by where it runs
-     Trash    deleted, still recoverable — last, folded shut, and only when it
-              has something in it
-
-   Recent exists because the thing you want next is almost always the thing you
-   touched last, and hunting for it inside a project group costs a scan. Older
-   work is the opposite — you look for it by *where* it was, so it stays
-   grouped. Pins live on this device (lib/pins); the harness's session list is
-   shared, and one person pinning a thread should not reorder anyone else's
-   sidebar. */
-
-/* Group titles, not rows. A label used to be the same size, weight and colour
-   as the threads under it, so "Recent" scanned as a thread called Recent.
-   Smaller, uppercase, tracked out, and darker than the rows beneath — /80 over
-   the sidebar surface keeps it legible while the rows stay full-strength.
-   Shared by every sidebar group so the whole panel has one title voice: one
-   neutral, no per-group accents — wayfinding comes from position and the
-   chevron, not from colour or icons. */
-const GROUP_LABEL =
-  "flex h-6 gap-1.5 px-2 text-[11px] font-bold tracking-[0.06em] uppercase text-sidebar-foreground/80"
-
-const RECENT_COUNT = 6
-
-/** Rows a long-tail group (a project, Trash) shows before its "Show more". */
-const PROJECT_PAGE_SIZE = 5
-
-function ThreadGroups({ actions }: { actions: Actions }) {
-  const { state } = useStore()
-  const pins = usePins()
-
-  // Deleting is reversible, so a deleted thread leaves the tiers above but not
-  // the sidebar: it drops into Trash until it is restored or purged.
-  const live = state.sessions.filter((session) => !session.deletedAt)
-  const trashed = state.sessions
-    .filter((session) => !!session.deletedAt)
-    .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0))
-
-  if (state.sessions.length === 0) {
-    return (
-      <SidebarGroup className="px-2 py-0">
-        <SidebarGroupLabel className={GROUP_LABEL}>Threads</SidebarGroupLabel>
-        <SidebarGroupContent>
-          <p className="px-2 py-4 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
-            No threads yet.
-          </p>
-        </SidebarGroupContent>
-      </SidebarGroup>
-    )
-  }
-
-  const newestFirst = [...live].sort((a, b) => b.createdAt - a.createdAt)
-  // Pinned keeps the order pins were added in, not the order threads were
-  // created: the group you built by hand should stay where you put it.
-  const pinned = pins
-    .map((id) => newestFirst.find((session) => session.id === id))
-    .filter((session): session is SessionMeta => !!session)
-  const rest = newestFirst.filter((session) => !pins.includes(session.id))
-  const recent = rest.slice(0, RECENT_COUNT)
-  const older = rest.slice(RECENT_COUNT)
-
-  const byProject = new Map<string, SessionMeta[]>()
-  for (const session of older) {
-    const list = byProject.get(session.projectId) ?? []
-    list.push(session)
-    byProject.set(session.projectId, list)
-  }
-
-  /* Projects are the long tail — there can be many, and you are usually only
-     interested in one. No count on the label: the number of old threads in a
-     project is not a thing anyone acts on, and it competed with the disclosure
-     arrow for the same corner. */
-  const projectGroup = (projectId: string, sessions: SessionMeta[]) => (
-    <FoldableGroup
-      key={projectId}
-      groupKey={projectId}
-      icon={<FolderIcon className="size-3 shrink-0" />}
-      label={state.projects.find((p) => p.id === projectId)?.name ?? "Other"}
-    >
-      <ThreadList sessions={sessions} actions={actions} limit={PROJECT_PAGE_SIZE} />
-    </FoldableGroup>
-  )
-
-  return (
-    <>
-      {/* Every tier folds now — the sidebar is one uniform two-level tree of
-          items and their subitems, and fold state is remembered per tier. */}
-      {pinned.length > 0 && (
-        <FoldableGroup
-          groupKey="__pinned"
-          label="Pinned"
-          icon={<Pin className="size-3 shrink-0" />}
-          count={pinned.length}
-        >
-          <ThreadList sessions={pinned} actions={actions} />
-        </FoldableGroup>
-      )}
-      <ScheduledGroup actions={actions} />
-      {recent.length > 0 && (
-        <FoldableGroup
-          groupKey="__recent"
-          label="Recent"
-          icon={<Clock className="size-3 shrink-0" />}
-          count={recent.length}
-        >
-          <ThreadList sessions={recent} actions={actions} />
-        </FoldableGroup>
-      )}
-      {[...byProject.entries()].map(([projectId, sessions]) =>
-        projectGroup(projectId, sessions)
-      )}
-      {/* Trash folds, and folds shut by default: it is where things go, not
-          where anyone works, and an install that deletes a lot of threads used
-          to end up scrolling past all of them to reach nothing. */}
-      {trashed.length > 0 && (
-        <FoldableGroup
-          groupKey="__trash"
-          label="Trash"
-          icon={<Trash2 className="size-3 shrink-0" />}
-          count={trashed.length}
-          defaultOpen={false}
-        >
-          <ThreadList sessions={trashed} actions={actions} trash limit={PROJECT_PAGE_SIZE} />
-          <EmptyTrash sessions={trashed} actions={actions} />
-        </FoldableGroup>
-      )}
-    </>
-  )
-}
-
-/** Relative time for a thread row: "just now", "5m", "2h", "3d", else a short
-    date. Nothing counts as a date prettier than the scannable index needs. */
-function timeAgo(ts: number): string {
-  const elapsed = Date.now() - ts
-  const minute = 60_000
-  const hour = 60 * minute
-  const day = 24 * hour
-  if (elapsed < minute) return "just now"
-  if (elapsed < hour) return `${Math.floor(elapsed / minute)}m`
-  if (elapsed < day) return `${Math.floor(elapsed / hour)}h`
-  if (elapsed < 7 * day) return `${Math.floor(elapsed / day)}d`
-  return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" })
-}
-
-/** "In 3 days" / "every day" style line for a schedule. */
-function scheduleWhen(nextAt: number, everyMs: number | null): string {
-  const when = new Date(nextAt).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
-  if (everyMs === null) return when
-  const every =
-    everyMs >= 7 * 24 * 60 * 60_000
-      ? `${Math.round(everyMs / (7 * 24 * 60 * 60_000))} week(s)`
-      : everyMs >= 24 * 60 * 60_000
-        ? `${Math.round(everyMs / (24 * 60 * 60_000))} day(s)`
-        : everyMs >= 60 * 60_000
-          ? `${Math.round(everyMs / (60 * 60_000))} hour(s)`
-          : `${Math.round(everyMs / 60_000)} min`
-  return `${when} · every ${every}`
-}
-
-/** Upcoming prompts the server will deliver even with no browser open. Lives
-    in the main sidebar, not settings: a schedule is something you watch for —
-    it names the thread it will land in, so its row opens that thread. The
-    group shows even when empty — a section that hides itself when there is
-    nothing in it is also the one place nobody can find to create the first
-    item — with the + on the label reusing the thread dialog and its picker,
-    which is why it needs a live thread to exist at all. */
-function ScheduledGroup({ actions }: { actions: Actions }) {
-  const { state } = useStore()
-  const navigate = useNavigate()
-  const location = useLocation()
-  const { isMobile, setOpenMobile } = useSidebar()
-  const confirm = useConfirm()
-
-  /* The picker offers the threads a schedule can legally target — the same
-     set the old settings page offered. A draft has no server row to schedule
-     against (createSchedule materializes it, but a picker row for a half
-     written thread is a promise about a thread nobody has seen). */
-  const live = state.sessions.filter((s) => !s.draft && !s.deletedAt)
-
-  const cancel = async (id: string) => {
-    if (
-      !(await confirm({
-        title: "Cancel this scheduled message?",
-        destructive: true,
-        confirmLabel: "Cancel schedule",
-      }))
-    )
-      return
-    actions.cancelSchedule(id).catch((err) => reportError(err, "Couldn't cancel the schedule"))
-  }
-
-  const open = (sessionId: string) => {
-    if (isMobile) setOpenMobile(false)
-    void navigate(threadPath(sessionId))
-  }
-
-  const titleOf = (sessionId: string) =>
-    state.sessions.find((s) => s.id === sessionId)?.title ?? "Unknown thread"
-
-  return (
-      <FoldableGroup
-        groupKey="__scheduled"
-        label="Scheduled"
-        icon={<CalendarClock className="size-3 shrink-0" />}
-        count={state.scheduled.length > 0 ? state.scheduled.length : undefined}
-        action={
-          live.length > 0 && (
-            <button
-              type="button"
-              title="New schedule"
-              onClick={() => void navigate(schedulePath(live[0].id), {
-                state: { returnTo: location.pathname + location.search },
-              })}
-              className="grid size-4 place-items-center rounded-sm text-muted-foreground transition-colors hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <Plus className="size-3.5" />
-              <span className="sr-only">New schedule</span>
-            </button>
-          )
-        }
-      >
-        {state.scheduled.length === 0 ? (
-          <p className="px-2 py-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
-            {live.length > 0
-              ? "Nothing scheduled. + adds a prompt the server sends later."
-              : "Nothing scheduled — open a thread first."}
-          </p>
-        ) : (
-          <SidebarMenu>
-          {state.scheduled.map((item) => (
-            <SidebarMenuItem key={item.id}>
-              <SidebarMenuButton
-                tooltip={`${titleOf(item.sessionId)} — ${scheduleWhen(item.nextAt, item.everyMs)}`}
-                onClick={() => open(item.sessionId)}
-                className="h-auto min-h-7 px-2 py-1"
-              >
-                {/* Two lines, because the message is the schedule's payload:
-                    a row that showed only the thread could not tell two
-                    schedules apart. The title line carries the thread, the
-                    muted line carries what will be said, and when. */}
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] leading-tight">{titleOf(item.sessionId)}</span>
-                  <span className="block truncate text-[10px] leading-tight text-muted-foreground">
-                    {item.text} · {scheduleWhen(item.nextAt, item.everyMs)}
-                  </span>
-                </span>
-              </SidebarMenuButton>
-              <SidebarMenuAction
-                showOnHover
-                title="Cancel schedule"
-                onClick={() => void cancel(item.id)}
-              >
-                <Trash2 />
-                <span className="sr-only">Cancel schedule</span>
-              </SidebarMenuAction>
-            </SidebarMenuItem>
-          ))}
-          </SidebarMenu>
-        )}
-      </FoldableGroup>
-  )
-}
-
-/* Which groups are folded, on this device. One list for every foldable group —
-   a project is keyed by its id, Trash by a name no project can have — so the
-   sidebar has one fold memory rather than one per kind of group. The key is
-   the old projects one: a group that was folded before this list grew stays
-   folded. */
-const COLLAPSED_KEY = "ui.collapsedProjects"
-
-function collapsedGroups(): string[] {
-  try {
-    const raw = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]") as unknown
-    return Array.isArray(raw) ? raw.filter((id): id is string => typeof id === "string") : []
-  } catch {
-    return []
-  }
-}
-
-function rememberFold(key: string, open: boolean, defaultOpen: boolean) {
-  /* Only the *departure* from the default is stored, so a group that defaults
-     closed (Trash) does not need a row in the list to stay closed — and one
-     that defaults open does not need one to stay open. */
-  const collapsed = collapsedGroups().filter((id) => id !== key)
-  if (open !== defaultOpen) collapsed.push(key)
-  try {
-    localStorage.setItem(COLLAPSED_KEY, JSON.stringify(collapsed))
-  } catch {
-    // A forgotten fold is not worth throwing out of a click handler.
-  }
-}
-
-/** A foldable sidebar group. Open/closed is remembered per key. */
-function FoldableGroup({
-  groupKey,
-  label,
-  icon,
-  count,
-  defaultOpen = true,
-  action,
-  children,
-}: {
-  groupKey: string
-  label: string
-  icon?: React.ReactNode
-  /** Printed next to the label when the number is something you act on. */
-  count?: number
-  /** Trash defaults closed: it is a place things go, not a place you work. */
-  defaultOpen?: boolean
-  /** A control that belongs to the group itself, not to a row in it — the
-      Scheduled group's "+ new". Rendered over the chevron and only on hover:
-      it cannot live inside the label, because the label is the fold trigger
-      and a button in a button folds and fires at once. */
-  action?: React.ReactNode
-  children: React.ReactNode
-}) {
-  const [open, setOpen] = React.useState(
-    () => collapsedGroups().includes(groupKey) !== defaultOpen
-  )
-
-  const toggle = (next: boolean) => {
-    setOpen(next)
-    rememberFold(groupKey, next, defaultOpen)
-  }
-
-  return (
-    <Collapsible open={open} onOpenChange={toggle}>
-      {/* mt-4: generous separation between tiers — a collapsed label next to an
-          expanded group needs a clear gap of its own, or two groups read as
-          one. The label's own py carries the inner spacing. */}
-      <SidebarGroup className="mt-4 px-2 py-0">
-        {/* Scoped to the label row, not the whole group: hovering a row ten
-            threads deep must not rearrange the header you can no longer see. */}
-        {action && (
-          <div className="absolute top-1 right-2 z-10 flex opacity-0 transition-opacity duration-150 group-hover/label:opacity-100 focus-within:opacity-100 group-data-[collapsible=icon]:hidden">
-            {action}
-          </div>
-        )}
-        <CollapsibleTrigger
-          render={
-            <SidebarGroupLabel
-              className={cn(GROUP_LABEL, "group/label hover:text-sidebar-foreground/70")}
-            />
-          }
-        >
-          {icon}
-          <span className="truncate">{label}</span>
-          {count != null && (
-            <span className="ml-auto tabular-nums opacity-70">{count}</span>
-          )}
-          <ChevronRight
-            aria-hidden
-            className={cn(
-              "shrink-0 transition-[transform,opacity] duration-200",
-              count == null && "ml-auto",
-              action && "group-hover/label:opacity-0",
-              open && "rotate-90"
-            )}
-          />
-        </CollapsibleTrigger>
-        <CollapsibleContent className="harness-collapse">
-          <SidebarGroupContent>{children}</SidebarGroupContent>
-        </CollapsibleContent>
-      </SidebarGroup>
-    </Collapsible>
-  )
-}
-
-/** The one action that belongs to the Trash rather than to a thread in it.
-    It sits at the foot of the list, not on the group label: the label is a
-    disclosure trigger, and a destructive button inside a trigger is a click
-    away from being hit by someone who only meant to fold the group. */
-function EmptyTrash({ sessions, actions }: { sessions: SessionMeta[]; actions: Actions }) {
-  const confirm = useConfirm()
-  const [busy, setBusy] = React.useState(false)
-
-  const empty = async () => {
-    if (
-      !(await confirm({
-        title: sessions.length === 1 ? "Empty the Trash?" : `Delete ${sessions.length} threads forever?`,
-        description:
-          "The harness forgets them. Only each agent's own transcript file would still have the conversation.",
-        confirmLabel: "Delete forever",
-        destructive: true,
-      }))
-    )
-      return
-    setBusy(true)
-    /* One at a time: purgeThread refreshes the session list after each, and a
-       parallel burst would have several refreshes racing to describe a list
-       that is still changing. There are never many. */
-    try {
-      for (const session of sessions) await actions.purgeThread(session.id)
-    } catch (err) {
-      reportError(err, "Couldn't empty the Trash")
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <SidebarMenu>
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          onClick={empty}
-          disabled={busy}
-          tooltip="Delete every thread in the Trash"
-          className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-        >
-          <Trash2 className="size-4" />
-          <span className="truncate">{busy ? "Emptying…" : "Empty Trash"}</span>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-    </SidebarMenu>
-  )
-}
-
-function ThreadList({
-  sessions,
-  actions,
-  trash = false,
-  limit,
-}: {
-  sessions: SessionMeta[]
-  actions: Actions
-  /** Rendering the Trash group: these threads are deleted, so the row restores
-      instead of opening and the menu offers the two ways back out. */
-  trash?: boolean
-  /** Show this many rows and a "Show more" toggle under them, instead of the
-      whole list. For the long tail — a project with last winter's threads in
-      it — not for Pinned or Recent, which are short by construction. */
-  limit?: number
-}) {
-  /* Expansion is deliberately not persisted: the reveal answers "is what I am
-     looking for down there?" and the answer resets the next visit, the same
-     way the fold defaults do. */
-  const [expanded, setExpanded] = React.useState(false)
-  const visible = limit && !expanded ? sessions.slice(0, limit) : sessions
-  const hidden = sessions.length - visible.length
-  const { state } = useStore()
-  const location = useLocation()
-  const navigate = useNavigate()
-  const activeThreadId = currentThreadId(location.pathname, location.search)
-  const confirm = useConfirm()
-  const pins = usePins()
-  const { isMobile, setOpenMobile } = useSidebar()
-  /* The live thread is the truth about a running turn: SessionMeta.promptActive
-     is a server snapshot refetched only on bootstrap and on mutations, so on
-     its own it never lights up mid-turn. Fall back to it for threads this
-     client has not connected yet — for those it is the only signal there is. */
-  const running = (session: SessionMeta) =>
-    state.threads[session.id]?.turnActive ?? session.promptActive
-  /* A thread is waiting on you when the agent has raised a question
-     (elicitation) or an approval (permission) that is still open. Both live
-     only on a thread this client has connected — there is no server snapshot
-     for the same reason `promptActive` is only a running hint — so this is
-     best-effort and correct whenever a tab has the thread open. */
-  const waiting = (session: SessionMeta) => {
-    const thread = state.threads[session.id]
-    return !!thread && (!!thread.permission || !!thread.elicitation)
-  }
-  const projectNameOf = (projectId: string) =>
-    state.projects.find((p) => p.id === projectId)?.name ?? "Other"
-
-  /* Delete stops the agent and moves the thread to Trash. Recoverable, but not
-     free — the process dies and a running turn dies with it — so it asks, and
-     the toast still offers the one-click way back. Purge asks its own,
-     harder question. */
-  const remove = async (session: SessionMeta) => {
-    /* A draft was never started: no process to stop, no server row, and nothing
-       for Trash to hold. Discarding it is the whole operation — promising an
-       Undo here would offer a button that cannot work. */
-    if (session.draft) {
-      if (
-        !(await confirm({
-          title: "Discard this thread?",
-          description:
-            "It was never started, so there is no agent to stop and nothing to restore afterwards.",
-          confirmLabel: "Discard",
-          destructive: true,
-        }))
-      )
-        return
-      if (activeThreadId === session.id) {
-        void navigate("/")
-      }
-      void actions.deleteThread(session.id)
-      return
-    }
-    if (
-      !(await confirm({
-        title: `Delete "${session.title}"?`,
-        description:
-          "The agent process is stopped and the thread moves to Trash, where it can be restored.",
-        confirmLabel: "Delete",
-        destructive: true,
-      }))
-    )
-      return
-    // Leave the route first: a deleted thread has no page to show.
-    if (activeThreadId === session.id) {
-      void navigate("/")
-    }
-    actions
-      .deleteThread(session.id)
-      .then(() =>
-        toast("Moved to Trash", {
-          description: session.title,
-          action: {
-            label: "Undo",
-            onClick: () => {
-              actions.restoreThread(session.id).catch((err) => reportError(err, "Couldn't restore the thread"))
-            },
-          },
-        })
-      )
-      .catch((err) => reportError(err, "Couldn't delete the thread"))
-  }
-
-  const restore = (session: SessionMeta) => {
-    actions.restoreThread(session.id).catch((err) => reportError(err, "Couldn't restore the thread"))
-  }
-
-  const purge = async (session: SessionMeta) => {
-    if (
-      !(await confirm({
-        title: `Delete "${session.title}" forever?`,
-        description:
-          "The harness forgets this thread. Only the agent's own transcript file would still have the conversation.",
-        confirmLabel: "Delete forever",
-        destructive: true,
-      }))
-    )
-      return
-    actions.purgeThread(session.id).catch((err) => reportError(err, "Couldn't delete the thread"))
-  }
-
-  const open = (session: SessionMeta, newTab = false) => {
-    if (isMobile) setOpenMobile(false)
-    if (newTab) markNewTab()
-    void navigate(threadPath(session.id))
-  }
-
-  return (
-    <SidebarMenu>
-      {visible.map((session) => {
-        const pinned = pins.includes(session.id)
-        /* One list feeds both the hover dropdown and the right-click menu. */
-        const items = trash
-          ? trashMenuItems(session, restore, purge)
-          : threadMenuItems(session, pinned, {
-              openInNewTab: () => open(session, true),
-              onDelete: remove,
-            })
-        return (
-          <ItemContextMenu key={session.id} items={items}>
-            <SidebarMenuItem>
-              {/* Two-line row: the title, then a muted context line that carries
-                  the agent's mark (small), the project and then when it was
-                  touched. Collapsed mode keeps only the mark. */}
-              <SidebarMenuButton
-                size="sm"
-                tooltip={session.title}
-                isActive={activeThreadId === session.id}
-                onClick={(event) => open(session, event.metaKey || event.ctrlKey)}
-                className="h-auto min-h-9 items-start px-2 py-1.5 text-[13px] group-data-[collapsible=icon]:items-center"
-              >
-                <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
-                  <span
-                    className={cn(
-                      "block truncate",
-                      (session.exited || trash) && "text-muted-foreground",
-                      trash && "line-through"
-                    )}
-                  >
-                    {session.title}
-                  </span>
-                  <span
-                    className={cn(
-                      "flex items-center gap-1 truncate text-[11px] leading-tight",
-                      waiting(session) ? "font-medium text-amber-600 dark:text-amber-400" : "text-muted-foreground"
-                    )}
-                  >
-                    <AgentIcon agentId={session.agentId} className="size-3" />
-                    {/* The live/waiting badge rides the metadata line, not the
-                        title: a running turn is a primary dot, a thread waiting
-                        on the user is an amber dot — the one you must act on. A
-                        removed thread stays quiet. */}
-                    {running(session) && (
-                      <span
-                        aria-hidden
-                        className="harness-node-active size-1.5 shrink-0 rounded-full bg-primary"
-                      />
-                    )}
-                    <span className="truncate">
-                      {waiting(session)
-                        ? "Needs you"
-                        : `${projectNameOf(session.projectId)} · ${timeAgo(session.createdAt)}`}
-                    </span>
-                  </span>
-                </span>
-                {/* Collapsed mode holds the mark — the text column below hides,
-                    and the button is otherwise empty. */}
-                <AgentIcon
-                  agentId={session.agentId}
-                  className="size-4 hidden group-data-[collapsible=icon]:inline-block"
-                />
-              </SidebarMenuButton>
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={
-                    <SidebarMenuAction showOnHover title={`Actions for ${session.title}`}>
-                      <MoreVertical />
-                    </SidebarMenuAction>
-                  }
-                />
-                <DropdownMenuContent side="right" align="start" className="w-44">
-                  {renderMenuItems(items, {
-                    Item: DropdownMenuItem,
-                    Separator: DropdownMenuSeparator,
-                  })}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </SidebarMenuItem>
-          </ItemContextMenu>
-        )
-      })}
-      {/* One toggle row, styled as a quieter thread row rather than a button —
-          it expands the index you are already scanning, so it borrows the
-          list's own anatomy instead of presenting itself as a control. */}
-      {hidden > 0 && (
-        <SidebarMenuItem>
-          <button
-            type="button"
-            onClick={() => setExpanded((value) => !value)}
-            className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <ChevronRight
-              aria-hidden
-              className={cn("size-3 shrink-0 transition-transform duration-200", expanded && "rotate-90")}
-            />
-            <span>{expanded ? "Show less" : `Show ${hidden} more`}</span>
-          </button>
-        </SidebarMenuItem>
-      )}
-    </SidebarMenu>
-  )
-}
-
-/** The row menu for a live thread — Trash rows get their own two items. */
-function threadMenuItems(
-  session: SessionMeta,
-  pinned: boolean,
-  handlers: {
-    openInNewTab: () => void
-    onDelete: (session: SessionMeta) => void
-  }
-): MenuItemSpec[] {
-  return [
-    {
-      label: pinned ? "Unpin" : "Pin to top",
-      icon: pinned ? <PinOff /> : <Pin />,
-      onClick: () => togglePin(session.id),
-    },
-    { label: "Open in new tab", icon: <ExternalLink />, onClick: handlers.openInNewTab },
-    {
-      label: "Copy link",
-      icon: <LinkIcon />,
-      onClick: () => {
-        navigator.clipboard
-          .writeText(new URL(threadPath(session.id), window.location.origin).toString())
-          .then(() => toast.success("Link copied"))
-          .catch((err) => reportError(err, "Couldn't copy the link"))
-      },
-    },
-    { type: "separator" },
-    {
-      label: "Delete",
-      icon: <Trash2 />,
-      destructive: true,
-      onClick: () => handlers.onDelete(session),
-    },
-  ]
-}
-
-function trashMenuItems(
-  session: SessionMeta,
-  restore: (session: SessionMeta) => void,
-  purge: (session: SessionMeta) => void
-): MenuItemSpec[] {
-  return [
-    { label: "Restore", icon: <Undo2 />, onClick: () => restore(session) },
-    { type: "separator" },
-    {
-      label: "Delete forever",
-      icon: <Trash2 />,
-      destructive: true,
-      onClick: () => purge(session),
-    },
-  ]
-}
 
 /** No thread open: a short "what now" with the two setup paths. */
 function EmptyState({
@@ -1503,84 +760,3 @@ function EmptyState({
   )
 }
 
-/* ── Server switcher ──
-   Several harness servers can be stored side by side (lib/settings). Switching
-   is a hard navigation: threads, the ACP sockets and the whole store belong to
-   one server, so the cheapest correct swap is to re-boot the app against the
-   newly-active connection. */
-function ServerSwitcher({
-  settings,
-  onAddServer,
-}: {
-  settings: ServerSettings
-  onAddServer: () => void
-}) {
-  const servers = React.useMemo(loadServers, [])
-  const switchTo = (id: string) => {
-    if (id === settings.id) return
-    setActiveServer(id)
-    location.assign("/")
-  }
-
-  return (
-    <SidebarMenuItem>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <SidebarMenuButton
-              tooltip={`${settings.name} · ${settings.url}`}
-              className="data-popup-open:bg-sidebar-accent"
-            >
-              <ServerIcon className="size-4 shrink-0" />
-              <span className="truncate">{settings.name}</span>
-              <ChevronsUpDown className="ml-auto size-4 shrink-0 opacity-60" />
-            </SidebarMenuButton>
-          }
-        />
-        <DropdownMenuContent align="start" side="top" className="w-64">
-          {/* Base UI: the label is a group part, so it has to live in a group. */}
-          <DropdownMenuGroup>
-            <DropdownMenuLabel>Servers</DropdownMenuLabel>
-            {servers.map((server) => (
-              <DropdownMenuItem key={server.id} onClick={() => switchTo(server.id)}>
-                <span className="grid min-w-0 flex-1 leading-tight">
-                  <span className="truncate">{server.name}</span>
-                  <span className="truncate font-mono text-[11px] text-muted-foreground">
-                    {server.url}
-                  </span>
-                </span>
-                {server.id === settings.id && <Check className="ml-2 size-4 shrink-0" />}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={onAddServer}>
-            <Plus className="size-4" />
-            Add server…
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            variant="destructive"
-            onClick={() => {
-              /* Forgetting a server has to drop this device from its push list
-                 first — the token outlives the connection, so a server nobody
-                 is connected to any more would go on notifying this device with
-                 no way left in the UI to stop it. The navigation waits, because
-                 unloading cancels the request in flight; but only briefly, since
-                 an unreachable server is one of the reasons to disconnect. */
-              void Promise.race([
-                teardownPush(settings),
-                new Promise((resolve) => setTimeout(resolve, 2000)),
-              ]).finally(() => {
-                removeServer(settings.id)
-                location.assign("/")
-              })
-            }}
-          >
-            <LogOut className="size-4" />
-            Disconnect {settings.name}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </SidebarMenuItem>
-  )
-}

@@ -25,7 +25,7 @@ import {
 } from "lucide-react"
 import { DiffView } from "@/components/ui/diff-view"
 import { useThreadLinks } from "@/lib/workspace/thread-links"
-import { shortPath, splitCommand, toolKindOf, toolLanguage } from "@/lib/tools"
+import { hostOf, shortPath, splitCommand, toolKindOf, toolLanguage } from "@/lib/tools"
 import type { ToolItem } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { useViewOptionsContext } from "@/lib/view-options"
@@ -493,6 +493,48 @@ export function FileBadge({ file, filePath }: { file: string; filePath?: string 
   )
 }
 
+
+/**
+ * A site's icon, from the one service every browser already talks to for it.
+ * Decorative: it is the visual anchor of a source row and nothing depends on
+ * it loading, so a failure just leaves the globe in place. `referrerPolicy`
+ * keeps the page's own address out of the request.
+ */
+export function Favicon({ url, className }: { url: string; className?: string }) {
+  const host = hostOf(url)
+  const [failed, setFailed] = React.useState(false)
+  if (!host || failed) return <GlobeIcon aria-hidden className={cn("size-3.5 shrink-0 text-muted-foreground/60", className)} />
+  return (
+    <img
+      src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=32`}
+      alt=""
+      width={14}
+      height={14}
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      onError={() => setFailed(true)}
+      className={cn("size-3.5 shrink-0 rounded-[3px] bg-background/60", className)}
+    />
+  )
+}
+
+/** One page the agent used, as a chip: icon, host, and the title on hover.
+    Shared by the search results and the per-turn Sources strip so a page
+    looks the same wherever it is mentioned. */
+export function SourceChip({ url, title }: { url: string; title?: string }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer noopener"
+      title={title ? `${title}\n${url}` : url}
+      className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-md border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[11px] leading-4 text-muted-foreground transition-colors hover:border-border hover:bg-muted hover:text-foreground"
+    >
+      <Favicon url={url} className="size-3" />
+      <span className="truncate">{hostOf(url) || url}</span>
+    </a>
+  )
+}
 
 /** Diffs and inline content blocks — the payload a code block cannot show. */
 export function ToolContentBlocks({ item }: { item: ToolItem }) {

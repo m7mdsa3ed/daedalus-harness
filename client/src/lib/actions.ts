@@ -8,6 +8,7 @@ import {
   alreadyAsked,
   loadAgentOptions,
   markAsked,
+  optionKey,
   pruneAgentOptions,
   saveAgentOptions,
   saveProbedOptions,
@@ -20,6 +21,7 @@ import { prunePins } from "./pins"
 import { pruneViewOptions } from "./view-options"
 import {
   api,
+  profileAgentIds,
   type AgentDef,
   type McpServerDef,
   type Profile,
@@ -63,6 +65,16 @@ export function useActions(settings: ServerSettings) {
        toast: the transcript is where the user is looking, it survives the four
        seconds a toast lives, and it is the only place that can offer the one
        useful next step (send that prompt again). */
+    /** The socket a queue command goes down. Same refusal `send` gives a
+        thread with no connection: the words are recorded, not lost. */
+    const requireLive = (sessionId: string): ThreadSocket => {
+      const thread = liveThreads.get(sessionId)
+      if (!thread) {
+        throw new Error("This thread has no live connection to its agent — revive it and send again.")
+      }
+      return thread
+    }
+
     const recordError = (
       sessionId: string,
       err: unknown,
@@ -216,8 +228,8 @@ export function useActions(settings: ServerSettings) {
         if (pending?.length) dispatch({ type: "batch", actions: pending })
       }
       return {
-        onUpdate: (update, historyReplay) =>
-          sendStream({ type: "update", id, update, allowUserChunks: historyReplay }),
+        onUpdate: (update, historyReplay, sessionId) =>
+          sendStream({ type: "update", id, update, allowUserChunks: historyReplay, sessionId }),
         /* The agent is blocked on this question until somebody answers it. The
            server holds its promise now, so `resolve` is a message rather than a
            callback: it names the request the server minted, which is also how a
@@ -319,13 +331,13 @@ export function useActions(settings: ServerSettings) {
           /* Remember what this profile's agent offers. A draft has no process to
              ask, so without this a new thread cannot show a single setting until
              it has already started — see lib/agent-options. */
-          const profileId = stateRef.current.sessions.find((s) => s.id === id)?.profileId
-          if (profileId && configOptions && configOptions.length > 0) {
-            saveAgentOptions(profileId, configOptions)
+          const meta = stateRef.current.sessions.find((s) => s.id === id)
+          if (meta?.profileId && meta.agentId && configOptions && configOptions.length > 0) {
+            saveAgentOptions(optionKey(meta.profileId, meta.agentId), configOptions)
           }
         },
         onTtft: (ms) => send({ type: "ttft", id, ms }),
-        onTurnEnded: (usage, error, promptText, catchingUp) => {
+        onTurnEnded: (usage, error, promptText, catchingUp, continued) => {
           send({ type: "turn-active", id, active: false })
           if (usage) send({ type: "usage", id, usage })
           if (error) {
@@ -342,12 +354,15 @@ export function useActions(settings: ServerSettings) {
             if (!catchingUp && info.kind !== "cancelled") {
               notifyThreadEvent("turnFailed", id, titleOf(id), info.title)
             }
-          } else if (!catchingUp) {
+          } else if (!catchingUp && !continued) {
             // Notifying on replay would re-announce every turn in the thread on
-            // every reload — on a phone, as a push.
+            // every reload — on a phone, as a push. And not for a turn the queue
+            // is about to continue: "finished" would announce a pause that is
+            // not there.
             notifyThreadEvent("turnFinished", id, titleOf(id))
           }
         },
+        onQueue: (items) => send({ type: "queue", id, items }),
         /* A turn began on words this device did not type — either another peer
            prompted, or this is the replay rebuilding the transcript. Only the
            first is live activity. */
@@ -362,7 +377,7 @@ export function useActions(settings: ServerSettings) {
            used to be read off `from > 0`, which stopped being enough once the
            server could pick a `from` of its own for a windowed attach — a case
            where `from` is large and the transcript must still be replaced. */
-        onAttached: ({ resumed, earlier, archived }, history, historyLost) => {
+        onAttached: ({ resumed, earlier, archived }, historyLost) => {
           buffer = []
           /* Keep what is on screen when resuming; replace it otherwise. A reset
              would throw away the transcript a delta is about to extend, and a
@@ -374,7 +389,6 @@ export function useActions(settings: ServerSettings) {
             send({ type: "thread-reset", id, thread: { ...emptyThread, status: "connecting" } })
           }
           send({ type: "thread-window", id, archived, earlier })
-          send({ type: "history-state", id, history })
           /* The agent would not reload this conversation, so the replay about
              to arrive is empty. Said here rather than left to look like a quiet
              thread — and through `send`, so it lands inside the same fold as
@@ -391,9 +405,12 @@ export function useActions(settings: ServerSettings) {
             )
         },
         // A turn may still be running server-side; `turn_ended` clears it.
-        onCaughtUp: (cursor, promptActive) => {
+        onCaughtUp: (cursor, promptActive, queue) => {
           journalCursors.set(id, cursor)
           if (promptActive) send({ type: "turn-active", id, active: true })
+          // Not journaled, so it rides here — the way an open permission is
+          // handed over after the replay rather than replayed.
+          send({ type: "queue", id, items: queue })
           flush()
         },
         /* A page of older history arrived and the socket is about to fold the
@@ -417,16 +434,6 @@ export function useActions(settings: ServerSettings) {
           send({ type: "thread-window", id, earlier, loadingEarlier: false })
           if (active) send({ type: "turn-active", id, active: true })
           flush()
-        },
-        onHistoryState: (history) => send({ type: "history-state", id, history }),
-        onHistoryReset: (history) => {
-          journalCursors.set(id, 0)
-          buffer = null
-          dispatch({
-            type: "thread-reset",
-            id,
-            thread: { ...emptyThread, status: "connected", history },
-          })
         },
         // A background task's journal grew server-side. Into the module store,
         // not the reducer: the events are keyed by transcript dir, not by
@@ -459,7 +466,7 @@ export function useActions(settings: ServerSettings) {
        through left a half-restored thread. */
     const respawnThread = async (
       meta: SessionMeta,
-      body: { profileId: string; model?: string; effort?: string },
+      body: { profileId: string; agentId?: string; model?: string; effort?: string },
       context: string
     ) => {
       try {
@@ -500,6 +507,9 @@ export function useActions(settings: ServerSettings) {
         body: JSON.stringify({
           id: meta.id,
           profileId: profile.id,
+          /* The thread is a (profile, agent) pair: the profile may serve several
+             agents, and which one answers is the draft's own pick. */
+          agentId: meta.agentId,
           projectId: project.id,
           model: meta.model || undefined,
           effort: meta.effort || undefined,
@@ -508,6 +518,12 @@ export function useActions(settings: ServerSettings) {
              best-effort: a remembered option the agent no longer offers must not
              stop the message that created the thread. */
           configChoices: meta.configChoices,
+          /* The thread's own tool picks, on top of the project's and the
+             profile's — the server links what still exists and spawns with
+             the union. */
+          mcpServerIds: meta.mcpServerIds ?? [],
+          skillIds: meta.skillIds ?? [],
+          commandIds: meta.commandIds ?? [],
         }),
       })
       // Swaps the draft row for the server's own — see the `sessions` reducer.
@@ -749,6 +765,8 @@ export function useActions(settings: ServerSettings) {
       newDraftThread(opts: {
         project: Project
         profile: Profile
+        /** One of `profile.agents`; the profile's first when left out. */
+        agentId?: string
         model?: string
         effort?: string
         /** Adopt this exact id instead of minting one — a reload that landed on
@@ -764,7 +782,7 @@ export function useActions(settings: ServerSettings) {
             id,
             profileId: profile.id,
             projectId: project.id,
-            agentId: profile.agentId,
+            agentId: opts.agentId ?? profileAgentIds(profile)[0] ?? "",
             model: model ?? "",
             effort: effort ?? "",
             title: "New thread",
@@ -775,6 +793,9 @@ export function useActions(settings: ServerSettings) {
             promptActive: false,
             cursor: 0,
             draft: true,
+            mcpServerIds: [],
+            skillIds: [],
+            commandIds: [],
           },
         })
         dispatch({ type: "thread-reset", id, thread: { ...emptyThread } })
@@ -782,31 +803,33 @@ export function useActions(settings: ServerSettings) {
       },
 
       /**
-       * Find out what a profile's agent can be configured with, once.
+       * Find out what an agent can be configured with on a profile, once.
        *
        * The server answers by spawning one and killing it (see probe.ts), which
-       * is the only way to ask — so this runs at most once per profile per
-       * page-load, and never when a live session has already told us. A failure
-       * is silent on purpose: the menu falls back to saying the settings appear
-       * once the thread starts, which is exactly what it said before.
+       * is the only way to ask — so this runs at most once per (profile, agent)
+       * per page-load, and never when a live session has already told us. A
+       * failure is silent on purpose: the menu falls back to saying the settings
+       * appear once the thread starts, which is exactly what it said before.
        */
-      async learnAgentOptions(profileId: string, projectId: string) {
-        if (alreadyAsked(profileId) || loadAgentOptions(profileId).base.length > 0) return
-        markAsked(profileId)
+      async learnAgentOptions(profileId: string, agentId: string, projectId: string) {
+        if (!agentId) return
+        const key = optionKey(profileId, agentId)
+        if (alreadyAsked(key) || loadAgentOptions(key).base.length > 0) return
+        markAsked(key)
         try {
           const probed = await api<{
             configOptions: acp.SessionConfigOption[]
             byModel: AgentOptionSet["byModel"]
           }>(settings, `/api/profiles/${profileId}/options`, {
             method: "POST",
-            body: JSON.stringify({ projectId }),
+            body: JSON.stringify({ projectId, agentId }),
           })
-          saveProbedOptions(profileId, {
+          saveProbedOptions(key, {
             base: probed.configOptions ?? [],
             byModel: probed.byModel ?? {},
           })
         } catch (error) {
-          console.warn(`Couldn't ask ${profileId}'s agent what it supports`, error)
+          console.warn(`Couldn't ask ${agentId} on ${profileId} what it supports`, error)
         }
       },
 
@@ -821,7 +844,12 @@ export function useActions(settings: ServerSettings) {
           spawn, so until the process starts they are ours to change freely. */
       configureDraft(
         id: string,
-        next: Partial<Pick<SessionMeta, "projectId" | "profileId" | "agentId" | "model" | "effort">>
+        next: Partial<
+          Pick<
+            SessionMeta,
+            "projectId" | "profileId" | "agentId" | "model" | "effort" | "mcpServerIds" | "skillIds" | "commandIds"
+          >
+        >
       ) {
         dispatch({ type: "configure-draft", id, next })
       },
@@ -869,7 +897,7 @@ export function useActions(settings: ServerSettings) {
        * text, so the row can offer Retry — and then rethrown, so the composer
        * can react too. Callers must not toast it a second time.
        */
-      async send(sessionId: string, text: string) {
+      async send(sessionId: string, text: string, opts: { steer?: boolean } = {}) {
         /* First message on a draft: this is the moment the thread becomes real.
            Create it, then connect, then prompt. A failure leaves the draft a
            draft and lands the text in a Retry row like any other send failure —
@@ -923,6 +951,21 @@ export function useActions(settings: ServerSettings) {
            still `promptActive`, so `caught_up` puts it straight back — which is
            exactly the "refresh brings it back" shape of the bug). */
         const alreadyRunning = stateRef.current.threads[sessionId]?.turnActive ?? false
+        /* A message typed into a running turn is QUEUED, not steered, unless
+           asked otherwise. No bubble and no indicator here: the `queue` event
+           draws the row, and when the turn ends the drained prompt comes back
+           as a `turn_started` with no origin — so this device draws the bubble
+           then, exactly like every other peer. If the turn ended before the
+           server saw this, `queue_add` drains at once and the same holds. */
+        if (alreadyRunning && !opts.steer) {
+          try {
+            await thread.queueAdd(text)
+          } catch (error) {
+            recordError(sessionId, error, "Couldn't queue this message", text)
+            throw error
+          }
+          return
+        }
         dispatch({ type: "user-message", id: sessionId, text })
         dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
         /* This device is the one peer that does not get a `turn_started` — it
@@ -933,33 +976,19 @@ export function useActions(settings: ServerSettings) {
           /* Resolves when the server has dispatched the prompt, not when the
              turn ends: how the turn went reaches every device on the thread as
              `turn_ended`, and awaiting it here would report a failure twice. */
-          const turnId = await thread.prompt(text)
-          dispatch({ type: "tag-user-turn", id: sessionId, turnId })
+          const reply = await thread.prompt(text, opts)
+          if ("queued" in reply) {
+            /* The server was busy before this device knew — another peer or
+               the scheduler started a turn. The words are on the queue row
+               now, so the optimistic bubble comes back off. */
+            dispatch({ type: "drop-user-message", id: sessionId })
+            if (!alreadyRunning) dispatch({ type: "turn-active", id: sessionId, active: true })
+            return
+          }
+          dispatch({ type: "tag-user-turn", id: sessionId, turnId: reply.turnId })
         } catch (error) {
           if (!alreadyRunning) dispatch({ type: "turn-active", id: sessionId, active: false })
           recordError(sessionId, error, "The agent couldn't answer this message", text)
-          throw error
-        }
-      },
-
-      async revertTurn(sessionId: string, checkpointId: string) {
-        const thread = liveThreads.get(sessionId)
-        if (!thread) throw new Error("This thread is not connected.")
-        try {
-          await thread.revert(checkpointId)
-        } catch (error) {
-          reportError(error, "Couldn't revert this turn")
-          throw error
-        }
-      },
-
-      async recoverBranch(sessionId: string, branchId: string) {
-        const thread = liveThreads.get(sessionId)
-        if (!thread) throw new Error("This thread is not connected.")
-        try {
-          await thread.recoverBranch(branchId)
-        } catch (error) {
-          reportError(error, "Couldn't recover this branch")
           throw error
         }
       },
@@ -973,7 +1002,13 @@ export function useActions(settings: ServerSettings) {
        * all, so the new profile's own default is the honest starting point.
        */
       async changeProfile(meta: SessionMeta, profileId: string) {
-        await respawnThread(meta, { profileId }, "Couldn't move this thread to that profile")
+        // Same agent, new provider: the menu only offers profiles that serve
+        // this thread's agent, and the server refuses one that does not.
+        await respawnThread(
+          meta,
+          { profileId, agentId: meta.agentId },
+          "Couldn't move this thread to that profile"
+        )
       },
 
       /**
@@ -1028,6 +1063,59 @@ export function useActions(settings: ServerSettings) {
            the change itself now (it knows the option's category), so all that is
            left here is to re-read the list this thread's row appears in. */
         if (category === "model" || category === "thought_level") await refreshSessions()
+      },
+
+      // ---- the queue ----
+      // Each answers with a `queue` event to every peer; a failure lands in
+      // the thread like any other, with the text where there is one to retry.
+
+      async queueUpdate(sessionId: string, itemId: string, text: string) {
+        try {
+          await requireLive(sessionId).queueUpdate(itemId, text)
+        } catch (error) {
+          recordError(sessionId, error, "Couldn't edit the queued message", text)
+          throw error
+        }
+      },
+
+      async queueRemove(sessionId: string, itemId: string) {
+        try {
+          await requireLive(sessionId).queueRemove(itemId)
+        } catch (error) {
+          recordError(sessionId, error, "Couldn't remove the queued message")
+          throw error
+        }
+      },
+
+      async queueClear(sessionId: string) {
+        try {
+          await requireLive(sessionId).queueClear()
+        } catch (error) {
+          recordError(sessionId, error, "Couldn't clear the queue")
+          throw error
+        }
+      },
+
+      /** Interrupt the running turn and send the queue (or one item) in its
+          place. No "interrupted" notice: `turn_ended` → `turn_started` says
+          it, and the server does all three steps whether or not this tab
+          stays open. */
+      async queueSendNow(sessionId: string, itemId?: string) {
+        try {
+          await requireLive(sessionId).queueSendNow(itemId)
+        } catch (error) {
+          recordError(sessionId, error, "Couldn't send the queued message")
+          throw error
+        }
+      },
+
+      async queueSteer(sessionId: string, itemId: string) {
+        try {
+          await requireLive(sessionId).queueSteer(itemId)
+        } catch (error) {
+          recordError(sessionId, error, "Couldn't steer with the queued message")
+          throw error
+        }
       },
 
       async stop(sessionId: string) {

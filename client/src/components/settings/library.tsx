@@ -24,6 +24,8 @@ export function LibrarySection<T extends { id: string; name: string }>({
   subtitle,
   settings,
   refresh,
+  extraActions,
+  editable = () => true,
 }: {
   meta: SectionMeta
   items: T[]
@@ -32,6 +34,10 @@ export function LibrarySection<T extends { id: string; name: string }>({
   subtitle: (item: T) => string
   settings: ServerSettings
   refresh: () => Promise<void>
+  /** Section-specific buttons beside Import / New (the MCP page's built-ins). */
+  extraActions?: React.ReactNode
+  /** Whether a row gets an Edit button. Every row can still be deleted. */
+  editable?: (item: T) => boolean
 }) {
   const navigate = useNavigate()
   const confirm = useConfirm()
@@ -53,6 +59,7 @@ export function LibrarySection<T extends { id: string; name: string }>({
   )
   const actions = (
     <div className="flex flex-wrap justify-end gap-2">
+      {extraActions}
       <Button variant="outline" onClick={() => void navigate(settingsFormPath(meta.id, "import"))}>
         <Download className="size-4" /> Import
       </Button>
@@ -69,9 +76,11 @@ export function LibrarySection<T extends { id: string; name: string }>({
         <Group>
           {items.map((item) => (
             <Row key={item.id} icon={meta.icon} title={item.name} subtitle={<span className="font-mono">{subtitle(item)}</span>}>
-              <Button variant="ghost" size="icon-lg" title="Edit" onClick={() => void navigate(settingsFormPath(meta.id, item.id))}>
-                <Pencil />
-              </Button>
+              {editable(item) && (
+                <Button variant="ghost" size="icon-lg" title="Edit" onClick={() => void navigate(settingsFormPath(meta.id, item.id))}>
+                  <Pencil />
+                </Button>
+              )}
               <Button variant="ghost" size="icon-lg" title="Delete" onClick={() => remove(item)}>
                 <Trash2 />
               </Button>

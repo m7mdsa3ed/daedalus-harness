@@ -4,11 +4,13 @@ import { Button } from "@/components/ui/button"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import {
   ActivityIndicator,
+  ComposerAgents,
   ComposerPlan,
   ComposerTodo,
   ContextIndicator,
 } from "@/components/composer-status"
 import { ComposerApproval } from "@/components/composer-approval"
+import { ComposerQueue } from "@/components/composer-queue"
 import { ComposerStrip, ComposerStripItem } from "@/components/composer-strip"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -38,31 +40,43 @@ import { SlashCommandMenu, useSlashCommands } from "./slash-commands"
 import { SessionSettingsButton } from "./session-settings"
 import { InlineElicitation } from "./elicitation-form"
 import { primaryPermissionOption } from "./composer-approval"
-import { ThreadItemView, ToolRun, type ToolRunGroup } from "./thread-items"
+import { RowView, SourcesStrip } from "./thread-items"
+import { splitTurns, turnSources, type TurnSources } from "@/lib/sources"
+import { buildRows, rowTailId, type Row } from "@/lib/transcript-rows"
 import { ThreadRail } from "./thread-rail"
 
-/** Consecutive tool steps become one ToolRunGroup; everything else passes
-    through untouched. Runs of one stay ungrouped — a lone step wrapped in a
-    "1 step" disclosure is strictly worse than the step. */
-function groupToolRuns(items: ThreadItem[]): (ThreadItem | ToolRunGroup)[] {
-  const rows: (ThreadItem | ToolRunGroup)[] = []
-  let run: Extract<ThreadItem, { kind: "tool" }>[] = []
-
-  const flush = () => {
-    if (run.length > 1) rows.push({ id: `tools-${run[0].id}`, items: run })
-    else rows.push(...run)
-    run = []
-  }
-
-  for (const item of items) {
-    if (item.kind === "tool") run.push(item)
-    else {
-      flush()
-      rows.push(item)
+/**
+ * Append a Sources row to every finished turn that has any. Computed on the
+ * transcript rather than in the reducer for the same reason grouping is: it is
+ * a reading of the items, derived entirely from what is already there, and it
+ * must not change one. The last turn only qualifies once it has ended — a
+ * strip that grows while the answer is still streaming is noise under the
+ * cursor — so `turnActive` is part of the input.
+ */
+function withTurnSources(items: ThreadItem[], turnActive: boolean): Map<string, TurnSources> {
+  const after = new Map<string, TurnSources>()
+  const byId = new Map(items.map((item) => [item.id, item]))
+  /* The row a turn ends on. A subagent's item is not a row of its own — it is
+     drawn under the step that launched it — so a turn that ends inside a
+     subagent's rail ends, as far as the rows go, on that step. */
+  const rootOf = (item: ThreadItem): ThreadItem => {
+    let current = item
+    for (let depth = 0; current.parentId && depth < 16; depth++) {
+      const owner = byId.get(current.parentId)
+      if (!owner) break
+      current = owner
     }
+    return current
   }
-  flush()
-  return rows
+  const turns = splitTurns(items)
+  turns.forEach((turn, index) => {
+    if (index === turns.length - 1 && turnActive) return
+    const last = turn[turn.length - 1]
+    if (!last || turn[0].kind !== "user") return
+    const sources = turnSources(turn)
+    if (sources.sources.length > 0) after.set(rootOf(last).id, sources)
+  })
+  return after
 }
 
 /* ── Thread keys ──
@@ -162,17 +176,28 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
      (items → visible → rows) is what lets a streaming update — which mutates one
      item in place via the reducer's new-array-of-old-refs — leave every unchanged
      row's identity alone so the memo below actually skips them. */
+  /* The thread's own plan lives on the composer shelf, not in the flow; a
+     subagent's plan has no shelf and is drawn in its rail. */
   const visible = React.useMemo(
-    () => thread.items.filter((item) => item.kind !== "plan"),
+    () => thread.items.filter((item) => item.kind !== "plan" || item.parentId !== undefined),
     [thread.items]
   )
-  /* Grouping folds a *run* of steps into one row. It is computed here, not in
-     the reducer: it is a way of looking at the transcript, not a change to it,
-     and toggling it must not touch a single item. */
+  /* Nesting folds a subagent's work under its step; grouping folds a *run*
+     of steps into one row. Both are computed here, not in the reducer: they
+     are ways of looking at the transcript, not changes to it, and toggling
+     the option must not touch a single item. See lib/transcript-rows. */
   const rows = React.useMemo(
-    () => (options.groupTools ? groupToolRuns(visible) : visible),
+    () => buildRows(visible, options.groupTools),
     [options.groupTools, visible]
   )
+  /* Where a Sources strip goes: after the item that ends each finished turn.
+     Keyed by that item's id so the lookup below is one map hit per row, and
+     a grouped run — whose last step may be the item — is checked by its tail. */
+  const sourcesAfter = React.useMemo(
+    () => withTurnSources(visible, thread.turnActive),
+    [visible, thread.turnActive]
+  )
+  const sourcesFor = (row: Row): TurnSources | undefined => sourcesAfter.get(rowTailId(row))
   const last = visible[visible.length - 1]
   const resumable =
     last?.kind === "notice" && !thread.turnActive && thread.status !== "closed"
@@ -183,17 +208,6 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
      same thing twice. */
   const resume = () => void actions.send(sessionId, "Continue.").catch(() => {})
   const retry = (text: string) => void actions.send(sessionId, text).catch(() => {})
-  const checkpoints = React.useMemo(
-    () => new Map(thread.history.checkpoints.map((checkpoint) => [checkpoint.turnId, checkpoint])),
-    [thread.history.checkpoints]
-  )
-  const firstUserForTurn = React.useMemo(() => {
-    const first = new Map<string, string>()
-    for (const item of thread.items) {
-      if (item.kind === "user" && item.turnId && !first.has(item.turnId)) first.set(item.turnId, item.id)
-    }
-    return first
-  }, [thread.items])
 
   const meta = state.sessions.find((s) => s.id === sessionId)
   /* Which transcript the keys belong to. The dock keeps every opened thread
@@ -264,23 +278,18 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                       onClick={() => void actions.loadEarlier(sessionId)}
                     >
                       <ChevronUp className={cn("size-4", thread.loadingEarlier && "animate-pulse")} />
-                      {thread.loadingEarlier ? "Loading…" : "Load earlier messages"}
+                      {thread.loadingEarlier ? "Loading…" : "Load earlier steps"}
                     </Button>
-                    <span>{thread.earlier} earlier</span>
+                    <span>{thread.earlier} earlier step{thread.earlier === 1 ? "" : "s"}</span>
                   </div>
                 </MessageScrollerItem>
               )}
               {rows.map((row, i) => {
                 /* A hairline above each of your messages (except the first)
                     separates one turn from the next when Turn dividers is on. */
-                const isUser = !("items" in row) && row.kind === "user"
-                const firstUser = rows.findIndex(
-                  (r) => !("items" in r) && r.kind === "user",
-                )
+                const isUser = row.kind === "user"
+                const firstUser = rows.findIndex((r) => r.kind === "user")
                 const divider = options.stepDividers && isUser && i !== firstUser
-                const checkpoint = !("items" in row) && row.kind === "user" && row.turnId && firstUserForTurn.get(row.turnId) === row.id
-                  ? checkpoints.get(row.turnId)
-                  : undefined
                 return (
                 /* ponytail: no scrollAnchor. Anchoring the user's message to
                     the top of the viewport meant sending scrolled the whole
@@ -302,27 +311,23 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   {divider && (
                     <div aria-hidden className="my-1.5 h-px bg-border/50 first:hidden" />
                   )}
-                  {"items" in row ? (
-                    <ToolRun items={row.items} showTimestamps={options.showTimestamps} />
-                  ) : (
-                    <ThreadItemView
-                      item={row}
-                      onContinue={resumable === row.id ? resume : undefined}
-                      onRetry={
-                        row.kind === "error" && row.retryText
-                          ? () => retry(row.retryText!)
-                          : undefined
-                      }
-                      onDismiss={
-                        row.kind === "error"
-                          ? () => dispatch({ type: "dismiss-error", id: sessionId, itemId: row.id })
-                          : undefined
-                      }
-                      onRevert={checkpoint ? () => void actions.revertTurn(sessionId, checkpoint.id) : undefined}
-                      revertDisabled={thread.turnActive || thread.history.busy}
-                      showTimestamps={options.showTimestamps}
-                    />
-                  )}
+                  <RowView
+                    row={row}
+                    onContinue={resumable === row.id ? resume : undefined}
+                    onRetry={
+                      row.kind === "error" && row.retryText
+                        ? () => retry(row.retryText!)
+                        : undefined
+                    }
+                    onDismiss={
+                      row.kind === "error"
+                        ? () => dispatch({ type: "dismiss-error", id: sessionId, itemId: row.id })
+                        : undefined
+                    }
+                    showTimestamps={options.showTimestamps}
+                    streaming={thread.turnActive && last !== undefined && rowTailId(row) === last.id}
+                  />
+                  {sourcesFor(row) && <SourcesStrip turn={sourcesFor(row)!} />}
                 </MessageScrollerItem>
                 )
               })}
@@ -509,17 +514,6 @@ function usePromptHistory(items: ThreadItem[], setText: (text: string) => void) 
   return { onKeyDown, browsing: index !== null }
 }
 
-/* The branch label is up to 80 characters of the prompt that made it — often a
-   pasted URL, and often with newlines in it. `truncate` alone only helps once
-   the row is already at its full width, and a one-line strip row is not the
-   place to spend that width: collapse the whitespace and cut it short here, and
-   leave the whole thing on `title` for anyone who wants it. */
-const BRANCH_LABEL_MAX = 42
-
-function shortLabel(label: string) {
-  const flat = label.replace(/\s+/g, " ").trim()
-  return flat.length > BRANCH_LABEL_MAX ? `${flat.slice(0, BRANCH_LABEL_MAX - 1)}…` : flat
-}
 
 function Composer({
   sessionId,
@@ -567,12 +561,12 @@ function Composer({
   /* The draft is cleared optimistically: a failure leaves a transcript row that
      carries the exact text and a Retry button, which is a better home for it
      than a textarea the user has since typed into. */
-  const send = () => {
+  const send = (opts: { steer?: boolean } = {}) => {
     const value = text.trim()
     if (!value) return
     setText("")
     clearDraft(sessionId)
-    void actions.send(sessionId, value).catch(() => {})
+    void actions.send(sessionId, value, opts).catch(() => {})
   }
 
   /* Up/Down walk what has already been sent here. It goes after the slash menu
@@ -601,44 +595,22 @@ function Composer({
             the thread (see actions.send), and a box you cannot type into would
             make the user go looking for a button to press first. */}
         {thread.archived && (
-          <ComposerStripItem className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-muted-foreground">
+          <ComposerStripItem
+            summary={{ id: "archived", icon: Archive, label: "Agent not running" }}
+            className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-muted-foreground"
+          >
             <Archive className="size-3 shrink-0" />
             <span>This thread's agent isn't running. Sending a message starts it again.</span>
           </ComposerStripItem>
         )}
-        {thread.history.conflict && (
-          <ComposerStripItem className="px-3 py-1.5 text-[11px] text-destructive">
-            {thread.history.conflict}
-          </ComposerStripItem>
-        )}
-        {!thread.history.available && thread.items.length > 0 && (
-          <ComposerStripItem className="px-3 py-1.5 text-[11px] text-muted-foreground">
-            {thread.history.reason ?? "Revert is unavailable for this agent."}
-          </ComposerStripItem>
-        )}
-        {thread.history.branches.map((branch) => (
-          <ComposerStripItem key={branch.id} className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-muted-foreground">
-            <History className="size-3 shrink-0" />
-            <span className="min-w-0 flex-1 truncate" title={branch.label}>
-              Retained: {shortLabel(branch.label)}
-            </span>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 shrink-0 px-2 text-[11px]"
-              disabled={thread.turnActive || thread.history.busy}
-              onClick={() => void actions.recoverBranch(sessionId, branch.id)}
-            >
-              Recover
-            </Button>
-          </ComposerStripItem>
-        ))}
         {/* Where it runs and who answers, before either is settled. They belong
             on the shelf rather than in the settings menu: picking a different
             agent changes what every option under it even means, and a thread
             started in the wrong project is started in the wrong directory. */}
         {draft && meta && (
           <ComposerStripItem>
+            {/* Registers its own summary — the names it prints are the ones it
+                already looks up. */}
             <DraftScopeRow meta={meta} actions={actions} />
           </ComposerStripItem>
         )}
@@ -646,13 +618,21 @@ function Composer({
         {/* The agent's checklist when it arrives as a tool call rather than an
             ACP plan — same surface as the plan, so both are read in place. */}
         <ComposerTodo thread={thread} />
+        {/* How many subagents are out working, while any are. */}
+        <ComposerAgents thread={thread} />
         {/* The one thing the turn is waiting on. Moves here so a reader who has
             scrolled up does not collide with the question mid-history. */}
         <ComposerApproval permission={thread.permission} />
+        {/* What is waiting for this turn to end. The user's own words, so
+            they are editable in place until the moment they go. */}
+        <ComposerQueue sessionId={sessionId} thread={thread} actions={actions} />
         {/* Says what the box is showing and how to get back out of it — without
             it, a recalled prompt is indistinguishable from one you typed. */}
         {history.browsing && (
-          <ComposerStripItem className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-muted-foreground">
+          <ComposerStripItem
+            summary={{ id: "history", icon: History, label: "Earlier prompt" }}
+            className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-muted-foreground"
+          >
             <History className="size-3" />
             <span>Earlier prompt</span>
             <span className="ms-auto flex items-center gap-1.5">
@@ -679,6 +659,13 @@ function Composer({
             if (slash.onKeyDown(e)) return
             if (history.onKeyDown(e)) return
             if (e.key !== "Enter") return
+            /* Past the queue: into the turn that is already running. Checked
+               first because it is the most specific chord of the three. */
+            if (matchesChord(e, KEYS.steer)) {
+              e.preventDefault()
+              send({ steer: true })
+              return
+            }
             /* Cmd/Ctrl+Enter always sends. Bare Enter sends on desktop and
                inserts a newline on touch, where Return is the only newline key
                there is and every soft keyboard shows it as one. Shift+Enter is
@@ -697,7 +684,7 @@ function Composer({
             disabled
               ? "Session ended"
               : thread.turnActive
-                ? "Steer the agent…"
+                ? "Queue a message for when the agent finishes…"
                 : "Message the agent…"
           }
           disabled={disabled}
@@ -767,9 +754,9 @@ function Composer({
             variant="ghost"
             size="icon-sm"
             className="shrink-0 rounded-lg text-primary hover:text-primary disabled:text-muted-foreground"
-            onClick={send}
+            onClick={() => send()}
             disabled={disabled || !text.trim()}
-            title={thread.turnActive ? "Send steering message" : "Send"}
+            title={thread.turnActive ? "Queue (⌘⇧Enter steers the running turn instead)" : "Send"}
           >
             <ArrowUp />
           </Button>

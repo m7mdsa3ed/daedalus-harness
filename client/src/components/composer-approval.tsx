@@ -17,7 +17,14 @@
    not the full-width card the transcript version had room to be. */
 import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, WrenchIcon, XIcon } from "lucide-react"
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  ShieldQuestionIcon,
+  WrenchIcon,
+  XIcon,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -31,7 +38,7 @@ import {
   AgentRequestWell,
   REQUEST_BUTTON,
 } from "./agent-request"
-import { ComposerStripItem } from "./composer-strip"
+import { ComposerStripItem, useStripSummary } from "./composer-strip"
 import { FileBadge, Prose } from "./tool-parts"
 import { KIND_ICONS, KIND_LABELS, ToolCallContent } from "./thread-items"
 import type { PendingPermission } from "@/lib/store"
@@ -104,6 +111,12 @@ function MetaRow({
 
 export function ComposerApproval({ permission }: { permission: PendingPermission | null }) {
   const [open, setOpen] = React.useState(false)
+  /* Urgent: the shelf stays open while a permission is pending. The turn has
+     stopped on this question, so summarising it away would hide the only thing
+     on screen that the user has to answer. */
+  useStripSummary(
+    permission ? { id: "approval", icon: ShieldQuestionIcon, label: "Permission needed", urgent: true } : null
+  )
   if (!permission) return null
   const { request, resolve } = permission
   const call = request.toolCall

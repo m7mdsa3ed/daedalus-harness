@@ -1,8 +1,6 @@
 // Minimal ACP-ish agent: answers requests, streams one update per prompt,
 // and exercises modes / config options / usage so the client UI can be tested.
 import { createInterface } from "node:readline";
-import { rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + "\n");
 
@@ -47,15 +45,6 @@ let configOptions = [
    client advertised `session.compaction` — so this is stored and honoured
    rather than assumed, which is what makes the capability itself testable. */
 let clientCapabilities = {};
-const sessions = new Set(["acp-123"]);
-/* Sessions this agent has actually written down. An id it has only minted is
-   not one it can resume — claude-agent-acp flushes the rollout as the first
-   turn runs — and a fork IS a resume, so forking one fails. It fails in a
-   peculiar way worth reproducing: the error names the *child* id it was in the
-   middle of creating, not the parent it could not find. */
-const durable = new Set();
-let forkCounter = 0;
-let activeCwd = process.cwd();
 
 /** Permission request id -> the prompt id whose turn is waiting on it. */
 const parkedTurns = new Map();
@@ -108,10 +97,83 @@ function promptUpdates() {
     tool("t5", "pnpm exec tsc -b --force", "execute", "failed", {
       content: text("error TS2322: Type 'string' is not assignable to type 'number'."),
     }),
+    ...subagentUpdates(),
     plan("completed", "in_progress"),
     tool("t6", "https://example.com/spec", "fetch", "pending"),
+    // Parent prose AFTER the subagents: proves it does not coalesce into the
+    // child's last chunk (the reducer keys text runs on their owner too).
     { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Rail lines up. Here's what changed:\n\n- node centre pinned to the row's line box\n- kind demoted to a right-hand column" } },
   ];
+}
+
+/* An update that belongs to a subagent's OWN session (the RFD's shape): the
+   prompt loop sends it under `sessionId` instead of the thread's. Everything
+   else in `promptUpdates` is a bare update on the thread's session. */
+const on = (sessionId, update) => ({ sessionId, update });
+
+/**
+ * Two subagents, one per mechanism the harness understands, so both code
+ * paths have a live sample:
+ *
+ * 1. claude-agent-acp's: a `Task` tool call on the thread's session, and the
+ *    child's work as further updates on the SAME session stamped
+ *    `_meta.claudeCode.parentToolUseId`. The child's prose is sent only when
+ *    the client claimed `_meta["subagent-transcript"]` — what the real agent
+ *    does — so the capability is what the test observes. `t7a` arrives with no
+ *    parent and acquires it on its update, which is the attribution race the
+ *    real agent documents as best-effort. The `user_message_chunk` is the
+ *    tool-result echo the real agent forwards; the client drops it.
+ * 2. The RFD's: `subagent_spawned` on the thread's session, the child's
+ *    updates on the child's session, `subagent_state_update` back on the
+ *    thread's. Sent only when the client claimed `subagents`, as the RFD
+ *    requires — an agent MUST NOT send these to a client that did not.
+ */
+function subagentUpdates() {
+  const out = [];
+  const child = (update) => ({ ...update, _meta: { claudeCode: { parentToolUseId: "t7" } } });
+  const transcript = clientCapabilities._meta?.["subagent-transcript"] === true;
+  out.push(
+    tool("t7", "Review the store reducer", "think", "in_progress", {
+      rawInput: {
+        description: "Review the store reducer",
+        prompt: "Read src/lib/store.tsx and report whether applySessionUpdate handles every variant.",
+        subagent_type: "code-reviewer",
+      },
+      content: text("Read src/lib/store.tsx and report whether applySessionUpdate handles every variant."),
+      _meta: { claudeCode: { toolName: "Task", subagent: true } },
+    }),
+  );
+  if (transcript) {
+    out.push(child({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "Starting with the reducer's switch." } }));
+  }
+  out.push(
+    tool("t7a", "src/lib/store.tsx", "read", "in_progress"),
+    child({ sessionUpdate: "tool_call_update", toolCallId: "t7a", status: "completed", content: text("export function applySessionUpdate(") }),
+    child(tool("t7b", "grep -n applySessionUpdate src", "execute", "completed", { content: text("src/lib/store.tsx:297") })),
+  );
+  if (transcript) {
+    out.push(
+      child({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Every variant is handled; the default arm drops unknown ones." } }),
+      child({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "[tool result echo — a client must not render this]" } }),
+    );
+  }
+  out.push({
+    sessionUpdate: "tool_call_update",
+    toolCallId: "t7",
+    status: "completed",
+    rawOutput: "Every variant is handled; the default arm drops unknown ones.",
+    _meta: { claudeCode: { toolName: "Task", toolResponse: { subagentType: "code-reviewer", elapsedTimeSeconds: 4 } } },
+  });
+
+  if (clientCapabilities.subagents) {
+    out.push(
+      { sessionUpdate: "subagent_spawned", subagentSessionId: "sub-1", name: "explorer", task: "Find every caller of groupToolRuns", capabilities: {} },
+      on("sub-1", tool("s1", "rg groupToolRuns", "search", "completed", { content: text("src/components/thread-view.tsx:47") })),
+      on("sub-1", { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "One caller, in thread-view." } }),
+      { sessionUpdate: "subagent_state_update", subagentSessionId: "sub-1", state: "completed" },
+    );
+  }
+  return out;
 }
 
 createInterface({ input: process.stdin }).on("line", (line) => {
@@ -123,14 +185,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       id: msg.id,
       result: {
         protocolVersion: 1,
-        agentCapabilities: process.env.FAKE_NO_FORK
-          ? { loadSession: true }
-          : { loadSession: true, sessionCapabilities: { fork: {} } },
+        agentCapabilities: { loadSession: true },
       },
     });
   }
   else if (msg.method === "session/new") {
-    activeCwd = msg.params?.cwd ?? activeCwd;
     out({
       jsonrpc: "2.0",
       id: msg.id,
@@ -149,12 +208,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     });
   }
   else if (msg.method === "session/load") {
-    activeCwd = msg.params?.cwd ?? activeCwd;
     /* A session this agent has no record of. Real agents answer exactly like
        this — codex says "no rollout found for thread id …" — and it is the
        failure that used to cost a thread its history, because the client's
        fallback `session/new` overwrote the id it had just failed to load. */
-    if (!sessions.has(msg.params?.sessionId) && !String(msg.params?.sessionId).startsWith("acp-fork-")) {
+    if (msg.params?.sessionId !== "acp-123") {
       out({
         jsonrpc: "2.0",
         id: msg.id,
@@ -166,8 +224,6 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       });
       return;
     }
-    sessions.add(msg.params.sessionId);
-    durable.add(msg.params.sessionId);
     // Replay a tiny conversation, then answer — mirrors ACP loadSession.
     out({
       jsonrpc: "2.0",
@@ -179,6 +235,16 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       method: "session/update",
       params: { sessionId: "acp-123", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "hi" } } },
     });
+    // The RFD's replay: the child tree comes back inside the parent's load, in
+    // its original order and under its original ids, with an orphan (no
+    // terminal update on record) closed as `disconnected`.
+    if (clientCapabilities.subagents) {
+      const send = (sessionId, update) =>
+        out({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update } });
+      send("acp-123", { sessionUpdate: "subagent_spawned", subagentSessionId: "sub-0", name: "explorer", task: "Earlier delegated work", capabilities: {} });
+      send("sub-0", { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "(replayed child prose)" } });
+      send("acp-123", { sessionUpdate: "subagent_state_update", subagentSessionId: "sub-0", state: "disconnected" });
+    }
     out({
       jsonrpc: "2.0",
       id: msg.id,
@@ -187,43 +253,13 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         configOptions,
       },
     });
-  } else if (msg.method === "session/fork") {
-    activeCwd = msg.params?.cwd ?? activeCwd;
-    const sessionId = `acp-fork-${++forkCounter}`;
-    if (!durable.has(msg.params?.sessionId)) {
-      out({
-        jsonrpc: "2.0",
-        id: msg.id,
-        error: {
-          code: -32002,
-          message: `Resource not found: ${sessionId}`,
-          data: { uri: sessionId },
-        },
-      });
-      return;
-    }
-    sessions.add(sessionId);
-    out({
-      jsonrpc: "2.0",
-      id: msg.id,
-      result: { sessionId, modes: { currentModeId: "default", availableModes: [{ id: "default", name: "Always ask" }] }, configOptions },
-    });
   } else if (msg.method === "session/set_config_option") {
     configOptions = configOptions.map((o) =>
       o.id === msg.params.configId ? { ...o, currentValue: msg.params.value } : o
     );
     out({ jsonrpc: "2.0", id: msg.id, result: { configOptions } });
   } else if (msg.method === "session/prompt") {
-    // The turn is what commits the session to disk, which is what makes it
-    // forkable — real agents write the rollout as the turn runs.
-    durable.add(msg.params?.sessionId);
     const asked = (msg.params.prompt ?? []).map((b) => b.text ?? "").join(" ");
-    if (asked.includes("edit workspace")) {
-      writeFileSync(join(activeCwd, "history-original.txt"), "changed by agent\n");
-      writeFileSync(join(activeCwd, ".history-created"), "hidden\n");
-      writeFileSync(join(activeCwd, "history-binary.bin"), Buffer.from([0, 1, 2, 255]));
-      rmSync(join(activeCwd, "history-delete.txt"), { force: true });
-    }
     // A prompt mentioning "permission" parks the turn on a permission request,
     // so both the UI and the multi-peer arbitration have something to exercise.
     if (asked.includes("permission")) {
@@ -292,8 +328,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     }
     // One of every step kind, in order — this is what the transcript UI is
     // developed against, so every branch of the step row has a live sample.
-    for (const update of promptUpdates()) {
-      out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "acp-123", update } });
+    for (const entry of promptUpdates()) {
+      const { sessionId, update } = "update" in entry ? entry : { sessionId: "acp-123", update: entry };
+      out({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update } });
     }
     out({
       jsonrpc: "2.0",
@@ -308,6 +345,15 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         usage: { totalTokens: 10_500, inputTokens: 1000, outputTokens: 500, cachedReadTokens: 9000 },
       },
     });
+  } else if (msg.method === "session/cancel") {
+    /* A cancel is a notification, and the spec's answer to it is a SUCCESS:
+       every prompt still open is answered with `stopReason: "cancelled"`. Only
+       a parked turn can be open here — an ordinary prompt answers itself in
+       the same tick — so those are the ones released. */
+    for (const promptId of parkedTurns.values()) {
+      out({ jsonrpc: "2.0", id: promptId, result: { stopReason: "cancelled", usage: { totalTokens: 1 } } });
+    }
+    parkedTurns.clear();
   } else if (msg.method === undefined && parkedTurns.has(msg.id)) {
     // The answer to a permission request — finish the turn it was blocking.
     const promptId = parkedTurns.get(msg.id);
@@ -321,5 +367,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       },
     });
     out({ jsonrpc: "2.0", id: promptId, result: { stopReason: "end_turn", usage: { totalTokens: 10 } } });
+  } else if (msg.method === undefined) {
+    // A response to something we asked and no longer wait on (a permission
+    // answered after the cancel released its turn). Nothing to say back —
+    // echoing a response as a response would be a frame the SDK never asked for.
   } else if (msg.id !== undefined) out({ jsonrpc: "2.0", id: msg.id, result: {} });
 });

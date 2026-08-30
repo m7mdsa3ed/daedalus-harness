@@ -1,3 +1,4 @@
+import type { BuiltinMcp } from "./db/schema.js";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -16,7 +17,31 @@ import {
 // Projects reference these through join tables, so deleting one here removes
 // the link everywhere it was used rather than leaving a dangling id behind.
 
+/**
+ * The harness's own servers, offered to the library as rows with nothing in
+ * them but a name and which one they are. Fixed ids, so injecting one twice is
+ * one row — and so a migration could link profiles to them by name.
+ */
+export const BUILTIN_MCP: Record<BuiltinMcp, { id: string; name: string; description: string }> = {
+  "web-search": {
+    id: "builtin:web-search",
+    name: "web-search",
+    description:
+      "The harness's web search + fetch tools, on the backend in Settings › Web search. Replaces Claude Code's built-in WebSearch/WebFetch on threads that link it.",
+  },
+  knowledge: {
+    id: "builtin:knowledge",
+    name: "knowledge",
+    description: "A per-project knowledge base the agent can read and write, scoped to the thread's project.",
+  },
+};
+
 export const McpServerInputSchema = z.union([
+  z.object({
+    type: z.literal("builtin"),
+    name: z.string().min(1),
+    builtin: z.enum(["web-search", "knowledge"]),
+  }),
   z.object({
     type: z.literal("http"),
     name: z.string().min(1),
@@ -60,6 +85,9 @@ type McpRow = typeof mcpServersTable.$inferSelect;
 /** The table holds both variants in one row shape — the columns the other
     variant uses are null. These two functions are the only place that knows. */
 function toDef(row: McpRow): McpServerDef {
+  if (row.type === "builtin") {
+    return { id: row.id, type: "builtin", name: row.name, builtin: row.builtin ?? "web-search" };
+  }
   return row.type === "http"
     ? { id: row.id, type: "http", name: row.name, url: row.url ?? "", headers: row.headers ?? [] }
     : {
@@ -73,23 +101,17 @@ function toDef(row: McpRow): McpServerDef {
 }
 
 function toRow(id: string, input: McpServerInput): typeof mcpServersTable.$inferInsert {
+  const blank = { url: null, headers: null, command: null, args: null, env: null, builtin: null };
+  if (input.type === "builtin") {
+    return { ...blank, id, type: "builtin", name: input.name, builtin: input.builtin };
+  }
   return input.type === "http"
-    ? {
-        id,
-        type: "http",
-        name: input.name,
-        url: input.url,
-        headers: input.headers,
-        command: null,
-        args: null,
-        env: null,
-      }
+    ? { ...blank, id, type: "http", name: input.name, url: input.url, headers: input.headers }
     : {
+        ...blank,
         id,
         type: "stdio",
         name: input.name,
-        url: null,
-        headers: null,
         command: input.command,
         args: input.args,
         env: input.env,
@@ -99,9 +121,22 @@ function toRow(id: string, input: McpServerInput): typeof mcpServersTable.$infer
 export const mcpServers = {
   list: (): McpServerDef[] => db.select().from(mcpServersTable).all().map(toDef),
   create(input: McpServerInput): McpServerDef {
+    // A built-in goes through `ensureBuiltin`: it has one id, not a fresh one.
+    if (input.type === "builtin") return mcpServers.ensureBuiltin(input.builtin);
     const row = toRow(randomUUID(), input);
     db.insert(mcpServersTable).values(row).run();
     return toDef(row as McpRow);
+  },
+  /** Put one of the harness's own servers in the library — the "inject"
+      action on the MCP page. Idempotent by fixed id: asking twice is one row,
+      and a row the user renamed keeps its name. */
+  ensureBuiltin(kind: BuiltinMcp): McpServerDef {
+    const { id, name } = BUILTIN_MCP[kind];
+    db.insert(mcpServersTable)
+      .values(toRow(id, { type: "builtin", name, builtin: kind }))
+      .onConflictDoNothing()
+      .run();
+    return toDef(db.select().from(mcpServersTable).where(eq(mcpServersTable.id, id)).get()!);
   },
   update(id: string, input: McpServerInput): McpServerDef | undefined {
     const row = toRow(id, input);

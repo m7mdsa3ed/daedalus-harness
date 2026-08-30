@@ -2,6 +2,8 @@ import { eq } from "drizzle-orm";
 import * as acp from "@agentclientprotocol/sdk";
 import { agentOptions as agentOptionsTable, db } from "./db/index.js";
 import { agentStream, spawnAgent } from "./acp-bridge.js";
+import { unionLinks } from "./db/links.js";
+import { materializeWorkspace } from "./materialize.js";
 import type { Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 
@@ -41,8 +43,8 @@ const inflight = new Map<string, Promise<AgentOptions>>();
 
 /** cwd is in the key because it changes the answer: an agent reports different
     options in different workspaces. */
-const cacheKey = (profile: Profile, project: Project) =>
-  `${profile.id}:${profile.agentId}:${project.cwd}`;
+const cacheKey = (profile: Profile, agentId: string, project: Project) =>
+  `${profile.id}:${agentId}:${project.cwd}`;
 
 /**
  * What this profile's agent can be configured with — from cache when we have
@@ -58,10 +60,11 @@ const cacheKey = (profile: Profile, project: Project) =>
  */
 export function probeAgentOptions(
   profile: Profile,
+  agentId: string,
   project: Project,
   { refresh = false } = {},
 ): Promise<AgentOptions> {
-  const key = cacheKey(profile, project);
+  const key = cacheKey(profile, agentId, project);
   if (!refresh) {
     const hit = db
       .select()
@@ -73,7 +76,7 @@ export function probeAgentOptions(
   const running = inflight.get(key);
   if (running) return running;
 
-  const run = runProbe(profile, project)
+  const run = runProbe(profile, agentId, project)
     .then((options) => {
       const row = { key, options, probedAt: Date.now() };
       db.insert(agentOptionsTable)
@@ -99,8 +102,12 @@ export function probeAgentOptions(
  * The session it opens is real and stays in the agent's own store. That is the
  * price of asking: ACP has no way to enumerate configuration without one.
  */
-async function runProbe(profile: Profile, project: Project): Promise<AgentOptions> {
-  const proc = spawnAgent(profile, project);
+async function runProbe(profile: Profile, agentId: string, project: Project): Promise<AgentOptions> {
+  // What a thread on this profile would see before its own picks. Additive
+  // only — a live thread in the same cwd keeps whatever it already has, since
+  // the sweep is by presence.
+  materializeWorkspace(project.cwd, unionLinks(profile));
+  const proc = spawnAgent(profile, agentId, project);
 
   const stderr: string[] = [];
   proc.stderr.on("data", (chunk: Buffer) => {
@@ -115,7 +122,7 @@ async function runProbe(profile: Profile, project: Project): Promise<AgentOption
     proc.on("exit", (code) =>
       reject(
         new Error(
-          `${profile.agentId} exited before answering (${code ?? "signal"})${
+          `${agentId} exited before answering (${code ?? "signal"})${
             stderr.length ? `: ${stderr.join("").trim().slice(-400)}` : ""
           }`,
         ),
@@ -163,7 +170,7 @@ async function runProbe(profile: Profile, project: Project): Promise<AgentOption
           const choices = flattenChoices(model);
           if (choices.length > MAX_MODEL_SWEEP) {
             console.warn(
-              `[probe] ${profile.agentId}: sweeping ${MAX_MODEL_SWEEP} of ${choices.length} models`,
+              `[probe] ${agentId}: sweeping ${MAX_MODEL_SWEEP} of ${choices.length} models`,
             );
           }
           for (const choice of choices.slice(0, MAX_MODEL_SWEEP)) {

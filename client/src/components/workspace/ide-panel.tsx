@@ -37,22 +37,29 @@ import { Button } from "@/components/ui/button"
 import { PanelEmptyState, PanelNotice, PanelToolbar } from "@/components/workspace/primitives"
 import { reportError } from "@/lib/errors"
 import { useStore } from "@/lib/store"
+import { useCustomThemes, useTheme } from "@/lib/theme"
 import {
   getIdeStatus,
   ideFrameUrl,
+  setIdeTheme,
   startIde,
   stopIde,
   type IdeStatus,
 } from "@/lib/workspace/ide"
+import { ideThemeFor } from "@/lib/workspace/ide-theme"
 
 /** How often the panel re-checks that the key its frame is using still names a
     running editor. Slow on purpose — see the note beside the poll. */
 const POLL_MS = 10_000
+/** After this long with the frame still loading, say so and offer a way out. */
+const SLOW_LOAD_MS = 20_000
 
 export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: string }>) {
   const { projectId } = params
   const { state } = useStore()
   const project = state.projects.find((candidate) => candidate.id === projectId)
+  const { resolved, colorTheme } = useTheme()
+  const customThemes = useCustomThemes()
 
   const [status, setStatus] = React.useState<IdeStatus | null>(null)
   const [busy, setBusy] = React.useState(false)
@@ -61,6 +68,15 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
      throws — and after a restart the old frame is pointed at a key that no
      longer resolves, so it has to be replaced rather than refreshed. */
   const [frameKey, setFrameKey] = React.useState(0)
+  /* **`ready` is the server's word, not the browser's.** It means `/healthz`
+     answered — the iframe *can* load — but the workbench is ~20 MB of script
+     the frame still has to fetch and boot, and until it does the frame paints
+     nothing at all. A cross-origin frame cannot be asked how far along it is,
+     so `load` is the one signal there is: draw over the frame until it fires,
+     and after a while say that it is still on its way, because a blank pane
+     with a spinner and a blank pane that is broken look the same. */
+  const [frameLoaded, setFrameLoaded] = React.useState(false)
+  const [slowLoad, setSlowLoad] = React.useState(false)
 
   React.useEffect(() => {
     api.setTitle(project ? `VS Code — ${project.name}` : "VS Code")
@@ -71,6 +87,9 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
      started a moment ago, rather than posting a second start every time the
      component happens to mount. `cancelled` is what keeps a panel closed
      mid-start from writing state into a component that is gone. */
+  const resolvedRef = React.useRef(resolved)
+  resolvedRef.current = resolved
+
   React.useEffect(() => {
     let cancelled = false
     setBusy(true)
@@ -79,8 +98,13 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
         const current = await getIdeStatus(projectId)
         if (cancelled) return
         setStatus(current)
+        if (current.state === "ready") {
+          // Already running, possibly since a different palette was worn.
+          void setIdeTheme(projectId, ideThemeFor(resolvedRef.current)).catch(() => {})
+          return
+        }
         if (current.state !== "off") return
-        const started = await startIde(projectId)
+        const started = await startIde(projectId, ideThemeFor(resolvedRef.current))
         if (!cancelled) setStatus(started)
       } catch (err) {
         if (!cancelled) reportError(err, "Couldn't reach the editor")
@@ -125,7 +149,7 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
              stopped, and a poll that undid it a few seconds later would make
              the button look broken. */
           if (next.state === "off" && !stoppedRef.current) {
-            setStatus(await startIde(projectId))
+            setStatus(await startIde(projectId, ideThemeFor(resolvedRef.current)))
           } else {
             setStatus(next)
           }
@@ -139,6 +163,34 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
     }, POLL_MS)
     return () => clearInterval(timer)
   }, [projectId])
+
+  /* **The editor wears the app's palette**, and keeps wearing it. Every
+     theme change — light/dark, a different palette, a slider in the theme
+     builder — is restated as VS Code settings and sent; the server writes
+     them where the workbench is already watching. Deferred a tick because
+     this effect runs *before* the provider's (children's effects fire first),
+     so the root's attributes have not been swapped yet when it starts — and
+     debounced, since the builder's sliders fire by the dozen. Only while the
+     editor is running: writing settings for a stopped one is fine but
+     pointless, and the start call carries the theme itself. */
+  const readyRef = React.useRef(false)
+  readyRef.current = status?.state === "ready"
+  const firstThemeRef = React.useRef(true)
+  React.useEffect(() => {
+    if (firstThemeRef.current) {
+      // The mount's theme went with the start call.
+      firstThemeRef.current = false
+      return
+    }
+    const timer = setTimeout(() => {
+      if (!readyRef.current) return
+      setIdeTheme(projectId, ideThemeFor(resolved)).catch(() => {
+        /* A colour that did not land is not worth a toast — the next change
+           sends the whole palette again. */
+      })
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [projectId, resolved, colorTheme, customThemes])
 
   const run = async (action: () => Promise<IdeStatus>, context: string) => {
     setBusy(true)
@@ -154,13 +206,13 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
 
   const start = () => {
     stoppedRef.current = false
-    return run(() => startIde(projectId), "Couldn't start the editor")
+    return run(() => startIde(projectId, ideThemeFor(resolved)), "Couldn't start the editor")
   }
   const restart = () => {
     stoppedRef.current = false
     return run(async () => {
       await stopIde(projectId)
-      return startIde(projectId)
+      return startIde(projectId, ideThemeFor(resolved))
     }, "Couldn't restart the editor")
   }
   const stop = () => {
@@ -169,6 +221,14 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
   }
 
   const url = status ? ideFrameUrl(status) : null
+
+  React.useEffect(() => {
+    setFrameLoaded(false)
+    setSlowLoad(false)
+    if (!url) return
+    const timer = setTimeout(() => setSlowLoad(true), SLOW_LOAD_MS)
+    return () => clearTimeout(timer)
+  }, [url, frameKey])
 
   /* The same trap the web panel hits, and it is likelier here: the PWA is
      served over https behind `dev:tunnel`, and a server reached over plain
@@ -228,18 +288,50 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
         </PanelNotice>
       )}
 
-      <div className="min-h-0 flex-1">
+      <div className="relative min-h-0 flex-1">
         {url && !mixedContent ? (
-          <iframe
-            key={frameKey}
-            src={url}
-            title={project ? `VS Code — ${project.name}` : "VS Code"}
-            className="h-full w-full border-0 bg-background"
-            /* No `sandbox` — see the note at the top of the file. `allow`
-               grants the two capabilities VS Code asks a frame for and does
-               not get by default. */
-            allow="clipboard-read; clipboard-write; fullscreen"
-          />
+          <>
+            <iframe
+              key={frameKey}
+              src={url}
+              title={project ? `VS Code — ${project.name}` : "VS Code"}
+              className="h-full w-full border-0 bg-background"
+              /* No `sandbox` — see the note at the top of the file. `allow`
+                 grants the two capabilities VS Code asks a frame for and does
+                 not get by default. */
+              allow="clipboard-read; clipboard-write; fullscreen"
+              onLoad={() => setFrameLoaded(true)}
+            />
+            {!frameLoaded && (
+              <PanelEmptyState className="absolute inset-0 bg-background">
+                <Loader2Icon className="size-5 animate-spin" />
+                <p>Loading VS Code…</p>
+                {slowLoad && (
+                  <div className="space-y-2">
+                    <p className="max-w-xs text-muted-foreground">
+                      Still loading. The editor is a large download the first time — on a slow
+                      link it can take a while. If it never appears, open it in a tab or restart
+                      it.
+                    </p>
+                    <div className="flex justify-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => window.open(url, "_blank", "noopener")}
+                      >
+                        <ExternalLinkIcon />
+                        Open in a tab
+                      </Button>
+                      <Button size="sm" variant="outline" disabled={busy} onClick={() => void restart()}>
+                        <RefreshCwIcon />
+                        Restart
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </PanelEmptyState>
+            )}
+          </>
         ) : (
           <Idle status={status} busy={busy} onStart={() => void start()} />
         )}

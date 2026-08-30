@@ -2,7 +2,7 @@ import * as React from "react"
 import { SlashSquare } from "lucide-react"
 import type * as acp from "@agentclientprotocol/sdk"
 import { cn } from "@/lib/utils"
-import { ComposerStripItem } from "./composer-strip"
+import { ComposerStripItem, useStripSummary } from "./composer-strip"
 
 /* Slash-command autocomplete for the composer.
 
@@ -118,6 +118,20 @@ export function useSlashCommands(
  */
 export function SlashCommandMenu({ state }: { state: SlashCommandState }) {
   const listRef = React.useRef<HTMLDivElement>(null)
+  /* Urgent: a menu you are arrow-keying through has to be visible to be a menu.
+     It belongs to the text being typed right now, so while it is up the shelf
+     is open regardless of what the summary line would otherwise have said. */
+  const showing = state.hint !== null || state.matches.length > 0
+  useStripSummary(
+    showing
+      ? {
+          id: "slash",
+          icon: SlashSquare,
+          label: state.hint ?? `${state.matches.length} command${state.matches.length === 1 ? "" : "s"}`,
+          urgent: true,
+        }
+      : null
+  )
   React.useEffect(() => {
     listRef.current
       ?.querySelector('[data-selected="true"]')

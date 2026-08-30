@@ -3,6 +3,7 @@ import { BookOpenIcon, FolderIcon, Pencil, Plus, RefreshCwIcon, Trash2 } from "l
 import { Navigate, useNavigate, useParams } from "react-router"
 import { reportError, describeError } from "@/lib/errors"
 import { Button } from "@/components/ui/button"
+import { ProjectIcon } from "@/components/entity-icon"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -10,7 +11,7 @@ import { PathInput } from "@/components/ui/suggesting-input"
 import { api, type Project, type ServerSettings } from "@/lib/settings"
 import { useStore } from "@/lib/store"
 import { addKnowledge, deleteKnowledge, listKnowledge, type KnowledgeEntry } from "@/lib/workspace/knowledge-api"
-import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions, FormSection, Picker } from "./primitives"
+import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions, FormSection } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { settingsFormPath, settingsPath } from "@/lib/router"
@@ -49,14 +50,11 @@ export function ProjectsPage() {
           {state.projects.map((project) => (
             <Row
               key={project.id}
-              icon={FolderIcon}
+              icon={<ProjectIcon project={project} className="size-4 shrink-0" />}
               title={project.name}
               subtitle={
                 <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                   <span className="font-mono">{project.cwd}</span>
-                  {project.mcpServerIds.length > 0 && <span>· {project.mcpServerIds.length} MCP</span>}
-                  {project.skillIds.length > 0 && <span>· {project.skillIds.length} skills</span>}
-                  {project.commandIds.length > 0 && <span>· {project.commandIds.length} commands</span>}
                   {project.description && (
                     <span className="basis-full truncate break-normal">{project.description}</span>
                   )}
@@ -105,14 +103,11 @@ export function ProjectForm({
   settings: ServerSettings
   onDone: (saved: boolean) => void
 }) {
-  const { state } = useStore()
   const [form, setForm] = React.useState(() => ({
     name: project?.name ?? "",
     cwd: project?.cwd ?? "",
     description: project?.description ?? "",
-    mcpServerIds: project?.mcpServerIds ?? [],
-    skillIds: project?.skillIds ?? [],
-    commandIds: project?.commandIds ?? [],
+    logoUrl: project?.logoUrl ?? "",
   }))
   const [busy, setBusy] = React.useState(false)
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
@@ -126,9 +121,7 @@ export function ProjectForm({
         // Drilling through the path picker leaves a trailing slash behind.
         cwd: form.cwd === "/" ? form.cwd : form.cwd.replace(/\/+$/, ""),
         description: form.description.trim() || null,
-        mcpServerIds: form.mcpServerIds,
-        skillIds: form.skillIds,
-        commandIds: form.commandIds,
+        logoUrl: form.logoUrl.trim(),
       }
       if (project) {
         await api(settings, `/api/projects/${project.id}`, { method: "PUT", body: JSON.stringify(payload) })
@@ -171,34 +164,17 @@ export function ProjectForm({
             placeholder="What runs here, and why."
           />
         </Field>
-      </FormSection>
-      <FormSection label="Capabilities">
-        <Field label="MCP servers" hint="Manage the definitions in Settings › MCP servers.">
-          <Picker
-            items={state.mcpServers}
-            selected={form.mcpServerIds}
-            onToggle={(mcpServerIds) => set({ mcpServerIds })}
-            subtitle={(s) => (s.type === "http" ? s.url : s.command)}
-            empty="No MCP servers defined yet."
-          />
-        </Field>
-        <Field label="Skills" hint="Manage the paths in Settings › Skills.">
-          <Picker
-            items={state.skills}
-            selected={form.skillIds}
-            onToggle={(skillIds) => set({ skillIds })}
-            subtitle={(s) => s.path}
-            empty="No skills defined yet."
-          />
-        </Field>
-        <Field label="Slash commands" hint="Manage the prompts in Settings › Commands.">
-          <Picker
-            items={state.commands}
-            selected={form.commandIds}
-            onToggle={(commandIds) => set({ commandIds })}
-            subtitle={(c) => `/${c.name}`}
-            empty="No commands defined yet."
-          />
+        <Field label="Logo URL" hint="Optional — shown next to this project in the sidebar and pickers. Empty shows the project's initial.">
+          <div className="flex items-center gap-2">
+            {/* Live preview — the same component the sidebar renders. */}
+            <ProjectIcon project={{ name: form.name, logoUrl: form.logoUrl }} className="size-5" />
+            <Input
+              value={form.logoUrl}
+              onChange={(e) => set({ logoUrl: e.target.value })}
+              placeholder="https://example.com/logo.svg"
+              className="font-mono text-xs"
+            />
+          </div>
         </Field>
       </FormSection>
       <FormActions busy={busy} onCancel={() => onDone(false)} />

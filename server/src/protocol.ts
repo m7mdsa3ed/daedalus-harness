@@ -42,6 +42,39 @@ export interface HistoryLost {
   error: WireError;
 }
 
+/* ---- subagent sessions (draft ACP RFD) ----
+   The two update variants of the "Subagent Sessions" RFD
+   (agent-client-protocol PR #1992). They are ahead of the SDK — its
+   `SessionUpdate` union does not carry them yet — so they are declared here and
+   `SessionUpdate` below is what the harness handles, on both ends. The wire
+   shape is the RFD's exactly, so the day the SDK ships them these two collapse
+   into `acp.SessionUpdate` with nothing else to change.
+
+   A spawn is sent on the *parent* session and names the child; the child's own
+   updates then arrive as ordinary `session/update`s whose `sessionId` is the
+   child's, and the terminal state arrives on the parent again, after all of
+   them. Nesting is a spawn sent on a child session. */
+export interface SubagentSpawned {
+  sessionUpdate: "subagent_spawned";
+  subagentSessionId: string;
+  name: string;
+  task: string;
+  capabilities: { cancel?: boolean; close?: boolean };
+  _meta?: Record<string, unknown> | null;
+}
+
+export type SubagentState = "completed" | "failed" | "cancelled" | "disconnected";
+
+export interface SubagentStateUpdate {
+  sessionUpdate: "subagent_state_update";
+  subagentSessionId: string;
+  state: SubagentState;
+  _meta?: Record<string, unknown> | null;
+}
+
+/** Everything a `session/update` can carry: the SDK's union plus the RFD's. */
+export type SessionUpdate = acp.SessionUpdate | SubagentSpawned | SubagentStateUpdate;
+
 /** What a respawn has to put back: the agent's configuration minus the two
     settings the profile owns. See AcpBridge.captureRestoreState. */
 export interface RestoreState {
@@ -49,54 +82,56 @@ export interface RestoreState {
   configOptions: acp.SessionConfigOption[];
 }
 
-export type HistoryStrategy = "native-revert" | "fork-checkpoint" | "unsupported";
-
-export interface HistoryCheckpointSummary {
+/**
+ * One queued prompt — typed while a turn was running, waiting for it to end.
+ * `id` is minted by the server; editing and removing go by it.
+ */
+export interface QueuedMessage {
   id: string;
-  turnId: string;
-  promptText: string;
-  createdAt: number;
-  completedAt: number | null;
-  status: string;
-}
-
-export interface HistoryBranchSummary {
-  id: string;
-  label: string;
-  sourceCheckpointId: string;
+  text: string;
   createdAt: number;
 }
 
-export interface HistoryState {
-  strategy: HistoryStrategy;
-  available: boolean;
-  busy: boolean;
-  reason?: string;
-  conflict?: string;
-  checkpoints: HistoryCheckpointSummary[];
-  branches: HistoryBranchSummary[];
-}
+/** The answer to `prompt` and `queue_add`. Which shape comes back is the
+    server's call: only it knows whether the turn is still open, so a client
+    that believed the thread idle can still be told its words were queued. */
+export type PromptReply = { turnId: string } | { queued: true; itemId: string };
 
 // ---- client -> server ----
 
 /**
- * The four commands carrying `id` get exactly one `reply`. The two answers do
+ * Every command carrying `id` gets exactly one `reply`. The two answers do
  * not: whether a peer's answer won the race is told by `request_answered`,
  * which every peer needs anyway.
  */
 export type ThreadCommand =
-  | { id: number; cmd: "prompt"; text: string }
+  /** Send a prompt. While a turn is running it is QUEUED (answered
+      `{queued, itemId}`) unless `steer` is set, which joins the running turn
+      the way every mid-turn prompt used to. */
+  | { id: number; cmd: "prompt"; text: string; steer?: boolean }
   | { id: number; cmd: "cancel" }
+  /* ---- the queue ----
+     `queue_add` is `prompt` from a client that already knows the thread is
+     busy — on an idle thread it drains at once, so there is one path. The
+     three edits work with no agent process at all: a parked queue on an
+     archived thread is edited without spawning one to do it. `queue_send_now`
+     interrupts the running turn and sends (one item, or everything combined);
+     `queue_steer` injects one item into the running turn without stopping it. */
+  | { id: number; cmd: "queue_add"; text: string }
+  | { id: number; cmd: "queue_update"; itemId: string; text: string }
+  | { id: number; cmd: "queue_remove"; itemId: string }
+  | { id: number; cmd: "queue_clear" }
+  | { id: number; cmd: "queue_send_now"; itemId?: string }
+  | { id: number; cmd: "queue_steer"; itemId: string }
   | { id: number; cmd: "set_mode"; modeId: string }
   | { id: number; cmd: "set_config_option"; configId: string; value: string | boolean }
   | { cmd: "answer_permission"; requestId: string; response: acp.RequestPermissionResponse }
   | { cmd: "answer_elicitation"; requestId: string; response: acp.CreateElicitationResponse }
-  /** Fetch the page of journaled events immediately before `before` (a seq).
-      Answered with `EarlierPage`. Only useful to a client that asked for a
-      windowed attach — see `attached.earlier`. */
-  | { id: number; cmd: "load_earlier"; before: number }
-  | { id: number; cmd: "revert"; checkpointId: string }
-  | { id: number; cmd: "recover_branch"; branchId: string };
+  /** Fetch the page of journaled steps immediately before `before` (the seq of
+      the step's `turn_started` — see `attached.from`). Answered with
+      `EarlierPage`. Only useful to a client that asked for a windowed attach —
+      see `attached.earlier`. */
+  | { id: number; cmd: "load_earlier"; before: number };
 
 // ---- server -> client ----
 
@@ -126,14 +161,17 @@ export const REPLAY_CHUNK_SIZE = 500;
  */
 export const REPLAY_CHUNK_BYTES = 256 * 1024;
 
-/** How many journaled events one `load_earlier` page returns. */
-export const EARLIER_PAGE_SIZE = 250;
+/** How many journaled steps one `load_earlier` page returns. A **step** is a
+    turn — the log is cut only at `turn_started` boundaries, so a page is always
+    a whole number of turns and the client never re-folds one that begins
+    mid-way (the old event-counted page landed wherever the count ran out). */
+export const EARLIER_PAGE_STEPS = 20;
 
 /** The answer to `load_earlier`: a page of history older than what the client
-    has, plus how much older history is still behind it. */
+    has, plus how many older steps are still behind it. */
 export interface EarlierPage {
   events: JournaledEvent[];
-  /** Journaled events before `events[0]` that were not sent. 0 = this is the
+  /** Steps (turns) before `events[0]` that were not sent. 0 = this is the
       head of the log and there is nothing left to ask for. */
   earlier: number;
 }
@@ -153,7 +191,9 @@ export type ThreadEvent =
      finished hours ago. */
   | {
       ev: "attached";
-      /** The seq the replay starts at. */
+      /** The seq the replay starts at. For a windowed attach this is the
+          `turn_started` of the first step in the tail — whole turns only,
+          never a cut inside one. */
       from: number;
       /** Whether `from` is the client's OWN cursor — i.e. the replay continues
           the transcript already on screen rather than replacing it.
@@ -165,7 +205,7 @@ export type ThreadEvent =
           the other resets. So the server states which it is instead of leaving
           the client to infer it from a number that now has two sources. */
       resumed: boolean;
-      /** Journaled events before `from` that were NOT sent and are still on the
+      /** Steps (turns) before `from` that were NOT sent and are still on the
           server, fetchable with `load_earlier`. 0 for an ordinary attach (the
           replay is the whole log) and for a resume (the client has them). */
       earlier: number;
@@ -177,9 +217,11 @@ export type ThreadEvent =
       /** Set when this process came up on an empty session because the thread's
           conversation could not be loaded. Absent is the normal case. */
       historyLost?: HistoryLost;
-      history: HistoryState;
     }
-  | { ev: "caught_up"; cursor: number; promptActive: boolean }
+  /** `queue` rides here because the queue is not journaled (see the `queue`
+      event): a peer attaching has to be handed it the way it is handed an
+      open permission after the replay. */
+  | { ev: "caught_up"; cursor: number; promptActive: boolean; queue?: QueuedMessage[] }
   /** The replay, in bulk. A container, not a fifth journaled kind: the events
       inside are the same events a live socket receives and the client unrolls
       them through the same dispatch, so `attached`/`caught_up` still bracket
@@ -199,8 +241,13 @@ export type ThreadEvent =
       server knows exactly when that replay starts and ends, so unlike the old
       client-side sniff this flag is authoritative. It becomes the reducer's
       `allowUserChunks`: during a load, user chunks are the only source of user
-      messages. */
-  | { ev: "update"; seq: number; update: acp.SessionUpdate; historyReplay: boolean }
+      messages.
+      `sessionId` is set only when the update belongs to a **subagent's**
+      session — a child announced by `subagent_spawned` — and names that child.
+      Absent means the thread's own session, which keeps the shape of every
+      event journaled before subagents existed exactly as it was. The reducer
+      files an update carrying it under the child rather than the thread. */
+  | { ev: "update"; seq: number; update: SessionUpdate; historyReplay: boolean; sessionId?: string }
   /** One event for three sources — the `session/new` response, the
       `session/load` response, and any accepted `set_mode`/`set_config_option`.
       It carries **absolute** state, which is what makes it safe to both journal
@@ -215,7 +262,10 @@ export type ThreadEvent =
   /** A turn began, and whose words began it. Fanned out to every peer except
       the sender, which already showed its own message. */
   | { ev: "turn_started"; seq: number; turnId: string; text: string }
-  /** `promptText` is what lets a replayed failure still offer Retry. */
+  /** `promptText` is what lets a replayed failure still offer Retry.
+      `continued` says the queue is draining into a new turn right behind this
+      one — a "turn finished" notification for it would announce a pause that
+      does not exist, so both the toast and the push read it. */
   | {
       ev: "turn_ended";
       seq: number;
@@ -223,6 +273,7 @@ export type ThreadEvent =
       usage: acp.Usage | null;
       error?: WireError;
       promptText?: string;
+      continued?: boolean;
     }
 
   /* ---- fan-out only ----
@@ -233,11 +284,14 @@ export type ThreadEvent =
   | { ev: "permission"; requestId: string; request: acp.RequestPermissionRequest }
   | { ev: "elicitation"; requestId: string; request: acp.CreateElicitationRequest }
   | { ev: "request_answered"; requestId: string; toolCallId?: string }
+  /** The whole queue, **absolute** — never a delta — to every peer including
+      the one whose command changed it: ids are minted server-side, so no peer's
+      own picture is authoritative. Not journaled: like a permission it is
+      current state rather than history, and `caught_up` carries it on attach. */
+  | { ev: "queue"; items: QueuedMessage[] }
   /** Time to first update of a turn, measured server-side — so it no longer
       includes the WebSocket hop to the browser. */
   | { ev: "ttft"; ms: number }
   | { ev: "task_event"; transcriptDir: string; event: Record<string, unknown> }
-  | { ev: "history_state"; history: HistoryState }
-  | { ev: "history_reset"; history: HistoryState }
   | { ev: "reply"; id: number; result?: unknown; error?: undefined }
   | { ev: "reply"; id: number; error: WireError; result?: undefined };

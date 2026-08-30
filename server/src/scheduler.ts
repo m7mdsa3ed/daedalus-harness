@@ -76,7 +76,8 @@ function deliver(row: ScheduledMessage, manager: SessionManager): void {
   void fire(row.sessionId, row.text, manager);
 }
 
-/** Send one prompt, reviving the thread's process first if it has no live one. */
+/** Send one prompt, reviving the thread's process first if it has no live one.
+    A prompt that lands mid-turn is queued behind it (see SessionManager.prompt). */
 async function fire(sessionId: string, text: string, manager: SessionManager): Promise<void> {
   const session = manager.get(sessionId);
   if (!session || session.deletedAt !== null) return;
@@ -95,7 +96,7 @@ async function fire(sessionId: string, text: string, manager: SessionManager): P
     const profile = getProfile(session.profileId);
     const project = getProject(session.projectId);
     if (!profile || !project) return;
-    await manager.respawn(sessionId, profile, project, session.model, session.effort);
+    await manager.respawn(sessionId, profile, session.agentId, project, session.model, session.effort);
     const revived = manager.get(sessionId);
     if (revived?.bridge && !revived.exited) {
       await revived.bridge.ready;

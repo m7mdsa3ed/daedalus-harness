@@ -23,6 +23,15 @@ function server(): ServerSettings {
 
 const base = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}/knowledge`
 
+/** An entry as the cross-project list reports it: with its project named. */
+export type KnowledgeEntryAcross = KnowledgeEntry & { projectId: string; projectName: string }
+
+/** Every entry across every project, newest-updated first — Settings ›
+    Knowledge base reads the whole store, not one workspace's slice. */
+export function listAllKnowledge(signal?: AbortSignal): Promise<KnowledgeEntryAcross[]> {
+  return api<KnowledgeEntryAcross[]>(server(), "/api/knowledge", { signal })
+}
+
 export function listKnowledge(projectId: string, signal?: AbortSignal): Promise<KnowledgeEntry[]> {
   return api<KnowledgeEntry[]>(server(), base(projectId), { signal })
 }

@@ -1,8 +1,10 @@
-/* ── App settings ──
+/* ── Device groups of the General page ──
    The device side of the install: whether this app is installed, whether the
    browser considers the page secure enough to install it, and the two clears
    that repair it when it isn't. Nothing here talks to the harness server —
-   it is all origin-local state, which is why it does not live on General. */
+   it is all origin-local state. These used to be their own "App" section;
+   they sit under General now, below the server list, since both halves are
+   "this device" and one page is easier to find than two. */
 import * as React from "react"
 import { toast } from "sonner"
 import { AlertTriangle, CheckCircle2, Info } from "lucide-react"
@@ -17,26 +19,13 @@ import {
   type SecurityFinding,
   type SiteDataReport,
 } from "@/lib/site-data"
-import { PageHeader, Group, Row } from "./primitives"
-import { sectionMeta } from "./sections"
-
-export function AppPage() {
-  const meta = sectionMeta("app")
-  return (
-    <>
-      <PageHeader meta={meta} />
-      <InstallGroup />
-      <SecurityGroup />
-      <SiteDataGroup />
-    </>
-  )
-}
+import { Group, Row } from "./primitives"
 
 /* Chrome no longer surfaces an install offer on its own — see lib/install.ts —
    so without this row the app is installable and yet offers nobody a way to
    install it. Every state says something: the two that cannot act explain why
    rather than showing a button that does nothing. */
-function InstallGroup() {
+export function InstallGroup() {
   const status = useInstallStatus()
   return (
     <Group label="Install">
@@ -103,7 +92,7 @@ const FINDING_TONE: Record<SecurityFinding["level"], string> = {
 /** Why the browser does or does not trust this page. Recomputed on mount rather
     than held in state: every input (protocol, server URL, SW controller) is
     already settled by the time the settings route renders. */
-function SecurityGroup() {
+export function SecurityGroup() {
   const findings = React.useMemo(() => inspectSecurity(), [])
   return (
     <Group label="Security">
@@ -140,7 +129,7 @@ function summarize(report: SiteDataReport): string {
   return `Removed ${parts.join(", ")}.`
 }
 
-function SiteDataGroup() {
+export function SiteDataGroup() {
   const confirm = useConfirm()
   const [busy, setBusy] = React.useState<"cache" | "all" | null>(null)
 

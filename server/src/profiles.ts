@@ -1,13 +1,21 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { db, profiles as profilesTable } from "./db/index.js";
+import { db, profiles as profilesTable, type ProfileAgentLink } from "./db/index.js";
+import { PROFILE_LINKS, emptyLinks, linksOf, readLinks, writeLinks } from "./db/links.js";
 
-// A profile is the AGENT configuration used in a session (credentials, models);
-// the workspace side lives in projects.ts.
+// A profile is the PROVIDER configuration used in a session (credentials,
+// models); the workspace side lives in projects.ts. It is not bound to one
+// agent: `agents` names every runtime it can spawn, and a thread is a
+// (profile, agent) pair chosen when the thread is started.
 export const ProfileInputSchema = z.object({
   name: z.string().min(1),
-  agentId: z.string().min(1),
+  /** Which agents this profile can spawn, keyed by agent id, with the little
+      that differs per agent on one provider (see ProfileAgentLink). At least
+      one — a profile no agent can use is a profile no thread can start on. */
+  agents: z
+    .record(z.string().min(1), z.object({ baseUrl: z.string().optional() }))
+    .refine((agents) => Object.keys(agents).length > 0, "a profile needs at least one agent"),
   baseUrl: z.string().optional().default(""),
   apiKey: z.string().optional().default(""),
   models: z
@@ -35,28 +43,20 @@ export const ProfileInputSchema = z.object({
       that serves a genuinely cheaper tier worth using. Deliberately a bare id
       and not a `models[]` entry — nothing may pick it for a thread. */
   smallModel: z.string().optional().default(""),
-  /** Replace the agent's built-in web tools with the harness's `web-search` MCP
-      server. A profile opts in; unset means off. The other fields override the
-      server-global `webSearch` in config.json — each only when set, and the
-      token is stored (redacted on read) like apiKey. */
-  webSearch: z
-    .object({
-      enabled: z.boolean().default(false),
-      searchApiBaseUrl: z.string().optional(),
-      searchApiToken: z.string().optional(),
-      searchModel: z.string().optional(),
-      fetchModel: z.string().optional(),
-    })
-    .optional()
-    .default({ enabled: false }),
-  /** Opt the agent into the harness's `knowledge` MCP server. Just the flag —
-      there is no per-profile config to override (unlike webSearch), so a profile
-      only says whether the tools are advertised at all. Off by default. */
-  knowledge: z.object({ enabled: z.boolean().default(false) }).optional().default({ enabled: false }),
+  /** Logo shown next to the profile in pickers — a URL (models.dev serves
+      provider marks at https://models.dev/logos/<provider>.svg). Empty means
+      "no logo of its own", and the client falls back to the agent's mark. */
+  logoUrl: z.string().optional().default(""),
+  /** Library entries this profile brings to every thread started on it, on
+      top of the project's (db/links.ts). The web-search and knowledge flags
+      above are the harness's own two servers; these are the user's. */
+  mcpServerIds: z.array(z.string()).default([]),
+  skillIds: z.array(z.string()).default([]),
+  commandIds: z.array(z.string()).default([]),
 });
 
 export type ProfileInput = z.infer<typeof ProfileInputSchema>;
-export type Profile = Omit<ProfileInput, "webSearch" | "knowledge" | "smallModel"> & {
+export type Profile = Omit<ProfileInput, "smallModel"> & {
   /** Null on rows predating the column; `resolveSpawn` reads it as empty, which
       falls back to the session model. */
   smallModel: string | null;
@@ -64,15 +64,6 @@ export type Profile = Omit<ProfileInput, "webSearch" | "knowledge" | "smallModel
   /** Not stored: synthesized for an agent so it can always be run as it ships.
       See `defaultProfileFor`. Nothing may edit or delete one. */
   virtual?: boolean;
-  /** Opt-in to the harness's `web-search` MCP server. Stored rows predating the
-      column read back null; treated as off so a profile that never opted in
-      stays off. The other fields override the server-global default. */
-  webSearch:
-    | { enabled: boolean; searchApiBaseUrl?: string; searchApiToken?: string; searchModel?: string; fetchModel?: string }
-    | null;
-  /** Opt-in to the harness's `knowledge` MCP server. Like webSearch, a stored row
-      predating the column reads back null, treated as off. */
-  knowledge: { enabled: boolean } | null;
 };
 
 /** `default:<agentId>` — the id of an agent's virtual profile. Prefixed rather
@@ -95,14 +86,16 @@ export function defaultProfileFor(agentId: string, _agentName?: string): Profile
   return {
     id: DEFAULT_PROFILE_PREFIX + agentId,
     name: "Default",
-    agentId,
+    agents: { [agentId]: {} },
     baseUrl: "",
     apiKey: "",
     models: [],
     defaultModel: "",
     smallModel: "",
-    webSearch: { enabled: false },
-    knowledge: { enabled: false },
+    // No logo, deliberately: the Default profile IS the agent as it ships,
+    // and the client already draws the agent's own mark for it.
+    logoUrl: "",
+    ...emptyLinks(),
     virtual: true,
   };
 }
@@ -111,23 +104,55 @@ export function isVirtualProfile(id: string): boolean {
   return id.startsWith(DEFAULT_PROFILE_PREFIX);
 }
 
-/** A stored row predating the `web_search` column reads back as null, which
-    `Profile` never produces (its schema defaults it). Treat null as "off" so a
-    profile that never opted in stays off, not a type that no longer fits. */
-function toProfile(row: Record<string, unknown>): Profile {
+/** The agents this profile can spawn, in the order they were saved. */
+export const profileAgentIds = (profile: Profile): string[] => Object.keys(profile.agents ?? {});
+
+export const profileSupports = (profile: Profile, agentId: string): boolean =>
+  Object.hasOwn(profile.agents ?? {}, agentId);
+
+/**
+ * Which agent a request meant when it named a profile and no agent.
+ *
+ * Only unambiguous when the profile names one agent — an older client, or the
+ * virtual Default, which always does. A multi-agent profile with no agent
+ * named resolves to nothing rather than to a guess: the caller 404s, because
+ * spawning "some" agent on a profile that serves three is not what anyone
+ * asked for.
+ */
+export function resolveProfileAgent(profile: Profile, agentId?: string | null): string | undefined {
+  if (agentId) return profileSupports(profile, agentId) ? agentId : undefined;
+  const ids = profileAgentIds(profile);
+  return ids.length === 1 ? ids[0] : undefined;
+}
+
+/** The base URL this agent should be pointed at: its own override on the
+    profile when one is set, otherwise the profile's shared one. */
+export function profileBaseUrl(profile: Profile, agentId: string): string {
+  const link: ProfileAgentLink | undefined = profile.agents?.[agentId];
+  return link?.baseUrl?.trim() || profile.baseUrl || "";
+}
+
+/** A row plus its links, with the nullable columns read back as the empty
+    strings the schema defaults them to. */
+function toProfile(row: Record<string, unknown>, links = linksOf(PROFILE_LINKS, row.id as string)): Profile {
   const { id, ...rest } = row;
   return {
-    ...(rest as Omit<ProfileInput, "webSearch" | "knowledge" | "smallModel">),
+    ...links,
+    ...(rest as Omit<ProfileInput, "smallModel">),
     id: id as string,
+    // A row from before the column existed reads back `{}` (the column
+    // default); the migration filled every row that had an agent.
+    agents: (row.agents as Record<string, ProfileAgentLink> | null | undefined) ?? {},
     smallModel: (row.smallModel as string | null | undefined) ?? "",
-    webSearch: (row.webSearch as { enabled: boolean } | undefined | null) ?? { enabled: false },
-    knowledge: (row.knowledge as { enabled: boolean } | undefined | null) ?? { enabled: false },
+    logoUrl: (row.logoUrl as string | null | undefined) ?? "",
   };
 }
 
 /** Stored profiles only. `listProfiles` is what the API and spawning use. */
 function storedProfiles(): Profile[] {
-  return db.select().from(profilesTable).all().map(toProfile);
+  const rows = db.select().from(profilesTable).all();
+  const links = readLinks(PROFILE_LINKS, rows.map((r) => r.id));
+  return rows.map((row) => toProfile(row, links.get(row.id) ?? emptyLinks()));
 }
 
 /**
@@ -151,34 +176,27 @@ export function getProfile(id: string): Profile | undefined {
   return row ? toProfile(row) : undefined;
 }
 
-/** Secrets never leave the server — API keys, and a profile's own web-search
-    token. Each is replaced by a boolean the client uses to render the
-    "leave empty to keep it" hint. The token key is deleted, not set to
-    undefined, so it cannot appear in a serialized payload even by accident. */
+/** Secrets never leave the server: the API key is replaced by a boolean the
+    client uses to render the "leave empty to keep it" hint. */
 export function redact(profile: Profile) {
   const { apiKey, ...rest } = profile;
-  const webSearch = rest.webSearch;
-  return {
-    ...rest,
-    hasApiKey: Boolean(apiKey),
-    ...(webSearch
-      ? {
-          webSearch: {
-            enabled: webSearch.enabled,
-            searchApiBaseUrl: webSearch.searchApiBaseUrl,
-            searchModel: webSearch.searchModel,
-            fetchModel: webSearch.fetchModel,
-            hasWebSearchToken: Boolean(webSearch.searchApiToken),
-          },
-        }
-      : {}),
-  };
+  return { ...rest, hasApiKey: Boolean(apiKey) };
+}
+
+/** The columns of the profiles table, without the link arrays that live in
+    their own tables. */
+function columnsOf(profile: Profile) {
+  const { mcpServerIds: _m, skillIds: _s, commandIds: _c, virtual: _v, ...columns } = profile;
+  return columns;
 }
 
 export function createProfile(input: ProfileInput): Profile {
   const profile: Profile = { id: randomUUID(), ...input };
-  db.insert(profilesTable).values(profile).run();
-  return profile;
+  db.transaction((tx) => {
+    tx.insert(profilesTable).values(columnsOf(profile)).run();
+    writeLinks(tx, PROFILE_LINKS, profile.id, profile);
+  });
+  return getProfile(profile.id)!;
 }
 
 export function updateProfile(id: string, input: ProfileInput): Profile | undefined {
@@ -187,18 +205,11 @@ export function updateProfile(id: string, input: ProfileInput): Profile | undefi
   if (!existing) return undefined;
   // Empty apiKey in an update means "keep the stored key" (the client never sees it).
   const updated: Profile = { ...input, id, apiKey: input.apiKey || existing.apiKey };
-  // Same for the web-search token: an empty one keeps the stored secret sent by
-  // the client (which never sees it back). The client always sends a webSearch
-  // object (its form defaults enabled to false), so `input.webSearch` is set.
-  const webSearch = input.webSearch;
-  const current = existing.webSearch ?? { enabled: false };
-  updated.webSearch = {
-    ...current,
-    ...webSearch,
-    searchApiToken: webSearch.searchApiToken || current.searchApiToken || undefined,
-  };
-  db.update(profilesTable).set(updated).where(eq(profilesTable.id, id)).run();
-  return updated;
+  db.transaction((tx) => {
+    tx.update(profilesTable).set(columnsOf(updated)).where(eq(profilesTable.id, id)).run();
+    writeLinks(tx, PROFILE_LINKS, id, updated);
+  });
+  return getProfile(id);
 }
 
 export function deleteProfile(id: string): boolean {

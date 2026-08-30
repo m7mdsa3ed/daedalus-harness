@@ -13,6 +13,7 @@ import { eq } from "drizzle-orm";
 import { agents as agentsTable, db } from "../src/db/index.js";
 import type { Profile } from "../src/profiles.js";
 import type { Project } from "../src/projects.js";
+import { configureGatewayShim } from "../src/gateway-shim.js";
 import { getAgent, resolveSpawn, seedAgents } from "../src/registry.js";
 
 let passed = 0;
@@ -33,14 +34,16 @@ function profileWith(over: Partial<Profile> = {}): Profile {
   return {
     id: "p1",
     name: "gateway",
-    agentId: "claude-code",
+    agents: { "claude-code": {} },
     baseUrl: "https://gw.example/v1",
     apiKey: "sk-test",
     models: [{ id: "gw/big", label: "Big", reasoningEfforts: [] }],
     defaultModel: "gw/big",
     smallModel: "",
-    webSearch: { enabled: false },
-    knowledge: { enabled: false },
+    logoUrl: "",
+    mcpServerIds: [],
+    skillIds: [],
+    commandIds: [],
     ...over,
   };
 }
@@ -216,7 +219,31 @@ test("the backfill moves a seed-3 row off {model} and keeps the user's edits", (
   assert.equal(claude?.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, SMALL);
   // Never a wholesale replacement: what the user put in the template is theirs.
   assert.equal(claude?.env.MY_OWN, "keep me");
-  assert.equal(claude?.env.ANTHROPIC_BASE_URL, "{baseUrl}");
+  // Seed 8 routes the seeded endpoint through the gateway shim — only the
+  // exact seeded value moves.
+  assert.equal(claude?.env.ANTHROPIC_BASE_URL, "{gatewayUrl}");
+});
+
+test("a base URL the user wrote by hand is not moved onto the shim", () => {
+  resetAgents([{ id: "claude-code", seededVersion: 7, env: { ANTHROPIC_BASE_URL: "https://my.gw/v1" } }]);
+  seedAgents();
+  assert.equal(getAgent("claude-code")?.env.ANTHROPIC_BASE_URL, "https://my.gw/v1");
+});
+
+test("{gatewayUrl} is the profile's endpoint until a shim is up, then the shim", () => {
+  const agent = { ...claudeAgent, env: { ...claudeEnv, ANTHROPIC_BASE_URL: "{gatewayUrl}" } };
+  assert.equal(resolveSpawn(agent, profileWith(), project).env.ANTHROPIC_BASE_URL, "https://gw.example/v1");
+  // The Default profile has no gateway, so the key prunes away either way.
+  assert.equal(resolveSpawn(agent, virtualProfile, project).env.ANTHROPIC_BASE_URL, undefined);
+  configureGatewayShim({ port: 4321 });
+  assert.match(
+    resolveSpawn(agent, profileWith(), project).env.ANTHROPIC_BASE_URL ?? "",
+    /^http:\/\/127\.0\.0\.1:4321\/gw\/[0-9a-f]{48}\/p1\/claude-code$/,
+  );
+  assert.equal(resolveSpawn(agent, virtualProfile, project).env.ANTHROPIC_BASE_URL, undefined);
+  // A per-agent override on the profile is still what the shim fronts — the
+  // shim resolves it by profile + agent at request time, so nothing to check
+  // in the env beyond the pair being named.
 });
 
 test("the backfill adds the keys to a row that predates them", () => {

@@ -2,12 +2,18 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
-import { materializeProject } from "./materialize.js";
-import type { Profile } from "./profiles.js";
+import { profileSupports, type Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 import { getAgent, resolveSpawn } from "./registry.js";
-import type { HistoryLost, HistoryStrategy, RestoreState, ThreadEvent, WireError } from "./protocol.js";
+import type {
+  HistoryLost,
+  RestoreState,
+  SessionUpdate,
+  ThreadEvent,
+  WireError,
+} from "./protocol.js";
 import type { Peer } from "./sessions.js";
+import { WEB_SEARCH_SERVER_NAME } from "./websearch.js";
 
 /**
  * The ACP client, server-side.
@@ -28,16 +34,6 @@ import type { Peer } from "./sessions.js";
     the probe uses, for the same reason. */
 export const HANDSHAKE_TIMEOUT_MS = 25_000;
 
-/** The session exists only in the agent's memory, so there is nothing to fork
-    from yet. An ordinary state — the first turn of every thread is in it — not
-    a failure, which is why it is a class and not a bare Error. */
-export class SessionNotForkableError extends Error {
-  constructor() {
-    super("the agent has not committed this session to disk yet");
-    this.name = "SessionNotForkableError";
-  }
-}
-
 /**
  * Start an agent process. Both callers — a thread's bridge and the throwaway
  * one the options probe spawns — build the same child, from the same three
@@ -45,13 +41,19 @@ export class SessionNotForkableError extends Error {
  */
 export function spawnAgent(
   profile: Profile,
+  agentId: string,
   project: Project,
   model?: string,
   effort?: string,
 ): ChildProcessWithoutNullStreams {
-  const agent = getAgent(profile.agentId);
-  if (!agent) throw new Error(`unknown agent: ${profile.agentId}`);
-  materializeProject(project);
+  const agent = getAgent(agentId);
+  if (!agent) throw new Error(`unknown agent: ${agentId}`);
+  if (!profileSupports(profile, agentId)) {
+    throw new Error(`profile "${profile.name}" is not configured for ${agentId}`);
+  }
+  // Skills/commands are NOT materialized here: what belongs in the cwd is the
+  // union across the project's live threads, which only the SessionManager
+  // knows (`materializeFor`). The probe writes the project's own set itself.
   const { command, args, env, cwd } = resolveSpawn(agent, profile, project, model, effort);
   return spawn(command, args, {
     cwd,
@@ -60,13 +62,69 @@ export function spawnAgent(
   }) as ChildProcessWithoutNullStreams;
 }
 
+/** `acp.SessionNotification` widened to the updates the SDK does not know yet
+    (protocol.ts `SessionUpdate`). */
+interface SessionNotification {
+  sessionId: string;
+  update: SessionUpdate;
+  _meta?: Record<string, unknown> | null;
+}
+
+/** `clientCapabilities.subagents: {}` — the RFD's opt-in, typed as the SDK's
+    capabilities so it can be spread into the handshake literal without the
+    excess-property check refusing a key the SDK has not learned yet. */
+const SUBAGENT_CAPABILITY = { subagents: {} } as unknown as Partial<acp.ClientCapabilities>;
+
+/**
+ * The subagent RFD's two updates are ahead of the SDK, and the SDK is not
+ * lenient about that: `acp.client()` installs a `session/update` router *ahead
+ * of every handler* which validates each frame against a closed union of the
+ * variants it knows and throws on anything else — the frame is logged and
+ * dropped before a handler registered with its own parser gets a look. So the
+ * two are moved to a private method name on the way in (`agentStream`), where
+ * the SDK has nothing to say about them, and the bridge listens on both names.
+ * Goes away the day the SDK's union carries the RFD.
+ */
+const SUBAGENT_UPDATE_METHOD = "_daedalus/subagent_update";
+const SUBAGENT_UPDATE_KINDS: ReadonlySet<string> = new Set(["subagent_spawned", "subagent_state_update"]);
+
+/** The structural check the rerouted frames are parsed with: the shape the
+    bridge itself relies on. An agent that sends something else is speaking a
+    protocol this bridge does not, and the SDK's own answer to that (a logged
+    error, the frame dropped) is the right one, so this throws the same way
+    its parser would. */
+function parseSessionNotification(params: unknown): SessionNotification {
+  const p = params as Partial<SessionNotification> | null;
+  const tag = (p?.update as { sessionUpdate?: unknown } | undefined)?.sessionUpdate;
+  if (!p || typeof p.sessionId !== "string" || typeof tag !== "string") {
+    throw acp.RequestError.invalidParams("session/update: expected {sessionId, update.sessionUpdate}");
+  }
+  return p as SessionNotification;
+}
+
+const isSubagentUpdate = (message: acp.AnyMessage): boolean => {
+  if (!("method" in message) || message.method !== acp.methods.client.session.update) return false;
+  const tag = ((message.params as { update?: { sessionUpdate?: unknown } } | undefined)?.update)?.sessionUpdate;
+  return typeof tag === "string" && SUBAGENT_UPDATE_KINDS.has(tag);
+};
+
 /** The ndJSON stream over a spawned agent's stdio. From here on the SDK owns
-    stdout — a stray 'data' listener anywhere else silently steals its bytes. */
+    stdout — a stray 'data' listener anywhere else silently steals its bytes.
+    Inbound frames pass through one rewrite: a `session/update` carrying an RFD
+    subagent variant is re-addressed to `SUBAGENT_UPDATE_METHOD` (see there). */
 export function agentStream(proc: ChildProcessWithoutNullStreams): acp.Stream {
-  return acp.ndJsonStream(
+  const stream = acp.ndJsonStream(
     Writable.toWeb(proc.stdin) as WritableStream<Uint8Array>,
     Readable.toWeb(proc.stdout) as ReadableStream<Uint8Array>,
   );
+  const reroute = new TransformStream<acp.AnyMessage, acp.AnyMessage>({
+    transform(message, controller) {
+      controller.enqueue(
+        isSubagentUpdate(message) ? { ...message, method: SUBAGENT_UPDATE_METHOD } : message,
+      );
+    },
+  });
+  return { writable: stream.writable, readable: stream.readable.pipeThrough(reroute) };
 }
 
 /** An agent request the agent is currently blocked on. Held here rather than in
@@ -101,8 +159,15 @@ export interface BridgeHost {
   /** Push hooks. Fired only when nobody is attached to see the thread. */
   onPermissionRequest(): void;
   onElicitationRequest(): void;
-  onTurnEnd(error?: unknown): void;
-  onLogicalTurnEnd(turnId: string): void;
+  /** Is there something queued that should follow a turn that ended cleanly?
+      Read in the same tick as `turn_ended` is emitted, so the event can say
+      `continued` about a drain that has not happened yet. */
+  hasQueued(): boolean;
+  /** The logical turn is over and `turn_ended` is journaled. `interrupted` =
+      cancelled or failed, after which nothing should auto-follow; `continued`
+      = `hasQueued()` said yes and the host is expected to drain now. The push
+      hook lives behind this on the host's side, gated on both. */
+  onTurnSettled(info: { error?: WireError; interrupted: boolean; continued: boolean }): void;
   /** The agent accepted a `session/new` or a `session/load`: this is the
       session the running process is on. `proven` says which — a load that
       answered is the strongest evidence an id can have (the agent found the
@@ -148,10 +213,6 @@ export class AcpBridge {
   /** Resolves when the session exists and its settings have been applied. */
   readonly ready: Promise<void>;
   acpSessionId: string | null = null;
-  /** Whether the agent has written this session down yet — a `session/load`
-      answered it, or a turn has settled on it. An id it has only minted is not
-      one it can resume, and forking is a resume (see `forkCheckpoint`). */
-  sessionDurable = false;
   modes: acp.SessionModeState | null = null;
   configOptions: acp.SessionConfigOption[] = [];
   agentCapabilities: acp.AgentCapabilities = {};
@@ -174,8 +235,11 @@ export class AcpBridge {
   /** Prompt texts whose turns are waiting on close() for a reason worth
       reporting — see onPromptRejected. */
   private readonly held: string[] = [];
-  private currentTurnId: string | null = null;
+  /** Id of the logical turn in flight, null between turns. Steering joins it. */
+  currentTurnId: string | null = null;
   private currentTurnPrompt: string | null = null;
+  /** Callers of `whenIdle()` waiting for `inflight` to reach zero. */
+  private idleWaiters: (() => void)[] = [];
 
   constructor(host: BridgeHost, proc: ChildProcessWithoutNullStreams, opts: BridgeOptions) {
     this.host = host;
@@ -183,6 +247,11 @@ export class AcpBridge {
     this.connection = acp
       .client({ name: "daedalus" })
       .onNotification(acp.methods.client.session.update, (ctx) => this.onUpdate(ctx.params))
+      // The RFD's subagent updates, re-addressed by `agentStream` — see
+      // SUBAGENT_UPDATE_METHOD. Same handler: they are session updates.
+      .onNotification(SUBAGENT_UPDATE_METHOD, parseSessionNotification, (ctx) =>
+        this.onUpdate(ctx.params),
+      )
       .onRequest(acp.methods.client.session.requestPermission, (ctx) =>
         this.park<acp.RequestPermissionResponse>(
           "permission",
@@ -208,10 +277,19 @@ export class AcpBridge {
     return this.inflight > 0;
   }
 
-  get historyStrategy(): HistoryStrategy {
-    return this.agentCapabilities.sessionCapabilities?.fork != null
-      ? "fork-checkpoint"
-      : "unsupported";
+  /**
+   * Resolves once no prompt is in flight — immediately if none is. What "send
+   * now" waits on between `cancel()` and the prompt it sends in the cancelled
+   * turn's place. Also released by `close()`, so a waiter never outlives the
+   * process it was waiting on.
+   */
+  whenIdle(): Promise<void> {
+    if (this.inflight === 0 || this.closed) return Promise.resolve();
+    return new Promise((resolve) => this.idleWaiters.push(resolve));
+  }
+
+  private releaseIdle(): void {
+    for (const resolve of this.idleWaiters.splice(0)) resolve();
   }
 
   // ---- handshake ----
@@ -255,6 +333,21 @@ export class AcpBridge {
         // badly. Advertising it turns the tool back on and routes it (plus
         // MCP elicitations and codex's question bridge) to `park`.
         elicitation: { form: {}, url: {} },
+        // The fourth bargain, and the one that decides whether a subagent's
+        // work is visible at all. Nothing in ACP v1 nests; the draft subagent
+        // RFD (see protocol.ts `SubagentSpawned`) does, and an agent that
+        // implements it — codex-acp from 1.7 — sends a child's transcript as
+        // its own session only if the client claimed this. Unclaimed, the
+        // same runtime folds the child into one lifecycle tool call with no
+        // steps in it. `{}` is the whole contract here too. Spread from a
+        // typed constant because the key is not in the SDK's type yet.
+        ...SUBAGENT_CAPABILITY,
+        // claude-agent-acp's older, `_meta`-only version of the same thing: it
+        // stamps every update a subagent produces with
+        // `_meta.claudeCode.parentToolUseId`, but withholds the subagent's
+        // prose and thinking — the part that says what it concluded — unless
+        // the client says it can render a nested transcript.
+        _meta: { "subagent-transcript": true },
       },
     });
     this.agentCapabilities = initialized.agentCapabilities ?? {};
@@ -277,10 +370,31 @@ export class AcpBridge {
    * extensibility escape hatch), so dropping `disallowedTools` here is the only
    * way to switch the built-in web tools off. Empty for non-claude-code agents
    * and for sessions without the web-search server.
+   *
+   * The allow rule is the other half, and it is not optional. A disallowed
+   * tool lands in the session's `alwaysDenyRules`, and the auto-mode
+   * classifier's prompt lists those as "User Deny Rules" with one standing
+   * instruction: block any action that reaches the same effect through a
+   * different tool. Our MCP server is, by construction, exactly that — a web
+   * search through a different tool — so in auto mode the classifier denied
+   * `mcp__web-search__web_search` as circumvention of a rule the harness itself
+   * wrote, and the model told the user to "remove the deny for WebSearch in
+   * your settings". `mcp__web-search` (the server, so both its tools) as an
+   * allow rule resolves before the classifier is consulted, which is the only
+   * place the two can be reconciled: the deny says "not the built-in", the
+   * allow says "this one instead". Verified with the CLI: the same prompt on
+   * the same gateway went from two denials to none.
    */
   private claudeMeta(opts: BridgeOptions): Record<string, unknown> {
     if (!opts.websearchViaMcp) return {};
-    return { claudeCode: { options: { disallowedTools: ["WebSearch", "WebFetch"] } } };
+    return {
+      claudeCode: {
+        options: {
+          disallowedTools: ["WebSearch", "WebFetch"],
+          allowedTools: [`mcp__${WEB_SEARCH_SERVER_NAME}`],
+        },
+      },
+    };
   }
 
   private async newSession(opts: BridgeOptions): Promise<void> {
@@ -290,43 +404,6 @@ export class AcpBridge {
       _meta: this.claudeMeta(opts),
     });
     this.adoptSession(response.sessionId, response.modes ?? null, response.configOptions ?? [], false);
-  }
-
-  /**
-   * Branch the conversation so the turn about to run can be thrown away later.
-   *
-   * A fork is a *resume* on the agent's side — it mints a child id and replays
-   * the parent's transcript into it — so it can only branch from a session the
-   * agent has written down. A session id straight out of `session/new` is not
-   * that: claude-agent-acp flushes the rollout lazily, so forking before the
-   * first turn settles fails with ResourceNotFound naming the *child* it had
-   * just minted (the parent is what was missing, but the error reports the id
-   * it was creating), which read like the agent losing a session it had
-   * invented one line earlier. Hence `sessionDurable`: the first turn of a
-   * thread runs unforked, which is also what it means — there is no state
-   * before it to revert to.
-   *
-   * The child is adopted *provisionally* for the same reason it could not be
-   * forked from: nothing has settled on it yet. Until a turn does, the id worth
-   * keeping on the record is the parent's, which still has the conversation.
-   */
-  async forkCheckpoint(cwd: string, mcpServers: acp.McpServer[]): Promise<string> {
-    if (this.historyStrategy !== "fork-checkpoint") {
-      throw new Error("the agent does not advertise session/fork");
-    }
-    if (!this.sessionDurable) throw new SessionNotForkableError();
-    const response = await this.connection.agent.request(acp.methods.agent.session.fork, {
-      sessionId: this.requireSession(),
-      cwd,
-      mcpServers,
-    });
-    this.adoptSession(
-      response.sessionId,
-      response.modes ?? this.modes,
-      response.configOptions ?? this.configOptions,
-      false,
-    );
-    return response.sessionId;
   }
 
   /**
@@ -385,7 +462,6 @@ export class AcpBridge {
     proven: boolean,
   ): void {
     this.acpSessionId = acpSessionId;
-    this.sessionDurable = proven;
     this.modes = modes;
     this.configOptions = configOptions;
     this.host.onAcpSessionId(acpSessionId, proven);
@@ -484,21 +560,36 @@ export class AcpBridge {
 
   // ---- agent -> us ----
 
-  private onUpdate(notification: acp.SessionNotification): void {
+  private onUpdate(notification: SessionNotification): void {
+    /* A subagent's session (RFD) is any id that is not this process's own.
+       The id is forwarded, not resolved: which child it is, and under which
+       step, is the transcript's business. Strictly "not ours" rather than "one
+       we have seen spawned" so an update that outran its `subagent_spawned`
+       still lands on the right side of the line — the reducer files it as an
+       orphan rather than mixing it into the parent. During the handshake
+       `acpSessionId` is still null and every update is the thread's own. */
+    const own = this.acpSessionId === null || notification.sessionId === this.acpSessionId;
+    const update = notification.update;
     // Session-level updates change what `captureRestoreState` will report, so
     // they are tracked here as well as forwarded. Forwarded either way: the
-    // reducer on the other end already handles both variants.
-    const update = notification.update;
-    if (update.sessionUpdate === "current_mode_update" && this.modes) {
+    // reducer on the other end already handles both variants. A child's
+    // mode/config are its own affair and must not overwrite the thread's.
+    if (own && update.sessionUpdate === "current_mode_update" && this.modes) {
       this.modes = { ...this.modes, currentModeId: update.currentModeId };
-    } else if (update.sessionUpdate === "config_option_update") {
+    } else if (own && update.sessionUpdate === "config_option_update") {
       this.configOptions = update.configOptions;
     }
     if (this.turnStartedAt !== null && !this.ttftSent) {
       this.ttftSent = true;
       this.host.emit({ ev: "ttft", ms: Math.round(performance.now() - this.turnStartedAt) });
     }
-    this.host.emit({ ev: "update", seq: 0, update, historyReplay: this.historyReplay });
+    this.host.emit({
+      ev: "update",
+      seq: 0,
+      update,
+      historyReplay: this.historyReplay,
+      ...(own ? {} : { sessionId: notification.sessionId }),
+    });
   }
 
   /**
@@ -573,7 +664,8 @@ export class AcpBridge {
         prompt: [{ type: "text", text }],
       })
       .then(
-        (response) => this.settleTurn(response.usage ?? null, undefined, text),
+        (response) =>
+          this.settleTurn(response.usage ?? null, undefined, text, response.stopReason),
         (error: unknown) => this.onPromptRejected(error, text),
       );
   }
@@ -596,7 +688,12 @@ export class AcpBridge {
     this.settleTurn(null, this.host.enrichError(toWireError(error)), text);
   }
 
-  private settleTurn(usage: acp.Usage | null, error: WireError | undefined, text: string): void {
+  private settleTurn(
+    usage: acp.Usage | null,
+    error: WireError | undefined,
+    text: string,
+    stopReason?: acp.StopReason,
+  ): void {
     // Steering: a second prompt sent mid-turn keeps the turn open. Only the one
     // that empties the set ends it.
     if (--this.inflight > 0) return;
@@ -606,18 +703,28 @@ export class AcpBridge {
        recording an unloadable id is how a thread loses the transcript it had.
        Reported even for a failed turn: the prompt still reached the agent, and
        what makes the session findable is that it recorded anything at all. */
-    if (this.acpSessionId) {
-      this.sessionDurable = true;
-      this.host.onSessionDurable();
-    }
+    if (this.acpSessionId) this.host.onSessionDurable();
     const turnId = this.currentTurnId;
     const promptText = this.currentTurnPrompt ?? text;
     this.currentTurnId = null;
     this.currentTurnPrompt = null;
     if (!turnId) throw new Error("logical turn ended without an id");
-    this.host.emit({ ev: "turn_ended", seq: 0, turnId, usage, error, promptText });
-    this.host.onLogicalTurnEnd(turnId);
-    if (this.host.peerCount() === 0) this.host.onTurnEnd(error);
+    /* A cancelled turn is a SUCCESS on the wire — the agent answers the prompt
+       with `stopReason: "cancelled"` — which is why the reason is read here and
+       not only the error: a Stop must park the queue, not drain it. */
+    const interrupted = error !== undefined || stopReason === "cancelled";
+    const continued = !interrupted && !this.closed && this.host.hasQueued();
+    this.host.emit({
+      ev: "turn_ended",
+      seq: 0,
+      turnId,
+      usage,
+      error,
+      promptText,
+      ...(continued ? { continued: true } : {}),
+    });
+    this.releaseIdle();
+    this.host.onTurnSettled({ error, interrupted, continued });
   }
 
   async setMode(modeId: string, origin?: Peer): Promise<void> {
@@ -663,6 +770,10 @@ export class AcpBridge {
     await this.connection.agent.notify(acp.methods.agent.session.cancel, {
       sessionId: this.acpSessionId,
     });
+    /* ACP asks the cancelling client to answer whatever it is still being asked
+       with `cancelled` — and a question left open here would be handed to every
+       later attacher as if the cancelled turn were still waiting on it. */
+    this.settleAll();
   }
 
   /**
@@ -732,6 +843,7 @@ export class AcpBridge {
       );
       for (const text of this.held.splice(0)) this.settleTurn(null, error, text);
     }
+    this.releaseIdle();
     this.connection.close(reason);
   }
 

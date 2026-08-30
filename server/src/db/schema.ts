@@ -61,33 +61,34 @@ export const agents = sqliteTable("agents", {
   seededVersion: integer("seeded_version").notNull(),
 });
 
-export interface WebSearchProfile {
-  /** Replace the agent's built-in WebSearch/WebFetch with the harness's own
-      `web-search` MCP server. Off by default; a profile opts in. */
-  enabled: boolean;
-  /** Overrides of the server-global web-search config. Each is only the profile's
-      own value when set; empty means "inherit from the server default". The
-      token is stored (redacted on read) the way a profile's apiKey is. */
-  searchApiBaseUrl?: string;
-  searchApiToken?: string;
-  searchModel?: string;
-  fetchModel?: string;
-}
-
-/** A profile opting the agent into the harness's `knowledge` MCP server. Just
-    the flag — there is no per-profile config to override, unlike webSearch, so
-    the profile only says whether the tools are advertised at all. Off by
-    default. */
-export interface KnowledgeProfile {
-  enabled: boolean;
+/**
+ * A profile's per-agent settings. The key set is the contract — which agents
+ * this profile can spawn — and the value carries the little that genuinely
+ * differs per agent on one provider: the base URL, because a gateway that
+ * serves several runtimes often serves them at different paths or API shapes
+ * (an Anthropic-messages path for Claude Code, an OpenAI-responses path for
+ * Codex). Everything else on the profile — credentials, catalog, default
+ * model — is provider data and is shared.
+ */
+export interface ProfileAgentLink {
+  /** Overrides the profile's shared baseUrl for this agent only. Empty/absent
+      means "use the shared one". */
+  baseUrl?: string;
 }
 
 export const profiles = sqliteTable("profiles", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
-  /** Not a foreign key: a profile naming an agent that has since been removed
-      is a broken profile the user should see and fix, not a row that vanishes. */
-  agentId: text("agent_id").notNull(),
+  /** Which agents this profile can spawn, and what differs per agent (see
+      ProfileAgentLink). Not foreign keys: a profile naming an agent that has
+      since been removed is a broken profile the user should see and fix, not
+      a row that vanishes. Replaces the old single `agent_id` column — one
+      provider (credentials + catalog) serves several runtimes, and binding it
+      to one forced the same key and model list to be entered once per agent. */
+  agents: text("agents", { mode: "json" })
+    .$type<Record<string, ProfileAgentLink>>()
+    .notNull()
+    .default({}),
   baseUrl: text("base_url").notNull(),
   apiKey: text("api_key").notNull(),
   defaultModel: text("default_model").notNull(),
@@ -97,13 +98,14 @@ export const profiles = sqliteTable("profiles", {
       matters against a gateway. Not part of `models`: it is not a model the user
       can pick for a thread, and listing it there would offer it as one. */
   smallModel: text("small_model"),
+  /** Logo shown next to the profile in pickers (a URL, e.g. a models.dev
+      provider mark). Null on rows from before the column existed — treated as
+      "no logo", which falls back to the agent's own mark in the client. */
+  logoUrl: text("logo_url"),
   models: text("models", { mode: "json" }).$type<ModelDef[]>().notNull(),
-  /** Per-profile web-search toggle. Null on rows from before the column existed
-      (treated as off — profiles opt in). */
-  webSearch: text("web_search", { mode: "json" }).$type<WebSearchProfile>(),
-  /** Opt the agent into the harness's `knowledge` MCP server. Null on rows from
-      before the column existed (treated as off — profiles opt in). */
-  knowledge: text("knowledge", { mode: "json" }).$type<KnowledgeProfile>(),
+  /* The web-search and knowledge opt-ins used to be columns here. They are
+     library rows now (`mcp_servers.type = "builtin"`), linked like any other
+     server — see BUILTIN_MCP in library.ts. */
 });
 
 export const projects = sqliteTable("projects", {
@@ -112,12 +114,24 @@ export const projects = sqliteTable("projects", {
   cwd: text("cwd").notNull(),
   /** Optional free-text notes; null on rows from before the column existed. */
   description: text("description"),
+  /** Optional logo URL, shown wherever the project is named — the sidebar
+      folder, pickers, the projects list. Null/empty means "no logo", which
+      falls back to the project's initial in the client. */
+  logoUrl: text("logo_url"),
 });
+
+/** The harness's own MCP servers, as library rows. `builtin` names which; the
+    row stores no command, env or credentials — those are synthesized at spawn
+    (`sessions.ts`: config.json's search backend, the project's id) so a config
+    edit is live and a token is never cached in a row. */
+export type BuiltinMcp = "web-search" | "knowledge";
 
 export const mcpServers = sqliteTable("mcp_servers", {
   id: text("id").primaryKey(),
-  type: text("type", { enum: ["http", "stdio"] }).notNull(),
+  type: text("type", { enum: ["http", "stdio", "builtin"] }).notNull(),
   name: text("name").notNull(),
+  // builtin
+  builtin: text("builtin", { enum: ["web-search", "knowledge"] }).$type<BuiltinMcp>(),
   // http
   url: text("url"),
   headers: text("headers", { mode: "json" }).$type<NameValue[]>(),
@@ -169,43 +183,49 @@ export const knowledge = sqliteTable(
   (t) => [index("knowledge_project").on(t.projectId)],
 );
 
-export const projectMcpServers = sqliteTable(
-  "project_mcp_servers",
+/* The library links — MCP servers, skills, slash commands — on a profile:
+   what the *provider setup* brings to every thread started on it (a gateway
+   with its own MCP servers, the skills that go with a house style). A thread
+   adds its own (the `session_*` tables below); the agent gets the union — see
+   `SessionManager.effectiveLinks`. Projects used to carry these too and no
+   longer do: a project is a directory. */
+export const profileMcpServers = sqliteTable(
+  "profile_mcp_servers",
   {
-    projectId: text("project_id")
+    profileId: text("profile_id")
       .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+      .references(() => profiles.id, { onDelete: "cascade" }),
     mcpServerId: text("mcp_server_id")
       .notNull()
       .references(() => mcpServers.id, { onDelete: "cascade" }),
   },
-  (t) => [primaryKey({ columns: [t.projectId, t.mcpServerId] })],
+  (t) => [primaryKey({ columns: [t.profileId, t.mcpServerId] })],
 );
 
-export const projectSkills = sqliteTable(
-  "project_skills",
+export const profileSkills = sqliteTable(
+  "profile_skills",
   {
-    projectId: text("project_id")
+    profileId: text("profile_id")
       .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+      .references(() => profiles.id, { onDelete: "cascade" }),
     skillId: text("skill_id")
       .notNull()
       .references(() => skills.id, { onDelete: "cascade" }),
   },
-  (t) => [primaryKey({ columns: [t.projectId, t.skillId] })],
+  (t) => [primaryKey({ columns: [t.profileId, t.skillId] })],
 );
 
-export const projectCommands = sqliteTable(
-  "project_commands",
+export const profileCommands = sqliteTable(
+  "profile_commands",
   {
-    projectId: text("project_id")
+    profileId: text("profile_id")
       .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+      .references(() => profiles.id, { onDelete: "cascade" }),
     commandId: text("command_id")
       .notNull()
       .references(() => commands.id, { onDelete: "cascade" }),
   },
-  (t) => [primaryKey({ columns: [t.projectId, t.commandId] })],
+  (t) => [primaryKey({ columns: [t.profileId, t.commandId] })],
 );
 
 export const sessions = sqliteTable(
@@ -258,6 +278,48 @@ export const sessions = sqliteTable(
  * it. Keeping the rows separates the two: reading is free, resuming still goes
  * through the agent.
  */
+/* And on a thread: what this one conversation was started with, on top of
+   its profile's. Picked on the draft, kept for the thread's
+   life so a revive spawns the same tools, and cascaded away with the row. */
+export const sessionMcpServers = sqliteTable(
+  "session_mcp_servers",
+  {
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    mcpServerId: text("mcp_server_id")
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.sessionId, t.mcpServerId] })],
+);
+
+export const sessionSkills = sqliteTable(
+  "session_skills",
+  {
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    skillId: text("skill_id")
+      .notNull()
+      .references(() => skills.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.sessionId, t.skillId] })],
+);
+
+export const sessionCommands = sqliteTable(
+  "session_commands",
+  {
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    commandId: text("command_id")
+      .notNull()
+      .references(() => commands.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.sessionId, t.commandId] })],
+);
+
 export const sessionEvents = sqliteTable(
   "session_events",
   {
@@ -400,6 +462,30 @@ export const scheduledMessages = sqliteTable(
     createdAt: integer("created_at").notNull(),
   },
   (t) => [index("scheduled_next").on(t.nextAt)],
+);
+
+/**
+ * A thread's queued prompts: what the user typed while a turn was running,
+ * sent — combined into ONE prompt — when that turn ends cleanly. Server-owned
+ * for the same reason scheduled_messages is: a tab closing must not lose a
+ * message, and the turn end that drains it happens whether or not a browser is
+ * attached. A table rather than a JSON column on `sessions`, because
+ * `persist()` rewrites that whole row on every title sniff and model change and
+ * would race the queue, and edit/remove/"send this one" are row operations.
+ * Ordered by `position` (monotonic per session, like session_events.seq).
+ */
+export const sessionQueue = sqliteTable(
+  "session_queue",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    text: text("text").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("session_queue_order").on(t.sessionId, t.position)],
 );
 
 /**

@@ -173,7 +173,11 @@ export async function runFetch(env: SearchEnv, url: string): Promise<string> {
   try {
     const raw = await apiJson(env, "/v1/web/fetch", { model: env.WEB_FETCH_MODEL, url, format: "markdown" });
     const o = raw as Record<string, unknown>;
-    const text = String(o.content ?? o.text ?? o.markdown ?? (o.data as Record<string, unknown>)?.content ?? "");
+    // The proxy answers `content` either as a string or as `{ format, text }`
+    // (tavily's shape); `String()` on the latter is "[object Object]".
+    const unwrap = (v: unknown): string =>
+      typeof v === "string" ? v : v && typeof v === "object" ? unwrap((v as Record<string, unknown>).text ?? (v as Record<string, unknown>).content ?? (v as Record<string, unknown>).markdown) : "";
+    const text = unwrap(o.content) || unwrap(o.text) || unwrap(o.markdown) || unwrap((o.data as Record<string, unknown> | undefined)?.content);
     return text.length > FETCH_CHAR_LIMIT ? text.slice(0, FETCH_CHAR_LIMIT) + "\n\n[truncated]" : text;
   } catch (err) {
     return `Error: ${(err as Error).message}.`;

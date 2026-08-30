@@ -18,15 +18,16 @@ import {
   ChevronRightIcon,
   FileWarningIcon,
   GlobeIcon,
-  LinkIcon,
   MessageCircleQuestionIcon,
   PlugZapIcon,
   SparklesIcon,
 } from "lucide-react"
+import { Avatar, AvatarFallback, AvatarGroup, AvatarImage } from "@/components/ui/avatar"
 import { DiffView } from "@/components/ui/diff-view"
 import { ToolCallSkeleton } from "@/components/ui/skeletons"
 import {
   DetailSection,
+  Favicon,
   Highlighted,
   PANE,
   PANE_MAX_H,
@@ -38,6 +39,7 @@ import {
   ToolContentBlocks,
   ToolInput,
   ToolLocations,
+  ToolProse,
   useShowAll,
 } from "@/components/tool-parts"
 import { useThreadLinks } from "@/lib/workspace/thread-links"
@@ -53,7 +55,9 @@ import {
   extractSkill,
   extractSubagent,
   extractTodos,
+  extractWebFetch,
   extractWebSearch,
+  hostOf,
   searchFlags,
   shortPath,
   taskAgentRows,
@@ -65,6 +69,7 @@ import {
   toolViewOf,
   type BackgroundTask,
   type TodoEntry,
+  type WebResult,
 } from "@/lib/tools"
 import type { ToolItem } from "@/lib/store"
 import { cn } from "@/lib/utils"
@@ -605,18 +610,21 @@ function textOf(value: unknown): string {
 /**
  * Work handed to another agent: who, what it was asked, what it said back.
  *
+ * In two halves, because a subagent with a transcript of its own draws that
+ * transcript BETWEEN them (`SubagentStep` in thread-items: brief, then the
+ * rail of what it did, then the report) — the order the work happened in.
+ * `SubagentDetail` is the two back to back, for a step drawn on its own.
+ *
  * The prompt is the interesting half and it is long, so it gets its own
  * bordered block rather than a row in the key/value table an unknown tool
  * would have got — where a five-paragraph brief rendered as one unwrapped
  * cell. A live background task (a workflow that outlives the turn) still shows
  * its own progress panel above all of this.
  */
-function SubagentDetail({ item, active }: { item: ToolItem; active: boolean }) {
+export function SubagentBrief({ item }: { item: ToolItem }) {
   const call = extractSubagent(item)
   const task = extractBackgroundTask(item)
   if (!call) return null
-  const { text, truncated } = toolOutputText(item)
-  const failed = item.status === "failed"
 
   return (
     <div className="space-y-2">
@@ -633,7 +641,16 @@ function SubagentDetail({ item, active }: { item: ToolItem; active: boolean }) {
             activity IS the whole content of the call, so it is not optional
             chrome the way the rest of this row is. */}
         {call.activity && <span className="text-muted-foreground/70">{call.activity}</span>}
+        {call.state && <span className="text-muted-foreground/70">{call.state}</span>}
+        {call.elapsedSeconds !== undefined && (
+          <span className="tabular-nums text-muted-foreground/70">{formatSeconds(call.elapsedSeconds)}</span>
+        )}
         {call.description && <span className="text-muted-foreground">{call.description}</span>}
+        {call.sessionId && (
+          <span className="ml-auto font-mono text-muted-foreground/50" title="The child session the task ran in">
+            {call.sessionId}
+          </span>
+        )}
       </div>
       {call.prompt && (
         <DetailSection label="Brief">
@@ -642,26 +659,56 @@ function SubagentDetail({ item, active }: { item: ToolItem; active: boolean }) {
           </div>
         </DetailSection>
       )}
-      {text.trim() && (
-        <DetailSection label={failed ? "Error" : active ? "Report so far" : "Report"}>
-          <SmartBlock text={truncated ? `${text}\n\n… output truncated` : text} tone={failed ? "error" : undefined} />
-        </DetailSection>
-      )}
-      {!text.trim() && active && !task && <ToolCallSkeleton className="py-1" />}
     </div>
   )
 }
 
-// ─── Web search ──────────────────────────────────────────────────────────────
+/** The report: the parsed `<task_result>` when the runtime wrapped it (OpenCode),
+    else whatever the call returned. */
+export function SubagentReport({ item, active }: { item: ToolItem; active: boolean }) {
+  const call = extractSubagent(item)
+  const task = extractBackgroundTask(item)
+  if (!call) return null
+  const raw = toolOutputText(item)
+  const text = call.result ?? raw.text
+  const truncated = call.result ? false : raw.truncated
+  const failed = item.status === "failed" || call.state === "error" || call.state === "failed"
+
+  if (!text.trim()) {
+    return active && !task ? <ToolCallSkeleton className="py-1" /> : null
+  }
+  return (
+    <DetailSection label={failed ? "Error" : active ? "Report so far" : "Report"}>
+      <SmartBlock text={truncated ? `${text}\n\n… output truncated` : text} tone={failed ? "error" : undefined} />
+    </DetailSection>
+  )
+}
+
+function SubagentDetail({ item, active }: { item: ToolItem; active: boolean }) {
+  return (
+    <div className="space-y-2">
+      <SubagentBrief item={item} />
+      <SubagentReport item={item} active={active} />
+    </div>
+  )
+}
+
+const formatSeconds = (seconds: number): string =>
+  seconds < 60 ? `${Math.round(seconds)}s` : `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`
+
+// ─── Web search and web fetch ────────────────────────────────────────────────
 
 /**
  * A search of the *web*. ACP files it under the same `kind` as a ripgrep, and
  * Codex actively uses `kind: "search"` for it — so the repo-search layout was
  * counting sentences as "matches" and trying to split prose on `path:line:`.
  *
- * Results are links, because a link is the thing a reader wants to do
- * something with. Codex's other two actions (opening a page, finding within
- * one) name themselves instead: there is no result list for those.
+ * Results are drawn as sources — icon, site, title, snippet — because a link
+ * is the thing a reader wants to do something with, and the snippet under it
+ * is what the agent actually read. Snippets are clamped: a search backend
+ * that returns page text hands back paragraphs per hit, and ten of those are
+ * a wall. Codex's other two actions (opening a page, finding within one) name
+ * themselves instead: there is no result list for those.
  */
 function WebSearchDetail({ item, active }: { item: ToolItem; active: boolean }) {
   const call = extractWebSearch(item)
@@ -671,6 +718,7 @@ function WebSearchDetail({ item, active }: { item: ToolItem; active: boolean }) 
     ...(call.blockedDomains ?? []).map((domain) => ({ domain, allowed: false })),
   ]
   const { text } = toolOutputText(item, 40_000)
+  const failed = item.status === "failed" || call.error !== undefined
 
   return (
     <div className="space-y-1.5">
@@ -690,6 +738,11 @@ function WebSearchDetail({ item, active }: { item: ToolItem; active: boolean }) 
         )}
         {call.action && call.action !== "search" && (
           <span className="text-muted-foreground/70">{call.action.replace(/([A-Z])/g, " $1").toLowerCase()}</span>
+        )}
+        {call.results.length > 0 && (
+          <span className="ml-auto text-muted-foreground/60">
+            {call.results.length} {call.results.length === 1 ? "result" : "results"}
+          </span>
         )}
       </div>
       {domains.length > 0 && (
@@ -711,26 +764,19 @@ function WebSearchDetail({ item, active }: { item: ToolItem; active: boolean }) 
         </div>
       )}
       {call.results.length > 0 ? (
-        <ul className={cn(PANE, "max-h-80 divide-y divide-border/40 overflow-auto")}>
-          {call.results.map((hit, index) => (
-            <li key={index} className="px-2.5 py-1.5">
-              <a
-                href={hit.url}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-start gap-1.5 text-[11.5px] hover:underline"
-              >
-                <LinkIcon className="mt-0.5 size-3 shrink-0 text-muted-foreground/50" />
-                <span className="min-w-0">
-                  <span className="text-foreground">{hit.title}</span>
-                  <span className="block truncate font-mono text-[10px] text-muted-foreground/60">
-                    {hit.url}
-                  </span>
-                </span>
-              </a>
-            </li>
-          ))}
-        </ul>
+        <>
+          <WebResultList results={call.results} />
+          {/* What the tool said about what it found — Claude Code's built-in
+              search answers the query itself. Under the list, because the
+              links are the evidence and this is the reading of it. */}
+          {call.summary && (
+            <DetailSection label="Summary">
+              <ToolProse text={call.summary} />
+            </DetailSection>
+          )}
+        </>
+      ) : failed ? (
+        <SmartBlock text={call.error ?? text} tone="error" />
       ) : (
         /* No parsed hits: the runtime returned prose (a page's text, a
            summary), which is worth showing whole rather than discarding
@@ -738,6 +784,194 @@ function WebSearchDetail({ item, active }: { item: ToolItem; active: boolean }) 
         <SmartBlock text={text} />
       )}
       {call.results.length === 0 && !text.trim() && active && <ToolCallSkeleton className="py-1" />}
+    </div>
+  )
+}
+
+/** How many site avatars a row stacks before folding the rest into a count. */
+const ROW_SOURCES = 6
+
+/**
+ * The pages behind a web step, on the row itself: every site a search
+ * returned and the page a fetch read, as a stack of favicons, visible whether
+ * or not the step is open. The detail above has the titles and snippets;
+ * this is the glance — which sites answered — and it is the tool-call-level
+ * counterpart of the turn's Sources strip, which keeps only what the answer
+ * used. One avatar per host, in result order, so ten hits from three sites
+ * are three faces and not a row of duplicates; each is a link to the first
+ * hit from that site, and the count at the end opens the rest. Null for
+ * anything that is not a web step, which is what lets every row pass
+ * through it.
+ */
+export function ToolSources({ item }: { item: ToolItem }) {
+  const [all, setAll] = React.useState(false)
+  const fetched = extractWebFetch(item)
+  const search = fetched ? null : extractWebSearch(item)
+  const pages: WebResult[] = fetched
+    ? [{ title: fetched.prompt ?? "", url: fetched.url }]
+    : (search?.results ?? [])
+  if (pages.length === 0) return null
+  const byHost = new Map<string, WebResult>()
+  for (const page of pages) {
+    const host = hostOf(page.url) || page.url
+    if (!byHost.has(host)) byHost.set(host, page)
+  }
+  const hosts = [...byHost.entries()]
+  const shown = all ? hosts : hosts.slice(0, ROW_SOURCES)
+  const hidden = hosts.length - shown.length
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <AvatarGroup className="-space-x-1.5">
+        {shown.map(([host, page]) => (
+          <SiteAvatar key={host} host={host} url={page.url} title={page.title} />
+        ))}
+        {hidden > 0 && (
+          /* The group's own count slot is a div; this is the same ring and
+             size on a button, because the count is the thing you click to see
+             the rest of the stack. */
+          <button
+            type="button"
+            data-slot="avatar-group-count"
+            onClick={() => setAll(true)}
+            title={hosts.slice(ROW_SOURCES).map(([host]) => host).join("\n")}
+            className="relative flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-full bg-muted text-[10px] text-muted-foreground ring-2 ring-background hover:z-10 hover:text-foreground"
+          >
+            +{hidden}
+          </button>
+        )}
+      </AvatarGroup>
+      <span className="min-w-0 truncate text-[11px] leading-5 text-muted-foreground/60">
+        {fetched
+          ? hosts[0][0]
+          : `${pages.length} ${pages.length === 1 ? "result" : "results"} · ${hosts.length} ${hosts.length === 1 ? "site" : "sites"}`}
+      </span>
+    </div>
+  )
+}
+
+/** One site in a stack: its favicon as an avatar, the host's initial when the
+    icon does not load, the whole thing a link to the page. `render` makes the
+    anchor the avatar's own root, which is what keeps the group's ring styling
+    (it targets direct `data-slot=avatar` children) on the element it expects. */
+function SiteAvatar({ host, url, title }: { host: string; url: string; title?: string }) {
+  return (
+    <Avatar
+      size="sm"
+      render={<a href={url} target="_blank" rel="noreferrer noopener" />}
+      title={title ? `${host}\n${title}` : host}
+      className="size-5 bg-background transition-transform hover:z-10 hover:scale-110"
+    >
+      <AvatarImage
+        src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=32`}
+        alt={host}
+        referrerPolicy="no-referrer"
+        className="p-[3px]"
+      />
+      <AvatarFallback className="text-[9px] font-medium uppercase">{host.charAt(0)}</AvatarFallback>
+    </Avatar>
+  )
+}
+
+/** How many lines of a snippet show before it is clamped. */
+const SNIPPET_LINES = 3
+
+function WebResultList({ results }: { results: WebResult[] }) {
+  return (
+    <ol className={cn(PANE, "max-h-[min(60vh,28rem)] divide-y divide-border/40 overflow-auto")}>
+      {results.map((hit, index) => (
+        <WebResultRow key={`${hit.url}-${index}`} hit={hit} />
+      ))}
+    </ol>
+  )
+}
+
+function WebResultRow({ hit }: { hit: WebResult }) {
+  const [open, setOpen] = React.useState(false)
+  const host = hostOf(hit.url)
+  return (
+    <li className="px-2.5 py-2">
+      <div className="flex min-w-0 items-center gap-1.5 text-[10.5px] text-muted-foreground/70">
+        <Favicon url={hit.url} className="size-3.5" />
+        <span className="truncate">{host || hit.url}</span>
+      </div>
+      <a
+        href={hit.url}
+        target="_blank"
+        rel="noreferrer noopener"
+        title={hit.url}
+        className="mt-0.5 block truncate text-[12px] font-medium leading-5 text-foreground hover:text-primary hover:underline"
+      >
+        {hit.title}
+      </a>
+      {hit.snippet && (
+        /* A button, not a link: the click toggles the clamp, and a snippet is
+           read in place. The clamp is CSS, so the whole text is in the DOM
+           for find-in-page either way. */
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className={cn(
+            "mt-0.5 block w-full text-left text-[11.5px] leading-[1.45] text-muted-foreground",
+            !open && "line-clamp-3"
+          )}
+          style={open ? undefined : { WebkitLineClamp: SNIPPET_LINES }}
+          title={open ? "Show less" : "Show more"}
+        >
+          {hit.snippet}
+        </button>
+      )}
+    </li>
+  )
+}
+
+/**
+ * A page read off the web. The address is the heading, the page is the body
+ * — as markdown, because that is what every fetcher returns, and a `pre` of
+ * it was a wall of bracketed links. Claude Code's `WebFetch` answers a prompt
+ * about the page rather than returning it, so the prompt is shown above the
+ * answer when there is one.
+ */
+function WebFetchDetail({ item, active }: { item: ToolItem; active: boolean }) {
+  const call = extractWebFetch(item)
+  if (!call) return null
+  const failed = item.status === "failed" || /^error:/i.test(call.text.trim())
+  const [shown, clipped, showAll] = useShowAll(call.text)
+  return (
+    <div className="space-y-1.5">
+      <div className="flex min-w-0 items-center gap-1.5 text-[11px]">
+        <Favicon url={call.url} />
+        <span className="shrink-0 text-muted-foreground/70">{hostOf(call.url)}</span>
+        <a
+          href={call.url}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="min-w-0 truncate font-mono text-primary hover:underline"
+          title={call.url}
+        >
+          {call.url}
+        </a>
+        {call.text && !failed && (
+          <span className="ml-auto shrink-0 text-muted-foreground/60">
+            {call.text.length >= 1000 ? `${Math.round(call.text.length / 1000)}k` : call.text.length} chars
+            {call.truncated ? "+" : ""}
+          </span>
+        )}
+      </div>
+      {call.prompt && (
+        <DetailSection label="Asked">
+          <p className="text-xs text-foreground/80">{call.prompt}</p>
+        </DetailSection>
+      )}
+      {failed ? (
+        <SmartBlock text={call.text} tone="error" />
+      ) : call.text.trim() ? (
+        <>
+          <ToolProse text={shown} />
+          {clipped && <ShowAll onClick={showAll} />}
+        </>
+      ) : active ? (
+        <ToolCallSkeleton className="py-1" />
+      ) : null}
     </div>
   )
 }
@@ -909,6 +1143,8 @@ export function ToolDetail({ item, active }: { item: ToolItem; active: boolean }
       return <SubagentDetail item={item} active={active} />
     case "websearch":
       return <WebSearchDetail item={item} active={active} />
+    case "webfetch":
+      return <WebFetchDetail item={item} active={active} />
     case "questions":
       return <QuestionsDetail item={item} />
     case "findings":

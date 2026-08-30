@@ -2,8 +2,10 @@ import type * as acp from "@agentclientprotocol/sdk"
 import type {
   EarlierPage,
   HistoryLost,
-  HistoryState,
   JournaledEvent,
+  PromptReply,
+  QueuedMessage,
+  SessionUpdate,
   ThreadCommand,
   ThreadEvent,
   WireError,
@@ -11,14 +13,14 @@ import type {
 import { wsUrl, type ServerSettings } from "./settings"
 
 /**
- * How much of a thread's tail to ask for on a fresh attach.
+ * How much of a thread's tail to ask for on a fresh attach, in **steps** (turns).
  *
  * Generous on purpose: the point is not to make every thread lazy, it is to
  * stop a months-old archive from costing its whole history to open at the end.
  * Below this the transcript arrives whole and `earlier` is 0, so nothing about
  * the ordinary thread changes — no button, no paging, no retained raw events.
  */
-export const REPLAY_WINDOW = 1500
+export const REPLAY_WINDOW_STEPS = 60
 
 /**
  * The browser's end of one thread.
@@ -51,8 +53,9 @@ export interface ThreadCloseInfo {
 
 export interface ThreadCallbacks {
   /** `historyReplay` is true for the updates a `session/load` streamed back —
-      the reducer takes user chunks only then. */
-  onUpdate: (update: acp.SessionUpdate, historyReplay: boolean) => void
+      the reducer takes user chunks only then. `sessionId` is set when the
+      update is a subagent's (see the `update` event in the protocol). */
+  onUpdate: (update: SessionUpdate, historyReplay: boolean, sessionId?: string) => void
   /** The agent is asking something. Answer with `answerPermission`. */
   onPermission: (requestId: string, request: acp.RequestPermissionRequest) => void
   onElicitation: (requestId: string, request: acp.CreateElicitationRequest) => void
@@ -72,12 +75,18 @@ export interface ThreadCallbacks {
   /** A turn began. Only ever seen for a prompt this device did NOT send — its
       own message is already on screen. `catchingUp` marks the replay. */
   onTurnStarted: (turnId: string, text: string, catchingUp: boolean) => void
+  /** `continued` says the queue is draining into a new turn right behind this
+      one — nothing to announce as finished. */
   onTurnEnded: (
     usage: acp.Usage | null,
     error: WireError | undefined,
     promptText: string | undefined,
-    catchingUp: boolean
+    catchingUp: boolean,
+    continued: boolean
   ) => void
+  /** The thread's queue, whole. Every change to it arrives this way — this
+      device's own included, since the ids are the server's. */
+  onQueue: (items: QueuedMessage[]) => void
   /** The replay is about to start.
 
       `resumed` says whether it continues the transcript already on screen (this
@@ -86,7 +95,7 @@ export interface ThreadCallbacks {
       device's cursor, and a window the server chose for a thread too long to
       send whole.
 
-      `earlier` is how many journaled events sit *before* the replay and were
+      `earlier` is how many **steps** (turns) sit *before* the replay and were
       not sent — 0 for everything but a windowed attach. `archived` means there
       is no agent process behind the thread and what follows is the journal
       alone. `historyLost` is set when the agent refused to reload this thread's
@@ -94,7 +103,6 @@ export interface ThreadCallbacks {
       difference between that and a brand new thread is this field. */
   onAttached: (
     info: { from: number; resumed: boolean; earlier: number; archived: boolean },
-    history: HistoryState,
     historyLost?: HistoryLost
   ) => void
   /** A `load_earlier` page arrived and the transcript is about to be re-folded
@@ -103,12 +111,10 @@ export interface ThreadCallbacks {
       buffer, same one commit, same suppressed notifications. */
   onRewind: () => void
   onRewound: (earlier: number) => void
-  onHistoryState: (history: HistoryState) => void
-  onHistoryReset: (history: HistoryState) => void
   /** The replay is over; everything after this is live. `promptActive` is read
       server-side in the same tick as the log it follows, so it cannot pair a
       stale turn state with a fresh replay window. */
-  onCaughtUp: (cursor: number, promptActive: boolean) => void
+  onCaughtUp: (cursor: number, promptActive: boolean, queue: QueuedMessage[]) => void
   /** A background task this thread's agent launched appended a journal line —
       the server tails the file (see /api/tasks/watch) and streams the rest. */
   onTaskEvent: (transcriptDir: string, event: Record<string, unknown>) => void
@@ -145,8 +151,8 @@ export class ThreadSocket {
    * it pays none of it.
    */
   private raw: JournaledEvent[] | null = null
-  /** The seq of the earliest event this socket holds, and how many are behind
-      it on the server. */
+  /** The seq of the `turn_started` that opens the earliest step this socket
+      holds, and how many steps (turns) are behind it on the server. */
   private windowFrom = 0
   private earlier = 0
 
@@ -177,7 +183,7 @@ export class ThreadSocket {
        window a resume for the same reason; sending 0 keeps the two ends saying
        the same thing rather than relying on one of them to correct the other. */
     const ws = new WebSocket(
-      wsUrl(this.settings, this.serverSessionId, cursor, cursor > 0 ? 0 : REPLAY_WINDOW)
+      wsUrl(this.settings, this.serverSessionId, cursor, cursor > 0 ? 0 : REPLAY_WINDOW_STEPS)
     )
     this.ws = ws
 
@@ -250,14 +256,13 @@ export class ThreadSocket {
         if (!resumed) this.raw = earlier > 0 ? [] : null
         this.callbacks.onAttached(
           { from: event.from, resumed, earlier, archived: event.archived ?? false },
-          event.history,
           event.historyLost
         )
         return
       }
       case "caught_up":
         this.catchingUp = false
-        this.callbacks.onCaughtUp(event.cursor, event.promptActive)
+        this.callbacks.onCaughtUp(event.cursor, event.promptActive, event.queue ?? [])
         return
       /* The replay, arriving whole. Unrolled through this same switch so there
          is no second parser: `catchingUp` is already true (the `attached` that
@@ -283,17 +288,14 @@ export class ThreadSocket {
       case "request_answered":
         this.callbacks.onRequestAnswered(event.requestId)
         return
+      case "queue":
+        this.callbacks.onQueue(event.items)
+        return
       case "ttft":
         this.callbacks.onTtft(event.ms)
         return
       case "task_event":
         this.callbacks.onTaskEvent(event.transcriptDir, event.event)
-        return
-      case "history_state":
-        this.callbacks.onHistoryState(event.history)
-        return
-      case "history_reset":
-        this.callbacks.onHistoryReset(event.history)
         return
       case "reply": {
         const pending = this.inflight.get(event.id)
@@ -312,7 +314,7 @@ export class ThreadSocket {
   private fold(event: JournaledEvent): void {
     switch (event.ev) {
       case "update":
-        this.callbacks.onUpdate(event.update, event.historyReplay)
+        this.callbacks.onUpdate(event.update, event.historyReplay, event.sessionId)
         return
       case "session_config":
         this.callbacks.onSessionConfig(event.modes, event.modeId, event.configOptions)
@@ -321,7 +323,13 @@ export class ThreadSocket {
         this.callbacks.onTurnStarted(event.turnId, event.text, this.catchingUp)
         return
       case "turn_ended":
-        this.callbacks.onTurnEnded(event.usage, event.error, event.promptText, this.catchingUp)
+        this.callbacks.onTurnEnded(
+          event.usage,
+          event.error,
+          event.promptText,
+          this.catchingUp,
+          event.continued ?? false
+        )
         return
     }
   }
@@ -333,26 +341,60 @@ export class ThreadSocket {
    * turn ends — the turn's outcome (and its failure) reaches every device on
    * the thread as `turn_ended`, so waiting here would report it twice.
    */
-  async prompt(text: string): Promise<string> {
-    const result = await this.request((id) => ({ id, cmd: "prompt", text }))
-    return (result as { turnId: string }).turnId
-  }
-
-  async revert(checkpointId: string): Promise<void> {
-    await this.request((id) => ({ id, cmd: "revert", checkpointId }))
-  }
-
-  async recoverBranch(branchId: string): Promise<void> {
-    await this.request((id) => ({ id, cmd: "recover_branch", branchId }))
+  async prompt(text: string, opts: { steer?: boolean } = {}): Promise<PromptReply> {
+    return (await this.request((id) => ({
+      id,
+      cmd: "prompt",
+      text,
+      ...(opts.steer ? { steer: true } : {}),
+    }))) as PromptReply
   }
 
   async cancel(): Promise<void> {
     await this.request((id) => ({ id, cmd: "cancel" }))
   }
 
+  // ---- the queue ----
+  // Every one of these is answered with a `queue` event as well as its reply;
+  // the reply is for the caller's own error handling, the event is the state.
+
+  async queueAdd(text: string): Promise<PromptReply> {
+    return (await this.request((id) => ({ id, cmd: "queue_add", text }))) as PromptReply
+  }
+
+  async queueUpdate(itemId: string, text: string): Promise<void> {
+    await this.request((id) => ({ id, cmd: "queue_update", itemId, text }))
+  }
+
+  async queueRemove(itemId: string): Promise<void> {
+    await this.request((id) => ({ id, cmd: "queue_remove", itemId }))
+  }
+
+  async queueClear(): Promise<void> {
+    await this.request((id) => ({ id, cmd: "queue_clear" }))
+  }
+
+  /** Interrupt the running turn and send what is queued in its place — one
+      item, or everything combined. Atomic on the server. */
+  async queueSendNow(itemId?: string): Promise<string> {
+    const result = await this.request((id) => ({
+      id,
+      cmd: "queue_send_now",
+      ...(itemId ? { itemId } : {}),
+    }))
+    return (result as { turnId: string }).turnId
+  }
+
+  /** Inject one queued item into the running turn without stopping it. */
+  async queueSteer(itemId: string): Promise<string> {
+    const result = await this.request((id) => ({ id, cmd: "queue_steer", itemId }))
+    return (result as { turnId: string }).turnId
+  }
+
   /**
-   * Fetch the page of history before the oldest event on screen and re-fold the
-   * transcript around it.
+   * Fetch the page of history before the oldest step on screen and re-fold the
+   * transcript around it. Pages are whole steps (turns): the server cuts only
+   * at `turn_started` boundaries, so what lands in front never begins mid-turn.
    *
    * The re-fold is the whole subtlety. The reducer builds the transcript by
    * appending — a tool call updates the item it already made, a compaction

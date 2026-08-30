@@ -114,6 +114,8 @@ export const KEYS = {
   sidebar: "mod+b",
   help: ["mod+/", "?"],
   send: "mod+enter",
+  /** Into the running turn, past the queue. */
+  steer: "mod+shift+enter",
   historyPrev: "up",
   historyNext: "down",
   /** Skip the question, reject the permission, stop the turn — in that order. */
@@ -197,7 +199,13 @@ export const SHORTCUTS: ShortcutDef[] = [
     scope: "Composer",
     label: "Send",
     chords: ["enter", KEYS.send],
-    note: "Shift+Enter inserts a newline. On touch it is the other way round — Return is a newline and the send button sends.",
+    note: "While the agent is working this queues the message for when it finishes. Shift+Enter inserts a newline. On touch it is the other way round — Return is a newline and the send button sends.",
+  },
+  {
+    scope: "Composer",
+    label: "Steer the running turn",
+    chords: [KEYS.steer],
+    note: "Sends into the turn already running instead of queueing behind it.",
   },
   {
     scope: "Composer",

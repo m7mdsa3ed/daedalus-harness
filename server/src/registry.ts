@@ -1,7 +1,8 @@
 import { desc, eq, like } from "drizzle-orm";
 import { agentOptions, agents as agentsTable, db } from "./db/index.js";
+import { gatewayUrlFor } from "./gateway-shim.js";
 import { writeCodexModelCatalog } from "./model-catalog.js";
-import type { Profile } from "./profiles.js";
+import { profileBaseUrl, type Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 
 /**
@@ -206,6 +207,23 @@ function withLongContextSuffix(env: Record<string, string>): Record<string, stri
   return out;
 }
 
+/**
+ * Claude Code's endpoint is the harness's own gateway shim, not the profile's
+ * URL. `{gatewayUrl}` resolves to `/gw/<key>/<profile>/<agent>` on this
+ * server, which forwards to the profile's base URL and repairs the one reply
+ * shape gateways get wrong for Claude Code — a non-streaming Messages call
+ * answered as an OpenAI chat completion, which is what the auto-mode
+ * permission classifier reads and what made it fail closed on a healthy
+ * endpoint (see gateway-shim.ts). It is empty whenever `{baseUrl}` is, so the
+ * Default profile still prunes the key away, and it *is* `{baseUrl}` when no
+ * shim is up (a test, a probe before boot). New in seed 8; the backfill moves
+ * only a key that still holds the exact seeded `{baseUrl}` — anything else is
+ * the user's own endpoint and stays.
+ */
+function withGatewayUrl(env: Record<string, string>): Record<string, string> {
+  return env.ANTHROPIC_BASE_URL === "{baseUrl}" ? { ...env, ANTHROPIC_BASE_URL: "{gatewayUrl}" } : env;
+}
+
 /** Model and effort are env at spawn for all three agents we ship. */
 const SPAWN_CATEGORIES: Record<string, "model" | "effort"> = {
   model: "model",
@@ -226,14 +244,15 @@ const SPAWN_CATEGORIES: Record<string, "model" | "effort"> = {
  */
 const DEFAULT_AGENTS: SeedAgent[] = [
   {
-    since: 6,
+    since: 8,
     introduced: 1,
     // Seed 4 moved the haiku keys to {smallModel}; seed 5 added the alias keys;
-    // seed 6 appends the 1M conditional to all of them. One backfill applies
-    // all three, because an install stamped below 4 jumps straight here and
-    // never sees the earlier rules on its own.
+    // seed 6 appends the 1M conditional to all of them; seed 8 routes the
+    // endpoint through the gateway shim. One backfill applies all of them,
+    // because an install stamped below 4 jumps straight here and never sees
+    // the earlier rules on its own.
     backfill: (existing) => ({
-      env: withLongContextSuffix(withAliasModelKeys(withSmallModelVar(existing.env))),
+      env: withGatewayUrl(withLongContextSuffix(withAliasModelKeys(withSmallModelVar(existing.env)))),
     }),
     id: "claude-code",
     name: "Claude Code",
@@ -242,7 +261,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     env: withAliasModelKeys(
       withSmallModelKeys({
         ANTHROPIC_API_KEY: "{apiKey}",
-        ANTHROPIC_BASE_URL: "{baseUrl}",
+        ANTHROPIC_BASE_URL: "{gatewayUrl}",
         ANTHROPIC_MODEL: modelVar("model"),
       }),
     ),
@@ -261,7 +280,11 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // back to "openai" — without it every revived thread 401s on api.openai.com.
     // model_catalog_json is what stops Codex inventing metadata for a gateway
     // model id: model_context_window alone does not (see model-catalog.ts).
-    since: 2,
+    // Seed 7 re-runs the same backfill: rows were found without the key (an
+    // env edit in Settings pastes whatever template the user had), and a seed
+    // already stamped never looks again. The merge is idempotent, so a row
+    // that still has the key is left exactly as it is.
+    since: 7,
     introduced: 2,
     backfill: (existing) => ({ env: withCodexCatalogKey(existing.env) }),
     id: "codex",
@@ -437,7 +460,15 @@ export function resolveSpawn(
   const modelMeta = profile.models?.find((m) => m.id === resolvedModel);
   const vars: Record<string, string> = {
     apiKey: profile.apiKey ?? "",
-    baseUrl: profile.baseUrl ?? "",
+    /* The profile's shared endpoint unless it names one for this agent: a
+       gateway that serves several runtimes often serves them at different
+       paths (an Anthropic-messages path for Claude Code, an OpenAI-responses
+       path for Codex) — the one thing on a profile that is per-agent. */
+    baseUrl: profileBaseUrl(profile, agent.id),
+    /* The same endpoint behind this server's gateway shim (see
+       `withGatewayUrl`); the raw URL when no shim is configured. */
+    gatewayUrl:
+      gatewayUrlFor(profile.id, agent.id, profileBaseUrl(profile, agent.id)) || profileBaseUrl(profile, agent.id),
     model: resolvedModel,
     /* Always the session model: a profile means "run everything on this
        model", and the cheap side-jobs (the auto-mode classifier) and the alias

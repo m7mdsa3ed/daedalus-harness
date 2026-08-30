@@ -10,28 +10,36 @@ import {
 } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { commands as commandLibrary, skills as skillLibrary, type CommandDef } from "./library.js";
-import type { Project } from "./projects.js";
+import type { LinkSet } from "./db/links.js";
 
 /**
- * Project the workspace's skills and slash commands into the cwd so the agent
- * picks them up natively: symlinks in <cwd>/.claude/skills/, markdown files in
+ * Project skills and slash commands into a cwd so the agent picks them up
+ * natively: symlinks in <cwd>/.claude/skills/, markdown files in
  * <cwd>/.claude/commands/. The agent then advertises the commands over ACP
  * `available_commands_update` like any of its own — the client needs no
  * harness-specific list.
+ *
+ * Takes the *effective* set, not a project: the cwd is shared by every thread
+ * of the project, and each thread brings its profile's links plus its own
+ * picks — the project itself links nothing. The caller
+ * (`SessionManager.materializeFor`) hands in the union across every thread
+ * that is live there, because this sweeps what it does not write —
+ * materializing one thread's set alone would pull the symlinks out from
+ * under the thread next to it.
  */
-export function materializeProject(project: Project): void {
-  materializeSkills(project);
-  materializeCommands(project);
+export function materializeWorkspace(cwd: string, links: Pick<LinkSet, "skillIds" | "commandIds">): void {
+  materializeSkills(cwd, links.skillIds);
+  materializeCommands(cwd, links.commandIds);
 }
 
-function materializeSkills(project: Project): void {
+function materializeSkills(cwd: string, skillIds: string[]): void {
   const paths = skillLibrary
     .list()
-    .filter((s) => project.skillIds.includes(s.id))
+    .filter((s) => skillIds.includes(s.id))
     .map((s) => s.path);
-  const skillsDir = join(project.cwd, ".claude", "skills");
+  const skillsDir = join(cwd, ".claude", "skills");
   mkdirSync(skillsDir, { recursive: true });
-  // Remove stale daedalus-managed symlinks, then link the project's skills.
+  // Remove stale daedalus-managed symlinks, then link the effective skills.
   for (const entry of readdirSync(skillsDir)) {
     const path = join(skillsDir, entry);
     if (lstatSync(path).isSymbolicLink()) rmSync(path);
@@ -60,9 +68,9 @@ function renderCommand(command: CommandDef): string {
   return `${frontmatter}\n${MANAGED_MARKER}\n\n${command.content}\n`;
 }
 
-function materializeCommands(project: Project): void {
-  const linked = commandLibrary.list().filter((c) => project.commandIds.includes(c.id));
-  const commandsDir = join(project.cwd, ".claude", "commands");
+function materializeCommands(cwd: string, commandIds: string[]): void {
+  const linked = commandLibrary.list().filter((c) => commandIds.includes(c.id));
+  const commandsDir = join(cwd, ".claude", "commands");
   mkdirSync(commandsDir, { recursive: true });
   for (const entry of readdirSync(commandsDir)) {
     if (!entry.endsWith(".md")) continue;

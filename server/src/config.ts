@@ -52,16 +52,6 @@ export interface ServerConfig {
   sessionJournalRetentionDays: number;
   fcm?: FcmConfig;
   webSearch?: WebSearchConfig;
-  history?: {
-    /** Maximum bytes represented by one workspace snapshot. */
-    maxSnapshotBytes?: number;
-    /** Retained discarded branch heads per thread. Defaults to 20. */
-    maxRetainedBranches?: number;
-    /** Extra names never snapshotted, on top of the built-in list. Only
-        consulted for a workspace that is not a git repo — in one, the
-        project's own .gitignore is the authority. */
-    ignore?: string[];
-  };
 }
 
 /*
@@ -116,7 +106,6 @@ export function loadConfig(): ServerConfig {
     sessionJournalRetentionDays: existing.sessionJournalRetentionDays ?? 30,
     ...(existing.fcm ? { fcm: existing.fcm as FcmConfig } : {}),
     ...(existing.webSearch ? { webSearch: existing.webSearch as WebSearchConfig } : {}),
-    ...(existing.history ? { history: existing.history } : {}),
   };
   // Seeding a token writes the file; write what the file says, not the env
   // override, so a pm2 port does not become the on-disk default.

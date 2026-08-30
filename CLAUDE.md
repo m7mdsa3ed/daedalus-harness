@@ -9,8 +9,9 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   handshake, `session/new`-vs-`session/load`, prompts, config, and the permission and
   elicitation requests the agent blocks on. What reaches the browser is *derived state*: the
   small command/event protocol in `src/protocol.ts`, over the same WebSocket. Also owns
-  **profiles** (agent config: credentials/models, keys redacted from the API), **projects**
-  (workspace: cwd + linked MCP/skill ids), the **library** of reusable MCP servers/skills,
+  **profiles** (provider config: credentials/models, keys redacted from the API, plus the
+  MCP/skill/command links every thread on it gets), **projects** (workspace: a cwd and a
+  name — nothing linked), the **library** of reusable MCP servers/skills,
   bearer-token auth, the event log (reconnect/replay), and FCM push.
   `data/` holds secrets — gitignored, never commit.
 - **Storage is SQLite via Drizzle** (`server/src/db/`), not JSON files.
@@ -22,8 +23,9 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   (`pnpm db:generate`) into `server/drizzle/` — **committed, and applied at boot** by
   `migrate()` — never `drizzle-kit push`. A pre-SQLite install is imported once on first boot
   and its files kept as `*.json.imported` (`importLegacyJson`). Two things the JSON could not
-  express: a project's MCP/skill links are **join tables with `ON DELETE CASCADE`**, so a
-  dangling id cannot exist and nothing filters for one any more; and the **event log is a
+  express: a profile's and a session's MCP/skill/command links are **join tables with
+  `ON DELETE CASCADE`** (`profile_*`, `session_*`), so a dangling id cannot exist and nothing
+  filters for one any more; and the **event log is a
   table** (`session_events`) keyed `(session_id, seq)` rather than an unbounded in-memory
   array, so `cursor` is a monotonic seq, a replay is a paged range scan, and a long thread
   costs no RAM — outliving its process, which is what makes a retired thread readable
@@ -79,12 +81,82 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   chunk. `applyTerminalMeta` accumulates the chunks onto `ToolItem.terminal` in
   the store reducer, which is also what makes replay work, since a replayed
   thread runs the same reducer over the same journaled updates.
+  **The web has two views of its own, and they are matched on the tool's
+  *leaf* name** (`toolLeafName`: `web_search` out of `mcp__web-search__web_search`
+  or Codex's `mcp.web-search.web_search`), so Claude Code's built-in
+  `WebSearch`/`WebFetch`, OpenCode's `websearch`/`webfetch`, Codex's browsing and
+  any MCP search server — the harness's own included — land in the same layouts.
+  `extractWebSearch` reads results out of whatever the tool answered: structured
+  `results[]` on `rawOutput` or on `_meta.claudeCode.toolResponse` (flat, or Claude
+  Code's nested `content[]` — whose array also carries the prose strings of the
+  built-in search's own answer, kept as `summary` and drawn under the list),
+  `N. title / url / snippet` blocks (what `websearch.ts` and the cc-cli proxy
+  write), `Title (url)` lines, or markdown links; the web heading wins over the
+  agent's own title (`"query"` from Claude Code, the raw MCP name from the server)
+  so both read `Search the web for “…”`; `extractWebFetch` is any named fetcher or `kind:
+  "fetch"` with an http URL. `WebSearchDetail` draws results as sources (favicon,
+  host, title, a clamped snippet that opens on click); `WebFetchDetail` draws the
+  page as markdown under its address. Two rules made this reachable at all: an
+  MCP server name may carry a hyphen, so `NAME_RE` accepts `[\w.-]` (it read
+  `mcp__web-search__web_search` as *prose* and made it the row title), and an
+  agent's `kind: "other"` is the protocol saying nothing, so `toolKindOf` lets
+  the name answer instead (Claude Code files every MCP tool under `other`). The
+  **Sources** strip under a finished turn (`lib/sources.ts`, `SourcesStrip`,
+  inserted by `withTurnSources` in `thread-view.tsx`) is derived from the
+  transcript alone — pages the agent *fetched* plus search results whose URL it
+  *cited* in its prose, never every hit it saw — so it survives replay with
+  nothing journaled, and it waits for `turnActive` to drop so it does not grow
+  under the reader. Sources exist at the **tool-call level** too: `ToolSources`
+  (`tool-views.tsx`) is the `below` slot of every `StepRow` — a shadcn
+  `AvatarGroup` stack of site favicons, one per host a search returned (result
+  order, a `+N` count past six that opens the rest) or the page a fetch read —
+  visible whether the step is open or not, so a collapsed run still says which
+  sites answered. Each avatar is a link, rendered with Base UI's `render={<a/>}`
+  so the anchor *is* the avatar root and the group's ring selector
+  (`*:data-[slot=avatar]`) still finds it. The two strips answer different questions: the row's is
+  "what did this call see", the turn's is "what did the answer use".
+  **A thinking row streams as a ticker**: `RowView`'s `streaming` flag (set by
+  `thread-view.tsx` on the transcript's tail row while `turnActive`, and by the subagent
+  rail on its tail while the child is active) makes the `thought` case draw in-progress —
+  primary icon, elapsed timer, a shimmering title that is the *newest* line's tail
+  (`thoughtPreview`), clipped from the front because the end is the part that is new.
+  Settled, the title is the opening line as before. Derived at view time from position,
+  not from a flag in the store: the reducer never marks a thought done.
   `components/ui/diff-view.tsx` is a dependency-free line LCS.
   Device-local, per-session state lives in its own tiny stores — `lib/drafts.ts`
   (unsent prompts), `lib/pins.ts` (pinned threads), `lib/view-options.ts`
-  (timestamps/tool grouping) — all pruned from `refreshSessions`. The shelf above
+  (timestamps/tool grouping) — all pruned from `refreshSessions`. **The sidebar
+  is `components/thread-sidebar.tsx`**, laid out like the Codex and Claude desktop
+  apps: fixed nav rows on top (`SidebarNav`: New thread, Search, Tasks — menu rows,
+  so they survive the icon rail), then Pinned, a flat Recents, **one folder per
+  project** with its threads under it and a hover `+` that starts a thread *in*
+  that project, Scheduled, Trash. Rows are one line and title-only: a running turn
+  **shimmers the title** (`harness-shimmer`, the same band as the working line and a live
+  thought), a thread waiting on you gets an amber dot at the trailing edge; agent,
+  profile, model, project and start time live in `ThreadInfoCard` — one popover
+  that opens on hover (Base UI `openOnHover`) and, on a phone, on long press,
+  where it also carries the row's actions (it replaces the right-click menu there). Every row, label and group draws from
+  one scale (`ROW`/`MENU`/`GROUP`/`TIER`, exported for the settings nav too). The
+  main surface (`SidebarInset`) is `bg-card` over the sidebar's tinted ground, and
+  the Threads label carries a sort/filter menu (recent first / by project;
+  all / running / needs you) remembered per device as `ui.sidebarView`. Fold
+  state is `ui.collapsedProjects`, keyed by project id. The shelf above
   the composer is `components/composer-strip.tsx`; app icons regenerate from
   `client/build/icon.svg` via `pnpm icons`.
+  **Everything with a face is drawn by `components/entity-icon.tsx`**: `EntityIcon`
+  is the one round, ringed mark (picture when the URL loads, fallback otherwise,
+  a broken URL remembered per src), and `AgentIcon` / `ProfileIcon` /
+  `ProjectIcon` wrap it with each entity's rule for where the picture comes from
+  — built-in brand PNGs, the profile's `logoUrl` (else its agent's mark), the
+  project's `logoUrl` (else its initial in a disc whose hue is hashed from the
+  name). Projects carry `logo_url` since migration `0024`; the API reports `""`
+  for none, like profiles. No component draws a folder for a project any more.
+  **Settings › Knowledge base** (`components/settings/knowledge.tsx`) is the cross-project
+  view of what the built-in `knowledge` MCP server has written: one `GET /api/knowledge`
+  (`listAllKnowledge` in `server/src/knowledge.ts`, every entry newest-updated first with its
+  `projectName` resolved server-side), grouped by project on screen with a project filter,
+  delete and a hand-written add — both through the existing per-project routes, which the
+  project form's own knowledge section still uses.
   Theme/layout ported from
   `/var/www/mawared-off/social-live-agent/ai-agent-web` (glass surfaces, Inter, step-row
   transcript). Electron shell lives in `client/electron/` (frameless, vibrancy/acrylic).
@@ -93,7 +165,9 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
 ## Commands
 
 - Agents are spawned by their **globally installed binary**, not through `npx`:
-  `npm install -g @agentclientprotocol/claude-agent-acp @agentclientprotocol/codex-acp`.
+  `npm install -g @agentclientprotocol/claude-agent-acp @agentclientprotocol/codex-acp`
+  (codex-acp **1.7.0 or later** — that is the release that speaks subagent sessions, see
+  the subagents note under Conventions).
   npx re-resolves the package on every spawn, and a thread spawns on create, on revive and
   on every profile/model change — measured here at ~3.2s per spawn versus ~0.4s for the
   binary. A missing binary fails with ENOENT, which surfaces in the thread; the
@@ -183,7 +257,13 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   attach starts at 0; a *resume* starts at this device's own cursor (`journalCursors` /
   `resumeCursor` in `actions.ts`, so a dropped socket costs a delta and not the thread); and
   a *windowed* attach starts wherever the server chose, because the thread was longer than
-  `REPLAY_WINDOW`. The first two replace the transcript, the third also replaces it — but
+  `REPLAY_WINDOW_STEPS`. **The window and every `load_earlier` page are counted in steps
+  (turns), never events**: the server cuts only at journaled `turn_started` seqs
+  (`SessionManager.turnStartAt`/`earlierPage`), so `attached.from` is always a turn's
+  opening event and a page is whole turns — an event-counted cut landed mid-turn and the
+  re-fold opened a half turn the reducer had never seen begin. `earlier` counts withheld
+  turns; events before the first `turn_started` (a load replay's history) are behind the
+  head and never paged. The first two replace the transcript, the third also replaces it — but
   `from` is large in the second and third alike, so `resumed` is a field and not a
   comparison. `earlier` says how much was withheld, and `load_earlier` fetches it a page at
   a time. Folding one of those pages is the awkward part: the reducer only appends, so an
@@ -271,6 +351,128 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   Profile changes always confirm (new credentials, new endpoint, new catalog; the model does
   not carry over). After a live change the server records `session.model`/`effort` itself —
   it knows the option's `category` — so reviving a retired thread rebuilds the right env.
+- **A message typed into a running turn is queued, not steered — and the queue is the
+  server's.** `session_queue` (`server/src/queue.ts`, storage only) holds it per thread,
+  ordered, cascaded with the row, so it survives a tab closing and a server restart and is
+  drained with nobody attached. A `prompt` arriving while `bridge.promptActive` is enqueued and
+  answered `{queued, itemId}` — only the server knows whether the turn is still open, the
+  browser's `turnActive` is a hint (a `{queued}` reply to a prompt the client sent optimistically
+  is what `drop-user-message` takes back). Steering is the explicit `prompt {steer:true}` /
+  `queue_steer` (⌘⇧Enter), which joins the turn through the old `inflight++` path. The queue
+  travels as the `queue` event — **absolute** like `session_config`, never a delta, fanned to
+  every peer *including* the origin because the ids are minted here — and is not journaled: it
+  is current state, handed over on `caught_up` the way a pending permission is handed over
+  after the replay. A drain combines **everything** queued into one blank-line-separated
+  prompt and starts one turn on it with no origin peer, so every device draws the user bubble
+  from `turn_started`. It hooks `AcpBridge.settleTurn` → `host.onTurnSettled`, after
+  `turn_ended` is journaled, and only after a turn that ended **cleanly**: a Stop or a failure
+  parks the queue on the shelf (`stopReason: "cancelled"` is a *success* on the wire, which is
+  why the bridge reads it now), and nothing drains on revive either — a profile-change respawn
+  must not fire a parked queue. The `turn_ended` before a drain carries `continued: true`, so
+  neither the toast nor the push says "Turn finished" about a turn that is about to continue.
+  "Send now" (one item, or all) is atomic and server-side like respawn — `cancel()` (which now
+  also `settleAll()`s the open questions, as ACP asks of a cancelling client), `whenIdle()`,
+  prompt — serialised on `session.queueChain`, which also stands the auto-drain down so nothing
+  goes twice; rows are deleted only after the prompt is dispatched, so a process dying mid-wait
+  leaves the queue as it was. The three edits (`queue_update/remove/clear`) are answered with no
+  bridge, like `load_earlier`: a parked queue on an archived thread is the user's words, and
+  taking one back must not cost a spawn. The scheduler gets the rule for free: a scheduled
+  prompt that lands mid-turn waits its turn. The row is `components/composer-queue.tsx` on the
+  strip (summary id `queue`).
+- **Claude Code reaches a profile's gateway through the harness's own shim, because a
+  gateway that streams correctly can still answer a non-streaming call in the wrong
+  shape.** Every main-loop turn streams, and that is the path a Claude-Code-on-a-gateway
+  router is built against; the CLI's *side queries* — the auto-mode permission
+  classifier above all, plus titling, memory selection and the rest of `sideQuery` — call
+  `messages.create` without `stream` and read `response.content` off the JSON. 9router
+  forces streaming towards providers that need it and re-assembles the SSE into JSON for
+  the client as an OpenAI `chat.completion` for every client format but Responses, so a
+  Claude-format caller gets `choices[]` where it expects `content[]`; the CLI's text
+  extractor throws (`undefined is not an object (evaluating 'e.filter')`), the classifier
+  reports "<model> is temporarily unavailable" and **fails closed** — a web search or a
+  build refused in auto mode while the main model on the same endpoint is healthy. The
+  model override cannot touch that (the classifier *is* on the profile's model; the error
+  names it), so `server/src/gateway-shim.ts` sits in front: the claude-code seed's
+  `ANTHROPIC_BASE_URL` is `{gatewayUrl}` (seed 8; the backfill moves only a key still
+  holding the exact seeded `{baseUrl}`), which `resolveSpawn` fills with
+  `http://127.0.0.1:<port>/gw/<key>/<profileId>/<agentId>` — or with the raw `{baseUrl}`
+  when no shim is configured, and with nothing at all for the Default profile, so the key
+  still prunes. `proxyGatewayRequest` resolves `profileBaseUrl(profile, agent)` per request
+  and forwards everything byte for byte — request bodies are never read, streaming replies
+  are piped — and makes exactly one repair: a `2xx` `application/json` reply to a path
+  ending in `/messages` that parses as a chat completion is rewritten into an Anthropic
+  `message` (`chatCompletionToMessage`: thinking/text/tool_use blocks, `stop_reason`, usage
+  with the cache counters split back out). The decision is made on the *response* content
+  type so a multi-megabyte prompt costs the shim nothing. The key in the path is the
+  credential, exactly as `/ide/<key>/` — the route is unauthenticated because the CLI
+  carries its own `x-api-key` for the gateway, and a bare `/gw/<profileId>/` would be an
+  open relay to whatever URL a profile names; it is minted per boot and never stored, since
+  its only readers are children this process spawns and a restart kills those anyway.
+  `pnpm test:gateway` drives it against a stand-in gateway that answers like 9router.
+- **A profile is a provider, not an agent, and a thread is a (profile, agent) pair.**
+  `profiles.agents` is a JSON map keyed by agent id (`ProfileAgentLink`), not a single
+  `agent_id`: the credentials, catalog and default model on a profile are gateway data,
+  and binding them to one runtime meant entering the same key and model list once per
+  agent. The key set is the contract — which agents the profile can spawn — and the value
+  carries the one thing that genuinely differs per agent on a gateway, an optional
+  `baseUrl` override (`profileBaseUrl` in `profiles.ts`: LiteLLM-style routers serve
+  Claude Code at an Anthropic-messages path and Codex at an OpenAI-responses path). The
+  agent is therefore chosen at draft time and lives on the **session** (`sessions.agent_id`,
+  which already existed): `POST /api/sessions` takes `agentId` and `sessions.create`,
+  `respawn`, `spawnAgent` and `probeAgentOptions` all take it explicitly; `resolveProfileAgent`
+  lets it be omitted only when the profile names exactly one agent (the virtual Default, or an
+  older client). A respawn keeps the session's agent unless told otherwise — a profile change
+  is new credentials, never a new runtime — and refuses a profile not configured for it, which
+  is also why both config menus list only profiles that serve the thread's agent. On the
+  client, `Profile.agents` replaces `agentId`, `lib/agent-options.ts` is keyed
+  `optionKey(profileId, agentId)` (what codex offers on a gateway is not what Claude Code
+  offers on it), `thread-defaults` remembers the agent too and `resolveThreadStart` degrades
+  the pair one half at a time (the agent is the stickier habit: a remembered profile that no
+  longer serves it loses to the first profile that does). Migration `0019` filled every
+  existing row with `{ [agent_id]: {} }`; it was written by hand under `generate --custom`
+  because drizzle-kit's rename prompt needs a TTY and its table-rebuild for this diff
+  selected a column the old table did not have.
+- **The harness's own MCP servers are library rows, not profile toggles.** Web search and
+  the knowledge base used to be `webSearch`/`knowledge` opt-ins on the profile (with per-profile
+  search overrides); they are `mcp_servers.type = "builtin"` rows now — `BUILTIN_MCP` in
+  `library.ts`, fixed ids `builtin:web-search` / `builtin:knowledge` — linked by a project, a
+  profile or a thread exactly like any other server. The row is a *handle*: it stores no
+  command, env or credentials, and `mcpServersFor` resolves it at spawn to `websearchServer(config)`
+  (config.json's backend, live, so a token is never cached in a row) or `knowledgeServer(project)`
+  (the thread's project id in env — which is why it could never be a stored command). A linked
+  web-search row resolves to *nothing* while search is unconfigured: a tool that cannot answer is
+  not advertised. `session.websearchViaMcp` — what makes the bridge disallow Claude Code's own
+  WebSearch/WebFetch and what gates usage recording — is now "the resolved list contains it",
+  for any agent. **The disallow travels with an allow rule for `mcp__web-search`**
+  (`AcpBridge.claudeMeta`): a disallowed tool becomes one of the session's
+  `alwaysDenyRules`, which the auto-mode classifier's prompt lists as "User Deny Rules" with
+  a standing order to block the same effect reached through another tool — and a web search
+  through our MCP server is exactly that, so it was denied as circumvention of a rule the
+  harness wrote, and the model told the user to edit their settings. Allow rules resolve
+  before the classifier is consulted; verified with the CLI on the same gateway (two denials
+  → none). `POST /api/mcp-servers/builtin/:kind` (`mcpServers.ensureBuiltin`) is the
+  "Add web search" / "Add knowledge base" button on the MCP page, idempotent by id, and a
+  built-in row has no Edit (nothing to edit) but can be deleted. Migration `0021` linked every
+  profile that had a toggle on to the injected row before dropping the columns.
+- **MCP servers, skills and commands have two owners, and the agent gets the union.**
+  A profile links them (the provider setup: a gateway's own servers, the skills that go with
+  a house style), and a thread picks its own on the draft's composer strip (`DraftToolsMenu`
+  in `draft-config.tsx`, where the profile's show checked and locked, so the thread's picks
+  are exactly the additions). A project links nothing — it is the directory, not the
+  toolset; the `project_*` link tables it once had were dropped in migration `0022`. Both
+  owners are join tables with `ON DELETE CASCADE` — `profile_*`, `session_*` — read and
+  written through one descriptor-driven helper, `server/src/db/links.ts`
+  (`readLinks`/`writeLinks`/`unionLinks`), so a stale id links nothing and nothing filters.
+  The thread's picks arrive in `POST /api/sessions` (`mcpServerIds`/`skillIds`/`commandIds`),
+  are written once at create, reported back by `list()`, and are what a revive spawns with.
+  `SessionManager.effectiveLinks` is the union; `serversFor` passes its MCP servers to
+  `session/new`. Skills and commands are the awkward half: they are **materialised into the
+  project's cwd**, which every thread of the project shares, and the materialiser sweeps
+  whatever it did not write — so `materializeFor` hands `materializeWorkspace` the union
+  across *every live thread in that cwd* plus the one spawning, never one thread's set alone
+  (that pulled the symlinks out from under the thread next to it). It runs in
+  `SessionManager.start`, not in `spawnAgent`, because only the manager knows the other
+  threads; the probe materialises the profile's own set itself, which is additive and safe.
 - **Every agent gets a virtual "Default" profile**, listed first. `defaultProfileFor`
   synthesizes `default:<agentId>` — no credentials and, deliberately, no `models`, which is
   what hands model and effort back to the agent per the rule above. It is offered for every
@@ -281,8 +483,9 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
 - **A draft cannot ask a process that does not exist**, so `lib/agent-options.ts` (a
   reactive device-local store, same shape as `pins.ts`) holds each profile's option set from
   two sources: whatever a live session last advertised, and — when nothing is known yet — a
-  one-shot `POST /api/profiles/:id/options`. A profile that has no set of its own borrows a
-  sibling profile's of the same agent (Default first) for display — the profile only
+  one-shot `POST /api/profiles/:id/options` (body carries `agentId`, since a profile may serve
+  several). A pair that has no set of its own borrows the same agent's from a sibling
+  profile (Default first) for display — the profile only
   overrides model/effort, everything else is the agent's — while its own probe still runs
   and replaces the borrowed set. The probe spawns the agent, runs the handshake as far as
   `session/new`, and kills it (`server/src/probe.ts`). The answer is cached **in the
@@ -393,6 +596,50 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   and pushed by the server (`onElicitationRequest`) when no peer is attached. A URL flow that
   completes is accepted **server-side** on `elicitation/complete`: the answer is already in,
   and waiting for a browser meant an agent with no peer attached blocked forever.
+- **Subagents: the store is flat, the transcript is a tree, and there are three ways a
+  runtime says whose work an update is.** ACP v1 has no subagent concept, so every
+  runtime improvised and none agree. Claude Code (`claude-agent-acp`) sends the child's
+  work on the *parent's* session, each update stamped `_meta.claudeCode.parentToolUseId`
+  = the `toolCallId` of the `Task`/`Agent` call that launched it — but withholds the
+  child's prose and thinking unless the client claims
+  `clientCapabilities._meta["subagent-transcript"]`, and attributes best-effort: a child's
+  `tool_call` can go out unowned and be told its parent on a later update. Codex
+  (`codex-acp` ≥ 1.7) implements the draft **ACP Subagent Sessions RFD** (PR #1992):
+  after both sides advertise `subagents`, the parent session gets `subagent_spawned
+  {subagentSessionId, name, task, capabilities}`, the child's updates arrive as ordinary
+  `session/update`s **whose `sessionId` is the child's**, and `subagent_state_update
+  {state: completed|failed|cancelled|disconnected}` closes it on the parent; a
+  `session/load` of the parent replays the children in place. Unnegotiated, the same
+  runtime folds a child into lifecycle tool calls (`_meta.codex.subagent`,
+  `_meta.codex.collaboration`) with no steps in them. OpenCode's shipped ACP bridge drops
+  the child session entirely (only the `task` call and its `<task id state>…<task_result>`
+  XML arrive — `parseTaskWrapper` unwraps it); its `acp-subagent-events` branch (PR #40654)
+  projects the child onto the root with `_meta["opencode/child-session"] = {id, parentID,
+  depth, title}` and tool ids namespaced `<childSid>:<callId>`, which is read as a third
+  shape. Two things on the server make the RFD path possible. The SDK's `SessionUpdate`
+  union is **closed** and `acp.client()` validates every `session/update` against it in a
+  router that runs *before any handler* — so `agentStream` re-addresses the two RFD
+  variants to `_daedalus/subagent_update` on the way in and the bridge listens on both
+  names (`protocol.ts` declares `SubagentSpawned`/`SubagentStateUpdate` and the widened
+  `SessionUpdate` both ends use). And the `update` event gains an optional `sessionId`,
+  set **only** when the update is a child's, so every event journaled before subagents
+  existed keeps its exact shape. On the client, ownership is resolved in one place —
+  `applySessionUpdate`'s `owner`: the child session id when the event carries one, else
+  `lib/tools.parentToolIdOf(_meta)` (the two `_meta` shapes; the store still never reads
+  `_meta` itself) — and lands as `parentId` on every item; `subagent_spawned` becomes a
+  `SubagentItem` (`subagent:<sessionId>`) for children no tool call launched. The store
+  stays **flat** (arrival order, reducer/replay/`settleTools` untouched) and
+  `lib/transcript-rows.ts` builds the tree at view time — `buildRows` = nest, then group —
+  keyed on the *full* id set because a child can precede its parent; orphans stay flat;
+  Codex's legacy lifecycle rows are grouped by thread id best-effort. `appendText`
+  coalesces a text chunk only onto a run with the **same owner** (parent prose after a
+  subagent is a new bubble, not the tail of the child's), a child's `user_message_chunk`s
+  are dropped (tool-result echoes; the brief is on the parent), a child's plan/compaction
+  ids carry `@<owner>` so they never replace the thread's, and a child's session-level
+  updates (mode, options, usage) never reach `ThreadState`. `SubagentStep` (thread-items)
+  draws it: bot icon, brief → rail of `RowView`s → report, open while live. Consumers that
+  read `thread.items` must ignore `parentId` items where the thread's own is meant — the
+  composer todo shelf, the rail's reply previews and the palette's transcript text do.
 - **One service worker, and no Firebase inside it.** `client/src/sw.ts` is the whole
   PWA: Workbox precache, an SPA navigation route bound to the precached shell, and the
   `push`/`notificationclick` handlers. vite-plugin-pwa builds it (`strategies:
@@ -532,6 +779,29 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   a state, not an error — the panel prints the install command and never runs one, and the
   binary lookup caches only the *positive* answer, since a permanent negative cache would
   make that empty state's "Check again" a lie until the next restart.
+- **Backup is one JSON document, and import is one transaction.** `server/src/backup.ts`
+  exports every user-data table in `db/schema.ts` (agents, profiles with their links,
+  the library, projects, knowledge, previews, sessions with their links, queue,
+  schedules, the event log, tasks, web-search usage, push tokens) plus config.json's
+  `webSearch` block — never the server's token/host/port, the `agent_options` probe
+  cache, or the `history_*` rows (meaningless without the snapshot files). Two opt-outs:
+  `secrets=0` blanks profile keys, MCP header/env values and the search token, and
+  `journals=0` leaves the transcripts out (the bulk of any install; a thread without one
+  still revives through `session/load`). `GET /api/backup` downloads it;
+  `POST /api/backup/import?mode=merge|replace` validates it against `BundleSchema` and
+  writes it — `merge` upserts by id with a non-cascading `ON CONFLICT DO UPDATE` (an
+  `INSERT OR REPLACE` would fire the cascades and take a profile's links with it),
+  `replace` empties every table first. A thread's queue/schedules/log are replaced as a
+  unit for every thread the bundle names (a merged log is two accounts stitched together);
+  child rows whose parent exists nowhere are counted as `orphaned`, not fatal; a blank
+  secret keeps the install's existing value, so a redacted bundle merged over its own
+  install changes nothing. The route retires the threads it is about to rewrite first
+  (`SessionManager.retireAll`) and `reload()`s the manager after — that is the same code
+  the constructor runs at boot, and it leaves a live process untouched, rebuilds
+  process-less rows (closing peers reading a changed archive), and drops rows that are
+  gone. The client page is Settings › Backup (`components/settings/backup.tsx`): it reads
+  the counts out of the chosen file locally, confirms, and hard-reloads after an import.
+  `pnpm test:backup` round-trips it.
 - Test agent: `server/test/fake-agent.mjs` (registered as `fake-echo`), drives the UI without
   credentials. It answers raw NDJSON, which the SDK on the other end is happy with — it
   validates inbound `session/update` params but not responses.

@@ -8,6 +8,7 @@
    no way to send a header and every asset code-server asks for afterwards is a
    relative URL the browser resolves on its own. */
 import { api, loadSettings, ApiError, type ServerSettings } from "@/lib/settings"
+import type { IdeTheme } from "@/lib/workspace/ide-theme"
 
 export type IdeState = "off" | "starting" | "ready" | "failed" | "unavailable"
 
@@ -39,8 +40,20 @@ export function getIdeStatus(projectId: string): Promise<IdeStatus> {
 
 /** Start it, or hand back the one already running. Idempotent, and slow the
     first time — the server does not answer until code-server does. */
-export function startIde(projectId: string): Promise<IdeStatus> {
-  return api<IdeStatus>(server(), route(projectId), { method: "POST" })
+export function startIde(projectId: string, theme?: IdeTheme): Promise<IdeStatus> {
+  return api<IdeStatus>(server(), route(projectId), {
+    method: "POST",
+    body: JSON.stringify(theme ? { theme } : {}),
+  })
+}
+
+/** Paint the editor in the app's palette. Lands live — VS Code watches the
+    settings file the server writes it into. */
+export function setIdeTheme(projectId: string, theme: IdeTheme): Promise<{ ok: true }> {
+  return api<{ ok: true }>(server(), `${route(projectId)}/theme`, {
+    method: "PUT",
+    body: JSON.stringify(theme),
+  })
 }
 
 /** Ends the process, and with it every unsaved buffer's live state. Closing the

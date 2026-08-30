@@ -1,13 +1,16 @@
-// Self-check for the harness's own `web-search` MCP server, which is
-// profile-driven (a profile opts in) and synthesized from config at spawn — it
-// is never a stored library row. The pieces worth proving:
+// Self-check for the harness's own `web-search` MCP server: linked through a
+// `builtin` library row that stores nothing, and synthesized from config at
+// spawn. The pieces worth proving:
 //   - toMcpServerEnv maps a WebSearchConfig onto the four stdio env vars.
 //   - websearchServer() returns null when no search API is configured, and the
 //     synthesized stdio def (node + path to the MCP server file + live env)
-//     when it is — never touching a library row.
-//   - the profile gate: web-search is OFF by default (unset / disabled), and ON
-//     for claude-code when the profile opts in AND search is configured.
+//     when it is.
+//   - the library gate: a thread gets the server only when a builtin row is
+//     linked, and a linked row resolves to nothing while search is
+//     unconfigured — a tool that cannot answer is not advertised.
+//   - ensureBuiltin is idempotent: one fixed id, however often it is pressed.
 // Run: pnpm test:websearch
+import { existsSync } from "node:fs";
 import assert from "node:assert/strict";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -18,7 +21,7 @@ const DATA = process.env.DAEDALUS_DATA_DIR!;
 rmSync(DATA, { recursive: true, force: true });
 mkdirSync(DATA, { recursive: true });
 
-const { resolveWebSearch, websearchServer } = await import("../src/sessions.js");
+const { websearchServer, mcpServersFor } = await import("../src/sessions.js");
 const { mcpServers } = await import("../src/library.js");
 const { toMcpServerEnv, SEARCH_ENV_KEYS, WEB_SEARCH_SERVER_NAME } = await import("../src/websearch.js");
 
@@ -62,28 +65,13 @@ await test("toMcpServerEnv maps a WebSearchConfig to the four env vars", () => {
   });
 });
 
-type ProfileWs = { enabled: boolean; searchApiBaseUrl?: string; searchApiToken?: string; searchModel?: string; fetchModel?: string };
-const profile = (ws?: ProfileWs) => ({ webSearch: ws ?? null });
-
-await test("not enabled -> null even when server config present", async () => {
-  writeConfig({
-    searchApiBaseUrl: "http://localhost:20128",
-    searchApiToken: "live-token",
-    searchModel: "search-combo",
-    fetchModel: "fetch-combo",
-  });
-  const cfg = await import("../src/config.js").then((m) => m.loadConfig());
-  assert.equal(websearchServer(profile(), cfg), null, "enabled defaults off");
-  assert.ok(websearchServer(profile({ enabled: true }), cfg), "enabled + config synthesizes");
-});
-
-await test("unconfigured -> null even when enabled", async () => {
+await test("unconfigured -> null", async () => {
   writeConfig();
   const cfg = await import("../src/config.js").then((m) => m.loadConfig());
-  assert.equal(websearchServer(profile({ enabled: true }), cfg), null);
+  assert.equal(websearchServer(cfg), null);
 });
 
-await test("profile override beats server default", async () => {
+await test("configured -> stdio def with live env", async () => {
   writeConfig({
     searchApiBaseUrl: "http://server:20128",
     searchApiToken: "server-token",
@@ -91,40 +79,53 @@ await test("profile override beats server default", async () => {
     fetchModel: "server-fetch",
   });
   const cfg = await import("../src/config.js").then((m) => m.loadConfig());
-  const server = websearchServer(
-    profile({ enabled: true, searchApiBaseUrl: "http://profile:9000", searchModel: "profile-search" }),
-    cfg,
-  );
-  assert.ok(server, "synthesized");
-  assert.deepEqual(server.env, toMcpServerEnv({
-    searchApiBaseUrl: "http://profile:9000",
-    searchApiToken: "server-token", // inherits
-    searchModel: "profile-search", // overrides
-    fetchModel: "server-fetch", // inherits
-  }));
-  assert.ok(!mcpServers.list().some((s) => s.name === WEB_SEARCH_SERVER_NAME), "no library row");
-});
-
-await test("no override -> server default + live env", async () => {
-  writeConfig({
-    searchApiBaseUrl: "http://server:20128",
-    searchApiToken: "server-token",
-    searchModel: "server-search",
-    fetchModel: "server-fetch",
-  });
-  const cfg = await import("../src/config.js").then((m) => m.loadConfig());
-  const server = websearchServer(profile({ enabled: true }), cfg);
+  const server = websearchServer(cfg);
   assert.ok(server, "synthesized");
   assert.equal(server.name, WEB_SEARCH_SERVER_NAME);
   assert.equal(server.command, process.execPath);
-  assert.ok((server.args as string[]).length === 1 && (server.args as string[])[0].endsWith("websearch-mcp.js"));
+  // Under tsx (how the tests run) the script is the .ts beside the module and
+  // node is handed tsx's CLI to run it; built, it is the bare dist .js.
+  const script = (server.args as string[]).at(-1)!;
+  assert.match(script, /websearch-mcp\.(ts|js)$/);
+  assert.ok(existsSync(script), `MCP server script exists: ${script}`);
   assert.deepEqual(server.env, toMcpServerEnv(cfg.webSearch!));
 });
 
-await test("profile gate: default profile is off", async () => {
-  const { defaultProfileFor } = await import("../src/profiles.js");
-  const d = defaultProfileFor("claude-code");
-  assert.equal(d.webSearch?.enabled, false, "default profile opts out");
+await test("ensureBuiltin is idempotent and the row stores nothing", () => {
+  const first = mcpServers.ensureBuiltin("web-search");
+  const second = mcpServers.ensureBuiltin("web-search");
+  assert.equal(first.id, second.id);
+  assert.equal(first.id, "builtin:web-search");
+  assert.equal(mcpServers.list().filter((s) => s.type === "builtin").length, 1);
+  assert.equal(first.type, "builtin");
+  assert.ok(!("command" in first) && !("env" in first), "no command or env on the row");
+});
+
+await test("library gate: linked + configured -> server; linked + unconfigured -> nothing", async () => {
+  const row = mcpServers.ensureBuiltin("web-search");
+  const project = { id: "p1" };
+  writeConfig({
+    searchApiBaseUrl: "http://server:20128",
+    searchApiToken: "server-token",
+    searchModel: "server-search",
+    fetchModel: "server-fetch",
+  });
+  let cfg = await import("../src/config.js").then((m) => m.loadConfig());
+  assert.deepEqual(mcpServersFor({ mcpServerIds: [] }, project, cfg), [], "not linked -> not offered");
+  const linked = mcpServersFor({ mcpServerIds: [row.id] }, project, cfg);
+  assert.equal(linked.length, 1);
+  assert.equal(linked[0].name, WEB_SEARCH_SERVER_NAME);
+  writeConfig();
+  cfg = await import("../src/config.js").then((m) => m.loadConfig());
+  assert.deepEqual(mcpServersFor({ mcpServerIds: [row.id] }, project, cfg), [], "linked but unconfigured -> nothing");
+});
+
+await test("knowledge builtin resolves with the project's id in env", async () => {
+  const row = mcpServers.ensureBuiltin("knowledge");
+  const cfg = await import("../src/config.js").then((m) => m.loadConfig());
+  const [server] = mcpServersFor({ mcpServerIds: [row.id] }, { id: "proj-42" }, cfg);
+  assert.ok(server && "env" in server, "stdio def");
+  assert.ok(server.env!.some((e) => e.name === "KNOWLEDGE_PROJECT_ID" && e.value === "proj-42"));
 });
 
 if (failures.length) {

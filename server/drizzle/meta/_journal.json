@@ -127,6 +127,55 @@
       "when": 1788084344019,
       "tag": "0017_brief_gressill",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1788097245266,
+      "tag": "0018_dizzy_domino",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1788098778531,
+      "tag": "0019_profile_agents",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1788099998539,
+      "tag": "0020_profile_session_links",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1788100680934,
+      "tag": "0021_builtin_mcp",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1788101470700,
+      "tag": "0022_drop_project_links",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1788104910783,
+      "tag": "0023_session_queue",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1788108480943,
+      "tag": "0024_project_logo",
+      "breakpoints": true
     }
   ]
 }

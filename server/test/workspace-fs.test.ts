@@ -70,9 +70,6 @@ const project = createProject({
   name: "ws",
   cwd: root,
   description: null,
-  mcpServerIds: [],
-  skillIds: [],
-  commandIds: [],
 });
 
 // ── Containment ──────────────────────────────────────────────────────────────
@@ -121,9 +118,6 @@ await test("a project rooted at a symlink is not its own escape", () => {
     name: "linked",
     cwd: linked,
     description: null,
-    mcpServerIds: [],
-    skillIds: [],
-    commandIds: [],
   });
   const listing = fs.listDir(viaLink.id, "src");
   assert.ok(listing.entries.some((entry) => entry.name === "index.ts"));
@@ -375,9 +369,6 @@ await test("status parses porcelain v2, including renames and untracked", async 
     name: "git",
     cwd: repo,
     description: null,
-    mcpServerIds: [],
-    skillIds: [],
-    commandIds: [],
   });
 
   writeFileSync(join(repo, "kept.txt"), "one changed\n");

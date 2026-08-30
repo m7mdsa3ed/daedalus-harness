@@ -10,15 +10,17 @@
    draws these same three paths in order. */
 import { cn } from "@/lib/utils"
 
-/** `working` traces the rings on a loop — see `.harness-logo-working` in
-    index.css. pathLength normalises the two rings so one dash rule drives both. */
+/** `working` traces the rings on a loop; `idle` retraces them once every few
+    seconds — `.harness-logo-working` / `.harness-logo-idle` in index.css.
+    pathLength normalises the two rings so one dash rule drives both. */
 export function Logo({
   className,
   working = false,
+  idle = false,
   title,
   ...props
-}: React.ComponentProps<"svg"> & { working?: boolean; title?: string }) {
-  const pathLength = working ? 1 : undefined
+}: React.ComponentProps<"svg"> & { working?: boolean; idle?: boolean; title?: string }) {
+  const pathLength = working || idle ? 1 : undefined
   return (
     <svg
       viewBox="0 0 64 64"
@@ -30,7 +32,11 @@ export function Logo({
       // Decoration by default; a working mark is a live status and says so.
       aria-hidden={title ? undefined : true}
       role={title ? "status" : undefined}
-      className={cn("size-7", working && "harness-logo-working", className)}
+      className={cn(
+        "size-7",
+        working ? "harness-logo-working" : idle && "harness-logo-idle",
+        className
+      )}
       {...props}
     >
       {/* <title> is both the tooltip and the accessible name. */}

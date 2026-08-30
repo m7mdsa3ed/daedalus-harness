@@ -15,7 +15,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { db, knowledge as knowledgeTable } from "./db/index.js";
-import { getProject } from "./projects.js";
+import { getProject, listProjects } from "./projects.js";
 import { WorkspaceError } from "./workspace-fs.js";
 
 /** The shape `POST /api/projects/:id/knowledge` accepts. */
@@ -38,6 +38,21 @@ export function listKnowledge(projectId: string): KnowledgeEntry[] {
     .where(eq(knowledgeTable.projectId, projectId))
     .all()
     .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+/** Every entry across every project, newest-updated first, each naming its
+    project — the Settings › Knowledge base page, which reads the whole store
+    rather than one workspace's slice. `projectName` is resolved here so the
+    client needs no join; a project deleted since cascades its rows away, so
+    the name is always found. */
+export function listAllKnowledge(): (KnowledgeEntry & { projectName: string })[] {
+  const names = new Map(listProjects().map((p) => [p.id, p.name]));
+  return db
+    .select()
+    .from(knowledgeTable)
+    .all()
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .map((row) => ({ ...row, projectName: names.get(row.projectId) ?? row.projectId }));
 }
 
 export function addKnowledge(projectId: string, input: KnowledgeInput): KnowledgeEntry {

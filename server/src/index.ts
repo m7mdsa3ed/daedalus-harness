@@ -14,7 +14,9 @@ import {
   deleteProfile,
   getProfile,
   listProfiles,
+  profileSupports,
   redact,
+  resolveProfileAgent,
   updateProfile,
 } from "./profiles.js";
 import {
@@ -62,7 +64,13 @@ import {
 import { stopWatching, watchProject, type WatchBatch } from "./workspace-watch.js";
 import * as git from "./git.js";
 import { createPreview, deletePreview, listPreviews } from "./previews.js";
-import { KnowledgeInputSchema, addKnowledge, deleteKnowledge, listKnowledge } from "./knowledge.js";
+import {
+  KnowledgeInputSchema,
+  addKnowledge,
+  deleteKnowledge,
+  listAllKnowledge,
+  listKnowledge,
+} from "./knowledge.js";
 import {
   CreateTaskSchema,
   ReorderEntrySchema,
@@ -81,11 +89,25 @@ import {
   killTerminal,
   listTerminals,
 } from "./terminals.js";
-import { adoptOrphans, ideStatus, startIde, stopAllIdes, stopIde } from "./ide.js";
+import {
+  IdeThemeSchema,
+  adoptOrphans,
+  applyIdeTheme,
+  ideStatus,
+  startIde,
+  stopAllIdes,
+  stopIde,
+} from "./ide.js";
 import { parseIdePath, proxyIdeRequest, proxyIdeUpgrade } from "./ide-proxy.js";
+import { configureGatewayShim, proxyGatewayRequest } from "./gateway-shim.js";
 import { Push } from "./push.js";
+import { BundleSchema, exportBundle, importBundle } from "./backup.js";
 
 const config = loadConfig();
+/* Before anything can spawn: `{gatewayUrl}` in an agent's env is resolved at
+   spawn from what this hands out, and a spawn that predates it would go to the
+   gateway direct (correct, but without the shim's repair). */
+configureGatewayShim({ port: config.port });
 // Editors a previous process left running: taken back under the same key so
 // browser frames survive a restart, or cleaned up. See adoptOrphans.
 await adoptOrphans();
@@ -147,7 +169,7 @@ app.notFound((c) => c.json({ error: `no such endpoint: ${c.req.method} ${c.req.p
 app.get("/api/health", (c) => {
   const token = bearerToken(c.req.header("authorization"), c.req.query("token"));
   // `webSearch` is only whether the search API is configured — never the token.
-  return c.json({ ok: true, name: "daedalus", authorized: token === config.token, webSearch: Boolean(config.webSearch) });
+  return c.json({ ok: true, name: "daedalus", authorized: token === config.token, webSearch: Boolean(readWebSearch()) });
 });
 
 app.use("/api/*", async (c, next) => {
@@ -224,14 +246,20 @@ app.delete("/api/profiles/:id", (c) =>
  */
 app.post("/api/profiles/:id/options", async (c) => {
   const profile = getProfile(c.req.param("id"));
-  if (!profile || !getAgent(profile.agentId)) return c.json({ error: "unknown profile" }, 404);
-  const { projectId } = await c.req.json();
+  if (!profile) return c.json({ error: "unknown profile" }, 404);
+  const { projectId, agentId: askedAgent } = await c.req.json();
+  // Which of the profile's agents to ask. Optional only when the profile
+  // names exactly one (the virtual Default always does).
+  const agentId = resolveProfileAgent(profile, askedAgent);
+  if (!agentId || !getAgent(agentId)) {
+    return c.json({ error: "unknown agent for this profile" }, 404);
+  }
   // No falling back to "some other project": the cwd is part of the answer, so
   // probing a different one returns a menu that quietly does not apply here.
   const project = getProject(projectId);
   if (!project) return c.json({ error: "unknown project" }, 404);
   const refresh = c.req.query("refresh") === "1";
-  return c.json(await probeAgentOptions(profile, project, { refresh }));
+  return c.json(await probeAgentOptions(profile, agentId, project, { refresh }));
 });
 
 /**
@@ -450,8 +478,11 @@ app.delete("/api/projects/:projectId/previews/:previewId", (c) =>
 );
 
 /* Knowledge base. The same table the `knowledge` MCP server reads, exposed as a
-   REST resource so the user can see and edit it in Settings › Projects. Missing
+   REST resource so the user can see and edit it — per project below, and as
+   one list across every project for Settings › Knowledge base. Missing
    project surfaces as a 404 via the `workspace()` wrapper. */
+app.get("/api/knowledge", (c) => c.json(listAllKnowledge()));
+
 app.get("/api/projects/:projectId/knowledge", (c) =>
   workspace(c, () => listKnowledge(c.req.param("projectId"))),
 );
@@ -561,8 +592,23 @@ app.get("/api/projects/:projectId/ide", (c) =>
   workspace(c, () => ideStatus(c.req.param("projectId"))),
 );
 
+/* The body is optional: `{ theme }` paints the editor in the app's palette
+   before it first loads (see `applyIdeTheme`). An older panel sends none. */
 app.post("/api/projects/:projectId/ide", (c) =>
-  workspace(c, () => startIde(c.req.param("projectId"))),
+  workspace(c, async () => {
+    const body = (await c.req.json().catch(() => null)) as { theme?: unknown } | null;
+    const theme = body?.theme ? IdeThemeSchema.safeParse(body.theme) : null;
+    return startIde(c.req.param("projectId"), theme?.success ? theme.data : undefined);
+  }),
+);
+
+app.put("/api/projects/:projectId/ide/theme", (c) =>
+  workspace(c, async () => {
+    const parsed = IdeThemeSchema.safeParse(await c.req.json());
+    if (!parsed.success) throw new WorkspaceError(parsed.error.message, 400);
+    applyIdeTheme(c.req.param("projectId"), parsed.data);
+    return { ok: true };
+  }),
 );
 
 app.delete("/api/projects/:projectId/ide", (c) =>
@@ -577,6 +623,12 @@ app.delete("/api/projects/:projectId/ide", (c) =>
    the browser resolves on its own. `parseIdePath` is the only thing that turns
    one into a loopback port, and a key it does not know is a 404. */
 app.all("/ide/*", (c) => proxyIdeRequest(c.req.raw));
+
+/* Claude Code's traffic to a profile's gateway. Same rule as the editor: the
+   per-boot key in the path is the credential (the CLI carries its own
+   `x-api-key` for the gateway itself), and a key the shim did not mint is a
+   404. See gateway-shim.ts for the one repair it makes on the way back. */
+app.all("/gw/*", (c) => proxyGatewayRequest(c.req.raw));
 
 /* File events as an NDJSON stream rather than SSE: EventSource cannot set an
    Authorization header, and the alternative is the bearer token in a URL — in
@@ -654,6 +706,14 @@ for (const [base, reg, schema] of [
   );
 }
 
+/** Put one of the harness's own MCP servers in the library. Idempotent — the
+    row has a fixed id — so the button is safe to press again. */
+app.post("/api/mcp-servers/builtin/:kind", (c) => {
+  const kind = c.req.param("kind");
+  if (kind !== "web-search" && kind !== "knowledge") return c.json({ error: "unknown builtin" }, 404);
+  return c.json(mcpServers.ensureBuiltin(kind), 201);
+});
+
 // Importable entries from the agents' own configs, minus what the library already has.
 app.get("/api/import", (c) => {
   const haveMcp = new Set(mcpServers.list().map((s) => s.name));
@@ -666,16 +726,61 @@ app.get("/api/import", (c) => {
   });
 });
 
+/* Backup: everything the harness stores, as one JSON document (backup.ts).
+   `secrets=0` leaves credentials out, `journals=0` leaves the transcripts
+   out. Served as an attachment so a plain link downloads it. */
+app.get("/api/backup", (c) => {
+  const bundle = exportBundle({
+    includeSecrets: c.req.query("secrets") !== "0",
+    includeJournals: c.req.query("journals") !== "0",
+  });
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  c.header("content-disposition", `attachment; filename="daedalus-backup-${stamp}.json"`);
+  return c.json(bundle);
+});
+
+/* Restore. `mode=merge` (default) upserts by id and keeps what the bundle does
+   not name; `mode=replace` empties every table first. Either way the threads
+   the bundle names are retired before their rows are rewritten — a row
+   changed under a running process is a race — and the manager reloads after,
+   which is also what closes the peers reading an archive that just changed. */
+app.post("/api/backup/import", async (c) => {
+  const mode = c.req.query("mode") === "replace" ? "replace" : "merge";
+  const parsed = BundleSchema.safeParse(await c.req.json());
+  if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+  const bundle = parsed.data;
+  sessions.retireAll(mode === "replace" ? undefined : bundle.sessions.map((s) => s.id));
+  const summary = importBundle(bundle, mode);
+  sessions.reload();
+  console.log(`[backup] imported (${mode}):`, summary);
+  return c.json(summary);
+});
+
 app.get("/api/sessions", (c) => c.json(sessions.list()));
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE =/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 app.post("/api/sessions", async (c) => {
-  const { id, profileId, projectId, model, effort, configChoices } = await c.req.json();
+  const {
+    id,
+    profileId,
+    agentId: askedAgent,
+    projectId,
+    model,
+    effort,
+    configChoices,
+    mcpServerIds,
+    skillIds,
+    commandIds,
+  } = await c.req.json();
   const profile = getProfile(profileId);
-  // A virtual profile is resolved from its id, so an id naming an agent that
+  if (!profile) return c.json({ error: "unknown profile" }, 404);
+  // The thread is a (profile, agent) pair. `agentId` may be left out only when
+  // the profile names one agent — the virtual Default, or an older client. A
+  // virtual profile is resolved from its id, so an id naming an agent that
   // does not exist would otherwise reach spawn and fail there instead.
-  if (!profile || !getAgent(profile.agentId)) {
-    return c.json({ error: "unknown profile" }, 404);
+  const agentId = resolveProfileAgent(profile, askedAgent);
+  if (!agentId || !getAgent(agentId)) {
+    return c.json({ error: "unknown agent for this profile" }, 404);
   }
   const project = getProject(projectId);
   if (!project) return c.json({ error: "unknown project" }, 404);
@@ -688,7 +793,15 @@ app.post("/api/sessions", async (c) => {
     }
     if (sessions.get(id)) return c.json({ error: "session already exists" }, 409);
   }
-  const session = sessions.create(profile, project, model, effort, id, configChoices);
+  // The thread's own picks, on top of the project's and the profile's. Stale
+  // ids link nothing (db/links.ts), so nothing here has to be validated.
+  const ids = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  const session = sessions.create(profile, agentId, project, model, effort, id, configChoices, {
+    mcpServerIds: ids(mcpServerIds),
+    skillIds: ids(skillIds),
+    commandIds: ids(commandIds),
+  });
   /* Wait for the handshake. A 201 therefore means the agent has answered
      session/new, its settings have been applied, and the first `session_config`
      is already in the log — so the socket the client opens next inherits a
@@ -712,14 +825,19 @@ app.post("/api/sessions/:id/respawn", async (c) => {
   // attempt as a 4xx keeps a stale client's retry from reading as a server
   // fault in the logs.
   if (session.deletedAt !== null) return c.json({ error: "session deleted" }, 409);
-  const { profileId, model, effort } = await c.req.json();
+  const { profileId, agentId: askedAgent, model, effort } = await c.req.json();
   const profile = getProfile(profileId ?? session.profileId);
-  if (!profile || !getAgent(profile.agentId)) {
-    return c.json({ error: "unknown profile" }, 404);
+  if (!profile) return c.json({ error: "unknown profile" }, 404);
+  // The agent stays what it was unless the caller says otherwise — a profile
+  // change is new credentials, not a new runtime — and whichever it is, the
+  // profile has to be configured for it.
+  const agentId = askedAgent ?? session.agentId;
+  if (!profileSupports(profile, agentId) || !getAgent(agentId)) {
+    return c.json({ error: "unknown agent for this profile" }, 404);
   }
   const project = getProject(session.projectId);
   if (!project) return c.json({ error: "unknown project" }, 404);
-  await sessions.respawn(session.id, profile, project, model, effort);
+  await sessions.respawn(session.id, profile, agentId, project, model, effort);
   return c.json({
     ok: true,
     acpSessionId: session.liveAcpSessionId ?? session.acpSessionId,

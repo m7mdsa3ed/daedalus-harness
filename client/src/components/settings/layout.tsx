@@ -12,6 +12,8 @@ import type { ServerSettings } from "@/lib/settings"
 export interface SettingsPageContext {
   settings: ServerSettings
   actions: Actions
+  /** Opens the connect screen to store another server (App.tsx owns it). */
+  onAddServer: () => void
 }
 
 export function useSettingsPage(): SettingsPageContext {
@@ -21,6 +23,7 @@ export function useSettingsPage(): SettingsPageContext {
 export function SettingsLayout({
   settings,
   actions,
+  onAddServer,
   loading,
 }: SettingsPageContext & { loading: boolean }) {
   const location = useLocation()
@@ -33,7 +36,7 @@ export function SettingsLayout({
           <SettingsSectionSkeleton />
         ) : (
           <ErrorBoundary name="settings" resetKeys={[location.pathname]}>
-            <Outlet context={{ settings, actions } satisfies SettingsPageContext} />
+            <Outlet context={{ settings, actions, onAddServer } satisfies SettingsPageContext} />
           </ErrorBoundary>
         )}
       </div>

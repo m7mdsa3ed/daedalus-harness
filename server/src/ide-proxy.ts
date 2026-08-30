@@ -164,6 +164,18 @@ export function proxyIdeUpgrade(req: IncomingMessage, socket: Duplex, head: Buff
     if (name.toLowerCase() === "host") continue;
     headers[name] = value;
   }
+  /* **The origin check is the one header rule this path cannot skip.**
+     code-server refuses a WebSocket whose `Origin` host is not its own host —
+     the standard cross-site-hijack guard — and "its own host" is read from
+     `x-forwarded-host` when a proxy sets it, else from `Host`. `Host` here is
+     rewritten to the loopback address by the connect below, while `Origin` is
+     still the harness's public address the browser was on, so without the
+     forwarded host every browser upgrade came back 403 — relayed as a closed
+     socket, which VS Code reports as "1006" and, from then on, as `ENOPRO`
+     for every file it can no longer reach. curl never hit it, because curl
+     sends no `Origin`. */
+  if (req.headers.host) headers["x-forwarded-host"] = req.headers.host;
+  headers["x-forwarded-proto"] = "http";
 
   const proxied = httpRequest({
     host: "127.0.0.1",

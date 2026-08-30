@@ -1,5 +1,5 @@
 import type * as acp from "@agentclientprotocol/sdk"
-import { AgentIcon } from "@/components/agent-icon"
+import { ProfileIcon } from "@/components/entity-icon"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
 import {
@@ -13,9 +13,10 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { MenuRow, selectChoices } from "@/components/config-menu"
 import type { Actions } from "@/lib/actions"
-import { optionsForModel, useAgentOptions } from "@/lib/agent-options"
+import { optionKey, optionsForModel, useAgentOptions } from "@/lib/agent-options"
 import { reportError } from "@/lib/errors"
 import { currentChoiceLabel, partitionSessionOptions } from "@/lib/session-options"
+import { profileSupports } from "@/lib/settings"
 import { useStore, type ThreadState } from "@/lib/store"
 
 /** Sentinel for "whatever the profile says", which is not itself a model id. */
@@ -51,16 +52,19 @@ export function SessionConfigPopover({
   const confirm = useConfirm()
   const meta = state.sessions.find((s) => s.id === sessionId)
   const profile = state.profiles.find((p) => p.id === meta?.profileId)
-  const agent = state.agents.find((a) => a.id === profile?.agentId)
+  // The thread's agent, not the profile's: a profile may serve several.
+  const agentId = meta?.agentId ?? ""
+  const agent = state.agents.find((a) => a.id === agentId)
+  /* The profiles this thread could move to: every one configured for its
+     agent. Changing profile is new credentials, never a new runtime. */
+  const agentProfiles = state.profiles.filter((p) => profileSupports(p, agentId))
   // Called before the early return below: hooks cannot be conditional.
-  // Sibling profiles of the same agent stand in while this one has no
+  // Sibling profiles serving the same agent stand in while this one has no
   // remembered set — the profile owns only model and effort, so the rest of
   // the agent's options are the same set whichever profile spawned it.
   const remembered = useAgentOptions(
-    meta?.profileId ?? "",
-    state.profiles
-      .filter((p) => p.agentId === profile?.agentId && p.id !== meta?.profileId)
-      .map((p) => p.id)
+    optionKey(meta?.profileId ?? "", agentId),
+    agentProfiles.filter((p) => p.id !== meta?.profileId).map((p) => optionKey(p.id, agentId))
   )
   if (!meta || !profile) return null
 
@@ -77,7 +81,6 @@ export function SessionConfigPopover({
     live ? thread.configOptions : optionsForModel(remembered, meta.model || undefined),
     modeIds
   )
-  const agentProfiles = state.profiles.filter((p) => p.agentId === profile.agentId)
   const modes = thread.modes && thread.modes.availableModes.length > 1 ? thread.modes : null
   const modeLabel = modes?.availableModes.find((m) => m.id === modes.currentModeId)?.name
 
@@ -164,7 +167,9 @@ export function SessionConfigPopover({
             className="h-8 gap-1.5 border-0 bg-transparent px-2 text-xs shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent max-md:w-8 max-md:px-0"
             title={triggerLabel}
           >
-            <AgentIcon agentId={agent?.id ?? profile.agentId} className="size-4" />
+            {/* The profile's own logo when it has one (a gateway profile is a
+                provider); the Default profile has none and shows the agent. */}
+            <ProfileIcon profile={profile} agentId={agent?.id ?? agentId} className="size-4" />
             {/* The mode rides along in the trigger: it left the composer, and a
                 silently-active "accept edits" is the one setting you must see. */}
             <span className="max-w-56 truncate max-md:sr-only">
@@ -182,7 +187,11 @@ export function SessionConfigPopover({
             <MenuRow
               label="Profile"
               value={profile.id}
-              choices={agentProfiles.map((p) => ({ value: p.id, name: p.name }))}
+              choices={agentProfiles.map((p) => ({
+                value: p.id,
+                name: p.name,
+                icon: <ProfileIcon profile={p} agentId={agent?.id ?? agentId} className="size-4" />,
+              }))}
               onSelect={changeProfile}
             />
           )}

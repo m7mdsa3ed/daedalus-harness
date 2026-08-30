@@ -6,21 +6,21 @@ import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import { api, type ModelCandidate, type Profile, type ServerSettings } from "@/lib/settings"
+import { AgentIcon, ProfileIcon } from "@/components/entity-icon"
+import {
+  api,
+  mcpSubtitle,
+  profileAgentIds,
+  type Profile,
+  type ProfileAgentLink,
+  type ServerSettings,
+} from "@/lib/settings"
 import { useStore } from "@/lib/store"
-import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions } from "./primitives"
+import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions, FormSection, Picker } from "./primitives"
 import {
   ModelsSection,
   blankModelRow,
-  candidateToRow,
   rowsToModels,
   toModelRows,
   type ModelRow,
@@ -28,8 +28,6 @@ import {
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { settingsFormPath, settingsPath } from "@/lib/router"
-
-const UNREGISTERED = "__unregistered"
 
 export function ProfilesPage() {
   const { settings, actions } = useSettingsPage()
@@ -55,69 +53,67 @@ export function ProfilesPage() {
     </Button>
   )
 
-  // One card per registered agent, in registry order; profiles whose agent is
-  // gone from data/agents.json land in a trailing group instead of vanishing.
-  const groups = [
-    ...state.agents.map((agent) => ({
-      key: agent.id,
-      label: agent.name,
-      profiles: state.profiles.filter((p) => p.agentId === agent.id),
-    })),
-    {
-      key: UNREGISTERED,
-      label: "Unregistered agents",
-      profiles: state.profiles.filter((p) => !state.agents.some((a) => a.id === p.agentId)),
-    },
-  ].filter((group) => group.profiles.length > 0)
+  /* One list, not one group per agent: a profile is a provider and may serve
+     several agents, so grouping by agent would list it more than once. The
+     agents it serves are named on the row instead. The virtual Defaults are
+     left out: they are the agents as they ship, synthesized per agent and
+     neither editable nor deletable, so here they would be one identical
+     "Default" row per agent with nothing to do on it. They still show up
+     wherever a thread picks a profile, which is the only place they matter. */
+  const stored = state.profiles.filter((p) => !p.virtual)
+  const agentName = (id: string) => state.agents.find((a) => a.id === id)?.name
 
   return (
     <>
       <PageHeader meta={meta} action={newButton} />
-      {state.profiles.length === 0 ? (
-        <EmptyCard icon={KeyRound} text="No profiles yet — a thread needs one to know which agent to run." action={newButton} />
+      {stored.length === 0 ? (
+        <EmptyCard
+          icon={KeyRound}
+          text="No profiles yet. Every agent already runs on its own defaults — add a profile to point one at your own gateway, key or model catalog."
+          action={newButton}
+        />
       ) : (
-        groups.map((group) => (
-          <Group key={group.key} label={group.label}>
-            {group.profiles.map((profile) => (
+        <Group>
+          {stored.map((profile) => (
               <Row
                 key={profile.id}
-                icon={KeyRound}
+                /* The profile's own logo when it has one; the agent's mark
+                   otherwise (which is what every virtual Default shows). */
+                icon={<ProfileIcon profile={profile} className="size-4 shrink-0" />}
                 title={profile.name}
                 subtitle={
                   <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    {group.key === UNREGISTERED && <span className="font-mono">{profile.agentId}</span>}
-                    {profile.defaultModel && <span className="font-mono">{profile.defaultModel}</span>}
+                    {/* Every agent this profile serves. One the server no
+                        longer registers is shown by id, in mono, so a broken
+                        profile is visible rather than silently narrowed. */}
+                    {profileAgentIds(profile).map((id) => (
+                      <span key={id} className="flex items-center gap-1">
+                        <AgentIcon agentId={id} className="size-3" />
+                        {agentName(id) ?? <span className="font-mono">{id}</span>}
+                      </span>
+                    ))}
+                    {profile.defaultModel && <span className="font-mono">· {profile.defaultModel}</span>}
                     {profile.models.length > 1 && <span>· {profile.models.length} models</span>}
+                    {profile.mcpServerIds.length > 0 && <span>· {profile.mcpServerIds.length} MCP</span>}
+                    {profile.skillIds.length > 0 && <span>· {profile.skillIds.length} skills</span>}
+                    {profile.commandIds.length > 0 && <span>· {profile.commandIds.length} commands</span>}
                   </span>
                 }
               >
-                {/* The agent's own defaults, synthesized rather than stored —
-                    there is nothing here to edit, and deleting it would only
-                    make the server hand it back. Adding a real profile for this
-                    agent is what overrides it. */}
-                {profile.virtual ? (
+                {!profile.hasApiKey && (
                   <Badge variant="outline" className="text-muted-foreground">
-                    from the agent
+                    no key
                   </Badge>
-                ) : (
-                  <>
-                    {!profile.hasApiKey && (
-                      <Badge variant="outline" className="text-muted-foreground">
-                        no key
-                      </Badge>
-                    )}
-                    <Button variant="ghost" size="icon-lg" title="Edit" onClick={() => void navigate(settingsFormPath("profiles", profile.id))}>
-                      <Pencil />
-                    </Button>
-                    <Button variant="ghost" size="icon-lg" title="Delete" onClick={() => remove(profile)}>
-                      <Trash2 />
-                    </Button>
-                  </>
                 )}
+                <Button variant="ghost" size="icon-lg" title="Edit" onClick={() => void navigate(settingsFormPath("profiles", profile.id))}>
+                  <Pencil />
+                </Button>
+                <Button variant="ghost" size="icon-lg" title="Delete" onClick={() => remove(profile)}>
+                  <Trash2 />
+                </Button>
               </Row>
-            ))}
-          </Group>
-        ))
+          ))}
+        </Group>
       )}
     </>
   )
@@ -158,22 +154,45 @@ function ProfileForm({
   settings: ServerSettings
   onDone: (saved: boolean) => void
 }) {
+  // The library the pickers below draw from.
+  const { state } = useStore()
   const [form, setForm] = React.useState(() => ({
     name: profile?.name ?? "",
-    agentId: profile?.agentId ?? agents[0]?.id ?? "",
     baseUrl: profile?.baseUrl ?? "",
     apiKey: "",
     defaultModel: profile?.defaultModel ?? "",
-    webSearch: profile?.webSearch?.enabled ?? false,
-    searchApiBaseUrl: profile?.webSearch?.searchApiBaseUrl ?? "",
-    searchApiToken: "",
-    searchModel: profile?.webSearch?.searchModel ?? "",
-    fetchModel: profile?.webSearch?.fetchModel ?? "",
-    knowledge: profile?.knowledge?.enabled ?? false,
+    logoUrl: profile?.logoUrl ?? "",
+    mcpServerIds: profile?.mcpServerIds ?? [],
+    skillIds: profile?.skillIds ?? [],
+    commandIds: profile?.commandIds ?? [],
   }))
-  const [hasWebSearchToken, setHasWebSearchToken] = React.useState(
-    (profile?.webSearch as { hasWebSearchToken?: boolean } | undefined)?.hasWebSearchToken ?? false,
-  )
+  /* Which agents this profile serves, and each one's optional base-URL
+     override. A new profile starts on the first registered agent, so the form
+     never saves a profile no thread could start on. */
+  const [links, setLinks] = React.useState<Record<string, { baseUrl: string }>>(() => {
+    const initial = Object.entries(profile?.agents ?? {}).map(
+      ([id, link]) => [id, { baseUrl: link?.baseUrl ?? "" }] as const
+    )
+    if (initial.length === 0 && agents[0]) return { [agents[0].id]: { baseUrl: "" } }
+    return Object.fromEntries(initial)
+  })
+  const toggleAgent = (id: string, on: boolean) =>
+    setLinks((current) => {
+      if (on) return current[id] ? current : { ...current, [id]: { baseUrl: "" } }
+      const { [id]: _dropped, ...rest } = current
+      return rest
+    })
+  const setAgentBaseUrl = (id: string, baseUrl: string) =>
+    setLinks((current) => ({ ...current, [id]: { ...current[id], baseUrl } }))
+  /* Agents this profile names that the server no longer registers: kept on the
+     form (and saved back) so editing an unrelated field cannot silently drop
+     them, and shown by id so the user can see what is dangling. */
+  const agentRows = [
+    ...agents,
+    ...Object.keys(links)
+      .filter((id) => !agents.some((a) => a.id === id))
+      .map((id) => ({ id, name: id, unregistered: true })),
+  ]
   const [rows, setRows] = React.useState<ModelRow[]>(() => toModelRows(profile?.models ?? []))
   const [busy, setBusy] = React.useState(false)
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
@@ -197,11 +216,11 @@ function ProfileForm({
     if (row?.id.trim() === form.defaultModel) set({ defaultModel: "" })
     setRows((r) => r.filter((x) => x.uid !== uid))
   }
-  /** Imports never clobber: a candidate whose id is already listed is skipped. */
-  const importModels = (candidates: ModelCandidate[]) =>
+  /** Imports never clobber: a row whose id is already listed is skipped. */
+  const importModels = (imported: ModelRow[]) =>
     setRows((r) => {
       const have = new Set(r.map((row) => row.id.trim()).filter(Boolean))
-      return [...r, ...candidates.filter((c) => c.id && !have.has(c.id)).map(candidateToRow)]
+      return [...r, ...imported.filter((row) => row.id.trim() && !have.has(row.id.trim()))]
     })
 
   const save = async (e: React.FormEvent) => {
@@ -209,28 +228,33 @@ function ProfileForm({
     setBusy(true)
     try {
       const models = rowsToModels(rows)
+      if (Object.keys(links).length === 0) {
+        throw new Error("Pick at least one agent this profile can run.")
+      }
       const payload = {
         name: form.name,
-        agentId: form.agentId,
+        // An empty override means "the shared base URL" and is left out.
+        agents: Object.fromEntries(
+          Object.entries(links).map(([id, link]): [string, ProfileAgentLink] => [
+            id,
+            link.baseUrl.trim() ? { baseUrl: link.baseUrl.trim() } : {},
+          ])
+        ),
         baseUrl: form.baseUrl,
         apiKey: form.apiKey,
         models,
         // A default that no longer exists in the list is dropped.
         defaultModel: models.some((m) => m.id === form.defaultModel) ? form.defaultModel : "",
-        webSearch: {
-          enabled: form.webSearch,
-          ...(form.searchApiBaseUrl ? { searchApiBaseUrl: form.searchApiBaseUrl } : {}),
-          ...(form.searchApiToken ? { searchApiToken: form.searchApiToken } : {}),
-          ...(form.searchModel ? { searchModel: form.searchModel } : {}),
-          ...(form.fetchModel ? { fetchModel: form.fetchModel } : {}),
-        },
-        knowledge: { enabled: form.knowledge },
+        logoUrl: form.logoUrl.trim(),
+        mcpServerIds: form.mcpServerIds,
+        skillIds: form.skillIds,
+        commandIds: form.commandIds,
       }
-      const saved = profile
-        ? await api<Profile>(settings, `/api/profiles/${profile.id}`, { method: "PUT", body: JSON.stringify(payload) })
-        : await api<Profile>(settings, "/api/profiles", { method: "POST", body: JSON.stringify(payload) })
-      setHasWebSearchToken((saved.webSearch as { hasWebSearchToken?: boolean } | undefined)?.hasWebSearchToken ?? false)
-      setForm((f) => ({ ...f, searchApiToken: "" }))
+      if (profile) {
+        await api<Profile>(settings, `/api/profiles/${profile.id}`, { method: "PUT", body: JSON.stringify(payload) })
+      } else {
+        await api<Profile>(settings, "/api/profiles", { method: "POST", body: JSON.stringify(payload) })
+      }
       onDone(true)
     } catch (err) {
       reportError(err, "Couldn't save the profile")
@@ -242,7 +266,7 @@ function ProfileForm({
     <>
       <FormPageHeader
         title={profile ? `Edit ${profile.name}` : "New profile"}
-        description="Configure the runtime, credentials, model catalog, and optional profile capabilities."
+        description="Credentials, model catalog, which agents run on it, and what every thread on it brings along."
         onBack={() => onDone(false)}
       />
       <PageForm onSubmit={save}>
@@ -250,21 +274,7 @@ function ProfileForm({
         <Field label="Name">
           <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
         </Field>
-        <Field label="Agent">
-          <Select value={form.agentId} onValueChange={(agentId) => set({ agentId: agentId ?? "" })}>
-            <SelectTrigger className="w-full">
-              <SelectValue>{agents.find((a) => a.id === form.agentId)?.name}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {agents.map((agent) => (
-                <SelectItem key={agent.id} value={agent.id}>
-                  {agent.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field label="Base URL" hint="Optional — defaults to the provider's own.">
+        <Field label="Base URL" hint="Optional — defaults to the provider's own. An agent below can override it.">
           <Input
             value={form.baseUrl}
             onChange={(e) => set({ baseUrl: e.target.value })}
@@ -275,7 +285,62 @@ function ProfileForm({
         <Field label="API key" hint={profile?.hasApiKey ? "Stored — leave empty to keep it." : "Never sent back to clients."}>
           <Input type="password" value={form.apiKey} onChange={(e) => set({ apiKey: e.target.value })} />
         </Field>
+        <Field
+          label="Logo URL"
+          hint="Optional — shown next to this profile in pickers. models.dev serves provider marks: https://models.dev/logos/<provider>.svg"
+        >
+          <div className="flex items-center gap-2">
+            {/* Live preview — the same component the pickers render, so what
+                you see here is what the composer shows. Empty falls back to
+                the agent's own mark. */}
+            <ProfileIcon
+              profile={{ logoUrl: form.logoUrl, agents: links }}
+              className="size-5"
+            />
+            <Input
+              value={form.logoUrl}
+              onChange={(e) => set({ logoUrl: e.target.value })}
+              placeholder="https://models.dev/logos/openrouter.svg"
+              className="font-mono text-xs"
+            />
+          </div>
+        </Field>
       </div>
+      {/* One provider, several runtimes: the same key and catalog reach each
+          agent through its own env template, so a profile names every agent it
+          serves rather than being made once per agent. The only thing that is
+          per agent is the endpoint — a gateway often serves Claude Code and
+          Codex at different paths. */}
+      <Field
+        label="Agents"
+        hint="Which agents can run on this profile. Each may point at its own base URL when the provider serves it at a different path."
+      >
+        <div className="grid gap-2">
+          {agentRows.map((agent) => {
+            const link = links[agent.id]
+            return (
+              <div key={agent.id} className="grid gap-2 rounded-md border border-border/60 p-2 sm:grid-cols-[minmax(10rem,auto)_1fr] sm:items-center">
+                <label className="flex items-center gap-2 text-sm">
+                  <Switch checked={!!link} onCheckedChange={(on) => toggleAgent(agent.id, on)} />
+                  <AgentIcon agentId={agent.id} className="size-4" />
+                  <span className={"unregistered" in agent ? "font-mono text-muted-foreground" : ""}>
+                    {agent.name}
+                  </span>
+                </label>
+                {link && (
+                  <Input
+                    value={link.baseUrl}
+                    onChange={(e) => setAgentBaseUrl(agent.id, e.target.value)}
+                    placeholder={form.baseUrl || "Base URL override (optional)"}
+                    aria-label={`${agent.name} base URL override`}
+                    className="font-mono text-xs"
+                  />
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </Field>
       <ModelsSection
         rows={rows}
         defaultModel={form.defaultModel}
@@ -289,53 +354,40 @@ function ProfileForm({
         onAdd={() => setRows((r) => [...r, blankModelRow()])}
         onImport={importModels}
       />
-      <Field
-        label="Web search via MCP"
-        hint="Replaces Claude Code's built-in WebSearch/WebFetch with the harness's own web-search tools. Unset fields inherit the server default in Settings › Web search."
-      >
-        <Switch checked={form.webSearch} onCheckedChange={(checked) => set({ webSearch: checked })} />
-      </Field>
-      {form.webSearch && (
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Search API base URL" hint="Optional — overrides the server default.">
-            <Input
-              value={form.searchApiBaseUrl}
-              onChange={(e) => set({ searchApiBaseUrl: e.target.value })}
-              placeholder="http://localhost:20128"
-              className="font-mono text-xs"
-            />
-          </Field>
-          <Field label="Search API token" hint={hasWebSearchToken ? "Stored — leave empty to keep it." : "Optional — overrides the server default."}>
-            <Input
-              type="password"
-              value={form.searchApiToken}
-              onChange={(e) => set({ searchApiToken: e.target.value })}
-            />
-          </Field>
-          <Field label="Search model" hint="Optional — overrides the server default.">
-            <Input
-              value={form.searchModel}
-              onChange={(e) => set({ searchModel: e.target.value })}
-              placeholder="search-combo"
-              className="font-mono text-xs"
-            />
-          </Field>
-          <Field label="Fetch model" hint="Optional — overrides the server default.">
-            <Input
-              value={form.fetchModel}
-              onChange={(e) => set({ fetchModel: e.target.value })}
-              placeholder="fetch-combo"
-              className="font-mono text-xs"
-            />
-          </Field>
-        </div>
-      )}
-      <Field
-        label="Knowledge base via MCP"
-        hint="Gives the agent a per-project knowledge base for this profile's projects. Off by default."
-      >
-        <Switch checked={form.knowledge} onCheckedChange={(checked) => set({ knowledge: checked })} />
-      </Field>
+      {/* The same three a project links. A project's say what the workspace
+          brings; a profile's say what the provider setup brings, to every
+          thread started on it whichever project it is in. The thread adds its
+          own on top (the Tools menu on a new thread's composer), and the
+          agent is spawned with the union of all three. */}
+      <FormSection label="Capabilities">
+        <Field label="MCP servers" hint="Manage the definitions in Settings › MCP servers.">
+          <Picker
+            items={state.mcpServers}
+            selected={form.mcpServerIds}
+            onToggle={(mcpServerIds) => set({ mcpServerIds })}
+            subtitle={mcpSubtitle}
+            empty="No MCP servers defined yet."
+          />
+        </Field>
+        <Field label="Skills" hint="Manage the paths in Settings › Skills.">
+          <Picker
+            items={state.skills}
+            selected={form.skillIds}
+            onToggle={(skillIds) => set({ skillIds })}
+            subtitle={(s) => s.path}
+            empty="No skills defined yet."
+          />
+        </Field>
+        <Field label="Slash commands" hint="Manage the prompts in Settings › Commands.">
+          <Picker
+            items={state.commands}
+            selected={form.commandIds}
+            onToggle={(commandIds) => set({ commandIds })}
+            subtitle={(c) => `/${c.name}`}
+            empty="No commands defined yet."
+          />
+        </Field>
+      </FormSection>
       <FormActions busy={busy} onCancel={() => onDone(false)} />
       </PageForm>
     </>

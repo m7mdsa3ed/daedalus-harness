@@ -2,7 +2,7 @@ import * as React from "react"
 import { Download, Pencil, Plus, Star, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { reportError } from "@/lib/errors"
-import { api, type ModelCandidate, type ModelsDevProvider, type ServerSettings } from "@/lib/settings"
+import { api, type ModelCandidate, type ServerSettings } from "@/lib/settings"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -16,13 +16,13 @@ import {
 } from "@/components/ui/combobox"
 import { Textarea } from "@/components/ui/textarea"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogFooter,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle,
+} from "@/components/ui/responsive-dialog"
 import { Field, Picker } from "./primitives"
 
 /* ── model rows (reference: profile-models.ts) ──
@@ -205,7 +205,9 @@ export function ModelsSection({
   onSetDefault: (uid: string) => void
   onRemove: (uid: string) => void
   onAdd: () => void
-  onImport: (candidates: ModelCandidate[]) => void
+  /** Rows the fetch dialog finished with — already filled from models.dev
+      where the user asked, so the form only has to append them. */
+  onImport: (rows: ModelRow[]) => void
 }) {
   const [editingUid, setEditingUid] = React.useState<string | null>(null)
   const [importing, setImporting] = React.useState(false)
@@ -226,7 +228,7 @@ export function ModelsSection({
       <div className="space-y-2">
         {rows.length === 0 ? (
           <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-pretty text-muted-foreground">
-            No models — this profile lets the agent use its own catalog. Add or import models to
+            No models — this profile lets the agent use its own catalog. Add or fetch models to
             override it.
           </p>
         ) : (
@@ -302,20 +304,30 @@ export function ModelsSection({
           <Button type="button" variant="outline" size="lg" onClick={onAdd}>
             <Plus className="size-4" /> Add model
           </Button>
-          <Button type="button" variant="outline" size="lg" onClick={() => setImporting(true)}>
-            <Download className="size-4" /> Import models
+          {/* Opens the panel below, which fetches at once — there is no source
+              to choose: the only one is the provider behind this profile's
+              credentials, and it needs a base URL to be asked. */}
+          <Button
+            type="button"
+            variant="outline"
+            size="lg"
+            disabled={!baseUrl.trim()}
+            title={baseUrl.trim() ? undefined : "Add a base URL first"}
+            onClick={() => setImporting(true)}
+          >
+            <Download className="size-4" /> Fetch models
           </Button>
         </div>
       </div>
       {importing && (
-        <ModelImportPanel
+        <FetchModelsDialog
           settings={settings}
           profileId={profileId}
           baseUrl={baseUrl}
           apiKey={apiKey}
           existingIds={rows.map((r) => r.id.trim()).filter(Boolean)}
-          onImport={(candidates) => {
-            onImport(candidates)
+          onImport={(imported) => {
+            onImport(imported)
             setImporting(false)
           }}
           onClose={() => setImporting(false)}
@@ -598,60 +610,8 @@ function ModelsDevMatch({
   )
 }
 
-/* ── import dialog ──
-   Two sources, one dialog: the provider behind the profile's credentials
-   (its own /models endpoint, enriched from models.dev server-side) and
-   models.dev's catalog browsed directly. */
-
-function ModelImportPanel({
-  settings,
-  profileId,
-  baseUrl,
-  apiKey,
-  existingIds,
-  onImport,
-  onClose,
-}: {
-  settings: ServerSettings
-  profileId: string
-  baseUrl: string
-  apiKey: string
-  existingIds: string[]
-  onImport: (candidates: ModelCandidate[]) => void
-  onClose: () => void
-}) {
-  return (
-    <section className="space-y-4 rounded-lg border bg-muted/20 p-4">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold">Import models</h3>
-        <Button type="button" variant="ghost" size="sm" onClick={onClose}>Close</Button>
-      </div>
-        <Tabs defaultValue="provider">
-          <TabsList>
-            <TabsTrigger value="provider">From provider</TabsTrigger>
-            <TabsTrigger value="catalog">From models.dev</TabsTrigger>
-          </TabsList>
-          <TabsContent value="provider">
-            <ProviderFetchTab
-              settings={settings}
-              profileId={profileId}
-              baseUrl={baseUrl}
-              apiKey={apiKey}
-              existingIds={existingIds}
-              onImport={onImport}
-              onClose={onClose}
-            />
-          </TabsContent>
-          <TabsContent value="catalog">
-            <CatalogImportTab settings={settings} existingIds={existingIds} onImport={onImport} onClose={onClose} />
-          </TabsContent>
-        </Tabs>
-    </section>
-  )
-}
-
-/** Candidate list shared by both tabs: the checkbox Picker keyed by a
-    composite key, with everything a summary line wants in `subtitle`. */
+/** The fetched candidates as a checkbox Picker, with everything a summary
+    line wants in `subtitle`. */
 function CandidatePicker({
   candidates,
   selected,
@@ -685,12 +645,22 @@ function CandidatePicker({
   )
 }
 
-/** The provider behind the profile's credentials: fetch its live /models list
-    and pick from it. There is nothing to type here — the fetch uses the same
-    base URL and key the profile itself does (the form's current values, which
-    is what the profile will be saved with), and the server enriches every
-    fetched id from models.dev before the list is shown. */
-function ProviderFetchTab({
+/* ── fetch dialog ──
+   One source: the provider behind the profile's credentials, its own /models
+   endpoint, enriched from models.dev server-side. Browsing models.dev's whole
+   catalog used to be a second tab, and it was the wrong question — a profile
+   can only run what its endpoint serves, and models.dev's role here is the
+   metadata. There is nothing to type either: the fetch uses the same base URL
+   and key the profile itself does (the form's current values, which is what
+   the profile will be saved with), so opening the dialog IS the request.
+
+   Two steps, because the two decisions are different: *which* of the served
+   models to add, and then *what each one is* — the server's enrichment is a
+   best guess by id, and a gateway's own ids ("oc/hy3-free") miss, so the
+   second step shows what each pick came back with and lets it be matched by
+   hand before anything lands in the form. Nothing is added until the last
+   button; Back returns to the picks with the matches kept. */
+function FetchModelsDialog({
   settings,
   profileId,
   baseUrl,
@@ -704,14 +674,18 @@ function ProviderFetchTab({
   baseUrl: string
   apiKey: string
   existingIds: string[]
-  onImport: (candidates: ModelCandidate[]) => void
+  onImport: (rows: ModelRow[]) => void
   onClose: () => void
 }) {
-  const [fetching, setFetching] = React.useState(false)
+  const [step, setStep] = React.useState<"pick" | "fill">("pick")
+  const [fetching, setFetching] = React.useState(true)
   const [fetched, setFetched] = React.useState<ModelCandidate[] | null>(null)
   const [selected, setSelected] = React.useState<string[]>([])
+  /* The rows being filled, keyed by candidate id. Built when Next is pressed
+     and kept across Back so a match made by hand survives a changed pick. */
+  const [drafts, setDrafts] = React.useState<Record<string, ModelRow>>({})
 
-  const fetchModels = async () => {
+  const fetchModels = React.useCallback(async () => {
     setFetching(true)
     setFetched(null)
     try {
@@ -732,177 +706,133 @@ function ProviderFetchTab({
       setSelected([])
     } catch (err) {
       reportError(err, "Couldn't fetch the provider's models")
+      setFetched([])
     } finally {
       setFetching(false)
     }
-  }
+  }, [settings, profileId, baseUrl, apiKey])
+
+  // Fetch on open. The credentials are captured when the dialog mounts, which
+  // is when the button was pressed; "Fetch again" re-asks with whatever has
+  // been typed since.
+  React.useEffect(() => {
+    void fetchModels()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Fresh candidates only; the provider may serve models this profile already lists.
   const candidates = (fetched ?? [])
     .filter((c) => c.id && !existingIds.includes(c.id))
     .map((c) => ({ ...c, key: c.id }))
 
-  const importSelected = () => {
-    const picked = candidates.filter((c) => selected.includes(c.key))
-    onImport(picked)
-    toast.success(`Imported ${picked.length} model${picked.length === 1 ? "" : "s"}`)
+  const picked = candidates.filter((c) => selected.includes(c.key))
+
+  const next = () => {
+    setDrafts((current) => {
+      const kept: Record<string, ModelRow> = {}
+      for (const c of picked) kept[c.id] = current[c.id] ?? candidateToRow(c)
+      return kept
+    })
+    setStep("fill")
+  }
+  const patchDraft = (id: string, patch: Partial<ModelRow>) =>
+    setDrafts((current) => ({ ...current, [id]: { ...current[id], ...patch } }))
+
+  const importAll = () => {
+    const rows = picked.map((c) => drafts[c.id]).filter(Boolean)
+    onImport(rows)
+    toast.success(`Imported ${rows.length} model${rows.length === 1 ? "" : "s"}`)
   }
 
   return (
-    <div className="space-y-3 pt-2">
-      <p className="text-xs text-pretty text-muted-foreground">
-        {baseUrl.trim()
-          ? `Fetches the live model list from ${baseUrl.trim()}, mapped against models.dev for names, context windows and pricing.`
-          : "Fetches the live model list from this profile's provider. Add a base URL above first."}
-      </p>
-      <div className="flex justify-end">
-        <Button
-          type="button"
-          variant="outline"
-          size="lg"
-          disabled={fetching || !baseUrl.trim()}
-          onClick={fetchModels}
-        >
-          {fetching ? "Fetching…" : "Fetch"}
-        </Button>
-      </div>
-      {fetched !== null && (
-        <>
-          <CandidatePicker candidates={candidates} selected={selected} onToggle={setSelected} />
-          <footer className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
-            <Button type="button" variant="outline" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="button" disabled={selected.length === 0} onClick={importSelected}>
-              Import {selected.length || ""} model{selected.length === 1 ? "" : "s"}
-            </Button>
-          </footer>
-        </>
-      )}
-    </div>
-  )
-}
-
-/** models.dev's catalog, searched server-side. Provider filter + debounced
-    query; every hit arrives already enriched, so importing is a plain copy. */
-function CatalogImportTab({
-  settings,
-  existingIds,
-  onImport,
-  onClose,
-}: {
-  settings: ServerSettings
-  existingIds: string[]
-  onImport: (candidates: ModelCandidate[]) => void
-  onClose: () => void
-}) {
-  const [providers, setProviders] = React.useState<ModelsDevProvider[] | null>(null)
-  const [provider, setProvider] = React.useState("all")
-  const [query, setQuery] = React.useState("")
-  const [results, setResults] = React.useState<ModelCandidate[] | null>(null)
-  const [loading, setLoading] = React.useState(false)
-  const [selected, setSelected] = React.useState<string[]>([])
-
-  React.useEffect(() => {
-    let cancelled = false
-    api<{ providers: ModelsDevProvider[] }>(settings, "/api/models-dev/providers")
-      .then((r) => !cancelled && setProviders(r.providers))
-      .catch((err) => {
-        reportError(err, "Couldn't load models.dev's providers")
-        if (!cancelled) setProviders([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [settings])
-
-  React.useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    const timer = setTimeout(() => {
-      const params = new URLSearchParams({ limit: "50" })
-      if (query.trim()) params.set("q", query.trim())
-      if (provider !== "all") params.set("provider", provider)
-      api<{ models: ModelCandidate[] }>(settings, `/api/models-dev/search?${params}`)
-        .then((r) => {
-          if (cancelled) return
-          setResults(r.models)
-          setSelected([])
-        })
-        .catch((err) => {
-          if (cancelled) return
-          reportError(err, "Couldn't search models.dev")
-          setResults([])
-        })
-        .finally(() => !cancelled && setLoading(false))
-    }, 300)
-    return () => {
-      cancelled = true
-      clearTimeout(timer)
-    }
-  }, [settings, query, provider])
-
-  // Composite keys (the same model id can exist under several providers), and
-  // only fresh candidates — a hit this profile already lists is noise.
-  const candidates = (results ?? [])
-    .filter((c) => c.id && !existingIds.includes(c.id))
-    .map((c) => ({ ...c, key: `${c.providerId}:${c.id}` }))
-
-  const importSelected = () => {
-    const picked = candidates
-      .filter((c) => selected.includes(c.key))
-      .map(({ key: _key, ...candidate }) => candidate)
-    onImport(picked)
-    toast.success(`Imported ${picked.length} model${picked.length === 1 ? "" : "s"}`)
-  }
-
-  return (
-    <div className="space-y-3 pt-2">
-      <div className="grid gap-2 sm:grid-cols-[1fr_2fr]">
-        <Select value={provider} onValueChange={(value) => setProvider(value ?? "all")}>
-          <SelectTrigger className="w-full">
-            <SelectValue>
-              {provider === "all" ? "All providers" : providers?.find((p) => p.id === provider)?.name}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All providers</SelectItem>
-            {(providers ?? []).map((p) => (
-              <SelectItem key={p.id} value={p.id}>
-                {p.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search models.dev…"
-        />
-      </div>
-      {providers !== null && providers.length === 0 ? (
-        <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-pretty text-muted-foreground">
-          models.dev is unreachable right now — try again later.
-        </p>
-      ) : results === null || loading ? (
-        <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
-          Searching…
-        </p>
-      ) : (
-        <CandidatePicker
-          candidates={candidates}
-          selected={selected}
-          onToggle={setSelected}
-        />
-      )}
-      <footer className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
-        <Button type="button" variant="outline" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button type="button" disabled={selected.length === 0} onClick={importSelected}>
-          Import {selected.length || ""} model{selected.length === 1 ? "" : "s"}
-        </Button>
-      </footer>
-    </div>
+    <ResponsiveDialog open onOpenChange={(open) => !open && onClose()}>
+      <ResponsiveDialogContent className="sm:max-w-lg">
+        {step === "pick" ? (
+          <>
+            <ResponsiveDialogHeader>
+              <ResponsiveDialogTitle>Fetch models</ResponsiveDialogTitle>
+              <ResponsiveDialogDescription>
+                The live model list from {baseUrl.trim()}. Pick the ones to add.
+              </ResponsiveDialogDescription>
+            </ResponsiveDialogHeader>
+            {fetching ? (
+              <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
+                Fetching…
+              </p>
+            ) : (
+              <CandidatePicker candidates={candidates} selected={selected} onToggle={setSelected} />
+            )}
+            <ResponsiveDialogFooter>
+              <Button
+                type="button"
+                variant="ghost"
+                className="sm:mr-auto"
+                disabled={fetching}
+                onClick={fetchModels}
+              >
+                Fetch again
+              </Button>
+              <Button type="button" variant="outline" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button type="button" disabled={fetching || picked.length === 0} onClick={next}>
+                Next{picked.length ? ` · ${picked.length}` : ""}
+              </Button>
+            </ResponsiveDialogFooter>
+          </>
+        ) : (
+          <>
+            <ResponsiveDialogHeader>
+              <ResponsiveDialogTitle>Fill from models.dev</ResponsiveDialogTitle>
+              <ResponsiveDialogDescription>
+                What each pick was recognised as. Match any the provider serves under its own id
+                to get the name, context window, pricing and efforts.
+              </ResponsiveDialogDescription>
+            </ResponsiveDialogHeader>
+            <div className="max-h-[60vh] divide-y overflow-y-auto rounded-lg border">
+              {picked.map((c) => {
+                const row = drafts[c.id]
+                if (!row) return null
+                const badges = summaryBadges(row)
+                return (
+                  <div key={c.id} className="space-y-2 p-3">
+                    <div className="min-w-0">
+                      <span className="block truncate text-sm font-medium">
+                        {row.label.trim() || row.id}
+                      </span>
+                      <span className="block truncate font-mono text-[11px] text-muted-foreground">
+                        {row.id}
+                      </span>
+                    </div>
+                    {badges.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {badges.map((badge) => (
+                          <Badge key={badge} variant="outline" className="font-normal text-muted-foreground">
+                            {badge}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                    <ModelsDevMatch
+                      row={row}
+                      settings={settings}
+                      onPatch={(patch) => patchDraft(c.id, patch)}
+                    />
+                  </div>
+                )
+              })}
+            </div>
+            <ResponsiveDialogFooter>
+              <Button type="button" variant="outline" onClick={() => setStep("pick")}>
+                Back
+              </Button>
+              <Button type="button" onClick={importAll}>
+                Import {picked.length} model{picked.length === 1 ? "" : "s"}
+              </Button>
+            </ResponsiveDialogFooter>
+          </>
+        )}
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   )
 }

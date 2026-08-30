@@ -8,7 +8,7 @@ import { refreshNotificationOffer } from "@/lib/notifications"
 import { setupPush } from "@/lib/push"
 import { loadSettings, type ServerSettings } from "@/lib/settings"
 import { initialState, reducer, StoreContext } from "@/lib/store"
-import { ThemeProvider } from "@/lib/theme"
+import { ThemeProvider, useTheme } from "@/lib/theme"
 import { reportError } from "@/lib/errors"
 
 function App() {
@@ -33,11 +33,21 @@ function App() {
               onCancel={settings && adding ? () => setAdding(false) : undefined}
             />
           )}
-          <Toaster position="top-center" />
+          <ThemedToaster />
         </StoreContext.Provider>
       </ConfirmProvider>
     </ThemeProvider>
   )
+}
+
+/* The stock shadcn Toaster reads next-themes, which is not mounted here — it
+   fell back to the OS scheme while the toast background followed the app's
+   palette, so a dark-mode app on a light OS drew sonner's light-theme text on
+   a dark popover. `theme` is spread last in the component, so passing the
+   app's own resolved mode overrides it without editing the shadcn file. */
+function ThemedToaster() {
+  const { resolved } = useTheme()
+  return <Toaster position="top-center" theme={resolved} />
 }
 
 function Connected({

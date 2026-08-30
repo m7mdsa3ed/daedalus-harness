@@ -1,5 +1,6 @@
 import { Cpu } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { profileSupports } from "@/lib/settings"
 import { useStore } from "@/lib/store"
 import { PageHeader, Group, Row, EmptyCard } from "./primitives"
 import { sectionMeta } from "./sections"
@@ -15,7 +16,7 @@ export function AgentsPage() {
       ) : (
         <Group>
           {state.agents.map((agent) => {
-            const uses = state.profiles.filter((p) => p.agentId === agent.id).length
+            const uses = state.profiles.filter((p) => profileSupports(p, agent.id)).length
             return (
               <Row
                 key={agent.id}

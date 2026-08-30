@@ -4,9 +4,10 @@
    /settings/<id> — with its page component in this directory; register new
    sections here and add a <Route> in app-shell's route tree. */
 import {
-  AppWindow,
   Bell,
+  BookOpen,
   Cpu,
+  DatabaseBackup,
   FolderIcon,
   KeyRound,
   Palette,
@@ -22,17 +23,9 @@ export const SETTINGS_SECTIONS = [
     id: "general",
     label: "General",
     icon: Server,
-    title: "Connection",
+    title: "General",
     description:
-      "The harness server this client talks to. Projects, profiles and agents live there, shared by every connected client.",
-  },
-  {
-    id: "app",
-    label: "App",
-    icon: AppWindow,
-    title: "App",
-    description:
-      "Installing this client on the device, what the browser makes of the page's security, and the site data it keeps. All local — the harness server is not involved.",
+      "The harness servers this device knows and which one it talks to, plus the device side of the install: whether the app is installed, what the browser makes of the page's security, and the site data it keeps.",
   },
   {
     id: "appearance",
@@ -55,7 +48,15 @@ export const SETTINGS_SECTIONS = [
     icon: FolderIcon,
     title: "Projects",
     description:
-      "A project is the workspace a thread runs in: directory, MCP servers and skills.",
+      "A project is the workspace a thread runs in: a directory on the server and a name. What a thread brings into it comes from its profile and its own picks.",
+  },
+  {
+    id: "knowledge",
+    label: "Knowledge base",
+    icon: BookOpen,
+    title: "Knowledge base",
+    description:
+      "Everything the agents have written to the per-project knowledge base through the built-in knowledge MCP server, across all projects.",
   },
   {
     id: "mcp",
@@ -63,7 +64,7 @@ export const SETTINGS_SECTIONS = [
     icon: Plug,
     title: "MCP servers",
     description:
-      "Reusable MCP server definitions. Attach them to a project; the client sends them to the agent in ACP session/new.",
+      "Reusable MCP server definitions. Attach them to a profile, or pick them on a new thread; the server sends them to the agent in ACP session/new.",
   },
   {
     id: "skills",
@@ -71,7 +72,7 @@ export const SETTINGS_SECTIONS = [
     icon: Sparkles,
     title: "Skills",
     description:
-      "Reusable skill directories on the server. Attach them to a project; they are symlinked into <cwd>/.claude/skills at spawn.",
+      "Reusable skill directories on the server. Attach them to a profile, or pick them on a new thread; they are symlinked into <cwd>/.claude/skills at spawn.",
   },
   {
     id: "commands",
@@ -79,7 +80,7 @@ export const SETTINGS_SECTIONS = [
     icon: SquareSlash,
     title: "Slash commands",
     description:
-      "Reusable prompts invoked as /name from the composer. Attach them to a project; they are written into <cwd>/.claude/commands at spawn and the agent advertises them like its own.",
+      "Reusable prompts invoked as /name from the composer. Attach them to a profile, or pick them on a new thread; they are written into <cwd>/.claude/commands at spawn and the agent advertises them like its own.",
   },
   {
     id: "profiles",
@@ -94,6 +95,14 @@ export const SETTINGS_SECTIONS = [
     icon: Cpu,
     title: "Agents",
     description: "ACP runtimes registered on the server (data/agents.json).",
+  },
+  {
+    id: "backup",
+    label: "Backup",
+    icon: DatabaseBackup,
+    title: "Backup",
+    description:
+      "Export everything this server stores as one JSON file, or restore one — profiles, projects, the library, knowledge, threads, schedules, tasks and the web-search backend.",
   },
   {
     id: "web-search",
@@ -115,7 +124,8 @@ export const SETTINGS_NAV_GROUPS: readonly {
   label: string
   sections: readonly SettingsSectionId[]
 }[] = [
-  { label: "Preferences", sections: ["general", "app", "appearance", "notifications", "web-search"] },
-  { label: "Workspace", sections: ["projects", "mcp", "skills", "commands"] },
+  { label: "Preferences", sections: ["general", "appearance", "notifications", "web-search"] },
+  { label: "Workspace", sections: ["projects", "knowledge", "mcp", "skills", "commands"] },
   { label: "Agents", sections: ["profiles", "agents"] },
+  { label: "Server", sections: ["backup"] },
 ] as const

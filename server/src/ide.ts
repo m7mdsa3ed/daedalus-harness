@@ -34,9 +34,11 @@
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
+
+import { z } from "zod";
 
 import { DATA_DIR } from "./config.js";
 import { WorkspaceError, projectRoot } from "./workspace-fs.js";
@@ -301,6 +303,60 @@ function statusOf(projectId: string, ide: Ide | undefined): IdeStatus {
   };
 }
 
+/* ── Theme ──
+   The editor follows the app's palette. VS Code has no API for that from
+   outside, but it has two settings that together amount to one:
+   `workbench.colorTheme` picks the base (light or dark — the syntax colours
+   come from there) and `workbench.colorCustomizations` paints the chrome over
+   it, key by key, in plain hex. Both live in the editor's *user* settings —
+   `data/ide/<project>/User/settings.json`, ours to write since the harness
+   owns the user-data dir — and VS Code watches that file, so a write lands
+   in the open workbench without a reload. The map is computed in the browser
+   (it is the only place the palette's CSS resolves) and only merged here: the
+   user's other settings in that file are theirs and are left as they were. */
+
+const HEX = /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i;
+
+export const IdeThemeSchema = z.object({
+  colorTheme: z.string().min(1).max(100),
+  colorCustomizations: z
+    .record(z.string().min(1).max(100), z.string().regex(HEX))
+    .refine((map) => Object.keys(map).length <= 200, "too many colours"),
+});
+export type IdeTheme = z.infer<typeof IdeThemeSchema>;
+
+const THEME_KEYS = ["workbench.colorTheme", "workbench.colorCustomizations"] as const;
+
+/** Write the palette into the editor's user settings, keeping everything else. */
+export function applyIdeTheme(projectId: string, theme: IdeTheme): void {
+  projectRoot(projectId);
+  const userDir = join(DATA_DIR, "ide", projectId, "User");
+  const file = join(userDir, "settings.json");
+  let settings: Record<string, unknown> = {};
+  if (existsSync(file)) {
+    try {
+      const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+        settings = parsed as Record<string, unknown>;
+    } catch {
+      /* VS Code's settings file may carry comments or trailing commas, which
+         it tolerates and JSON.parse does not. Rewriting it from a failed parse
+         would throw the user's settings away for a colour, so the theme
+         yields instead. */
+      throw fail(409, "The editor's settings.json isn't plain JSON, so the theme wasn't applied.");
+    }
+  }
+  if (
+    settings[THEME_KEYS[0]] === theme.colorTheme &&
+    JSON.stringify(settings[THEME_KEYS[1]]) === JSON.stringify(theme.colorCustomizations)
+  )
+    return;
+  settings[THEME_KEYS[0]] = theme.colorTheme;
+  settings[THEME_KEYS[1]] = theme.colorCustomizations;
+  mkdirSync(userDir, { recursive: true });
+  writeFileSync(file, JSON.stringify(settings, null, 4) + "\n");
+}
+
 export function ideStatus(projectId: string): IdeStatus {
   projectRoot(projectId);
   return statusOf(projectId, instances.get(projectId));
@@ -315,8 +371,11 @@ export function ideStatus(projectId: string): IdeStatus {
  * race. It returns as soon as the process is up and `/healthz` answers, so a
  * `ready` status means the iframe has something to load.
  */
-export async function startIde(projectId: string): Promise<IdeStatus> {
+export async function startIde(projectId: string, theme?: IdeTheme): Promise<IdeStatus> {
   const cwd = projectRoot(projectId);
+  /* Before the spawn, so the first paint is already in the palette; and for a
+     running editor too, since the file is watched. */
+  if (theme) applyIdeTheme(projectId, theme);
 
   const existing = instances.get(projectId);
   if (existing && existing.state !== "failed") return statusOf(projectId, existing);
@@ -353,6 +412,17 @@ export async function startIde(projectId: string): Promise<IdeStatus> {
     "none",
     "--bind-addr",
     `127.0.0.1:${port}`,
+    /* `--bind-addr` is not the last word: code-server's `bindAddrFromArgs`
+       lets `PORT` and `CODE_SERVER_HOST` in the environment override it, and
+       only the explicit `--host`/`--port` flags beat the environment. The
+       harness inherits its env into the child, and `PORT` is one of the
+       names `loadConfig` accepts for the harness's *own* port — so an install
+       started with `PORT=4001` had every editor try to bind 4001 and fail
+       with EADDRINUSE against the process that spawned it. */
+    "--host",
+    "127.0.0.1",
+    "--port",
+    String(port),
     "--disable-telemetry",
     "--disable-update-check",
     "--disable-workspace-trust",
@@ -363,7 +433,12 @@ export async function startIde(projectId: string): Promise<IdeStatus> {
     cwd,
   ];
 
-  const proc = spawn(binary, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+  /* Belt and braces with the flags above: the env code-server sees carries
+     none of the names it reads a bind address from. */
+  const env = { ...process.env };
+  delete env.PORT;
+  delete env.CODE_SERVER_HOST;
+  const proc = spawn(binary, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
 
   const ide: Ide = {
     projectId,

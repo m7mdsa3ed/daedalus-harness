@@ -104,27 +104,34 @@
       #boot-splash .boot-seq {
         display: flex;
         align-items: center;
-        gap: 14px;
-        animation: boot-hold 1700ms linear forwards;
+        gap: 12px;
+        /* boot-rise is the entrance; boot-hold stays last so its animationend
+           is still what dismisses the splash. */
+        animation:
+          boot-rise 560ms cubic-bezier(0.22, 1, 0.36, 1) both,
+          boot-hold 1700ms linear forwards;
       }
-      #boot-splash svg { width: 56px; height: 56px; color: var(--boot-mark); }
+      #boot-splash svg { width: 44px; height: 44px; color: var(--boot-mark); }
       /* pathLength="1" normalises every path, so one dash rule draws them all
          regardless of their real length. */
       #boot-splash svg path {
         stroke-dasharray: 1;
         stroke-dashoffset: 1;
-        animation: boot-draw 520ms ease-out forwards;
+        animation: boot-draw 560ms cubic-bezier(0.65, 0, 0.35, 1) forwards;
       }
-      #boot-splash svg path:nth-child(2) { animation-delay: 180ms; }
-      /* The centre lands last and does not draw — it pops. */
+      #boot-splash svg path:nth-child(2) { animation-delay: 200ms; }
+      /* The centre lands last and does not draw — it pops, with a little spring. */
       #boot-splash svg path:nth-child(3) {
-        animation: boot-core 260ms 460ms ease-out forwards;
+        animation: boot-core 320ms 520ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
         stroke-dashoffset: 0;
         opacity: 0;
+        transform-box: fill-box;
+        transform-origin: center;
+        transform: scale(0);
       }
       #boot-splash .boot-name {
         display: flex;
-        font: 600 38px/1.25 "Cormorant Garamond", Georgia, "Times New Roman", serif;
+        font: italic 600 31px/1.25 "Playfair Display", Georgia, "Times New Roman", serif;
         letter-spacing: 0.01em;
         color: var(--boot-fg);
       }
@@ -135,10 +142,14 @@
         display: inline-block;
         padding: 0 0.2em 0.1em 0.08em;
         clip-path: inset(-25% 100% -25% 0);
-        animation: boot-write 950ms 480ms cubic-bezier(0.65, 0, 0.35, 1) forwards;
+        animation: boot-write 900ms 520ms cubic-bezier(0.65, 0, 0.35, 1) forwards;
+      }
+      @keyframes boot-rise {
+        from { opacity: 0; transform: translateY(6px) scale(0.98); }
+        to { opacity: 1; transform: none; }
       }
       @keyframes boot-draw { to { stroke-dashoffset: 0; } }
-      @keyframes boot-core { from { opacity: 0; } to { opacity: 1; } }
+      @keyframes boot-core { from { opacity: 0; transform: scale(0); } to { opacity: 1; transform: scale(1); } }
       @keyframes boot-write { to { clip-path: inset(-25% -15% -25% 0); } }
       /* Pure gate: no visual effect, it only marks when the sequence is over. */
       @keyframes boot-hold { from { opacity: 1; } to { opacity: 1; } }
@@ -146,9 +157,9 @@
         /* No movement — mark and wordmark appear fully formed — but the splash
            still holds briefly: boot-hold's end is what dismisses it (main.tsx),
            so near-zero here made the splash invisible, not calm. */
-        #boot-splash svg path { stroke-dashoffset: 0; opacity: 1; animation: none; }
+        #boot-splash svg path { stroke-dashoffset: 0; opacity: 1; transform: none; animation: none; }
         #boot-splash .boot-name .boot-word { clip-path: none; animation: none; }
-        #boot-splash .boot-seq { animation-duration: 700ms; }
+        #boot-splash .boot-seq { animation: boot-hold 700ms linear forwards; }
       }
     </style>
   </head>
@@ -195,7 +206,7 @@
           };
           if (document.fonts && document.fonts.load) {
             var cap = setTimeout(go, 300);
-            document.fonts.load('600 38px "Cormorant Garamond"').then(
+            document.fonts.load('italic 600 31px "Playfair Display"').then(
               function () { clearTimeout(cap); go(); },
               function () { clearTimeout(cap); go(); }
             );

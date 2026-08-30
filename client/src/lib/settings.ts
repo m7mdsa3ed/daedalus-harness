@@ -97,6 +97,13 @@ export function setActiveServer(id: string): void {
   write({ ...store, activeId: id })
 }
 
+/** Relabels a connection without touching which one is active — unlike
+    `saveSettings`, which always activates the entry it writes. */
+export function renameServer(id: string, name: string): void {
+  const store = read()
+  write({ ...store, servers: store.servers.map((s) => (s.id === id ? { ...s, name } : s)) })
+}
+
 /** Forgets one connection; the next one in the list becomes active.
     Its saved workspace layout goes with it — the key is per server, and a
     layout nothing can reach again is a key that never gets collected. */
@@ -216,8 +223,9 @@ export function wsUrl(
   // it one event at a time, which this client still handles.
   url.searchParams.set("batch", "1")
   /* Ask for only the tail of a very long thread, and page the rest back on
-     demand (`load_earlier`). Also ignored by an older server, which sends the
-     whole log — the same transcript, just paid for up front. */
+     demand (`load_earlier`). The window is in **steps** (turns), so the
+     replay is always whole turns. Also ignored by an older server, which
+     sends the whole log — the same transcript, just paid for up front. */
   if (window > 0) url.searchParams.set("window", String(window))
   return url.toString()
 }
@@ -244,8 +252,24 @@ export interface McpServerHttp {
   headers: { name: string; value: string }[]
 }
 
-/** Library entries projects link to by id. */
-export type McpServerDef = (McpServerStdio | McpServerHttp) & { id: string }
+/** One of the harness's own servers, in the library as a row that holds
+    nothing but which one it is — command, env and credentials are synthesized
+    at spawn from the server's config and the thread's project. Injected from
+    the MCP page rather than typed in. */
+export interface McpServerBuiltin {
+  type: "builtin"
+  name: string
+  builtin: "web-search" | "knowledge"
+}
+
+/** Library entries projects, profiles and threads link to by id. */
+export type McpServerDef = (McpServerStdio | McpServerHttp | McpServerBuiltin) & { id: string }
+
+/** The one-line description a picker shows under an MCP server's name. */
+export function mcpSubtitle(s: McpServerDef): string {
+  if (s.type === "builtin") return s.builtin === "web-search" ? "built-in · web search + fetch" : "built-in · project knowledge base"
+  return s.type === "http" ? s.url : [s.command, ...s.args].join(" ")
+}
 
 export interface SkillDef {
   id: string
@@ -274,11 +298,22 @@ export interface ImportCandidates {
   commands: (Omit<CommandDef, "id"> & { source: string })[]
 }
 
-/** Agent configuration used in a session (credentials, models). */
+/** What a profile says about one of the agents it can spawn. The key set of
+    `Profile.agents` is the contract (which runtimes this provider serves); the
+    value is the little that differs per agent on one provider. */
+export interface ProfileAgentLink {
+  /** Overrides the profile's shared baseUrl for this agent only — a gateway
+      often serves Claude Code and Codex at different paths. Empty = shared. */
+  baseUrl?: string
+}
+
+/** Provider configuration used in a session (credentials, models). Not bound
+    to one agent: `agents` names every runtime it can spawn, and a thread is a
+    (profile, agent) pair chosen when it is started. */
 export interface Profile {
   id: string
   name: string
-  agentId: string
+  agents: Record<string, ProfileAgentLink>
   baseUrl: string
   hasApiKey: boolean
   /** Synthesized by the server for an agent with no profile of its own: the
@@ -291,20 +326,24 @@ export interface Profile {
       classifier above all). Empty means "the session model". Not one of
       `models`: nothing may pick it for a thread. */
   smallModel?: string
-  /** Replace the agent's built-in web tools with the harness's web-search MCP
-      server. A profile opts in; null means off. The rest override the server
-      default, and the token is redacted (never sent back). */
-  webSearch?: {
-    enabled: boolean
-    searchApiBaseUrl?: string
-    searchApiToken?: undefined
-    searchModel?: string
-    fetchModel?: string
-    hasWebSearchToken?: boolean
-  }
-  /** Opt the agent into the harness's `knowledge` MCP server. Off by default. */
-  knowledge?: { enabled: boolean }
+  /** Logo shown next to the profile in pickers — a URL. Empty means "no logo
+      of its own": the client falls back to the agent's mark, which is also
+      what the virtual Default profile always shows. */
+  logoUrl?: string
+  /** Library entries every thread on this profile gets, on top of its
+      project's. The same three a project and a thread carry; the agent sees
+      the union. */
+  mcpServerIds: string[]
+  skillIds: string[]
+  commandIds: string[]
 }
+
+/** The agents a profile can spawn, in the order they were saved. */
+export const profileAgentIds = (profile: Pick<Profile, "agents">): string[] =>
+  Object.keys(profile.agents ?? {})
+
+export const profileSupports = (profile: Pick<Profile, "agents">, agentId: string): boolean =>
+  Object.hasOwn(profile.agents ?? {}, agentId)
 
 export interface ModelOption {
   id: string
@@ -330,12 +369,6 @@ export interface ModelCandidate extends ModelOption {
   providerName?: string
 }
 
-/** A provider in models.dev's catalog (GET /api/models-dev/providers). */
-export interface ModelsDevProvider {
-  id: string
-  name: string
-}
-
 /** Workspace a session runs in. */
 export interface Project {
   id: string
@@ -343,9 +376,9 @@ export interface Project {
   cwd: string
   /** Optional free-text notes; null on rows created before the field existed. */
   description: string | null
-  mcpServerIds: string[]
-  skillIds: string[]
-  commandIds: string[]
+  /** Logo shown wherever the project is named — a URL. Empty means "no logo",
+      and `ProjectIcon` draws the project's initial instead. */
+  logoUrl?: string
 }
 
 /** One directory on the server, as `GET /api/fs/list` reports it. */
@@ -385,6 +418,12 @@ export interface SessionMeta {
   /** Client-only, draft-only: settings picked against the option set the agent
       last advertised (`lib/agent-options`), replayed once session/new answers. */
   configChoices?: Record<string, string | boolean>
+  /** This thread's own library picks, on top of what its project and profile
+      link. Chosen on the draft, sent with `POST /api/sessions`, and reported
+      back by the server for the thread's life. */
+  mcpServerIds?: string[]
+  skillIds?: string[]
+  commandIds?: string[]
 }
 
 /** A scheduled prompt: the server sends `text` to `sessionId`'s agent at

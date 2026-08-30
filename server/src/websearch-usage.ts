@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, count, desc, eq } from "drizzle-orm";
 import type * as acp from "@agentclientprotocol/sdk";
+import type { SessionUpdate } from "./protocol.js";
 import { db, webSearchUsage } from "./db/index.js";
 
 export type WebSearchUsageTool = "search" | "fetch";
@@ -42,7 +43,7 @@ const isTerminalStatus = (status: string): boolean =>
   status === "completed" || status === "failed" || status === "cancelled";
 
 /** Record live calls only. SessionManager excludes ACP history replay before calling this. */
-export function recordWebSearchUsage(context: WebSearchUsageContext, update: acp.SessionUpdate): void {
+export function recordWebSearchUsage(context: WebSearchUsageContext, update: SessionUpdate): void {
   if (update.sessionUpdate === "tool_call") {
     const tool = toolOf(update);
     if (!tool) return;

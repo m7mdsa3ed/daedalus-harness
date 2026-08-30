@@ -5,6 +5,7 @@
    the same control to look at — the difference between them is what happens on
    select, and that is the caller's business, not the row's. */
 import type * as acp from "@agentclientprotocol/sdk"
+import type * as React from "react"
 import {
   DropdownMenuPortal,
   DropdownMenuRadioGroup,
@@ -18,6 +19,8 @@ import { flattenSelectOptions } from "@/lib/session-options"
 export interface Choice {
   value: string
   name: string
+  /** A mark drawn before the name — a profile's logo, an agent's brand. */
+  icon?: React.ReactNode
 }
 
 export function MenuRow({
@@ -31,12 +34,15 @@ export function MenuRow({
   choices: Choice[]
   onSelect: (value: string) => void
 }) {
-  const current = choices.find((choice) => choice.value === value)?.name ?? value
+  const current = choices.find((choice) => choice.value === value)
   return (
     <DropdownMenuSub>
       <DropdownMenuSubTrigger>
         <span className="flex-1">{label}</span>
-        <span className="max-w-24 truncate text-xs text-muted-foreground">{current}</span>
+        {current?.icon}
+        <span className="max-w-24 truncate text-xs text-muted-foreground">
+          {current?.name ?? value}
+        </span>
       </DropdownMenuSubTrigger>
       <DropdownMenuPortal>
         <DropdownMenuSubContent>
@@ -46,7 +52,8 @@ export function MenuRow({
           >
             {choices.map((choice) => (
               <DropdownMenuRadioItem key={choice.value} value={choice.value}>
-                {choice.name}
+                {choice.icon}
+                <span className="truncate">{choice.name}</span>
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>

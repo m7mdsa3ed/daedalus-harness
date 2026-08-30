@@ -151,7 +151,7 @@ export function parseColor(value: string): { hex: string; alpha: number } {
 
 /** Flatten a translucent token onto the surface it sits on, so the editor can
     offer one opaque swatch without changing how the palette reads. */
-function composite(hex: string, alpha: number, over: string): string {
+export function composite(hex: string, alpha: number, over: string): string {
   if (alpha >= 1) return hex
   const channels = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16))
   const [fr, fg, fb] = channels(hex)
