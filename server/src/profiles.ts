@@ -29,6 +29,12 @@ export const ProfileInputSchema = z.object({
     )
     .default([]),
   defaultModel: z.string().optional().default(""),
+  /** Model for the agent's cheap side-jobs (Claude Code's Bash permission
+      classifier above all). Empty means "the session model", which is what a
+      profile promises everywhere else; naming one separately is for a gateway
+      that serves a genuinely cheaper tier worth using. Deliberately a bare id
+      and not a `models[]` entry — nothing may pick it for a thread. */
+  smallModel: z.string().optional().default(""),
   /** Replace the agent's built-in web tools with the harness's `web-search` MCP
       server. A profile opts in; unset means off. The other fields override the
       server-global `webSearch` in config.json — each only when set, and the
@@ -50,7 +56,10 @@ export const ProfileInputSchema = z.object({
 });
 
 export type ProfileInput = z.infer<typeof ProfileInputSchema>;
-export type Profile = Omit<ProfileInput, "webSearch" | "knowledge"> & {
+export type Profile = Omit<ProfileInput, "webSearch" | "knowledge" | "smallModel"> & {
+  /** Null on rows predating the column; `resolveSpawn` reads it as empty, which
+      falls back to the session model. */
+  smallModel: string | null;
   id: string;
   /** Not stored: synthesized for an agent so it can always be run as it ships.
       See `defaultProfileFor`. Nothing may edit or delete one. */
@@ -91,6 +100,7 @@ export function defaultProfileFor(agentId: string, _agentName?: string): Profile
     apiKey: "",
     models: [],
     defaultModel: "",
+    smallModel: "",
     webSearch: { enabled: false },
     knowledge: { enabled: false },
     virtual: true,
@@ -107,8 +117,9 @@ export function isVirtualProfile(id: string): boolean {
 function toProfile(row: Record<string, unknown>): Profile {
   const { id, ...rest } = row;
   return {
-    ...(rest as Omit<ProfileInput, "webSearch" | "knowledge">),
+    ...(rest as Omit<ProfileInput, "webSearch" | "knowledge" | "smallModel">),
     id: id as string,
+    smallModel: (row.smallModel as string | null | undefined) ?? "",
     webSearch: (row.webSearch as { enabled: boolean } | undefined | null) ?? { enabled: false },
     knowledge: (row.knowledge as { enabled: boolean } | undefined | null) ?? { enabled: false },
   };

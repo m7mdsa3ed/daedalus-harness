@@ -49,6 +49,34 @@ export interface RestoreState {
   configOptions: acp.SessionConfigOption[];
 }
 
+export type HistoryStrategy = "native-revert" | "fork-checkpoint" | "unsupported";
+
+export interface HistoryCheckpointSummary {
+  id: string;
+  turnId: string;
+  promptText: string;
+  createdAt: number;
+  completedAt: number | null;
+  status: string;
+}
+
+export interface HistoryBranchSummary {
+  id: string;
+  label: string;
+  sourceCheckpointId: string;
+  createdAt: number;
+}
+
+export interface HistoryState {
+  strategy: HistoryStrategy;
+  available: boolean;
+  busy: boolean;
+  reason?: string;
+  conflict?: string;
+  checkpoints: HistoryCheckpointSummary[];
+  branches: HistoryBranchSummary[];
+}
+
 // ---- client -> server ----
 
 /**
@@ -63,7 +91,9 @@ export type ThreadCommand =
   | { id: number; cmd: "set_config_option"; configId: string; value: string | boolean }
   | { cmd: "answer_permission"; requestId: string; response: acp.RequestPermissionResponse }
   | { cmd: "answer_elicitation"; requestId: string; response: acp.CreateElicitationResponse }
-  | { id: number; cmd: "load_earlier"; before: number };
+  | { id: number; cmd: "load_earlier"; before: number }
+  | { id: number; cmd: "revert"; checkpointId: string }
+  | { id: number; cmd: "recover_branch"; branchId: string };
 
 // ---- server -> client ----
 
@@ -99,6 +129,7 @@ export type ThreadEvent =
       /** Set when this process came up on an empty session because the thread's
           conversation could not be loaded. Absent is the normal case. */
       historyLost?: HistoryLost;
+      history: HistoryState;
     }
   | { ev: "caught_up"; cursor: number; promptActive: boolean }
   /** The replay, in bulk. A container, not a fifth journaled kind: the events
@@ -135,11 +166,12 @@ export type ThreadEvent =
     }
   /** A turn began, and whose words began it. Fanned out to every peer except
       the sender, which already showed its own message. */
-  | { ev: "turn_started"; seq: number; text: string }
+  | { ev: "turn_started"; seq: number; turnId: string; text: string }
   /** `promptText` is what lets a replayed failure still offer Retry. */
   | {
       ev: "turn_ended";
       seq: number;
+      turnId: string;
       usage: acp.Usage | null;
       error?: WireError;
       promptText?: string;
@@ -157,5 +189,7 @@ export type ThreadEvent =
       includes the WebSocket hop to the browser. */
   | { ev: "ttft"; ms: number }
   | { ev: "task_event"; transcriptDir: string; event: Record<string, unknown> }
+  | { ev: "history_state"; history: HistoryState }
+  | { ev: "history_reset"; history: HistoryState }
   | { ev: "reply"; id: number; result?: unknown; error?: undefined }
   | { ev: "reply"; id: number; error: WireError; result?: undefined };

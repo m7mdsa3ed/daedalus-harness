@@ -32,10 +32,10 @@ import {
   REQUEST_BUTTON,
 } from "./agent-request"
 import { ComposerStripItem } from "./composer-strip"
-import { Prose } from "./tool-parts"
+import { FileBadge, Prose } from "./tool-parts"
 import { KIND_ICONS, KIND_LABELS, ToolCallContent } from "./thread-items"
 import type { PendingPermission } from "@/lib/store"
-import { extractPlanProposalFromPermission, toolDescription } from "@/lib/tools"
+import { extractPlanProposalFromPermission, toolDescription, toolHeading } from "@/lib/tools"
 import { cn } from "@/lib/utils"
 
 /**
@@ -83,11 +83,21 @@ function Label({ children }: { children: React.ReactNode }) {
   )
 }
 
-function MetaRow({ label, value }: { label: string; value: string }) {
+function MetaRow({
+  label,
+  value,
+  mono = true,
+}: {
+  label: string
+  value: string
+  mono?: boolean
+}) {
   return (
     <>
       <dt className="text-muted-foreground/70">{label}</dt>
-      <dd className="min-w-0 font-mono break-all">{value}</dd>
+      <dd className={cn("min-w-0 break-words", mono ? "font-mono break-all" : "whitespace-pre-wrap")}>
+        {value}
+      </dd>
     </>
   )
 }
@@ -112,11 +122,25 @@ export function ComposerApproval({ permission }: { permission: PendingPermission
      margin carries it and everything after it to the opposite edge of the row,
      so deny never sits beside its tempting affirmative. */
   const rejectStart = request.options.findIndex((o) => o.kind.startsWith("reject"))
-  const heading =
-    toolDescription({ meta: call._meta, rawInput: call.rawInput }) ||
-    call.title ||
-    call.name ||
-    call.toolCallId
+  /* The collapsed row has one line to spend, so it prints whichever of these
+     says the most — which means the other one is on screen nowhere. Keep both
+     and let Details carry the one the heading did not. */
+  const description = toolDescription({
+    meta: call._meta,
+    rawInput: call.rawInput,
+    title: call.title,
+  })
+  const heading = description ?? call.name ?? call.toolCallId
+  /* The file badge rides on the heading row the same way it does on a step row:
+     `toolHeading` names the file and strips it out of the prose, so the card
+     says "Read" + a `package.json` chip rather than an elided path. */
+  const h = toolHeading({
+    title: call.title,
+    rawInput: call.rawInput,
+    meta: call._meta ?? undefined,
+    toolKind: call.kind ?? undefined,
+    locations: call.locations ?? [],
+  })
 
   return (
     <ComposerStripItem>
@@ -132,11 +156,18 @@ export function ComposerApproval({ permission }: { permission: PendingPermission
           <span className="shrink-0 text-primary">
             <KindIcon aria-hidden className="size-3.5" />
           </span>
-          {/* The label shimmers: this is the one thing on screen that is
-              waiting, the same "now" the working line and the live plan step
-              already use. */}
-          <span className="harness-shimmer min-w-0 flex-1 truncate text-[10px] font-semibold tracking-[0.08em] text-primary uppercase">
-            Permission needed
+          {/* Two lines, one object: the caption says WHY the turn stopped, and
+              the line under it names the thing being approved. The caption
+              shimmers — this is the one thing on screen that is waiting, the
+              same "now" the working line and the live plan step already use. */}
+          <span className="min-w-0 flex-1">
+            <span className="harness-shimmer block truncate text-[10px] font-semibold tracking-[0.08em] text-primary uppercase">
+              Permission needed
+            </span>
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className="min-w-0 truncate text-xs text-muted-foreground">{heading}</span>
+              {h.file && <FileBadge file={h.file} filePath={h.filePath} />}
+            </span>
           </span>
           {/* The kind keeps the transcript's step-row right-hand column, at
               caption weight, so the two objects read on the same axis. */}
@@ -212,6 +243,10 @@ export function ComposerApproval({ permission }: { permission: PendingPermission
                 </summary>
                 <div className="mt-2 space-y-2.5">
                   <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-[11px]">
+                    {call.title && <MetaRow label="Title" value={call.title} mono={false} />}
+                    {description && (
+                      <MetaRow label="Description" value={description} mono={false} />
+                    )}
                     <MetaRow label="Session" value={request.sessionId} />
                     <MetaRow label="Call ID" value={call.toolCallId} />
                     <MetaRow label="Name" value={call.name ?? "—"} />

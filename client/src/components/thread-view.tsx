@@ -2,7 +2,13 @@ import * as React from "react"
 import { ArrowUp, Clock, History, Mic, RotateCw, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
-import { ActivityIndicator, ComposerPlan, ContextIndicator } from "@/components/composer-status"
+import {
+  ActivityIndicator,
+  ComposerPlan,
+  ComposerTodo,
+  ContextIndicator,
+} from "@/components/composer-status"
+import { ComposerApproval } from "@/components/composer-approval"
 import { ComposerStrip, ComposerStripItem } from "@/components/composer-strip"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -31,7 +37,7 @@ import { SessionConfigPopover } from "./session-config"
 import { SlashCommandMenu, useSlashCommands } from "./slash-commands"
 import { SessionSettingsButton } from "./session-settings"
 import { InlineElicitation } from "./elicitation-form"
-import { InlineToolApproval, primaryPermissionOption } from "./tool-approval"
+import { primaryPermissionOption } from "./composer-approval"
 import { ThreadItemView, ToolRun, type ToolRunGroup } from "./thread-items"
 import { ThreadRail } from "./thread-rail"
 
@@ -177,6 +183,17 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
      same thing twice. */
   const resume = () => void actions.send(sessionId, "Continue.").catch(() => {})
   const retry = (text: string) => void actions.send(sessionId, text).catch(() => {})
+  const checkpoints = React.useMemo(
+    () => new Map(thread.history.checkpoints.map((checkpoint) => [checkpoint.turnId, checkpoint])),
+    [thread.history.checkpoints]
+  )
+  const firstUserForTurn = React.useMemo(() => {
+    const first = new Map<string, string>()
+    for (const item of thread.items) {
+      if (item.kind === "user" && item.turnId && !first.has(item.turnId)) first.set(item.turnId, item.id)
+    }
+    return first
+  }, [thread.items])
 
   const meta = state.sessions.find((s) => s.id === sessionId)
   /* Which transcript the keys belong to. The dock keeps every opened thread
@@ -242,6 +259,9 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   (r) => !("items" in r) && r.kind === "user",
                 )
                 const divider = options.stepDividers && isUser && i !== firstUser
+                const checkpoint = !("items" in row) && row.kind === "user" && row.turnId && firstUserForTurn.get(row.turnId) === row.id
+                  ? checkpoints.get(row.turnId)
+                  : undefined
                 return (
                 /* ponytail: no scrollAnchor. Anchoring the user's message to
                     the top of the viewport meant sending scrolled the whole
@@ -279,6 +299,8 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                           ? () => dispatch({ type: "dismiss-error", id: sessionId, itemId: row.id })
                           : undefined
                       }
+                      onRevert={checkpoint ? () => void actions.revertTurn(sessionId, checkpoint.id) : undefined}
+                      revertDisabled={thread.turnActive || thread.history.busy}
                       showTimestamps={options.showTimestamps}
                     />
                   )}
@@ -293,13 +315,6 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                 <MessageScrollerItem messageId="working">
                   <div className="py-0.5">
                     <ActivityIndicator step={thread.items.length} />
-                  </div>
-                </MessageScrollerItem>
-              )}
-              {thread.permission && (
-                <MessageScrollerItem messageId="permission">
-                  <div className="py-1">
-                    <InlineToolApproval permission={thread.permission} />
                   </div>
                 </MessageScrollerItem>
               )}
@@ -475,6 +490,18 @@ function usePromptHistory(items: ThreadItem[], setText: (text: string) => void) 
   return { onKeyDown, browsing: index !== null }
 }
 
+/* The branch label is up to 80 characters of the prompt that made it — often a
+   pasted URL, and often with newlines in it. `truncate` alone only helps once
+   the row is already at its full width, and a one-line strip row is not the
+   place to spend that width: collapse the whitespace and cut it short here, and
+   leave the whole thing on `title` for anyone who wants it. */
+const BRANCH_LABEL_MAX = 42
+
+function shortLabel(label: string) {
+  const flat = label.replace(/\s+/g, " ").trim()
+  return flat.length > BRANCH_LABEL_MAX ? `${flat.slice(0, BRANCH_LABEL_MAX - 1)}…` : flat
+}
+
 function Composer({
   sessionId,
   actions,
@@ -550,6 +577,33 @@ function Composer({
         </div>
       )}
       <ComposerStrip>
+        {thread.history.conflict && (
+          <ComposerStripItem className="px-3 py-1.5 text-[11px] text-destructive">
+            {thread.history.conflict}
+          </ComposerStripItem>
+        )}
+        {!thread.history.available && thread.items.length > 0 && (
+          <ComposerStripItem className="px-3 py-1.5 text-[11px] text-muted-foreground">
+            {thread.history.reason ?? "Revert is unavailable for this agent."}
+          </ComposerStripItem>
+        )}
+        {thread.history.branches.map((branch) => (
+          <ComposerStripItem key={branch.id} className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-muted-foreground">
+            <History className="size-3 shrink-0" />
+            <span className="min-w-0 flex-1 truncate" title={branch.label}>
+              Retained: {shortLabel(branch.label)}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 shrink-0 px-2 text-[11px]"
+              disabled={thread.turnActive || thread.history.busy}
+              onClick={() => void actions.recoverBranch(sessionId, branch.id)}
+            >
+              Recover
+            </Button>
+          </ComposerStripItem>
+        ))}
         {/* Where it runs and who answers, before either is settled. They belong
             on the shelf rather than in the settings menu: picking a different
             agent changes what every option under it even means, and a thread
@@ -560,6 +614,12 @@ function Composer({
           </ComposerStripItem>
         )}
         <ComposerPlan thread={thread} />
+        {/* The agent's checklist when it arrives as a tool call rather than an
+            ACP plan — same surface as the plan, so both are read in place. */}
+        <ComposerTodo thread={thread} />
+        {/* The one thing the turn is waiting on. Moves here so a reader who has
+            scrolled up does not collide with the question mid-history. */}
+        <ComposerApproval permission={thread.permission} />
         {/* Says what the box is showing and how to get back out of it — without
             it, a recalled prompt is indistinguishable from one you typed. */}
         {history.browsing && (

@@ -7,6 +7,7 @@ import { ErrorBoundary } from './components/error-boundary.tsx'
 import { installGlobalErrorReporting } from './lib/errors.ts'
 import { installNotificationTestHelper } from './lib/notifications.ts'
 import { registerPwa } from './lib/pwa.ts'
+import { watchInstallability } from './lib/install.ts'
 
 // The floor under everything else: a promise nobody caught, or a listener that
 // threw outside React's tree, would otherwise vanish into the console. The
@@ -19,6 +20,10 @@ installNotificationTestHelper()
 // that arrive when no tab is attached. Silent no-op off https or in a browser
 // without support.
 registerPwa()
+// `beforeinstallprompt` fires within moments of load and only once, so the
+// listener has to be up before anything renders — a component that mounts later
+// has already missed it, and the app then has no way to offer an install at all.
+watchInstallability()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

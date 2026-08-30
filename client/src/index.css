@@ -287,8 +287,7 @@
      index.html; falls back to system serifs). Only the brand name wears it,
      never UI copy. */
   .brand-script {
-    font-family: "Playfair Display", Georgia, "Times New Roman", serif;
-    font-style: italic;
+    font-family: "Cormorant Garamond", Georgia, "Times New Roman", serif;
     font-weight: 600;
     letter-spacing: 0.01em;
   }
@@ -651,9 +650,30 @@ html[data-desktop="true"]:not([data-desktop-platform="darwin"]) [data-drag-regio
    attribute on the item), because a row mid-growth must stay measured: the
    scroller reads scrollHeight to follow the stream, and a placeholder height
    would make the autoscroll target jump. See thread-view.tsx. */
-[data-message-scroller-content] [data-message-id][data-settled] {
+[data-slot="message-scroller-content"] [data-message-id][data-settled] {
   content-visibility: auto;
   contain-intrinsic-size: auto 48px;
+}
+
+/* A transcript row entering the list — a streamed tool step, a completed turn.
+   Fade + a 4px rise, run once per DOM mount (items are keyed by id, so a
+   content update reuses the node and this does not replay on every token).
+   `transform`/`opacity` are the cheap pair: neither affects layout, so the
+   autoscroll that reads scrollHeight is not thrown by a row still settling.
+   The entrance is short and shallow — rows above the fold in a long thread are
+   skipped by content-visibility anyway, so the read-on-load case costs nothing. */
+@keyframes harness-item-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+[data-slot="message-scroller-content"] [data-message-id] {
+  animation: harness-item-in 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="message-scroller-content"] [data-message-id] {
+    animation: none;
+  }
 }
 
 /* GFM tables. The scroll lives on the wrapper `<div class="harness-table">`

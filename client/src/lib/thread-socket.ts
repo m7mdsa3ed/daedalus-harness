@@ -1,5 +1,5 @@
 import type * as acp from "@agentclientprotocol/sdk"
-import type { HistoryLost, ThreadCommand, ThreadEvent, WireError } from "@daedalus/protocol"
+import type { HistoryLost, HistoryState, ThreadCommand, ThreadEvent, WireError } from "@daedalus/protocol"
 import { wsUrl, type ServerSettings } from "./settings"
 
 /**
@@ -53,7 +53,7 @@ export interface ThreadCallbacks {
   onTtft: (ms: number) => void
   /** A turn began. Only ever seen for a prompt this device did NOT send — its
       own message is already on screen. `catchingUp` marks the replay. */
-  onTurnStarted: (text: string, catchingUp: boolean) => void
+  onTurnStarted: (turnId: string, text: string, catchingUp: boolean) => void
   onTurnEnded: (
     usage: acp.Usage | null,
     error: WireError | undefined,
@@ -65,7 +65,9 @@ export interface ThreadCallbacks {
       `historyLost` is set when the agent refused to reload this thread's
       conversation — the replay that follows is an empty transcript, and the
       only difference between that and a brand new thread is this field. */
-  onAttached: (from: number, historyLost?: HistoryLost) => void
+  onAttached: (from: number, history: HistoryState, historyLost?: HistoryLost) => void
+  onHistoryState: (history: HistoryState) => void
+  onHistoryReset: (history: HistoryState) => void
   /** The replay is over; everything after this is live. `promptActive` is read
       server-side in the same tick as the log it follows, so it cannot pair a
       stale turn state with a fresh replay window. */
@@ -168,7 +170,7 @@ export class ThreadSocket {
     switch (event.ev) {
       case "attached":
         this.catchingUp = true
-        this.callbacks.onAttached(event.from, event.historyLost)
+        this.callbacks.onAttached(event.from, event.history, event.historyLost)
         return
       case "caught_up":
         this.catchingUp = false
@@ -189,7 +191,7 @@ export class ThreadSocket {
         this.callbacks.onSessionConfig(event.modes, event.modeId, event.configOptions)
         return
       case "turn_started":
-        this.callbacks.onTurnStarted(event.text, this.catchingUp)
+        this.callbacks.onTurnStarted(event.turnId, event.text, this.catchingUp)
         return
       case "turn_ended":
         this.callbacks.onTurnEnded(event.usage, event.error, event.promptText, this.catchingUp)
@@ -209,6 +211,12 @@ export class ThreadSocket {
       case "task_event":
         this.callbacks.onTaskEvent(event.transcriptDir, event.event)
         return
+      case "history_state":
+        this.callbacks.onHistoryState(event.history)
+        return
+      case "history_reset":
+        this.callbacks.onHistoryReset(event.history)
+        return
       case "reply": {
         const pending = this.inflight.get(event.id)
         if (!pending) return
@@ -227,8 +235,17 @@ export class ThreadSocket {
    * turn ends — the turn's outcome (and its failure) reaches every device on
    * the thread as `turn_ended`, so waiting here would report it twice.
    */
-  async prompt(text: string): Promise<void> {
-    await this.request((id) => ({ id, cmd: "prompt", text }))
+  async prompt(text: string): Promise<string> {
+    const result = await this.request((id) => ({ id, cmd: "prompt", text }))
+    return (result as { turnId: string }).turnId
+  }
+
+  async revert(checkpointId: string): Promise<void> {
+    await this.request((id) => ({ id, cmd: "revert", checkpointId }))
+  }
+
+  async recoverBranch(branchId: string): Promise<void> {
+    await this.request((id) => ({ id, cmd: "recover_branch", branchId }))
   }
 
   async cancel(): Promise<void> {

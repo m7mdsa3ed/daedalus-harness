@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "dev:tunnel": "node scripts/dev-tunnel.mjs",
+    "dev:serve": "node scripts/dev-serve.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",

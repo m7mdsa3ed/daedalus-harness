@@ -4,6 +4,7 @@
    /settings/<id> — with its page component in this directory; register new
    sections here and add a <Route> in app-shell's route tree. */
 import {
+  AppWindow,
   Bell,
   Cpu,
   FolderIcon,
@@ -24,6 +25,14 @@ export const SETTINGS_SECTIONS = [
     title: "Connection",
     description:
       "The harness server this client talks to. Projects, profiles and agents live there, shared by every connected client.",
+  },
+  {
+    id: "app",
+    label: "App",
+    icon: AppWindow,
+    title: "App",
+    description:
+      "Installing this client on the device, what the browser makes of the page's security, and the site data it keeps. All local — the harness server is not involved.",
   },
   {
     id: "appearance",
@@ -106,7 +115,7 @@ export const SETTINGS_NAV_GROUPS: readonly {
   label: string
   sections: readonly SettingsSectionId[]
 }[] = [
-  { label: "Preferences", sections: ["general", "appearance", "notifications", "web-search"] },
+  { label: "Preferences", sections: ["general", "app", "appearance", "notifications", "web-search"] },
   { label: "Workspace", sections: ["projects", "mcp", "skills", "commands"] },
   { label: "Agents", sections: ["profiles", "agents"] },
 ] as const

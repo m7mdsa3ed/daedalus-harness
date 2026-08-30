@@ -154,6 +154,14 @@ export default defineConfig({
     // and scheme the browser must use are the tunnel's, not ours.
     ...(tunnelled ? { hmr: { protocol: "wss" as const, clientPort: 443 } } : {}),
   },
+  // `vite preview` has its own host allowlist, separate from `server`. It is
+  // what `pnpm dev:serve --preview` runs behind Tailscale Serve, which forwards
+  // the tailnet hostname in Host — unlisted, that is answered with "Blocked
+  // request" and the phone sees nothing. Same dev-only reasoning as `server`.
+  preview: {
+    allowedHosts: true,
+    host: true,
+  },
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "./src"),

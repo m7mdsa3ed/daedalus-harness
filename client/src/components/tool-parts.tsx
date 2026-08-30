@@ -468,6 +468,31 @@ export function ShowAll({ onClick }: { onClick: () => void }) {
 
 export const PANE = "overflow-hidden rounded-md border border-border/50 bg-muted/30"
 
+/** A file a step acted on, as a chip. The path is elided to its basename so a
+    row says "Read" + `package.json` rather than an elided mono path; the full
+    path rides in the tooltip. Clickable only where `useThreadLinks` is alive. */
+export function FileBadge({ file, filePath }: { file: string; filePath?: string }) {
+  const links = useThreadLinks()
+  const inner = (
+    <>
+      <FileTextIcon aria-hidden className="size-3 shrink-0 opacity-70" />
+      <span className="truncate">{file}</span>
+    </>
+  )
+  const cls = "inline-flex max-w-[45%] shrink-0 items-center gap-1 rounded-md bg-muted/60 px-1.5 py-px font-mono text-[10px] leading-4 text-muted-foreground/80"
+  if (!links) return <span className={cls} title={filePath ?? file}>{inner}</span>
+  return (
+    <button
+      type="button"
+      className={cn(cls, "transition-colors hover:text-foreground hover:bg-muted")}
+      title={filePath ? `Open ${filePath}` : file}
+      onClick={() => links.openFile(filePath ?? file)}
+    >
+      {inner}
+    </button>
+  )
+}
+
 
 /** Diffs and inline content blocks — the payload a code block cannot show. */
 export function ToolContentBlocks({ item }: { item: ToolItem }) {

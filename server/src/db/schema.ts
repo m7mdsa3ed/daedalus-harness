@@ -91,6 +91,12 @@ export const profiles = sqliteTable("profiles", {
   baseUrl: text("base_url").notNull(),
   apiKey: text("api_key").notNull(),
   defaultModel: text("default_model").notNull(),
+  /** The model an agent's cheap side-jobs run on, when it has a separate one.
+      Empty (or null, on rows from before the column existed) means "the session
+      model" — see `withSmallModelKeys` in registry.ts for why naming it at all
+      matters against a gateway. Not part of `models`: it is not a model the user
+      can pick for a thread, and listing it there would offer it as one. */
+  smallModel: text("small_model"),
   models: text("models", { mode: "json" }).$type<ModelDef[]>().notNull(),
   /** Per-profile web-search toggle. Null on rows from before the column existed
       (treated as off — profiles opt in). */
@@ -259,6 +265,50 @@ export const sessionEvents = sqliteTable(
     payload: text("payload", { mode: "json" }).$type<unknown>().notNull(),
   },
   (t) => [uniqueIndex("session_events_seq").on(t.sessionId, t.seq)],
+);
+
+/** Durable restore points created before logical agent turns. Snapshot content
+    lives in data/history; SQLite keeps ownership, branch and ACP pointers. */
+export const historyCheckpoints = sqliteTable(
+  "history_checkpoints",
+  {
+    id: text("id").primaryKey(),
+    turnId: text("turn_id").notNull().unique(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    promptText: text("prompt_text").notNull(),
+    parentAcpSessionId: text("parent_acp_session_id").notNull(),
+    childAcpSessionId: text("child_acp_session_id").notNull(),
+    preSnapshotId: text("pre_snapshot_id").notNull(),
+    postManifest: text("post_manifest", { mode: "json" }).$type<unknown>(),
+    parentCheckpointId: text("parent_checkpoint_id"),
+    branchId: text("branch_id"),
+    status: text("status").notNull(),
+    createdAt: integer("created_at").notNull(),
+    completedAt: integer("completed_at"),
+  },
+  (t) => [index("history_checkpoints_session").on(t.sessionId, t.createdAt)],
+);
+
+/** Retained branch heads. A revert never deletes the child ACP session or the
+    workspace state it displaced; this row is the recovery handle for both. */
+export const historyBranches = sqliteTable(
+  "history_branches",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    sourceCheckpointId: text("source_checkpoint_id").notNull(),
+    acpSessionId: text("acp_session_id").notNull(),
+    workspaceSnapshotId: text("workspace_snapshot_id").notNull(),
+    label: text("label").notNull(),
+    status: text("status").notNull(),
+    createdAt: integer("created_at").notNull(),
+    recoveredAt: integer("recovered_at"),
+  },
+  (t) => [index("history_branches_session").on(t.sessionId, t.createdAt)],
 );
 
 export const pushTokens = sqliteTable("push_tokens", {

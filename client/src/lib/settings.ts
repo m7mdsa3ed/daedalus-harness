@@ -278,6 +278,10 @@ export interface Profile {
   virtual?: boolean
   models: ModelOption[]
   defaultModel: string
+  /** Model for the agent's cheap side-jobs (Claude Code's Bash permission
+      classifier above all). Empty means "the session model". Not one of
+      `models`: nothing may pick it for a thread. */
+  smallModel?: string
   /** Replace the agent's built-in web tools with the harness's web-search MCP
       server. A profile opts in; null means off. The rest override the server
       default, and the token is redacted (never sent back). */

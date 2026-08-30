@@ -124,7 +124,7 @@
       }
       #boot-splash .boot-name {
         display: flex;
-        font: italic 600 38px/1.25 "Playfair Display", Georgia, "Times New Roman", serif;
+        font: 600 38px/1.25 "Cormorant Garamond", Georgia, "Times New Roman", serif;
         letter-spacing: 0.01em;
         color: var(--boot-fg);
       }
@@ -195,7 +195,7 @@
           };
           if (document.fonts && document.fonts.load) {
             var cap = setTimeout(go, 300);
-            document.fonts.load('italic 600 38px "Playfair Display"').then(
+            document.fonts.load('600 38px "Cormorant Garamond"').then(
               function () { clearTimeout(cap); go(); },
               function () { clearTimeout(cap); go(); }
             );

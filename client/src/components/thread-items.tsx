@@ -1,6 +1,6 @@
 import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
-import { FoldVerticalIcon, ListTodoIcon, PlayIcon, RotateCwIcon, TriangleAlertIcon, WrenchIcon } from "lucide-react"
+import { FoldVerticalIcon, ListTodoIcon, PlayIcon, RotateCwIcon, TriangleAlertIcon, Undo2Icon, WrenchIcon } from "lucide-react"
 import { ChevronRightIcon, CopyIcon } from "lucide-react"
 import { toast } from "sonner"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
@@ -13,6 +13,7 @@ import { Message, MessageContent } from "@/components/ui/message"
    rows: a message, a step, a plan, a compaction. */
 import {
   ContentBlockView,
+  FileBadge,
   KIND_ICONS,
   KIND_LABELS,
   Prose,
@@ -25,7 +26,6 @@ import {
   parseTaskNotification,
   shortPath,
   toolKindOf,
-  toolSummary,
   toolHeading,
   type TaskNotification,
   type TodoEntry,
@@ -36,7 +36,7 @@ import type { CompactionItem, PlanItem, ThreadItem, ToolItem } from "@/lib/store
 
 /* Re-exported so the approval card and the editor panel keep importing the
    transcript's vocabulary from the transcript, not from its internals. */
-export { KIND_ICONS, KIND_LABELS, Prose, Timestamp, ToolCallContent }
+export { FileBadge, KIND_ICONS, KIND_LABELS, Prose, Timestamp, ToolCallContent }
 
 /* Right-clicking text the user has selected keeps the browser's own menu —
    native Copy works there. Ours only claims clicks on unselected content.
@@ -58,9 +58,11 @@ function copyText(text: string) {
 }
 
 /* Steps read as one timeline: a hairline rail down the gutter with a node per
-   step (rail geometry in index.css). The thing acted on is the headline — the
-   kind is demoted to a right-hand label so those form their own scan column.
-   Everything a step produced is collapsed behind the row until clicked. */
+   step (rail geometry in index.css). The thing acted on is the headline, and
+   the kind of step is the leading icon — it was also a word in the right-hand
+   column, which spent a column of every row repeating what the mark beside it
+   already said. Only a failure claims that column now. Everything a step
+   produced is collapsed behind the row until clicked. */
 
 
 
@@ -94,6 +96,8 @@ function formatElapsed(ms: number): string {
 const StepRow = React.memo(function StepRow({
   target,
   caption,
+  file,
+  filePath,
   label,
   status,
   metric,
@@ -108,7 +112,16 @@ const StepRow = React.memo(function StepRow({
   /** A second, quieter line under the target — the literal thing invoked when
       the target is the agent's prose *about* it (see `toolHeading`). */
   caption?: string
-  label: string
+  /** A file the row acted on, drawn as a badge chip next to the target — the
+      path is elided to its basename so "Read /path/to/file" reads as "Read" +
+      a `file` chip rather than an elided mono line. */
+  file?: string
+  /** The full path behind the badge, for its tooltip. */
+  filePath?: string
+  /** The trailing word. Optional: a row whose leading icon already says what
+      kind of step it is (every tool, plan and compaction row does) prints
+      nothing here, and only a failure claims the column. */
+  label?: string
   status: string | null
   metric?: React.ReactNode
   detail?: React.ReactNode
@@ -203,15 +216,22 @@ const StepRow = React.memo(function StepRow({
         {/* Steps are what the agent did, not what it said: the whole row sits at
             caption weight so prose stays the thing you read. */}
         <span className="flex min-w-0 flex-1 flex-col">
-          <span
-            className={cn(
-              "min-w-0 truncate text-xs leading-6",
-              mono && "font-mono",
-              failed ? "text-destructive" : "text-muted-foreground",
-              active && "harness-shimmer"
-            )}
-          >
-            {target}
+          <span className="flex min-w-0 items-baseline gap-1.5">
+            <span
+              className={cn(
+                "min-w-0 truncate text-xs leading-6",
+                mono && "font-mono",
+                failed ? "text-destructive" : "text-muted-foreground",
+                active && "harness-shimmer"
+              )}
+            >
+              {target}
+            </span>
+            {/* The file a step acted on, as a chip: the path is gone in the
+                basename, so the row says "Read" + `package.json` instead of an
+                elided "/var/www/…/package.json". Baseline-aligned with the
+                title so it reads on the same line, never on a second row. */}
+            {file && <FileBadge file={file} filePath={filePath} />}
           </span>
           {/* The command under its description. One notch quieter and one notch
               smaller than the title, and always mono — it is the literal thing
@@ -235,14 +255,16 @@ const StepRow = React.memo(function StepRow({
             {metric}
           </span>
         )}
-        <span
-          className={cn(
-            "shrink-0 text-[11px] leading-6",
-            failed ? "text-destructive" : "text-muted-foreground/50"
-          )}
-        >
-          {failed ? "failed" : label}
-        </span>
+        {(failed || label) && (
+          <span
+            className={cn(
+              "shrink-0 text-[11px] leading-6",
+              failed ? "text-destructive" : "text-muted-foreground/50"
+            )}
+          >
+            {failed ? "failed" : label}
+          </span>
+        )}
       </button>
 
       {expandable && open && <div className="mt-1 mb-2.5 min-w-0 space-y-2">{detail}</div>}
@@ -720,6 +742,8 @@ export const ThreadItemView = React.memo(function ThreadItemView({
   onContinue,
   onRetry,
   onDismiss,
+  onRevert,
+  revertDisabled = false,
   showTimestamps = false,
 }: {
   item: ThreadItem
@@ -728,6 +752,8 @@ export const ThreadItemView = React.memo(function ThreadItemView({
   /** Present on an error row that knows the prompt it killed. */
   onRetry?: () => void
   onDismiss?: () => void
+  onRevert?: () => void
+  revertDisabled?: boolean
   showTimestamps?: boolean
 }) {
   const view = useViewOptionsContext()
@@ -762,6 +788,18 @@ export const ThreadItemView = React.memo(function ThreadItemView({
               </Bubble>
             </MessageContent>
             {showTimestamps && <Timestamp at={item.at} className="pr-1" />}
+            {onRevert && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1.5 px-2 text-[11px] text-muted-foreground"
+                onClick={onRevert}
+                disabled={revertDisabled}
+              >
+                <Undo2Icon className="size-3" />
+                Revert to before this turn
+              </Button>
+            )}
           </Message>
         </ItemContextMenu>
       )
@@ -827,7 +865,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
 
       return (
         <StepRow
-          label="think"
+          icon={KIND_ICONS.think}
           status={null}
           mono={false}
           defaultOpen={view.showThinking}
@@ -887,7 +925,6 @@ const CompactionStep = React.memo(function CompactionStep({
 
   return (
     <StepRow
-      label="context"
       icon={FoldVerticalIcon}
       status={running ? "in_progress" : failed ? "failed" : null}
       mono={false}
@@ -914,7 +951,6 @@ const ToolStep = React.memo(function ToolStep({
   const active = item.status === "in_progress" || item.status === "pending"
   const kind = toolKindOf(item)
   const KindIcon = KIND_ICONS[kind] ?? WrenchIcon
-  const summary = toolSummary(item, active)
   const view = useViewOptionsContext()
   /* Both of these are `tool-views`' to answer, not this row's: whether an
      expansion would hold anything, and whether it should start open, both
@@ -928,20 +964,20 @@ const ToolStep = React.memo(function ToolStep({
 
   return (
     <StepRow
-      label={KIND_LABELS[kind] ?? KIND_LABELS.other}
       status={item.status}
       icon={KindIcon}
       target={heading.title}
       caption={heading.detail}
+      file={heading.file}
+      filePath={heading.filePath}
       mono={!heading.prose}
-      metric={
-        <span className="flex items-center gap-1.5">
-          {/* The closed row already says what happened, so opening it is for
-              reading the content rather than for learning the outcome. */}
-          {summary && <span className="truncate">{summary}</span>}
-          {showTimestamp && <Timestamp at={item.at} />}
-        </span>
-      }
+      /* No outcome here. The header line is the title and the command that
+         produced it; churn counts and echoed output lines competed with both
+         for the same strip of row, and a long one pushed the command it
+         belonged to out of view. What happened is in the body — the diff, the
+         output, the matches — where it is the thing being read rather than a
+         teaser for it. `failed` still reaches the row, as the label. */
+      metric={showTimestamp ? <Timestamp at={item.at} /> : undefined}
       startedAt={item.startedAt}
       detail={hasBody || active ? <ToolDetail item={item} active={active} /> : undefined}
       defaultOpen={view.showToolDetails || toolOpensByDefault(item)}
@@ -969,7 +1005,6 @@ const PlanStep = React.memo(function PlanStep({ item }: { item: PlanItem }) {
   if (item.markdown !== undefined || item.uri !== undefined) {
     return (
       <StepRow
-        label="plan"
         icon={ListTodoIcon}
         status={null}
         mono={false}
@@ -992,7 +1027,6 @@ const PlanStep = React.memo(function PlanStep({ item }: { item: PlanItem }) {
   const next = current ?? item.entries.find((e) => e.status !== "completed")
   return (
     <StepRow
-      label="plan"
       icon={ListTodoIcon}
       status={current ? "in_progress" : next ? null : "completed"}
       mono={false}

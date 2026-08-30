@@ -78,7 +78,10 @@ interface Ide {
   projectId: string;
   key: string;
   port: number;
-  proc: ChildProcess;
+  /** Null for an editor this process adopted rather than spawned — it is a
+      live process either way, but only a child can be listened to. */
+  proc: ChildProcess | null;
+  pid: number | undefined;
   binary: string;
   state: Exclude<IdeState, "off" | "unavailable">;
   message: string | null;
@@ -143,77 +146,131 @@ function freePort(): Promise<number> {
   });
 }
 
-/* ── Orphans ──
- * The instance table is memory, and the editor is a child process. A clean
- * shutdown takes both (`stopAllIdes` on SIGINT/SIGTERM), but a `SIGKILL`, an
- * OOM or a hard crash takes only the table — and leaves a code-server still
- * holding this project's `--user-data-dir`. Starting a second one on that
- * directory is the corruption the per-project singleton exists to prevent, so
- * the pid is written beside the data it owns and reclaimed on the way in.
+/* ── Surviving a restart ──
  *
- * The pid alone is not enough to act on: pids are reused, and `kill`ing a
+ * The instance table is memory; the editor is a process. A clean shutdown takes
+ * both, but the signal often does not arrive — pm2 runs `d-server` as `bash -c
+ * pnpm dev`, so SIGINT lands on the wrapper and `stopAllIdes` never runs — and
+ * a `SIGKILL` or a crash never gives one at all. Either way a live code-server
+ * is left holding this project's `--user-data-dir`.
+ *
+ * **The first instinct was to kill it, and that was wrong.** This whole module
+ * argues that closing the panel must not cost you an unsaved buffer or a
+ * running task; killing the editor on every server restart says the opposite,
+ * and in dev — where `tsx watch` restarts on every keystroke in this file —
+ * it would say it constantly. So a restart **adopts**: the key is written down
+ * beside the pid, and a new process that finds a live, healthy editor takes it
+ * back under the *same* key, which is what open browser frames are still using.
+ * The restart becomes invisible instead of destructive. Killing is the fallback
+ * for an editor that is there but not answering.
+ *
+ * The pid alone is never enough to act on: pids are reused, and signalling a
  * number that now means something else is a far worse bug than the one being
- * fixed. So it is only trusted where it can be *verified* — on Linux, by
- * reading the recorded process's own command line back and requiring this
- * project's data directory in it. Anywhere else the stale record is dropped
- * without a signal, which risks a second editor rather than a wrong kill.
+ * fixed. It is trusted only where it can be *verified* — on Linux, by reading
+ * the recorded process's own command line back and requiring this project's
+ * data directory in it. Anywhere else a stale record is dropped without a
+ * signal, which risks a second editor rather than a wrong kill.
  */
 const LOCK = ".daedalus-ide.json";
 
-function reclaimOrphan(userDataDir: string) {
-  const lock = join(userDataDir, LOCK);
-  let pid: number | undefined;
+interface Lock {
+  pid?: number;
+  port?: number;
+  key?: string;
+}
+
+/** The recorded process, if it is still alive and still that process. */
+function verifyPid(pid: number | undefined, userDataDir: string): boolean {
+  if (!pid || pid === process.pid) return false;
+  if (process.platform !== "linux") return false;
   try {
-    pid = (JSON.parse(readFileSync(lock, "utf8")) as { pid?: number }).pid;
+    return readFileSync(`/proc/${pid}/cmdline`, "utf8").includes(userDataDir);
   } catch {
-    return; // No record, or an unreadable one — nothing to reclaim.
+    return false; // Already gone.
   }
-  rmSync(lock, { force: true });
-  if (!pid || pid === process.pid) return;
-  if (process.platform !== "linux") return;
-  let cmdline: string;
+}
+
+function readLock(userDataDir: string): Lock | null {
   try {
-    cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
+    return JSON.parse(readFileSync(join(userDataDir, LOCK), "utf8")) as Lock;
   } catch {
-    return; // Already gone.
-  }
-  if (!cmdline.includes(userDataDir)) return; // The pid was reused.
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    /* It exited between the read and the signal, which is the outcome wanted. */
+    return null;
   }
 }
 
 /**
- * Every orphan, at boot.
+ * Take back, or clean up, the editors left by a previous process — at boot,
+ * before anything is served.
  *
- * Reclaiming on the way into a start only covers the project someone reopens.
- * The signal a process manager sends does not always reach this process at all
- * — pm2 runs `d-server` as `bash -c pnpm dev`, so SIGINT lands on the wrapper
- * and `stopAllIdes` never runs — which means a restart routinely leaves editors
- * behind, and one for a project nobody reopens would sit there for its whole
- * idle window with no server left to sweep it. This is the same reasoning that
- * has `SessionManager` clear `session_events` in its constructor: a fresh
- * process cannot inherit the state of a dead one, so it disowns it explicitly.
+ * Awaited rather than fired off, so the first request cannot arrive between the
+ * health check and the registration and be told the editor is off.
  */
-export function reclaimAllOrphans(): void {
-  const root = join(DATA_DIR, "ide");
+export async function adoptOrphans(): Promise<void> {
   let entries: string[];
   try {
-    entries = readdirSync(root);
+    entries = readdirSync(join(DATA_DIR, "ide"));
   } catch {
     return; // No editor has ever run here.
   }
   for (const entry of entries) {
     if (entry === "extensions") continue;
-    reclaimOrphan(join(root, entry));
+    const userDataDir = join(DATA_DIR, "ide", entry);
+    const lock = readLock(userDataDir);
+    if (!lock) continue;
+    if (!verifyPid(lock.pid, userDataDir)) {
+      rmSync(join(userDataDir, LOCK), { force: true });
+      continue;
+    }
+    /* Alive, and it is ours. Answering is the last question: an editor that is
+       running but wedged is worse than none, because the panel would frame it
+       and wait forever rather than offering to start one that works. */
+    if (lock.port && lock.key && (await healthy(lock.port))) {
+      const ide: Ide = {
+        projectId: entry,
+        key: lock.key,
+        port: lock.port,
+        proc: null,
+        pid: lock.pid,
+        binary: findBinary() ?? "code-server",
+        state: "ready",
+        message: null,
+        stderr: "",
+        lastActivity: Date.now(),
+      };
+      instances.set(entry, ide);
+      byKey.set(lock.key, entry);
+      startSweeper();
+      continue;
+    }
+    killPid(lock.pid);
+    rmSync(join(userDataDir, LOCK), { force: true });
   }
 }
 
-function writeLock(userDataDir: string, pid: number | undefined, port: number) {
+function killPid(pid: number | undefined) {
+  if (!pid) return;
   try {
-    writeFileSync(join(userDataDir, LOCK), JSON.stringify({ pid, port, at: Date.now() }));
+    process.kill(pid, "SIGTERM");
+  } catch {
+    /* It exited between the check and the signal — the outcome wanted. */
+  }
+  setTimeout(() => {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      /* Gone, as intended. */
+    }
+  }, 5000).unref?.();
+}
+
+function writeLock(userDataDir: string, ide: Ide) {
+  try {
+    writeFileSync(
+      join(userDataDir, LOCK),
+      // The key is the part that makes adoption work: a frame already open is
+      // using it, and a restart that minted a new one would strand that frame.
+      JSON.stringify({ pid: ide.pid, port: ide.port, key: ide.key, at: Date.now() }),
+    );
   } catch {
     /* Losing the record costs a possible orphan after a crash, which is not
        worth failing a start the user asked for. */
@@ -280,8 +337,11 @@ export async function startIde(projectId: string): Promise<IdeStatus> {
   const extensionsDir = join(DATA_DIR, "ide", "extensions");
   mkdirSync(userDataDir, { recursive: true });
   mkdirSync(extensionsDir, { recursive: true });
-  // A previous process may have died without taking its editor with it.
-  reclaimOrphan(userDataDir);
+  /* Nothing to adopt here: `adoptOrphans` ran at boot, so a live editor for
+     this project would already be in `instances` and returned above. A lock
+     still on disk names a process that failed that check. */
+  const stale = readLock(userDataDir);
+  if (stale && verifyPid(stale.pid, userDataDir)) killPid(stale.pid);
 
   /* `--auth none` is safe only because of the bind address on the line above
      it; the two belong together and neither is optional. The telemetry and
@@ -310,6 +370,7 @@ export async function startIde(projectId: string): Promise<IdeStatus> {
     key,
     port,
     proc,
+    pid: proc.pid,
     binary,
     state: "starting",
     message: null,
@@ -318,7 +379,7 @@ export async function startIde(projectId: string): Promise<IdeStatus> {
   };
   instances.set(projectId, ide);
   byKey.set(key, projectId);
-  writeLock(userDataDir, proc.pid, port);
+  writeLock(userDataDir, ide);
   startSweeper();
 
   proc.stdout?.on("data", () => {
@@ -391,10 +452,15 @@ function retire(ide: Ide) {
   rmSync(join(DATA_DIR, "ide", ide.projectId, LOCK), { force: true });
   /* SIGTERM, not SIGKILL: VS Code flushes its state database and its unsaved
      buffer backups on the way out, and those backups are the whole reason an
-     editor that was killed can be reopened without losing work. */
-  ide.proc.kill("SIGTERM");
-  const proc = ide.proc;
-  setTimeout(() => proc.killed || proc.kill("SIGKILL"), 5000).unref?.();
+     editor that was killed can be reopened without losing work. An adopted
+     editor has no ChildProcess to ask, only a pid — same signal, same grace. */
+  if (ide.proc) {
+    const proc = ide.proc;
+    proc.kill("SIGTERM");
+    setTimeout(() => proc.killed || proc.kill("SIGKILL"), 5000).unref?.();
+  } else {
+    killPid(ide.pid);
+  }
 }
 
 /** Stop the editor for one project. Returns false when there was none. */
@@ -405,7 +471,16 @@ export function stopIde(projectId: string): boolean {
   return true;
 }
 
-/** Every editor, on shutdown. */
+/**
+ * Every editor, on shutdown.
+ *
+ * The asymmetry with `adoptOrphans` is deliberate, not an oversight: a process
+ * that is *told* to stop stops what it owns, because leaving four VS Codes
+ * running behind a server nobody is going to restart is a leak. A process that
+ * dies without being told — a crash, or a signal that never got past the shell
+ * wrapper pm2 launches — cannot clean up, and the next one adopts instead. So
+ * the destructive path is the one someone asked for.
+ */
 export function stopAllIdes(): void {
   for (const ide of [...instances.values()]) retire(ide);
   if (sweeper) clearInterval(sweeper);

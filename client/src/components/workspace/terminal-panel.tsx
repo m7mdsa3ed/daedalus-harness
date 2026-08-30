@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/confirm-dialog"
 import { useDock } from "@/components/workspace/dock"
 import { PanelNotice, PanelToolbar } from "@/components/workspace/primitives"
+import { TerminalKeyRow } from "@/components/workspace/terminal-keys"
 import { describeError, reportError } from "@/lib/errors"
 import { loadSettings, serverName } from "@/lib/settings"
 import { useStore } from "@/lib/store"
@@ -266,6 +267,18 @@ export function TerminalPanel({
       )}
 
       <div ref={host} className="min-h-0 flex-1 overflow-hidden px-2 py-1" />
+
+      {/* Mobile only: a row of keys the soft keyboard can't reach. `input()`
+          routes through onData so the PTY sees one real keypress. It sits at the
+          bottom, where a soft keyboard lives, so it reads as input rather than
+          as part of the terminal. */}
+      <TerminalKeyRow
+        disabled={status !== "ready"}
+        onKey={(data) => {
+          term.current?.input(data)
+          term.current?.focus()
+        }}
+      />
     </div>
   )
 }

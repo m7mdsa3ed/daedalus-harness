@@ -254,7 +254,10 @@ export function notifyThreadEvent(
   ) {
     const tag = `${sessionId}:${event}`
     try {
-      const notification = new Notification(label, { body, tag })
+      // `renotify` with a `tag`, exactly as the worker path below does: a
+      // replacement that swaps the text in silence is, for a second permission
+      // ask on the same thread, the same as no notification at all.
+      const notification = new Notification(label, { body, tag, renotify: true })
       notification.onclick = () => {
         window.focus()
         openThread(sessionId)

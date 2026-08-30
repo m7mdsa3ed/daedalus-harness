@@ -80,13 +80,14 @@ import {
   killTerminal,
   listTerminals,
 } from "./terminals.js";
-import { ideStatus, reclaimAllOrphans, startIde, stopAllIdes, stopIde } from "./ide.js";
+import { adoptOrphans, ideStatus, startIde, stopAllIdes, stopIde } from "./ide.js";
 import { parseIdePath, proxyIdeRequest, proxyIdeUpgrade } from "./ide-proxy.js";
 import { Push } from "./push.js";
 
 const config = loadConfig();
-// Editors this process did not start and cannot manage — see reclaimAllOrphans.
-reclaimAllOrphans();
+// Editors a previous process left running: taken back under the same key so
+// browser frames survive a restart, or cleaned up. See adoptOrphans.
+await adoptOrphans();
 // Adds only the built-in agents this install has never been offered; a user's
 // edits and deletions are left alone. See registry.seedAgents.
 seedAgents();

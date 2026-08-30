@@ -6,7 +6,7 @@ import { materializeProject } from "./materialize.js";
 import type { Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 import { getAgent, resolveSpawn } from "./registry.js";
-import type { HistoryLost, RestoreState, ThreadEvent, WireError } from "./protocol.js";
+import type { HistoryLost, HistoryStrategy, RestoreState, ThreadEvent, WireError } from "./protocol.js";
 import type { Peer } from "./sessions.js";
 
 /**
@@ -27,6 +27,16 @@ import type { Peer } from "./sessions.js";
     that a wedged one does not hold an HTTP request open forever. Same ceiling
     the probe uses, for the same reason. */
 export const HANDSHAKE_TIMEOUT_MS = 25_000;
+
+/** The session exists only in the agent's memory, so there is nothing to fork
+    from yet. An ordinary state — the first turn of every thread is in it — not
+    a failure, which is why it is a class and not a bare Error. */
+export class SessionNotForkableError extends Error {
+  constructor() {
+    super("the agent has not committed this session to disk yet");
+    this.name = "SessionNotForkableError";
+  }
+}
 
 /**
  * Start an agent process. Both callers — a thread's bridge and the throwaway
@@ -92,6 +102,7 @@ export interface BridgeHost {
   onPermissionRequest(): void;
   onElicitationRequest(): void;
   onTurnEnd(error?: unknown): void;
+  onLogicalTurnEnd(turnId: string): void;
   /** The agent accepted a `session/new` or a `session/load`: this is the
       session the running process is on. `proven` says which — a load that
       answered is the strongest evidence an id can have (the agent found the
@@ -132,8 +143,13 @@ export class AcpBridge {
   /** Resolves when the session exists and its settings have been applied. */
   readonly ready: Promise<void>;
   acpSessionId: string | null = null;
+  /** Whether the agent has written this session down yet — a `session/load`
+      answered it, or a turn has settled on it. An id it has only minted is not
+      one it can resume, and forking is a resume (see `forkCheckpoint`). */
+  sessionDurable = false;
   modes: acp.SessionModeState | null = null;
   configOptions: acp.SessionConfigOption[] = [];
+  agentCapabilities: acp.AgentCapabilities = {};
   readonly pending = new Map<string, PendingRequest>();
 
   private readonly host: BridgeHost;
@@ -153,6 +169,8 @@ export class AcpBridge {
   /** Prompt texts whose turns are waiting on close() for a reason worth
       reporting — see onPromptRejected. */
   private readonly held: string[] = [];
+  private currentTurnId: string | null = null;
+  private currentTurnPrompt: string | null = null;
 
   constructor(host: BridgeHost, proc: ChildProcessWithoutNullStreams, opts: BridgeOptions) {
     this.host = host;
@@ -185,6 +203,12 @@ export class AcpBridge {
     return this.inflight > 0;
   }
 
+  get historyStrategy(): HistoryStrategy {
+    return this.agentCapabilities.sessionCapabilities?.fork != null
+      ? "fork-checkpoint"
+      : "unsupported";
+  }
+
   // ---- handshake ----
 
   private async handshake(opts: BridgeOptions): Promise<void> {
@@ -198,7 +222,7 @@ export class AcpBridge {
   }
 
   private async runHandshake(opts: BridgeOptions): Promise<void> {
-    await this.connection.agent.request(acp.methods.agent.initialize, {
+    const initialized = await this.connection.agent.request(acp.methods.agent.initialize, {
       protocolVersion: acp.PROTOCOL_VERSION,
       clientCapabilities: {
         // The agent runs beside us with its own filesystem; there is nothing
@@ -228,6 +252,7 @@ export class AcpBridge {
         elicitation: { form: {}, url: {} },
       },
     });
+    this.agentCapabilities = initialized.agentCapabilities ?? {};
 
     if (opts.load) {
       await this.loadSession(opts);
@@ -259,6 +284,43 @@ export class AcpBridge {
       _meta: this.claudeMeta(opts),
     });
     this.adoptSession(response.sessionId, response.modes ?? null, response.configOptions ?? [], false);
+  }
+
+  /**
+   * Branch the conversation so the turn about to run can be thrown away later.
+   *
+   * A fork is a *resume* on the agent's side — it mints a child id and replays
+   * the parent's transcript into it — so it can only branch from a session the
+   * agent has written down. A session id straight out of `session/new` is not
+   * that: claude-agent-acp flushes the rollout lazily, so forking before the
+   * first turn settles fails with ResourceNotFound naming the *child* it had
+   * just minted (the parent is what was missing, but the error reports the id
+   * it was creating), which read like the agent losing a session it had
+   * invented one line earlier. Hence `sessionDurable`: the first turn of a
+   * thread runs unforked, which is also what it means — there is no state
+   * before it to revert to.
+   *
+   * The child is adopted *provisionally* for the same reason it could not be
+   * forked from: nothing has settled on it yet. Until a turn does, the id worth
+   * keeping on the record is the parent's, which still has the conversation.
+   */
+  async forkCheckpoint(cwd: string, mcpServers: acp.McpServer[]): Promise<string> {
+    if (this.historyStrategy !== "fork-checkpoint") {
+      throw new Error("the agent does not advertise session/fork");
+    }
+    if (!this.sessionDurable) throw new SessionNotForkableError();
+    const response = await this.connection.agent.request(acp.methods.agent.session.fork, {
+      sessionId: this.requireSession(),
+      cwd,
+      mcpServers,
+    });
+    this.adoptSession(
+      response.sessionId,
+      response.modes ?? this.modes,
+      response.configOptions ?? this.configOptions,
+      false,
+    );
+    return response.sessionId;
   }
 
   /**
@@ -317,6 +379,7 @@ export class AcpBridge {
     proven: boolean,
   ): void {
     this.acpSessionId = acpSessionId;
+    this.sessionDurable = proven;
     this.modes = modes;
     this.configOptions = configOptions;
     this.host.onAcpSessionId(acpSessionId, proven);
@@ -450,12 +513,14 @@ export class AcpBridge {
    * so a prompt that fails is reported once, on `turn_ended`, rather than twice
    * in two shapes.
    */
-  prompt(text: string, origin?: Peer): void {
+  prompt(text: string, origin: Peer | undefined, turnId: string): void {
     const sessionId = this.requireSession();
     // The other peers never see this command (it goes to the agent, not to
     // them), so tell them a turn started and whose words started it.
-    this.host.emit({ ev: "turn_started", seq: 0, text }, origin);
+    this.host.emit({ ev: "turn_started", seq: 0, turnId, text }, origin);
     if (this.inflight === 0) {
+      this.currentTurnId = turnId;
+      this.currentTurnPrompt = text;
       this.host.markTurnStderr();
       this.turnStartedAt = performance.now();
       this.ttftSent = false;
@@ -500,8 +565,17 @@ export class AcpBridge {
        recording an unloadable id is how a thread loses the transcript it had.
        Reported even for a failed turn: the prompt still reached the agent, and
        what makes the session findable is that it recorded anything at all. */
-    if (this.acpSessionId) this.host.onSessionDurable();
-    this.host.emit({ ev: "turn_ended", seq: 0, usage, error, promptText: text });
+    if (this.acpSessionId) {
+      this.sessionDurable = true;
+      this.host.onSessionDurable();
+    }
+    const turnId = this.currentTurnId;
+    const promptText = this.currentTurnPrompt ?? text;
+    this.currentTurnId = null;
+    this.currentTurnPrompt = null;
+    if (!turnId) throw new Error("logical turn ended without an id");
+    this.host.emit({ ev: "turn_ended", seq: 0, turnId, usage, error, promptText });
+    this.host.onLogicalTurnEnd(turnId);
     if (this.host.peerCount() === 0) this.host.onTurnEnd(error);
   }
 

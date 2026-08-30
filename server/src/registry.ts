@@ -6,7 +6,7 @@ import type { Project } from "./projects.js";
 
 /**
  * An ACP agent definition. `args`/`env` values may contain {placeholders}
- * resolved from the active profile: {apiKey} {baseUrl} {model} {cwd}.
+ * resolved from the active profile: {apiKey} {baseUrl} {model} {smallModel} {cwd}.
  * An env entry whose placeholders resolve empty is omitted entirely.
  */
 export interface AgentDef {
@@ -27,10 +27,22 @@ export interface AgentDef {
   spawnCategories?: Record<string, "model" | "effort"> | null;
 }
 
-/** A default agent, plus the seed release that introduced it. Give a new
-    default the next unused `since` and installs pick it up — see `seedAgents`. */
+/** A default agent, plus the seed releases that bear on it. Give a new default
+    the next unused `since` and installs pick it up — see `seedAgents`. */
 type SeedAgent = AgentDef & {
+  /** The seed release whose work this row still needs: bumped whenever a
+      release adds something to it, which is what re-runs `backfill`. */
   since: number;
+  /**
+   * The release that first shipped this agent. Fixed forever, unlike `since`.
+   *
+   * The two are the same until a release backfills an existing agent, and then
+   * they must not be: `since` is how far this install has been carried, but
+   * "has this install ever been offered this agent" is what says whether a
+   * missing row was deleted on purpose. Bumping `since` alone answers that
+   * question wrongly and resurrects the row.
+   */
+  introduced: number;
   /**
    * What this seed release ADDS to a row that already exists. Returns only the
    * fields to change, and only ever fields a release introduced — never a
@@ -73,6 +85,92 @@ function withCodexCatalogKey(env: Record<string, string>): Record<string, string
   };
 }
 
+/** The two env names Claude Code has used for its cheap side-job model. */
+const SMALL_MODEL_VARS = ["ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"] as const;
+
+/**
+ * Name the model Claude Code's cheap side-jobs run on.
+ *
+ * Claude Code runs those on a second, smaller model — and the one that matters
+ * here is the Bash permission classifier, which is what decides whether a
+ * command is safe in `auto` mode. Nothing in this template ever named that
+ * model, so against a profile's {baseUrl} the *gateway* chose it: it maps the
+ * built-in Haiku id onto whatever its own cheap tier is. When that tier is an
+ * experimental preview it flaps, and the classifier fails closed — no verdict
+ * means no Bash, for commands as ordinary as a build, while the main model on
+ * the same endpoint is perfectly healthy.
+ *
+ * {smallModel} resolves to the session model (`resolveSpawn`) — which is what
+ * the profile already promises everywhere else: one model id, the one the
+ * gateway is known to serve, used for the main model, the side-jobs and the
+ * alias switches alike. A separate cheap tier was tried and unmade: it is one
+ * more id the gateway may not serve, and the classifier pays for it every Bash
+ * command. A user who wants a different tier pins the key by hand — `env`
+ * spreads last.
+ *
+ * Both names because the var was renamed across Claude Code releases and the
+ * harness does not pin the binary. An unset {smallModel} — a profile with no
+ * models at all — prunes them away, handing the choice back to the agent exactly
+ * as it does for ANTHROPIC_MODEL. `env` spreads last, so a key the user already
+ * put there is theirs and survives.
+ */
+function withSmallModelKeys(env: Record<string, string>): Record<string, string> {
+  return { ...Object.fromEntries(SMALL_MODEL_VARS.map((k) => [k, "{smallModel}"])), ...env };
+}
+
+/**
+ * Move a row already pinned to {model} onto {smallModel}.
+ *
+ * Seed 3 wrote `{model}` into these two keys; seed 4 gives the profile its own
+ * say. Only that exact value is rewritten: anything else in there is a real
+ * choice someone made, and `withSmallModelKeys` adds the keys when they are
+ * missing entirely.
+ */
+function withSmallModelVar(env: Record<string, string>): Record<string, string> {
+  const out = withSmallModelKeys(env);
+  for (const key of SMALL_MODEL_VARS) {
+    if (out[key] === "{model}") out[key] = "{smallModel}";
+  }
+  return out;
+}
+
+/**
+ * The env names Claude Code resolves its `sonnet`/`opus`/`fable` aliases
+ * through. Unlike the haiku pair these are not side-jobs — they are the models
+ * the CLI *switches the session to* on its own:
+ *
+ *   - entering plan mode upgrades a session on the haiku alias to `sonnet`
+ *     (the plan-mode constituent — the failure this exists for: a gateway
+ *     session pinned to a custom model sits in the haiku slot via
+ *     ANTHROPIC_DEFAULT_HAIKU_MODEL, the upgrade resolved the alias to the
+ *     bare `claude-sonnet-5`, the gateway serves no such unprefixed id, and
+ *     the turn died with model_not_found the moment the agent called
+ *     EnterPlanMode);
+ *   - the `opusplan` alias resolves to `opus` in plan mode and `sonnet` out;
+ *   - automatic model fallback on third-party providers recognizes a model as
+ *     Fable 5 by id, which is the `fable` alias's var.
+ *
+ * Each of those names a built-in Anthropic id the profile's gateway does not
+ * serve, so every one of them is pinned to {model} — the model the session
+ * already runs, the one id the gateway is known to serve. The aliases keep
+ * their meaning (the switch still happens) but land somewhere that answers.
+ * An unset {model} — the Default profile, a profile with no catalog — prunes
+ * the keys away and the aliases resolve to the agent's own defaults, exactly
+ * as ANTHROPIC_MODEL does. `env` spreads last, so a key the user already put
+ * there is theirs and survives.
+ */
+const ALIAS_MODEL_VARS = [
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_FABLE_MODEL",
+] as const;
+
+/** Pin Claude Code's model aliases to the selected model. New in seed 5;
+    `backfill` merges the keys into rows that predate them. */
+function withAliasModelKeys(env: Record<string, string>): Record<string, string> {
+  return { ...Object.fromEntries(ALIAS_MODEL_VARS.map((k) => [k, "{model}"])), ...env };
+}
+
 /** Model and effort are env at spawn for all three agents we ship. */
 const SPAWN_CATEGORIES: Record<string, "model" | "effort"> = {
   model: "model",
@@ -93,16 +191,23 @@ const SPAWN_CATEGORIES: Record<string, "model" | "effort"> = {
  */
 const DEFAULT_AGENTS: SeedAgent[] = [
   {
-    since: 1,
+    since: 5,
+    introduced: 1,
+    // Seed 4 moved the haiku keys to {smallModel}; seed 5 adds the alias keys.
+    // One backfill applies both, because an install stamped below 4 jumps
+    // straight here and never sees the seed-4 rule on its own.
+    backfill: (existing) => ({ env: withAliasModelKeys(withSmallModelVar(existing.env)) }),
     id: "claude-code",
     name: "Claude Code",
     command: "claude-agent-acp",
     args: [],
-    env: {
-      ANTHROPIC_API_KEY: "{apiKey}",
-      ANTHROPIC_BASE_URL: "{baseUrl}",
-      ANTHROPIC_MODEL: "{model}",
-    },
+    env: withAliasModelKeys(
+      withSmallModelKeys({
+        ANTHROPIC_API_KEY: "{apiKey}",
+        ANTHROPIC_BASE_URL: "{baseUrl}",
+        ANTHROPIC_MODEL: "{model}",
+      }),
+    ),
     spawnCategories: SPAWN_CATEGORIES,
   },
   {
@@ -119,6 +224,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // model_catalog_json is what stops Codex inventing metadata for a gateway
     // model id: model_context_window alone does not (see model-catalog.ts).
     since: 2,
+    introduced: 2,
     backfill: (existing) => ({ env: withCodexCatalogKey(existing.env) }),
     id: "codex",
     name: "Codex",
@@ -148,6 +254,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // normally set in .env (or shell) for a global default; a stored profile
     // overrides them per-thread.
     since: 1,
+    introduced: 1,
     id: "opencode",
     name: "OpenCode",
     command: "opencode",
@@ -179,10 +286,18 @@ export function seedAgents(): void {
   const applied =
     db.select({ v: agentsTable.seededVersion }).from(agentsTable).orderBy(desc(agentsTable.seededVersion)).get()
       ?.v ?? 0;
-  for (const { since, backfill, ...agent } of DEFAULT_AGENTS) {
+  for (const { since, introduced, backfill, ...agent } of DEFAULT_AGENTS) {
     if (since <= applied) continue;
     const existing = db.select().from(agentsTable).where(eq(agentsTable.id, agent.id)).get();
     if (!existing) {
+      /* This install was already offered this agent in an earlier release and
+         does not have it, so it was deleted — the one case the whole
+         seeded-version scheme exists to respect. `since > applied` alone cannot
+         tell that apart from a fresh install, because a backfill bumps `since`
+         past every row present; `introduced` is the half that does not move.
+         Nothing is stamped either: there is no row to carry a version, and the
+         re-check next boot is a no-op. */
+      if (introduced <= applied) continue;
       db.insert(agentsTable)
         .values({ ...agent, spawnCategories: agent.spawnCategories ?? null, seededVersion: since })
         .run();
@@ -286,6 +401,14 @@ export function resolveSpawn(
     apiKey: profile.apiKey ?? "",
     baseUrl: profile.baseUrl ?? "",
     model: resolvedModel,
+    /* Always the session model: a profile means "run everything on this
+       model", and the cheap side-jobs (the auto-mode classifier) and the alias
+       switches (plan mode's sonnet upgrade) are no exception — a different id
+       here is a model the gateway may not serve, which is the failure
+       `withSmallModelKeys`/`withAliasModelKeys` document. A profile with no
+       models at all resolves both to "" and the keys prune away — the agent
+       keeps its own choice, as it does for the model itself. */
+    smallModel: resolvedModel,
     effort: effort ?? "",
     contextWindow: modelMeta?.contextWindow ? String(modelMeta.contextWindow) : "null",
     maxOutputTokens: modelMeta?.maxOutputTokens ? String(modelMeta.maxOutputTokens) : "null",

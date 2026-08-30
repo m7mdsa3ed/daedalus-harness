@@ -31,6 +31,7 @@ import {
   PANE,
   PANE_MAX_H,
   Prose,
+  ProsePreview,
   ShellScript,
   ShowAll,
   SmartBlock,
@@ -755,22 +756,37 @@ function QuestionsDetail({ item }: { item: ToolItem }) {
   return (
     <div className="space-y-2">
       {questions.map((question, index) => (
-        <div key={index} className="space-y-1">
+        <div key={index} className="space-y-1.5">
           <div className="flex items-start gap-1.5 text-xs">
-            <MessageCircleQuestionIcon className="mt-0.5 size-3 shrink-0 text-muted-foreground/60" />
-            <span className="min-w-0 text-foreground">{question.question}</span>
+            <MessageCircleQuestionIcon className="mt-1 size-3 shrink-0 text-muted-foreground/60" />
+            <span className="min-w-0 flex-1 text-foreground">
+              <ProsePreview text={question.question} />
+            </span>
             {question.multiSelect && (
-              <span className="shrink-0 text-[10px] text-muted-foreground/60">multi</span>
+              <span className="shrink-0 rounded bg-muted/60 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                multi-select
+              </span>
             )}
           </div>
           {question.options.length > 0 && (
-            <ul className="ms-4 space-y-0.5">
+            <ul className="ms-5 space-y-1">
               {question.options.map((option, optionIndex) => (
-                <li key={optionIndex} className="text-[11px]">
-                  <span className="text-foreground/80">{option.label}</span>
-                  {option.description && (
-                    <span className="text-muted-foreground/70"> — {option.description}</span>
-                  )}
+                <li
+                  key={optionIndex}
+                  className="flex items-start gap-2 rounded-lg bg-background/40 px-2 py-1 text-[11.5px]"
+                >
+                  <span
+                    aria-hidden
+                    className="mt-[0.4em] size-1.5 shrink-0 rounded-full bg-muted-foreground/40"
+                  />
+                  <span className="min-w-0">
+                    <ProsePreview text={option.label} className="font-medium text-foreground/90" />
+                    {option.description && (
+                      <span className="block text-muted-foreground/70">
+                        <ProsePreview text={option.description} />
+                      </span>
+                    )}
+                  </span>
                 </li>
               ))}
             </ul>

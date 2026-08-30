@@ -9,10 +9,24 @@ import { db, sessionEvents as eventsTable, sessions as sessionsTable } from "./d
 import { mcpServers as mcpLibrary } from "./library.js";
 import type { Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
+import { getProfile } from "./profiles.js";
+import { getProject } from "./projects.js";
 import { loadConfig } from "./config.js";
 import { WEB_SEARCH_SERVER_NAME, toMcpServerEnv } from "./websearch.js";
 import { KNOWLEDGE_SERVER_NAME, toKnowledgeServerEnv } from "./knowledge-db.js";
-import { AcpBridge, spawnAgent, toWireError, type BridgeHost } from "./acp-bridge.js";
+import {
+  AcpBridge,
+  SessionNotForkableError,
+  spawnAgent,
+  toWireError,
+  type BridgeHost,
+} from "./acp-bridge.js";
+import { HistoryController } from "./history-controller.js";
+import {
+  WorkspaceConflictError,
+  WorkspaceSnapshotLimitError,
+  WorkspaceSnapshotService,
+} from "./workspace-history.js";
 import {
   JOURNALED_EVENTS,
   REPLAY_CHUNK_SIZE,
@@ -35,6 +49,9 @@ export interface Session {
   profileId: string;
   projectId: string;
   agentId: string;
+  /** Live spawn inputs. Persisted threads resolve them again on revive. */
+  profile: Profile | null;
+  project: Project | null;
   model: string;
   effort: string;
   title: string;
@@ -91,6 +108,11 @@ export interface Session {
       bridge, which is what used to reject the first call's `await bridge.ready`
       with the close reason and answer a fine respawn with 500 "respawning". */
   respawnChain: Promise<Session> | null;
+  /** Serializes checkpoint creation, completion and workspace restores. */
+  historyChain: Promise<unknown> | null;
+  activeTurnId: string | null;
+  historyBusy: boolean;
+  historyConflict: string | null;
 }
 
 /** How much of the agent's stderr to keep. Enough for a stack trace, bounded so
@@ -225,6 +247,10 @@ export interface SessionEvents {
 
 export class SessionManager {
   private sessions = new Map<string, Session>();
+  private readonly history = new HistoryController(
+    new WorkspaceSnapshotService(loadConfig().history?.maxSnapshotBytes, loadConfig().history?.ignore),
+    loadConfig().history?.maxRetainedBranches,
+  );
 
   constructor(private events: SessionEvents = {}, idleMinutes = 30) {
     // Sessions from before the last server restart: processes are gone, but the
@@ -236,6 +262,8 @@ export class SessionManager {
       this.sessions.set(row.id, {
         ...row,
         acpSessionId: row.acpSessionId ?? undefined,
+        profile: null,
+        project: null,
         liveAcpSessionId: null,
         historyLost: null,
         eventCount: 0,
@@ -248,6 +276,10 @@ export class SessionManager {
         detachedAt: Date.now(),
         exited: true,
         respawnChain: null,
+        historyChain: null,
+        activeTurnId: null,
+        historyBusy: false,
+        historyConflict: null,
       });
     }
 
@@ -426,6 +458,24 @@ export class SessionManager {
       onPermissionRequest: () => this.events.onPermissionRequest?.(session),
       onElicitationRequest: () => this.events.onElicitationRequest?.(session),
       onTurnEnd: (error) => this.events.onTurnEnd?.(session, error),
+      onLogicalTurnEnd: (turnId) => {
+        void this.queueHistory(session, async () => {
+          const project = session.project ?? getProject(session.projectId);
+          if (!project || session.bridge?.historyStrategy === "unsupported") {
+            session.activeTurnId = null;
+            return;
+          }
+          try {
+            this.history.complete(turnId, this.history.snapshots.manifest(project.cwd));
+          } catch (error) {
+            this.history.fail(turnId);
+            console.error(`[history:${session.id.slice(0, 8)}] couldn't complete checkpoint`, error);
+          } finally {
+            session.activeTurnId = null;
+            this.emitHistory(session);
+          }
+        });
+      },
       /* Two callbacks where there was one, and the gap between them is the
          point — but the gap is about *precedence*, not about whether to write
          anything down. A session the agent has just created exists in its
@@ -455,7 +505,13 @@ export class SessionManager {
       onSessionDurable: () => {
         const live = session.liveAcpSessionId;
         if (!live) return;
-        if (live === session.acpSessionId && !session.acpSessionProvisional) return;
+        if (live === session.acpSessionId && !session.acpSessionProvisional) {
+          if (session.historyLost) {
+            session.historyLost = null;
+            this.persist(session);
+          }
+          return;
+        }
         session.acpSessionId = live;
         session.acpSessionProvisional = false;
         session.historyLost = null; // superseded: this session is the thread now
@@ -564,6 +620,8 @@ export class SessionManager {
       profileId: profile.id,
       projectId: project.id,
       agentId: profile.agentId,
+      profile,
+      project,
       model: model || profile.defaultModel || "",
       effort: effort ?? "",
       title: "New thread",
@@ -582,6 +640,10 @@ export class SessionManager {
       deletedAt: null,
       exited: false,
       respawnChain: null,
+      historyChain: null,
+      activeTurnId: null,
+      historyBusy: false,
+      historyConflict: null,
     };
     this.sessions.set(session.id, session);
     // Before the bridge: the event rows reference this one, so the session has
@@ -604,24 +666,16 @@ export class SessionManager {
       configChoices?: Record<string, string | boolean>;
     },
   ): AcpBridge {
+    session.profile = profile;
+    session.project = project;
     const proc = spawnAgent(profile, project, model, effort);
-    const mcpServers = mcpServersFor(project);
+    const { mcpServers, websearchFromProfile } = this.serversFor(session, profile, project);
     // The web-search MCP server replaces claude-code's built-in WebSearch/
     // WebFetch, but only when the PROFILE opts in (and a search backend is
     // resolvable — profile override or server default). Default is off: a
     // profile that never set `webSearch.enabled`, or an agent that never
     // declared the originals (codex/opencode), adds nothing and disallows
     // nothing.
-    const wsServer = websearchServer(profile, loadConfig());
-    const websearchFromProfile = session.agentId === "claude-code" && wsServer !== null;
-    // Knowledge is additive for every agent — there is no built-in to disallow
-    // (unlike web-search), so no agentId gating and no special-casing. Gated on
-    // the profile's own toggle.
-    const kbServer = knowledgeServer(profile, project);
-    const extra = [
-      ...(websearchFromProfile ? [wsServer!] : []),
-      ...(kbServer ? [kbServer] : []),
-    ];
     // Both belong to the process about to be replaced, and the handshake below
     // is what fills them in again — a stale "history lost" would outlive the
     // load that failed and mark a thread that has just been restored fine.
@@ -629,7 +683,7 @@ export class SessionManager {
     session.historyLost = null;
     const bridge = new AcpBridge(this.hostFor(session), proc, {
       cwd: project.cwd,
-      mcpServers: [...extra, ...mcpServers],
+      mcpServers,
       ...opts,
       websearchViaMcp: websearchFromProfile,
     });
@@ -642,6 +696,23 @@ export class SessionManager {
     bridge.ready.catch(() => {});
     this.wire(session, proc, bridge, profile.name);
     return bridge;
+  }
+
+  private serversFor(session: Session, profile: Profile, project: Project): {
+    mcpServers: acp.McpServer[];
+    websearchFromProfile: boolean;
+  } {
+    const wsServer = websearchServer(profile, loadConfig());
+    const websearchFromProfile = session.agentId === "claude-code" && wsServer !== null;
+    const kbServer = knowledgeServer(profile, project);
+    return {
+      mcpServers: [
+        ...(websearchFromProfile ? [wsServer!] : []),
+        ...(kbServer ? [kbServer] : []),
+        ...mcpServersFor(project),
+      ],
+      websearchFromProfile,
+    };
   }
 
   /**
@@ -730,6 +801,66 @@ export class SessionManager {
     return this.sessions.get(id);
   }
 
+  /** Dispatch a logical prompt from any source (socket or scheduler). */
+  async prompt(id: string, text: string, peer?: Peer): Promise<{ turnId: string }> {
+    const session = this.sessions.get(id);
+    const bridge = session?.bridge;
+    if (!session || !bridge) throw new Error("this thread has no running agent");
+    const result = await this.queueHistory(session, async () => {
+      if (session.bridge !== bridge) throw new Error("the agent changed while preparing the turn");
+      if (!bridge.promptActive) {
+        const project = session.project ?? getProject(session.projectId);
+        const profile = session.profile ?? getProfile(session.profileId);
+        if (!project || !profile) throw new Error("the thread's project or profile no longer exists");
+        /* A checkpoint is a convenience; the turn is the point. Nothing that
+           goes wrong while taking one may cost the user their message, so a
+           failure degrades to an uncheckpointed turn and says why in the
+           history state — where it used to fail the prompt with an error about
+           bytes, or about a session id the agent had minted a line earlier.
+           Not being forkable yet is the ordinary case, not a failure: the first
+           turn of a thread has no state before it to revert to. */
+        let checkpointed = false;
+        if (bridge.historyStrategy === "fork-checkpoint") {
+          try {
+            const checkpoint = await this.history.begin(
+              session.id,
+              bridge,
+              project.cwd,
+              this.serversFor(session, profile, project).mcpServers,
+              text,
+            );
+            session.activeTurnId = checkpoint.turnId;
+            session.historyConflict = null;
+            checkpointed = true;
+          } catch (error) {
+            if (error instanceof SessionNotForkableError) {
+              session.historyConflict = null;
+            } else if (error instanceof WorkspaceSnapshotLimitError) {
+              session.historyConflict = `This turn was not checkpointed. ${error.message}`;
+              console.warn(`[history:${session.id.slice(0, 8)}] skipping checkpoint`, error.message);
+            } else {
+              session.historyConflict = `This turn was not checkpointed. ${describe(error)}`;
+              console.warn(`[history:${session.id.slice(0, 8)}] couldn't start a checkpoint`, error);
+            }
+          }
+          this.emitHistory(session);
+        }
+        if (!checkpointed) {
+          session.activeTurnId = randomUUID();
+        }
+      }
+      const turnId = session.activeTurnId;
+      if (!turnId) throw new Error("the logical turn has no checkpoint id");
+      bridge.prompt(text, peer, turnId);
+      return { turnId };
+    });
+    if (text && session.title === "New thread") {
+      session.title = text.slice(0, 60);
+      this.persist(session);
+    }
+    return result;
+  }
+
   private resetStderr(session: Session): void {
     session.stderr = [];
     session.stderrCount = 0;
@@ -778,6 +909,32 @@ export class SessionManager {
       promptActive: s.bridge?.promptActive ?? false,
       cursor: s.eventCount,
     }));
+  }
+
+  private historyState(session: Session) {
+    return this.history.state(
+      session.id,
+      this.history.strategy(session.bridge),
+      session.historyBusy,
+      session.historyConflict ?? undefined,
+    );
+  }
+
+  private emitHistory(session: Session): void {
+    this.emit(session, { ev: "history_state", history: this.historyState(session) });
+  }
+
+  private queueHistory<T>(session: Session, op: () => Promise<T>): Promise<T> {
+    const ahead = session.historyChain;
+    const run = (async () => {
+      await ahead?.catch(() => {});
+      return op();
+    })();
+    session.historyChain = run;
+    void run.finally(() => {
+      if (session.historyChain === run) session.historyChain = null;
+    }).catch(() => {});
+    return run;
   }
 
   /**
@@ -854,6 +1011,7 @@ export class SessionManager {
       ev: "attached",
       from: cursor,
       acpSessionId: session.liveAcpSessionId ?? session.acpSessionId ?? null,
+      history: this.historyState(session),
       ...(session.historyLost ? { historyLost: session.historyLost } : {}),
     });
     const history = this.eventsFrom(session, cursor);
@@ -919,13 +1077,13 @@ export class SessionManager {
         return;
       }
       case "prompt":
-        this.run(session, peer, command.id, async () => {
-          bridge.prompt(command.text, peer);
-          if (command.text && session.title === "New thread") {
-            session.title = command.text.slice(0, 60);
-            this.persist(session);
-          }
-        });
+        this.run(session, peer, command.id, () => this.prompt(session.id, command.text, peer));
+        return;
+      case "revert":
+        this.run(session, peer, command.id, () => this.revert(session, command.checkpointId));
+        return;
+      case "recover_branch":
+        this.run(session, peer, command.id, () => this.recoverBranch(session, command.branchId));
         return;
       case "cancel":
         this.run(session, peer, command.id, () => bridge.cancel());
@@ -939,6 +1097,111 @@ export class SessionManager {
         }));
         return;
     }
+  }
+
+  private async revert(session: Session, checkpointId: string): Promise<{ checkpointId: string }> {
+    return this.queueHistory(session, async () => {
+      if (session.historyBusy) throw new Error("a history operation is already running");
+      if (session.bridge?.promptActive) throw new Error("wait for the active turn to finish before reverting");
+      const target = this.history.checkpoint(session.id, checkpointId);
+      if (!target || target.status !== "completed" || target.branchId) throw new Error("unknown or inactive checkpoint");
+      const project = session.project ?? getProject(session.projectId);
+      const profile = session.profile ?? getProfile(session.profileId);
+      const bridge = session.bridge;
+      if (!project || !profile || !bridge) throw new Error("the thread cannot be restored without its live project, profile and agent");
+      if (bridge.historyStrategy === "unsupported") throw new Error("revert is unavailable for this agent");
+      session.historyBusy = true;
+      session.historyConflict = null;
+      this.emitHistory(session);
+      try {
+        this.history.snapshots.assertMatches(project.cwd, this.history.latestActive(session.id)?.postManifest ?? null);
+        const discardedSnapshot = this.history.snapshots.capture(project.cwd);
+        const discardedAcpSessionId = session.liveAcpSessionId ?? session.acpSessionId;
+        if (!discardedAcpSessionId) throw new Error("the active ACP session has no id");
+        this.history.retainActiveBranch(session.id, target, discardedAcpSessionId, discardedSnapshot.id);
+        this.history.snapshots.restore(project.cwd, target.preSnapshotId);
+        await this.loadHistorySession(session, profile, project, target.parentAcpSessionId);
+        return { checkpointId };
+      } catch (error) {
+        if (error instanceof WorkspaceConflictError) session.historyConflict = error.message;
+        throw error;
+      } finally {
+        session.historyBusy = false;
+        this.emitHistory(session);
+      }
+    });
+  }
+
+  private async recoverBranch(session: Session, branchId: string): Promise<{ branchId: string }> {
+    return this.queueHistory(session, async () => {
+      if (session.historyBusy) throw new Error("a history operation is already running");
+      if (session.bridge?.promptActive) throw new Error("wait for the active turn to finish before recovering a branch");
+      const branch = this.history.recoverBranch(session.id, branchId);
+      if (!branch) throw new Error("unknown retained branch");
+      const latest = this.history.latestActive(session.id);
+      const project = session.project ?? getProject(session.projectId);
+      const profile = session.profile ?? getProfile(session.profileId);
+      if (!project || !profile || !session.bridge) throw new Error("the active branch cannot be retained");
+      session.historyBusy = true;
+      session.historyConflict = null;
+      this.emitHistory(session);
+      try {
+        this.history.snapshots.assertMatches(project.cwd, latest?.postManifest ?? null);
+        const activeSnapshot = this.history.snapshots.capture(project.cwd);
+        const activeAcpSessionId = session.liveAcpSessionId ?? session.acpSessionId;
+        if (!activeAcpSessionId) throw new Error("the active ACP session has no id");
+        if (latest) {
+          this.history.retainActiveBranch(session.id, latest, activeAcpSessionId, activeSnapshot.id);
+        } else {
+          this.history.retainHead(
+            session.id,
+            branch.sourceCheckpointId,
+            activeAcpSessionId,
+            activeSnapshot.id,
+            "Branch before recovery",
+          );
+        }
+        this.history.snapshots.restore(project.cwd, branch.workspaceSnapshotId);
+        await this.loadHistorySession(session, profile, project, branch.acpSessionId);
+        this.history.markRecovered(session.id, branchId);
+        this.history.refreshActiveHead(session.id, this.history.snapshots.manifest(project.cwd));
+        return { branchId };
+      } catch (error) {
+        if (error instanceof WorkspaceConflictError) session.historyConflict = error.message;
+        throw error;
+      } finally {
+        session.historyBusy = false;
+        this.emitHistory(session);
+      }
+    });
+  }
+
+  private async loadHistorySession(
+    session: Session,
+    profile: Profile,
+    project: Project,
+    acpSessionId: string,
+  ): Promise<void> {
+    const restore = session.bridge?.captureRestoreState();
+    const oldProc = session.proc;
+    const oldBridge = session.bridge;
+    session.bridge = null;
+    oldBridge?.close(new Error("restoring history"));
+    if (!session.exited) oldProc?.kill();
+    this.clearEvents(session);
+    this.resetStderr(session);
+    session.acpSessionId = acpSessionId;
+    session.acpSessionProvisional = false;
+    this.persist(session);
+    this.emit(session, { ev: "history_reset", history: this.historyState(session) });
+    const next = this.start(session, profile, project, session.model, session.effort, {
+      load: { acpSessionId },
+      restore,
+    });
+    await next.ready;
+    // Starting an agent materializes harness-managed project files. They are
+    // part of the known restored state, not an intervening user edit.
+    this.history.refreshActiveHead(session.id, this.history.snapshots.manifest(project.cwd));
   }
 
   /** One command, one reply. Failures carry the agent's stderr, so the browser

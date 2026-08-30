@@ -33,6 +33,7 @@ import {
   type ElicitationField,
 } from "@/lib/elicitation"
 import type { PendingElicitation } from "@/lib/store"
+import { Prose, ProsePreview } from "./tool-parts"
 import { cn } from "@/lib/utils"
 
 /* The agent asked something, and the turn is stopped until it hears back — so
@@ -103,7 +104,7 @@ function ElicitationStep({
         {/* mb-0! because the wrapper's own margin is set by a `:has(~ …)`
             variant that can't see the description through this row. */}
         <QuestionnaireTitle className="mb-0! flex-1 text-[15px] leading-snug">
-          {prompt}
+          <ProsePreview text={prompt} className="text-[15px] leading-snug" />
         </QuestionnaireTitle>
         {chip && (
           <span className="mt-px shrink-0 rounded-full bg-background/60 px-2 py-0.5 text-[10px] leading-4 tracking-wide text-muted-foreground">
@@ -132,10 +133,10 @@ function ElicitationStep({
                  or it is the one outlined thing left in the card. */
               className="rounded-xl border-transparent bg-background/60 hover:bg-background/80 data-checked:border-transparent data-checked:bg-primary/15 [&_[data-slot=questionnaire-choice-shortcut]]:border-transparent [&_[data-slot=questionnaire-choice-shortcut]]:bg-primary/10"
             >
-              <span className="font-medium">{option.label}</span>
+              <ProsePreview text={option.label} className="font-medium" />
               {option.description && (
                 <QuestionnaireChoiceDescription className="text-xs">
-                  {option.description}
+                  <ProsePreview text={option.description} />
                 </QuestionnaireChoiceDescription>
               )}
               {/* A preview is a mockup or a snippet the option wants compared
@@ -145,10 +146,11 @@ function ElicitationStep({
               {option.preview && (
                 /* One step further down than the option it sits in — the same
                    `bg-background/60` would make it invisible against its own
-                   parent. */
-                <pre className="mt-1.5 max-h-40 overflow-auto rounded-lg bg-muted/60 px-2.5 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap text-foreground/90">
-                  {option.preview}
-                </pre>
+                   parent. Prose marks up a markdown preview; a code preview
+                   still finds its fenced blocks styled by the same renderer. */
+                <div className="mt-1.5 max-h-40 overflow-auto rounded-lg bg-muted/60 px-2.5 py-2 text-[11px] leading-relaxed text-foreground/90">
+                  <Prose text={option.preview} />
+                </div>
               )}
             </QuestionnaireChoice>
           ))}

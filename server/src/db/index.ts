@@ -115,6 +115,7 @@ function importLegacyJson(): void {
           baseUrl: profile.baseUrl ?? "",
           apiKey: profile.apiKey ?? "",
           defaultModel: profile.defaultModel ?? "",
+          smallModel: profile.smallModel ?? "",
           models: profile.models ?? [],
         })
         .onConflictDoNothing()

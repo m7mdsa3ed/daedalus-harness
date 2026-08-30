@@ -94,15 +94,21 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   on every profile/model change — measured here at ~3.2s per spawn versus ~0.4s for the
   binary. A missing binary fails with ENOENT, which surfaces in the thread; the
   self-installing form is `command: "npx"`, `args: ["-y", "<package>"]`. Defaults live in
-  `DEFAULT_AGENTS` (`server/src/registry.ts`); each carries a `since` seed version and
-  `seedAgents()` inserts only the ones this install has never been offered, so **an agent
+  `DEFAULT_AGENTS` (`server/src/registry.ts`); each carries **two** seed versions —
+  `introduced`, the release that first shipped the agent, fixed forever, and `since`, the
+  release whose work the row still needs, bumped by every backfill — and `seedAgents()`
+  inserts only the ones this install has never been offered, so **an agent
   added in a later release reaches installs that already have rows** (the old seed-if-empty
   rule could not). It backfills fields a release *adds* (e.g. `spawnCategories`) onto older
   built-in rows but never replaces name/command/args/env — those are the user's. A release
   that adds a single key *inside* one of them (the codex catalog key in `CODEX_CONFIG`) says
   so with a `backfill` on the seed entry, which merges that one key and leaves the rest; it
   also drops that agent's cached probe answers, since what the key adds is what the probe
-  reports.
+  reports. The two versions have to be separate because a backfill bumps `since` past every
+  row present, and "is this install past the release that introduced this agent" is the only
+  way to read a *missing* row as **deleted on purpose** rather than as a fresh install owed
+  the agent — with one version, backfilling a built-in resurrects it for everyone who
+  removed it.
 - Server: `cd server && pnpm dev` (prints token), `pnpm test` (bridge self-check against the
   fake agent: handshake, event log, replay, multi-peer, failure paths).
 - **The server is deployed built, not with tsx.** `pnpm build` emits to `server/dist/` via
@@ -120,7 +126,11 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   the SQLite handle are owned by this process, and a cluster fork could not see another
   fork's bridges.
 - Schema change: edit `server/src/db/schema.ts`, run `pnpm db:generate`, commit the SQL in
-  `server/drizzle/`. `pnpm db:studio` browses the database.
+  `server/drizzle/`. `pnpm db:studio` browses the database. `pnpm db:push` exists as a
+  **local-only** escape hatch — it writes the schema straight into `data/daedalus.db` and
+  records nothing in `__drizzle_migrations`, so a column it adds reaches no other install
+  and `migrate()` will still try to add it at boot. Generate the migration too, always;
+  push is for getting a dev database unstuck, never for shipping a change.
 - Client: `cd client && pnpm dev` / `pnpm build` / `pnpm electron:dev` / `pnpm electron:dist:win`.
 - **The PWA needs https, so dev has `pnpm dev:tunnel`.** No secure context means no
   service worker and no install prompt, and `localhost` is one where a LAN IP is not —
@@ -201,7 +211,24 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   no reasoning levels, which is that missing effort selector. `model_context_window` does not
   silence it; only `model_catalog_json` does, and it takes a *path*. So
   `server/src/model-catalog.ts` writes `data/model-catalogs/<profileId>.json` on spawn and
-  `{codexModelCatalog}` in the env template points at it. An entry carries far more than
+  `{codexModelCatalog}` in the env template points at it. **A model a profile does not
+  name is a model the gateway picks**, and the quietest one is the *second* model Claude
+  Code runs its cheap side-jobs on — the Bash permission classifier among them, which is
+  what `auto` mode's verdict is. Unnamed, the endpoint maps the built-in Haiku id onto
+  whatever it calls cheap; when that is an experimental preview it flaps and the classifier
+  fails closed, so an ordinary build is refused while the main model on the same endpoint is
+  healthy. `{smallModel}` fills `ANTHROPIC_DEFAULT_HAIKU_MODEL` *and*
+  `ANTHROPIC_SMALL_FAST_MODEL` (the var was renamed across releases and the harness does not
+  pin the binary), and resolves to the session model — always, with no per-profile cheap
+  pick any more: a profile means "run everything on this model", and a second id is one more
+  the gateway may not serve. The same rule, for the same reason, pins Claude Code's model
+  *aliases* — `ANTHROPIC_DEFAULT_SONNET_MODEL`/`_OPUS_MODEL`/`_FABLE_MODEL` all carry
+  `{model}`, because the CLI switches to them on its own (entering plan mode upgrades a
+  haiku-alias session to `sonnet`; `opusplan` resolves opus/sonnet across the plan boundary)
+  and each names a built-in Anthropic id a gateway does not serve, which killed turns with
+  `model_not_found` the moment one fired. A profile with no models at all resolves all of
+  these empty and the keys prune away, which hands the choice back to the agent exactly as
+  it does for `ANTHROPIC_MODEL`. An entry carries far more than
   numbers (`base_instructions` is codex's whole system prompt), so none is invented: `codex
   debug models` prints the built-in catalog and each entry is its flagship model with the
   identity, context window and efforts swapped. No `codex` on PATH, or a profile with no
@@ -437,7 +464,23 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   to be somewhere the browser repeats on its own; a cookie would need `SameSite=None;
   Secure` (the app's origin and the server's are different — Vite, a tunnel, Electron) and
   plain-http localhost refuses that. The key is 24 random bytes, minted by the
-  authenticated `POST /api/projects/:id/ide`, held in memory, dead with the instance. The
+  authenticated `POST /api/projects/:id/ide` — and **written beside the editor's own data
+  so a restart can adopt it**. That is the part worth keeping: the panel's whole argument is
+  that closing it must not cost you an unsaved buffer or a running task, and killing the
+  editor on every server restart said the opposite — constantly, in dev, where `tsx watch`
+  restarts on every keystroke in that file. So `adoptOrphans()` runs at boot and takes a
+  live, healthy code-server back under the *same* key, which is what browser frames already
+  open are still using; the restart becomes invisible instead of destructive. The pid is
+  never acted on unquestioned (pids are reused): it is verified on Linux by reading
+  `/proc/<pid>/cmdline` back and requiring this project's data directory in it, and
+  elsewhere a stale record is dropped without a signal — risking a second editor rather than
+  a wrong kill. The asymmetry with `stopAllIdes` is deliberate: a process *told* to stop
+  stops what it owns, because leaving four VS Codes behind a server nobody restarts is a
+  leak, while one that dies without being told cannot clean up and the next one adopts. That
+  second case is the common one here — pm2 runs `d-server` as `bash -c pnpm dev`, so SIGINT
+  lands on the wrapper and the handler never runs. The client half of the same problem is a
+  slow poll in `ide-panel.tsx`: a dead key does not announce itself, and what the user sees
+  is VS Code's own "failed to connect (1006)" dialog inside a frame this app cannot read. The
   proxy strips the prefix before forwarding, which is code-server's documented sub-path
   shape, and it does three things on purpose: drops hop-by-hop headers, **drops
   `x-frame-options` and the `frame-ancestors` directive** (code-server refuses framing,
@@ -451,7 +494,9 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   build and an unsaved buffer are what you close a laptop on) — `IDLE_MS` without proxy
   traffic sweeps it, and Stop is how you mean it now. Singleton per project because the
   server is: two extension hosts writing one `.vscode` is a corruption. A missing binary is
-  a state, not an error — the panel prints the install command and never runs one.
+  a state, not an error — the panel prints the install command and never runs one, and the
+  binary lookup caches only the *positive* answer, since a permanent negative cache would
+  make that empty state's "Check again" a lie until the next restart.
 - Test agent: `server/test/fake-agent.mjs` (registered as `fake-echo`), drives the UI without
   credentials. It answers raw NDJSON, which the SDK on the other end is happy with — it
   validates inbound `session/update` params but not responses.

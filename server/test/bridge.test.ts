@@ -5,7 +5,7 @@
 // imports are hoisted, so setting it here would be too late).
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeJson } from "../src/config.js";
@@ -20,6 +20,13 @@ writeJson(join(process.env.DAEDALUS_DATA_DIR!, "agents.json"), [
     command: "node",
     args: [join(dirname(fileURLToPath(import.meta.url)), "fake-agent.mjs")],
     env: { FAKE_KEY: "{apiKey}", FAKE_EMPTY: "{baseUrl}" },
+  },
+  {
+    id: "fake-no-fork",
+    name: "Fake without history",
+    command: "node",
+    args: [join(dirname(fileURLToPath(import.meta.url)), "fake-agent.mjs")],
+    env: { FAKE_NO_FORK: "1" },
   },
 ]);
 
@@ -54,6 +61,7 @@ const profile: Profile = {
   apiKey: "sk-test",
   models: [],
   defaultModel: "",
+  smallModel: "",
   webSearch: { enabled: false },
   knowledge: { enabled: false },
 };
@@ -103,7 +111,11 @@ send(ws1, { id: 1, cmd: "prompt", text: "hello fake agent" });
 await waitFor(() => ws1.of("turn_ended").length === 1, "turn end");
 assert.equal(session.title, "hello fake agent", "the title is sniffed from the first prompt");
 // The turn is what makes the session findable again, so now it is proven.
-assert.equal(session.acpSessionId, "acp-123", "a session with a turn in it is recorded");
+// The *first* turn runs unforked: a session the agent has only minted cannot be
+// resumed, and a fork is a resume — asking for one used to fail the prompt with
+// ResourceNotFound naming the child it had just created. There is also nothing
+// to revert to before the first turn.
+assert.equal(session.acpSessionId, "acp-123", "the first turn runs on the session itself");
 assert.equal(session.acpSessionProvisional, false, "a turn promotes the id to a proven one");
 assert.equal(session.bridge!.promptActive, false);
 assert.ok(ws1.of("update").length > 0, "the transcript streamed");
@@ -116,6 +128,13 @@ assert.deepEqual(
 assert.equal(ws1.of("turn_started").length, 0);
 assert.ok(ws1.of("ttft")[0], "time to first update is measured server-side");
 assert.ok(ws1.of("turn_ended")[0].usage, "usage rides the turn end");
+
+// --- and the second turn, which is the first one there is a checkpoint for ---
+
+send(ws1, { id: 2, cmd: "prompt", text: "and again" });
+await waitFor(() => ws1.of("turn_ended").length === 2, "the second turn");
+assert.equal(session.acpSessionId, "acp-fork-1", "now the fork carries the conversation");
+assert.equal(session.acpSessionProvisional, false);
 
 // --- reattach: the journaled events come back, in order ---
 
@@ -628,6 +647,110 @@ assert.deepEqual(getProject(linked.id)!.mcpServerIds, [], "the link went with th
 // A stale id in a request links nothing rather than failing the whole write.
 const stale = createProject({ name: "q", cwd: "/tmp", description: null, mcpServerIds: ["gone"], skillIds: [], commandIds: [] });
 assert.deepEqual(getProject(stale.id)!.mcpServerIds, []);
+
+const unsupportedSession = manager.create({ ...profile, id: "p-no-fork", agentId: "fake-no-fork" }, project);
+await unsupportedSession.bridge!.ready;
+const unsupportedWs = new MockWs();
+manager.attach(unsupportedSession.id, unsupportedWs as never);
+assert.equal(unsupportedWs.of("attached")[0]!.history.available, false);
+assert.equal(unsupportedWs.of("attached")[0]!.history.strategy, "unsupported");
+send(unsupportedWs, { id: 99, cmd: "prompt", text: "still works" });
+await waitFor(() => unsupportedWs.of("turn_ended").length === 1, "unsupported agent turn");
+assert.equal(unsupportedWs.of("history_state").length, 0, "no restore points are invented");
+assert.ok(manager.purge(unsupportedSession.id));
+
+// --- generic history checkpoints restore ACP and workspace state together ---
+
+writeFileSync(join(project.cwd, "history-original.txt"), "original\n");
+writeFileSync(join(project.cwd, "history-delete.txt"), "keep me\n");
+const historySession = manager.create(profile, project);
+await historySession.bridge!.ready;
+const historyWs = new MockWs();
+manager.attach(historySession.id, historyWs as never);
+// One turn to make the session forkable — the agent has to have written it
+// down before it can branch from it — and to prove the unforkable first turn
+// costs nothing but its checkpoint: the prompt still runs.
+send(historyWs, { id: 98, cmd: "prompt", text: "warm up" });
+await waitFor(() => historyWs.of("turn_ended").length === 1, "the unforkable first turn");
+assert.equal(historyWs.of("reply").find((event) => event.id === 98)!.error, undefined);
+assert.equal(
+  historyWs.of("history_state").at(-1)!.history.checkpoints.length,
+  0,
+  "nothing to revert to before the first turn",
+);
+send(historyWs, { id: 100, cmd: "prompt", text: "edit workspace" });
+await waitFor(() => historyWs.of("turn_ended").length === 2, "history turn end");
+await waitFor(
+  () => historyWs.of("history_state").some((event) => event.history.checkpoints.length === 1),
+  "completed history checkpoint",
+);
+const checkpoint = historyWs.of("history_state").at(-1)!.history.checkpoints[0]!;
+assert.equal(readFileSync(join(project.cwd, "history-original.txt"), "utf8"), "changed by agent\n");
+assert.equal(existsSync(join(project.cwd, ".history-created")), true);
+assert.equal(existsSync(join(project.cwd, "history-delete.txt")), false);
+
+send(historyWs, { id: 101, cmd: "revert", checkpointId: checkpoint.id });
+await waitFor(() => historyWs.of("reply").some((event) => event.id === 101), "revert reply");
+assert.equal(historyWs.of("reply").find((event) => event.id === 101)!.error, undefined);
+assert.equal(readFileSync(join(project.cwd, "history-original.txt"), "utf8"), "original\n");
+assert.equal(readFileSync(join(project.cwd, "history-delete.txt"), "utf8"), "keep me\n");
+assert.equal(existsSync(join(project.cwd, ".history-created")), false);
+assert.equal(existsSync(join(project.cwd, "history-binary.bin")), false);
+assert.ok(historyWs.of("history_reset")[0], "all peers reset before ACP history is replayed");
+assert.equal(historyWs.of("history_state").at(-1)!.history.branches.length, 1, "discarded child branch is retained");
+
+const discardedBranch = historyWs.of("history_state").at(-1)!.history.branches[0]!;
+send(historyWs, { id: 105, cmd: "recover_branch", branchId: discardedBranch.id });
+await waitFor(() => historyWs.of("reply").some((event) => event.id === 105), "branch recovery reply");
+assert.equal(historyWs.of("reply").find((event) => event.id === 105)!.error, undefined);
+assert.equal(readFileSync(join(project.cwd, "history-original.txt"), "utf8"), "changed by agent\n");
+const revertedBranch = historyWs.of("history_state").at(-1)!.history.branches.find(
+  (branch) => branch.label === "Branch before recovery",
+)!;
+send(historyWs, { id: 106, cmd: "recover_branch", branchId: revertedBranch.id });
+await waitFor(() => historyWs.of("reply").some((event) => event.id === 106), "reverted branch recovery reply");
+assert.equal(historyWs.of("reply").find((event) => event.id === 106)!.error, undefined);
+assert.equal(readFileSync(join(project.cwd, "history-original.txt"), "utf8"), "original\n");
+
+// Steering shares the restore point created for the logical turn.
+send(historyWs, { id: 102, cmd: "prompt", text: "one" });
+send(historyWs, { id: 103, cmd: "prompt", text: "two" });
+await waitFor(() => historyWs.of("turn_ended").length === 3, "steered history turn end");
+await waitFor(
+  () => historyWs.of("history_state").at(-1)?.history.checkpoints.length === 1,
+  "one checkpoint for steering",
+);
+const steeredCheckpoint = historyWs.of("history_state").at(-1)!.history.checkpoints[0]!;
+
+// An edit outside the known branch head is never overwritten.
+writeFileSync(join(project.cwd, "intervening.txt"), "mine\n");
+send(historyWs, { id: 104, cmd: "revert", checkpointId: steeredCheckpoint.id });
+await waitFor(() => historyWs.of("reply").some((event) => event.id === 104), "conflict reply");
+assert.ok(historyWs.of("reply").find((event) => event.id === 104)!.error, "the conflict rejects the command");
+assert.equal(readFileSync(join(project.cwd, "intervening.txt"), "utf8"), "mine\n");
+assert.match(historyWs.of("history_state").at(-1)!.history.conflict!, /changed after the last agent turn/);
+assert.ok(manager.purge(historySession.id));
+
+// --- a checkpoint that cannot be taken costs its checkpoint, not the turn ---
+
+// Forcing the durability flag makes the bridge ask for a fork the agent will
+// refuse — the exact failure that used to reach the user as "the agent couldn't
+// find that resource", naming a session id it had minted a moment earlier, with
+// their message never sent at all.
+const refusedSession = manager.create(profile, project);
+await refusedSession.bridge!.ready;
+refusedSession.bridge!.sessionDurable = true;
+const refusedWs = new MockWs();
+manager.attach(refusedSession.id, refusedWs as never);
+send(refusedWs, { id: 200, cmd: "prompt", text: "go on anyway" });
+await waitFor(() => refusedWs.of("turn_ended").length === 1, "the uncheckpointed turn still runs");
+assert.equal(refusedWs.of("reply").find((event) => event.id === 200)!.error, undefined);
+assert.match(
+  refusedWs.of("history_state").at(-1)!.history.conflict!,
+  /not checkpointed/,
+  "and the thread is told why it has no restore point",
+);
+assert.ok(manager.purge(refusedSession.id));
 
 console.log("bridge.test.ts OK");
 process.exit(0);

@@ -87,7 +87,7 @@ async function fire(sessionId: string, text: string, manager: SessionManager): P
       // when it has already resolved. It never rejects as unhandled — start()
       // attached a catch handler when the bridge was created.
       await session.bridge.ready;
-      session.bridge.prompt(text);
+      await manager.prompt(sessionId, text);
       return;
     }
     // Idle-retired or pre-restart: revive the way the client's "open a closed
@@ -99,7 +99,7 @@ async function fire(sessionId: string, text: string, manager: SessionManager): P
     const revived = manager.get(sessionId);
     if (revived?.bridge && !revived.exited) {
       await revived.bridge.ready;
-      revived.bridge.prompt(text);
+      await manager.prompt(sessionId, text);
     }
   } catch (error) {
     console.error(`[scheduler] failed to deliver to ${sessionId}`, error);

@@ -1,6 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
+import type { HistoryState } from "@daedalus/protocol"
 // Value import, but tools.ts imports only *types* from here — erased at build,
 // so there is no runtime cycle.
 import { applyTerminalMeta, parseTaskNotification, type TerminalState } from "./tools"
@@ -26,6 +27,8 @@ export interface TextItem {
       a session/load replay: the journal carries no clock, so a replayed item
       has no honest time to show and shows none rather than the reload's. */
   at?: number
+  /** Logical turn restore point, present on user messages. */
+  turnId?: string
 }
 
 export interface ToolItem {
@@ -167,6 +170,7 @@ export interface ThreadState {
   context: acp.UsageUpdate | null
   /** Time to first update of the last turn, ms. */
   ttftMs: number | null
+  history: HistoryState
 }
 
 export interface State {
@@ -197,6 +201,13 @@ export const emptyThread: ThreadState = {
   usage: null,
   context: null,
   ttftMs: null,
+  history: {
+    strategy: "unsupported",
+    available: false,
+    busy: false,
+    checkpoints: [],
+    branches: [],
+  },
 }
 
 /**
@@ -476,8 +487,8 @@ function settleTools(items: ThreadItem[]): ThreadItem[] {
   })
 }
 
-export function pushUserMessage(items: ThreadItem[], text: string, at?: number): ThreadItem[] {
-  return [...items, { kind: "user", id: `user-${items.length}`, text, at }]
+export function pushUserMessage(items: ThreadItem[], text: string, at?: number, turnId?: string): ThreadItem[] {
+  return [...items, { kind: "user", id: `user-${items.length}`, text, at, turnId }]
 }
 
 /** null only when neither side reported the field — keeps optional stats hidden. */
@@ -542,7 +553,9 @@ export type Action =
     }
   | { type: "turn-active"; id: string; active: boolean }
   | { type: "update"; id: string; update: acp.SessionUpdate; allowUserChunks?: boolean }
-  | { type: "user-message"; id: string; text: string }
+  | { type: "user-message"; id: string; text: string; turnId?: string }
+  | { type: "tag-user-turn"; id: string; turnId: string }
+  | { type: "history-state"; id: string; history: HistoryState }
   | { type: "notice"; id: string; text: string }
   | { type: "error"; id: string; title: string; reason?: string; detail?: string; retryText?: string }
   | { type: "dismiss-error"; id: string; itemId: string }
@@ -577,6 +590,24 @@ function thread(state: State, id: string): ThreadState {
 
 function withThread(state: State, id: string, patch: Partial<ThreadState>): State {
   return { ...state, threads: { ...state.threads, [id]: { ...thread(state, id), ...patch } } }
+}
+
+function tagHistoryTurns(items: ThreadItem[], history: HistoryState): ThreadItem[] {
+  let from = 0
+  let changed = false
+  const next = [...items]
+  for (const checkpoint of history.checkpoints) {
+    const index = next.findIndex(
+      (item, i) => i >= from && item.kind === "user" && !item.turnId && item.text.trim() === checkpoint.promptText.trim()
+    )
+    if (index < 0) continue
+    const item = next[index]
+    if (item.kind !== "user") continue
+    next[index] = { ...item, turnId: checkpoint.turnId }
+    from = index + 1
+    changed = true
+  }
+  return changed ? next : items
 }
 
 export function reducer(state: State, action: Action): State {
@@ -676,7 +707,20 @@ export function reducer(state: State, action: Action): State {
       }
     case "user-message":
       return withThread(state, action.id, {
-        items: pushUserMessage(thread(state, action.id).items, action.text, Date.now()),
+        items: pushUserMessage(thread(state, action.id).items, action.text, Date.now(), action.turnId),
+      })
+    case "tag-user-turn": {
+      const items = thread(state, action.id).items
+      const index = items.findIndex((item) => item.kind === "user" && !item.turnId)
+      if (index < 0) return state
+      return withThread(state, action.id, {
+        items: items.map((item, i) => i === index && item.kind === "user" ? { ...item, turnId: action.turnId } : item),
+      })
+    }
+    case "history-state":
+      return withThread(state, action.id, {
+        history: action.history,
+        items: tagHistoryTurns(thread(state, action.id).items, action.history),
       })
     case "notice": {
       // Never two rules in a row: cancelling an already-cancelled turn is one

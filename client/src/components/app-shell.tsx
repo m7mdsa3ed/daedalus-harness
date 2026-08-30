@@ -109,6 +109,7 @@ import {
 } from "@/components/settings/sections"
 import { SettingsLayout } from "@/components/settings/layout"
 import { GeneralPage } from "@/components/settings/general"
+import { AppPage } from "@/components/settings/app"
 import { AppearancePage } from "@/components/settings/appearance"
 import { NotificationsPage } from "@/components/settings/notifications"
 import { McpFormPage, McpImportPage, McpPage } from "@/components/settings/mcp"
@@ -593,6 +594,7 @@ export function AppShell({
           >
             <Route index element={<Navigate to="general" replace />} />
             <Route path="general" element={<GeneralPage />} />
+            <Route path="app" element={<AppPage />} />
             <Route path="appearance" element={<AppearancePage />} />
             <Route path="appearance/themes/:themeId" element={<ThemeEditorPage />} />
             <Route path="notifications" element={<NotificationsPage />} />

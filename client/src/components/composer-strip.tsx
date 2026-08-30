@@ -18,7 +18,11 @@ export function ComposerStrip({ className, ...props }: React.ComponentProps<"div
       className={cn(
         // -mb-4/pb-4: the bottom four units sit behind the composer, which is
         // what makes the seam disappear. Keep the two in step.
-        "mx-auto -mb-4 w-full max-w-[calc(var(--harness-composer-width)-3rem)]",
+        // Width follows the composer: minus whatever the composer actually is
+        // (capped on desktop, 100% of the container on mobile) the strip stays
+        // 3rem narrower — ~1.5rem inset each side — instead of running flush to
+        // the composer's edges when the fixed pixel cap doesn't engage.
+        "mx-auto -mb-4 w-full max-w-[calc(min(100%,var(--harness-composer-width))_-_3rem)]",
         "overflow-hidden rounded-t-xl bg-muted/70 pb-4 backdrop-blur-[14px] empty:hidden",
         className
       )}

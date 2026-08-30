@@ -208,10 +208,24 @@ export function toolTarget(item: Pick<ToolItem, "title" | "rawInput" | "meta" | 
  * what it typed. The sentence is the better row title — a 200-character
  * one-liner truncates to `git log --oneline -20 && echo "---BRA…`, which says
  * nothing the `run` label had not already said.
+ *
+ * With no explicit description, ACP's own prose `title` ("Update TODOs: rewire
+ * the reducer") is the same thing the description field provides — it says what
+ * the agent meant, where an identifier or a bare command does not. Only a
+ * prose title counts: a title that `NAME_RE` accepts is a label ("Bash",
+ * "todowrite"), which is the tool's name, not a description of the call.
  */
-export function toolDescription(item: { meta?: unknown; rawInput?: unknown }): string | null {
+export function toolDescription(item: {
+  meta?: unknown
+  rawInput?: unknown
+  title?: string | null
+}): string | null {
   const meta = str(asRecord(asRecord(item.meta)?.claudeCode)?.title)
-  return meta ?? str(asRecord(item.rawInput)?.description)
+  const inputDescription = str(asRecord(item.rawInput)?.description)
+  const explicit = meta ?? inputDescription
+  if (explicit) return explicit
+  const title = item.title?.trim()
+  return title && !NAME_RE.test(title) ? title : null
 }
 
 /**
@@ -219,6 +233,10 @@ export function toolDescription(item: { meta?: unknown; rawInput?: unknown }): s
  * the thing actually invoked underneath it. `detail` is absent when the two
  * would say the same thing — a `Task` names itself with its description and
  * nothing else, so repeating it as a second line is just a taller row.
+ *
+ * `file`/`filePath` are the row the call acted on, when it acted on a file: the
+ * path is drawn as a badge (basename) rather than as a truncated mono line, so
+ * "Read /path/to/file" reads as "Read" + a file chip instead of an elided path.
  */
 export interface ToolHeading {
   title: string
@@ -226,16 +244,134 @@ export interface ToolHeading {
   detail?: string
   /** The title is a sentence, not an identifier — don't set it in mono. */
   prose: boolean
+  /** The file this call acted on, as a basename — rendered as a badge chip. */
+  file?: string
+  /** The full path behind the badge, for its tooltip. */
+  filePath?: string
+}
+
+/* The keys that mean "a file", as opposed to a command, pattern or url. When
+   the target came from one of these, the row acts on a file — and the path is
+   better drawn as a badge (its basename) than as a mono line that elides the
+   middle and keeps a directory we were only ever going to truncate. */
+const FILE_KEYS = new Set(["file_path", "filePath", "path", "notebook_path"])
+
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+/** Drop a file reference from the tail of a sentence, so "Read src/index.ts"
+    (the description) and a `src/index.ts` badge never say the path twice. The
+    full path is tried first, then the basename, then a dangling separator left
+    by stripping a basename that was only the last segment of the path. */
+function stripTrailingFileRef(text: string, path: string, name: string): string {
+  let out = text
+  for (const ref of [path, name]) {
+    out = out.replace(new RegExp(`(?:\\s*[-–:]?\\s*${escapeRegExp(ref)})$`, "i"), "")
+  }
+  return out.replace(/[\s/:]+$/, "").trim()
+}
+
+/** The path this call acted on, when it acted on a file. Returns the full text
+    (to strip out of a heading that repeats it) and the basename (the badge).
+    Null when the target is a command/pattern/url/name — so a grep over a path
+    doesn't badge the pattern it searched for as if that pattern were a file.
+    Falls back to the first location only when no input key picked the target,
+    which is where a write's path lives when the arguments carry the body only. */
+function fileTargetOf(
+  item: {
+    rawInput?: unknown
+    meta?: Record<string, unknown>
+    toolKind?: ToolItem["toolKind"]
+    locations?: acp.ToolCallLocation[]
+    title?: string | null
+  }
+): { path: string; name: string } | null {
+  const input = asRecord(item.rawInput)
+  const normalized = { ...item, title: item.title ?? "" }
+  if (input && !extractMcpCall(normalized)) {
+    /* Same key order `toolTarget` uses — the key that produced the target is
+       the one that decides whether the target IS a file. */
+    const keys =
+      toolKindOf(normalized) === "search"
+        ? ["pattern", "query", ...TARGET_KEYS]
+        : TARGET_KEYS
+    for (const key of keys) {
+      const value = str(input[key])
+      if (!value) continue
+      if (!FILE_KEYS.has(key)) return null
+      const path = value.replace(/\\/g, "/")
+      return { path, name: path.split("/").pop() ?? path }
+    }
+  }
+  const location = item.locations?.[0]?.path
+  if (location) {
+    const path = location.replace(/\\/g, "/")
+    return { path, name: path.split("/").pop() ?? path }
+  }
+  return null
+}
+
+/** The verb a kind's label becomes when there is no description to lead with —
+    "Read package.json", "Run git log…" — so a row says what happened rather
+    than echoing the bare identifier the agent typed. The kind `other` is left
+    out: its label ("tool") is not a verb. */
+const KIND_VERB: Record<string, string> = {
+  read: "Read",
+  edit: "Edit",
+  delete: "Delete",
+  move: "Move",
+  search: "Search",
+  execute: "Run",
+  fetch: "Fetch",
 }
 
 export function toolHeading(
-  item: Pick<ToolItem, "title" | "rawInput" | "meta" | "toolKind">
+  item: {
+    title?: string | null
+    rawInput?: unknown
+    meta?: Record<string, unknown>
+    toolKind?: ToolItem["toolKind"]
+    locations?: acp.ToolCallLocation[]
+  }
 ): ToolHeading {
-  const target = toolTarget(item)
+  const target = toolTarget({ ...item, title: item.title ?? "" })
   const description = toolDescription(item)
-  if (!description) return { title: target, prose: false }
+  /* The file badge: if the target IS a file, that is the chip, and the
+     description's own mention of the path is cut so the sentence doesn't repeat
+     the badge ("Read src/index.ts" becomes "Read" + a `src/index.ts` chip). */
+  const file = fileTargetOf(item)
+  const fileInTitle =
+    file && description && description.toLowerCase().includes(file.name.toLowerCase())
+
+  if (!description) {
+    /* The agent sent no prose, so the title is the thing it acted on. Prefix it
+       with the kind's verb rather than printing the command alone — a bash row
+       that said "git log --oneline" said nothing the kind icon hadn't. The verb
+       is skipped when the target already reads as one ("Read package.json" as
+       the title), which is the prose-title fallback's own wording. */
+    const verb = KIND_VERB[toolKindOf({ ...item, title: item.title ?? "" })]
+    const hasVerb = verb && target.trim() && !new RegExp(`^${verb}\\s`, "i").test(target)
+    /* The file IS the title: drop the path from the row and let the badge carry
+       it, so "Read /path/to/file" reads as "Read" + a `file` chip instead of an
+       elided mono path. */
+    if (file) return { title: hasVerb ? verb : "", file: file.name, filePath: file.path, prose: false }
+    return hasVerb ? { title: `${verb} ${target}`, prose: false } : { title: target, prose: false }
+  }
   const title = firstLine(description)
-  return { title, detail: title === target ? undefined : target, prose: true }
+  const base: ToolHeading = { title, detail: title === target ? undefined : target, prose: true }
+  /* The description leads, and the file is drawn as the chip it mentions — the
+     path is dropped from both the title and the mono detail so the row never
+     says the path twice. A `Read src/index.ts` prose title keeps only "Read". */
+  if (file && fileInTitle) {
+    const cleaned = stripTrailingFileRef(title, file.path, file.name)
+    return {
+      title: cleaned || "Read",
+      detail: undefined,
+      file: file.name,
+      filePath: file.path,
+      prose: true,
+    }
+  }
+  return base
 }
 
 /** The most useful single string in the input, if any — the "command". */

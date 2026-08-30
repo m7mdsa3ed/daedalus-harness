@@ -1,6 +1,8 @@
 // Minimal ACP-ish agent: answers requests, streams one update per prompt,
 // and exercises modes / config options / usage so the client UI can be tested.
 import { createInterface } from "node:readline";
+import { rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + "\n");
 
@@ -45,6 +47,15 @@ let configOptions = [
    client advertised `session.compaction` — so this is stored and honoured
    rather than assumed, which is what makes the capability itself testable. */
 let clientCapabilities = {};
+const sessions = new Set(["acp-123"]);
+/* Sessions this agent has actually written down. An id it has only minted is
+   not one it can resume — claude-agent-acp flushes the rollout as the first
+   turn runs — and a fork IS a resume, so forking one fails. It fails in a
+   peculiar way worth reproducing: the error names the *child* id it was in the
+   middle of creating, not the parent it could not find. */
+const durable = new Set();
+let forkCounter = 0;
+let activeCwd = process.cwd();
 
 /** Permission request id -> the prompt id whose turn is waiting on it. */
 const parkedTurns = new Map();
@@ -107,9 +118,19 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   const msg = JSON.parse(line);
   if (msg.method === "initialize") {
     clientCapabilities = msg.params?.clientCapabilities ?? {};
-    out({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } });
+    out({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        protocolVersion: 1,
+        agentCapabilities: process.env.FAKE_NO_FORK
+          ? { loadSession: true }
+          : { loadSession: true, sessionCapabilities: { fork: {} } },
+      },
+    });
   }
-  else if (msg.method === "session/new")
+  else if (msg.method === "session/new") {
+    activeCwd = msg.params?.cwd ?? activeCwd;
     out({
       jsonrpc: "2.0",
       id: msg.id,
@@ -126,12 +147,14 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         configOptions,
       },
     });
+  }
   else if (msg.method === "session/load") {
+    activeCwd = msg.params?.cwd ?? activeCwd;
     /* A session this agent has no record of. Real agents answer exactly like
        this — codex says "no rollout found for thread id …" — and it is the
        failure that used to cost a thread its history, because the client's
        fallback `session/new` overwrote the id it had just failed to load. */
-    if (msg.params?.sessionId !== "acp-123") {
+    if (!sessions.has(msg.params?.sessionId) && !String(msg.params?.sessionId).startsWith("acp-fork-")) {
       out({
         jsonrpc: "2.0",
         id: msg.id,
@@ -143,6 +166,8 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       });
       return;
     }
+    sessions.add(msg.params.sessionId);
+    durable.add(msg.params.sessionId);
     // Replay a tiny conversation, then answer — mirrors ACP loadSession.
     out({
       jsonrpc: "2.0",
@@ -162,13 +187,43 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         configOptions,
       },
     });
+  } else if (msg.method === "session/fork") {
+    activeCwd = msg.params?.cwd ?? activeCwd;
+    const sessionId = `acp-fork-${++forkCounter}`;
+    if (!durable.has(msg.params?.sessionId)) {
+      out({
+        jsonrpc: "2.0",
+        id: msg.id,
+        error: {
+          code: -32002,
+          message: `Resource not found: ${sessionId}`,
+          data: { uri: sessionId },
+        },
+      });
+      return;
+    }
+    sessions.add(sessionId);
+    out({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: { sessionId, modes: { currentModeId: "default", availableModes: [{ id: "default", name: "Always ask" }] }, configOptions },
+    });
   } else if (msg.method === "session/set_config_option") {
     configOptions = configOptions.map((o) =>
       o.id === msg.params.configId ? { ...o, currentValue: msg.params.value } : o
     );
     out({ jsonrpc: "2.0", id: msg.id, result: { configOptions } });
   } else if (msg.method === "session/prompt") {
+    // The turn is what commits the session to disk, which is what makes it
+    // forkable — real agents write the rollout as the turn runs.
+    durable.add(msg.params?.sessionId);
     const asked = (msg.params.prompt ?? []).map((b) => b.text ?? "").join(" ");
+    if (asked.includes("edit workspace")) {
+      writeFileSync(join(activeCwd, "history-original.txt"), "changed by agent\n");
+      writeFileSync(join(activeCwd, ".history-created"), "hidden\n");
+      writeFileSync(join(activeCwd, "history-binary.bin"), Buffer.from([0, 1, 2, 255]));
+      rmSync(join(activeCwd, "history-delete.txt"), { force: true });
+    }
     // A prompt mentioning "permission" parks the turn on a permission request,
     // so both the UI and the multi-peer arbitration have something to exercise.
     if (asked.includes("permission")) {

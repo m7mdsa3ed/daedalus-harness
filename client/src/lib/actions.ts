@@ -1,7 +1,7 @@
 import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
 import { AgentError, liveThreads, ThreadSocket, type ThreadCallbacks } from "./thread-socket"
-import { describeError, markReported } from "./errors"
+import { describeError, markReported, reportError } from "./errors"
 import { appendOutput } from "./workspace/output"
 import { uuid } from "./uuid"
 import {
@@ -332,8 +332,8 @@ export function useActions(settings: ServerSettings) {
         /* A turn began on words this device did not type — either another peer
            prompted, or this is the replay rebuilding the transcript. Only the
            first is live activity. */
-        onTurnStarted: (text, catchingUp) => {
-          send({ type: "user-message", id, text })
+        onTurnStarted: (turnId, text, catchingUp) => {
+          send({ type: "user-message", id, text, turnId })
           send({ type: "session-title", id, title: text.slice(0, 60) })
           if (!catchingUp) send({ type: "turn-active", id, active: true })
         },
@@ -342,7 +342,7 @@ export function useActions(settings: ServerSettings) {
         // from "brand new"), anything else is a delta — a reconnect to a thread
         // this device already has most of in memory, so the transcript is kept
         // and only the gap is appended.
-        onAttached: (from, historyLost) => {
+        onAttached: (from, history, historyLost) => {
           buffer = []
           const resuming = from > 0
           /* Keep what is on screen when resuming; replace it otherwise. A reset
@@ -356,6 +356,7 @@ export function useActions(settings: ServerSettings) {
           if (!resuming) {
             send({ type: "thread-reset", id, thread: { ...emptyThread, status: "connecting" } })
           }
+          send({ type: "history-state", id, history })
           /* The agent would not reload this conversation, so the replay about
              to arrive is empty. Said here rather than left to look like a quiet
              thread — and through `send`, so it lands inside the same fold as
@@ -376,6 +377,16 @@ export function useActions(settings: ServerSettings) {
           journalCursors.set(id, cursor)
           if (promptActive) send({ type: "turn-active", id, active: true })
           flush()
+        },
+        onHistoryState: (history) => send({ type: "history-state", id, history }),
+        onHistoryReset: (history) => {
+          journalCursors.set(id, 0)
+          buffer = null
+          dispatch({
+            type: "thread-reset",
+            id,
+            thread: { ...emptyThread, status: "connected", history },
+          })
         },
         // A background task's journal grew server-side. Into the module store,
         // not the reducer: the events are keyed by transcript dir, not by
@@ -834,10 +845,33 @@ export function useActions(settings: ServerSettings) {
           /* Resolves when the server has dispatched the prompt, not when the
              turn ends: how the turn went reaches every device on the thread as
              `turn_ended`, and awaiting it here would report a failure twice. */
-          await thread.prompt(text)
+          const turnId = await thread.prompt(text)
+          dispatch({ type: "tag-user-turn", id: sessionId, turnId })
         } catch (error) {
           if (!alreadyRunning) dispatch({ type: "turn-active", id: sessionId, active: false })
           recordError(sessionId, error, "The agent couldn't answer this message", text)
+          throw error
+        }
+      },
+
+      async revertTurn(sessionId: string, checkpointId: string) {
+        const thread = liveThreads.get(sessionId)
+        if (!thread) throw new Error("This thread is not connected.")
+        try {
+          await thread.revert(checkpointId)
+        } catch (error) {
+          reportError(error, "Couldn't revert this turn")
+          throw error
+        }
+      },
+
+      async recoverBranch(sessionId: string, branchId: string) {
+        const thread = liveThreads.get(sessionId)
+        if (!thread) throw new Error("This thread is not connected.")
+        try {
+          await thread.recoverBranch(branchId)
+        } catch (error) {
+          reportError(error, "Couldn't recover this branch")
           throw error
         }
       },
