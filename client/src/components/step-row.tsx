@@ -8,6 +8,7 @@ import { ChevronRightIcon } from "lucide-react"
 import { toast } from "sonner"
 import { reportError } from "@/lib/errors"
 import { FileBadge } from "@/components/tool-parts"
+import type { FileRange } from "@/lib/tools"
 import { cn } from "@/lib/utils"
 
 /* Right-clicking text the user has selected keeps the browser's own menu —
@@ -68,6 +69,7 @@ export const StepRow = React.memo(function StepRow({
   caption,
   file,
   filePath,
+  fileRange,
   label,
   status,
   metric,
@@ -89,6 +91,9 @@ export const StepRow = React.memo(function StepRow({
   file?: string
   /** The full path behind the badge, for its tooltip. */
   filePath?: string
+  /** The lines the row was about, so opening the badge lands on them and tints
+      them rather than opening the file at the top. */
+  fileRange?: FileRange
   /** The trailing word. Optional: a row whose leading icon already says what
       kind of step it is (every tool, plan and compaction row does) prints
       nothing here, and only a failure claims the column. */
@@ -207,7 +212,7 @@ export const StepRow = React.memo(function StepRow({
                 basename, so the row says "Read" + `package.json` instead of an
                 elided "/var/www/…/package.json". Baseline-aligned with the
                 title so it reads on the same line, never on a second row. */}
-            {file && <FileBadge file={file} filePath={filePath} />}
+            {file && <FileBadge file={file} filePath={filePath} range={fileRange} />}
           </span>
           {/* The command under its description. One notch quieter and one notch
               smaller than the title, and always mono — it is the literal thing

@@ -14,10 +14,25 @@ import * as React from "react"
 
 export interface ThreadLinks {
   projectId: string
-  /** Open a file from the transcript. `line` scrolls to it. */
-  openFile: (path: string, line?: number) => void
+  /**
+   * Open a file from the transcript. `line` scrolls to it and puts the caret
+   * there; `endLine` makes it a span, which the editor highlights — the
+   * difference between "here is the file" and "here is the part the call was
+   * about". See `lib/tools/files.fileRangeOf` for where a span comes from.
+   */
+  openFile: (path: string, line?: number, endLine?: number) => void
   /** Open an agent's edit as a comparison against the last commit. */
   openDiff: (path: string) => void
+  /**
+   * Open a page the agent read or cited in the workspace's own Browser panel,
+   * rather than in a browser tab that leaves the app.
+   *
+   * One panel, reused: following a second source replaces the page in it, the
+   * way clicking a second file replaces the editor. Callers keep their `href`
+   * so a middle-click, a ⌘-click and "copy link" all still mean what they
+   * always did — this is the plain left-click path only.
+   */
+  openUrl: (url: string) => void
 }
 
 const ThreadLinksContext = React.createContext<ThreadLinks | null>(null)
@@ -28,6 +43,20 @@ export const ThreadLinksProvider = ThreadLinksContext.Provider
     text in that case rather than a button that cannot do anything. */
 export function useThreadLinks(): ThreadLinks | null {
   return React.useContext(ThreadLinksContext)
+}
+
+/**
+ * Is this click ours to intercept?
+ *
+ * A source stays an `<a href>` so the browser's own vocabulary keeps working —
+ * ⌘-click for a background tab, middle-click, right-click → copy address. Only
+ * the plain left click means "show me this", and only that one is turned into
+ * a panel.
+ */
+export function isPlainClick(event: React.MouseEvent): boolean {
+  return (
+    event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey
+  )
 }
 
 /**

@@ -716,32 +716,70 @@ html[data-desktop="true"]:not([data-desktop-platform="darwin"]) [data-drag-regio
   contain-intrinsic-size: auto 48px;
 }
 
-/* A transcript row entering the list — a streamed tool step, a completed turn.
-   Fade + a 4px rise, run once per DOM mount (items are keyed by id, so a
-   content update reuses the node and this does not replay on every token).
-   `transform`/`opacity` are the cheap pair: neither affects layout, so the
-   autoscroll that reads scrollHeight is not thrown by a row still settling.
-   The entrance is short and shallow — rows above the fold in a long thread are
-   skipped by content-visibility anyway, so the read-on-load case costs nothing. */
+/* A transcript item entering the list — a new row, a streamed tool step, a
+   workflow step starting. It *slides* in: the wrapper is a one-row grid whose
+   track animates 0fr → 1fr, so everything below moves down smoothly instead of
+   jumping a row-height in one frame, with a fade riding on top. Grid tracks
+   rather than `height`, because the content's height is never known up front
+   and `0fr → 1fr` interpolates without measuring. Run once per DOM mount
+   (items are keyed by id, so a content update reuses the node and this does
+   not replay on every token).
+   Fill-mode is `backwards`, not `both`: when the animation ends every keyframe
+   property — the collapsed track, and the `overflow: hidden` that makes it
+   actually hide its content — reverts to the stylesheet, so a settled item
+   clips nothing (step rows hang hover washes past the wrapper's edge) and the
+   grid costs nothing. One child per wrapper: a second would land in an
+   implicit row the animated track cannot reach. */
 @keyframes harness-item-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { grid-template-rows: 0fr; opacity: 0; overflow: hidden; }
+  to { grid-template-rows: 1fr; opacity: 1; overflow: hidden; }
 }
-[data-slot="message-scroller-content"] [data-message-id] {
-  animation: harness-item-in 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+.harness-item-in {
+  display: grid;
+  /* The column is declared for the same reason `> * { min-height: 0 }` is
+     below, in the other axis — and it is the one that was missing. An
+     *implicit* grid column is `auto`, whose minimum is the item's min-content:
+     a step row holding a command with no breakable point in it (a long
+     one-liner, a base64 payload, a path) sized this track to the whole
+     command, so the row's `w-[calc(100%+0.75rem)]` resolved against a track
+     wider than the transcript and the `truncate` on its title had nothing left
+     to clip against. The collapsed header then printed the entire command and
+     the thread ran off the side of the panel — a wrapper that exists only to
+     animate a height was deciding the width of every row in the transcript.
+     minmax(0,1fr) pins it to the column the transcript is laid out in and
+     hands the overflow back to the row, which already truncates it. */
+  grid-template-columns: minmax(0, 1fr);
+  animation: harness-item-in 300ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+.harness-item-in > * {
+  min-height: 0;
+}
+
+/* The entrance for content whose *space* already exists — a workflow step
+   coming alive in the slot its pending row held. Sliding there would collapse
+   and regrow a table that never changed height, so it only fades. */
+@keyframes harness-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.harness-fade-in {
+  animation: harness-fade-in 260ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-slot="message-scroller-content"] [data-message-id] {
+  .harness-item-in,
+  .harness-fade-in {
     animation: none;
   }
 }
 
 /* "Calm motion" (view options). The same result the OS-level preference gets,
-   asked for per thread: no row entrance, and a running turn's title states that
-   it is running with colour rather than with a sweep. Scoped to the transcript
-   column — the composer, the sidebar and the working line are not in it. */
-[data-slot="message-scroller-content"][data-motion="calm"] [data-message-id] {
+   asked for per thread: no item entrance, and a running turn's title states
+   that it is running with colour rather than with a sweep. Scoped to the
+   transcript column — the composer, the sidebar and the working line are not
+   in it. */
+[data-slot="message-scroller-content"][data-motion="calm"] .harness-item-in,
+[data-slot="message-scroller-content"][data-motion="calm"] .harness-fade-in {
   animation: none;
 }
 [data-slot="message-scroller-content"][data-motion="calm"] .harness-shimmer {

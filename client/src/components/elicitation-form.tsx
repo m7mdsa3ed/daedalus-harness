@@ -9,7 +9,7 @@ import {
   AgentRequestHeader,
   REQUEST_BUTTON,
 } from "./agent-request"
-import { Kbd } from "@/components/ui/kbd"
+import { Shortcut } from "@/components/shortcut"
 import {
   Questionnaire,
   QuestionnaireChoice,
@@ -360,7 +360,7 @@ export function InlineElicitation({ elicitation }: { elicitation: PendingElicita
               {single ? "Don't answer" : "Dismiss"}
               {/* Escape does this from anywhere in the thread — including from
                   the composer, where the cursor usually is. */}
-              <Kbd className="ms-1 hidden bg-transparent sm:inline-flex">Esc</Kbd>
+              <Shortcut chord="esc" className="ms-1 hidden sm:inline-flex" keyClassName="bg-transparent" />
             </Button>
           </div>
           <div className="ms-auto flex items-center gap-1.5">

@@ -10,7 +10,8 @@ import { SplitSquareHorizontalIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { KEYS, formatChord } from "@/lib/shortcuts"
+import { KEYS } from "@/lib/shortcuts"
+import { Shortcut } from "@/components/shortcut"
 
 export function makeTabActions({ onSplit }: { onSplit: () => void }) {
   return function TabActions({ group, containerApi }: IDockviewHeaderActionsProps) {
@@ -37,7 +38,10 @@ export function makeTabActions({ onSplit }: { onSplit: () => void }) {
               </Button>
             }
           />
-          <TooltipContent side="bottom">Split right · {formatChord(KEYS.splitRight)}</TooltipContent>
+          <TooltipContent side="bottom">
+            Split right
+            <Shortcut chord={KEYS.splitRight} />
+          </TooltipContent>
         </Tooltip>
       </div>
     )

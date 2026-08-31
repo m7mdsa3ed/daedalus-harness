@@ -4,10 +4,9 @@ import { Button } from "@/components/ui/button"
 import { CommandPalette, useCommandPalette } from "@/components/command-palette"
 import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
 import { Logo } from "@/components/ui/logo"
-import { Separator } from "@/components/ui/separator"
 import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
 import { OpenPanelMenu } from "@/components/workspace/open-panel-menu"
-import { panelId, type PanelKind } from "@/lib/workspace/panels"
+import type { PanelKind } from "@/lib/workspace/panels"
 import { openTerminal } from "@/components/workspace/terminal-panel"
 import { SchedulePage } from "@/components/schedule-page"
 import { TasksBoard } from "@/components/tasks-board"
@@ -35,6 +34,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router"
 import {
   currentThreadId,
   NavigationBridge,
+  projectPath,
   settingsFormPath,
   settingsPath,
   threadPath,
@@ -47,6 +47,7 @@ import { type ServerSettings } from "@/lib/settings"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { ProjectFormPage, ProjectsPage } from "@/components/settings/projects"
+import { ProjectPage } from "@/components/project-page"
 import {
   SETTINGS_NAV_GROUPS,
   SETTINGS_SECTIONS,
@@ -131,8 +132,11 @@ export function AppShell({
   const inSettings = location.pathname.startsWith("/settings")
   const inSchedule = location.pathname.startsWith("/schedules")
   const inBoard = location.pathname.startsWith("/board")
+  const inProject = location.pathname.startsWith("/projects")
   const sessionId =
-    inSettings || inSchedule || inBoard ? null : currentThreadId(location.pathname, location.search)
+    inSettings || inSchedule || inBoard || inProject
+      ? null
+      : currentThreadId(location.pathname, location.search)
   const section = sectionOf(inSettings ? (location.pathname.split("/")[2] ?? "") : "")
   // Leaving settings returns to the thread it was opened from.
   const lastThread = React.useRef<string | null>(null)
@@ -246,20 +250,11 @@ export function AppShell({
           { kind: "web", trust: "project", projectId, viewId: "default" },
           { direction: "right" }
         )
-        return
       }
-      const descriptor = { kind: "output", projectId } as const
-      const id = panelId(descriptor)
-      if (dock.isPanelOpen(id)) void dock.closePanel(id)
-      else dock.openPanel(descriptor, { direction: "below" })
     },
     [dock]
   )
 
-  useHotkey(KEYS.output, (event) => {
-    event.preventDefault()
-    openWorkspacePanel("output")
-  })
   useHotkey(KEYS.terminal, (event) => {
     event.preventDefault()
     openWorkspacePanel("terminal")
@@ -483,7 +478,6 @@ export function AppShell({
           className="relative z-30 flex h-12 shrink-0 items-center gap-1 bg-transparent px-2 sm:gap-2 sm:px-4"
         >
           <SidebarTrigger className="-ml-1 shrink-0" />
-          <Separator orientation="vertical" className="mr-1 h-full shrink-0 sm:mr-2" />
           <div className="flex min-w-0 flex-1 items-center justify-between gap-2 sm:gap-3">
             <div className="flex min-w-0 items-baseline gap-2">
               {loading ? (
@@ -496,7 +490,11 @@ export function AppShell({
                       ? (location.pathname.endsWith("/new") ? "New schedule" : "Schedules")
                       : inBoard
                         ? "Tasks"
-                        : (active?.title ?? "Daedalus")}
+                        : inProject
+                          ? (state.projects.find(
+                              (p) => p.id === location.pathname.split("/")[2]
+                            )?.name ?? "Project")
+                          : (active?.title ?? "Daedalus")}
                 </h1>
               )}
               {inSettings ? (
@@ -505,10 +503,21 @@ export function AppShell({
                 <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Scheduled messages</span>
               ) : inBoard ? (
                 <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Board</span>
+              ) : inProject ? (
+                <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Project</span>
               ) : (
                 active && (
                   <span className="hidden shrink-0 truncate text-xs text-muted-foreground sm:inline">
-                    {state.projects.find((p) => p.id === active.projectId)?.name}
+                    {/* The project name is the way to its page: the thread
+                        header already names the workspace, so the name is the
+                        link rather than one more control beside it. */}
+                    <button
+                      type="button"
+                      className="rounded-sm underline-offset-2 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={() => void navigate(projectPath(active.projectId))}
+                    >
+                      {state.projects.find((p) => p.id === active.projectId)?.name}
+                    </button>
                     {" · "}
                     {state.profiles.find((p) => p.id === active.profileId)?.name}
                   </span>
@@ -519,7 +528,7 @@ export function AppShell({
                 tab strip: there is exactly one of it however the dock is split,
                 and it survives a narrow screen, which is where it matters —
                 nothing else on a phone can reach these panels. */}
-            {!inSettings && !inSchedule && !inBoard && (
+            {!inSettings && !inSchedule && !inBoard && !inProject && (
               <OpenPanelMenu
                 onNewTab={newThreadInTab}
                 onOpen={openWorkspacePanel}
@@ -581,6 +590,10 @@ export function AppShell({
               }
             />
           ))}
+          {/* A project's own page: the overview, its threads and its numbers.
+              Outside /settings on purpose — settings holds the *form*, and a
+              workspace with a history is not a settings screen. */}
+          <Route path="/projects/:projectId" element={<ProjectPage actions={actions} />} />
           <Route
             path="/board"
             element={

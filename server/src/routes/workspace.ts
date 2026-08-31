@@ -8,6 +8,7 @@ import {
   listProjects,
 } from "../projects.js";
 import { listDirectory } from "../fs.js";
+import { projectStats } from "../project-stats.js";
 import {
   WorkspaceError,
   createEntry,
@@ -45,6 +46,11 @@ export function workspaceRoutes(app: Hono): void {
     killProjectTerminals(id);
     return c.json({ ok: true });
   });
+
+  /* The project overview's numbers — the half the browser cannot derive from
+     its own session list (turns, activity, what the project has learned). One
+     route, because a page that asked six would redraw six times. */
+  app.get("/api/projects/:id/stats", (c) => workspace(c, () => projectStats(c.req.param("id"))));
 
   // Feeds the client's path autocomplete; ?path= (empty lists the home dir).
   // Handles its own errors: `not found` vs `not a directory` deserve real codes,

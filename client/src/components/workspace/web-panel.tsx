@@ -1,7 +1,9 @@
 /* ── Web ──
-   One panel, two trust levels. Only `project` trust is enabled; `external` is
-   built but gated (see `EXTERNAL_TRUST_ENABLED`) until its isolation model has
-   been reviewed.
+   One panel, two trust levels — both live. `external` is what a source
+   followed out of a transcript opens in: the pages an agent searched and read
+   are the ones a reader most wants beside the thread that cited them, and
+   sending those to a browser tab meant leaving the app to read the thing the
+   app was talking about.
 
    **Why one panel and not two.** The chrome is identical — URL bar, back,
    forward, reload, open externally, viewport presets — and only the trust
@@ -55,10 +57,14 @@ import {
   type Preview,
 } from "@/lib/workspace/previews"
 
-/** External trust ships when its isolation review is done — see the plan's
-    Phase 7. Project trust is unaffected by the wait, which is the point of
-    gating it here rather than leaving the panel out entirely. */
-const EXTERNAL_TRUST_ENABLED = false
+/** What an external page may do inside the frame. Deliberately the same set a
+    project preview gets, minus nothing and plus nothing: the isolation that
+    matters is the one clause that is NOT here. Without `allow-same-origin` the
+    frame is a unique opaque origin — it cannot read this app's localStorage,
+    its cookies or the bearer token, and `postMessage` to the opener is all it
+    can address. `allow-top-navigation` is likewise absent, so a page cannot
+    navigate the app out from under itself. */
+const SANDBOX = "allow-scripts allow-forms allow-popups allow-modals allow-downloads"
 
 const VIEWPORTS = [
   { id: "desktop", label: "Desktop", icon: MonitorIcon, width: null },
@@ -84,10 +90,30 @@ export function WebPanel({
      cross-origin frame: `contentWindow.location.reload()` is a same-origin
      operation and throws, which is the sandbox working as intended. */
   const [reloadKey, setReloadKey] = React.useState(0)
+  /* Per panel, not persisted: it is a reminder about the page in front of you,
+     and it is cheap to have said once per browser panel you open. */
+  const [hint, setHint] = React.useState(true)
 
   React.useEffect(() => {
     api.setTitle(url ? new URL(url).host : project ? `Browser — ${project.name}` : "Browser")
   }, [api, url, project])
+
+  /* One panel follows successive sources. `openPanel` re-points an existing
+     panel's params rather than opening a second tab per link (see dock.tsx),
+     and the params are the descriptor, so this is where that arrives. Guarded
+     on the value actually differing: typing an address in the bar moves `url`
+     and not `params.url`, and re-asserting the descriptor's address would undo
+     what was just typed. */
+  const lastParamUrl = React.useRef(initialUrl ?? "")
+  React.useEffect(() => {
+    const next = params.url ?? ""
+    if (next === lastParamUrl.current) return
+    lastParamUrl.current = next
+    if (next) go(next)
+    // `go` is re-made every render; the ref above is what makes this fire once
+    // per genuinely new address.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.url])
 
   React.useEffect(() => {
     if (!projectId) return
@@ -127,27 +153,6 @@ export function WebPanel({
     } catch (err) {
       reportError(err, "Couldn't remove that page")
     }
-  }
-
-  if (trust === "external" && !EXTERNAL_TRUST_ENABLED) {
-    return (
-      <Centered>
-        <ShieldAlertIcon className="size-6" />
-        <div className="space-y-1">
-          <p className="text-sm font-medium">External pages aren't enabled yet</p>
-          <p className="max-w-sm text-xs">
-            This panel only opens a project's own development server for now. General browsing
-            needs its navigation, download and permission policy reviewed first.
-          </p>
-        </div>
-        {url && (
-          <Button size="sm" variant="outline" onClick={() => window.open(url, "_blank", "noopener")}>
-            <ExternalLinkIcon />
-            Open in your browser
-          </Button>
-        )}
-      </Centered>
-    )
   }
 
   /* `https:` page framing an `http:` dev server is blocked as mixed content,
@@ -273,6 +278,29 @@ export function WebPanel({
         </Button>
       </PanelToolbar>
 
+      {/* Plenty of the web refuses to be framed at all — `X-Frame-Options` and
+          `frame-ancestors` are the publisher's call, the refusal is enforced by
+          the browser, and a blocked frame is indistinguishable from a slow one
+          from in here (no error crosses the boundary, and a cross-origin frame
+          cannot be inspected). So this is said once, up front, rather than
+          detected badly after the fact: the frame may stay blank, and the
+          button that always works is in the toolbar. */}
+      {trust === "external" && url && !mixedContent && hint && (
+        <PanelNotice className="flex items-center gap-2">
+          <ShieldAlertIcon aria-hidden className="size-3.5 shrink-0" />
+          <span className="min-w-0 flex-1">
+            Some sites refuse to be shown inside another page. If this stays blank, use{" "}
+            <span className="text-foreground">Open in your browser</span>.
+          </span>
+          <button
+            type="button"
+            className="shrink-0 underline-offset-2 hover:text-foreground hover:underline"
+            onClick={() => setHint(false)}
+          >
+            Got it
+          </button>
+        </PanelNotice>
+      )}
       {mixedContent && (
         <PanelNotice className="text-foreground">
           This page is served over https, so the browser will not let it frame an{" "}
@@ -293,16 +321,23 @@ export function WebPanel({
                  does not get to reach into the app framing it. Scripts and
                  forms yes — it is a web page — but not the app's origin, its
                  storage, or its token. */
-              sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+              sandbox={SANDBOX}
               referrerPolicy="no-referrer"
             />
           </div>
         ) : (
           <Centered>
             <p className="max-w-xs">
-              Enter the address of this project's development server — {" "}
-              <code className="font-mono">localhost:5173</code>, or whatever your{" "}
-              <code className="font-mono">dev</code> script prints.
+              {trust === "external"
+                ? "Enter an address, or follow a source from a thread — the pages an agent read open here."
+                : null}
+              {trust === "project" && (
+                <>
+                  Enter the address of this project's development server —{" "}
+                  <code className="font-mono">localhost:5173</code>, or whatever your{" "}
+                  <code className="font-mono">dev</code> script prints.
+                </>
+              )}
             </p>
           </Centered>
         )}

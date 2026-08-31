@@ -5,9 +5,8 @@ import { ErrorBoundary } from "@/components/error-boundary"
 import { ThreadView } from "@/components/thread-view"
 import type { Actions } from "@/lib/actions"
 import { useStore } from "@/lib/store"
-import { useDock } from "@/components/workspace/dock"
-import { markReveal } from "@/lib/workspace/reveal"
-import { ThreadLinksProvider, toRelative, type ThreadLinks } from "@/lib/workspace/thread-links"
+import { ThreadLinksProvider } from "@/lib/workspace/thread-links"
+import { useThreadLinksFor } from "@/lib/workspace/use-thread-links"
 
 /** A thread, and the one panel kind that owns an ACP connection. Every other
     panel observes the store; this is where `openThread` is called, which is why
@@ -18,10 +17,8 @@ export function ChatPanel({
   params,
 }: IDockviewPanelProps<{ sessionId: string }> & { actions: Actions }) {
   const { state } = useStore()
-  const dock = useDock()
   const meta = state.sessions.find((session) => session.id === params.sessionId)
   const thread = state.threads[params.sessionId]
-  const project = state.projects.find((candidate) => candidate.id === meta?.projectId)
 
   React.useEffect(() => {
     if (!meta) return
@@ -48,30 +45,9 @@ export function ChatPanel({
     api.setTitle(`${marker}${meta?.title || "Thread"}`)
   }, [api, meta?.title, marker])
 
-  /* What makes a path in a tool call clickable. The project's cwd is what turns
-     the absolute paths agents report into the relative ones the file API takes;
-     without a project there are no links and the transcript renders plain text. */
-  const links = React.useMemo<ThreadLinks | null>(() => {
-    if (!meta?.projectId) return null
-    const projectId = meta.projectId
-    const cwd = project?.cwd
-    return {
-      projectId,
-      openFile: (path, line) => {
-        const relative = toRelative(path, cwd)
-        if (line) markReveal(projectId, relative, line)
-        dock.openPanel({ kind: "editor", projectId, path: relative })
-      },
-      openDiff: (path) => {
-        dock.openPanel({
-          kind: "editor",
-          projectId,
-          path: toRelative(path, cwd),
-          comparison: "head",
-        })
-      },
-    }
-  }, [dock, meta?.projectId, project?.cwd])
+  /* What makes a path or a source in a tool call clickable — shared with every
+     other surface that renders a transcript (see lib/workspace/use-thread-links). */
+  const links = useThreadLinksFor(params.sessionId)
 
   if (!meta) return null
 

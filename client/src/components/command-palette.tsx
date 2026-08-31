@@ -34,7 +34,6 @@ import {
   PinOff,
   Plus,
   RotateCcw,
-  ScrollTextIcon,
   RotateCw,
   ServerIcon,
   ShieldCheck,
@@ -67,14 +66,16 @@ import { useSidebar } from "@/components/ui/sidebar"
 import type { WorkspaceDock } from "@/components/workspace/dock"
 import { openTerminal } from "@/components/workspace/terminal-panel"
 import { useHotkey } from "@/hooks/use-hotkey"
-import { KEYS, formatChord } from "@/lib/shortcuts"
+import { KEYS } from "@/lib/shortcuts"
+import { Shortcut } from "@/components/shortcut"
 import { SETTINGS_SECTIONS } from "@/components/settings/sections"
+import { ProjectIcon } from "@/components/entity-icon"
 import type { Actions } from "@/lib/actions"
 import { customThemeValue } from "@/lib/custom-themes"
 import { togglePin, usePins } from "@/lib/pins"
 import { shortAge } from "@/lib/time"
 import { useLocation, useNavigate } from "react-router"
-import { boardPath, currentThreadId, settingsPath, threadPath } from "@/lib/router"
+import { boardPath, currentThreadId, projectPath, settingsPath, threadPath } from "@/lib/router"
 import {
   clearSettings,
   isTopLevel,
@@ -427,7 +428,9 @@ export function CommandPalette({
                 >
                   <Plus />
                   New thread
-                  <CommandShortcut>{formatChord(KEYS.newThread)}</CommandShortcut>
+                  <CommandShortcut>
+                    <Shortcut chord={KEYS.newThread} />
+                  </CommandShortcut>
                 </CommandItem>
                 <CommandItem
                   value="new project workspace directory cwd"
@@ -450,23 +453,6 @@ export function CommandPalette({
                   presets are the only way to get an arrangement back once it
                   has been dragged into a shape nobody wanted. */}
               <CommandGroup heading="Workspace">
-                {meta && (
-                  <CommandItem
-                    value="output problems diagnostics errors log console"
-                    onSelect={() =>
-                      run(() =>
-                        dock.openPanel(
-                          { kind: "output", projectId: meta.projectId },
-                          { direction: "below" }
-                        )
-                      )
-                    }
-                  >
-                    <ScrollTextIcon />
-                    Output &amp; problems
-                    <CommandShortcut>{formatChord(KEYS.output)}</CommandShortcut>
-                  </CommandItem>
-                )}
                 {meta && (
                   <CommandItem
                     value="browser preview dev server localhost web"
@@ -495,7 +481,9 @@ export function CommandPalette({
                   >
                     <SquareTerminalIcon />
                     New terminal
-                    <CommandShortcut>{formatChord(KEYS.terminal)}</CommandShortcut>
+                    <CommandShortcut>
+                    <Shortcut chord={KEYS.terminal} />
+                  </CommandShortcut>
                   </CommandItem>
                 )}
                 <CommandItem
@@ -504,7 +492,9 @@ export function CommandPalette({
                 >
                   <PanelsTopLeft />
                   Split right
-                  <CommandShortcut>{formatChord(KEYS.splitRight)}</CommandShortcut>
+                  <CommandShortcut>
+                    <Shortcut chord={KEYS.splitRight} />
+                  </CommandShortcut>
                 </CommandItem>
                 <CommandItem
                   value="split panel down below"
@@ -548,7 +538,9 @@ export function CommandPalette({
                   >
                     <RotateCcw />
                     Reopen closed panel
-                    <CommandShortcut>{formatChord(KEYS.reopenPanel)}</CommandShortcut>
+                    <CommandShortcut>
+                    <Shortcut chord={KEYS.reopenPanel} />
+                  </CommandShortcut>
                   </CommandItem>
                 )}
                 <CommandItem
@@ -717,6 +709,31 @@ export function CommandPalette({
                 </CommandGroup>
               )}
 
+              {/* Projects as destinations, not as settings rows: each one goes
+                  to its own page — the overview, its threads and its numbers. */}
+              {state.projects.length > 0 && (
+                <CommandGroup heading="Projects">
+                  {state.projects.map((project) => (
+                    <CommandItem
+                      key={project.id}
+                      value={`project ${project.name} ${project.cwd}`}
+                      onSelect={() =>
+                        run(() => {
+                          setOpenMobile(false)
+                          void navigate(projectPath(project.id))
+                        })
+                      }
+                    >
+                      <ProjectIcon project={project} className="size-4" />
+                      <span className="truncate">{project.name}</span>
+                      <span className="ml-auto truncate font-mono text-[11px] text-muted-foreground">
+                        {project.cwd}
+                      </span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              )}
+
               <CommandGroup heading="Go to">
                 {SETTINGS_SECTIONS.map((section) => (
                   <SectionItem key={section.id} section={section} onSelect={run} />
@@ -776,7 +793,9 @@ export function CommandPalette({
                 <CommandItem value="toggle sidebar panel collapse" onSelect={() => run(toggleSidebar)}>
                   <PanelLeft />
                   Toggle sidebar
-                  <CommandShortcut>{formatChord(KEYS.sidebar)}</CommandShortcut>
+                  <CommandShortcut>
+                    <Shortcut chord={KEYS.sidebar} />
+                  </CommandShortcut>
                 </CommandItem>
                 <CommandItem
                   value="keyboard shortcuts keys bindings help"
@@ -784,7 +803,9 @@ export function CommandPalette({
                 >
                   <Keyboard />
                   Keyboard shortcuts
-                  <CommandShortcut>?</CommandShortcut>
+                  <CommandShortcut>
+                    <Shortcut keys={["?"]} />
+                  </CommandShortcut>
                 </CommandItem>
               </CommandGroup>
 

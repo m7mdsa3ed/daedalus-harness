@@ -125,13 +125,30 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   not from a flag in the store: the reducer never marks a thought done.
   `components/ui/diff-view.tsx` is a dependency-free line LCS.
   Device-local, per-session state lives in its own tiny stores — `lib/drafts.ts`
-  (unsent prompts), `lib/pins.ts` (pinned threads), `lib/view-options.ts`
-  (timestamps/tool grouping) — all pruned from `refreshSessions`. **The sidebar
+  (unsent prompts) and `lib/pins.ts` (pinned threads), both pruned from
+  `refreshSessions`. `lib/view-options.ts` (timestamps/tool grouping/density) is
+  device-local too but **global and persisted**: one set of reading settings for
+  every thread, keyed by nothing, so `useViewOptions()`/`setViewOption(key, …)`
+  take no session and there is nothing to prune. Per-session was the older rule
+  and it meant finding and flipping the same switch again in every thread — how a
+  transcript is drawn is a property of the reader, not of the conversation. The
+  pre-global blob (`{ [sessionId]: Partial<ViewOptions> }` under the same
+  `ui.viewOptions` key) is folded into the one set on first read, later threads
+  winning, rather than dropped. **The sidebar
   is `components/thread-sidebar.tsx`**, laid out like the Codex and Claude desktop
   apps: fixed nav rows on top (`SidebarNav`: New thread, Search, Tasks — menu rows,
   so they survive the icon rail), then Pinned, a flat Recents, **one folder per
   project** with its threads under it and a hover `+` that starts a thread *in*
-  that project, Scheduled, Trash. Rows are one line and title-only: a running turn
+  that project, Scheduled, Trash. Pinned and Recents are **shortcuts, not
+  places**: a folder holds every one of its project's threads, the recent and
+  the pinned included, because a folder that dropped whatever was recent was an
+  incomplete index of its own project — with the newest thread, the one most
+  likely to be looked for, the one missing from where it lives. Inside a folder
+  the rows are **grouped by period** (`periodLabel` in `lib/time.ts`, `grouped`
+  on `ThreadList`): Today / Yesterday / Previous 7 days / Previous 30 days, then
+  by month. Counted in calendar days, so 00:10 says "Yesterday" about 23:50, and
+  the headings are inserted over the rows that are *visible*, so `limit` still
+  counts threads and "Show more" can never reveal an empty heading. Rows are one line and title-only: a running turn
   **shimmers the title** (`harness-shimmer`, the same band as the working line and a live
   thought), a thread waiting on you gets an amber dot at the trailing edge; agent,
   profile, model, project and start time live in `ThreadInfoCard` — one popover
@@ -576,13 +593,24 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   name, step, index/total, this step's `phase`) — decoded only in `lib/tools/subagents.ts`
   (`workflowInfoOf`), stamped onto the `SubagentItem`, and folded at view time by
   `mergeWorkflowRuns` (`transcript-rows.ts`) into one `workflow-group` row per run, which
-  `WorkflowRun` (`thread-items.tsx`) draws as a single card — header with
-  name/progress/phase pips/elapsed, then a band per phase (`WorkflowPhaseBand`) over the
-  steps as a **table** (`WorkflowStepRow`: mark, ordinal, the definition's step name,
-  what it did, how long), a row each — instead of N stray subagent rows. The header's
-  bottom rule *is* the progress bar: the hairline that separated header from table is the
-  track and `done/total` fills it, so the card gained a reading rather than a band, and
-  how far through a long run is arrives as a length instead of a fraction to parse. The
+  `WorkflowRun` (`thread-items.tsx`) draws as a single card — a two-line header (an icon
+  chip in the run's state tint, the run's name over `done/total · running phase · elapsed`,
+  and the state as a word in `WorkflowPill`), then the meter, then a band per phase
+  (`WorkflowPhaseBand`) over the steps as a **table** (`WorkflowStepRow`: mark, ordinal,
+  the definition's step name, what it did, how long), a row each — instead of N stray
+  subagent rows. The name shares its line with nothing now: beside the pips, the clock and
+  the counter it was the one thing that truncated at a panel's width, and it is the only
+  thing that identifies the run in a long transcript. **The meter is one segment per
+  step**, grouped by phase and tinted per step state (`WorkflowMeter`), and it replaces
+  both of the readings that used to sit apart — a pip per phase in the header and a
+  `done/total` bar drawn into the header's hairline. Neither was enough alone: the bar
+  said how far through the run was and nothing about where it went wrong, the pips said
+  which stage it was in and nothing about how big a stage was. Segments share the width in
+  proportion to a phase's step count, so a phase of six does not read the length of a phase
+  of one. Every state colour in the card — the meter's fills, a step's mark disc, a phase's
+  count pill, the header chip — comes from one table (`WF_TONE`/`wfTone`), because the four
+  of them were each picking their own and a failed step could read destructive in the table
+  and merely muted in the strip above it. The
   activity column answers the tense it is in — settled, `summarise`'s counts ("read 2
   files"); live, `currentActivity`, the newest call still open, because the counts describe
   what a working step did a minute ago and that column is the only thing the table says
@@ -718,6 +746,23 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   entry for the model actually chosen. One spawn, the whole map. Still best-effort — a
   different cwd or an upgraded agent invalidates it — and the real set replaces it as soon
   as a session answers.
+  **A thread that already exists asks the same question**, and that is not a special case
+  of the draft's: `SessionConfigPopover` runs the same `learnAgentOptions` when the thread
+  has advertised nothing *and* nothing is remembered — an archived thread with no process,
+  a plain reattach (no call in it carries an option set), a device that has never drafted
+  on this pair. The draft menu used to be the only writer, so the only way to make an old
+  thread's Model/Effort rows appear was to open a new thread first and let it fill the
+  store. It is gated on there being nothing to draw, because the answer costs a spawn: a
+  live session is already the authority, and a pair borrowing a sibling's set already has
+  something true to show. The store is device-local, so **saving a profile drops its
+  entries** (`dropAgentOptions`, from the profile form) — the credentials, endpoint and
+  catalog are what decide the answer, `learnAgentOptions` refuses to re-ask a pair it has
+  a set for, and the server evicts its own probe cache on that same PUT.
+  `refreshProfiles` re-reads the **agent registry along with the profiles**, since every
+  agent's virtual Default is synthesized from it, and returning to a hidden tab re-reads
+  both (throttled to a minute): the client is a PWA that stays open for days, and a
+  profile added on another device — or an agent a server upgrade started offering — was
+  otherwise invisible until a reload.
 - **The client mints session ids and threads start as drafts.** "New thread" is a route
   change, not a round trip: `actions.newDraftThread` mints a UUID, puts a `draft: true`
   `SessionMeta` in the store and navigates. `POST /api/sessions` (which accepts that id,
@@ -988,7 +1033,17 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
 - **A key that is bound is a key that is listed.** `client/src/lib/shortcuts.ts` holds
   the chord vocabulary (`mod` = ⌘ or Ctrl), the matcher, and the `SHORTCUTS` table that
   `components/shortcuts-help.tsx` (`?` / `⌘/`, and a command-palette entry) prints — so a
-  binding nobody can discover is a bug in one file, not two. `hooks/use-hotkey.ts` binds on
+  binding nobody can discover is a bug in one file, not two. **A chord is printed by
+  `components/shortcut.tsx` and nowhere else**: `Shortcut` draws keycaps on shadcn's
+  `Kbd`/`KbdGroup`, from a chord (`chord="mod+k"`, split by `chordKeys`) or from literal
+  caps (`keys={["1…9"]}`) for a range or a glyph that is not a binding. Every surface reads
+  it — the sheet, the palette, the `+` menu, a tooltip, the sidebar's hover hint, the
+  permission card's digits — because they each used to draw their own: half printed
+  `formatChord()` into bare text and half built keycaps by hand, so one chord read three
+  ways depending on where you met it. `formatChord` survives for the places a chord has to
+  be a *string* (a tooltip prop, an aria-label). `CommandShortcut`/`DropdownMenuShortcut`
+  drop their letter-spacing when they hold a `kbd-group`, since tracking meant for bare
+  glyphs pulls keycaps apart. `hooks/use-hotkey.ts` binds on
   `window` with the handler in a ref and skips an event another handler already claimed
   (`defaultPrevented`), which is how a local owner — the slash menu's arrows, a dialog's
   Escape — always beats a global. Scope is the real decision: global keys are unguarded,
@@ -1020,16 +1075,60 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   `close(reason)` (called after `EXIT_DRAIN_MS`) has both the reason and the output.
   `GET /api/sessions/:id/stderr` exposes the tail. `app.onError` turns every route throw
   into the `{ error }` shape the client already parses.
-- **The dock holds five panel kinds: chat, editor, terminal, web (the *Browser*
-  panel) and output.** The framed `code-server` panel, the "Simple IDE" opening, the file
-  explorer and the source-control panel have all been removed from the client — with them
-  went `ide-panel.tsx`, `simple-ide.ts`, `explorer-panel.tsx`, `source-control-panel.tsx`,
-  `lib/workspace/ide.ts`, `lib/workspace/ide-theme.ts` and the ⌘⇧E / ⌘⇧G chords. The
-  server's `src/ide.ts` + `src/ide-proxy.ts` (code-server spawn, `/ide/<key>/` proxy) and
+- **The dock holds four panel kinds: chat, editor, terminal and web (the *Browser*
+  panel).** The framed `code-server` panel, the "Simple IDE" opening, the file
+  explorer, the source-control panel, the Output & problems panel and the Subagents &
+  workflows panel have all been removed
+  from the client — with them went `ide-panel.tsx`, `simple-ide.ts`, `explorer-panel.tsx`,
+  `source-control-panel.tsx`, `output-panel.tsx`, `agents-panel.tsx`, `lib/workspace/ide.ts`,
+  `lib/workspace/ide-theme.ts`, `lib/workspace/output.ts` and the ⌘⇧E / ⌘⇧G / ⌘⇧U chords.
+  The server's `src/ide.ts` + `src/ide-proxy.ts` (code-server spawn, `/ide/<key>/` proxy) and
   `src/git.ts` are still there and still routed; nothing in the UI reaches the IDE half any
   more, while git is still read by the editor panel's diff mode (`gitFileAt`). An editor
-  panel is opened from the transcript's file links and from the output panel — there is no
-  tree to pick a file from, so `openWorkspacePanel("editor")` is gone too.
+  panel is opened from the transcript's file links — there is no tree to pick a file from,
+  so `openWorkspacePanel("editor")` is gone too. Output went the same way: it was a
+  device-local buffer per project fed by two producers that already had a home on screen —
+  `recordError`'s failures, which are a transcript row, and task journal events, which are
+  a task card — so the pane was a second copy of both, and `parseLocation` was maintaining
+  four compiler-diagnostic regexes to make a `file:line` clickable in the copy. A layout
+  restored with an output panel in it drops that panel and keeps the rest, which is
+  `parsePanel` returning null for a component it does not know. The agents panel went for
+  the same reason and took `AgentsScope` with it: a thread's workers are already drawn
+  where the work is — the transcript nests every subagent step under the call that
+  launched it and folds a workflow run into its own card, and the composer's shelf says
+  how many are running — so a panel beside it was a third view of one stream, and the only
+  panel that was pruned by session rather than by project. **None of the subagent or
+  workflow machinery is affected**: the RFD events, `mergeWorkflowRuns`, `WorkflowRun`,
+  `SubagentStep`/`SubagentBody`, `ComposerAgents` and the whole server-side engine are
+  untouched.
+- **A project has a page of its own (`/projects/<id>`), and it is assembled from two
+  halves on purpose.** Until it did, a project was a row in settings (a form), a folder in
+  the sidebar (a list) and a name in a thread's header — three surfaces that each say a
+  *part* of what a workspace is and none that answers "what is this project, and what has
+  happened in it". `components/project-page.tsx` is that answer: the header (mark, name,
+  the cwd as a copy button, description, Edit / New thread), four tiles, a 30-day activity
+  strip, the project's threads, and the rails beside them (what it is worked on with, what
+  is scheduled against it, what it has accumulated). The **live** half is the store's —
+  `state.sessions` already carries every thread with its process state, so the thread list,
+  the running/waiting dots and the scheduled rows need no request and are right the moment a
+  turn starts; the status reading is the sidebar's exactly (`turnActive` ?? `promptActive`,
+  a pending permission or elicitation outranking both). The **settled** half exists only in
+  SQLite and arrives as one `GET /api/projects/:id/stats` (`server/src/project-stats.ts`,
+  `lib/workspace/project-stats.ts`) — one route, so the page paints once, refetched on mount
+  and by Refresh and **never on a timer**: nothing in it is worth a poll, and the half that
+  moves is the half that already moves on its own. Two rules in the numbers. **Turns, not
+  events**: an event is a streaming chunk and a long turn is thousands of them, so
+  `session_events.kind = "turn_started"` — journaled exactly once per turn — is the only
+  countable that means anything to a person, and the activity strip is grouped by
+  `date(at, 'unixepoch', 'localtime')` in SQLite (a UTC bucket cuts every evening in half
+  for half the world) and re-expanded client-side into a fixed run of days, because a bar
+  chart missing its empty days reads as busy. And **a tile skeletons rather than zeroes**
+  while the fetch is out: a 0 that becomes 400 is a statement the page made and took back.
+  `cwdExists` is the one health answer it can give — a project whose directory has moved
+  spawns nothing, and that failure otherwise surfaces as an ENOENT inside a thread. The
+  page is reached from the folder's hover control in the sidebar, the project name in a
+  thread's header, the palette's Projects group and the settings row — settings keeps the
+  *form*, this is the workspace as a thing with a history.
 - **A project is a directory, and a directory is not one git repository.** It can hold
   several, or sit inside one, so `server/src/git.ts` addresses a `RepoContext` rather than
   "the project's git": a `dir` (always inside the project, and the cwd every invocation

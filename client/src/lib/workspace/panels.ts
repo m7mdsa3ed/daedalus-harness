@@ -1,10 +1,9 @@
 /* ── Panel vocabulary ──
-   What the dock can hold, and how a panel is named. Five kinds, because a
-   panel type is an interaction surface and not a data source: a diff is the
-   editor looking at a file two ways, and a problems list is the output buffer
-   filtered to the records that carry a location. Merging them is what keeps the
-   registry, the palette and the close rules from having three near-copies of
-   each other.
+   What the dock can hold, and how a panel is named. A panel type is an
+   interaction surface and not a data source: a diff is the editor looking at a
+   file two ways, not a kind of its own. Merging them is what keeps the
+   registry, the palette and the close rules from having near-copies of each
+   other.
 
    A descriptor IS the panel's params. Dockview serializes params verbatim into
    localStorage, so this file is a storage schema as much as a type: ids and
@@ -12,7 +11,7 @@
    server restart. `parsePanel` is the other half of that contract — anything
    restored has to come back through it before the dock will trust it. */
 
-export type PanelKind = "chat" | "editor" | "terminal" | "web" | "output"
+export type PanelKind = "chat" | "editor" | "terminal" | "web"
 
 /** Whether a web panel is looking at a project's own dev server or the wider
     internet. It is carried on the descriptor so the panel cannot decide for
@@ -27,7 +26,6 @@ export type PanelDescriptor =
   | { kind: "editor"; projectId: string; path: string; comparison?: string }
   | { kind: "terminal"; projectId: string; terminalId: string }
   | { kind: "web"; trust: WebTrust; viewId: string; projectId?: string; url?: string }
-  | { kind: "output"; projectId: string }
 
 export interface PanelSpec {
   /** One per project — opening it again focuses what is there. */
@@ -45,7 +43,6 @@ export const PANEL_SPECS: Record<PanelKind, PanelSpec> = {
   editor: { singleton: false, defaultTitle: "Editor", implemented: true },
   terminal: { singleton: false, defaultTitle: "Terminal", implemented: true },
   web: { singleton: false, defaultTitle: "Browser", implemented: true },
-  output: { singleton: true, defaultTitle: "Output", implemented: true },
 }
 
 export const PANEL_KINDS = Object.keys(PANEL_SPECS) as PanelKind[]
@@ -72,8 +69,6 @@ export function panelId(panel: PanelDescriptor): string {
       return panel.trust === "external"
         ? `web:external:${panel.viewId}`
         : `web:${panel.projectId}:${panel.viewId}`
-    case "output":
-      return `output:${panel.projectId}`
   }
 }
 
@@ -138,7 +133,5 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
         ...(str(p.url) ? { url: str(p.url) } : {}),
       }
     }
-    case "output":
-      return projectId ? { kind: "output", projectId } : null
   }
 }

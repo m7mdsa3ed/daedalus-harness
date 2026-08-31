@@ -10,6 +10,7 @@
 
    /                     home (no thread open)
    /t/<sessionId>        one thread
+   /projects/<id>        one project: overview, threads, metrics
    /settings/<section>   settings, one page per section (components/settings/) */
 import * as React from "react"
 import { matchPath, useNavigate, type NavigateFunction } from "react-router"
@@ -18,6 +19,10 @@ export const threadPath = (sessionId: string) => `/t/${encodeURIComponent(sessio
 export const settingsPath = (section: string) => `/settings/${section}`
 export const settingsFormPath = (section: string, id: string = "new") =>
   `/settings/${section}/${encodeURIComponent(id)}`
+/** A project's own page — the overview, its threads and its numbers. Settings
+    keeps the *form* (`settingsFormPath("projects", id)`); this is the workspace
+    seen as a thing that has a history, which is not a settings screen. */
+export const projectPath = (projectId: string) => `/projects/${encodeURIComponent(projectId)}`
 export const schedulesPath = () => `/schedules`
 export const schedulePath = (sessionId?: string) =>
   `/schedules/new${sessionId ? `?session=${encodeURIComponent(sessionId)}` : ""}`

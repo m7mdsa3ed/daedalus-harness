@@ -5,9 +5,9 @@
      ┌ brand row
      │ New thread · Search · Tasks        fixed nav, icon + label, always there
      ├ Pinned                             the ones you said matter
-     │ Recents                            the newest few, flat, "Show more"
-     │ Projects                           one folder per project, its threads
-     │   ▸ harness              + ·       inside, + starts a thread *in* it
+     │ Recents                            the newest few, flat — a shortcut
+     │ Projects                           one folder per project, ALL its
+     │   ▸ harness              + ·       threads, by period; + starts one *in* it
      │   ▸ website
      │ Scheduled                          what the server will send later
      │ Trash                              folded shut
@@ -72,9 +72,10 @@ import { ScheduledGroup } from "@/components/sidebar/scheduled"
 import { ThreadList } from "@/components/sidebar/thread-list"
 import type { ThreadStatus } from "@/components/sidebar/thread-row"
 import type { Actions } from "@/lib/actions"
-import { boardPath, settingsPath, threadPath } from "@/lib/router"
+import { boardPath, projectPath, settingsPath, threadPath } from "@/lib/router"
 import { usePins } from "@/lib/pins"
 import { formatChord, KEYS } from "@/lib/shortcuts"
+import { Shortcut } from "@/components/shortcut"
 import { isTopLevel, type Project, type SessionMeta } from "@/lib/settings"
 import { defaultsForProfile, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import { useStore, type ThreadState as LiveThreadState } from "@/lib/store"
@@ -160,9 +161,11 @@ export function SidebarNav({
     hint, not a label. Hidden in the icon rail, where the tooltip carries it. */
 function Kbd({ chord }: { chord: string }) {
   return (
-    <kbd className="ml-auto hidden shrink-0 font-sans text-[10px] tracking-wide text-muted-foreground/70 opacity-0 transition-opacity group-hover/menu-button:opacity-100 sm:inline group-data-[collapsible=icon]:hidden">
-      {formatChord(chord)}
-    </kbd>
+    <Shortcut
+      chord={chord}
+      className="ml-auto hidden opacity-0 transition-opacity group-hover/menu-button:opacity-100 sm:inline-flex group-data-[collapsible=icon]:hidden"
+      keyClassName="h-4 min-w-4 bg-transparent px-0.5 text-[10px] text-muted-foreground/70"
+    />
   )
 }
 
@@ -217,7 +220,7 @@ function useSidebarView(): SidebarView {
     profile/agent/model come from the same remembered defaults ⌘N uses; only
     the project is the caller's. With no usable profile there is nothing to
     start, so it lands on the projects settings page like the empty state does. */
-function useStartThreadIn(actions: Actions) {
+export function useStartThreadIn(actions: Actions) {
   const { state } = useStore()
   const navigate = useNavigate()
   const { isMobile, setOpenMobile } = useSidebar()
@@ -283,6 +286,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
   const { state } = useStore()
   const pins = usePins()
   const view = useSidebarView()
+  const navigate = useNavigate()
   const startIn = useStartThreadIn(actions)
   /* The icon rail is 3rem wide: a thread row there is a title clipped to
      nothing, and a group label is already hidden by the primitive — so the
@@ -303,7 +307,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
      streamed token changes (statuses is identity-stable, see above), so a
      token costs this component a render but no re-sorting and — through the
      memoized rows — no row re-renders. */
-  const { live, trashed, pinned, recent, older } = React.useMemo(() => {
+  const { live, trashed, pinned, recent, filed } = React.useMemo(() => {
     // Deleting is reversible, so a deleted thread leaves the tiers above but
     // not the sidebar: it drops into Trash until it is restored or purged.
     const live = state.sessions
@@ -327,17 +331,20 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
       .map((id) => newestFirst.find((session) => session.id === id))
       .filter((session): session is SessionMeta => !!session)
     const rest = newestFirst.filter((session) => !pinSet.has(session.id))
-    /* Recent first: a flat Recents list, and the folders hold what is older.
-       By project: no Recents — every thread lives under its folder, which is
-       the view for someone who thinks in projects rather than in time. */
+    /* Recent first: a flat Recents list of the newest few — and the folders
+       still hold *every* thread, this one included. Recents is a shortcut, not
+       a place a thread moves to: a folder that dropped whatever was recent was
+       an incomplete index of its own project, so the newest thread — the one
+       most likely to be looked for — was the one missing from where it lives.
+       By project: no Recents at all, which is the view for someone who thinks
+       in projects rather than in time. */
     const recent = view.sort === "recent" ? rest.slice(0, RECENT_COUNT) : []
-    const older = view.sort === "recent" ? rest.slice(RECENT_COUNT) : rest
-    return { live, trashed, pinned, recent, older }
+    return { live, trashed, pinned, recent, filed: newestFirst }
   }, [state.sessions, statuses, pins, view.filter, view.sort])
 
   const { byProject, orphans } = React.useMemo(() => {
     const byProject = new Map<string, SessionMeta[]>()
-    for (const session of older) {
+    for (const session of filed) {
       const list = byProject.get(session.projectId) ?? []
       list.push(session)
       byProject.set(session.projectId, list)
@@ -349,7 +356,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
       (id) => !state.projects.some((project) => project.id === id)
     )
     return { byProject, orphans }
-  }, [older, state.projects])
+  }, [filed, state.projects])
 
   const listProps = { actions, status }
   const filtered = view.filter !== "all"
@@ -412,6 +419,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
                   logoUrl={project.logoUrl}
                   sessions={byProject.get(project.id) ?? []}
                   onNewThread={() => startIn(project)}
+                  onOpenProject={() => void navigate(projectPath(project.id))}
                   {...listProps}
                 />
               ))}

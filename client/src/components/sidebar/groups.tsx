@@ -1,6 +1,6 @@
 /* ── Folders and foldable tiers ── the group primitives the sidebar stacks. */
 import * as React from "react"
-import { ChevronRight, FolderIcon, Plus } from "lucide-react"
+import { ChevronRight, FolderIcon, PanelsTopLeft, Plus } from "lucide-react"
 import { useLocation } from "react-router"
 import {
   Collapsible,
@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/sidebar"
 import { ProjectIcon } from "@/components/entity-icon"
 import type { Actions } from "@/lib/actions"
-import { currentThreadId } from "@/lib/router"
+import { currentThreadId, projectPath } from "@/lib/router"
 import { type SessionMeta } from "@/lib/settings"
 import { cn } from "@/lib/utils"
 import { ACTION, GROUP, GROUP_LABEL, NEST, PROJECT_PAGE_SIZE, ROW, TIER } from "./scale"
@@ -60,6 +60,7 @@ export function ProjectFolder({
   logoUrl,
   sessions,
   onNewThread,
+  onOpenProject,
   actions,
   status,
 }: {
@@ -69,6 +70,8 @@ export function ProjectFolder({
   sessions: SessionMeta[]
   /** Absent for "Other" — a project that no longer exists cannot host one. */
   onNewThread?: () => void
+  /** Opens the project's own page. Absent for "Other", for the same reason. */
+  onOpenProject?: () => void
   actions: Actions
   status: (session: SessionMeta) => ThreadStatus
 }) {
@@ -80,6 +83,9 @@ export function ProjectFolder({
   const location = useLocation()
   const activeThreadId = currentThreadId(location.pathname, location.search)
   const holdsActive = sessions.some((session) => session.id === activeThreadId)
+  /* The project's own page is *about* this folder, so the folder is where you
+     are — open or closed, unlike the thread case below. */
+  const onProjectPage = location.pathname === projectPath(id)
 
   /* The folder's hover group must NOT enclose its threads: a thread row's ⋯
      and the folder's + both show on `group-hover/menu-item`, and a named
@@ -100,8 +106,11 @@ export function ProjectFolder({
               /* The folder takes the active tint only while closed over the
                  routed thread — a pointer to where you are that the row
                  itself, being hidden, cannot give. */
-              isActive={!open && holdsActive}
-              className={cn(ROW, "text-sidebar-foreground/90")}
+              isActive={onProjectPage || (!open && holdsActive)}
+              /* Two hover controls need twice the gutter the primitive
+                 reserves for one — the count sits inside it and would land
+                 under the overview button otherwise. */
+              className={cn(ROW, "text-sidebar-foreground/90", onOpenProject && "pr-14")}
             />
           }
         >
@@ -130,6 +139,20 @@ export function ProjectFolder({
             </span>
           )}
         </CollapsibleTrigger>
+        {/* The folder's own row opens and closes it — a click on the name is a
+            fold, as in every file tree — so the way *into* the project is a
+            control of its own, beside the +. */}
+        {onOpenProject && (
+          <SidebarMenuAction
+            showOnHover
+            title={`Open ${name}`}
+            onClick={onOpenProject}
+            className={cn(ACTION, "right-8")}
+          >
+            <PanelsTopLeft />
+            <span className="sr-only">Open {name}</span>
+          </SidebarMenuAction>
+        )}
         {onNewThread && (
           <SidebarMenuAction
             showOnHover
@@ -154,6 +177,11 @@ export function ProjectFolder({
                 actions={actions}
                 status={status}
                 limit={PROJECT_PAGE_SIZE}
+                /* A folder is the whole history of one project, so it reads by
+                   period — Today, Yesterday, Previous 7 days — the way the
+                   flat tiers above it do not need to, being short by
+                   construction. */
+                grouped
               />
             )}
           </div>

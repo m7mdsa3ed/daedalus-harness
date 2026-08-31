@@ -5,7 +5,6 @@ import {
   FileTextIcon,
   GlobeIcon,
   MessageSquareIcon,
-  ScrollTextIcon,
   SquareTerminalIcon,
   type LucideIcon,
 } from "lucide-react"
@@ -17,5 +16,4 @@ export const PANEL_ICONS: Record<PanelKind, LucideIcon> = {
   editor: FileTextIcon,
   terminal: SquareTerminalIcon,
   web: GlobeIcon,
-  output: ScrollTextIcon,
 }

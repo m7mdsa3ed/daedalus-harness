@@ -1,6 +1,7 @@
 import * as React from "react"
 import { KeyRound, Pencil, Plus, Trash2 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
+import { dropAgentOptions } from "@/lib/agent-options"
 import { reportError } from "@/lib/errors"
 import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -160,6 +161,12 @@ export function ProfileFormPage() {
       agents={state.agents}
       settings={settings}
       onDone={async (saved) => {
+        /* The saved profile's credentials, endpoint and catalog are what decide
+           what its agents advertise, so what this device remembered describes a
+           profile that no longer exists. The server evicts its own probe cache
+           on the same PUT; this is the device-local half, and it is also what
+           lets the pair be asked again before the page is reloaded. */
+        if (saved && profile) dropAgentOptions(profile.id)
         if (saved) await actions.refreshProfiles()
         void navigate(settingsPath("profiles"))
       }}

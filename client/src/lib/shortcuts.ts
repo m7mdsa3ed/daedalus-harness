@@ -129,7 +129,6 @@ export const KEYS = {
       is not part of the vocabulary — and ⌘` is macOS's own "cycle windows",
       which this app should not be taking. */
   terminal: "mod+j",
-  output: "mod+shift+u",
   /** The editor panel's own — bound on the window when a dirty file is in
       front, and inside the editor itself where the caret lives. */
   save: "mod+s",
@@ -152,12 +151,6 @@ export const SHORTCUTS: ShortcutDef[] = [
     label: "Save the file",
     chords: [KEYS.save],
     note: "Only in an editor panel, and only while it has unsaved changes — nothing else in the app claims it.",
-  },
-  {
-    scope: "Global",
-    label: "Toggle output and problems",
-    chords: [KEYS.output],
-    note: "One buffer — Problems is the lines that named a file and a line number.",
   },
   {
     scope: "Global",

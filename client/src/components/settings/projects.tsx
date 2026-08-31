@@ -1,5 +1,5 @@
 import * as React from "react"
-import { BookOpenIcon, FolderIcon, Pencil, Plus, RefreshCwIcon, Trash2 } from "lucide-react"
+import { BookOpenIcon, FolderIcon, PanelsTopLeft, Pencil, Plus, RefreshCwIcon, Trash2 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
 import { reportError, describeError } from "@/lib/errors"
 import { Button } from "@/components/ui/button"
@@ -14,7 +14,7 @@ import { addKnowledge, deleteKnowledge, listKnowledge, type KnowledgeEntry } fro
 import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions, FormSection } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
-import { settingsFormPath, settingsPath } from "@/lib/router"
+import { projectPath, settingsFormPath, settingsPath } from "@/lib/router"
 
 export function ProjectsPage() {
   const { settings, actions } = useSettingsPage()
@@ -61,6 +61,11 @@ export function ProjectsPage() {
                 </span>
               }
             >
+              {/* The overview is the project as a *place* — its threads, its
+                  numbers — where this page is the project as a record. */}
+              <Button variant="ghost" size="icon-lg" title="Open overview" onClick={() => void navigate(projectPath(project.id))}>
+                <PanelsTopLeft />
+              </Button>
               <Button variant="ghost" size="icon-lg" title="Edit" onClick={() => void navigate(settingsFormPath("projects", project.id))}>
                 <Pencil />
               </Button>

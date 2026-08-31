@@ -24,7 +24,7 @@ import type { Actions } from "@/lib/actions"
 import type { SessionMeta } from "@/lib/settings"
 import { extractSubagent, extractTodos, toolHeading, toolViewOf } from "@/lib/tools"
 import { activeSubagents, buildRows } from "@/lib/transcript-rows"
-import type { PlanItem, ThreadState, ToolItem } from "@/lib/store"
+import type { ThreadState, ToolItem } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
 function formatTokens(value: number): string {
@@ -427,55 +427,15 @@ function ChecklistCollapsible({
 }
 
 /**
- * The plan above the composer. Collapsed it is one line — what the agent is on
- * now, and a segment per step so the *shape* of the plan is visible at a
- * glance: how many steps there are, how many are behind you, which one is
- * live. Expanded it is the whole checklist, in place.
- *
- * ponytail: this used to hide the list behind a popover. A popover is for
- * things you consult; a plan is something you watch, so it opens downward into
- * the page instead of floating over it.
- */
-export function ComposerPlan({ thread }: { thread: ThreadState }) {
-  const plan = thread.items.find((item): item is PlanItem => item.kind === "plan")
-  if (!plan || plan.entries.length === 0) return null
-
-  const total = plan.entries.length
-  const completed = plan.entries.filter((entry) => entry.status === "completed").length
-  const current = plan.entries.find((entry) => entry.status === "in_progress")
-    ?? plan.entries.find((entry) => entry.status !== "completed")
-  const percent = Math.round((completed / total) * 100)
-
-  return (
-    <ChecklistCollapsible
-      summaryId="plan"
-      summaryLabel="Plan"
-      percent={percent}
-      completed={completed}
-      total={total}
-      current={current?.content}
-      running={current?.status === "in_progress"}
-      rows={plan.entries.map((entry) => ({
-        content: entry.content,
-        status:
-          entry.status === "completed"
-            ? "completed"
-            : entry.status === "in_progress"
-              ? "in_progress"
-              : "pending",
-      }))}
-    />
-  )
-}
-
-/**
  * The agent's checklist, when it arrives through a tool call instead of ACP's
  * `plan` channel. Claude Code's `TodoWrite` and OpenCode's `todowrite` both
  * send the list as tool *input* and return nothing worth reading, and neither
  * maps to ACP's `plan` channel — so without this the shelf has no surface for
- * the most-repeated call in a long thread, while Codex's own plan (a real ACP
- * plan) is drawn by ComposerPlan on the same track. The reader should not be
- * able to tell which runtime wrote it: a checklist is a checklist.
+ * the most-repeated call in a long thread. A real ACP plan is NOT drawn here:
+ * it arrives as its own session update, at its own point in the conversation,
+ * so the transcript draws it in place (`PlanStep`). This one has no such point
+ * — it is the input of a call the agent makes over and over, and stacking a row
+ * per revision is what the shelf exists to avoid.
  *
  * `toolViewOf` is the single place that says "this call IS a todo list"; the
  * newest such call wins, so an agent revising its list mid-turn replaces the
@@ -635,9 +595,17 @@ export function ComposerAgents({ thread }: { thread: ThreadState }) {
  * What the working line says, read off the thread: the one thing the turn is
  * doing right now, so the line is a status and not a mood. In order of what
  * the reader most needs to know — a question waiting on them, workers out,
- * the step in flight (its own heading, so "Read store.tsx" here matches the
- * row above), prose or thought still streaming — and "Working" when the turn
- * is open but nothing has been announced yet.
+ * then whatever the *newest* thing in the transcript is.
+ *
+ * That last part is a single walk backwards, and it has to be: an in-flight
+ * step used to be searched for across the whole transcript before prose and
+ * thinking were even looked at, so a step a runtime never settles — a tool
+ * call left `in_progress` forever, which is ordinary — pinned the line to its
+ * heading for the rest of the turn while the agent wrote a page underneath it.
+ * The line said "Read store.tsx" for two minutes. So the first item from the
+ * end that means anything wins, and a *settled* step is the one thing that
+ * means nothing (it is over) and is stepped past to whatever ran before it —
+ * which is what keeps a parallel batch of calls reading as the call still out.
  */
 export function workingMessage(thread: ThreadState): string {
   if (thread.permission) return "Waiting for your approval"
@@ -647,16 +615,36 @@ export function workingMessage(thread: ThreadState): string {
   const items = thread.items
   for (let i = items.length - 1; i >= 0; i--) {
     const item = items[i]
-    if (item.kind !== "tool" || item.parentId) continue
-    if (item.status !== "in_progress" && item.status !== "pending") continue
-    const heading = toolHeading(item)
-    if (heading.file) return `${heading.title} ${heading.file}`
-    if (heading.detail && !heading.prose) return `${heading.title} ${heading.detail}`
-    return heading.title
+    /* A subagent's own work is announced by the line above, not by this one. */
+    if (item.parentId) continue
+    switch (item.kind) {
+      case "tool": {
+        if (item.status !== "in_progress" && item.status !== "pending") continue
+        // The step's own heading, so "Read store.tsx" here matches the row above.
+        const heading = toolHeading(item)
+        if (heading.file) return `${heading.title} ${heading.file}`
+        if (heading.detail && !heading.prose) return `${heading.title} ${heading.detail}`
+        return heading.title
+      }
+      case "compaction":
+        if (item.status !== "in_progress") continue
+        return "Compacting the context"
+      case "plan":
+        return "Working through the plan"
+      case "thought":
+        return "Thinking"
+      case "agent":
+        return "Writing"
+      case "user":
+        /* The turn is open and the agent has not said a word yet — which is a
+           real stage of a turn (the model is reading the prompt), and naming it
+           is what stops the line reading as "Working" from send to finish. */
+        return "Starting the turn"
+      default:
+        // A notice or an error is not what the turn is doing; keep walking.
+        continue
+    }
   }
-  const last = items.at(-1)
-  if (last?.kind === "thought") return "Thinking"
-  if (last?.kind === "agent") return "Writing"
   return "Working"
 }
 

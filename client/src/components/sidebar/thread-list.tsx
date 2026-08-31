@@ -11,6 +11,7 @@ import { currentThreadId, threadPath } from "@/lib/router"
 import { markNewTab } from "@/lib/session-tabs"
 import { usePins } from "@/lib/pins"
 import { type SessionMeta } from "@/lib/settings"
+import { periodLabel } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { MENU } from "./scale"
 import { ThreadRow, type ThreadStatus } from "./thread-row"
@@ -25,6 +26,7 @@ export const ThreadList = React.memo(function ThreadList({
   status,
   trash = false,
   limit,
+  grouped = false,
 }: {
   sessions: SessionMeta[]
   actions: Actions
@@ -36,6 +38,12 @@ export const ThreadList = React.memo(function ThreadList({
       tail — a folder with last winter's threads in it — not for Pinned or
       Recents, which are short by construction. */
   limit?: number
+  /** Print a period heading — Today, Yesterday, Previous 7 days, … — above
+      each run of rows that falls in it. The list is already newest-first, so
+      the buckets come out in order and grouping is one pass over the rows
+      that are actually visible: the limit still counts threads, not headings,
+      and "Show more" cannot reveal a heading with nothing under it. */
+  grouped?: boolean
 }) {
   /* Expansion is deliberately not persisted: the reveal answers "is what I am
      looking for down there?" and the answer resets the next visit. */
@@ -147,20 +155,41 @@ export const ThreadList = React.memo(function ThreadList({
 
   return (
     <SidebarMenu ref={listRef} onKeyDown={onListKeyDown} className={MENU}>
-      {visible.map((session) => (
-        <ThreadRow
-          key={session.id}
-          session={session}
-          state={trash ? "idle" : status(session)}
-          trash={trash}
-          active={activeThreadId === session.id}
-          pinned={pinSet.has(session.id)}
-          onOpen={open}
-          onDelete={remove}
-          onRestore={restore}
-          onPurge={purge}
-        />
-      ))}
+      {visible.map((session, index) => {
+        const label = grouped ? periodLabel(session.createdAt) : null
+        const heading =
+          label && (index === 0 || label !== periodLabel(visible[index - 1]!.createdAt))
+        return (
+          <React.Fragment key={session.id}>
+            {heading && (
+              /* Not a SidebarGroupLabel: this sits *inside* a menu, between
+                 rows, so it is a list item with no control in it — quieter and
+                 smaller than a tier's title, which is a fold trigger and the
+                 heading of the whole folder. `aria-hidden` would lose the only
+                 thing that says which period a row belongs to, so it stays
+                 readable and simply is not focusable. */
+              <li
+                data-slot="sidebar-menu-item"
+                data-sidebar="menu-item"
+                className="mt-1.5 flex h-6 items-center px-2 text-[10px] font-semibold tracking-[0.06em] text-muted-foreground/80 uppercase first:mt-0"
+              >
+                <span className="truncate">{label}</span>
+              </li>
+            )}
+            <ThreadRow
+              session={session}
+              state={trash ? "idle" : status(session)}
+              trash={trash}
+              active={activeThreadId === session.id}
+              pinned={pinSet.has(session.id)}
+              onOpen={open}
+              onDelete={remove}
+              onRestore={restore}
+              onPurge={purge}
+            />
+          </React.Fragment>
+        )
+      })}
       {/* One toggle row, styled as a quieter thread row rather than a button —
           it expands the index you are already scanning. */}
       {hidden > 0 && (

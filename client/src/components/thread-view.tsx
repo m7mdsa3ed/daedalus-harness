@@ -1,15 +1,13 @@
 import * as React from "react"
 import { Archive, ArrowUp, ChevronUp, History, Mic, RotateCw, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Kbd, KbdGroup } from "@/components/ui/kbd"
+import { Shortcut } from "@/components/shortcut"
 import {
   ActivityIndicator,
   ComposerAgents,
-  ComposerPlan,
   ComposerTodo,
   ContextIndicator,
 } from "@/components/composer-status"
-import { ComposerApproval } from "@/components/composer-approval"
 import { ComposerQueue } from "@/components/composer-queue"
 import { ComposerStrip, ComposerStripItem } from "@/components/composer-strip"
 import { Textarea } from "@/components/ui/textarea"
@@ -37,11 +35,12 @@ import { useFollowStream } from "@/hooks/use-follow-stream"
 import { cn } from "@/lib/utils"
 import { DraftConfigPopover, DraftScopeRow } from "./draft-config"
 import { SessionConfigPopover } from "./session-config"
+import { ThreadToolsMenu } from "./thread-tools"
 import { FileMentionMenu, useFileMentions } from "./file-mentions"
 import { HARNESS_COMMANDS, SlashCommandMenu, harnessCommandFor, useSlashCommands } from "./slash-commands"
 import { SessionSettingsButton } from "./session-settings"
 import { InlineElicitation } from "./elicitation-form"
-import { primaryPermissionOption } from "./composer-approval"
+import { InlineApproval, primaryPermissionOption } from "./tool-approval"
 import { RowView, SourcesStrip } from "./thread-items"
 import { splitTurns, turnSources, type TurnSources } from "@/lib/sources"
 import { buildRows, rowTailId, type Row } from "@/lib/transcript-rows"
@@ -196,19 +195,22 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
   /* An interrupt is resumable only while it is the last thing that happened:
      the turn is over, the agent is still there, and nothing has been said
      since. Anything older is history, and history does not get a button. */
-  const options = useViewOptions(sessionId)
+  const options = useViewOptions()
   const follow = useFollowStream(options.autoScroll)
   /* Memoised separately: `.filter` would hand `rows` a fresh array every render
      even when nothing changed, and `rows`' memo depends on it. Two stable layers
      (items → visible → rows) is what lets a streaming update — which mutates one
      item in place via the reducer's new-array-of-old-refs — leave every unchanged
      row's identity alone so the memo below actually skips them. */
-  /* The thread's own plan lives on the composer shelf, not in the flow; a
-     subagent's plan has no shelf and is drawn in its rail. */
-  const visible = React.useMemo(
-    () => thread.items.filter((item) => item.kind !== "plan" || item.parentId !== undefined),
-    [thread.items]
-  )
+  /* Nothing is filtered out: a plan is drawn here, in the flow, at the point in
+     the conversation where the agent wrote it — like every other thing it did.
+     It used to be lifted onto the composer shelf, which cost more than it
+     bought: the shelf could only draw the checklist variant, so `plan_update`'s
+     markdown and file plans were rendered in neither place, and a plan lifted
+     out of the flow loses the one thing the flow says about it — when, and
+     after what, the agent decided on it. It still updates in place, since the
+     reducer replaces the item it already holds. */
+  const visible = thread.items
   /* Nesting folds a subagent's work under its step; grouping folds a *run*
      of steps into one row. Both are computed here, not in the reducer: they
      are ways of looking at the transcript, not changes to it, and toggling
@@ -345,24 +347,31 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   {divider && (
                     <div aria-hidden className="my-1.5 h-px bg-border/50 first:hidden" />
                   )}
-                  <RowView
-                    row={row}
-                    onContinue={resumable === row.id ? resume : undefined}
-                    onRetry={
-                      row.kind === "error" && row.retryText
-                        ? () => retry(row.retryText!)
-                        : undefined
-                    }
-                    onDismiss={
-                      row.kind === "error"
-                        ? () => dispatch({ type: "dismiss-error", id: sessionId, itemId: row.id })
-                        : undefined
-                    }
-                    showTimestamps={options.showTimestamps}
-                    streaming={thread.turnActive && last !== undefined && rowTailId(row) === last.id}
-                  />
+                  {/* The slide wrapper (index.css) takes one child, so the
+                      divider and the Sources strip sit beside it — each mounts
+                      at its own moment and slides in on its own. */}
+                  <div className="harness-item-in">
+                    <RowView
+                      row={row}
+                      onContinue={resumable === row.id ? resume : undefined}
+                      onRetry={
+                        row.kind === "error" && row.retryText
+                          ? () => retry(row.retryText!)
+                          : undefined
+                      }
+                      onDismiss={
+                        row.kind === "error"
+                          ? () => dispatch({ type: "dismiss-error", id: sessionId, itemId: row.id })
+                          : undefined
+                      }
+                      showTimestamps={options.showTimestamps}
+                      streaming={thread.turnActive && last !== undefined && rowTailId(row) === last.id}
+                    />
+                  </div>
                   {options.showSources && sourcesFor(row) && (
-                    <SourcesStrip turn={sourcesFor(row)!} />
+                    <div className="harness-item-in">
+                      <SourcesStrip turn={sourcesFor(row)!} />
+                    </div>
                   )}
                 </MessageScrollerItem>
                 )
@@ -373,15 +382,33 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   `caught_up` flips the status and hands the wait back here. */}
               {thread.turnActive && thread.status !== "connecting" && (
                 <MessageScrollerItem messageId="working">
-                  <div className="py-0.5">
-                    <ActivityIndicator thread={thread} />
+                  <div className="harness-item-in">
+                    <div className="py-0.5">
+                      <ActivityIndicator thread={thread} />
+                    </div>
+                  </div>
+                </MessageScrollerItem>
+              )}
+              {/* The two things that stop a turn dead, at the tail of the flow
+                  where the turn is: an approval and a question are the same
+                  event to a reader, and they are drawn on the same card. Both
+                  come after the working line — whatever the agent got as far as
+                  saying is above the thing it stopped on. */}
+              {thread.permission && (
+                <MessageScrollerItem messageId="permission">
+                  <div className="harness-item-in">
+                    <div className="py-1">
+                      <InlineApproval permission={thread.permission} />
+                    </div>
                   </div>
                 </MessageScrollerItem>
               )}
               {thread.elicitation && (
                 <MessageScrollerItem messageId="elicitation">
-                  <div className="py-1">
-                    <InlineElicitation elicitation={thread.elicitation} />
+                  <div className="harness-item-in">
+                    <div className="py-1">
+                      <InlineElicitation elicitation={thread.elicitation} />
+                    </div>
                   </div>
                 </MessageScrollerItem>
               )}
@@ -399,7 +426,18 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
           {options.turnRail && <ThreadRail items={visible} wide={options.wideTranscript} />}
         </MessageScroller>
       </MessageScrollerProvider>
-      <div className="relative">
+      {/* min-w-0, and it is load-bearing: a grid item's automatic minimum is
+          `min-content`, so the composer's row was as wide as the widest
+          unbreakable thing on the shelf — a queued message holding a URL or a
+          long path made the whole column wider than the panel and pushed the
+          composer off the side of the screen. (The strip's own
+          `max-w-[calc(min(100%,…))]` cannot prevent that: a percentage max-width
+          is ignored while intrinsic contributions are being measured.) With the
+          minimum at 0 the track is the panel's width, the strip fills it, and
+          the rows inside truncate and wrap as they were written to. The same
+          reasoning as every `min-h-0` on the rows above — the axis is the only
+          difference. */}
+      <div className="relative min-w-0">
         {empty && <ThreadWelcome draft={meta?.draft} />}
         <Composer sessionId={sessionId} actions={actions} thread={thread} meta={meta} />
       </div>
@@ -689,6 +727,26 @@ function Composer({
      both be open (a `/name` token holds no `@`), but the order is stated rather
      than relied upon. */
   const composerRef = React.useRef<HTMLTextAreaElement>(null)
+
+  /* A new thread is a route change into an empty screen whose only purpose is
+     the box, so the box takes the caret itself — "New thread" then typing,
+     with nothing to click in between. Scoped tightly, because focus taken
+     wrongly is worse than focus not taken:
+     — only a draft (an existing thread is opened to read at least as often as
+       to write to, and stealing focus there scrolls a phone to the bottom);
+     — only while this thread is the routed one, since the dock keeps every
+       opened transcript mounted and a background panel must not grab the caret;
+     — never on touch, where focusing raises the keyboard over the screen the
+       user has just arrived at.
+     After a frame: dockview moves focus itself as it activates a new panel,
+     and the later mover wins. */
+  const routed = currentThreadId(location.pathname, location.search) === sessionId
+  React.useEffect(() => {
+    if (!draft || !routed || isMobile) return
+    const frame = requestAnimationFrame(() => composerRef.current?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [sessionId, draft, routed, isMobile])
+
   const mentions = useFileMentions({
     text,
     setText,
@@ -732,15 +790,14 @@ function Composer({
             <DraftScopeRow meta={meta} actions={actions} />
           </ComposerStripItem>
         )}
-        <ComposerPlan thread={thread} />
         {/* The agent's checklist when it arrives as a tool call rather than an
-            ACP plan — same surface as the plan, so both are read in place. */}
+            ACP plan. The ACP plan itself is NOT here: it is a running account of
+            the work, so it belongs in the transcript with the work — the shelf
+            keeps the list a runtime sends as tool input, which has nowhere else
+            to go. */}
         <ComposerTodo thread={thread} />
         {/* How many subagents are out working, while any are. */}
         <ComposerAgents thread={thread} />
-        {/* The one thing the turn is waiting on. Moves here so a reader who has
-            scrolled up does not collide with the question mid-history. */}
-        <ComposerApproval permission={thread.permission} />
         {/* What is waiting for this turn to end. The user's own words, so
             they are editable in place until the moment they go. */}
         <ComposerQueue sessionId={sessionId} thread={thread} actions={actions} />
@@ -757,9 +814,7 @@ function Composer({
                 there is no Esc key on a phone, so it is an instruction that
                 cannot be followed taking up the end of the row. */}
             <span className="ms-auto hidden items-center gap-1.5 sm:flex">
-              <KbdGroup>
-                <Kbd>Esc</Kbd>
-              </KbdGroup>
+              <Shortcut chord="esc" />
               to go back
             </span>
           </ComposerStripItem>
@@ -832,9 +887,17 @@ function Composer({
             {draft && meta ? (
               <DraftConfigPopover meta={meta} actions={actions} />
             ) : (
-              <SessionConfigPopover sessionId={sessionId} actions={actions} thread={thread} />
+              <>
+                <SessionConfigPopover sessionId={sessionId} actions={actions} thread={thread} />
+                {/* The kit picked on the draft, still said once the thread is
+                    running: the links were written at create and are what a
+                    revive spawns with, so this is a read-out rather than the
+                    picker the strip carried. It draws nothing when the thread
+                    carries no tools. */}
+                {meta && <ThreadToolsMenu meta={meta} actions={actions} editable={false} />}
+              </>
             )}
-            <SessionSettingsButton sessionId={sessionId} />
+            <SessionSettingsButton />
           </div>
           <ContextIndicator thread={thread} meta={meta} actions={actions} />
           {voice.supported && (

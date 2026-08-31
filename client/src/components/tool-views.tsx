@@ -41,6 +41,7 @@ import {
   ToolLocations,
   ToolProse,
   useShowAll,
+  useSourceOpener,
 } from "@/components/tool-parts"
 import { useThreadLinks } from "@/lib/workspace/thread-links"
 import { useTaskEvents, watchTask } from "@/lib/task-events"
@@ -855,10 +856,18 @@ export function ToolSources({ item }: { item: ToolItem }) {
     anchor the avatar's own root, which is what keeps the group's ring styling
     (it targets direct `data-slot=avatar` children) on the element it expects. */
 function SiteAvatar({ host, url, title }: { host: string; url: string; title?: string }) {
+  const open = useSourceOpener()
   return (
     <Avatar
       size="sm"
-      render={<a href={url} target="_blank" rel="noreferrer noopener" />}
+      render={
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer noopener"
+          onClick={(event) => open(event, url)}
+        />
+      }
       title={title ? `${host}\n${title}` : host}
       className="size-5 bg-background transition-transform hover:z-10 hover:scale-110"
     >
@@ -888,6 +897,7 @@ function WebResultList({ results }: { results: WebResult[] }) {
 
 function WebResultRow({ hit }: { hit: WebResult }) {
   const [open, setOpen] = React.useState(false)
+  const openSource = useSourceOpener()
   const host = hostOf(hit.url)
   return (
     <li className="px-2.5 py-2">
@@ -899,6 +909,7 @@ function WebResultRow({ hit }: { hit: WebResult }) {
         href={hit.url}
         target="_blank"
         rel="noreferrer noopener"
+        onClick={(event) => openSource(event, hit.url)}
         title={hit.url}
         className="mt-0.5 block truncate text-[12px] font-medium leading-5 text-foreground hover:text-primary hover:underline"
       >
@@ -934,6 +945,7 @@ function WebResultRow({ hit }: { hit: WebResult }) {
  */
 function WebFetchDetail({ item, active }: { item: ToolItem; active: boolean }) {
   const call = extractWebFetch(item)
+  const openSource = useSourceOpener()
   if (!call) return null
   const failed = item.status === "failed" || /^error:/i.test(call.text.trim())
   const [shown, clipped, showAll] = useShowAll(call.text)
@@ -946,6 +958,7 @@ function WebFetchDetail({ item, active }: { item: ToolItem; active: boolean }) {
           href={call.url}
           target="_blank"
           rel="noreferrer noopener"
+          onClick={(event) => openSource(event, call.url)}
           className="min-w-0 truncate font-mono text-primary hover:underline"
           title={call.url}
         >

@@ -1,6 +1,6 @@
 import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
-import { BotIcon, WrenchIcon } from "lucide-react"
+import { BotIcon } from "lucide-react"
 import { AgentIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
 import { Button } from "@/components/ui/button"
 import {
@@ -17,10 +17,11 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { MenuRow, selectChoices } from "@/components/config-menu"
 import { useStripSummary } from "@/components/composer-strip"
+import { ThreadToolsMenu } from "@/components/thread-tools"
 import type { Actions } from "@/lib/actions"
 import { optionKey, optionsForModel, useAgentOptions, withChoices } from "@/lib/agent-options"
 import { partitionSessionOptions } from "@/lib/session-options"
-import { mcpSubtitle, profileSupports, type SessionMeta } from "@/lib/settings"
+import { profileSupports, type SessionMeta } from "@/lib/settings"
 import { saveThreadDefaults } from "@/lib/thread-defaults"
 import { useStore } from "@/lib/store"
 
@@ -132,114 +133,8 @@ export function DraftScopeRow({ meta, actions }: { meta: SessionMeta; actions: A
         onSelect={(id) => configure({ projectId: id })}
       />
       {divider}
-      <DraftToolsMenu meta={meta} actions={actions} />
+      <ThreadToolsMenu meta={meta} actions={actions} editable />
     </div>
-  )
-}
-
-/**
- * What this thread brings with it: MCP servers, skills and slash commands out
- * of the library, on top of whatever its profile already links.
- *
- * The profile's are shown checked and locked — they are the provider's, set
- * in Settings, and a thread cannot opt out of them here — so the thread's own
- * picks are exactly the additions. They travel with `POST /api/sessions`, and
- * the agent is spawned with the union. The project contributes nothing: it is
- * the directory, not the toolset.
- */
-function DraftToolsMenu({ meta, actions }: { meta: SessionMeta; actions: Actions }) {
-  const { state, profile } = useDraft(meta, actions)
-  const inherited = {
-    mcpServerIds: new Set(profile?.mcpServerIds ?? []),
-    skillIds: new Set(profile?.skillIds ?? []),
-    commandIds: new Set(profile?.commandIds ?? []),
-  }
-  const own = {
-    mcpServerIds: meta.mcpServerIds ?? [],
-    skillIds: meta.skillIds ?? [],
-    commandIds: meta.commandIds ?? [],
-  }
-  const toggle = (key: keyof typeof own, id: string, on: boolean) => {
-    const next = on ? [...own[key].filter((x) => x !== id), id] : own[key].filter((x) => x !== id)
-    actions.configureDraft(meta.id, { [key]: next })
-    // Remembered like the agent is: a reload rebuilds the draft from these,
-    // and the next thread starts with the same kit.
-    saveThreadDefaults({ ...own, [key]: next })
-  }
-  const extra = own.mcpServerIds.length + own.skillIds.length + own.commandIds.length
-  const total =
-    extra + inherited.mcpServerIds.size + inherited.skillIds.size + inherited.commandIds.size
-
-  const group = <T extends { id: string; name: string }>(
-    title: string,
-    key: keyof typeof own,
-    items: T[],
-    hint: (item: T) => string
-  ) => (
-    <DropdownMenuGroup>
-      <DropdownMenuLabel>{title}</DropdownMenuLabel>
-      {items.length === 0 ? (
-        <DropdownMenuItem disabled className="text-xs">
-          None in the library.
-        </DropdownMenuItem>
-      ) : (
-        items.map((item) => {
-          const from = inherited[key].has(item.id)
-          return (
-            <DropdownMenuCheckboxItem
-              key={item.id}
-              checked={from || own[key].includes(item.id)}
-              disabled={from}
-              closeOnClick={false}
-              onCheckedChange={(checked) => toggle(key, item.id, checked === true)}
-            >
-              <span className="flex min-w-0 flex-col">
-                <span className="truncate">{item.name}</span>
-                <span className="truncate font-mono text-[10px] text-muted-foreground">
-                  {from ? "from profile" : hint(item)}
-                </span>
-              </span>
-            </DropdownMenuCheckboxItem>
-          )
-        })
-      )}
-    </DropdownMenuGroup>
-  )
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            variant="ghost"
-            title="Tools for this thread"
-            className="h-6 min-w-0 gap-1.5 rounded-md border-0 bg-transparent px-1.5 text-[11px] font-normal text-muted-foreground shadow-none hover:bg-accent/50 hover:text-foreground data-popup-open:bg-accent/50"
-          >
-            <WrenchIcon className="size-3.5" />
-            <span className="max-w-40 truncate">
-              {total === 0 ? "No tools" : `${total} tool${total === 1 ? "" : "s"}`}
-              {extra > 0 && ` (+${extra})`}
-            </span>
-          </Button>
-        }
-      />
-      {/* Pinned below the strip rather than flipping above it: the popup
-          already sizes itself to the room it has and scrolls, so keeping the
-          side fixed costs nothing and keeps the three menus on the strip
-          opening the same way. */}
-      <DropdownMenuContent
-        align="start"
-        side="bottom"
-        collisionAvoidance={{ side: "none", fallbackAxisSide: "none" }}
-        className="w-64"
-      >
-        {group("MCP servers", "mcpServerIds", state.mcpServers, mcpSubtitle)}
-        <DropdownMenuSeparator />
-        {group("Skills", "skillIds", state.skills, (s) => s.path)}
-        <DropdownMenuSeparator />
-        {group("Slash commands", "commandIds", state.commands, (c) => `/${c.name}`)}
-      </DropdownMenuContent>
-    </DropdownMenu>
   )
 }
 

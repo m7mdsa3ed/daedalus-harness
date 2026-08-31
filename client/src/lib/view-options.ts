@@ -1,8 +1,10 @@
-/* ── Per-thread view options ──
+/* ── View options ──
     How a transcript is *displayed* — not what it contains, and not anything the
-    agent needs to know. Local to this device, per session, so a thread you read
-    with timestamps on stays that way without imposing it on the next one or on
-    anyone else connected to the same harness.
+    agent needs to know. Local to this device and **global**: one set of reading
+    settings for every thread, persisted in localStorage, so a switch you flip
+    once is how you read from then on. They were per-session once, which meant
+    the same switch had to be found and flipped again in every thread — reading
+    preferences are a property of the reader, not of the conversation.
 
     Adding an option:
       1. add the field to `ViewOptions` and a value to `VIEW_DEFAULTS` — the
@@ -85,36 +87,50 @@ export function useViewOptionsContext(): ViewOptions {
 
 const STORAGE_KEY = "ui.viewOptions"
 
-function read(): Record<string, Partial<ViewOptions>> {
+const KEYS = Object.keys(VIEW_DEFAULTS) as (keyof ViewOptions)[]
+
+/** Keep only known boolean fields: the stored blob is user-editable and outlives
+ *  any one release, so an option this build has never heard of must not reach
+ *  the resolved object. */
+function pick(raw: unknown): Partial<ViewOptions> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
+  const source = raw as Record<string, unknown>
+  const out: Partial<ViewOptions> = {}
+  for (const key of KEYS) if (typeof source[key] === "boolean") out[key] = source[key] as boolean
+  return out
+}
+
+function read(): Partial<ViewOptions> {
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as unknown
-    return raw && typeof raw === "object" && !Array.isArray(raw)
-      ? (raw as Record<string, Partial<ViewOptions>>)
-      : {}
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
+    const entries = Object.values(raw as Record<string, unknown>)
+    /* Pre-global shape: `{ [sessionId]: Partial<ViewOptions> }`. Fold every
+       thread's picks into the one set rather than dropping them — later keys
+       win — so upgrading keeps the switches the reader had chosen instead of
+       silently resetting them. Written back on the first commit. */
+    if (entries.some((value) => value && typeof value === "object"))
+      return entries.reduce<Partial<ViewOptions>>(
+        (acc, value) => ({ ...acc, ...pick(value) }),
+        {}
+      )
+    return pick(raw)
   } catch {
     return {}
   }
 }
 
-let cache = read()
 const listeners = new Set<() => void>()
 
-/* Resolved objects are memoised per session so useSyncExternalStore's snapshot
-   is referentially stable — returning a fresh object each call is an infinite
+/* The resolved object is memoised so useSyncExternalStore's snapshot is
+   referentially stable — returning a fresh object each call is an infinite
    render loop, not a subtle inefficiency. */
-let resolved = new Map<string, ViewOptions>()
+let stored = read()
+let resolved: ViewOptions = { ...VIEW_DEFAULTS, ...stored }
 
-function optionsFor(sessionId: string): ViewOptions {
-  const hit = resolved.get(sessionId)
-  if (hit) return hit
-  const value = { ...VIEW_DEFAULTS, ...cache[sessionId] }
-  resolved.set(sessionId, value)
-  return value
-}
-
-function commit(next: Record<string, Partial<ViewOptions>>) {
-  cache = next
-  resolved = new Map()
+function commit(next: Partial<ViewOptions>) {
+  stored = next
+  resolved = { ...VIEW_DEFAULTS, ...next }
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
   } catch {
@@ -123,29 +139,16 @@ function commit(next: Record<string, Partial<ViewOptions>>) {
   for (const listener of listeners) listener()
 }
 
-export function setViewOption<K extends keyof ViewOptions>(
-  sessionId: string,
-  key: K,
-  value: ViewOptions[K]
-): void {
-  commit({ ...cache, [sessionId]: { ...cache[sessionId], [key]: value } })
+export function setViewOption<K extends keyof ViewOptions>(key: K, value: ViewOptions[K]): void {
+  commit({ ...stored, [key]: value })
 }
 
-export function resetViewOptions(sessionId: string): void {
-  const next = { ...cache }
-  delete next[sessionId]
-  commit(next)
+export function resetViewOptions(): void {
+  commit({})
 }
 
-/** Drop options for sessions the server no longer lists — as drafts and pins do. */
-export function pruneViewOptions(sessionIds: Iterable<string>): void {
-  const live = new Set(sessionIds)
-  const kept = Object.fromEntries(Object.entries(cache).filter(([id]) => live.has(id)))
-  if (Object.keys(kept).length !== Object.keys(cache).length) commit(kept)
-}
-
-export function useViewOptions(sessionId: string): ViewOptions {
-  const snapshot = () => optionsFor(sessionId)
+export function useViewOptions(): ViewOptions {
+  const snapshot = () => resolved
   return useSyncExternalStore(
     (listener) => {
       listeners.add(listener)

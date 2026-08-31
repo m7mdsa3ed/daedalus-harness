@@ -27,7 +27,6 @@ import "dockview-react/dist/styles/dockview.css"
 
 import { ChatPanel } from "@/components/workspace/chat-panel"
 import { EditorPanel } from "@/components/workspace/editor-panel"
-import { OutputPanel } from "@/components/workspace/output-panel"
 import { PanelContainer } from "@/components/workspace/panel-container"
 import { PanelTab } from "@/components/workspace/panel-tab"
 import { TerminalPanel } from "@/components/workspace/terminal-panel"
@@ -57,12 +56,36 @@ const REOPEN_DEPTH = 10
 export interface OpenPanelOptions {
   /** Add beside the current panel instead of replacing it. */
   newTab?: boolean
-  /** Put it in a new group beside the active one. Navigation panels go left,
-      streams go below — the IDE preset's arrangement, one panel at a time. */
+  /**
+   * Put it in a new group beside the active one. Navigation panels go left,
+   * streams go below — the IDE preset's arrangement, one panel at a time.
+   *
+   * A **preference**, not an instruction: see `SPLIT_MIN_WIDTH`. Below that
+   * width, and once a group of the same kind already exists, it degrades to a
+   * tab. Callers say where a panel *belongs* and the dock decides whether the
+   * window can afford it — which is the only way the + menu, the chords and
+   * every transcript link can share one answer.
+   */
   direction?: "left" | "right" | "above" | "below"
   /** Open it without taking focus. */
   background?: boolean
 }
+
+/**
+ * Narrower than this and a split is two useless columns, so a panel that asked
+ * to open *beside* something opens as a **tab** instead.
+ *
+ * The window, deliberately, and not the panel's own container: what is being
+ * decided here is whether the dock can be cut in two, which is a question about
+ * the screen. (The rule the rest of the app follows — width is the panel's, the
+ * pointer is the device's — is about laying out *inside* a panel; this is the
+ * one place where the window genuinely is the subject.) Read at click time
+ * rather than subscribed to: a layout the user is looking at must not rearrange
+ * itself because a phone was turned sideways.
+ *
+ * The same 768px as `useIsMobile`, so "phone" means one thing in this app.
+ */
+const SPLIT_MIN_WIDTH = 768
 
 export type PresetId = "ide" | "focus"
 
@@ -141,6 +164,19 @@ export function useWorkspaceDock(): DockController {
       const id = panelId(panel)
       const existing = api.getPanel(id)
       if (existing) {
+        /* Same id, different params is "the same surface, pointed somewhere
+           else" — the Browser panel following a second source is the whole
+           reason it can happen, since its `viewId` is its identity and the URL
+           is not. Anything the id already distinguishes (a file's path, a
+           terminal) cannot reach here with a different descriptor at all, so
+           this is not a way to smuggle one panel into being another. */
+        /* Both sides normalized through `parsePanel`, so the comparison is of
+           the fields and not of the order some caller wrote its literal in. */
+        const current = descriptorOf(existing)
+        const next = parsePanel(panel.kind, panel)
+        if (!current || JSON.stringify(current) !== JSON.stringify(next)) {
+          existing.api.updateParameters(panel as unknown as Record<string, unknown>)
+        }
         if (!options?.background) existing.api.setActive()
         return
       }
@@ -155,10 +191,28 @@ export function useWorkspaceDock(): DockController {
         siblings[0] ??
         api.activeGroup?.activePanel
       const group = current?.group
+
+      /* The side preference, resolved against what the window and the dock can
+         actually do — the one place it is decided, so every caller gets the
+         same answer.
+
+         It is dropped in two cases. On a **phone**, where a split is two
+         columns of nothing: the panel opens as a tab in the group you are in,
+         which is what "beside the thread" means on a screen that can only show
+         one thing at a time. And when a group of that kind is **already open**,
+         because a second editor asking to open on the right would split the
+         dock a second time — the first one established where that kind lives,
+         and the second belongs in it. */
+      const roomToSplit = window.innerWidth >= SPLIT_MIN_WIDTH && siblings.length === 0
+      const direction = options?.direction && roomToSplit ? options.direction : undefined
+      /* A panel that wanted its own side and cannot have one must still not
+         REPLACE what is in front of it — it was never asking to navigate. */
+      const newTab = options?.newTab || (!!options?.direction && !direction)
+
       /* Replace-in-place is what makes clicking through the sidebar feel like
          navigation rather than tab-hoarding: the panel you came from goes away
          unless you asked for a new tab. Only same-kind panels are replaced. */
-      const replace = !!current && current.api.component === panel.kind && !options?.newTab && !options?.direction
+      const replace = !!current && current.api.component === panel.kind && !newTab && !direction
       const index = replace && group ? group.panels.indexOf(current) + 1 : undefined
 
       api.addPanel({
@@ -169,8 +223,8 @@ export function useWorkspaceDock(): DockController {
         inactive: options?.background,
         position: (() => {
           const reference = group?.id ?? api.activeGroup?.id
-          if (options?.direction)
-            return reference ? { referenceGroup: reference, direction: options.direction } : undefined
+          if (direction)
+            return reference ? { referenceGroup: reference, direction } : undefined
           return group ? { referenceGroup: group.id, direction: "within" as const, index } : undefined
         })(),
       })
@@ -310,7 +364,7 @@ export function useWorkspaceDock(): DockController {
       /* IDE: work centre, streams below. A kind with nothing open contributes
          no group, so a dock holding only threads is one centre group, which is
          exactly right. */
-      const BOTTOM: PanelKind[] = ["terminal", "output"]
+      const BOTTOM: PanelKind[] = ["terminal"]
       const bucket = (panel: IDockviewPanel) =>
         BOTTOM.includes(panel.api.component as PanelKind) ? "bottom" : "centre"
       silently(() => {
@@ -576,7 +630,6 @@ export function WorkspaceDock({
     map.editor = contained(EditorPanel as React.FC<IDockviewPanelProps>)
     map.terminal = contained(TerminalPanel as React.FC<IDockviewPanelProps>)
     map.web = contained(WebPanel as React.FC<IDockviewPanelProps>)
-    map.output = contained(OutputPanel as React.FC<IDockviewPanelProps>)
     return map
   }, [actions])
 

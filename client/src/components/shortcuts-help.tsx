@@ -4,7 +4,7 @@
    Opened with ? (or mod+/) and from the command palette. */
 import * as React from "react"
 
-import { Kbd, KbdGroup } from "@/components/ui/kbd"
+import { Shortcut } from "@/components/shortcut"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -14,7 +14,6 @@ import {
 } from "@/components/ui/responsive-dialog"
 import { useHotkey } from "@/hooks/use-hotkey"
 import {
-  chordKeys,
   isTypingTarget,
   KEYS,
   SHORTCUTS,
@@ -41,16 +40,6 @@ export function useShortcutsHelp() {
   return { open, setOpen }
 }
 
-function Chord({ chord }: { chord: string }) {
-  return (
-    <KbdGroup>
-      {chordKeys(chord).map((cap, index) => (
-        <Kbd key={index}>{cap}</Kbd>
-      ))}
-    </KbdGroup>
-  )
-}
-
 function Row({ shortcut }: { shortcut: ShortcutDef }) {
   const chords = shortcut.display ?? shortcut.chords
   return (
@@ -68,7 +57,7 @@ function Row({ shortcut }: { shortcut: ShortcutDef }) {
         {chords.map((chord, index) => (
           <React.Fragment key={chord}>
             {index > 0 && <span className="text-[11px] text-muted-foreground">or</span>}
-            <Chord chord={chord} />
+            <Shortcut chord={chord} />
           </React.Fragment>
         ))}
       </div>

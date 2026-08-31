@@ -25,8 +25,9 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirro
 import { HighlightStyle, LanguageDescription, syntaxHighlighting } from "@codemirror/language"
 import { languages } from "@codemirror/language-data"
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search"
-import { Compartment, EditorState, type Extension } from "@codemirror/state"
+import { Compartment, EditorState, StateEffect, StateField, type Extension } from "@codemirror/state"
 import {
+  Decoration,
   EditorView,
   drawSelection,
   highlightActiveLine,
@@ -34,6 +35,7 @@ import {
   keymap,
   lineNumbers,
   placeholder as cmPlaceholder,
+  type DecorationSet,
 } from "@codemirror/view"
 import { tags as t } from "@lezer/highlight"
 
@@ -87,6 +89,14 @@ const baseTheme = EditorView.theme({
     backgroundColor: "color-mix(in oklch, var(--primary) 22%, transparent)",
   },
   ".cm-selectionMatch": { backgroundColor: "color-mix(in oklch, var(--primary) 14%, transparent)" },
+  /* The span a transcript link asked for. Quieter than a selection and marked
+     down the gutter edge as well as behind the text, so a band that runs off
+     the bottom of the viewport still reads as one region rather than as a
+     stripe per line. */
+  ".cm-revealBand": {
+    backgroundColor: "color-mix(in oklch, var(--primary) 10%, transparent)",
+    boxShadow: "inset 2px 0 0 0 color-mix(in oklch, var(--primary) 55%, transparent)",
+  },
   ".cm-panels": {
     backgroundColor: "var(--popover)",
     color: "var(--popover-foreground)",
@@ -101,6 +111,41 @@ const baseTheme = EditorView.theme({
     color: "var(--popover-foreground)",
     border: "1px solid var(--border)",
   },
+})
+
+/* ── The revealed span ──
+   A tool call that read or rewrote a range gets that range tinted, not just a
+   caret at its first line. Line decorations rather than a selection: a
+   selection is the user's, and replacing it would break the very next thing
+   they do (copy, extend, search-within), while a band is chrome the document
+   can carry alongside whatever they select next.
+
+   It clears on the first edit. The band describes the file *as the call saw
+   it*; once the line has been typed into, the mapped range is a claim about
+   text the agent never read. */
+const setRevealBand = StateEffect.define<{ from: number; to: number } | null>()
+
+const revealBandMark = Decoration.line({ class: "cm-revealBand" })
+
+const revealBand = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, tr) {
+    for (const effect of tr.effects) {
+      if (!effect.is(setRevealBand)) continue
+      if (!effect.value) return Decoration.none
+      const { from, to } = effect.value
+      const marks = []
+      for (let pos = from; pos <= to; ) {
+        const line = tr.state.doc.lineAt(pos)
+        marks.push(revealBandMark.range(line.from))
+        if (line.to >= tr.state.doc.length) break
+        pos = line.to + 1
+      }
+      return Decoration.set(marks)
+    }
+    return tr.docChanged ? Decoration.none : value
+  },
+  provide: (field) => EditorView.decorations.from(field),
 })
 
 export const editorBaseExtensions = (): Extension[] => [
@@ -133,6 +178,10 @@ export interface CodeEditorProps {
   /** 1-based. Scrolls to it and puts the caret there; see `lib/workspace/reveal`. */
   revealLine?: number
   revealColumn?: number
+  /** Last line of the revealed span, 1-based and inclusive. With it, the span
+      is tinted until the next reveal or the first edit — a Read of lines
+      400-460 says where it stopped looking, which a caret cannot. */
+  revealEndLine?: number
   /** Changes whenever a reveal is requested again for the same line, so asking
       twice actually scrolls twice. */
   revealNonce?: number
@@ -153,6 +202,7 @@ export function CodeEditor({
   onSave,
   revealLine,
   revealColumn,
+  revealEndLine,
   revealNonce,
 }: CodeEditorProps) {
   const host = React.useRef<HTMLDivElement | null>(null)
@@ -195,6 +245,7 @@ export function CodeEditor({
             indentWithTab,
           ]),
           ...(placeholder ? [cmPlaceholder(placeholder)] : []),
+          revealBand,
           ...editorBaseExtensions(),
           language.current.of([]),
           editable.current.of([
@@ -259,16 +310,26 @@ export function CodeEditor({
     if (!instance || !revealLine) return
     /* Clamped, because the line came from a compiler that may have been reading
        a different version of the file — an out-of-range line should land at the
-       end rather than throw and leave the panel blank. */
-    const target = Math.min(Math.max(1, revealLine), instance.state.doc.lines)
-    const line = instance.state.doc.line(target)
+       end rather than throw and leave the panel blank. The same clamp is what
+       makes a window the agent read past the end of the file (`offset + limit`
+       is arithmetic, not a measurement) end at the last line instead. */
+    const lines = instance.state.doc.lines
+    const clamp = (value: number) => Math.min(Math.max(1, value), lines)
+    const line = instance.state.doc.line(clamp(revealLine))
     const position = Math.min(line.from + Math.max(0, (revealColumn ?? 1) - 1), line.to)
+    const end = revealEndLine && revealEndLine > revealLine ? instance.state.doc.line(clamp(revealEndLine)) : null
     instance.dispatch({
       selection: { anchor: position },
-      effects: EditorView.scrollIntoView(position, { y: "center" }),
+      effects: [
+        setRevealBand.of(end ? { from: line.from, to: end.from } : null),
+        /* Scrolled to the *start* of the span even when the span is taller than
+           the viewport: the top of what was read is where reading begins, and
+           centring a 400-line range would show its middle and nothing else. */
+        EditorView.scrollIntoView(position, { y: "center" }),
+      ],
     })
     instance.focus()
-  }, [revealLine, revealColumn, revealNonce])
+  }, [revealLine, revealColumn, revealEndLine, revealNonce])
 
   return <div ref={host} className="h-full min-h-0 w-full overflow-hidden" />
 }

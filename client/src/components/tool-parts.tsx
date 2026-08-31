@@ -24,8 +24,18 @@ import {
   Trash2Icon,
 } from "lucide-react"
 import { DiffView } from "@/components/ui/diff-view"
-import { useThreadLinks } from "@/lib/workspace/thread-links"
-import { hostOf, shortPath, splitCommand, toolKindOf, toolLanguage } from "@/lib/tools"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { isPlainClick, useThreadLinks } from "@/lib/workspace/thread-links"
+import {
+  fileRangeOf,
+  formatRange,
+  hostOf,
+  shortPath,
+  splitCommand,
+  toolKindOf,
+  toolLanguage,
+  type FileRange,
+} from "@/lib/tools"
 import type { ToolItem } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { useViewOptionsContext } from "@/lib/view-options"
@@ -278,7 +288,11 @@ export function ToolLocations({ item }: { item: ToolItem }) {
   return (
     <ul className="space-y-0.5 font-mono text-[11px] text-muted-foreground/80">
       {item.locations.map((location, index) => {
-        const label = `${location.path}${location.line != null ? `:${location.line}` : ""}`
+        /* The span, not just the point ACP carries: a windowed read or a
+           multi-line rewrite says `:400-460`, and opening it highlights those
+           lines rather than dropping a caret on the first of them. */
+        const range = fileRangeOf(item, location)
+        const label = `${location.path}${range ? `:${formatRange(range)}` : ""}`
         if (!links) return <li key={index} className="truncate">{label}</li>
         return (
           <li key={index} className="flex min-w-0 items-center gap-1.5">
@@ -286,7 +300,7 @@ export function ToolLocations({ item }: { item: ToolItem }) {
               type="button"
               className="min-w-0 flex-1 truncate text-left underline-offset-2 hover:text-foreground hover:underline"
               title={`Open ${location.path}`}
-              onClick={() => links.openFile(location.path, location.line ?? undefined)}
+              onClick={() => links.openFile(location.path, range?.line, range?.end)}
             >
               {label}
             </button>
@@ -477,12 +491,24 @@ export const PANE = "overflow-hidden rounded-md border border-border/50 bg-muted
 /** A file a step acted on, as a chip. The path is elided to its basename so a
     row says "Read" + `package.json` rather than an elided mono path; the full
     path rides in the tooltip. Clickable only where `useThreadLinks` is alive. */
-export function FileBadge({ file, filePath }: { file: string; filePath?: string }) {
+export function FileBadge({
+  file,
+  filePath,
+  range,
+}: {
+  file: string
+  filePath?: string
+  /** The lines the step was about. Printed after the basename and carried into
+      the editor, which tints them — the chip then says `store.ts:400-460`,
+      which is the part of the file the row is actually about. */
+  range?: FileRange
+}) {
   const links = useThreadLinks()
   const inner = (
     <>
       <FileTextIcon aria-hidden className="size-3 shrink-0 opacity-70" />
       <span className="truncate">{file}</span>
+      {range && <span className="shrink-0 opacity-60">:{formatRange(range)}</span>}
     </>
   )
   const cls = "inline-flex max-w-[45%] shrink-0 items-center gap-1 rounded-md bg-muted/60 px-1.5 py-px font-mono text-[10px] leading-4 text-muted-foreground/80"
@@ -492,7 +518,7 @@ export function FileBadge({ file, filePath }: { file: string; filePath?: string 
       type="button"
       className={cn(cls, "transition-colors hover:text-foreground hover:bg-muted")}
       title={filePath ? `Open ${filePath}` : file}
-      onClick={() => links.openFile(filePath ?? file)}
+      onClick={() => links.openFile(filePath ?? file, range?.line, range?.end)}
     >
       {inner}
     </button>
@@ -524,21 +550,50 @@ export function Favicon({ url, className }: { url: string; className?: string })
   )
 }
 
-/** One page the agent used, as a chip: icon, host, and the title on hover.
-    Shared by the search results and the per-turn Sources strip so a page
-    looks the same wherever it is mentioned. */
+/**
+ * One page the agent used, as a chip: icon, host, and the title on hover.
+ * Shared by the search results and the per-turn Sources strip so a page looks
+ * the same wherever it is mentioned.
+ *
+ * Inside a workspace a plain click opens it in the dock's Browser panel — the
+ * source and the thread that cited it end up side by side instead of the
+ * thread being left behind in another tab. It stays an anchor either way:
+ * ⌘-click, middle-click and copy-address are the browser's, not ours (see
+ * `useSourceOpener`).
+ */
 export function SourceChip({ url, title }: { url: string; title?: string }) {
+  const open = useSourceOpener()
   return (
     <a
       href={url}
       target="_blank"
       rel="noreferrer noopener"
+      onClick={(event) => open(event, url)}
       title={title ? `${title}\n${url}` : url}
       className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-md border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[11px] leading-4 text-muted-foreground transition-colors hover:border-border hover:bg-muted hover:text-foreground"
     >
       <Favicon url={url} className="size-3" />
       <span className="truncate">{hostOf(url) || url}</span>
     </a>
+  )
+}
+
+/**
+ * The click handler every source link shares.
+ *
+ * Returns a no-op outside a workspace, where there is no panel to open and the
+ * anchor's own `target="_blank"` is the right answer — the same fallback
+ * `useThreadLinks` gives a file path.
+ */
+export function useSourceOpener(): (event: React.MouseEvent, url: string) => void {
+  const links = useThreadLinks()
+  return React.useCallback(
+    (event: React.MouseEvent, url: string) => {
+      if (!links || !isPlainClick(event)) return
+      event.preventDefault()
+      links.openUrl(url)
+    },
+    [links]
   )
 }
 
@@ -630,18 +685,98 @@ export function ContentBlockView({ block }: { block: acp.ContentBlock }) {
       return null
   }
 }
-/** HH:MM in the reader's locale; the full stamp is in the tooltip. Renders
-    nothing without a time — replayed history has none to show (see store). */
+/* ── Timestamps ──
+   A stamp in a transcript answers two different questions and only one of them
+   fits in the ~40px it is given: "where in the day did this happen" (a clock)
+   and "how long ago was that" (a phrase). So the label is the clock and the
+   hover is the phrase, with one rule the clock alone could not state — a
+   thread is read days after it ran, and `14:03` on a row from last Tuesday is
+   not a shorter truth, it is a wrong one. Anything off today's date therefore
+   carries its day in front of the clock: the weekday inside a week ("Fri
+   14:03"), the date beyond it ("4 Mar 14:03"), the year beyond that. */
+
+const clockOf = (date: Date) =>
+  date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+
+const startOfDay = (ms: number) => {
+  const d = new Date(ms)
+  d.setHours(0, 0, 0, 0)
+  return d.getTime()
+}
+
+/** The short label: a clock, prefixed with the day when it is not today's. */
+export function formatStamp(at: number, now = Date.now()): string {
+  const date = new Date(at)
+  const time = clockOf(date)
+  const days = Math.round((startOfDay(now) - startOfDay(at)) / 86_400_000)
+  if (days === 0) return time
+  // Inside the last week the weekday is both shorter and easier to place than
+  // a date — "Fri 14:03" needs no arithmetic to read as "yesterday-ish".
+  if (days > 0 && days < 7) {
+    return `${date.toLocaleDateString(undefined, { weekday: "short" })} ${time}`
+  }
+  const sameYear = date.getFullYear() === new Date(now).getFullYear()
+  return sameYear
+    ? `${date.toLocaleDateString(undefined, { day: "numeric", month: "short" })} ${time}`
+    : date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
+}
+
+const RELATIVE = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" })
+
+/** "just now" / "12 minutes ago" / "3 days ago", in the reader's locale. */
+export function formatRelative(at: number, now = Date.now()): string {
+  const diff = at - now
+  const abs = Math.abs(diff)
+  if (abs < 45_000) return "just now"
+  const steps: [Intl.RelativeTimeFormatUnit, number][] = [
+    ["minute", 60_000],
+    ["hour", 3_600_000],
+    ["day", 86_400_000],
+    ["month", 2_592_000_000],
+    ["year", 31_536_000_000],
+  ]
+  let [unit, size] = steps[0]
+  for (const [u, s] of steps) if (abs >= s) [unit, size] = [u, s]
+  return RELATIVE.format(Math.round(diff / size), unit)
+}
+
+/**
+ * When something happened. Renders nothing without a time — replayed history
+ * has none to show (see store).
+ *
+ * The hover is a real tooltip rather than a `title`: the browser's takes a
+ * second to appear, cannot be styled to match the transcript, and on a phone
+ * never appears at all — and the two lines it holds (the full date, and how
+ * long ago that was) are the whole reason to reach for a stamp you are already
+ * looking at. Left quiet by default and lit on hover, because a column of
+ * timestamps down a transcript should be legible when looked for and invisible
+ * when not.
+ */
 export function Timestamp({ at, className }: { at?: number; className?: string }) {
   if (!at) return null
   const date = new Date(at)
+  const now = Date.now()
   return (
-    <time
-      dateTime={date.toISOString()}
-      title={date.toLocaleString()}
-      className={cn("shrink-0 text-[10px] tabular-nums text-muted-foreground/60", className)}
-    >
-      {date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
-    </time>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <time
+            dateTime={date.toISOString()}
+            className={cn(
+              "shrink-0 cursor-default whitespace-nowrap text-[10px] tabular-nums text-muted-foreground/50 transition-colors hover:text-muted-foreground",
+              className
+            )}
+          />
+        }
+      >
+        {formatStamp(at, now)}
+      </TooltipTrigger>
+      <TooltipContent className="flex-col items-start gap-0 text-[11px]">
+        <span className="tabular-nums">
+          {date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+        </span>
+        <span className="text-background/60">{formatRelative(at, now)}</span>
+      </TooltipContent>
+    </Tooltip>
   )
 }

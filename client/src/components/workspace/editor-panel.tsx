@@ -106,9 +106,12 @@ export function EditorPanel({
   /* A reveal can arrive before this panel exists (the click that opened it) or
      while it is already open, so both paths are handled: consume on every load,
      and subscribe for the ones that land later. */
-  const [reveal, setReveal] = React.useState<{ line: number; column?: number; nonce: number } | null>(
-    null
-  )
+  const [reveal, setReveal] = React.useState<{
+    line: number
+    column?: number
+    endLine?: number
+    nonce: number
+  } | null>(null)
   const takeReveal = React.useCallback(() => {
     const pending = consumeReveal(projectId, path)
     if (pending) setReveal((current) => ({ ...pending, nonce: (current?.nonce ?? 0) + 1 }))
@@ -502,6 +505,7 @@ export function EditorPanel({
             onSave={() => void save()}
             revealLine={reveal?.line}
             revealColumn={reveal?.column}
+            revealEndLine={reveal?.endLine}
             revealNonce={reveal?.nonce}
           />
         </div>

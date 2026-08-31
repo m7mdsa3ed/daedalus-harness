@@ -1,8 +1,10 @@
-/* ── Session view settings ──
-   Display-only switches for one thread (lib/view-options): they change how the
-   transcript reads, never what is in it and never anything the agent is told.
-   That is why they live here and not in SessionConfigPopover, which respawns
-   the agent process to change model/effort/mode.
+/* ── View settings ──
+   Display-only switches (lib/view-options): they change how the transcript
+   reads, never what is in it and never anything the agent is told. That is why
+   they live here and not in SessionConfigPopover, which respawns the agent
+   process to change model/effort/mode. They are global to this device — one
+   reading setup for every thread — and persisted, so the dialog takes no
+   session and the button can sit on any transcript.
 
    The list is declarative and **grouped**: add an entry to a group's `options`
    and the row appears. Grouping is the whole layout argument — thirteen equally
@@ -196,12 +198,10 @@ const ALL_OPTIONS = GROUPS.flatMap((group) => group.options)
 
 function OptionRow({
   option,
-  sessionId,
   value,
   changed,
 }: {
   option: Option
-  sessionId: string
   value: boolean
   changed: boolean
 }) {
@@ -212,7 +212,7 @@ function OptionRow({
        the association would be decorative and the pointer cursor a lie. */
     <div
       role="presentation"
-      onClick={() => setViewOption(sessionId, key, !value)}
+      onClick={() => setViewOption(key, !value)}
       className="flex cursor-pointer items-start gap-3 px-3 py-2.5 transition-colors hover:bg-muted/40"
     >
       <span
@@ -244,7 +244,7 @@ function OptionRow({
       <span className="mt-0.5 shrink-0" onClick={(event) => event.stopPropagation()}>
         <Switch
           checked={value}
-          onCheckedChange={(checked) => setViewOption(sessionId, key, checked)}
+          onCheckedChange={(checked) => setViewOption(key, checked)}
           aria-label={title}
         />
       </span>
@@ -252,9 +252,9 @@ function OptionRow({
   )
 }
 
-export function SessionSettingsButton({ sessionId }: { sessionId: string }) {
+export function SessionSettingsButton() {
   const [open, setOpen] = React.useState(false)
-  const options = useViewOptions(sessionId)
+  const options = useViewOptions()
   const changedKeys = React.useMemo(
     () => new Set(ALL_OPTIONS.filter(({ key }) => options[key] !== VIEW_DEFAULTS[key]).map((o) => o.key)),
     [options]
@@ -267,7 +267,7 @@ export function SessionSettingsButton({ sessionId }: { sessionId: string }) {
         size="icon-sm"
         className="shrink-0 rounded-lg text-muted-foreground hover:text-foreground"
         onClick={() => setOpen(true)}
-        title="View settings for this thread"
+        title="View settings"
       >
         <Eye />
         <span className="sr-only">View settings</span>
@@ -277,7 +277,7 @@ export function SessionSettingsButton({ sessionId }: { sessionId: string }) {
           <ResponsiveDialogHeader>
             <ResponsiveDialogTitle>View settings</ResponsiveDialogTitle>
             <ResponsiveDialogDescription>
-              How this thread is displayed on this device. The agent is not told, and other
+              How every thread is displayed on this device. The agent is not told, and other
               clients are not affected.
             </ResponsiveDialogDescription>
           </ResponsiveDialogHeader>
@@ -297,7 +297,6 @@ export function SessionSettingsButton({ sessionId }: { sessionId: string }) {
                     <OptionRow
                       key={option.key}
                       option={option}
-                      sessionId={sessionId}
                       value={options[option.key]}
                       changed={changedKeys.has(option.key)}
                     />
@@ -316,7 +315,7 @@ export function SessionSettingsButton({ sessionId }: { sessionId: string }) {
               variant="ghost"
               size="sm"
               disabled={changedKeys.size === 0}
-              onClick={() => resetViewOptions(sessionId)}
+              onClick={() => resetViewOptions()}
             >
               <RotateCcw /> Reset
             </Button>

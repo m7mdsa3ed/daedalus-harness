@@ -1,3 +1,4 @@
+import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
 import { ProfileIcon } from "@/components/entity-icon"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -72,6 +73,23 @@ export function SessionConfigPopover({
     optionKey(meta?.profileId ?? "", agentId),
     agentProfiles.filter((p) => p.id !== meta?.profileId).map((p) => optionKey(p.id, agentId))
   )
+  /* A live session is the authority, but a thread is not always live and not
+     every attach carries one (see the fallback below). When nothing has
+     answered — an archived thread, a reattach, a device that has never drafted
+     on this pair — ask the same way a draft does: one probe per (profile,
+     agent) per page-load, no-oped by the action when the set is already known
+     or in flight. Without this the *only* thing that ever filled the store was
+     the new-thread menu, which is why opening an old thread showed no model
+     and no mode until a draft had been opened first.
+
+     Gated on there being nothing to show: a thread whose agent is talking has
+     no use for a spawn, and neither has one still borrowing a sibling's set. */
+  const unanswered =
+    !!meta && thread.configOptions.length === 0 && remembered.base.length === 0
+  React.useEffect(() => {
+    if (!unanswered || !meta) return
+    void actions.learnAgentOptions(meta.profileId, agentId, meta.projectId)
+  }, [actions, unanswered, meta?.profileId, agentId, meta?.projectId])
   if (!meta || !profile) return null
 
   const modeIds = new Set(thread.modes?.availableModes.map((m) => m.id) ?? [])

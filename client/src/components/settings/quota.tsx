@@ -67,8 +67,8 @@ function WindowBar({ window }: { window: QuotaWindow }) {
   return (
     <div>
       <div className="flex items-baseline justify-between gap-3">
-        <span className="truncate text-sm">{window.label}</span>
-        <span className={cn("text-sm font-medium tabular-nums", tone.text)}>{percent}%</span>
+        <span className="min-w-0 truncate text-sm">{window.label}</span>
+        <span className={cn("shrink-0 text-sm font-medium tabular-nums", tone.text)}>{percent}%</span>
       </div>
       <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
         <div className={cn("h-full rounded-full transition-[width]", tone.bar)} style={{ width: `${percent}%` }} />
@@ -93,11 +93,77 @@ function RawReport({ raw, label }: { raw: string; label: string }) {
         }
       />
       <CollapsibleContent>
-        <pre className="mt-2 max-h-64 overflow-auto rounded-lg border bg-muted/40 p-3 text-[11px] leading-relaxed whitespace-pre-wrap">
+        {/* `break-words` and not `overflow-x-auto`: a report is prose and long
+            paths, and a horizontally scrolling block inside a vertically
+            scrolling page is a gesture fight on a phone. */}
+        <pre className="mt-2 max-h-64 overflow-y-auto rounded-lg border bg-muted/40 p-3 text-[11px] leading-relaxed break-words whitespace-pre-wrap">
           {raw}
         </pre>
       </CollapsibleContent>
     </Collapsible>
+  )
+}
+
+/** A card's header: mark, name, plan badge, when it was read, and the controls.
+    Shared by both cards for the reason `QuotaBody` is — the two differ in what
+    they name and whether they have a profile picker, not in how a card reads.
+
+    One flex row that wraps in exactly one place. The controls are a `w-full`
+    child, so on a phone they take the line under the name (where the picker can
+    be full width and the button has room) and on `sm+` they sit back on the
+    header's own line, right-aligned, as before. */
+function QuotaCardHeader({
+  icon,
+  name,
+  quota,
+  meta,
+  control,
+  busy,
+  onRefresh,
+  refreshLabel,
+}: {
+  icon: React.ReactNode
+  name: string
+  quota: QuotaSnapshot
+  meta: React.ReactNode
+  /** The profile picker, on the card that has one. */
+  control?: React.ReactNode
+  busy: boolean
+  onRefresh: () => void
+  refreshLabel: string
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-3">
+      {icon}
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="truncate text-sm font-medium">{name}</span>
+          {quota.planName && (
+            <Badge variant="secondary" className="capitalize">
+              {quota.planName}
+            </Badge>
+          )}
+        </div>
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">{meta}</p>
+      </div>
+      <div className="flex w-full items-center gap-2 sm:w-auto">
+        {control && <div className="min-w-0 flex-1 sm:flex-none">{control}</div>}
+        <Button
+          variant="outline"
+          size="sm"
+          /* Alone on the line it fills it; beside a picker the picker gets the
+             width, since a truncated model/profile name says less than a
+             narrower button does. */
+          className={cn("shrink-0 max-sm:h-9", !control && "max-sm:flex-1")}
+          disabled={busy}
+          onClick={onRefresh}
+          aria-label={refreshLabel}
+        >
+          <RefreshCwIcon className={cn("size-3.5", busy && "animate-spin")} />
+          Refresh
+        </Button>
+      </div>
+    </div>
   )
 }
 
@@ -155,35 +221,19 @@ function ProfileQuotaCard({ profile, initial }: { profile: Profile; initial: Quo
   return (
     <Group label={profile.name}>
       <div className="space-y-4 p-4">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <ProfileIcon profile={profile} className="size-5" />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="truncate text-sm font-medium">{profile.name}</span>
-              {quota.planName && (
-                <Badge variant="secondary" className="capitalize">
-                  {quota.planName}
-                </Badge>
-              )}
-            </div>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Read {new Date(quota.fetchedAt).toLocaleTimeString()} · shared by{" "}
-              {profileAgentIds(profile).length === 1
-                ? "1 agent"
-                : `${profileAgentIds(profile).length} agents`}
-            </p>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={busy}
-            onClick={() => void refresh()}
-            aria-label={`Refresh ${profile.name}'s plan usage`}
-          >
-            <RefreshCwIcon className={cn("size-3.5", busy && "animate-spin")} />
-            Refresh
-          </Button>
-        </div>
+        <QuotaCardHeader
+          icon={<ProfileIcon profile={profile} className="size-5 shrink-0" />}
+          name={profile.name}
+          quota={quota}
+          meta={`Read ${new Date(quota.fetchedAt).toLocaleTimeString()} · shared by ${
+            profileAgentIds(profile).length === 1
+              ? "1 agent"
+              : `${profileAgentIds(profile).length} agents`
+          }`}
+          busy={busy}
+          onRefresh={() => void refresh()}
+          refreshLabel={`Refresh ${profile.name}'s plan usage`}
+        />
         <QuotaBody quota={quota} rawLabel="What the provider reported" />
       </div>
     </Group>
@@ -238,46 +288,31 @@ function AgentQuotaCard({
   return (
     <Group label={agentName}>
       <div className="space-y-4 p-4">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <AgentIcon agentId={agentId} className="size-5" />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="truncate text-sm font-medium">{agentName}</span>
-              {quota.planName && (
-                <Badge variant="secondary" className="capitalize">
-                  {quota.planName}
-                </Badge>
-              )}
-            </div>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Read {fetched.toLocaleTimeString()} · {profileName}
-            </p>
-          </div>
-          {profiles.length > 1 && (
-            <Select value={profileId} onValueChange={(id) => pick(id ?? defaultProfileId(agentId))}>
-              <SelectTrigger className="w-44">
-                <SelectValue>{profileName}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {profiles.map((profile) => (
-                  <SelectItem key={profile.id} value={profile.id}>
-                    {profile.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={busy}
-            onClick={() => void load(profileId, true)}
-            aria-label={`Refresh ${agentName}'s usage`}
-          >
-            <RefreshCwIcon className={cn("size-3.5", busy && "animate-spin")} />
-            Refresh
-          </Button>
-        </div>
+        <QuotaCardHeader
+          icon={<AgentIcon agentId={agentId} className="size-5 shrink-0" />}
+          name={agentName}
+          quota={quota}
+          meta={`Read ${fetched.toLocaleTimeString()} · ${profileName}`}
+          control={
+            profiles.length > 1 ? (
+              <Select value={profileId} onValueChange={(id) => pick(id ?? defaultProfileId(agentId))}>
+                <SelectTrigger className="w-full max-sm:h-9 sm:w-44">
+                  <SelectValue>{profileName}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {profiles.map((profile) => (
+                    <SelectItem key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : undefined
+          }
+          busy={busy}
+          onRefresh={() => void load(profileId, true)}
+          refreshLabel={`Refresh ${agentName}'s usage`}
+        />
 
         <QuotaBody quota={quota} rawLabel="What the runtime reported" />
       </div>

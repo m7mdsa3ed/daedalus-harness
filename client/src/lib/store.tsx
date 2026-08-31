@@ -733,6 +733,10 @@ export type Action =
       is no reload to carry it and no draft semantics to respect. */
   | { type: "spawn-config"; id: string; profileId: string; model: string; effort: string }
   | { type: "profiles"; profiles: Profile[] }
+  /** The registry, re-read. Virtual "Default" profiles are derived from it
+      server-side, so an agent the client has never heard of would otherwise
+      leave its own profile in the list pointing at nothing. */
+  | { type: "agents"; agents: AgentDef[] }
   | { type: "projects"; projects: Project[] }
   | { type: "mcp-servers"; mcpServers: McpServerDef[] }
   | { type: "skills"; skills: SkillDef[] }
@@ -875,6 +879,8 @@ export function reducer(state: State, action: Action): State {
       }
     case "profiles":
       return { ...state, profiles: action.profiles }
+    case "agents":
+      return { ...state, agents: action.agents }
     case "projects":
       return { ...state, projects: action.projects }
     case "mcp-servers":

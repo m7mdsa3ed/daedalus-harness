@@ -4,22 +4,29 @@
    same object rather than as a card floating above one — which is why the
    composer itself no longer needs a border to hold the two together.
 
-   Generic on purpose: it is a stack, not a plan bar. Anything that belongs to
-   the *turn* rather than to the message you are typing goes here — the plan,
-   the queue of messages waiting on it, a diff summary tomorrow. Add a child; the strip
-   hides itself when every child renders nothing (`empty:hidden`), so a shelf
-   with nothing on it costs no pixels.
+   Generic on purpose: it is a stack, not a plan bar. Anything that is *state
+   you consult while typing* goes here — the checklist, the queue of messages
+   waiting on the turn, what is running. Add a child; the strip hides itself
+   when every child renders nothing (`empty:hidden`), so a shelf with nothing on
+   it costs no pixels.
+
+   What does NOT go here is anything the turn has stopped on. A permission and a
+   question are the end of the transcript, not state beside it, and they are
+   drawn there (`tool-approval.tsx`, `elicitation-form.tsx`) on a card with room
+   for the diff or plan you have to read before answering — a shelf capped at a
+   fraction of the panel is the wrong place to read a document. The agent's own
+   plan left for the same reason: it belongs at the point in the conversation
+   where it was written.
 
    The shelf shows one row. Left to itself it grew a row per concern — archive
-   notice, draft scope, plan, todo list, approval, history notice, command menu
-   — and six stacked rows push the composer up the screen and turn a glance
-   into a read. So the rows now report a one-line `summary`. When the shelf is
-   holding more than one thing the strip prints a single line that says what is
-   on it ("Plan 2/5 · Permission needed · 3 commands") and the stack opens on
-   click; a single row is already its own summary, so it stays open flat and
-   its own disclosure works as before. Rows that must be acted on right now (an
-   approval, the command menu you are typing into) declare themselves urgent and
-   open the shelf on their own — a summary of a question is not a question. */
+   notice, draft scope, todo list, history notice, command menu — and stacked
+   rows push the composer up the screen and turn a glance into a read. So the
+   rows report a one-line `summary`. When the shelf is holding more than one
+   thing the strip prints a single line that says what is on it ("Todos 2/5 · 3
+   commands") and the stack opens on click; a single row is already its own
+   summary, so it stays open flat and its own disclosure works as before. Rows
+   that must be acted on right now (the command menu you are typing into)
+   declare themselves urgent and open the shelf on their own. */
 import * as React from "react"
 import { ChevronDownIcon } from "lucide-react"
 
@@ -48,9 +55,9 @@ type StripContext = {
    rendered in on the shelf. It cannot be discovered from registration: effects
    run children-first, so mount order is the reverse of DOM order and a row that
    arrives mid-turn would land wherever it happened to mount. Sorting by a fixed
-   list keeps "Agent · Plan 2/5 · Permission needed" saying the same thing in
+   list keeps "Agent · Todos 2/5 · 2 queued" saying the same thing in
    the same places every time. Ids not listed here sort last, in mount order. */
-const SUMMARY_ORDER = ["archived", "scope", "plan", "todos", "agents", "approval", "queue", "history", "slash"]
+const SUMMARY_ORDER = ["archived", "scope", "todos", "agents", "queue", "history", "slash"]
 
 function summaryRank(id: string): number {
   const index = SUMMARY_ORDER.indexOf(id)
@@ -127,12 +134,11 @@ export function ComposerStrip({ className, children, ...props }: React.Component
      always present; only its trigger and the divider between it and the stack
      come and go. */
   const many = summaries.length > 1
-  /* One row is already its own best summary: folding a single plan into
-     "Plan 2/5" adds a click to what was a glance, and a lone approval is
-     something to answer, not to summarise. So the shelf is only collapsible
-     when it is holding more than one thing — a single row stays open flat, and
-     its own disclosure (the plan's, the approval's buttons) behaves exactly as
-     it did before the strip learned to collapse. */
+  /* One row is already its own best summary: folding a single checklist into
+     "Todos 2/5" adds a click to what was a glance. So the shelf is only
+     collapsible when it is holding more than one thing — a single row stays
+     open flat, and its own disclosure (the checklist's, the queue's) behaves
+     exactly as it did before the strip learned to collapse. */
   const expanded = many ? open || urgent : true
 
   return (
@@ -262,7 +268,7 @@ export function ComposerStrip({ className, children, ...props }: React.Component
  * `summary` is what this row contributes to the collapsed line, and it is not
  * optional in practice: a row that reports nothing is a row that vanishes when
  * the shelf is closed. Components that own their whole row (the checklist, the
- * approval, the command menu) call `useStripSummary` directly instead. */
+ * queue, the command menu) call `useStripSummary` directly instead. */
 export function ComposerStripItem({
   className,
   summary,

@@ -168,6 +168,24 @@ export function withChoices(
   })
 }
 
+/** Forget everything remembered about one profile, *and* let it be asked
+    again this page-load.
+
+    A profile's credentials, endpoint and catalog are exactly what decide the
+    answer, so an edited profile's remembered set describes a profile that no
+    longer exists — and `learnAgentOptions` refuses to re-ask a pair it already
+    has a set for, so without this the stale set outlives the edit for as long
+    as the tab is open. The server evicts its own probe cache on the same event
+    (`updateProfile`); this is the device-local half of it. */
+export function dropAgentOptions(profileId: string): void {
+  const prefix = `${profileId}:`
+  for (const key of asked) if (key.startsWith(prefix)) asked.delete(key)
+  const kept = Object.fromEntries(
+    Object.entries(cache).filter(([key]) => !key.startsWith(prefix))
+  )
+  if (Object.keys(kept).length !== Object.keys(cache).length) write(kept)
+}
+
 /** Drop the cache for profiles that no longer exist. Keys are
     `<profileId>:<agentId>`, so a profile's entries are the ones under its id. */
 export function pruneAgentOptions(profileIds: Iterable<string>): void {

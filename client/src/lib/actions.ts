@@ -2,7 +2,6 @@ import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
 import { AgentError, liveThreads, ThreadSocket, type ThreadCallbacks } from "./thread-socket"
 import { describeError, markReported, reportError } from "./errors"
-import { appendOutput } from "./workspace/output"
 import { uuid } from "./uuid"
 import {
   alreadyAsked,
@@ -19,7 +18,6 @@ import { defaultToolPicks, loadThreadDefaults } from "./thread-defaults"
 import { appendTaskEvent } from "./task-events"
 import { notifyThreadEvent } from "./notifications"
 import { prunePins } from "./pins"
-import { pruneViewOptions } from "./view-options"
 import {
   api,
   profileAgentIds,
@@ -59,13 +57,30 @@ const reconnectWaiting = new Set<string>()
     closure's `reconnectThread`); one Connected mounts at a time, so the last
     binding is the live one. */
 let retryWaitingThreads: (() => void) | null = null
+/** Bound the same way, for the catalog half of coming back: this client is a
+    PWA that stays open for days, and profiles and agents are read once at boot
+    and on a mutation *this device* made — so a profile added on the laptop, or
+    an agent the server started offering after an upgrade, was invisible on the
+    phone until it was reloaded. */
+let refreshCatalogOnReturn: (() => void) | null = null
+/** Throttle for the above. Returning to the tab is not a question anybody
+    asked, so it must not become two requests per glance. */
+let catalogRefreshedAt = 0
+const CATALOG_REFRESH_MIN_MS = 60_000
+const refreshCatalogIfStale = () => {
+  if (Date.now() - catalogRefreshedAt < CATALOG_REFRESH_MIN_MS) return
+  catalogRefreshedAt = Date.now()
+  refreshCatalogOnReturn?.()
+}
 let networkListenersInstalled = false
 const installNetworkListeners = () => {
   if (networkListenersInstalled || typeof window === "undefined") return
   networkListenersInstalled = true
   window.addEventListener("online", () => retryWaitingThreads?.())
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") retryWaitingThreads?.()
+    if (document.visibilityState !== "visible") return
+    retryWaitingThreads?.()
+    refreshCatalogIfStale()
   })
 }
 /** The last journal cursor this client has folded into a thread's state, keyed
@@ -141,13 +156,6 @@ export function useActions(settings: ServerSettings) {
         detail: info.detail,
         retryText,
       })
-      /* Also to the project's Output pane. Not instead of the transcript row —
-         that stays where the user is looking — but a failure whose detail is a
-         stack trace or a compiler's complaint is exactly what a workspace pane
-         is for, and it is where a `file:line` becomes clickable. */
-      const projectId = stateRef.current.sessions.find((s) => s.id === sessionId)?.projectId
-      if (projectId)
-        appendOutput(projectId, "agent", [info.title, info.detail].filter(Boolean).join("\n"))
       return info
     }
 
@@ -529,15 +537,6 @@ export function useActions(settings: ServerSettings) {
         // thread, and the panel reading them subscribes there (lib/task-events).
         onTaskEvent: (transcriptDir, event) => {
           appendTaskEvent(transcriptDir, event)
-          /* Also to the project's Output pane, *as well as* the transcript's own
-             task card rather than instead of it: the card is the shape of the
-             work (which agent, how far along), and Output is the running text —
-             where a `file:line` in a build's stderr becomes a clickable problem.
-             Two readings of one stream, which is the same bargain the Problems
-             filter makes. */
-          const projectId = stateRef.current.sessions.find((s) => s.id === id)?.projectId
-          const text = typeof event.message === "string" ? event.message : ""
-          if (projectId && text.trim()) appendOutput(projectId, "task", text)
         },
       }
     }
@@ -664,6 +663,31 @@ export function useActions(settings: ServerSettings) {
       return journalCursors.get(meta.id) ?? 0
     }
 
+    /* Profiles + the agent registry, together — see `refreshProfiles` below for
+       why they are one call. Hoisted rather than left a method on the returned
+       object because the visibility listener bound above calls it, and there is
+       no `this` in scope here. */
+    const refreshCatalog = async () => {
+      const [profiles, agents] = await Promise.all([
+        api<Profile[]>(settings, "/api/profiles"),
+        api<AgentDef[]>(settings, "/api/agents"),
+      ])
+      // A deleted profile's remembered option set is dead weight, and its id
+      // will never be asked for again.
+      pruneAgentOptions(profiles.map((profile) => profile.id))
+      dispatch({ type: "profiles", profiles })
+      dispatch({ type: "agents", agents })
+    }
+
+    /* What the visibility listener calls, bound the way `retryWaitingThreads`
+       is. Ambient: nobody asked by looking at the tab, so a failure costs the
+       refresh and nothing else. */
+    refreshCatalogOnReturn = () => {
+      void refreshCatalog().catch((error) => {
+        console.warn("Couldn't re-read profiles and agents", error)
+      })
+    }
+
     /* Hoisted rather than left as a method on the returned object, for the same
        reason `refreshSessions` is: `scheduleMessage` and `cancelSchedule` both
        have to re-read the list after they change it, and a bare call to a
@@ -686,7 +710,6 @@ export function useActions(settings: ServerSettings) {
       ]
       pruneDrafts(ids)
       prunePins(ids)
-      pruneViewOptions(ids)
       /* The module-level maps leak the same way the device-local stores do — a
          cursor, a backoff timer or a live socket for a thread the server no
          longer reports is never coming back on its own. Same authority, same
@@ -805,6 +828,8 @@ export function useActions(settings: ServerSettings) {
             api<SessionMeta[]>(settings, "/api/sessions?deleted=1"),
             api<ScheduledMessage[]>(settings, "/api/scheduled"),
           ])
+        // Boot is a catalog read; the visibility throttle starts from here.
+        catalogRefreshedAt = Date.now()
         dispatch({
           type: "bootstrap",
           profiles,
@@ -843,13 +868,17 @@ export function useActions(settings: ServerSettings) {
         }
       },
 
-      async refreshProfiles() {
-        const profiles = await api<Profile[]>(settings, "/api/profiles")
-        // A deleted profile's remembered option set is dead weight, and its id
-        // will never be asked for again.
-        pruneAgentOptions(profiles.map((profile) => profile.id))
-        dispatch({ type: "profiles", profiles })
-      },
+      /**
+       * Re-read the profile list — and the agent registry with it.
+       *
+       * The two cannot be refreshed apart: every agent has a virtual "Default"
+       * profile synthesized server-side (`defaultProfileFor`), so a registry
+       * this client last read at boot means an agent added since — a seeded
+       * one after a server upgrade, one added through the API — has a profile
+       * in the list that no `state.agents` entry answers for. Both halves are
+       * small and both are cheap.
+       */
+      refreshProfiles: refreshCatalog,
 
       async refreshProjects() {
         const projects = await api<Project[]>(settings, "/api/projects")
