@@ -15,6 +15,7 @@ import type { Profile } from "../src/profiles.js";
 import type { Project } from "../src/projects.js";
 import { configureGatewayShim } from "../src/gateway-shim.js";
 import { getAgent, resolveSpawn, seedAgents } from "../src/registry.js";
+import type { PersonaSpawn } from "../src/personas.js";
 
 let passed = 0;
 const failures: string[] = [];
@@ -173,6 +174,89 @@ test("the alias keys follow the session model", () => {
   const { env: pinned } = resolveSpawn(agent, profileWith(), project);
   assert.equal(pinned.ANTHROPIC_DEFAULT_SONNET_MODEL, "gw/sonnet");
   assert.equal(pinned.ANTHROPIC_DEFAULT_OPUS_MODEL, "gw/big");
+});
+
+/* ── the persona placeholders ────────────────────────────────────────────── */
+
+/* Codex's shape: the prompt inline, inside a JSON string literal in a JSON
+   template. This is the pair of cases the escaping exists for — a persona is
+   multi-line prose with quotes in it, and substituted raw it closed the string
+   it was sitting in, leaving CODEX_CONFIG unparseable (which `resolveEnvValue`
+   then passes through whole, unpruned, to the agent). */
+const codexAgent = {
+  id: "codex",
+  name: "Codex",
+  command: "codex-acp",
+  args: [],
+  env: {
+    CODEX_CONFIG: '{"developer_instructions":"{personaPrompt}","model":"{model}"}',
+  },
+};
+/* OpenCode's: `instructions` is a list of file paths, so the template names
+   {personaFile} and the caller has written one. */
+const opencodeAgent = {
+  id: "opencode",
+  name: "OpenCode",
+  command: "opencode",
+  args: ["acp"],
+  env: { OPENCODE_CONFIG_CONTENT: '{"instructions":["{personaFile}"],"model":"{model}"}' },
+};
+
+const persona = (over: Partial<PersonaSpawn> = {}): PersonaSpawn => ({
+  id: "px",
+  prompt: "Answer in one line.",
+  thinking: null,
+  ...over,
+});
+
+test("a persona's prompt reaches codex as valid JSON", () => {
+  const { env } = resolveSpawn(codexAgent, profileWith(), project, undefined, undefined, undefined, persona());
+  const config = JSON.parse(env.CODEX_CONFIG) as Record<string, string>;
+  assert.equal(config.developer_instructions, "Answer in one line.");
+});
+
+test("quotes, newlines and backslashes in a prompt do not break the template", () => {
+  const prompt = 'Say "no".\nUse a \\ when you must.\tThen stop.';
+  const { env } = resolveSpawn(
+    codexAgent,
+    profileWith(),
+    project,
+    undefined,
+    undefined,
+    undefined,
+    persona({ prompt }),
+  );
+  const config = JSON.parse(env.CODEX_CONFIG) as Record<string, string>;
+  assert.equal(config.developer_instructions, prompt, "the prompt survives the round trip verbatim");
+});
+
+test("no persona prunes the key away rather than sending an empty instruction", () => {
+  const { env } = resolveSpawn(codexAgent, profileWith(), project);
+  const config = JSON.parse(env.CODEX_CONFIG) as Record<string, string>;
+  assert.equal("developer_instructions" in config, false);
+  assert.equal(config.model, "gw/big", "…and the rest of the template is untouched");
+});
+
+test("a file-shaped agent gets the path, and an empty list prunes to nothing", () => {
+  const { env } = resolveSpawn(
+    opencodeAgent,
+    profileWith(),
+    project,
+    undefined,
+    undefined,
+    undefined,
+    persona({ file: "/tmp/personas/s1.md" }),
+  );
+  assert.deepEqual(JSON.parse(env.OPENCODE_CONFIG_CONTENT).instructions, ["/tmp/personas/s1.md"]);
+  const { env: bare } = resolveSpawn(opencodeAgent, profileWith(), project);
+  assert.equal("instructions" in JSON.parse(bare.OPENCODE_CONFIG_CONTENT), false);
+});
+
+test("a persona with no file resolves the path empty even when it has a prompt", () => {
+  // The prompt is the *other* agent's shape; this one only reads a path, and
+  // the writer is the caller's job (`resolvePersonaSpawn`).
+  const { env } = resolveSpawn(opencodeAgent, profileWith(), project, undefined, undefined, undefined, persona());
+  assert.equal("instructions" in JSON.parse(env.OPENCODE_CONFIG_CONTENT), false);
 });
 
 /* ── seedAgents ─────────────────────────────────────────────────────────── */

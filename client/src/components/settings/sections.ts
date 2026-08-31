@@ -10,6 +10,7 @@ import {
   DatabaseBackup,
   FolderIcon,
   Gauge,
+  Keyboard,
   KeyRound,
   Palette,
   Plug,
@@ -43,6 +44,14 @@ export const SETTINGS_SECTIONS = [
     title: "Notifications",
     description:
       "What interrupts you on this device when something happens in a thread you're not looking at. Stored locally, never synced.",
+  },
+  {
+    id: "keyboard",
+    label: "Keyboard",
+    icon: Keyboard,
+    title: "Keyboard shortcuts",
+    description:
+      "Every key the harness binds, and what it does about the keys something else already wanted. Stored on this device, never synced.",
   },
   {
     id: "projects",
@@ -165,7 +174,7 @@ export const SETTINGS_NAV_GROUPS: readonly {
   label: string
   sections: readonly SettingsSectionId[]
 }[] = [
-  { label: "Preferences", sections: ["general", "appearance", "notifications", "web-search"] },
+  { label: "Preferences", sections: ["general", "appearance", "keyboard", "notifications", "web-search"] },
   { label: "Workspace", sections: ["projects", "knowledge", "mcp", "skills", "commands", "personas"] },
   { label: "Agents", sections: ["profiles", "agents", "usage"] },
   { label: "Server", sections: ["backup"] },

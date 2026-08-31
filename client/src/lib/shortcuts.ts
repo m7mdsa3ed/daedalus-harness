@@ -93,16 +93,132 @@ export function formatChord(chord: string): string {
   return APPLE ? caps.join("") : caps.join("+")
 }
 
+/** The chord a keypress spells, in this module's vocabulary — the inverse of
+    `matchesChord`, and what the settings recorder writes down. Returns null for
+    a press that is only modifiers, which is every intermediate state of typing
+    a chord. */
+export function chordFromEvent(event: KeyboardEvent | React.KeyboardEvent): string | null {
+  const key = normalizeKey(event.key)
+  if (["shift", "control", "alt", "meta", "os", "dead", "unidentified"].includes(key)) return null
+  const parts: string[] = []
+  if (event.metaKey || event.ctrlKey) parts.push("mod")
+  if (event.altKey) parts.push("alt")
+  /* Shift is part of the chord only where the key means something without it —
+     the same rule `matchesChord` applies, or a recorded chord would never match
+     the press that recorded it. */
+  if (event.shiftKey && (key.length > 1 || /^[a-z0-9]$/.test(key))) parts.push("shift")
+  parts.push(key)
+  return parts.join("+")
+}
+
+/* ── What the browser (or the OS) already does with a chord ──
+   A shortcut the app binds is not automatically a shortcut the app *gets*.
+   Three cases, and the settings page has to tell them apart rather than
+   promising a binding it cannot deliver:
+
+   - `reserved: "hard"` — the browser keeps the key. Chrome and Edge never
+     deliver ⌘/Ctrl+N, T, W or Q to the page at all, so `preventDefault` has
+     nothing to cancel and the binding is dead in a tab. It still works in the
+     installed desktop app, where the page is the whole window.
+   - `reserved: "soft"` — the browser has a default (Save, Print, Find…) but the
+     page is allowed to cancel it. This is what "Override the browser" is for.
+   - absent — nobody else wants it.
+
+   Written against Chromium, which is what the PWA and the Electron shell both
+   are; Firefox and Safari are a little more permissive, never less. */
+export type ReservedKind = "hard" | "soft"
+
+export interface ReservedChord {
+  /** What the browser does with it, in words, for the warning. */
+  action: string
+  reserved: ReservedKind
+}
+
+const RESERVED: Record<string, ReservedChord> = {
+  "mod+n": { action: "New window", reserved: "hard" },
+  "mod+shift+n": { action: "New incognito window", reserved: "hard" },
+  "mod+t": { action: "New tab", reserved: "hard" },
+  "mod+shift+t": { action: "Reopen the last closed tab", reserved: "hard" },
+  "mod+w": { action: "Close the tab", reserved: "hard" },
+  "mod+shift+w": { action: "Close the window", reserved: "hard" },
+  "mod+q": { action: "Quit the browser", reserved: "hard" },
+  "mod+shift+q": { action: "Quit the browser", reserved: "hard" },
+  "mod+r": { action: "Reload the page", reserved: "hard" },
+  "mod+shift+r": { action: "Hard reload", reserved: "hard" },
+  "mod+l": { action: "Focus the address bar", reserved: "hard" },
+  "mod+tab": { action: "Next tab", reserved: "hard" },
+  "mod+s": { action: "Save the page", reserved: "soft" },
+  "mod+p": { action: "Print", reserved: "soft" },
+  "mod+f": { action: "Find in page", reserved: "soft" },
+  "mod+g": { action: "Find next", reserved: "soft" },
+  "mod+o": { action: "Open a file", reserved: "soft" },
+  "mod+d": { action: "Bookmark the page", reserved: "soft" },
+  "mod+j": { action: "Downloads", reserved: "soft" },
+  "mod+h": { action: "History", reserved: "soft" },
+  "mod+k": { action: "Search from the address bar", reserved: "soft" },
+  "mod+e": { action: "Search from the address bar", reserved: "soft" },
+  "mod+u": { action: "View source", reserved: "soft" },
+  "mod+shift+p": { action: "New private window", reserved: "soft" },
+  "mod+shift+o": { action: "Bookmark manager", reserved: "soft" },
+  "mod+shift+j": { action: "Developer tools", reserved: "soft" },
+  "mod+shift+i": { action: "Developer tools", reserved: "soft" },
+  "mod+shift+c": { action: "Inspect element", reserved: "soft" },
+  "mod+shift+delete": { action: "Clear browsing data", reserved: "soft" },
+  "mod+plus": { action: "Zoom in", reserved: "soft" },
+  "mod+-": { action: "Zoom out", reserved: "soft" },
+  "mod+0": { action: "Reset zoom", reserved: "soft" },
+  f1: { action: "Browser help", reserved: "soft" },
+  f3: { action: "Find next", reserved: "soft" },
+  f5: { action: "Reload the page", reserved: "hard" },
+  f6: { action: "Cycle browser panes", reserved: "soft" },
+  f11: { action: "Full screen", reserved: "soft" },
+  f12: { action: "Developer tools", reserved: "hard" },
+}
+
+/** What else wants this chord, if anything. */
+export function reservedChord(chord: string): ReservedChord | undefined {
+  return RESERVED[chord.toLowerCase()]
+}
+
 export type ShortcutScope = "Global" | "Thread" | "Editor" | "Composer" | "Questions"
 
+export type ShortcutId =
+  | "palette"
+  | "newThread"
+  | "sidebar"
+  | "help"
+  | "tabJump"
+  | "splitRight"
+  | "reopenPanel"
+  | "terminal"
+  | "save"
+  | "send"
+  | "steer"
+  | "historyPrev"
+  | "historyNext"
+  | "historyLeave"
+  | "threadStop"
+  | "questionSkip"
+  | "questionChoose"
+  | "questionAccept"
+
 export interface ShortcutDef {
+  /** Stable name. What a rebinding is stored against, so renaming the label
+      cannot orphan somebody's custom chord. */
+  id: ShortcutId
   scope: ShortcutScope
   label: string
-  /** Chords that trigger it. The first is the one the sheet leads with. */
+  /** The chords it ships with. The first is the one the sheet leads with, and
+      what "Reset" puts back. */
   chords: string[]
   /** Printed instead of the chords when the real binding is a range. */
   display?: string[]
   note?: string
+  /** False for a key whose meaning is the key — Enter sends, Escape backs out,
+      the arrows walk the history, a digit picks the option it names. These are
+      listed in settings so the sheet stays complete, but they are not offered a
+      recorder: rebinding Enter is not a preference, it is a broken composer. */
+  rebindable?: boolean
 }
 
 /* The chords handlers bind, named once so a rename cannot desync the sheet from
@@ -114,8 +230,12 @@ export const KEYS = {
   sidebar: "mod+b",
   help: ["mod+/", "?"],
   send: "mod+enter",
-  /** Into the running turn, past the queue. */
-  steer: "mod+shift+enter",
+  /** Into the running turn, past the queue. ⌘/Ctrl+Enter is the one people
+      reach for while an agent is working — it used to send, which while a turn
+      is running means *queue*, so the deliberate chord asked for the ordinary
+      thing and the ordinary chord asked for nothing in particular. Both spell
+      "steer" now; ⇧ survives as the older muscle memory. */
+  steer: ["mod+enter", "mod+shift+enter"],
   historyPrev: "up",
   historyNext: "down",
   /** Skip the question, reject the permission, stop the turn — in that order. */
@@ -135,63 +255,75 @@ export const KEYS = {
 } as const
 
 export const SHORTCUTS: ShortcutDef[] = [
-  { scope: "Global", label: "Command palette", chords: [KEYS.palette] },
-  { scope: "Global", label: "New thread", chords: [KEYS.newThread] },
-  { scope: "Global", label: "Toggle the sidebar", chords: [KEYS.sidebar] },
+  { id: "palette", scope: "Global", label: "Command palette", chords: [KEYS.palette], rebindable: true },
+  { id: "newThread", scope: "Global", label: "New thread", chords: [KEYS.newThread], rebindable: true },
+  { id: "sidebar", scope: "Global", label: "Toggle the sidebar", chords: [KEYS.sidebar], rebindable: true },
   {
+    id: "tabJump",
     scope: "Global",
     label: "Jump to a tab in this group",
     chords: ["mod+1"],
     display: [SYMBOLS.mod + "1…9"],
     note: "Counts the tabs in the group you are looking at, which is every open thread until the workspace is split.",
   },
-  { scope: "Global", label: "Split the panel to the right", chords: [KEYS.splitRight] },
   {
+    id: "splitRight",
+    scope: "Global",
+    label: "Split the panel to the right",
+    chords: [KEYS.splitRight],
+    rebindable: true,
+  },
+  {
+    id: "save",
     scope: "Editor",
     label: "Save the file",
     chords: [KEYS.save],
+    rebindable: true,
     note: "Only in an editor panel, and only while it has unsaved changes — nothing else in the app claims it.",
   },
   {
+    id: "terminal",
     scope: "Global",
     label: "Open a terminal",
     chords: [KEYS.terminal],
+    rebindable: true,
     note: "A shell on the Daedalus server, in the current thread's project directory.",
   },
   {
+    id: "reopenPanel",
     scope: "Global",
     label: "Reopen the last closed panel",
     chords: [KEYS.reopenPanel],
+    rebindable: true,
     note: "Walks back through the last ten, the way a browser reopens tabs.",
   },
-  {
-    scope: "Global",
-    label: "Save the open file",
-    chords: [KEYS.save],
-    note: "When the editor panel is the one in front and the file has changes.",
-  },
-  { scope: "Global", label: "Keyboard shortcuts", chords: [...KEYS.help] },
+  { id: "help", scope: "Global", label: "Keyboard shortcuts", chords: [...KEYS.help], rebindable: true },
 
   {
+    id: "send",
     scope: "Composer",
     label: "Send",
-    chords: ["enter", KEYS.send],
+    chords: ["enter"],
     note: "While the agent is working this queues the message for when it finishes. Shift+Enter inserts a newline. On touch it is the other way round — Return is a newline and the send button sends.",
   },
   {
+    id: "steer",
     scope: "Composer",
     label: "Steer the running turn",
-    chords: [KEYS.steer],
-    note: "Sends into the turn already running instead of queueing behind it.",
+    chords: [...KEYS.steer],
+    rebindable: true,
+    note: "Sends into the turn already running instead of queueing behind it. With nothing running it is an ordinary send.",
   },
   {
+    id: "historyPrev",
     scope: "Composer",
     label: "Previous prompt",
     chords: [KEYS.historyPrev],
     note: "From the start of the composer, the way a shell recalls a command.",
   },
-  { scope: "Composer", label: "Next prompt", chords: [KEYS.historyNext] },
+  { id: "historyNext", scope: "Composer", label: "Next prompt", chords: [KEYS.historyNext] },
   {
+    id: "historyLeave",
     scope: "Composer",
     label: "Leave the prompt history",
     chords: [KEYS.escape],
@@ -199,6 +331,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   },
 
   {
+    id: "threadStop",
     scope: "Thread",
     label: "Stop the running turn",
     chords: [KEYS.escape],
@@ -206,12 +339,14 @@ export const SHORTCUTS: ShortcutDef[] = [
   },
 
   {
+    id: "questionSkip",
     scope: "Questions",
     label: "Skip the question / reject the permission",
     chords: [KEYS.escape],
     note: "Skipping is a real answer — the agent is told you passed and the turn carries on.",
   },
   {
+    id: "questionChoose",
     scope: "Questions",
     label: "Choose an option",
     chords: ["1"],
@@ -219,6 +354,7 @@ export const SHORTCUTS: ShortcutDef[] = [
     note: "While the composer does not have focus.",
   },
   {
+    id: "questionAccept",
     scope: "Questions",
     label: "Take the recommended option",
     chords: ["enter"],
@@ -227,3 +363,9 @@ export const SHORTCUTS: ShortcutDef[] = [
 ]
 
 export const SHORTCUT_SCOPES: ShortcutScope[] = ["Global", "Thread", "Editor", "Composer", "Questions"]
+
+export const shortcutDef = (id: ShortcutId): ShortcutDef =>
+  SHORTCUTS.find((entry) => entry.id === id) ?? SHORTCUTS[0]
+
+/** The chords a shortcut ships with. */
+export const defaultChords = (id: ShortcutId): string[] => shortcutDef(id).chords

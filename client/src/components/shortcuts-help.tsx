@@ -3,6 +3,10 @@
    strings: a key that stops being bound has to disappear from here by itself.
    Opened with ? (or mod+/) and from the command palette. */
 import * as React from "react"
+import { SlidersHorizontalIcon } from "lucide-react"
+import { useNavigate } from "react-router"
+
+import { Button } from "@/components/ui/button"
 
 import { Shortcut } from "@/components/shortcut"
 import {
@@ -12,10 +16,10 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
-import { useHotkey } from "@/hooks/use-hotkey"
+import { useShortcut } from "@/hooks/use-hotkey"
+import { useChords } from "@/lib/keybindings"
 import {
   isTypingTarget,
-  KEYS,
   SHORTCUTS,
   SHORTCUT_SCOPES,
   type ShortcutDef,
@@ -26,22 +30,23 @@ import {
 export function useShortcutsHelp() {
   const [open, setOpen] = React.useState(false)
 
-  useHotkey(
-    KEYS.help,
-    (event) => {
-      // "?" is a character before it is a command — typing one into a prompt
-      // must not open a dialog over the thing you are typing.
-      if (!(event.metaKey || event.ctrlKey) && isTypingTarget(event.target)) return
-      event.preventDefault()
-      setOpen((previous) => !previous)
-    }
-  )
+  useShortcut("help", (event) => {
+    // "?" is a character before it is a command — typing one into a prompt must
+    // not open a dialog over the thing you are typing. Declining the key rather
+    // than returning quietly is what leaves the character in the box.
+    if (!(event.metaKey || event.ctrlKey) && isTypingTarget(event.target)) return false
+    setOpen((previous) => !previous)
+  })
 
   return { open, setOpen }
 }
 
 function Row({ shortcut }: { shortcut: ShortcutDef }) {
-  const chords = shortcut.display ?? shortcut.chords
+  /* The reader's own chords, so a rebinding shows up here rather than leaving
+     the sheet advertising a key that no longer does anything. `display` still
+     wins where the real binding is a range (1…9) that no chord spells. */
+  const bound = useChords(shortcut.id)
+  const chords = shortcut.display ?? bound
   return (
     <div className="flex items-baseline justify-between gap-4 py-1.5">
       <div className="min-w-0">
@@ -72,6 +77,7 @@ export function ShortcutsHelp({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
+  const navigate = useNavigate()
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
       <ResponsiveDialogContent className="sm:max-w-lg">
@@ -100,6 +106,22 @@ export function ShortcutsHelp({
               </section>
             )
           })}
+          {/* The sheet says what the keys are; changing them is a page, not a
+              dialog — one link rather than an editor inside a reference. */}
+          <div className="mt-4 border-t pt-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                onOpenChange(false)
+                void navigate("/settings/keyboard")
+              }}
+            >
+              <SlidersHorizontalIcon />
+              Change these shortcuts
+            </Button>
+          </div>
         </div>
       </ResponsiveDialogContent>
     </ResponsiveDialog>

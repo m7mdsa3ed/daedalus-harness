@@ -33,15 +33,15 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Shortcut } from "@/components/shortcut"
 import { PANEL_ICONS } from "@/components/workspace/panel-kinds"
-import { KEYS } from "@/lib/shortcuts"
+import type { ShortcutId } from "@/lib/shortcuts"
 import type { PanelKind } from "@/lib/workspace/panels"
 
-const OPENABLE: { kind: PanelKind; label: string; hint: string; chord?: string }[] = [
+const OPENABLE: { kind: PanelKind; label: string; hint: string; shortcut?: ShortcutId }[] = [
   {
     kind: "terminal",
     label: "Terminal",
     hint: "A shell in this project",
-    chord: KEYS.terminal,
+    shortcut: "terminal",
   },
   { kind: "web", label: "Browser", hint: "A page beside the thread" },
 ]
@@ -53,13 +53,13 @@ function PanelRow({
   icon: Icon,
   label,
   hint,
-  chord,
+  shortcut,
   onClick,
 }: {
   icon: React.ComponentType<{ className?: string }>
   label: string
   hint?: string
-  chord?: string
+  shortcut?: ShortcutId
   onClick: () => void
 }) {
   return (
@@ -73,9 +73,9 @@ function PanelRow({
           </span>
         )}
       </span>
-      {chord && (
+      {shortcut && (
         <DropdownMenuShortcut className="mt-0.5 ps-4">
-          <Shortcut chord={chord} />
+          <Shortcut id={shortcut} />
         </DropdownMenuShortcut>
       )}
     </DropdownMenuItem>
@@ -116,7 +116,7 @@ export function OpenPanelMenu({
             icon={PlusIcon}
             label="New thread"
             hint="A fresh conversation in this workspace"
-            chord={KEYS.newThread}
+            shortcut="newThread"
             onClick={onNewTab}
           />
         </DropdownMenuGroup>
@@ -133,7 +133,7 @@ export function OpenPanelMenu({
                   icon={PANEL_ICONS[entry.kind]}
                   label={entry.label}
                   hint={entry.hint}
-                  chord={entry.chord}
+                  shortcut={entry.shortcut}
                   onClick={() => onOpen(entry.kind)}
                 />
               ))}

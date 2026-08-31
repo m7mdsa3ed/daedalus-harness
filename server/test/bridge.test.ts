@@ -20,14 +20,22 @@ writeJson(join(process.env.DAEDALUS_DATA_DIR!, "agents.json"), [
     command: "node",
     args: [join(dirname(fileURLToPath(import.meta.url)), "fake-agent.mjs")],
     env: { FAKE_KEY: "{apiKey}", FAKE_EMPTY: "{baseUrl}" },
-    // Which door a persona reaches this agent through. Without it the bridge
-    // sends none at all, which is the correct behaviour for an agent that has
-    // not said it takes one — and would make the assertions below vacuous.
-    personaVia: "acp-meta",
   },
 ]);
 
 const { SessionManager } = await import("../src/sessions.js");
+
+/* Which door a persona reaches this agent through — set on the row rather than
+   in agents.json above, because the legacy importer deliberately does not carry
+   it (nor `liveConfig`, nor `quotaProbe`): those are claims about a runtime that
+   only `seedAgents`' backfill is entitled to make, and it never touches an agent
+   the user wrote themselves. Without it the bridge correctly sends no persona at
+   all, which would make the assertions at the end of this file vacuous. */
+{
+  const { eq } = await import("drizzle-orm");
+  const { db, agents: agentsTable } = await import("../src/db/index.js");
+  db.update(agentsTable).set({ personaVia: "acp-meta" }).where(eq(agentsTable.id, "fake")).run();
+}
 
 class MockWs extends EventEmitter {
   sent: string[] = [];
@@ -629,12 +637,16 @@ assert.equal(turnStarts.length, 25);
 send(reader, { id: 901, cmd: "load_earlier", before: turnStarts[3] });
 await waitFor(() => reader.of("reply").length === 2, "load_earlier is answered from the journal");
 const page = reader.of("reply")[1].result as { events: { seq: number }[]; earlier: number };
-assert.equal(page.events[0].seq, turnStarts[0], "the page begins at a turn boundary");
-assert.equal(page.events.length, turnStarts[3] - turnStarts[0], "…and ends where the window began");
+// The page that reaches the oldest turn takes the head of the log with it —
+// whatever precedes the first `turn_started` is not a turn and so can never be
+// a page of its own. On a revived thread that head is the entire `session/load`
+// replay, i.e. the whole conversation before the revive.
+assert.equal(page.events[0].seq, 0, "the oldest page begins at the head of the log");
+assert.equal(page.events.length, turnStarts[3], "…and ends where the window began");
 assert.equal(page.earlier, 0, "…and nothing is left above it");
-send(reader, { id: 902, cmd: "load_earlier", before: turnStarts[0] });
+send(reader, { id: 902, cmd: "load_earlier", before: 0 });
 await waitFor(() => reader.of("reply").length === 3, "the head of the log");
-assert.deepEqual(reader.of("reply")[2].result, { events: [], earlier: 0 }, "nothing before the first step");
+assert.deepEqual(reader.of("reply")[2].result, { events: [], earlier: 0 }, "nothing before the head");
 
 // --- windowed attach: only the tail, in whole steps, with the rest fetchable ---
 const windowed = new MockWs();
@@ -653,9 +665,33 @@ assert.equal(
 send(windowed, { id: 903, cmd: "load_earlier", before: windowAttach.from });
 await waitFor(() => windowed.of("reply").length === 1, "a page before the window");
 const tailPage = windowed.of("reply")[0].result as { events: { seq: number }[]; earlier: number };
-assert.equal(tailPage.events[0].seq, turnStarts[0]);
-assert.equal(tailPage.events.length, turnStarts[20] - turnStarts[0]);
+assert.equal(tailPage.events[0].seq, 0);
+assert.equal(tailPage.events.length, turnStarts[20]);
 assert.equal(tailPage.earlier, 0);
+
+// --- a log that does not begin with a turn is not windowed away ---
+
+// A revive clears the journal and refills it from the `session/load` replay:
+// the prior conversation, with no `turn_started` in it, followed by whatever
+// turns are taken after. Cutting at "the first turn of the window" would then
+// start the replay *after* everything the load put back — and report
+// `earlier: 0`, since there are no whole turns behind it, so nothing would
+// offer it back either. A crash and revive lost the conversation on screen
+// while every event of it sat in the table. Only cut when a turn is actually
+// being withheld.
+// This log's first `turn_started` is at seq 1, so it stands in for that shape:
+// 25 turns against a window of 60 withholds nothing, and the replay has to be
+// the whole log — head included — rather than starting at that first turn.
+assert.ok(turnStarts[0] > 0, "this log has events before its first turn");
+const whole = new MockWs();
+assert.equal(manager.attach(logged.id, whole as never, 0, true, { window: 60 }), null);
+assert.equal(whole.of("attached")[0].from, 0, "a log inside the window replays from its head");
+assert.equal(whole.of("attached")[0].earlier, 0, "…and withholds nothing");
+assert.equal(
+  whole.of("replay").flatMap((r) => r.events).length,
+  archivedCursor,
+  "…which is every event, including the ones before the first turn",
+);
 
 // --- the queue outlives the process ---
 

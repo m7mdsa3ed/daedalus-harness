@@ -1060,3 +1060,21 @@ html .dv-tab {
   overflow-wrap: anywhere;
   min-width: 0;
 }
+
+/* ── Keycaps inside a shortcut slot ──
+   `CommandShortcut` and `DropdownMenuShortcut` ship as bare `ml-auto` text with
+   `tracking-widest` — right for a glyph like ⌘K written as a string, wrong for
+   the keycaps `components/shortcut.tsx` draws, which the tracking pulls apart
+   and which need to be laid out in a row rather than as inline text. That used
+   to be a `has-data-[slot=kbd-group]:` variant patched into both components,
+   and a `shadcn add` took it back out of both. Same rule, stated once, where a
+   re-install cannot reach it — the `has()` is the point: a shortcut holding a
+   plain string is left exactly as shadcn draws it. */
+[data-slot="command-shortcut"]:has([data-slot="kbd-group"]),
+[data-slot="dropdown-menu-shortcut"]:has([data-slot="kbd-group"]) {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: calc(var(--spacing) * 1);
+  letter-spacing: var(--tracking-normal);
+}

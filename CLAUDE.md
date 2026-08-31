@@ -11,7 +11,9 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   small command/event protocol in `src/protocol.ts`, over the same WebSocket. Also owns
   **profiles** (provider config: credentials/models, keys redacted from the API, plus the
   MCP/skill/command links every thread on it gets), **projects** (workspace: a cwd and a
-  name — nothing linked), the **library** of reusable MCP servers/skills,
+  name — nothing linked), the **library** of reusable MCP servers/skills/commands
+  and of **personas** (how a thread is worked on — one is *named* by a thread, not
+  linked like the rest),
   bearer-token auth, the event log (reconnect/replay), and FCM push.
   `data/` holds secrets — gitignored, never commit.
 - **Storage is SQLite via Drizzle** (`server/src/db/`), not JSON files.
@@ -442,8 +444,19 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   (`SessionManager.turnStartAt`/`earlierPage`), so `attached.from` is always a turn's
   opening event and a page is whole turns — an event-counted cut landed mid-turn and the
   re-fold opened a half turn the reducer had never seen begin. `earlier` counts withheld
-  turns; events before the first `turn_started` (a load replay's history) are behind the
-  head and never paged. The first two replace the transcript, the third also replaces it — but
+  turns. **A log does not have to begin with a `turn_started`, and that is the case the
+  cut has to be written around**: a revive clears the journal and refills it from the
+  `session/load` replay, which is the entire prior conversation with no turn boundaries in
+  it, so the first `turn_started` is the turn taken *after* the revive. So the window is
+  applied **only when a turn is actually being withheld** (`skip > 0` in
+  `SessionSocket.attach`) — jumping to "the first turn of the window" unconditionally looks
+  equivalent and is not: a revived thread of one turn, far inside any window, replayed from
+  that turn's seq and dropped everything the load had put back, while `earlier` said 0
+  (there are no whole *turns* behind it) so nothing offered it back either. A server crash
+  and the revive after it lost the conversation on screen with every event of it still in
+  the table. For the same reason that head is not stranded at the other end: it is not a
+  turn and so can never be a page of its own, so the `earlierPage` that reaches the oldest
+  turn extends to seq 0 and takes it along. The first two replace the transcript, the third also replaces it — but
   `from` is large in the second and third alike, so `resumed` is a field and not a
   comparison. `earlier` says how much was withheld, and `load_earlier` fetches it a page at
   a time. Folding one of those pages is the awkward part: the reducer only appends, so an
@@ -685,6 +698,63 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   existing row with `{ [agent_id]: {} }`; it was written by hand under `generate --custom`
   because drizzle-kit's rename prompt needs a TTY and its table-rebuild for this diff
   selected a column the old table did not have.
+- **A persona is how a thread wants to be worked on, and it goes in through each
+  runtime's own door.** A thread already said who answers (the agent), on whose
+  credentials (the profile) and with which engine (the model); it could not say
+  "think this one through", "just chat, don't touch the files" or "smallest
+  change that works". Effort is the nearest existing lever and it is a number on
+  a dial, not an instruction — and on a gateway profile the agent frequently
+  offers no dial at all. So `personas` is a library table (`server/src/personas.ts`,
+  Settings › Personas) seeded like `DEFAULT_AGENTS` — the same `since`/`introduced`
+  pair, so a persona added in a later release reaches existing installs and one
+  the user deleted stays deleted — carrying a **prompt append**, an optional
+  **thinking budget** and an optional **effort**. `sessions.persona_id` names it,
+  and like the other three ids on that row it is **not** a foreign key: a deleted
+  persona reads as none at the next spawn, which is what "deleted" should mean.
+  The point of the design is that **nothing is pasted in front of the user's
+  message** — the prompt the user typed is exactly the prompt that is journaled —
+  because all three runtimes have a real slot for this and `AgentDef.personaVia`
+  says which, declared with the agent for the reason `spawnCategories`/`liveConfig`/
+  `quotaProbe` are. `"acp-meta"` (claude-code) is `_meta` on `session/new`:
+  `systemPrompt` as an **object** is merged over the agent's own
+  `{type:"preset", preset:"claude_code"}` with type and preset locked, so
+  `{append}` adds to the CLI's prompt where a *string* there would replace it
+  wholesale; and `thinking` goes inside `claudeCode.options`, which the adapter
+  spreads straight into the Agent SDK's query options. Thinking is a **separate
+  axis from effort** — the agent exposes both and they do different things — so
+  `null` means "leave the runtime's default alone" and `0` means off, and the two
+  must never be conflated. `"env"` (codex, opencode) is a key in the agent's own
+  config template, filled from `{personaPrompt}` (inline text — codex's
+  `developer_instructions`, which appends, and **not** `base_instructions`, which
+  replaces codex's entire system prompt and is not a `ConfigToml` key) or
+  `{personaFile}` (a path — opencode's `instructions` is a list of *files*).
+  `{personaPrompt}` is **JSON-escaped in `resolveSpawn`** and is only ever correct
+  inside a JSON string literal, which is the only place a template names it: a
+  persona is prose full of quotes and newlines, and substituted raw it closed the
+  string it sat in, leaving CODEX_CONFIG unparseable — which `resolveEnvValue`
+  then passes through whole, unpruned. The file goes in `data/persona-prompts/<sessionId>.md`
+  beside the generated model catalogs, deliberately **not** in the project's cwd:
+  that directory is shared by every thread of the project, which is the hazard
+  `materializeFor` exists to manage. It is rewritten — or deleted — on every
+  spawn, so a thread that has just had its persona taken away does not leave the
+  old text on disk for the next spawn to point at.
+  **Changing it always costs a respawn**, and that is not conservatism: `_meta` is
+  read at `session/new`/`session/load` and codex's config at spawn, so no runtime
+  we ship can be told mid-process. It joins the four cases `applyConfigLive`
+  already refuses as a fifth, and the respawn is cheap in the way that matters —
+  it ends in `session/load`, which claude-agent-acp forwards `_meta` into, so the
+  new instructions land on the *existing* conversation rather than an empty one.
+  A persona's **effort applies when it is picked and never again**: otherwise the
+  persona wins every argument — drop "Think more" to medium, change model, and
+  the respawn silently puts it back on high. A workflow step inherits its
+  parent's persona along with everything else, because a step is the same actor
+  working in another thread and a parent on "quick fix" must not spawn steps that
+  refactor. Named *persona* and not *mode* because `mode` is already ACP's
+  permission modes (`current_mode_update`, the palette's `mode` page) and codex's
+  collaboration mode. The picker is a row in both config menus above Profile (it
+  is the one choice there that does not depend on one), a palette page, and the
+  settings library page — which is the only one of the four libraries with **no
+  Import**, since nothing in the agents' own configs is a persona to import.
 - **The harness's own MCP servers are library rows, not profile toggles.** Web search and
   the knowledge base used to be `webSearch`/`knowledge` opt-ins on the profile (with per-profile
   search overrides); they are `mcp_servers.type = "builtin"` rows now — `BUILTIN_MCP` in
@@ -1132,7 +1202,7 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
 - **One service worker, and no Firebase inside it.** `client/src/sw.ts` is the whole
   PWA: Workbox precache, an SPA navigation route bound to the precached shell, and the
   `push`/`notificationclick` handlers. vite-plugin-pwa builds it (`strategies:
-  "injectManifest"`) and `lib/pwa.ts` registers it through `virtual:pwa-register` —
+  "injectManifest"`) and `lib/pwa.tsx` registers it through `virtual:pwa-register` —
   which is the only thing that knows the worker is `/dev-sw.js?dev-sw` as a module in
   dev and a classic `/sw.js` in a build. Updates are `registerType: "prompt"`, not
   auto: a new worker installs and waits, and `registerPwa` offers it as one pinned
@@ -1147,6 +1217,23 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   first install there is no old version, nothing will be offered at the end of it, and
   the announcement would be a lie. A failed install (`redundant`) dismisses the toast
   rather than leaving a spinner turning against nothing.
+  **The loading face carries a real bar, and the denominator is the hard half.**
+  Nothing in Workbox reports install progress, so `sw.ts` counts it: `addPlugins`
+  hangs a `cacheDidUpdate` on the default precache strategy, which fires exactly
+  once per entry the install actually writes, and each one posts
+  `{type: "PRECACHE_PROGRESS", done, total}` to every window client. The total is
+  **not** the manifest's length — an update re-fetches only the entries whose
+  revision changed, three files out of ninety after a small deploy, and Workbox
+  only says which those were once it has finished — so an `install` listener
+  registered *before* `precacheAndRoute` (listeners run in registration order, so
+  it reads the cache's existing keys before Workbox starts writing new ones into
+  it) diffs the manifest's cache keys, via the public `getCacheKeyForURL`, against
+  what the precache already holds. It is still a race, so the page clamps `done`
+  to the total; and until the count arrives — or if the cache read throws — there
+  is no bar at all, because a spinner is how "not known yet" is said and a bar
+  against a total of zero is a lie that jumps. Ticks go through `toast.update`,
+  never a same-id `add`: an upsert re-creates a toast the user has closed and
+  resets its timer, and a progress readout must not argue with a dismissal.
   Silently taking over would swap the precache under a page whose JS is already
   running, so a lazy chunk it asks for next is a hash that no longer exists, and it
   would reload the tab mid-turn. Reloading is cheap on purpose — drafts are in
@@ -1289,6 +1376,39 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   `isInteractiveTarget` say nothing else owns the key. Prompt history (↑/↓) reads the
   transcript's own user turns: no second store, nothing to persist, and nothing that can
   disagree with what is on screen.
+  **And a key that is bound is a key that can be moved** (Settings › Keyboard,
+  `components/settings/keyboard.tsx` over `lib/keybindings.ts`): a device-local,
+  global store — the same bargain `view-options` makes — keyed by a **`ShortcutId`
+  on every `SHORTCUTS` row**, so a relabelled shortcut keeps the chord somebody
+  chose for it. What is stored is only the difference from the defaults, which is
+  what lets a later release move a chord for everyone who never touched that row.
+  Nothing reads `KEYS` to *bind* any more: `useShortcut(id, handler)` resolves the
+  chords through the store, `Shortcut id="…"`, `useChord`/`useChords` print them,
+  and the help sheet renders the bound chord rather than the shipped one — which
+  is also why `ui/sidebar.tsx`'s own hardcoded ⌘B listener is gone, since a
+  registry component quietly owning a chord is exactly the second table the rule
+  exists to prevent. Two things beyond a chord. **A binding is not automatically a
+  win**: the browser has its own defaults, so `Binding.override` (on by default —
+  what every handler did by hand before) is what decides whether `useShortcut`
+  cancels the event, and a handler bound through it must not `preventDefault`
+  itself; a handler that only *sometimes* owns the key returns `false` to decline
+  it, which is how `?` typed into a prompt stays a character. And **override
+  cannot buy back a key the page never receives**: `reservedChord` splits the
+  browser's claims into `soft` (Find, Save, Print — cancellable, which is what
+  override is for) and `hard` (⌘/Ctrl+N, T, W, Q, R — Chromium never delivers
+  them to a tab), so the settings row says in words that a hard-reserved chord
+  works only in the desktop shell instead of leaving a dead binding to be found
+  by pressing it. Warnings are shown twice on purpose — in the recorder, where
+  the question is "do you want this", and on the row afterwards, where it is
+  "why is this one not firing" — and an in-app collision is reported with the
+  scopes named rather than refused, because Escape in a composer and Escape in a
+  thread are deliberately the same key. Rows that are not `rebindable` (Enter
+  sends, Escape backs out, the arrows walk the history, a digit picks the option
+  it names) are still listed and marked Fixed: an omitted row reads as an
+  incomplete list, not a deliberate one. The recorder is a dialog capturing on
+  the **capture phase** because while it is open every chord belongs to it — ⌘K
+  must be written down, not open the palette — with Escape and Tab left alone so
+  a recorder opened by accident is not a trap.
 - **Errors are never `String(err)`.** `client/src/lib/errors.ts` normalizes everything
   thrown (`AgentError` from `lib/thread-socket`, the plain `{code, message, data}` on a
   `turn_ended`, `ApiError` from `lib/settings`, network failures, aborts)

@@ -645,16 +645,19 @@ export class SessionManager {
   /**
    * Re-read this thread's subscription quota and tell its peers, after a turn.
    *
-   * Three things it refuses to do, each for its own reason. It does nothing for
-   * a **child session**: a workflow's five steps are five settled turns on one
-   * account, and probing per step would spawn five CLIs to learn the same number
-   * — the parent's own turn covers the run. It does nothing with **no peer
-   * attached**: the reading is for a screen, and a thread draining a queue
-   * overnight should not be spawning a process per turn for nobody. And it
-   * **swallows its own failure**: a missing `claude` binary must not surface as
-   * an error on a turn that succeeded — `getQuota` already records that verdict
-   * for the settings page to show, where it is the answer to a question someone
-   * actually asked.
+   * Four things it refuses to do, each for its own reason. It skips a **profile
+   * with no plan of its own**: a thread on an API-key profile is billed per
+   * token, and the reading an agent probe would give back belongs to the
+   * machine's login, not to that profile — the composer draws no card for it,
+   * so no CLI is spawned after every turn. It does nothing for a **child
+   * session**: a workflow's five steps are five settled turns on one account,
+   * and probing per step would spawn five CLIs to learn the same number — the
+   * parent's own turn covers the run. It does nothing with **no peer attached**:
+   * the reading is for a screen, and a thread draining a queue overnight should
+   * not be spawning a process per turn for nobody. And it **swallows its own
+   * failure**: a missing `claude` binary must not surface as an error on a turn
+   * that succeeded — `getQuota` already records that verdict for the settings
+   * page to show, where it is the answer to a question someone actually asked.
    *
    * Deliberately not awaited. The turn is settled; nothing downstream of it may
    * wait on a child process.
@@ -664,11 +667,11 @@ export class SessionManager {
     const agent = getAgent(session.agentId);
     const profile = session.profile ?? getProfile(session.profileId);
     const project = session.project ?? getProject(session.projectId);
-    /* Either reader will do: the agent's own probe, or the provider plan the
-       profile names — which outranks it, and is the only quota a thread on a
-       gateway has at all. */
-    if (!agent || !profile || !project) return;
-    if (!agent.quotaProbe && !profileUsage(profile)) return;
+    /* Only the profile's own plan is the turn's to report. A profile without
+       one spends no plan at all — its turn is billed to an API key, whatever
+       the machine's `claude`/`codex login` happens to report. The agent's probe
+       stays on Settings › Usage, where the machine reading is the answer. */
+    if (!agent || !profile || !project || !profileUsage(profile)) return;
     invalidateQuota(profile, agent.id);
     void getQuota(agent, profile, project)
       .then((quota) => this.emit(session, { ev: "quota", quota }))

@@ -74,7 +74,8 @@ import type { ThreadStatus } from "@/components/sidebar/thread-row"
 import type { Actions } from "@/lib/actions"
 import { boardPath, projectPath, settingsPath, threadPath } from "@/lib/router"
 import { usePins } from "@/lib/pins"
-import { formatChord, KEYS } from "@/lib/shortcuts"
+import { useChord } from "@/lib/keybindings"
+import { formatChord, type ShortcutId } from "@/lib/shortcuts"
 import { Shortcut } from "@/components/shortcut"
 import { activityAt, isTopLevel, type Project, type SessionMeta } from "@/lib/settings"
 import { defaultsForProfile, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
@@ -111,6 +112,10 @@ export function SidebarNav({
   const location = useLocation()
   const navigate = useNavigate()
   const inBoard = location.pathname.startsWith("/board")
+  // Whatever these two are bound to on this device — the tooltip has to say the
+  // key that actually works, not the one the release shipped.
+  const newThreadChord = useChord("newThread") ?? ""
+  const paletteChord = useChord("palette") ?? ""
   return (
     <SidebarGroup className={GROUP}>
       <SidebarGroupContent>
@@ -118,25 +123,25 @@ export function SidebarNav({
           <SidebarMenuItem>
             <SidebarMenuButton
               size="sm"
-              tooltip={`New thread (${formatChord(KEYS.newThread)})`}
+              tooltip={`New thread (${formatChord(newThreadChord)})`}
               onClick={onNewThread}
               className={ROW}
             >
               <SquarePen />
               <span>New thread</span>
-              <Kbd chord={KEYS.newThread} />
+              <Kbd id="newThread" />
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               size="sm"
-              tooltip={`Search threads and commands (${formatChord(KEYS.palette)})`}
+              tooltip={`Search threads and commands (${formatChord(paletteChord)})`}
               onClick={onSearch}
               className={ROW}
             >
               <SearchIcon />
               <span>Search</span>
-              <Kbd chord={KEYS.palette} />
+              <Kbd id="palette" />
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
@@ -159,10 +164,10 @@ export function SidebarNav({
 
 /** The chord, at the row's trailing edge, only while the row is hovered — a
     hint, not a label. Hidden in the icon rail, where the tooltip carries it. */
-function Kbd({ chord }: { chord: string }) {
+function Kbd({ id }: { id: ShortcutId }) {
   return (
     <Shortcut
-      chord={chord}
+      id={id}
       className="ml-auto hidden opacity-0 transition-opacity group-hover/menu-button:opacity-100 sm:inline-flex group-data-[collapsible=icon]:hidden"
       keyClassName="h-4 min-w-4 bg-transparent px-0.5 text-[10px] text-muted-foreground/70"
     />

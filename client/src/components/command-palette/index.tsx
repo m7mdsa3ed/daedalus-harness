@@ -28,10 +28,10 @@ import {
   Command,
   CommandDialog,
   CommandEmpty,
-  CommandInput,
   CommandList,
 } from "@/components/ui/command"
-import { useHotkey } from "@/hooks/use-hotkey"
+import { PaletteInput } from "./palette-input"
+import { useShortcut } from "@/hooks/use-hotkey"
 import { KEYS, matchesChord } from "@/lib/shortcuts"
 import type { Actions } from "@/lib/actions"
 import type { WorkspaceDock } from "@/components/workspace/dock"
@@ -60,8 +60,7 @@ export { PaletteContext, usePalette } from "./context"
 export function useCommandPalette() {
   const [open, setOpen] = React.useState(false)
 
-  useHotkey(KEYS.palette, (event) => {
-    event.preventDefault()
+  useShortcut("palette", () => {
     setOpen((previous) => !previous)
   })
 
@@ -160,11 +159,20 @@ export function CommandPalette({
   }
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange} className="sm:max-w-xl">
+    /* Centred, like every other dialog: shadcn's CommandDialog pins itself at
+        top-1/3, which reads as anchored to nothing once the list grows or
+        shrinks with the query. Dead-centre keeps the input under the cursor's
+        rest position at any result count — asserted here rather than patched
+        into `ui/command.tsx`, which a re-install would overwrite. */
+    <CommandDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      className="top-1/2 -translate-y-1/2 sm:max-w-xl"
+    >
       <PaletteContext.Provider value={palette}>
         {/* Filtering is this file's, not cmdk's — see score.ts. */}
         <Command loop shouldFilter={false} onKeyDownCapture={onKeyDownCapture} className="bg-transparent">
-          <CommandInput
+          <PaletteInput
             autoFocus
             value={query}
             onValueChange={setQuery}

@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useState } from "react"
 import type { QuotaSnapshot, QuotaWindow } from "@daedalus/protocol"
 
-import { api, type ServerSettings } from "@/lib/settings"
+import { api, type Profile, type ServerSettings } from "@/lib/settings"
+
+/** Whether a profile names a plan of its own — the client twin of the server's
+    `profileUsage` (usage-api.ts). A profile without one spends no plan at all:
+    its threads are billed to an API key, and the reading an agent probe would
+    return belongs to the machine's login, not to the profile — which is why the
+    composer's Plan usage card is drawn for profiles that have this, and nowhere
+    else. */
+export const profileHasUsage = (profile: Pick<Profile, "usage"> | null | undefined): boolean => {
+  const usage = profile?.usage
+  return Boolean(usage && usage.kind && usage.kind !== "none")
+}
 
 /* ── Subscription quota, client side ──
    What Claude Code's `/usage` and Codex's `/status` report, as the server

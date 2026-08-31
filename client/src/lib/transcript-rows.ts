@@ -62,7 +62,34 @@ export interface WorkflowGroup {
   plan?: WorkflowPlanPhase[]
 }
 
-export type Row = ThreadItem | ToolRunGroup | SubagentGroup | WorkflowGroup
+/**
+ * N subagents the agent fired side by side, folded into one row.
+ *
+ * A runtime has no word for "these three Tasks are one act" — Claude Code
+ * simply emits the launches back to back — so what a transcript showed was N
+ * separate step rows, each folded, each with its own rail, and no reading of
+ * the whole: how many are still working, which one failed, what is being
+ * written right now. That is the same question a workflow run answers, and it
+ * is answered by the same card (`RunCard` in thread-items), so the fold is
+ * shaped like `mergeWorkflowRuns`': the steps are the very `SubagentGroup`s
+ * they would have been on their own, moved rather than reshaped, so a step's
+ * rail, its `active` flag and its report all keep working.
+ *
+ * Adjacency is the whole rule — a run of two or more top-level subagent groups
+ * with nothing between them, exactly as `groupToolRuns` reads a run of tool
+ * steps. Prose, a plan or a tool call between two launches means the agent did
+ * something in between, which is a sequence and not a batch; a lone subagent
+ * stays the step row it was, since a card around one worker says nothing the
+ * row did not.
+ */
+export interface SubagentBatch {
+  kind: "subagent-batch"
+  /** `batch:<first step's id>`. */
+  id: string
+  steps: SubagentGroup[]
+}
+
+export type Row = ThreadItem | ToolRunGroup | SubagentGroup | WorkflowGroup | SubagentBatch
 
 /** The id of the item a row stands for — for keys, scroll anchors and the
     "where does the Sources strip go" lookup, which is keyed by item id. A
@@ -70,7 +97,8 @@ export type Row = ThreadItem | ToolRunGroup | SubagentGroup | WorkflowGroup
     workflow's is its last step's for the same reason. */
 export function rowTailId(row: Row): string {
   if (row.kind === "run") return row.items[row.items.length - 1].id
-  if (row.kind === "workflow-group") return rowTailId(row.steps[row.steps.length - 1])
+  if (row.kind === "workflow-group" || row.kind === "subagent-batch")
+    return rowTailId(row.steps[row.steps.length - 1])
   return row.id
 }
 
@@ -102,7 +130,7 @@ export function isAnswerItem(item: ThreadItem): boolean {
  * a preference, it is where its steps belong.
  */
 export function buildRows(items: ThreadItem[], groupTools: boolean, turnActive = false): Row[] {
-  const nested = mergeWorkflowRuns(nestSubagents(items, groupTools, turnActive))
+  const nested = mergeSubagentBatches(mergeWorkflowRuns(nestSubagents(items, groupTools, turnActive)))
   return groupTools ? groupToolRuns(nested) : nested
 }
 
@@ -139,11 +167,43 @@ function mergeWorkflowRuns(rows: Row[]): Row[] {
   return out
 }
 
+/**
+ * Fold a run of consecutive top-level subagent groups into one `SubagentBatch`
+ * — see the interface for why adjacency is the rule and why a run of one is
+ * left alone.
+ *
+ * After `mergeWorkflowRuns`, so a workflow's steps are already inside their
+ * own group and can never be swept into a batch, and before `groupToolRuns`,
+ * which passes any non-tool row through whole. Top level only: a worker's own
+ * workers are read on its rail, where a card inside a rail inside a card is
+ * exactly the nesting the run dialog exists to avoid.
+ */
+function mergeSubagentBatches(rows: Row[]): Row[] {
+  const out: Row[] = []
+  let run: SubagentGroup[] = []
+
+  const flush = () => {
+    if (run.length > 1) out.push({ kind: "subagent-batch", id: `batch:${run[0].id}`, steps: run })
+    else out.push(...run)
+    run = []
+  }
+
+  for (const row of rows) {
+    if (row.kind === "subagent-group") run.push(row)
+    else {
+      flush()
+      out.push(row)
+    }
+  }
+  flush()
+  return out
+}
+
 /** Every subagent at work, at any depth — a worker's worker is a worker. */
 export function activeSubagents(rows: Row[]): SubagentGroup[] {
   const out: SubagentGroup[] = []
   for (const row of rows) {
-    if (row.kind === "workflow-group") {
+    if (row.kind === "workflow-group" || row.kind === "subagent-batch") {
       // A run's steps are workers like any other; the run itself is not one.
       out.push(...activeSubagents(row.steps))
       continue

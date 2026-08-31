@@ -60,7 +60,7 @@ import {
   toolHeading,
   webInput,
 } from "@/lib/tools"
-import type { Row, SubagentGroup, ToolRunGroup, WorkflowGroup } from "@/lib/transcript-rows"
+import type { Row, SubagentBatch, SubagentGroup, ToolRunGroup, WorkflowGroup } from "@/lib/transcript-rows"
 import { formatTokens, sumUsage } from "@/lib/tokens"
 import { StepTokens, TokenFigure, TokenSummary, useStepTokens } from "@/components/token-usage"
 import { cn } from "@/lib/utils"
@@ -78,7 +78,7 @@ export { SourcesStrip }
    is shared with the nested transcript a subagent step draws, and both this
    file and thread-view read them. Re-exported so callers keep importing the
    transcript's vocabulary from the transcript. */
-export type { Row, SubagentGroup, ToolRunGroup, WorkflowGroup }
+export type { Row, SubagentBatch, SubagentGroup, ToolRunGroup, WorkflowGroup }
 
 /** Natural-language summary: "reading 10 files, running 28 shell commands". */
 const KIND_VERBS: Record<string, string> = {
@@ -323,6 +323,7 @@ export const RowView = React.memo(function RowView({
   if (row.kind === "run") return <ToolRun items={row.items} showTimestamps={showTimestamps} />
   if (row.kind === "subagent-group") return <SubagentStep group={row} showTimestamps={showTimestamps} />
   if (row.kind === "workflow-group") return <WorkflowRun group={row} showTimestamps={showTimestamps} />
+  if (row.kind === "subagent-batch") return <SubagentBatchRun group={row} showTimestamps={showTimestamps} />
   return (
     <ThreadItemView
       item={row}
@@ -346,7 +347,7 @@ function collectTools(rows: Row[]): ToolItem[] {
     else if (row.kind === "subagent-group") {
       if (row.head.kind === "tool") out.push(row.head)
       out.push(...collectTools(row.children))
-    } else if (row.kind === "workflow-group") out.push(...collectTools(row.steps))
+    } else if (row.kind === "workflow-group" || row.kind === "subagent-batch") out.push(...collectTools(row.steps))
   }
   return out
 }
@@ -606,7 +607,8 @@ function lastActivityAt(rows: Row[]): number {
   for (const row of rows) {
     if (row.kind === "run") for (const item of row.items) last = Math.max(last, item.at ?? 0)
     else if (row.kind === "subagent-group") last = Math.max(last, row.head.at ?? 0, lastActivityAt(row.children))
-    else if (row.kind === "workflow-group") last = Math.max(last, lastActivityAt(row.steps))
+    else if (row.kind === "workflow-group" || row.kind === "subagent-batch")
+      last = Math.max(last, lastActivityAt(row.steps))
     // Not every item kind is stamped (a plan has no arrival time of its own).
     else if ("at" in row) last = Math.max(last, row.at ?? 0)
   }
@@ -615,11 +617,18 @@ function lastActivityAt(rows: Row[]): number {
 
 /** The name a step reads by: the definition's (`workflow.step`), not the
     agent's title for the thread — a table of steps should read as the workflow
-    the user wrote. */
+    the user wrote. A launch call has no definition behind it, so it reads by
+    the brief the agent gave that worker (`description`) and not by
+    `toolHeading`'s title, which is the word "Task" for every one of them — a
+    sidebar of three identical rows names nothing. */
 function stepNameOf(group: SubagentGroup, fallback?: string): string {
   const head = group.head
   const info = head.kind === "subagent" ? head.workflow : undefined
-  return info?.step || (head.kind === "subagent" ? head.name || head.task : toolHeading(head).title) || (fallback ?? "")
+  const own =
+    head.kind === "subagent"
+      ? head.name || head.task
+      : (extractSubagent(head)?.description ?? toolHeading(head).title)
+  return info?.step || own || (fallback ?? "")
 }
 
 /** A step's one duration: live while it runs; once settled,
@@ -845,7 +854,7 @@ type PhaseState = "pending" | "running" | "completed" | "failed" | "cancelled"
  * — the arrived steps are the outline, in definition order, as one unnamed
  * phase; that is exactly the flat table the card drew before.
  */
-function phasesOf(group: WorkflowGroup): PhaseView[] {
+function phasesOf(group: Pick<WorkflowGroup, "steps" | "plan">): PhaseView[] {
   const infoOf = (step: SubagentGroup) => (step.head.kind === "subagent" ? step.head.workflow : undefined)
   const byName = new Map<string, SubagentGroup>()
   for (const step of group.steps) {
@@ -978,9 +987,10 @@ function WorkflowPhaseHeader({ phase }: { phase: PhaseView }) {
 }
 
 /**
- * A workflow run in the transcript: a compact preview card — the run's name,
- * its state, its meter and, while it runs, the step being written — that
- * opens the whole run in a dialog on click.
+ * A set of subagents in the transcript — a harness workflow run, or the N
+ * workers an agent fired side by side — as a compact preview card: the run's
+ * name, its state, its meter and, while it runs, the step being written. It
+ * opens the whole thing in a dialog on click.
  *
  * A dialog rather than the phase-banded table this card used to hold, because
  * a run is N whole threads and a transcript column is the wrong room to read
@@ -991,29 +1001,44 @@ function WorkflowPhaseHeader({ phase }: { phase: PhaseView }) {
  * steps under them, and the selected step's events beside it, the very same
  * `SubagentBody` a step draws anywhere.
  *
- * The shape is still drawn *before* it happens: the whole definition rides
- * every spawn's `_meta` as `plan`, so the meter and the sidebar show every
- * phase and every step from the first spawn on, the ones ahead of the run
- * dimmed. A definition with no phases is one unnamed phase whose header is
- * left out — a flat step list.
+ * One component for both because they are one question asked twice: a
+ * workflow knows its shape up front and an ad-hoc batch does not, which is
+ * the whole of the difference — the plan rides every workflow spawn's
+ * `_meta`, so the meter and the sidebar show every phase and every step from
+ * the first spawn on, the ones ahead of the run dimmed, while a batch has
+ * exactly the steps that were launched. A definition with no phases, and
+ * every batch, is one unnamed phase whose header is left out — a flat step
+ * list.
  */
-export const WorkflowRun = React.memo(function WorkflowRun({
-  group,
+function RunCard({
+  name,
+  steps: runSteps,
+  plan,
+  icon: RunIcon,
+  countNoun,
+  ariaLabel,
   showTimestamps,
 }: {
-  group: WorkflowGroup
+  name: string
+  steps: SubagentGroup[]
+  plan?: WorkflowGroup["plan"]
+  icon: React.ComponentType<{ className?: string }>
+  /** What the `2/9` in the subtitle counts — "steps" of a definition, "done"
+      of a batch, which has no shape beyond the workers in it. */
+  countNoun: string
+  ariaLabel: string
   showTimestamps?: boolean
 }) {
-  const phases = phasesOf(group)
+  const phases = phasesOf({ steps: runSteps, plan })
   const banded = phases.some((phase) => phase.name !== null)
   const all = phases.flatMap((p) => p.steps)
-  const active = group.steps.some((step) => step.active)
+  const active = runSteps.some((step) => step.active)
   const failed = phases.some((phase) => phaseStateOf(phase) === "failed")
   const done = all.filter((step) => stateOfStep(step) === "completed").length
   /* The outline's count, so "1/9 steps" is honest while the later steps have
      not been spawned yet; a run with no outline falls back to what arrived. */
-  const total = Math.max(all.length, ...group.steps.map((s) => (s.head.kind === "subagent" ? (s.head.workflow?.total ?? 0) : 0)))
-  const started = group.steps.map((step) => step.head.startedAt)
+  const total = Math.max(all.length, ...runSteps.map((s) => (s.head.kind === "subagent" ? (s.head.workflow?.total ?? 0) : 0)))
+  const started = runSteps.map((step) => step.head.startedAt)
   const startedAt = started.length ? Math.min(...started) : 0
   const elapsedMs = useElapsed(startedAt, active && startedAt > 0)
   /* The run's own state, said once and read by the pill, the icon chip and the
@@ -1036,9 +1061,9 @@ export const WorkflowRun = React.memo(function WorkflowRun({
      at view time rather than accumulated anywhere, so a step arriving late (or
      a replay rebuilding the lot) simply adds to it. */
   const view = useViewOptionsContext()
-  const runTokens = view.showTokens ? sumUsage(group.steps.map(stepUsage)) : null
+  const runTokens = view.showTokens ? sumUsage(runSteps.map(stepUsage)) : null
   const subtitle = [
-    total > 0 ? `${done}/${total} steps` : null,
+    total > 0 ? `${done}/${total} ${countNoun}` : null,
     banded && runningPhase?.name ? runningPhase.name : null,
     elapsedMs !== null && elapsedMs >= 2000 ? formatElapsed(elapsedMs) : null,
     runTokens ? `${formatTokens(runTokens.totalTokens)} tokens` : null,
@@ -1063,7 +1088,7 @@ export const WorkflowRun = React.memo(function WorkflowRun({
        list, and auto-selecting would skip the run's shape, which is the
        screen the tap asked for. */
     if (next && !isMobile) {
-      setSelected((cur) => cur ?? runningStep?.id ?? failedStep?.id ?? group.steps[0]?.id ?? null)
+      setSelected((cur) => cur ?? runningStep?.id ?? failedStep?.id ?? runSteps[0]?.id ?? null)
     }
     setOpen(next)
   }
@@ -1077,7 +1102,7 @@ export const WorkflowRun = React.memo(function WorkflowRun({
         render={
           <button
             type="button"
-            aria-label={`Preview workflow ${group.name}`}
+            aria-label={ariaLabel}
             className={cn(
               "group/wfc my-1 block w-full overflow-hidden rounded-lg border border-border/60 text-start",
               "transition-colors duration-150 hover:border-border hover:bg-muted/30",
@@ -1098,7 +1123,7 @@ export const WorkflowRun = React.memo(function WorkflowRun({
                   : "bg-muted text-muted-foreground/70"
             )}
           >
-            <WorkflowIcon className="size-3.5" />
+            <RunIcon className="size-3.5" />
           </span>
           <span className="flex min-w-0 flex-1 flex-col">
             <span
@@ -1108,7 +1133,7 @@ export const WorkflowRun = React.memo(function WorkflowRun({
                 active && "harness-shimmer"
               )}
             >
-              {group.name}
+              {name}
             </span>
             {subtitle && (
               <span className="truncate text-[11px] leading-4 tabular-nums text-muted-foreground/60">
@@ -1171,7 +1196,7 @@ export const WorkflowRun = React.memo(function WorkflowRun({
                     : "bg-muted text-muted-foreground/70"
               )}
             >
-              <WorkflowIcon className="size-4" />
+              <RunIcon className="size-4" />
             </span>
             <span className="flex min-w-0 flex-1 flex-col">
               <DialogTitle
@@ -1181,7 +1206,7 @@ export const WorkflowRun = React.memo(function WorkflowRun({
                   active && "harness-shimmer"
                 )}
               >
-                {group.name}
+                {name}
               </DialogTitle>
               {subtitle && (
                 <span className="truncate text-[11px] leading-4 tabular-nums text-muted-foreground/60">
@@ -1240,7 +1265,7 @@ export const WorkflowRun = React.memo(function WorkflowRun({
           {/* One panel per step; Base UI mounts only the selected one, so a
               run of nine steps costs one transcript and not nine. */}
           <div className={cn("min-h-0 min-w-0 flex-1 flex-col", selected === null ? "hidden sm:flex" : "flex")}>
-            {group.steps.map((step) => (
+            {runSteps.map((step) => (
               <WorkflowStepPanel
                 key={step.id}
                 group={step}
@@ -1261,8 +1286,64 @@ export const WorkflowRun = React.memo(function WorkflowRun({
       </DialogContent>
     </Dialog>
   )
+}
+
+/** A harness workflow run (`WorkflowGroup`) as the card above. */
+export const WorkflowRun = React.memo(function WorkflowRun({
+  group,
+  showTimestamps,
+}: {
+  group: WorkflowGroup
+  showTimestamps?: boolean
+}) {
+  return (
+    <RunCard
+      name={group.name}
+      steps={group.steps}
+      plan={group.plan}
+      icon={WorkflowIcon}
+      countNoun="steps"
+      ariaLabel={`Preview workflow ${group.name}`}
+      showTimestamps={showTimestamps}
+    />
+  )
 })
 WorkflowRun.displayName = "WorkflowRun"
+
+/**
+ * The subagents an agent fired side by side (`SubagentBatch`) as the same
+ * card. No definition wrote this one, so its name has to be read off the
+ * workers themselves: the kind of agent when they all agree — which is the
+ * common case, since a batch is usually one job split N ways — and a plain
+ * count when they do not. Never a step's own description: three of them would
+ * have to fit on one line, and the sidebar says all three in full.
+ */
+export const SubagentBatchRun = React.memo(function SubagentBatchRun({
+  group,
+  showTimestamps,
+}: {
+  group: SubagentBatch
+  showTimestamps?: boolean
+}) {
+  const kinds = new Set(
+    group.steps
+      .map((step) => (step.head.kind === "tool" ? extractSubagent(step.head)?.agentType : step.head.name))
+      .filter((kind): kind is string => Boolean(kind))
+  )
+  const count = group.steps.length
+  const name = kinds.size === 1 ? `${count} × ${[...kinds][0]}` : `${count} subagents`
+  return (
+    <RunCard
+      name={name}
+      steps={group.steps}
+      icon={BotIcon}
+      countNoun="done"
+      ariaLabel={`Preview ${name}`}
+      showTimestamps={showTimestamps}
+    />
+  )
+})
+SubagentBatchRun.displayName = "SubagentBatchRun"
 
 /** A subagent's rows, on a rail. Peeks the tail while the subagent is live;
     the whole thing once it is done, or once asked. */
@@ -1373,7 +1454,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
           <Message align="end" className="flex-col items-end gap-0.5 py-2">
             <MessageContent>
               <Bubble variant="tinted" align="end">
-                <BubbleContent className="rounded-2xl rounded-br-sm px-4 py-2.5 text-sm">
+                <BubbleContent dir="auto" className="rounded-2xl rounded-br-sm px-4 py-2.5 text-sm">
                   <Prose text={item.text} />
                 </BubbleContent>
               </Bubble>
@@ -1394,7 +1475,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
           <Message className="flex-col items-start gap-0.5 py-2">
             <MessageContent>
               <Bubble variant="ghost">
-                <BubbleContent className="text-sm leading-relaxed">
+                <BubbleContent dir="auto" className="text-sm leading-relaxed">
                   <StreamedAgentText text={item.text} streaming={streaming} />
                 </BubbleContent>
               </Bubble>
@@ -1460,7 +1541,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
           status={streaming ? "in_progress" : null}
           label={streaming ? "thinking" : undefined}
           startedAt={streaming ? item.at : undefined}
-          metric={tokens ? <StepTokens tokens={tokens} /> : undefined}
+          metric={tokens ? <StepTokens usage={tokens} itemId={item.id} /> : undefined}
           mono={false}
           defaultOpen={view.showThinking}
           openSetting={view.showThinking}
@@ -1549,7 +1630,7 @@ const ToolStep = React.memo(function ToolStep({
       metric={
         tokens || showTimestamp ? (
           <>
-            {tokens ? <StepTokens tokens={tokens} /> : null}
+            {tokens ? <StepTokens usage={tokens} itemId={item.id} /> : null}
             {tokens && showTimestamp ? " · " : null}
             {showTimestamp ? <Timestamp at={item.at} /> : null}
           </>

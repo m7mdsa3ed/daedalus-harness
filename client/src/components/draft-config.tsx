@@ -291,15 +291,16 @@ export function DraftConfigPopover({
         render={
           <Button
             variant="ghost"
-            /* Icon-only on a phone — same collapse as SessionConfigPopover's
-               trigger, which replaces this one the moment the thread starts. */
-            className="h-8 gap-1.5 border-0 bg-transparent px-2 text-xs shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent max-md:w-8 max-md:px-0"
+            /* Ellipsized rather than collapsed, on a phone as in a narrow dock
+               panel — same rule as SessionConfigPopover's trigger, which
+               replaces this one the moment the thread starts. */
+            className="h-8 gap-1.5 border-0 bg-transparent px-2 text-xs shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent"
             title={[persona?.name, modelLabel, effortLabel].filter(Boolean).join(" · ")}
           >
             {/* Same rule as SessionConfigPopover's trigger: the profile's own
                 logo when it has one, the agent's mark otherwise. */}
             <ProfileIcon profile={profile} agentId={agent?.id ?? meta.agentId} className="size-4" />
-            <span className="max-w-56 truncate max-md:sr-only">
+            <span className="max-w-56 truncate">
               {persona && <span>{persona.name} · </span>}
               {modelLabel}
               {effortLabel && <span className="capitalize"> · {effortLabel}</span>}

@@ -250,16 +250,23 @@ export class SessionJournal {
   }
 
   /** The page of whole turns immediately before `before`, plus how many turns
-      are still behind it. Empty when `before` is already the head of the log. */
+      are still behind it. Empty when `before` is already the head of the log.
+   *
+   * A log need not begin with a `turn_started`: a revive clears the journal and
+   * refills it from the `session/load` replay, which is the prior conversation
+   * with no turn boundaries in it. That head is not a turn and so can never be
+   * a page of its own — the page that reaches the oldest turn takes it, which
+   * is also the only way it is ever reachable. `earlier` is turns, so it is 0
+   * either way and the client stops asking at the same point. */
   earlierPage(sessionId: string, before: number): EarlierPage {
     if (before <= 0) return { events: [], earlier: 0 };
     const starts = this.turnStartsBefore(sessionId, before, EARLIER_PAGE_STEPS).reverse();
-    if (starts.length === 0) return { events: [], earlier: 0 };
-    const first = starts[0];
-    return {
-      events: this.eventsFrom(sessionId, first, before - first),
-      earlier: this.countTurnsBefore(sessionId, first),
-    };
+    const earlier = starts.length === 0 ? 0 : this.countTurnsBefore(sessionId, starts[0]);
+    // No turns left behind this page: whatever precedes it is that head, and
+    // it belongs to the oldest turn shown rather than being stranded below it.
+    const first = starts.length === 0 || earlier === 0 ? 0 : starts[0];
+    if (first >= before) return { events: [], earlier: 0 };
+    return { events: this.eventsFrom(sessionId, first, before - first), earlier };
   }
 
   /** Wipe one session's log — its buffered rows included — and zero its

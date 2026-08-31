@@ -123,12 +123,12 @@ export function FormPageHeader({
   onBack: () => void
 }) {
   return (
-    <header className="mb-6 flex items-start gap-3 border-b pb-5">
-      <Button type="button" variant="ghost" size="icon-lg" className="mt-0.5 shrink-0" onClick={onBack}>
+    <header className="mb-6 border-b pb-5">
+      <Button type="button" variant="ghost" size="sm" className="-ml-2 mb-3 text-muted-foreground" onClick={onBack}>
         <ArrowLeft />
-        <span className="sr-only">Back</span>
+        Back
       </Button>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0">
         <h1 className="text-lg font-semibold tracking-tight sm:text-xl">{title}</h1>
         {description && <p className="mt-1 max-w-[65ch] text-sm text-pretty text-muted-foreground">{description}</p>}
       </div>

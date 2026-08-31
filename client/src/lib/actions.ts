@@ -34,7 +34,7 @@ import {
   type SkillDef,
   type CommandDef,
 } from "./settings"
-import { fetchQuota } from "./quota"
+import { fetchQuota, profileHasUsage } from "./quota"
 import { emptyThread, useStore, type Action } from "./store"
 
 const RECONNECT_MAX_ATTEMPTS = 5
@@ -875,8 +875,10 @@ export function useActions(settings: ServerSettings) {
        * has been worked in already has one; this is for the other case — a
        * thread just opened, or an archived one with no process at all, whose
        * stats popover someone expanded. It asks under the thread's *own*
-       * profile, which is the honest reading: a gateway profile spends an API
-       * key and has no plan windows, and saying so is the answer.
+       * profile, and only when that profile names a plan of its own: a thread on
+       * an API-key profile has no plan windows by construction, and the reading
+       * an agent probe would give back is the machine's login, not that
+       * profile's — Settings › Usage is where that answer lives.
        *
        * Failures are swallowed. The number is ambient, nobody asked a question
        * by opening a popover, and a missing `claude` binary would otherwise
@@ -884,6 +886,12 @@ export function useActions(settings: ServerSettings) {
        * the failure is reported, because there it is the answer.
        */
       async loadQuota(meta: SessionMeta) {
+        /* The card is the profile's own plan. A profile without one has nothing
+           to read — and asking would spawn the agent's CLI probe for a card the
+           composer will not draw, so don't. Settings › Usage is where the
+           machine reading is asked for, on purpose. */
+        const profile = stateRef.current.profiles.find((p) => p.id === meta.profileId)
+        if (!profileHasUsage(profile)) return
         try {
           const quota = await fetchQuota(settings, meta.agentId, { profileId: meta.profileId })
           dispatch({ type: "quota", id: meta.id, quota })

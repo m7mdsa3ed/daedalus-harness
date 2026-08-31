@@ -10,15 +10,22 @@
    `keys` is literal caps for a range or a single glyph the table prints as
    `display` ("1…9", "↵"). */
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
-import { chordKeys } from "@/lib/shortcuts"
+import { useChord } from "@/lib/keybindings"
+import { chordKeys, type ShortcutId } from "@/lib/shortcuts"
 import { cn } from "@/lib/utils"
 
 export function Shortcut({
+  id,
   chord,
   keys,
   className,
   keyClassName,
 }: {
+  /** A named shortcut, printed on whatever chord the reader has it on — which
+      is the form to reach for wherever the thing being advertised is a real
+      binding, so a rebinding in settings reaches every surface that mentions
+      it. */
+  id?: ShortcutId
   /** A chord in `lib/shortcuts`' vocabulary — "mod+shift+enter". */
   chord?: string
   /** Literal caps, for a range or a glyph that is not a binding. */
@@ -26,7 +33,9 @@ export function Shortcut({
   className?: string
   keyClassName?: string
 }) {
-  const caps = keys ?? (chord ? chordKeys(chord) : [])
+  const bound = useChord(id ?? "palette")
+  const resolved = id ? bound : chord
+  const caps = keys ?? (resolved ? chordKeys(resolved) : [])
   if (caps.length === 0) return null
   return (
     <KbdGroup className={cn("shrink-0", className)}>

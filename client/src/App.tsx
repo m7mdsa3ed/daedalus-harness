@@ -1,8 +1,8 @@
 import * as React from "react"
 import { AppShell } from "@/components/app-shell"
+import { AppToaster } from "@/components/app-toaster"
 import { ConfirmProvider } from "@/components/confirm-dialog"
 import { ConnectScreen } from "@/components/connect-screen"
-import { Toaster } from "@/components/ui/toast"
 import { useActions } from "@/lib/actions"
 import { refreshNotificationOffer } from "@/lib/notifications"
 import { setupPush } from "@/lib/push"
@@ -33,11 +33,12 @@ function App() {
               onCancel={settings && adding ? () => setAdding(false) : undefined}
             />
           )}
-          {/* Bottom-trailing, and no `theme` prop to reconcile: the Base UI
-              toast is drawn entirely out of the palette's own tokens, so it
-              follows the app's mode rather than the OS's the way sonner's
-              hardcoded per-theme colours had to be talked out of. */}
-          <Toaster />
+          {/* Bottom-trailing on a desktop, top on a phone, and no `theme` prop
+              to reconcile: the Base UI toast is drawn entirely out of the
+              palette's own tokens, so it follows the app's mode rather than the
+              OS's the way sonner's hardcoded per-theme colours had to be talked
+              out of. */}
+          <AppToaster />
         </StoreProvider>
       </ConfirmProvider>
     </ThemeProvider>

@@ -18,7 +18,12 @@
 
     /* Linting */
     "strict": true,
-    "noUnusedLocals": true,
+    /* Off on purpose: shadcn ships components with an unused `import * as
+       React` (jsx: react-jsx needs none), and `components/ui/` is meant to be
+       re-installable rather than hand-edited — see the shadcn note in
+       CLAUDE.md. Trading unused-local detection for a `shadcn add` that
+       typechecks without a follow-up edit in every file it wrote. */
+    "noUnusedLocals": false,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,

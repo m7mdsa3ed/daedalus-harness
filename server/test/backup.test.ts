@@ -10,6 +10,7 @@ import type { SQLiteTable } from "drizzle-orm/sqlite-core";
 import {
   agents as agentsTable,
   commands as commandsTable,
+  personas as personasTable,
   db,
   knowledge as knowledgeTable,
   mcpServers as mcpServersTable,
@@ -39,7 +40,7 @@ function test(name: string, fn: () => void) {
 }
 
 function wipe() {
-  for (const table of [sessionsTable, profilesTable, projectsTable, mcpServersTable, skillsTable, commandsTable, agentsTable, tasksTable, boardStatusesTable, boardsTable]) {
+  for (const table of [sessionsTable, profilesTable, projectsTable, mcpServersTable, skillsTable, commandsTable, personasTable, agentsTable, tasksTable, boardStatusesTable, boardsTable]) {
     db.delete(table).run();
   }
 }
@@ -55,11 +56,15 @@ function seed() {
   db.insert(mcpServersTable).values({ id: "m1", type: "http", name: "srv", url: "http://x", headers: [{ name: "Authorization", value: "Bearer s3cret" }] }).run();
   db.insert(skillsTable).values({ id: "s1", name: "skill", path: "/tmp/skill" }).run();
   db.insert(commandsTable).values({ id: "c1", name: "go", description: "d", content: "body" }).run();
+  /* A built-in, edits and all: it carries a `seededVersion`, so a restore that
+     dropped it would never be re-seeded and the thread below would point at a
+     persona that no longer exists. */
+  db.insert(personasTable).values({ id: "builtin:terse", name: "Terse", description: "d", prompt: "One line.", thinking: 0, effort: "low", seededVersion: 1, sortOrder: 10 }).run();
   db.insert(profilesTable).values({ id: "p1", name: "gw", agents: { fake: {} }, baseUrl: "http://gw", apiKey: "sk-live", defaultModel: "m", smallModel: "", logoUrl: "", models: [{ id: "m", label: "M", reasoningEfforts: [] }] }).run();
   db.insert(profileMcpServers).values({ profileId: "p1", mcpServerId: "m1" }).run();
   db.insert(projectsTable).values({ id: "w1", name: "ws", cwd: "/tmp/ws", logoUrl: "" }).run();
   db.insert(knowledgeTable).values({ id: "k1", projectId: "w1", title: "t", content: "c", createdAt: now, updatedAt: now }).run();
-  db.insert(sessionsTable).values({ id: "t1", profileId: "p1", projectId: "w1", agentId: "fake", model: "m", effort: "", title: "Thread", acpSessionId: "acp-1", createdAt: now }).run();
+  db.insert(sessionsTable).values({ id: "t1", profileId: "p1", projectId: "w1", agentId: "fake", model: "m", effort: "", personaId: "builtin:terse", title: "Thread", acpSessionId: "acp-1", createdAt: now }).run();
   db.insert(eventsTable).values([
     { sessionId: "t1", seq: 0, kind: "turn_started", payload: { ev: "turn_started", turnId: "x" }, at: now },
     { sessionId: "t1", seq: 1, kind: "turn_ended", payload: { ev: "turn_ended", turnId: "x" }, at: now },
@@ -79,6 +84,28 @@ test("a full export round-trips through the schema", () => {
   assert.deepEqual(bundle.profiles[0]!.mcpServerIds, ["m1"]);
   assert.equal(bundle.events.length, 2);
   assert.equal(bundle.queue.length, 1);
+  assert.deepEqual(bundle.personas[0], {
+    id: "builtin:terse",
+    name: "Terse",
+    description: "d",
+    prompt: "One line.",
+    thinking: 0,
+    effort: "low",
+    seededVersion: 1,
+    sortOrder: 10,
+  });
+  assert.equal(bundle.sessions[0]!.personaId, "builtin:terse", "the thread remembers how it was worked on");
+});
+
+test("a 0 thinking budget survives the round trip as 0, not as absent", () => {
+  // The one value the schema could quietly lose: `thinking: 0` is "no
+  // thinking", and a nullish coalesce anywhere on the path turns it into
+  // "leave the runtime's default alone" — the opposite instruction.
+  seed();
+  const bundle = exportBundle({ includeSecrets: true, includeJournals: true });
+  wipe();
+  importBundle(BundleSchema.parse(JSON.parse(JSON.stringify(bundle))), "replace");
+  assert.equal(db.select().from(personasTable).all()[0]!.thinking, 0);
 });
 
 test("a redacted export carries no secrets", () => {

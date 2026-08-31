@@ -16,8 +16,14 @@
  * below, which needs no config at all. The page still uses the Firebase SDK to
  * mint a token (lib/push.ts) — that part has a config, because it fetched it.
  */
-import { clientsClaim } from "workbox-core"
-import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from "workbox-precaching"
+import { cacheNames, clientsClaim } from "workbox-core"
+import {
+  addPlugins,
+  cleanupOutdatedCaches,
+  createHandlerBoundToURL,
+  getCacheKeyForURL,
+  precacheAndRoute,
+} from "workbox-precaching"
 import { NavigationRoute, registerRoute } from "workbox-routing"
 
 declare let self: ServiceWorkerGlobalScope
@@ -35,7 +41,74 @@ self.addEventListener("message", (event) => {
 // that installed it rather than the one after.
 clientsClaim()
 
-precacheAndRoute(self.__WB_MANIFEST)
+const manifest = self.__WB_MANIFEST
+
+/* ── Install progress ──
+   A build is a whole precache, so installing a new worker is a download of a
+   hundred-odd files — long enough on a phone that the page has to be able to
+   say more than "working on it". Nothing in Workbox reports that, so it is
+   counted here and posted to the page (lib/pwa.tsx draws the bar).
+
+   Two counters, and the awkward one is the denominator. `done` is easy: the
+   precache strategy writes each entry through `cachePut`, so `cacheDidUpdate`
+   fires exactly once per file that actually came down. The TOTAL is not the
+   manifest's length — an update re-fetches only the entries whose revision
+   changed, which after a small deploy may be three files out of ninety — and
+   Workbox only reports which those were once it has finished. So it is worked
+   out here at install time: every manifest entry whose cache key is not
+   already in the precache is one that has to be fetched.
+
+   The install listener is registered BEFORE `precacheAndRoute` on purpose.
+   Listeners run in registration order, so this one starts reading the cache's
+   existing keys before Workbox's own handler starts writing new ones into it —
+   otherwise the snapshot could count a file that had already landed as one
+   that never needed fetching, and the total would come out under the count.
+   It is still a race the page has to tolerate, which is why the bar clamps. */
+
+let downloaded = 0
+let outstanding = 0
+
+function postProgress(): void {
+  void self.clients
+    .matchAll({ type: "window", includeUncontrolled: true })
+    .then((clients) => {
+      for (const client of clients) {
+        client.postMessage({ type: "PRECACHE_PROGRESS", done: downloaded, total: outstanding })
+      }
+    })
+    .catch(() => undefined)
+}
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(countOutstanding())
+})
+
+async function countOutstanding(): Promise<void> {
+  try {
+    const cache = await caches.open(cacheNames.precache)
+    const held = new Set((await cache.keys()).map((request) => request.url))
+    outstanding = manifest.filter((entry) => {
+      const url = typeof entry === "string" ? entry : entry.url
+      const key = getCacheKeyForURL(url)
+      return !key || !held.has(new URL(key, self.location.href).href)
+    }).length
+  } catch {
+    // No total is a spinner, not a wrong bar — the page falls back to it.
+    outstanding = 0
+  }
+  postProgress()
+}
+
+addPlugins([
+  {
+    cacheDidUpdate: async () => {
+      downloaded += 1
+      postProgress()
+    },
+  },
+])
+
+precacheAndRoute(manifest)
 // Drop precaches written by earlier Workbox revisions; without this an upgrade
 // leaves the old app's assets on disk forever.
 cleanupOutdatedCaches()

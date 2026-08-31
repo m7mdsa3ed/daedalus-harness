@@ -395,8 +395,10 @@ export type ThreadEvent =
       includes the WebSocket hop to the browser. */
   | { ev: "ttft"; ms: number }
   /** What is left of the subscription this thread's (profile, agent) pair is
-      spending — see quota.ts. Sent when a turn settles, because the turn is what
-      moved the number.
+      spending — see quota.ts. Only a profile that names a plan of its own has
+      one to report: a thread on an API-key profile is billed per token, and the
+      probe's answer would be the machine's login, not that profile's. Sent when
+      a turn settles, because the turn is what moved the number.
 
       Live-only and **absolute**, like `queue`: it is the current state of an
       account, not a thing that happened in this thread, and journaling it would

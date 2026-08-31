@@ -36,7 +36,7 @@ import { makeTabActions } from "@/components/workspace/tab-actions"
 import type { Actions } from "@/lib/actions"
 import { navigateTo, threadPath } from "@/lib/router"
 import { loadSettings } from "@/lib/settings"
-import { useHotkey } from "@/hooks/use-hotkey"
+import { useHotkey, useShortcut } from "@/hooks/use-hotkey"
 import { KEYS } from "@/lib/shortcuts"
 import { useTheme } from "@/lib/theme"
 import { loadLayout, saveLayout } from "@/lib/workspace/layout"
@@ -527,13 +527,11 @@ export function useWorkspaceDock(): DockController {
     panel.api.setActive()
   })
 
-  useHotkey(KEYS.splitRight, (event) => {
-    event.preventDefault()
+  useShortcut("splitRight", () => {
     splitActive("right")
   })
 
-  useHotkey(KEYS.reopenPanel, (event) => {
-    event.preventDefault()
+  useShortcut("reopenPanel", () => {
     reopenClosed()
   })
 

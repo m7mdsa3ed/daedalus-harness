@@ -19,12 +19,12 @@ import {
 import { Logo } from "@/components/ui/logo"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useStripSummary } from "@/components/composer-strip"
-import { formatReset, peakWindow, quotaStatusText, quotaTone } from "@/lib/quota"
+import { formatReset, peakWindow, profileHasUsage, quotaStatusText, quotaTone } from "@/lib/quota"
 import type { Actions } from "@/lib/actions"
 import type { SessionMeta } from "@/lib/settings"
 import { extractSubagent, extractTodos, toolHeading, toolViewOf } from "@/lib/tools"
 import { activeSubagents, buildRows } from "@/lib/transcript-rows"
-import type { ThreadState, ToolItem } from "@/lib/store"
+import { useStore, type ThreadState, type ToolItem } from "@/lib/store"
 import { formatTokens } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 
@@ -78,7 +78,9 @@ function Stat({ label, value, valueClass }: { label: string; value: string; valu
  * about *this thread* — how full its context is, what the last turn cost. This
  * is about the account the thread spends, which is the thing that decides
  * whether there is a next turn at all, and there was nowhere in the app to see
- * it. Settings › Usage is the full view; this is the glance.
+ * it. Settings › Usage is the full view; this is the glance. It is drawn only
+ * for a profile that names a plan of its own — a thread on one without it is
+ * billed to an API key and has nothing a glance could say.
  *
  * Fetched when the popover first opens rather than with the thread: it costs a
  * process on the server, and a thread nobody expands should not pay for one.
@@ -86,15 +88,20 @@ function Stat({ label, value, valueClass }: { label: string; value: string; valu
  * every settled turn — so this asks once and then only listens.
  */
 function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: SessionMeta; actions: Actions }) {
+  const { state } = useStore()
+  const profile = meta ? state.profiles.find((p) => p.id === meta.profileId) : null
   const { quota } = thread
   const asked = React.useRef(false)
   React.useEffect(() => {
-    if (asked.current || quota || !meta) return
+    if (asked.current || quota || !meta || !profileHasUsage(profile)) return
     asked.current = true
     void actions.loadQuota(meta)
-  }, [quota, meta, actions])
+  }, [quota, meta, actions, profile])
 
-  if (!quota || quota.status === "unsupported") return null
+  /* A thread on a profile with no plan of its own draws nothing here: the
+     reading an agent probe would give back belongs to the machine's login, not
+     to the profile, and Settings › Usage is where that answer lives. */
+  if (!profileHasUsage(profile) || !quota || quota.status === "unsupported") return null
   const peak = peakWindow(quota)
 
   return (

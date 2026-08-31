@@ -6,7 +6,7 @@ import App from './App.tsx'
 import { ErrorBoundary } from './components/error-boundary.tsx'
 import { installGlobalErrorReporting } from './lib/errors.ts'
 import { installNotificationTestHelper } from './lib/notifications.ts'
-import { registerPwa } from './lib/pwa.ts'
+import { registerPwa } from './lib/pwa'
 import { watchInstallability } from './lib/install.ts'
 
 // The floor under everything else: a promise nobody caught, or a listener that

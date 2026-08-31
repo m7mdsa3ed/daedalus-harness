@@ -258,8 +258,10 @@ export interface ThreadState {
   /** What the model request that produced a step cost, keyed by item id — the
       per-step half of `turnUsage`, and derived rather than reported: see
       `markStepUsage`. Journaled like everything it is built from, so it
-      replays. */
-  stepUsage: Record<string, number>
+      replays. The whole reading is kept rather than just its figure: the
+      step's own popover draws the window and the cost beside it, and what is
+      dropped here cannot be recovered downstream. */
+  stepUsage: Record<string, acp.UsageUpdate>
   /** The item the last `usage_update` was filed against — the cursor
       `markStepUsage` reads to tell one model request from the next. */
   usageMark: string | null
@@ -711,7 +713,7 @@ function markStepUsage(
     }
   }
   if (!tail || thread.usageMark === tail.id) return kept
-  return { stepUsage: { ...thread.stepUsage, [tail.id]: update.used }, usageMark: tail.id }
+  return { stepUsage: { ...thread.stepUsage, [tail.id]: update }, usageMark: tail.id }
 }
 
 /** Session-level (non-transcript) updates applied to ThreadState. */

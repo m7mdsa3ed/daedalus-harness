@@ -22,13 +22,14 @@ import {
 } from "@/components/ui/message-scroller"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useHotkey } from "@/hooks/use-hotkey"
+import { useChords } from "@/lib/keybindings"
 import { useVoice } from "@/hooks/use-voice"
 import type { Actions } from "@/lib/actions"
 import { clearDraft, loadDraft, saveDraft } from "@/lib/drafts"
 import { reportError } from "@/lib/errors"
 import { currentThreadId, schedulePath } from "@/lib/router"
 import type { SessionMeta } from "@/lib/settings"
-import { KEYS, isInteractiveTarget, isTypingTarget, matchesChord, overlayOpen } from "@/lib/shortcuts"
+import { KEYS, formatChord, isInteractiveTarget, isTypingTarget, matchesChord, overlayOpen } from "@/lib/shortcuts"
 import { useStore, emptyThread, threadIsEmpty, type ThreadItem, type ThreadState } from "@/lib/store"
 import { useLocation, useNavigate } from "react-router"
 import { useViewOptions, ViewOptionsContext } from "@/lib/view-options"
@@ -154,6 +155,26 @@ function withTurnUsage(
     const turnId = head.kind === "user" ? head.turnId : undefined
     const usage = turnId ? turnUsage[turnId] : undefined
     if (usage) after.set(tailId, usage)
+  }
+  return after
+}
+
+/** Every row's turn, keyed by the row's own id. A step's popover reads the
+    billed split of the turn it sits in here (`StepTokens`), since a runtime
+    reports only a total per model request and the prompt/output/cache split
+    once, at turn end. The walk is the same one `withTurnUsage` does for the
+    footer — the nearest user row back, which is the only thing tying a
+    transcript position to a reading that arrives after it — but kept per row. */
+function withStepTurnUsage(
+  items: ThreadItem[],
+  turnUsage: Record<string, acp.Usage>
+): Record<string, acp.Usage> {
+  const after: Record<string, acp.Usage> = {}
+  let turnId: string | undefined
+  for (const item of items) {
+    if (item.kind === "user") turnId = item.turnId
+    const usage = turnId ? turnUsage[turnId] : undefined
+    if (usage) after[item.id] = usage
   }
   return after
 }
@@ -299,6 +320,10 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
     [thread.items, thread.turnActive, thread.turnUsage, options.answersOnly]
   )
   const usageFor = (row: Row): acp.Usage | undefined => usageAfter.get(rowTailId(row))
+  const stepTurnAfter = React.useMemo(
+    () => withStepTurnUsage(thread.items, thread.turnUsage),
+    [thread.items, thread.turnUsage]
+  )
   /* Hoisted out of the map below: `findIndex` inside `rows.map` was O(n²) per
      render, re-scanned on every streamed token. */
   const firstUserIndex = React.useMemo(() => rows.findIndex((r) => r.kind === "user"), [rows])
@@ -357,7 +382,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
         <MessageScroller className="min-h-0 flex-1">
           <MessageScrollerViewport ref={follow.viewportRef}>
             <ViewOptionsContext.Provider value={options}>
-            <StepTokensProvider value={thread.stepUsage}>
+            <StepTokensProvider value={{ step: thread.stepUsage, turn: stepTurnAfter }}>
             <MessageScrollerContent
               ref={follow.contentRef}
               data-density={options.compactDensity ? "compact" : undefined}
@@ -740,6 +765,8 @@ function Composer({
   React.useEffect(() => saveDraft(sessionId, text), [sessionId, text])
   const [reviving, setReviving] = React.useState(false)
   const isMobile = useIsMobile()
+  // Rebindable in Settings › Keyboard, so it is read rather than named here.
+  const steerChords = useChords("steer")
   const voice = useVoice((transcript) => setText((t) => (t ? t + " " : "") + transcript))
   // A draft has no socket, so "closed" never applies to it — it is waiting to be
   // typed into, which is the one state where the composer must stay live.
@@ -926,22 +953,20 @@ function Composer({
             if (history.onKeyDown(e)) return
             if (e.key !== "Enter") return
             /* Past the queue: into the turn that is already running. Checked
-               first because it is the most specific chord of the three. */
-            if (matchesChord(e, KEYS.steer)) {
+               first because it is the more specific chord, and it is every
+               Cmd/Ctrl+Enter now — with no turn running `send({steer})` is an
+               ordinary send, so the chord never has to be told apart from the
+               plain one by the person pressing it. */
+            if (steerChords.some((chord) => matchesChord(e, chord))) {
               e.preventDefault()
               send({ steer: true })
               return
             }
-            /* Cmd/Ctrl+Enter always sends. Bare Enter sends on desktop and
-               inserts a newline on touch, where Return is the only newline key
-               there is and every soft keyboard shows it as one. Shift+Enter is
-               the desktop escape hatch. IME composition is left alone — Enter
-               is how you accept a candidate. */
-            if (e.metaKey || e.ctrlKey) {
-              e.preventDefault()
-              send()
-              return
-            }
+            /* Bare Enter sends on desktop and inserts a newline on touch, where
+               Return is the only newline key there is and every soft keyboard
+               shows it as one. Shift+Enter is the desktop escape hatch. IME
+               composition is left alone — Enter is how you accept a
+               candidate. */
             if (isMobile || e.shiftKey || e.altKey || e.nativeEvent.isComposing) return
             e.preventDefault()
             send()
@@ -1028,7 +1053,11 @@ function Composer({
             className="shrink-0 rounded-lg text-primary hover:text-primary disabled:text-muted-foreground"
             onClick={() => send()}
             disabled={disabled || !text.trim()}
-            title={thread.turnActive ? "Queue (⌘⇧Enter steers the running turn instead)" : "Send"}
+            title={
+              thread.turnActive
+                ? `Queue (${formatChord(steerChords[0] ?? "")} steers the running turn instead)`
+                : "Send"
+            }
           >
             <ArrowUp />
           </Button>

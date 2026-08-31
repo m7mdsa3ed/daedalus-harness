@@ -42,7 +42,7 @@ import {
   threadPath,
 } from "@/lib/router"
 import { consumeNewTab, markNewTab } from "@/lib/session-tabs"
-import { useHotkey } from "@/hooks/use-hotkey"
+import { useShortcut } from "@/hooks/use-hotkey"
 import { KEYS } from "@/lib/shortcuts"
 import { defaultsForProfile, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import { type ServerSettings } from "@/lib/settings"
@@ -59,6 +59,7 @@ import { SettingsLayout } from "@/components/settings/layout"
 import { GeneralPage } from "@/components/settings/general"
 import { KnowledgePage } from "@/components/settings/knowledge"
 import { AppearancePage } from "@/components/settings/appearance"
+import { KeyboardPage } from "@/components/settings/keyboard"
 import { NotificationsPage } from "@/components/settings/notifications"
 import { McpFormPage, McpImportPage, McpPage } from "@/components/settings/mcp"
 import { SkillFormPage, SkillImportPage, SkillsPage } from "@/components/settings/skills"
@@ -201,8 +202,7 @@ export function AppShell({
   /* Mirrors the palette's "New thread" entry — the palette advertises the
      shortcut, so something has to answer for it. The chord itself is named in
      lib/shortcuts, which is also what the help sheet prints. */
-  useHotkey(KEYS.newThread, (event) => {
-    event.preventDefault()
+  useShortcut("newThread", () => {
     startThreadRef.current()
   })
 
@@ -271,8 +271,7 @@ export function AppShell({
     [dock]
   )
 
-  useHotkey(KEYS.terminal, (event) => {
-    event.preventDefault()
+  useShortcut("terminal", () => {
     openWorkspacePanel("terminal")
   })
 
@@ -576,6 +575,7 @@ export function AppShell({
             <Route path="knowledge" element={<KnowledgePage />} />
             <Route path="appearance" element={<AppearancePage />} />
             <Route path="appearance/themes/:themeId" element={<ThemeEditorPage />} />
+            <Route path="keyboard" element={<KeyboardPage />} />
             <Route path="notifications" element={<NotificationsPage />} />
             <Route path="projects" element={<ProjectsPage />} />
             <Route path="projects/:entryId" element={<ProjectFormPage />} />

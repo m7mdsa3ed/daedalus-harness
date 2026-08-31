@@ -63,6 +63,7 @@ import { useSidebar } from "@/components/ui/sidebar"
 import { openTerminal } from "@/components/workspace/terminal-panel"
 import { reportError } from "@/lib/errors"
 import { currentChoiceLabel } from "@/lib/session-options"
+import { useKeybindings } from "@/lib/keybindings"
 import { KEYS } from "@/lib/shortcuts"
 import { boardPath, settingsPath, threadPath } from "@/lib/router"
 import {
@@ -104,6 +105,9 @@ export function RootPage() {
   const { toggleSidebar, setOpenMobile } = useSidebar()
   const { sessionId, meta, thread, modes, options } = useThreadTarget()
   const query = palette.query.trim()
+  // The chords these rows advertise are the reader's own (lib/keybindings), so
+  // a rebinding in settings reaches the palette without a second table.
+  const binds = useKeybindings()
 
   // localStorage, so read once per open rather than per keystroke.
   const servers = React.useMemo(loadServers, [])
@@ -195,7 +199,7 @@ export function RootPage() {
     title: "New thread",
     keywords: "session chat start",
     icon: <Plus />,
-    chord: KEYS.newThread,
+    chord: binds.newThread.chords[0],
     // What ↵ here is about to pick, in the order it is decided: the project
     // (the cwd), then the pair that runs in it.
     trailing: startTarget ? (
@@ -427,7 +431,7 @@ export function RootPage() {
       title: "New terminal",
       keywords: "shell console command line",
       icon: <SquareTerminalIcon />,
-      chord: KEYS.terminal,
+      chord: binds.terminal.chords[0],
       onSelect: () => palette.run(() => void openTerminal(palette.dock, meta.projectId)),
     })
   }
@@ -438,7 +442,7 @@ export function RootPage() {
       title: "Split right",
       keywords: "panel side by side",
       icon: <PanelsTopLeft />,
-      chord: KEYS.splitRight,
+      chord: binds.splitRight.chords[0],
       onSelect: () => palette.run(() => palette.dock.splitActive("right")),
     },
     {
@@ -489,7 +493,7 @@ export function RootPage() {
       title: "Reopen closed panel",
       keywords: "tab undo close",
       icon: <RotateCcw />,
-      chord: KEYS.reopenPanel,
+      chord: binds.reopenPanel.chords[0],
       onSelect: () => palette.run(() => palette.dock.reopenClosed()),
     })
   }
@@ -580,7 +584,7 @@ export function RootPage() {
       title: "Toggle sidebar",
       keywords: "panel collapse hide",
       icon: <PanelLeft />,
-      chord: KEYS.sidebar,
+      chord: binds.sidebar.chords[0],
       onSelect: () => palette.run(toggleSidebar),
     },
     {

@@ -40,7 +40,7 @@ export function makeTabActions({ onSplit }: { onSplit: () => void }) {
           />
           <TooltipContent side="bottom">
             Split right
-            <Shortcut chord={KEYS.splitRight} />
+            <Shortcut id="splitRight" />
           </TooltipContent>
         </Tooltip>
       </div>

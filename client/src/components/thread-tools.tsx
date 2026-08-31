@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
-  DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -14,6 +14,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { DropdownMenuContentPositioned } from "@/components/ui-ext/dropdown-menu"
 import type { Actions } from "@/lib/actions"
 import { mcpSubtitle, type SessionMeta } from "@/lib/settings"
 import { saveThreadDefaults } from "@/lib/thread-defaults"
@@ -192,7 +193,7 @@ export function ThreadToolsMenu({
           composer's own control row, at the bottom of the panel, where a menu
           pinned below would open off screen — so that one opens upwards like
           every other control beside it. */}
-      <DropdownMenuContent
+      <DropdownMenuContentPositioned
         align="start"
         side={editable ? "bottom" : "top"}
         collisionAvoidance={
@@ -200,10 +201,15 @@ export function ThreadToolsMenu({
         }
         className="w-56"
       >
-        <DropdownMenuLabel>
-          {editable ? "Tools for this thread" : "Running with"}
-        </DropdownMenuLabel>
-        {sections}
+        {/* The label is Base UI's Menu.GroupLabel: it reads its group from
+            context and throws outside one, so it sits inside the group it
+            heads rather than loose in the content. */}
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>
+            {editable ? "Tools for this thread" : "Running with"}
+          </DropdownMenuLabel>
+          {sections}
+        </DropdownMenuGroup>
         {/* Only offered when there is something of the thread's own to take
             back: the profile's links are not this menu's to clear. */}
         {editable && extra > 0 && (
@@ -220,7 +226,7 @@ export function ThreadToolsMenu({
             </DropdownMenuItem>
           </>
         )}
-      </DropdownMenuContent>
+      </DropdownMenuContentPositioned>
     </DropdownMenu>
   )
 }

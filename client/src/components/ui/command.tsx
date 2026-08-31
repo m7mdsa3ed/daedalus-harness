@@ -1,3 +1,5 @@
+"use client"
+
 import * as React from "react"
 import { Command as CommandPrimitive } from "cmdk"
 
@@ -53,11 +55,10 @@ function CommandDialog({
         <DialogDescription>{description}</DialogDescription>
       </DialogHeader>
       <DialogContent
-        /* Centred, like every other dialog: it used to sit at top-1/3, which
-           reads as anchored to nothing once the list grows or shrinks with the
-           query. Dead-centre keeps the input under the cursor's rest position
-           at any result count. */
-        className={cn("overflow-hidden rounded-4xl! p-0", className)}
+        className={cn(
+          "top-1/3 translate-y-0 overflow-hidden rounded-4xl! p-0",
+          className
+        )}
         showCloseButton={showCloseButton}
       >
         {children}
@@ -68,14 +69,8 @@ function CommandDialog({
 
 function CommandInput({
   className,
-  prefix,
   ...props
-}: Omit<React.ComponentProps<typeof CommandPrimitive.Input>, "prefix"> & {
-  /** Sits between the magnifier and the caret — a breadcrumb chip for a palette
-      that has pages, so which list you are typing into is visible rather than
-      inferred from what it contains. */
-  prefix?: React.ReactNode
-}) {
+}: React.ComponentProps<typeof CommandPrimitive.Input>) {
   return (
     <div data-slot="command-input-wrapper" className="p-1 pb-0">
       <InputGroup className="h-9 bg-input/30">
@@ -89,7 +84,6 @@ function CommandInput({
         />
         <InputGroupAddon>
           <HugeiconsIcon icon={SearchIcon} strokeWidth={2} className="size-4 shrink-0 opacity-50" />
-          {prefix}
         </InputGroupAddon>
       </InputGroup>
     </div>
@@ -182,7 +176,7 @@ function CommandShortcut({
     <span
       data-slot="command-shortcut"
       className={cn(
-        "ml-auto flex shrink-0 items-center gap-1 text-xs tracking-widest has-data-[slot=kbd-group]:tracking-normal text-muted-foreground group-data-selected/command-item:text-foreground",
+        "ml-auto text-xs tracking-widest text-muted-foreground group-data-selected/command-item:text-foreground",
         className
       )}
       {...props}

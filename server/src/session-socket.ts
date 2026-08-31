@@ -83,14 +83,23 @@ export class SessionSocket {
        in the middle of a turn would re-fold into a half turn the reducer has
        never seen opened. `earlier` says how many whole steps were withheld.
        Never applied to a resume — the client is asking for a delta it already
-       knows the size of, and windowing that would hide events it is missing. */
+       knows the size of, and windowing that would hide events it is missing.
+
+       The cut is only made when there is genuinely something to withhold
+       (`skip > 0`). Jumping to the first `turn_started` unconditionally looks
+       equivalent and is not, because a log does not have to begin with one: a
+       revive clears the journal and refills it from the `session/load` replay,
+       which is the whole prior conversation with no turn boundaries in it, and
+       the first `turn_started` is then the turn the user typed *after* the
+       revive. So a thread of one turn, well inside any window, replayed from
+       that seq and dropped everything the load had put back — `earlier` said 0
+       (there are no whole turns behind it), so nothing offered it back either.
+       A crash-and-revive lost the conversation on screen while every event of
+       it sat in the table. */
     const journal = this.host.journal;
     const window = opts.window && opts.window > 0 ? opts.window : 0;
-    const from = resumed
-      ? cursor
-      : window
-        ? journal.turnStartAt(session.id, Math.max(0, journal.turnCount(session.id) - window)) ?? 0
-        : 0;
+    const skip = window ? journal.turnCount(session.id) - window : 0;
+    const from = resumed ? cursor : skip > 0 ? journal.turnStartAt(session.id, skip) ?? 0 : 0;
 
     this.send(peer, {
       ev: "attached",

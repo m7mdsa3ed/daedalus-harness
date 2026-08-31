@@ -1,6 +1,7 @@
 import * as React from "react"
 
-import { matchesChord } from "@/lib/shortcuts"
+import { useBinding } from "@/lib/keybindings"
+import { matchesChord, type ShortcutId } from "@/lib/shortcuts"
 
 /**
  * Bind one or more chords on `window`.
@@ -41,4 +42,36 @@ export function useHotkey(
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [enabled, allowRepeat, list])
+}
+
+/**
+ * Bind a *named* shortcut — the chords the reader has it on (lib/keybindings),
+ * not the ones the release ships.
+ *
+ * It is also what settles the override question, in one place: with "Override
+ * the browser" on (the default, and what every handler here used to do by hand)
+ * the event is cancelled, so ⌘S saves the file instead of the page; with it off
+ * the app still acts and the browser's own default is left alone. A handler
+ * bound this way must therefore not call `preventDefault` itself — that is the
+ * preference saying one thing and the code another.
+ *
+ * A handler that returns `false` declines the key: nothing is cancelled and the
+ * event carries on, which is how a guard that only *sometimes* owns the chord
+ * is expressed (`?` typed into a prompt is a character, not a command). Every
+ * other return value means it was handled.
+ */
+export function useShortcut(
+  id: ShortcutId,
+  handler: (event: KeyboardEvent) => boolean | void,
+  options?: { enabled?: boolean; allowRepeat?: boolean }
+): void {
+  const { chords, override } = useBinding(id)
+  useHotkey(
+    chords,
+    (event) => {
+      if (handler(event) === false) return
+      if (override) event.preventDefault()
+    },
+    options
+  )
 }

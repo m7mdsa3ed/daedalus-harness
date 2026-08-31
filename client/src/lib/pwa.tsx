@@ -10,6 +10,7 @@
  * The worker needs nothing from us at runtime: it holds no Firebase config
  * (see src/sw.ts for why), so there is no channel to keep open.
  */
+import type { ReactNode } from "react"
 import { toast } from "@/lib/toast"
 import { registerSW } from "virtual:pwa-register"
 
@@ -86,6 +87,57 @@ async function unregisterRetiredWorkers(): Promise<void> {
 
 const UPDATE_TOAST_ID = "pwa-update"
 
+const INSTALLING_TITLE = "Downloading a new version of Daedalus"
+const INSTALLING_NOTE = "You can keep working — you'll be asked before anything reloads."
+
+/* ── The download's progress ──
+   src/sw.ts counts the precache entries it still has to fetch and posts one
+   message per file written. The count is the honest unit here: a precache is a
+   list of files and Workbox fetches them one at a time, while bytes are only
+   knowable for the responses that carry a Content-Length. Until the worker has
+   worked out its denominator (one cache read, so the first files can land
+   before it does) there is no bar — a spinner is the right way to say "we do
+   not know yet", and a bar drawn against a total of zero would be a lie that
+   later jumps. `done` is clamped for the same reason: the total is a snapshot
+   taken as the install begins, so a file that landed between the snapshot and
+   its arithmetic would otherwise push the bar past its own end. */
+
+interface PrecacheProgress {
+  done: number
+  total: number
+}
+
+let progress: PrecacheProgress | null = null
+
+/** True between the first sign of an installing worker and the offer (or the
+    failure) that replaces the toast — the window in which a progress message
+    has somewhere to go. */
+let installing = false
+
+function installingDescription(): ReactNode {
+  if (!progress || progress.total <= 0) return INSTALLING_NOTE
+  const done = Math.min(progress.done, progress.total)
+  const percent = Math.round((done / progress.total) * 100)
+  return (
+    // Spans, not divs: this lands inside the toast's <p> description.
+    <span className="flex flex-col gap-1.5">
+      <span className="flex items-baseline justify-between gap-2 tabular-nums">
+        <span>
+          {done} of {progress.total} files
+        </span>
+        <span>{percent}%</span>
+      </span>
+      <span className="block h-1 w-full overflow-hidden rounded-pill bg-muted">
+        <span
+          className="block h-full rounded-pill bg-primary transition-[width] duration-300 ease-out"
+          style={{ width: `${percent}%` }}
+        />
+      </span>
+      <span className="block">{INSTALLING_NOTE}</span>
+    </span>
+  )
+}
+
 /** Set once a worker is waiting: hands over and reloads. */
 let applyUpdate: (() => Promise<void>) | null = null
 
@@ -99,14 +151,45 @@ export async function applyPwaUpdate(): Promise<void> {
 export const pwaUpdateReady = (): boolean => applyUpdate !== null
 
 function announceInstalling(): void {
-  toast.loading("Downloading a new version of Daedalus", {
+  installing = true
+  toast.loading(INSTALLING_TITLE, {
     id: UPDATE_TOAST_ID,
-    description: "You can keep working — you'll be asked before anything reloads.",
+    description: installingDescription(),
     duration: Infinity,
   })
 }
 
+/** A tick of the download. `update`, never `add`: raising the same id again
+    would resurrect a toast the user had closed and reset its timer, and a
+    progress readout is the last thing that should argue with a dismissal. It
+    is a no-op when the toast is gone, which is exactly the wanted behaviour. */
+function tickInstalling(): void {
+  toast.update(UPDATE_TOAST_ID, INSTALLING_TITLE, {
+    type: "loading",
+    description: installingDescription(),
+    duration: Infinity,
+  })
+}
+
+/** Follow the installing worker's own report of how far it has got. Registered
+    once, before `registerSW`, because the messages start as soon as the worker
+    does — and kept even while nothing is installing, since the alternative is
+    adding and removing a listener around a window that opens on an event we
+    may see late. */
+function watchProgress(): void {
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    const data = event.data as { type?: string; done?: number; total?: number } | undefined
+    if (data?.type !== "PRECACHE_PROGRESS") return
+    progress = { done: data.done ?? 0, total: data.total ?? 0 }
+    // A first install draws nothing (see watchInstalling), so a message that
+    // arrives with no toast up has nowhere to go.
+    if (installing) tickInstalling()
+  })
+}
+
 function offerUpdate(): void {
+  installing = false
+  progress = null
   toast("A new version of Daedalus is ready", {
     id: UPDATE_TOAST_ID,
     description: "Reload to pick it up — drafts are kept, and a running turn carries on.",
@@ -145,11 +228,18 @@ function offerUpdate(): void {
 function watchInstalling(worker: ServiceWorker | null): void {
   if (!worker || !navigator.serviceWorker.controller) return
   if (worker.state === "activated" || worker.state === "redundant") return
+  // Each install is its own download; the last one's numbers are not this
+  // one's, and the worker re-states them within a cache read anyway.
+  progress = null
   announceInstalling()
   worker.addEventListener("statechange", () => {
     // The install failed: there is no update to offer, so take the spinner
     // away rather than leaving it turning against nothing.
-    if (worker.state === "redundant") toast.dismiss(UPDATE_TOAST_ID)
+    if (worker.state === "redundant") {
+      installing = false
+      progress = null
+      toast.dismiss(UPDATE_TOAST_ID)
+    }
   })
 }
 
@@ -166,6 +256,7 @@ export function registerPwa(): void {
 }
 
 function registerAppWorker(): void {
+  watchProgress()
   const updateSW = registerSW({
     immediate: true,
     onNeedRefresh() {

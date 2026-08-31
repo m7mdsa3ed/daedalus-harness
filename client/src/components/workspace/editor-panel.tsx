@@ -35,9 +35,10 @@ import { CodeEditor } from "@/components/workspace/code-editor"
 import { DiffEditor } from "@/components/workspace/diff-editor"
 import { useDock } from "@/components/workspace/dock"
 import { PanelEmptyState, PanelToolbar } from "@/components/workspace/primitives"
-import { useHotkey } from "@/hooks/use-hotkey"
+import { useShortcut } from "@/hooks/use-hotkey"
 import { describeError, reportError } from "@/lib/errors"
-import { KEYS } from "@/lib/shortcuts"
+import { useChord } from "@/lib/keybindings"
+import { formatChord } from "@/lib/shortcuts"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { clearBuffer, loadBuffer, saveBuffer } from "@/lib/workspace/buffers"
@@ -81,6 +82,8 @@ export function EditorPanel({
   const confirm = useConfirm()
   const { state } = useStore()
   const project = state.projects.find((candidate) => candidate.id === projectId)
+
+  const saveChord = useChord("save") ?? ""
 
   const [file, setFile] = React.useState<WorkspaceFile | null>(null)
   const [draft, setDraft] = React.useState<string | null>(null)
@@ -339,10 +342,9 @@ export function EditorPanel({
 
   // ⌘S while this panel is the one in front. The editor binds it too, for when
   // the caret is inside it; this is the same action from the toolbar's scope.
-  useHotkey(
-    KEYS.save,
-    (event) => {
-      event.preventDefault()
+  useShortcut(
+    "save",
+    () => {
       void save()
     },
     { enabled: active && dirty }
@@ -421,7 +423,7 @@ export function EditorPanel({
               size="icon-xs"
               variant="ghost"
               aria-label="Save"
-              title={`Save · ${KEYS.save}`}
+              title={`Save · ${formatChord(saveChord)}`}
               className={cn("size-6", dirty && "text-primary")}
               disabled={!dirty || saving}
               onClick={() => void save()}

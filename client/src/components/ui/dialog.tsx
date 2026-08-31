@@ -1,3 +1,5 @@
+"use client"
+
 import * as React from "react"
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 
@@ -78,9 +80,9 @@ function DialogContent({
   )
 }
 
-function DialogHeader({ className, ...props }: React.ComponentProps<"header">) {
+function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
-    <header
+    <div
       data-slot="dialog-header"
       className={cn("flex flex-col gap-2", className)}
       {...props}
@@ -93,11 +95,11 @@ function DialogFooter({
   showCloseButton = false,
   children,
   ...props
-}: React.ComponentProps<"footer"> & {
+}: React.ComponentProps<"div"> & {
   showCloseButton?: boolean
 }) {
   return (
-    <footer
+    <div
       data-slot="dialog-footer"
       className={cn(
         "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
@@ -111,7 +113,7 @@ function DialogFooter({
           Close
         </DialogPrimitive.Close>
       )}
-    </footer>
+    </div>
   )
 }
 

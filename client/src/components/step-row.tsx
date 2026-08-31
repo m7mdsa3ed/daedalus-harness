@@ -148,10 +148,14 @@ export const StepRow = React.memo(function StepRow({
 
   return (
     <div>
-      <button
-        type="button"
-        disabled={!expandable}
-        onClick={() => setOpen((o) => !o)}
+      {/* The row is the wrapper, not the button. The trailing columns — the
+          metric and the label — sit OUTSIDE the disclosure control, because
+          the metric is a popover trigger now (a step's tokens carry the same
+          breakdown a turn's do) and a button may not hold a button. The
+          wrapper keeps every class the button used to carry, `group/step`
+          included, so the hover tint still covers the whole line and the
+          chevron still swaps in when the pointer is anywhere on it. */}
+      <div
         className={cn(
           // items-start, not items-baseline: the target span is `truncate`
           // (overflow: hidden), so its baseline is its bottom edge — baseline
@@ -164,73 +168,80 @@ export const StepRow = React.memo(function StepRow({
           // cancels on BOTH sides: a `w-full` box only shifts left under a
           // negative start margin, which left the row's content edge 12px shy
           // of the right edge that messages run to.
-          "group/step -mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-start gap-2 rounded-md px-1.5 py-0.5 text-start transition-colors duration-150",
+          "group/step -mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-start gap-2 rounded-md px-1.5 py-0.5 transition-colors duration-150",
           expandable && "hover:bg-muted/40"
         )}
       >
-        {Icon && (
-          <span
-            className={cn(
-              // h-6, not size-3.5: the mark has to occupy a whole line box, or
-              // `items-start` would hang it off the top of the text it marks.
-              "relative flex h-6 w-3.5 shrink-0 items-center justify-center",
-              failed ? "text-destructive" : active ? "text-primary" : "text-muted-foreground/60"
-            )}
-          >
-            <Icon
-              className={cn(
-                "size-3.5 transition-opacity duration-100",
-                expandable && (open ? "opacity-0" : "group-hover/step:opacity-0")
-              )}
-            />
-            {expandable && (
-              <ChevronRightIcon
-                aria-hidden
-                className={cn(
-                  "absolute size-3.5 text-muted-foreground transition-[opacity,transform] duration-100",
-                  open ? "rotate-90 opacity-100" : "opacity-0 group-hover/step:opacity-100"
-                )}
-              />
-            )}
-          </span>
-        )}
-        {/* Steps are what the agent did, not what it said: the whole row sits at
-            caption weight so prose stays the thing you read. */}
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="flex min-w-0 items-baseline gap-1.5">
+        <button
+          type="button"
+          disabled={!expandable}
+          onClick={() => setOpen((o) => !o)}
+          className="flex min-w-0 flex-1 items-start gap-2 text-start"
+        >
+          {Icon && (
             <span
               className={cn(
-                "min-w-0 truncate text-xs leading-6",
-                mono && "font-mono",
-                failed ? "text-destructive" : "text-muted-foreground",
-                active && "harness-shimmer"
+                // h-6, not size-3.5: the mark has to occupy a whole line box, or
+                // `items-start` would hang it off the top of the text it marks.
+                "relative flex h-6 w-3.5 shrink-0 items-center justify-center",
+                failed ? "text-destructive" : active ? "text-primary" : "text-muted-foreground/60"
               )}
             >
-              {target}
-            </span>
-            {/* The file a step acted on, as a chip: the path is gone in the
-                basename, so the row says "Read" + `package.json` instead of an
-                elided "/var/www/…/package.json". Baseline-aligned with the
-                title so it reads on the same line, never on a second row. */}
-            {file && <FileBadge file={file} filePath={filePath} range={fileRange} />}
-          </span>
-          {/* The command under its description. One notch quieter and one notch
-              smaller than the title, and always mono — it is the literal thing
-              that ran, so it is read as code even when the line above it is
-              prose. `-mt-1` claws back the slack in the two leadings so the
-              pair reads as one row rather than as two. */}
-          {caption && (
-            <span className="-mt-1 min-w-0 truncate font-mono text-[11px] leading-5 text-muted-foreground/55">
-              {caption}
+              <Icon
+                className={cn(
+                  "size-3.5 transition-opacity duration-100",
+                  expandable && (open ? "opacity-0" : "group-hover/step:opacity-0")
+                )}
+              />
+              {expandable && (
+                <ChevronRightIcon
+                  aria-hidden
+                  className={cn(
+                    "absolute size-3.5 text-muted-foreground transition-[opacity,transform] duration-100",
+                    open ? "rotate-90 opacity-100" : "opacity-0 group-hover/step:opacity-100"
+                  )}
+                />
+              )}
             </span>
           )}
-        </span>
-
-        {elapsedMs !== null && elapsedMs >= 2000 && (
-          <span className="shrink-0 text-[11px] leading-6 tabular-nums text-muted-foreground/60">
-            {formatElapsed(elapsedMs)}
+          {/* Steps are what the agent did, not what it said: the whole row sits at
+              caption weight so prose stays the thing you read. */}
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="flex min-w-0 items-baseline gap-1.5">
+              <span
+                className={cn(
+                  "min-w-0 truncate text-xs leading-6",
+                  mono && "font-mono",
+                  failed ? "text-destructive" : "text-muted-foreground",
+                  active && "harness-shimmer"
+                )}
+              >
+                {target}
+              </span>
+              {/* The file a step acted on, as a chip: the path is gone in the
+                  basename, so the row says "Read" + `package.json` instead of an
+                  elided "/var/www/…/package.json". Baseline-aligned with the
+                  title so it reads on the same line, never on a second row. */}
+              {file && <FileBadge file={file} filePath={filePath} range={fileRange} />}
+            </span>
+            {/* The command under its description. One notch quieter and one notch
+                smaller than the title, and always mono — it is the literal thing
+                that ran, so it is read as code even when the line above it is
+                prose. `-mt-1` claws back the slack in the two leadings so the
+                pair reads as one row rather than as two. */}
+            {caption && (
+              <span className="-mt-1 min-w-0 truncate font-mono text-[11px] leading-5 text-muted-foreground/55">
+                {caption}
+              </span>
+            )}
           </span>
-        )}
+
+          {elapsedMs !== null && elapsedMs >= 2000 && (
+            <span className="shrink-0 text-[11px] leading-6 tabular-nums text-muted-foreground/60">
+              {formatElapsed(elapsedMs)}
+            </span>
+          )}
+        </button>
         {metric && (
           <span className="shrink-0 text-[11px] leading-6 tabular-nums text-muted-foreground/60">
             {metric}
@@ -246,7 +257,7 @@ export const StepRow = React.memo(function StepRow({
             {failed ? "failed" : label}
           </span>
         )}
-      </button>
+      </div>
 
       {below && <div className="mb-1 min-w-0 pl-[1.375rem]">{below}</div>}
       {expandable && open && <div className="mt-1 mb-2.5 min-w-0 space-y-2">{detail}</div>}
