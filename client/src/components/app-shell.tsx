@@ -52,6 +52,7 @@ import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { ProjectFormPage, ProjectsPage } from "@/components/settings/projects"
 import { ProjectPage } from "@/components/project-page"
+import { StudioPage } from "@/components/studio-page"
 import {
   SETTINGS_NAV_GROUPS,
   SETTINGS_SECTIONS,
@@ -71,6 +72,7 @@ import { PersonaFormPage, PersonasPage } from "@/components/settings/personas"
 import { ProfileFormPage, ProfilesPage } from "@/components/settings/profiles"
 import { AgentsPage } from "@/components/settings/agents"
 import { QuotaPage } from "@/components/settings/quota"
+import { TemplateFormPage, TemplatesPage } from "@/components/settings/templates"
 import { WebSearchPage } from "@/components/settings/web-search"
 import { BackupPage } from "@/components/settings/backup"
 import { ThemeEditorPage } from "@/components/theme-builder"
@@ -600,6 +602,10 @@ export function AppShell({
             <Route path="notifications" element={<NotificationsPage />} />
             <Route path="projects" element={<ProjectsPage />} />
             <Route path="projects/:entryId" element={<ProjectFormPage />} />
+            {/* No import route, like personas: nothing in the agents' own
+                configs is a project template to import. */}
+            <Route path="templates" element={<TemplatesPage />} />
+            <Route path="templates/:entryId" element={<TemplateFormPage />} />
             <Route path="mcp" element={<McpPage />} />
             <Route path="mcp/import" element={<McpImportPage />} />
             <Route path="mcp/:entryId" element={<McpFormPage />} />
@@ -676,6 +682,11 @@ export function AppShell({
               Outside /settings on purpose — settings holds the *form*, and a
               workspace with a history is not a settings screen. */}
           <Route path="/projects/:projectId" element={<ProjectPage actions={actions} />} />
+          {/* The Studio: the gallery, and the dialog that turns a template into
+              a directory, a project row and a prefilled draft. Beside the
+              project page for the same reason — it is a place, not a form, and
+              Settings › Templates keeps the editing half. */}
+          <Route path="/studio" element={<StudioPage actions={actions} />} />
           <Route
             path="/board"
             element={

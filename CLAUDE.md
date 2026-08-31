@@ -437,7 +437,12 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   **Where the replay starts has three sources and only one meaning per attach**, which is
   why `attached` states it rather than leaving it to be inferred from `from > 0`: a fresh
   attach starts at 0; a *resume* starts at this device's own cursor (`journalCursors` /
-  `resumeCursor` in `actions.ts`, so a dropped socket costs a delta and not the thread); and
+  `resumeCursor` in `actions.ts`, so a dropped socket costs a delta and not the thread) —
+  **which has to move with every journaled event, not be written once at `caught_up`**, the
+  bug being that a cursor frozen at attach time described a transcript an hour out of date,
+  so the resume asked for a delta the device already had and the whole hour was folded onto
+  the end of itself a second time (`ThreadSocket.cursor`, raised in `handle` and not in
+  `fold`, since a `load_earlier` re-fold runs events this cursor is long past); and
   a *windowed* attach starts wherever the server chose, because the thread was longer than
   `REPLAY_WINDOW_STEPS` **or heavier than `REPLAY_WINDOW_BYTES`** — two budgets, whichever
   binds first (`SessionJournal.windowStart`), because a step is a turn and a turn is not a
@@ -468,7 +473,12 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   turn extends to seq 0 and takes it along. The first two replace the transcript, the third also replaces it — but
   `from` is large in the second and third alike, so `resumed` is a field and not a
   comparison. `earlier` says how much was withheld, and `load_earlier` fetches it a page at
-  a time. Folding one of those pages is the awkward part: the reducer only appends, so an
+  a time — **fetched before it is asked for**, when the top of the transcript comes within a
+  screenful of the viewport (`prefetchEarlier`, an IntersectionObserver on the "Load earlier
+  steps" row): paging back is a round trip plus a re-fold, only the round trip can be paid
+  in advance, and it stays a button rather than becoming an infinite scroll because a
+  re-fold moves the scroll position under the reader. Folding one of those pages is the
+  awkward part: the reducer only appends, so an
   older event cannot be inserted into a built transcript — `ThreadSocket.loadEarlier`
   re-folds the whole widened window through the same callbacks inside the same buffer, which
   is why the socket keeps its raw journaled events, and why it only keeps them when
@@ -481,7 +491,29 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   both ends. The frames are built from the payload column **as text** and put straight on
   the socket: it is already the JSON the browser needs, so parsing it to re-serialize it
   once per peer is work with no reader — and the scan is paged, so a replay costs a page of
-  memory rather than the whole transcript.
+  memory rather than the whole transcript, in **bytes as well as rows**: the DB page is
+  sized from the last one's average event, since five hundred rows of terminal output is
+  25MB fetched to emit five frames of five, which is the peak the paging exists to bound.
+  **The frames are also paced against the socket** (`SessionSocket.sendFrame` awaits each
+  write): pushing the whole window at a slow peer held it in this process's memory until it
+  drained, and running the loop to completion meant one attach to a heavy thread got every
+  tick before any other thread's turn did. Pacing it means it **yields**, which is a second
+  rule and not a detail — a turn can now be journaled between two frames. So the replay is
+  bounded at the `to` that `attached` names, everything past that reaches the peer as the
+  live event it is, and a peer mid-replay holds its fan-out in `Peer.pending` until
+  `caught_up` has gone out. Without the bound the trailing page and the buffer would each
+  send that turn; without the buffer it would arrive before the history it follows. The
+  attach bracket itself (`attached`, `caught_up`, replies) writes past the buffer, or the
+  line that opens the replay would be held until the replay had ended. `session_events`
+  carries a **partial index on the turn boundaries** (`session_events_turns`, `where kind =
+  'turn_started'`) because every structural read is the same question — where do this
+  session's turns begin — and one attach asks it four times: on the busiest thread in a real
+  install (97k events) that is 16ms a call against a covering-index lookup's 0.01ms, and the
+  scan was reading the terminal output and diffs it was skipping past. The socket is
+  compressed above 8KB (`perMessageDeflate`, `threshold`), which is the frames and not the
+  streamed `update`s: a frame is self-similar JSON that deflates five to ten times over, so
+  this buys window back rather than trimming it, while a few hundred bytes of streamed text
+  arriving thousands of times a turn would pay more for zlib than it saves.
   It is a container, not a fifth journaled kind: `attached`/`caught_up` still bracket it and
   `thread-socket.ts` unrolls it back through the same switch, so there is still one parser.
   It is **opt-in** (`?batch=1`, which `wsUrl` sets): a client that predates the shape would
@@ -496,8 +528,9 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   costs an order of magnitude fewer renders than an event at a time — `commit` keeps
   buffering where `flush` closes the buffer, and the array is replaced rather than emptied,
   since the actions in it have just been handed to the reducer. Each frame also raises
-  `onReplayProgress`, counted against the `to` that `attached` now states — the log's length,
-  read in the same tick as `caught_up`'s `cursor` so the two cannot disagree — which is what
+  `onReplayProgress`, counted against the `to` that `attached` now states — where the replay
+  *ends*, which is a real bound on it and not just a reading of the log, so the count cannot
+  be outrun by a turn streaming while the client connects — which is what
   turns the wait into a quantity: `ThreadState.replay` drives a bar in `StartingLine` instead
   of a line apologising for a length it had no evidence for. Before `attached` the client
   knows nothing about the thread's *size* (the wait is the network, the socket, or a server
@@ -845,52 +878,75 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   the card itself used to hold: a run is N whole threads, and a transcript column is the
   wrong room to read one in (the table fought the panel for width, and a step's events
   ended up in a pane inside a card inside a transcript). The card answers the passing
-  reader's questions and nothing else: a two-line header (an icon chip in the run's state
-  tint, the run's name over `done/total · running phase · elapsed`, the state as a word in
-  `WorkflowPill`), the meter, and a foot line that live says the step being written plus
+  reader's questions and nothing else: a header (an icon chip in the run's state tint,
+  the run's name, its **fact line**, the state as a word in `WorkflowPill`), the
+  **pipeline strip**, and a foot line that live says the step being written plus
   `currentActivity` (the newest call still open — `summarise`'s counts describe what a
   working step did a minute ago) and settled-failed names the step that failed. The whole
-  card is one `DialogTrigger` button (children are spans — a button holds phrasing
-  content), with a standing `Maximize2Icon` hint: hover is not the only way in, just the
-  first one discovered. **The meter is one segment per step**, grouped by phase and tinted
-  per step state (`WorkflowMeter`, `className` from the caller since card and dialog pad
-  differently), replacing the pip-per-phase and done/total bar that used to sit apart:
-  segments share width in proportion to a phase's step count, so a phase of six does not
-  read the length of a phase of one. Every state colour anywhere — meter fills, mark
-  discs, count pills, chips — comes from one table (`WF_TONE`/`wfTone`), because four
-  surfaces each picking their own let a failed step read destructive in one and merely
-  muted in another. **The dialog is the run**: it restates the card's header (it covers
-  the transcript, so it must say which run it is showing) over a two-pane body — a
-  sidebar of the run's phases with their steps under them, and the selected step's events
-  beside it. The sidebar is a Base UI `Tabs.List`: each started step is a `Tabs.Tab`
-  (`WorkflowStepTab`: state mark in its tinted disc, the definition's step name, a live
-  second line of `currentActivity` while it runs, duration trailing) and the selected
-  step's `SubagentBody` — the very same brief/thread-link/rail/report a step draws on its
-  own, which is what `SubagentStep` was split around — is its `Tabs.Panel`
-  (`WorkflowStepPanel`), scrolling in its own pane so a long rail never grows the dialog.
-  Phase headers (`WorkflowPhaseHeader`: name, duration, done/total pill) are sticky and
-  are not tabs — nor are pending rows — so they never take the roving focus and ↑/↓ walk
-  the steps, Enter picks, Home/End reach the ends. Selection is **manual**
-  (`activateOnFocus` off: a panel is a whole transcript) and only the selected panel
-  mounts (`keepMounted` off, so nine steps cost one transcript). Phases no longer fold —
-  the dialog has the room the card never did. Opening the dialog lands on the running
-  step, else the failed one, else the first, and keeps a pick made last time; on a phone
-  (`useIsMobile`) it opens on the list instead, because there the panel *replaces* the
-  list (`max-sm:hidden` both ways) and the panel header grows a back button — the two
-  panes are viewport-anchored now, so their breakpoints are `sm:`, not `@panel-*`. A
-  running row is tinted `bg-primary/5` and a failed one `bg-destructive/5` (the two rows
-  anyone is looking for), a pending row trails `waiting` rather than sitting blank, and
-  every row carries its state as `sr-only` text, since the mark that states it is an
-  icon. **The shape is drawn before it happens**: the same stamp carries `plan`, the
-  whole outline (phases and the step names in them), repeated on *every* spawn — so the
-  meter and the sidebar show every step of the definition from the first spawn, the ones
-  the runner has not reached yet dimmed (`WorkflowPendingItem`), and `phasesOf` is what
+  card is one button (children are spans — a button holds phrasing content), with a
+  standing `Maximize2Icon` hint: hover is not the only way in, just the first one
+  discovered. **The strip is one chip per phase with a chevron between them**
+  (`PipelineStrip`), each chip carrying its stage's name, its `done/total` and a pip per
+  step tinted with that step's own state; chips share the row in proportion to their step
+  counts, so a phase of six does not read the length of a phase of one, and they wrap
+  rather than scroll, since a card inside a transcript column cannot own a horizontal
+  scroller. It replaced a 1px rule of segments that was honest and unreadable — a mark
+  small enough to be taken for a border, with the stage names captioned under it — and a
+  chip is the smallest thing that can hold a stage's name, its count and its steps at
+  once. **The fact line is `RunFact[]`, derived once and drawn twice** (`RunFactsInline`
+  on the card — spans, one truncating row, because the card is a button; `RunFactsBlock`
+  in the dialog header, where there is room to label each figure): the figure leads and
+  the noun follows it, where four dot-joined phrases of equal weight were a sentence to
+  read rather than a reading to take. A failure **count** is one of them, because a run
+  that has moved on from a failure still has to admit to it where the foot line no longer
+  can. Every state colour anywhere — pips, chips, column headers, marks, cards — comes
+  from one table (`WF_TONE`/`wfTone`, which carries a `text`, a `fill`, a `chip` and a
+  `border`), because four surfaces each picking their own let a failed step read
+  destructive in one and merely muted in another. **The dialog is the run, and it is a
+  board, not a list**: it restates the card's header (it covers the transcript, so it must
+  say which run it is showing) over columns that run left to right — a phase is a column
+  (`WorkflowPhaseColumn`: a state dot, the stage's name, its duration and a `done/total`
+  pill, its cards scrolling under it), a step is a card in it (`WorkflowStepCard`), and a
+  chevron sits between columns. The sidebar it replaces spent its width on one narrow
+  column of every step in the run, banded by phase, so the thing a definition is *about* —
+  these three run together, and only then does that one start — was left to be inferred
+  from a heading; columns say it in the layout. Everything is a size larger than it was,
+  too: a step is a whole thread of work, and at 11px in a 16rem column a run read as a
+  table of file names. The board is a Base UI `Tabs.List`: each started step is a
+  `Tabs.Tab` (state mark in its tinted square, the definition's step name over two lines
+  if it needs them, a live line of `currentActivity` while it runs, duration and tokens
+  along the foot), a column header is not a tab — nor is a pending card — so ↑/↓ walk the
+  steps in the order they run, Enter picks, Home/End reach the ends. Selection is
+  **manual** (`activateOnFocus` off: a panel is a whole transcript) and only the selected
+  panel mounts (`keepMounted` off, so nine steps cost one transcript). The selected step's
+  `SubagentBody` — the very same brief/thread-link/rail/report a step draws on its own,
+  which is what `SubagentStep` was split around — is its `Tabs.Panel`
+  (`WorkflowStepPanel`), and the panel is an **overlay that slides over the board from
+  the right** (full width on a phone), scrolling in its own pane so a long rail never
+  grows the dialog: a step's transcript wants every pixel it can get, the board behind it
+  is still worth seeing at the edge, and picking another card is one click past the pane.
+  Which is why **opening the dialog lands on the board and never on a step** — the old
+  two-pane dialog had a permanently empty pane to fill and so auto-selected the running
+  step, where an overlay doing the same would cover the run with one of its steps at the
+  moment the reader asked to see the run; the step worth opening is already the loud card
+  in the tinted column, and a pick made last time is still kept. A running card is tinted
+  `bg-primary/5` and a failed one `bg-destructive/5` (the two anyone is looking for), a
+  pending card is a dashed ghost trailing `waiting` rather than a blank, and every card
+  carries its state as `sr-only` text, since the mark that states it is an icon. At phone
+  width the columns stack (`max-md:flex-col`) — the run then reads top to bottom, which is
+  the same order. **The shape is drawn before it happens**: the same stamp carries `plan`,
+  the whole outline (phases and the step names in them), repeated on *every* spawn — so
+  the strip and the board show every step of the definition from the first spawn, the ones
+  the runner has not reached yet drawn as `WorkflowPendingCard`s, and `phasesOf` is what
   joins the outline to the steps that have started. Repeating it is what keeps it
   journaled and replayed for free: an outline sent once would have to be an event kind of
   its own, and a view built only from spawns can only ever say what has already happened.
-  A flat definition's outline is one phase named `null`, whose header is left out — a
-  plain step list, which is also what a journal written before phases existed replays as,
-  since `phasesOf` falls back to the arrived steps when there is no plan.
+  A flat definition's outline — and every ad-hoc batch — is one phase named `null`: chips
+  with no name on the card, and a responsive **grid** of step cards rather than columns in
+  the dialog, since there are no stages to put side by side and one tall column down the
+  left of an empty dialog is the shape a board is there to avoid. That is also what a
+  journal written before phases existed replays as, since `phasesOf` falls back to the
+  arrived steps when there is no plan.
   A settled step's duration is start-to-last-activity (`lastActivityAt`): nothing records
   when a step *ended*, and the reducer never marks one done. Only `update`s are mirrored: a child's
   `turn_started`/`turn_ended` on the parent's log would cut the parent's replay windows at

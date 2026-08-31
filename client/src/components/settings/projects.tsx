@@ -1,5 +1,14 @@
 import * as React from "react"
-import { BookOpenIcon, FolderIcon, PanelsTopLeft, Pencil, Plus, RefreshCwIcon, Trash2 } from "lucide-react"
+import {
+  BookOpenIcon,
+  FolderIcon,
+  PanelsTopLeft,
+  Pencil,
+  Plus,
+  RefreshCwIcon,
+  Sparkles,
+  Trash2,
+} from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
 import { captureError, reportError, type InlineError, describeError } from "@/lib/errors"
 import { Button } from "@/components/ui/button"
@@ -14,7 +23,7 @@ import { addKnowledge, deleteKnowledge, listKnowledge, type KnowledgeEntry } fro
 import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions, FormSection } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
-import { projectPath, settingsFormPath, settingsPath } from "@/lib/router"
+import { projectPath, settingsFormPath, settingsPath, studioPath } from "@/lib/router"
 
 export function ProjectsPage() {
   const { settings, actions } = useSettingsPage()
@@ -52,7 +61,22 @@ export function ProjectsPage() {
     <>
       <PageHeader meta={meta} action={newButton} />
       {state.projects.length === 0 ? (
-        <EmptyCard icon={FolderIcon} text="No projects yet — a thread needs one to know where to run." action={newButton} />
+        /* The one screen where the Studio is the better answer: a person with
+           no projects has no directory to name yet, and "New project" asks for
+           one. Offered beside it rather than instead of it — pointing at code
+           that already exists is still the ordinary case. */
+        <EmptyCard
+          icon={FolderIcon}
+          text="No projects yet — a thread needs one to know where to run."
+          action={
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {newButton}
+              <Button variant="outline" onClick={() => void navigate(studioPath())}>
+                <Sparkles className="size-4" /> Start from a template
+              </Button>
+            </div>
+          }
+        />
       ) : (
         <Group>
           {state.projects.map((project) => (

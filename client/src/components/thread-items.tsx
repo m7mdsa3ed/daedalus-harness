@@ -20,7 +20,6 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
-import { useIsMobile } from "@/hooks/use-mobile"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import { ItemContextMenu } from "@/components/item-context-menu"
@@ -512,7 +511,7 @@ function SubagentBody({
     the newest call at all. `summarise`'s counts are the right answer for a
     step that has finished and the wrong one while it works — "reading 2
     files" is what it did a minute ago. Read by the preview card's live line
-    and by the dialog sidebar's running row alike. */
+    and by the board's running card alike. */
 function currentActivity(rows: Row[]): string | undefined {
   const tools = collectTools(rows)
   if (!tools.length) return undefined
@@ -553,36 +552,42 @@ const WF_STATE_ICONS: Record<string, React.ComponentType<{ className?: string }>
    how every one of them asks for it. */
 type WfState = "pending" | "running" | "completed" | "failed" | "cancelled" | "disconnected"
 
-const WF_TONE: Record<WfState, { text: string; fill: string; chip: string }> = {
+const WF_TONE: Record<WfState, { text: string; fill: string; chip: string; border: string }> = {
   pending: {
     text: "text-muted-foreground/40",
     fill: "bg-muted-foreground/15",
     chip: "bg-muted text-muted-foreground/60",
+    border: "border-muted-foreground/15",
   },
   running: {
     text: "text-primary",
     fill: "bg-primary animate-pulse",
     chip: "bg-primary/10 text-primary",
+    border: "border-primary/50",
   },
   completed: {
     text: "text-muted-foreground/60",
     fill: "bg-muted-foreground/50",
     chip: "bg-muted text-muted-foreground",
+    border: "border-muted-foreground/25",
   },
   failed: {
     text: "text-destructive",
     fill: "bg-destructive",
     chip: "bg-destructive/10 text-destructive",
+    border: "border-destructive/50",
   },
   cancelled: {
     text: "text-muted-foreground/50",
     fill: "bg-muted-foreground/25",
     chip: "bg-muted text-muted-foreground/70",
+    border: "border-muted-foreground/20",
   },
   disconnected: {
     text: "text-muted-foreground/50",
     fill: "bg-muted-foreground/25",
     chip: "bg-muted text-muted-foreground/70",
+    border: "border-muted-foreground/20",
   },
 }
 
@@ -626,7 +631,7 @@ function lastActivityAt(rows: Row[]): number {
     the user wrote. A launch call has no definition behind it, so it reads by
     the brief the agent gave that worker (`description`) and not by
     `toolHeading`'s title, which is the word "Task" for every one of them — a
-    sidebar of three identical rows names nothing. */
+    board of three identical cards names nothing. */
 function stepNameOf(group: SubagentGroup, fallback?: string): string {
   const head = group.head
   const info = head.kind === "subagent" ? head.workflow : undefined
@@ -648,16 +653,22 @@ function useStepElapsed(group: SubagentGroup): number | null {
 }
 
 /**
- * One step of the run, as a row of the dialog's sidebar *and* as a tab: its
- * mark, its name, its duration — and while it runs, what it is on right now,
- * as a second line, because the sidebar is the only part of the dialog that
- * says anything about a step you have not selected.
+ * One step of the run, as a **card on the board**: its mark in a tinted
+ * square, its name at a size a name deserves, what it is on right now while
+ * it runs, and its duration and cost along the foot.
  *
- * A tab so the run is walkable — ↑/↓ move between steps, Enter picks one,
- * `Home`/`End` reach the ends; Base UI's tabs give the roving focus and the
- * ARIA wiring (see the Tabs.Root in `WorkflowPreviewDialog`).
+ * A card rather than the sidebar row this used to be, because a step is a
+ * whole thread of work and the row it was drawn as — 12px of truncated name
+ * in a 16rem column — read as a table of file names. A card can hold two
+ * lines of a name and a line of live activity without either of them fighting
+ * the other, which is the whole of what a reader wants off an unselected step.
+ *
+ * Still a tab, so the run stays walkable: ↑/↓ move between steps (in column
+ * order, which is the order they run in), Enter picks one, `Home`/`End` reach
+ * the ends. Base UI gives the roving focus and the ARIA wiring — see the
+ * `Tabs.Root` in the dialog.
  */
-function WorkflowStepTab({ group }: { group: SubagentGroup }) {
+function WorkflowStepCard({ group }: { group: SubagentGroup }) {
   const active = group.active
   const state = stepStateOf(group)
   const failed = state === "failed"
@@ -667,82 +678,77 @@ function WorkflowStepTab({ group }: { group: SubagentGroup }) {
   const Mark = WF_STATE_ICONS[state] ?? LoaderCircleIcon
   const view = useViewOptionsContext()
   const tokens = view.showTokens ? stepUsage(group) : undefined
-  /* Live, the second line says what the step is on right now. */
+  /* Live, the card says what the step is on right now — the one thing about a
+     step you have not opened that is worth the room. */
   const activity = active ? currentActivity(group.children) : undefined
-  /* Only a step that did not simply succeed spends the trailing text on a
-     word — the mark says the rest. */
-  const trailing = state === "completed" || state === "running" ? null : state
+  const tone = wfTone(state)
+  /* Only a step that did not simply succeed spends a word on its state; the
+     mark says the rest. */
+  const word = state === "completed" || state === "running" ? null : state
 
   return (
     <Tabs.Tab
       value={group.id}
       disabled={!selectable}
       className={cn(
-        /* A step mounts when the runner reaches it, replacing its pending row
+        /* A step mounts when the runner reaches it, replacing its pending card
            — the space is already held, so it fades alive rather than sliding. */
-        "group/wfs harness-fade-in flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-start transition-colors duration-150",
-        "focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-ring",
-        /* The row the eye should land on is the one being written. A failure
-           keeps its own tint after the fact, since that is the row you came
-           back for. Selection outranks both — it is the answer to "which of
-           these am I reading", and it has to win over a state colour. */
-        active && "bg-primary/5",
-        failed && "bg-destructive/5",
-        selectable ? "cursor-pointer hover:bg-muted/60" : "cursor-default",
-        "data-active:bg-accent data-active:shadow-xs"
+        "group/wfs harness-fade-in flex w-full flex-col gap-2 rounded-xl border p-3 text-start",
+        "transition-[transform,box-shadow,border-color,background-color] duration-150",
+        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+        /* The card the eye should land on is the one being written; a failure
+           keeps its tint after the fact, since that is the card you came back
+           for. Selection outranks both — it answers "which of these am I
+           reading", and it has to win over a state colour. */
+        failed
+          ? "border-destructive/30 bg-destructive/5"
+          : active
+            ? "border-primary/30 bg-primary/5"
+            : "border-border/60 bg-card",
+        selectable ? "cursor-pointer hover:-translate-y-px hover:shadow-sm" : "cursor-default",
+        "data-active:border-primary/70 data-active:ring-1 data-active:ring-primary/25 data-active:shadow-md"
       )}
     >
-      {/* The mark sits in a disc of its own state's tint: a column of bare
-          glyphs reads as punctuation, and the mark column is what the eye
-          runs down looking for the step that failed. */}
-      <span
-        className={cn(
-          "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full",
-          failed
-            ? "bg-destructive/10 text-destructive"
-            : active
-              ? "bg-primary/10 text-primary"
-              : "text-muted-foreground/60"
-        )}
-      >
-        <Mark className={cn("size-3", active && "animate-spin")} />
-      </span>
-      <span className="flex min-w-0 flex-1 flex-col">
+      <span className="flex w-full items-start gap-2.5">
+        {/* The mark in a square of its own state's tint: a column of bare
+            glyphs reads as punctuation, and this is what the eye runs down
+            looking for the step that failed. */}
+        <span
+          aria-hidden
+          className={cn("flex size-6 shrink-0 items-center justify-center rounded-lg", tone.chip)}
+        >
+          <Mark className={cn("size-3.5", active && "animate-spin")} />
+        </span>
         <span
           className={cn(
-            "min-w-0 truncate text-xs leading-5",
-            failed ? "text-destructive" : active ? "text-foreground/90" : "text-muted-foreground",
-            "group-data-active/wfs:font-medium group-data-active/wfs:text-foreground",
-            active && "harness-shimmer"
+            "min-w-0 flex-1 text-sm leading-5 font-medium",
+            failed ? "text-destructive" : active ? "text-foreground" : "text-foreground/85"
           )}
         >
           {/* The mark is the only thing that states the state, and it is an
               icon — so say it once for a reader who cannot see one. */}
           <span className="sr-only">{state}: </span>
-          {stepNameOf(group)}
+          <span className={cn("line-clamp-2", active && "harness-shimmer")}>{stepNameOf(group)}</span>
         </span>
-        {activity && (
-          <span className="harness-shimmer min-w-0 truncate text-[11px] leading-4 text-muted-foreground/80">
-            {activity}
-          </span>
-        )}
       </span>
-      <span
-        className={cn(
-          "shrink-0 text-end text-[11px] leading-5 tabular-nums",
-          failed ? "text-destructive" : "text-muted-foreground/50"
-        )}
-      >
-        {trailing}
-        {trailing && ms !== null && " · "}
-        {ms !== null && formatElapsed(ms)}
-        {/* Under the duration rather than beside it: the trailing column is
-            already two facts wide on a failed step, and a third would push the
-            step's own name out of a sidebar that is deliberately narrow. */}
+      {activity && (
+        <span className="harness-shimmer line-clamp-2 text-xs leading-4 text-muted-foreground">{activity}</span>
+      )}
+      <span className="flex w-full items-center gap-1.5 text-xs leading-4 tabular-nums text-muted-foreground/70">
+        {ms !== null && <span className="shrink-0">{formatElapsed(ms)}</span>}
+        {ms !== null && tokens && <span className="shrink-0 text-muted-foreground/30">·</span>}
         {tokens && (
-          <span className="block text-muted-foreground/40">
+          <span className="shrink-0">
             <TokenFigure usage={tokens} />
           </span>
+        )}
+        <span className="flex-1" />
+        {word && <span className={cn("shrink-0", failed && "text-destructive")}>{word}</span>}
+        {selectable && (
+          <ChevronRightIcon
+            aria-hidden
+            className="size-3.5 shrink-0 text-muted-foreground/40 transition-transform duration-150 group-hover/wfs:translate-x-0.5"
+          />
         )}
       </span>
     </Tabs.Tab>
@@ -750,15 +756,15 @@ function WorkflowStepTab({ group }: { group: SubagentGroup }) {
 }
 
 /**
- * The selected step's events, as the dialog's main pane: a header naming the
- * step, then the very same body the step draws on its own — brief, thread
- * link, rail, report.
+ * The selected step's events, as a pane that **slides over the board from the
+ * right**: a header naming the step, then the very same body the step draws
+ * anywhere — brief, thread link, rail, report.
  *
- * On a phone the sidebar and this pane are one column and the list yields to
- * the panel, so the header grows a back button; on a desktop the list stays
- * beside it and closing is deselecting, which the back button also does. It
- * is a button and not a second click on the row: a tab list that deselects on
- * re-click loses your place by accident.
+ * An overlay rather than a second column, because a step's transcript wants
+ * every pixel it can get and the board behind it is still worth seeing at the
+ * edge: closing is one button, and picking another card is one click past the
+ * pane. On a phone it covers the board entirely, which is the only thing that
+ * fits there.
  */
 function WorkflowStepPanel({
   group,
@@ -779,28 +785,34 @@ function WorkflowStepPanel({
   const panelTokens = view.showTokens ? stepUsage(group) : undefined
   return (
     <Tabs.Panel value={group.id} className="flex min-h-0 min-w-0 flex-1 flex-col outline-none">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border/40 px-3 py-2 md:px-4">
+      <div className="flex shrink-0 items-center gap-2.5 border-b border-border/50 px-3 py-2.5 md:px-4">
+        {/* The way out is always drawn: the pane is an overlay, so unlike the
+            old two-column dialog there is no "deselect by looking away". */}
         <Button
           variant="ghost"
           size="icon"
           aria-label="Back to steps"
           onClick={onBack}
-          className="-ml-1 size-7 shrink-0 text-muted-foreground md:hidden"
+          className="-ml-1 size-8 shrink-0 text-muted-foreground"
         >
           <ChevronLeftIcon className="size-4" />
         </Button>
-        <Mark
+        <span
           aria-hidden
+          className={cn("flex size-6 shrink-0 items-center justify-center rounded-lg", wfTone(state).chip)}
+        >
+          <Mark className={cn("size-3.5", active && "animate-spin")} />
+        </span>
+        <span
           className={cn(
-            "size-3.5 shrink-0",
-            failed ? "text-destructive" : active ? "text-primary animate-spin" : "text-muted-foreground/60"
+            "min-w-0 flex-1 truncate text-sm leading-5 font-medium",
+            failed ? "text-destructive" : "text-foreground"
           )}
-        />
-        <span className={cn("min-w-0 flex-1 truncate text-xs font-medium", failed ? "text-destructive" : "text-foreground/80")}>
+        >
           {stepNameOf(group)}
         </span>
         {ms !== null && (
-          <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/50">{formatElapsed(ms)}</span>
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground/60">{formatElapsed(ms)}</span>
         )}
         {/* The pane is ordinary flow content — no enclosing button — so this is
             the one place a step can offer the whole breakdown. */}
@@ -815,7 +827,7 @@ function WorkflowStepPanel({
         <WorkflowPill state={state as WfState} />
       </div>
       {/* The pane owns the scroll, so a long rail never grows the dialog. */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 pt-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] md:px-4 md:pb-2.5">
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-4">
         <SubagentBody group={group} stepThread={stepThread} showTimestamps={showTimestamps} />
       </div>
     </Tabs.Panel>
@@ -823,21 +835,25 @@ function WorkflowStepPanel({
 }
 
 /** A step of the definition that has not spawned yet: the outline says it
-    exists, and nothing else about it is known. Drawn so the sidebar shows the
-    run's whole shape from the first step rather than growing a row at a time. */
-function WorkflowPendingItem({ name }: { name: string }) {
+    exists, and nothing else about it is known. Drawn as a dashed ghost of the
+    card it will become, so the board shows the run's whole shape from the
+    first step rather than growing a card at a time. */
+function WorkflowPendingCard({ name }: { name: string }) {
   return (
-    <div className="flex items-center gap-2 rounded-md px-2 py-1.5 opacity-60">
-      <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground/40">
-        <CircleDashedIcon className="size-3" />
+    <div className="flex items-center gap-2.5 rounded-xl border border-dashed border-border/50 p-3">
+      <span
+        aria-hidden
+        className="flex size-6 shrink-0 items-center justify-center rounded-lg text-muted-foreground/35"
+      >
+        <CircleDashedIcon className="size-3.5" />
       </span>
-      <span className="min-w-0 flex-1 truncate text-xs leading-5 text-muted-foreground/50">
+      <span className="min-w-0 flex-1 truncate text-sm leading-5 text-muted-foreground/50">
         <span className="sr-only">pending: </span>
         {name}
       </span>
       {/* A trailing word rather than a blank: a column of blanks reads as
           missing data rather than as work not yet done. */}
-      <span className="shrink-0 text-[11px] leading-5 text-muted-foreground/40">waiting</span>
+      <span className="shrink-0 text-xs leading-4 text-muted-foreground/40">waiting</span>
     </div>
   )
 }
@@ -903,66 +919,113 @@ function phaseStateOf(phase: PhaseView): PhaseState {
 }
 
 /**
- * The meter under the card's header: **one segment per step**, grouped by
- * phase, each segment tinted with its own step's state.
+ * The run's shape on the **card**: one chip per phase, in order, with a
+ * chevron between them — the pipeline as a sentence you can read at a glance,
+ * each chip carrying its stage's name, its `done/total` and a pip per step
+ * tinted with that step's own state.
  *
- * It replaces two things that used to sit apart — a pip per phase in the header
- * and a `done/total` progress bar drawn into the header's hairline. Neither was
- * enough on its own: the bar said how far through the run was and nothing about
- * where it went wrong, the pips said which stage it was in and nothing about
- * how big a stage was. One segment per step says all of it at a glance — how
- * long the run is, how much of it is behind you, which step is being written
- * and which one failed — and it still *is* the rule under the header, so the
- * card gains a reading rather than a band.
+ * It replaces a 1px rule of segments. That rule was honest and unreadable: it
+ * said how far along the run was in a mark small enough to be mistaken for a
+ * border, and the stage names it eventually grew underneath were a caption to
+ * a hairline. A chip is the smallest thing that can hold a stage's name, its
+ * count and its steps at once, and putting the chips in a row with chevrons is
+ * what makes three of them read as a pipeline rather than as three badges.
  *
- * Segments share the width in proportion to the steps in a phase, so a phase of
- * six does not read the same length as a phase of one. Aria-hidden: the counter
- * beside it and the table below say every bit of this in words.
+ * Spans throughout: the card's whole surface is a button, and a button holds
+ * phrasing content. Chips share the row in proportion to their step counts, so
+ * a phase of six does not read the length of a phase of one, and they wrap
+ * rather than scroll — a card inside a transcript column cannot own a
+ * horizontal scroller.
  */
-function WorkflowMeter({ phases, className }: { phases: PhaseView[]; className?: string }) {
+function PipelineStrip({ phases, banded }: { phases: PhaseView[]; banded: boolean }) {
   return (
-    <div className={cn("flex w-full items-stretch gap-1", className)} aria-hidden>
-      {phases.map((phase, p) => (
-        <div
-          key={phase.name ?? p}
-          className="flex min-w-0 items-center gap-px"
-          style={{ flex: `${Math.max(1, phase.steps.length)} 1 0%` }}
-          /* The bands below say this in words; a pointer still gets the phase
-             it is pointing at. */
-          title={phase.name ? `${phase.name} — ${phaseStateOf(phase)}` : phaseStateOf(phase)}
-        >
-          {(phase.steps.length ? phase.steps : [null]).map((step, i) => (
+    <span className="flex flex-wrap items-stretch gap-1.5">
+      {phases.map((phase, p) => {
+        const state = phaseStateOf(phase)
+        const tone = wfTone(state)
+        const done = phase.steps.filter((step) => stateOfStep(step) === "completed").length
+        const named = banded && phase.name !== null
+        return (
+          <span
+            key={phase.name ?? p}
+            className="flex min-w-0 items-center gap-1.5"
+            style={{ flex: `${Math.max(1, phase.steps.length)} 1 7rem` }}
+          >
             <span
-              key={i}
-              /* A segment is one step, so it says which — the strip is the only
-                 part of the card that draws every step, and on the card there
-                 is no list under it to read the name off. */
-              title={step ? `${step.name || "step"} — ${stateOfStep(step)}` : undefined}
+              /* The pips below say this in colour; a pointer still gets the
+                 phase it is pointing at, named or not. */
+              title={phase.name ? `${phase.name} — ${state}` : state}
               className={cn(
-                "h-1 min-w-1 flex-1 rounded-pill transition-colors duration-300",
-                /* Not `harness-shimmer`: it paints through
-                   `background-clip: text`, and a segment has no text. */
-                wfTone(step ? stateOfStep(step) : "pending").fill
+                "flex min-w-0 flex-1 flex-col gap-1.5 rounded-lg border px-2 py-1.5 transition-colors duration-300",
+                state === "failed"
+                  ? "border-destructive/30 bg-destructive/5"
+                  : state === "running"
+                    ? "border-primary/30 bg-primary/5"
+                    : "border-border/50 bg-muted/20"
               )}
-            />
-          ))}
-        </div>
-      ))}
-    </div>
+            >
+              {named && (
+                <span className="flex items-baseline gap-1.5">
+                  <span
+                    className={cn(
+                      "min-w-0 flex-1 truncate text-[11px] leading-4 font-semibold tracking-[0.06em] uppercase",
+                      tone.text,
+                      state === "running" && "harness-shimmer"
+                    )}
+                  >
+                    {phase.name}
+                  </span>
+                  <span className="shrink-0 text-[11px] leading-4 tabular-nums text-muted-foreground/50">
+                    {done}/{phase.steps.length}
+                  </span>
+                </span>
+              )}
+              <span className="flex items-stretch gap-0.5">
+                {(phase.steps.length ? phase.steps : [null]).map((step, i) => (
+                  <span
+                    key={i}
+                    /* A pip is one step, so it says which — on the card there is
+                       no list under the strip to read the name off. */
+                    title={step ? `${step.name || "step"} — ${stateOfStep(step)}` : undefined}
+                    className={cn(
+                      "h-1.5 min-w-1 flex-1 rounded-pill transition-colors duration-300",
+                      /* Not `harness-shimmer`: it paints through
+                         `background-clip: text`, and a pip has no text. */
+                      wfTone(step ? stateOfStep(step) : "pending").fill
+                    )}
+                  />
+                ))}
+              </span>
+            </span>
+            {named && p < phases.length - 1 && (
+              <ChevronRightIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground/30" />
+            )}
+          </span>
+        )
+      })}
+    </span>
   )
 }
 
 /**
- * A phase's heading in the dialog's sidebar: its name, how long it took and
- * how far through it is. Sticky, so a long phase scrolling by still says
- * which stage its steps belong to. Not a disclosure any more: the dialog has
- * the room the card never did, so a phase no longer folds.
+ * One stage of the run as a **column of the board**: its name and progress in
+ * a header, its steps as cards under it, scrolling in their own right.
  *
- * Its own component because each phase times itself, and `useElapsed` is a
+ * The board is why the dialog stopped being a sidebar and a pane. A run's
+ * shape is stages that follow one another with work happening side by side
+ * inside them, and that is a shape a list cannot draw: the old sidebar spent
+ * its width on one narrow column of every step in the run, banded by phase,
+ * so the very thing the definition is *about* — that these three run together
+ * and only then does that one start — was a heading you had to infer it from.
+ * Columns say it in the layout, left to right, and the chevron between them
+ * says it again.
+ *
+ * Its own component because each phase times itself and `useElapsed` is a
  * hook: a run's phases cannot be timed from a loop in the dialog.
  */
-function WorkflowPhaseHeader({ phase }: { phase: PhaseView }) {
+function WorkflowPhaseColumn({ phase }: { phase: PhaseView }) {
   const state = phaseStateOf(phase)
+  const tone = wfTone(state)
   const groups = phase.steps.map((s) => s.group).filter((g): g is SubagentGroup => g !== null)
   const startedAt = groups.length ? Math.min(...groups.map((g) => g.head.startedAt)) : 0
   const active = state === "running"
@@ -974,51 +1037,137 @@ function WorkflowPhaseHeader({ phase }: { phase: PhaseView }) {
   const failed = state === "failed"
 
   return (
-    <div className="sticky top-0 z-10 flex items-center gap-2 bg-popover px-2 pt-2.5 pb-1">
-      <span
-        className={cn(
-          "min-w-0 flex-1 truncate text-[10px] font-semibold uppercase leading-5 tracking-[0.08em]",
-          failed ? "text-destructive" : active ? "text-foreground/75" : "text-muted-foreground/60",
-          active && "harness-shimmer"
-        )}
-      >
-        {phase.name}
-      </span>
-      {ms !== null && ms >= 2000 && (
-        <span className="shrink-0 text-[11px] leading-5 tabular-nums text-muted-foreground/50">{formatElapsed(ms)}</span>
+    <div
+      className={cn(
+        "flex min-h-0 w-[19rem] shrink-0 flex-col overflow-hidden rounded-xl border",
+        failed ? "border-destructive/25 bg-destructive/[0.03]" : active ? "border-primary/25 bg-primary/[0.03]" : "border-border/50 bg-muted/15"
       )}
-      {/* The count is a pill so the heading carries a piece of its state's
-          colour beside the step marks below it. */}
-      <span className={cn("shrink-0 rounded-pill px-1.5 text-[10px] leading-5 tabular-nums", wfTone(state).chip)}>
-        {done}/{phase.steps.length}
-      </span>
+    >
+      <div className="flex shrink-0 items-center gap-2 border-b border-border/40 px-3 py-2.5">
+        <span aria-hidden className={cn("size-2 shrink-0 rounded-full", tone.fill)} />
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate text-xs leading-5 font-semibold tracking-[0.08em] uppercase",
+            failed ? "text-destructive" : active ? "text-foreground/80" : "text-muted-foreground/70",
+            active && "harness-shimmer"
+          )}
+        >
+          {phase.name}
+        </span>
+        {ms !== null && ms >= 2000 && (
+          <span className="shrink-0 text-xs leading-5 tabular-nums text-muted-foreground/50">{formatElapsed(ms)}</span>
+        )}
+        {/* The count is a pill so the header carries a piece of its state's
+            colour beside the marks on the cards below it. */}
+        <span className={cn("shrink-0 rounded-pill px-2 text-xs leading-5 tabular-nums", tone.chip)}>
+          {done}/{phase.steps.length}
+        </span>
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain p-2">
+        {phase.steps.map((step, i) =>
+          step.group ? (
+            <WorkflowStepCard key={step.group.id} group={step.group} />
+          ) : (
+            <WorkflowPendingCard key={`${phase.name ?? ""}:${step.name}:${i}`} name={step.name} />
+          )
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ── The run's numbers ──
+   How many steps, how long, what it cost, what broke. One derivation and two
+   renderings, because the card and the dialog are the same facts under
+   different pressure: on the card they are a line inside a button (spans, one
+   row, truncating), in the dialog they are the header's own content, with room
+   to label each figure rather than lean on word order. Both put the *figure*
+   in the foreground and the noun behind it — a run's second line used to be
+   four dot-joined phrases of equal weight, which is a sentence to read rather
+   than a reading to take. */
+interface RunFact {
+  label: string
+  value: string
+  tone?: "bad"
+}
+
+function RunFactsInline({ facts }: { facts: RunFact[] }) {
+  return (
+    <span className="flex min-w-0 items-center gap-2 truncate text-xs leading-4">
+      {facts.map((fact, i) => (
+        <React.Fragment key={fact.label}>
+          {i > 0 && (
+            <span aria-hidden className="shrink-0 text-muted-foreground/25">
+              ·
+            </span>
+          )}
+          <span className="shrink-0 tabular-nums">
+            <span className={cn("font-semibold", fact.tone === "bad" ? "text-destructive" : "text-foreground/80")}>
+              {fact.value}
+            </span>{" "}
+            <span className="text-muted-foreground/60">{fact.label}</span>
+          </span>
+        </React.Fragment>
+      ))}
+    </span>
+  )
+}
+
+function RunFactsBlock({ facts }: { facts: RunFact[] }) {
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1.5">
+      {facts.map((fact) => (
+        <div key={fact.label} className="flex items-baseline gap-1.5">
+          <span
+            className={cn(
+              "text-base leading-5 font-semibold tabular-nums",
+              fact.tone === "bad" ? "text-destructive" : "text-foreground"
+            )}
+          >
+            {fact.value}
+          </span>
+          <span className="text-[11px] leading-5 tracking-[0.08em] text-muted-foreground/60 uppercase">
+            {fact.label}
+          </span>
+        </div>
+      ))}
     </div>
   )
 }
 
 /**
  * A set of subagents in the transcript — a harness workflow run, or the N
- * workers an agent fired side by side — as a compact preview card: the run's
- * name, its state, its meter and, while it runs, the step being written. It
- * opens the whole thing in a dialog on click.
+ * workers an agent fired side by side — as a preview card: the run's name, its
+ * state, its stages as a row of chips and, while it runs, the step being
+ * written. It opens the whole run as a **board** on click.
  *
  * A dialog rather than the phase-banded table this card used to hold, because
  * a run is N whole threads and a transcript column is the wrong room to read
  * one in: the table fought the panel for width, and a step's events ended up
- * in a pane inside a card inside a transcript. The card now answers only the
+ * in a pane inside a card inside a transcript. The card answers only the
  * passing reader's questions — is it moving, how far along, did anything fail
- * — and the dialog answers the rest: a sidebar of the run's phases with their
- * steps under them, and the selected step's events beside it, the very same
- * `SubagentBody` a step draws anywhere.
+ * — and the dialog answers the rest.
+ *
+ * **The dialog is a board, not a list.** A phase is a column
+ * (`WorkflowPhaseColumn`), a step is a card in it (`WorkflowStepCard`), the
+ * columns run left to right with a chevron between them, and the selected
+ * step's transcript slides over the board from the right — the very same
+ * `SubagentBody` a step draws anywhere. The sidebar it replaces spent its
+ * width on one narrow column of every step in the run, banded by phase, so
+ * the thing a definition is *about* — these three run together, and only then
+ * does that one start — was left to be inferred from a heading. Columns say it
+ * in the layout. Everything is a size larger than it was, too: a step is a
+ * whole thread of work, and at 11px in a 16rem column a run read as a table of
+ * file names rather than as a pipeline.
  *
  * One component for both because they are one question asked twice: a
  * workflow knows its shape up front and an ad-hoc batch does not, which is
  * the whole of the difference — the plan rides every workflow spawn's
- * `_meta`, so the meter and the sidebar show every phase and every step from
- * the first spawn on, the ones ahead of the run dimmed, while a batch has
- * exactly the steps that were launched. A definition with no phases, and
- * every batch, is one unnamed phase whose header is left out — a flat step
- * list.
+ * `_meta`, so the chips and the board show every phase and every step from
+ * the first spawn on, the ones ahead of the run drawn as dashed ghosts, while
+ * a batch has exactly the steps that were launched. A definition with no
+ * phases, and every batch, is one unnamed phase: chips with no name on the
+ * card, and a grid of step cards rather than columns in the dialog.
  */
 function RunCard({
   name,
@@ -1033,7 +1182,7 @@ function RunCard({
   steps: SubagentGroup[]
   plan?: WorkflowGroup["plan"]
   icon: React.ComponentType<{ className?: string }>
-  /** What the `2/9` in the subtitle counts — "steps" of a definition, "done"
+  /** What the `2/9` in the fact line counts — "steps" of a definition, "done"
       of a batch, which has no shape beyond the workers in it. */
   countNoun: string
   ariaLabel: string
@@ -1063,27 +1212,26 @@ function RunCard({
         : done === all.length
           ? "completed"
           : "cancelled"
-  /* Counts belong under the name, not beside the pill: the second line is the
-     run's shape (how many steps, which stage), and the pill is its state. A
-     run whose outline has not arrived has neither yet. */
-  const runningPhase = phases.find((phase) => phaseStateOf(phase) === "running")
+  const runningStep = all.find((step) => step.group?.active)?.group ?? null
+  const failedSteps = all.filter((step) => step.group && stepStateOf(step.group) === "failed")
+  const failedStep = failedSteps[0]?.group ?? null
   /* The run's cost is its steps' — a workflow spends nothing of its own. Summed
      at view time rather than accumulated anywhere, so a step arriving late (or
      a replay rebuilding the lot) simply adds to it. */
   const view = useViewOptionsContext()
   const runTokens = view.showTokens ? sumUsage(runSteps.map(stepUsage)) : null
-  const subtitle = [
-    total > 0 ? `${done}/${total} ${countNoun}` : null,
-    banded && runningPhase?.name ? runningPhase.name : null,
-    elapsedMs !== null && elapsedMs >= 2000 ? formatElapsed(elapsedMs) : null,
-    runTokens ? `${formatTokens(runTokens.totalTokens)} tokens` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ")
-
-  const runningStep = all.find((step) => step.group?.active)?.group ?? null
-  const failedSteps = all.filter((step) => step.group && stepStateOf(step.group) === "failed")
-  const failedStep = failedSteps[0]?.group ?? null
+  /* Counts belong under the name, not beside the pill: the pill is the run's
+     state, this is its shape. Which *stage* is being written is no longer one
+     of them — the meter names it now, under the segments that say how far into
+     it the run is, so saying it here as well was the same fact twice. A count
+     of failures is here rather than only in the foot line, because a run that
+     has moved on from a failure still has to admit to it. */
+  const facts: RunFact[] = [
+    total > 0 ? { label: countNoun, value: `${done}/${total}` } : null,
+    failedSteps.length > 0 ? { label: "failed", value: String(failedSteps.length), tone: "bad" as const } : null,
+    elapsedMs !== null && elapsedMs >= 2000 ? { label: "elapsed", value: formatElapsed(elapsedMs) } : null,
+    runTokens ? { label: "tokens", value: formatTokens(runTokens.totalTokens) } : null,
+  ].filter((fact): fact is RunFact => fact !== null)
   /* The card's foot line: what is being written right now, else the step that
      failed — the two things a reader would open the dialog to find. */
   const activity = runningStep ? currentActivity(runningStep.children) : undefined
@@ -1091,18 +1239,15 @@ function RunCard({
 
   const [open, setOpen] = React.useState(false)
   const [selected, setSelected] = React.useState<string | null>(null)
-  const isMobile = useIsMobile()
-  const openPreview = (next: boolean) => {
-    /* Opening lands on the step being written, else the one that failed —
-       the rows the reader came for — and keeps a pick made last time. On a
-       phone it opens on the list instead: there the panel *replaces* the
-       list, and auto-selecting would skip the run's shape, which is the
-       screen the tap asked for. */
-    if (next && !isMobile) {
-      setSelected((cur) => cur ?? runningStep?.id ?? failedStep?.id ?? runSteps[0]?.id ?? null)
-    }
-    setOpen(next)
-  }
+  /* Opening lands on the **board**, never on a step. The old dialog had a
+     permanently empty pane beside its list, so it had to put something in it
+     and picked the step being written; the pane is an overlay now, and
+     auto-selecting would cover the run with one of its steps at the exact
+     moment the reader asked to see the run. The step worth opening is already
+     the loud card in the tinted column. A pick made last time is kept, though
+     — reopening a run you were reading is the one case where the step is what
+     was asked for. */
+  const openPreview = (next: boolean) => setOpen(next)
 
   return (
     <ResponsiveDialog open={open} onOpenChange={openPreview}>
@@ -1119,16 +1264,18 @@ function RunCard({
         aria-expanded={open}
         onClick={() => openPreview(true)}
         className={cn(
-          "group/wfc my-1 block w-full overflow-hidden rounded-lg border border-border/60 text-start",
-          "transition-colors duration-150 hover:border-border hover:bg-muted/30",
-          "focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          "group/wfc my-1.5 block w-full overflow-hidden rounded-xl border text-start",
+          "transition-[border-color,box-shadow,background-color] duration-150 hover:shadow-sm",
+          failed ? "border-destructive/25" : active ? "border-primary/25" : "border-border/60",
+          "bg-card hover:border-border",
+          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         )}
       >
-        <span className="flex items-center gap-2 bg-muted/25 px-2.5 py-1.5 transition-colors duration-150 group-hover/wfc:bg-muted/40">
+        <span className="flex items-center gap-3 px-3 py-2.5">
           <span
             aria-hidden
             className={cn(
-              "flex size-6 shrink-0 items-center justify-center rounded-md",
+              "flex size-9 shrink-0 items-center justify-center rounded-xl",
               failed
                 ? "bg-destructive/10 text-destructive"
                 : active
@@ -1136,23 +1283,19 @@ function RunCard({
                   : "bg-muted text-muted-foreground/70"
             )}
           >
-            <RunIcon className="size-3.5" />
+            <RunIcon className="size-4.5" />
           </span>
-          <span className="flex min-w-0 flex-1 flex-col">
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span
               className={cn(
-                "truncate text-xs font-medium leading-4",
-                failed ? "text-destructive" : active ? "text-foreground" : "text-foreground/80",
+                "truncate text-sm leading-5 font-semibold",
+                failed ? "text-destructive" : "text-foreground",
                 active && "harness-shimmer"
               )}
             >
               {name}
             </span>
-            {subtitle && (
-              <span className="truncate text-[11px] leading-4 tabular-nums text-muted-foreground/60">
-                {subtitle}
-              </span>
-            )}
+            {facts.length > 0 && <RunFactsInline facts={facts} />}
           </span>
           <WorkflowPill state={runState} />
           {/* The one standing hint that the card opens: visible always, louder
@@ -1160,29 +1303,33 @@ function RunCard({
               one discovered. */}
           <Maximize2Icon
             aria-hidden
-            className="size-3.5 shrink-0 text-muted-foreground/40 transition-colors duration-150 group-hover/wfc:text-muted-foreground"
+            className="size-4 shrink-0 text-muted-foreground/40 transition-colors duration-150 group-hover/wfc:text-muted-foreground"
           />
         </span>
-        {/* The run's whole shape as a strip of steps — see `WorkflowMeter`.
+        {/* The run's whole shape as a row of stage chips — see `PipelineStrip`.
             Drawn even before a step has spawned, because the outline is known
             from the first `_meta` the runner stamps. */}
-        {all.length > 0 && <WorkflowMeter phases={phases} className="px-2.5 pt-2 pb-1.5" />}
+        {all.length > 0 && (
+          <span className="block px-3 pb-2.5">
+            <PipelineStrip phases={phases} banded={banded} />
+          </span>
+        )}
         {(liveLine || failedStep) && (
-          <span className="flex items-center gap-1.5 border-t border-border/40 px-2.5 py-1">
+          <span className="flex items-center gap-2 border-t border-border/40 bg-muted/20 px-3 py-2">
             {liveLine ? (
               <>
-                <LoaderCircleIcon aria-hidden className="size-3 shrink-0 animate-spin text-primary" />
-                <span className="harness-shimmer min-w-0 truncate text-[11px] leading-4 text-muted-foreground/80">
+                <LoaderCircleIcon aria-hidden className="size-3.5 shrink-0 animate-spin text-primary" />
+                <span className="harness-shimmer min-w-0 truncate text-xs leading-4 text-muted-foreground">
                   {liveLine}
                 </span>
               </>
             ) : (
               <>
-                <XIcon aria-hidden className="size-3 shrink-0 text-destructive" />
-                <span className="min-w-0 truncate text-[11px] leading-4 text-destructive">
+                <XIcon aria-hidden className="size-3.5 shrink-0 text-destructive" />
+                <span className="min-w-0 truncate text-xs leading-4 text-destructive">
                   {/* One failure reads by name — that is what the reader came
                       back for. Several would have to be a list the card has no
-                      room for, so it says how many and the dialog names them. */}
+                      room for, so it says how many and the board names them. */}
                   {failedSteps.length > 1
                     ? `${failedSteps.length} steps failed`
                     : `${stepNameOf(failedStep!)} failed`}
@@ -1195,26 +1342,26 @@ function RunCard({
       {/* A centred dialog on a desktop, a bottom sheet on a phone — the run is
           N whole transcripts, which is exactly the content a phone wants as a
           sheet it can swipe away rather than a box inset from every edge.
-          `bodyClassName` turns the shared scroll region off: the two panes
-          below own their own scroll. */}
+          `bodyClassName` turns the shared scroll region off: the board and the
+          step pane own their own scrolling. */}
       <ResponsiveDialogContent
         bodyClassName="overflow-hidden p-0"
         className={cn(
           "flex flex-col gap-0 overflow-hidden p-0",
           "h-[calc(100dvh-6rem)]",
-          "md:h-[min(44rem,calc(100svh-2rem))] md:max-h-[calc(100svh-2rem)]",
-          "md:w-[min(60rem,calc(100vw-3rem))] md:max-w-[calc(100vw-3rem)]"
+          "md:h-[min(46rem,calc(100svh-2rem))] md:max-h-[calc(100svh-2rem)]",
+          "md:w-[min(72rem,calc(100vw-3rem))] md:max-w-[calc(100vw-3rem)]"
         )}
       >
         {/* The card's header, restated where the card can no longer be seen:
             the dialog covers the transcript, so it has to say which run it is
             showing. `pr-12` clears the modal's own close button. */}
-        <ResponsiveDialogHeader className="gap-2 px-4 py-3 pr-12">
-          <div className="flex items-center gap-2.5">
+        <ResponsiveDialogHeader className="gap-3 px-4 py-3.5 pr-12">
+          <div className="flex items-center gap-3">
             <span
               aria-hidden
               className={cn(
-                "flex size-7 shrink-0 items-center justify-center rounded-md",
+                "flex size-10 shrink-0 items-center justify-center rounded-xl",
                 failed
                   ? "bg-destructive/10 text-destructive"
                   : active
@@ -1222,94 +1369,107 @@ function RunCard({
                     : "bg-muted text-muted-foreground/70"
               )}
             >
-              <RunIcon className="size-4" />
+              <RunIcon className="size-5" />
             </span>
-            <span className="flex min-w-0 flex-1 flex-col">
-              <ResponsiveDialogTitle
-                className={cn(
-                  "truncate text-sm leading-4 font-medium",
-                  failed ? "text-destructive" : "text-foreground",
-                  active && "harness-shimmer"
-                )}
-              >
-                {name}
-              </ResponsiveDialogTitle>
-              {subtitle && (
-                <span className="truncate text-[11px] leading-4 tabular-nums text-muted-foreground/60">
-                  {subtitle}
-                </span>
+            {/* The run's name gets the whole line here. The figures under it
+                are the dialog's own reading — labelled, because a header with
+                room for them should not make word order carry the meaning. */}
+            <ResponsiveDialogTitle
+              className={cn(
+                "min-w-0 flex-1 truncate text-base leading-6 font-semibold",
+                failed ? "text-destructive" : "text-foreground",
+                active && "harness-shimmer"
               )}
-            </span>
+            >
+              {name}
+            </ResponsiveDialogTitle>
             <WorkflowPill state={runState} />
           </div>
-          {all.length > 0 && <WorkflowMeter phases={phases} />}
+          {facts.length > 0 && <RunFactsBlock facts={facts} />}
         </ResponsiveDialogHeader>
-        {/* Sidebar and pane. On a desktop they sit side by side; on a phone
-            they are one column and selecting swaps the list for the panel,
-            whose header grows the way back (see `WorkflowStepPanel`).
+        {/* The board, and the step pane that slides over it.
 
-            The sidebar is a Tabs.List: phase headers and pending rows ride
-            inside it in document order — they are not tabs and never take the
-            roving focus, so ↑/↓ walk the steps. Selection is manual
-            (`activateOnFocus` left off): a panel is a whole transcript, and
-            activating on focus would open one on the way past. Arrows move,
-            Enter/Space picks. */}
+            `Tabs.List` is the board itself: the columns and the pending cards
+            ride inside it in document order — a column header is not a tab and
+            never takes the roving focus, so ↑/↓ walk the steps in the order
+            they run. Selection is manual (`activateOnFocus` left off): a panel
+            is a whole transcript, and activating on focus would open one on the
+            way past. Arrows move, Enter/Space picks. */}
         <Tabs.Root
           orientation="vertical"
           value={selected}
           onValueChange={(value) => setSelected(value as string | null)}
-          className="flex min-h-0 flex-1"
+          className="relative flex min-h-0 flex-1 flex-col"
         >
           <Tabs.List
             className={cn(
-              "flex w-full flex-col overflow-y-auto overscroll-contain p-1.5 outline-none",
-              "pb-[max(0.5rem,env(safe-area-inset-bottom))]",
-              "md:w-64 md:shrink-0 md:border-r md:border-border/40 md:pb-2",
-              selected !== null && "max-md:hidden"
+              "flex min-h-0 flex-1 items-stretch gap-2 overflow-x-auto overscroll-x-contain p-3 outline-none",
+              "pb-[max(0.75rem,env(safe-area-inset-bottom))]",
+              /* Stages side by side is the whole point of the board, and the
+                 point is lost at phone width: there the columns stack and the
+                 run reads top to bottom, which is the same order. */
+              banded && "max-md:flex-col max-md:overflow-x-visible max-md:overflow-y-auto"
             )}
           >
             {/* A run whose first spawn has arrived but whose outline has not
-                (an older server) draws no rows at all, and an empty sidebar
+                (an older server) draws no cards at all, and an empty board
                 reads as a broken dialog rather than as a pipeline about to
                 start. */}
             {all.length === 0 && (
-              <div className={cn("px-2 py-1.5 text-xs leading-6 text-muted-foreground/60", active && "harness-shimmer")}>
+              <div className={cn("p-3 text-sm text-muted-foreground/60", active && "harness-shimmer")}>
                 {active ? "Starting…" : "No steps ran"}
               </div>
             )}
-            {phases.map((phase, p) => (
-              <div key={phase.name ?? p}>
-                {banded && phase.name !== null && <WorkflowPhaseHeader phase={phase} />}
-                {phase.steps.map((step) =>
-                  step.group ? (
-                    <WorkflowStepTab key={step.group.id} group={step.group} />
-                  ) : (
-                    <WorkflowPendingItem key={`${phase.name ?? p}:${step.name}`} name={step.name} />
-                  )
+            {/* A definition with phases is a board. One without — and every
+                ad-hoc batch — has no stages to put in columns, so its steps
+                are a grid that uses the width instead of one tall column of
+                cards down the left of an empty dialog. */}
+            {banded
+              ? phases.map((phase, p) => (
+                  <React.Fragment key={phase.name ?? p}>
+                    {p > 0 && (
+                      <div aria-hidden className="flex shrink-0 items-center max-md:hidden">
+                        <ChevronRightIcon className="size-4 text-muted-foreground/25" />
+                      </div>
+                    )}
+                    <WorkflowPhaseColumn phase={phase} />
+                  </React.Fragment>
+                ))
+              : all.length > 0 && (
+                  <div className="grid min-h-0 w-full flex-1 auto-rows-min grid-cols-1 gap-2 overflow-y-auto sm:grid-cols-2 xl:grid-cols-3">
+                    {all.map((step, i) =>
+                      step.group ? (
+                        <WorkflowStepCard key={step.group.id} group={step.group} />
+                      ) : (
+                        <WorkflowPendingCard key={`${step.name}:${i}`} name={step.name} />
+                      )
+                    )}
+                  </div>
                 )}
-              </div>
-            ))}
           </Tabs.List>
-          {/* One panel per step; Base UI mounts only the selected one, so a
-              run of nine steps costs one transcript and not nine. */}
-          <div className={cn("min-h-0 min-w-0 flex-1 flex-col", selected === null ? "hidden md:flex" : "flex")}>
-            {runSteps.map((step) => (
-              <WorkflowStepPanel
-                key={step.id}
-                group={step}
-                onBack={() => setSelected(null)}
-                showTimestamps={showTimestamps}
-              />
-            ))}
-            {/* Nothing picked: the pane beside the list would otherwise be a
-                hole the width of the dialog. Desktop-only by construction —
-                on a phone no selection means the list has the column. */}
-            {selected === null && (
-              <div className="flex flex-1 items-center justify-center p-6 text-xs text-muted-foreground/60">
-                Select a step to see its events
-              </div>
-            )}
-          </div>
+          {/* One panel per step; Base UI mounts only the selected one, so a run
+              of nine steps costs one transcript and not nine. The pane is an
+              overlay: it covers the board from the right on a desktop and
+              entirely on a phone, and nothing is drawn at all when nothing is
+              picked — which is why there is no "select a step" hole to fill any
+              more, the board itself being the thing to look at. */}
+          {selected !== null && (
+            <div
+              className={cn(
+                "harness-fade-in absolute inset-y-0 right-0 z-20 flex w-full flex-col",
+                "border-l border-border/60 bg-popover shadow-2xl md:w-[min(42rem,72%)]"
+              )}
+            >
+              {runSteps.map((step) => (
+                <WorkflowStepPanel
+                  key={step.id}
+                  group={step}
+                  onBack={() => setSelected(null)}
+                  showTimestamps={showTimestamps}
+                />
+              ))}
+            </div>
+          )}
         </Tabs.Root>
       </ResponsiveDialogContent>
     </ResponsiveDialog>
@@ -1344,7 +1504,7 @@ WorkflowRun.displayName = "WorkflowRun"
  * workers themselves: the kind of agent when they all agree — which is the
  * common case, since a batch is usually one job split N ways — and a plain
  * count when they do not. Never a step's own description: three of them would
- * have to fit on one line, and the sidebar says all three in full.
+ * have to fit on one line, and the board says all three in full.
  */
 export const SubagentBatchRun = React.memo(function SubagentBatchRun({
   group,

@@ -143,11 +143,23 @@ export class SessionJournal {
    * the one that matters for a thread full of terminal output or large diffs;
    * count is what keeps a chatty-but-small thread from being one frame.
    */
-  *replayFrames(sessionId: string, from: number, batch: boolean): Generator<string> {
+  *replayFrames(sessionId: string, from: number, batch: boolean, to?: number): Generator<string> {
     this.flush();
     let cursor = from;
     let frame: string[] = [];
     let bytes = 0;
+    /* How many rows to ask SQLite for at a time. It starts at the frame's own
+       count budget and then follows what the thread turns out to be made of:
+       the frame cut already knows a page of events can be worth far more than
+       `REPLAY_CHUNK_BYTES`, and the DB page — which is where the memory
+       actually lands — was the one place that still counted only rows. Five
+       hundred rows of streamed text is a page worth two frames; five hundred
+       rows of terminal output is 25MB fetched to emit five frames of five, and
+       the peak the paging exists to bound is back. So each page is sized from
+       the last one's average row: enough rows for about two frames' worth of
+       bytes, never fewer than a handful (a single enormous event must still
+       make progress) and never more than the count budget. */
+    let pageSize = REPLAY_CHUNK_SIZE;
     const cut = function* (): Generator<string> {
       if (frame.length === 0) return;
       yield `{"ev":"replay","events":[${frame.join(",")}]}`;
@@ -155,15 +167,27 @@ export class SessionJournal {
       bytes = 0;
     };
     for (;;) {
+      /* `to` bounds the replay to the window the `attached` event named, so the
+         events a turn journals *while* the archive is going out are left to
+         reach the peer as the live events they are (see `Peer.pending`) instead
+         of being sent twice — once by this trailing page and once by the
+         buffer. Unbounded when the caller names none. */
+      const limit = to === undefined ? pageSize : Math.min(pageSize, to - cursor);
+      if (limit <= 0) break;
       const page = this.db
         .select({ payload: sql<string>`cast(${eventsTable.payload} as text)` })
         .from(eventsTable)
         .where(and(eq(eventsTable.sessionId, sessionId), gte(eventsTable.seq, cursor)))
         .orderBy(asc(eventsTable.seq))
-        .limit(REPLAY_CHUNK_SIZE)
+        .limit(limit)
         .all();
       if (page.length === 0) break;
       cursor += page.length;
+      const pageBytes = page.reduce((sum, row) => sum + row.payload.length, 0);
+      pageSize = Math.max(
+        8,
+        Math.min(REPLAY_CHUNK_SIZE, Math.ceil((2 * REPLAY_CHUNK_BYTES) / Math.max(1, pageBytes / page.length))),
+      );
       for (const row of page) {
         // A client that did not ask for bulk gets the events one at a time; it
         // would drop a `replay` frame it does not know, and `caught_up` rides
@@ -178,7 +202,9 @@ export class SessionJournal {
         frame.push(row.payload);
         bytes += row.payload.length;
       }
-      if (page.length < REPLAY_CHUNK_SIZE) break;
+      // Short page: the range is exhausted. Compared against the limit that was
+      // actually used, not the constant — the page size moves now.
+      if (page.length < limit) break;
     }
     yield* cut();
   }

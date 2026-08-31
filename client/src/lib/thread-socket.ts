@@ -161,6 +161,12 @@ export interface ThreadCallbacks {
       server-side in the same tick as the log it follows, so it cannot pair a
       stale turn state with a fresh replay window. */
   onCaughtUp: (cursor: number, promptActive: boolean, queue: QueuedMessage[]) => void
+  /** The journal position this device has folded up to, as it moves — so the
+      cursor a reconnect resumes from describes what is actually on screen and
+      not merely what was there when this socket attached. Raised on every
+      journaled event, live and replayed alike; cheap on purpose, because it is
+      called at the rate the agent streams. */
+  onCursor: (cursor: number) => void
   /** A background task this thread's agent launched appended a journal line —
       the server tails the file (see /api/tasks/watch) and streams the rest. */
   onTaskEvent: (transcriptDir: string, event: Record<string, unknown>) => void
@@ -197,6 +203,25 @@ export class ThreadSocket {
    * it pays none of it.
    */
   private raw: JournaledEvent[] | null = null
+  /**
+   * The journal position this device has folded up to: one past the highest
+   * seq it has seen. What a reconnect resumes from.
+   *
+   * It has to advance with every journaled event, and for a long time it did
+   * not — it was written once, from `caught_up`, and then stood still for the
+   * rest of the session. Everything after that point was already on screen and
+   * the saved cursor did not know it, so a socket that dropped an hour into a
+   * thread resumed from the hour-old position, and the server — correctly —
+   * replayed the whole hour as the delta the client had asked for. A resume
+   * *keeps* the transcript and appends (that is what makes it cheap), so the
+   * hour arrived twice: every message, every tool call, every turn, folded a
+   * second time onto the end of the conversation it duplicated.
+   *
+   * Advanced in `handle` rather than in `fold`, which is exactly the split that
+   * already exists there: a `load_earlier` re-fold runs the held events through
+   * `fold` again, and those are events this cursor is long past.
+   */
+  private cursor = 0
   /** The seq of the `turn_started` that opens the earliest step this socket
       holds, and how many steps (turns) are behind it on the server. */
   private windowFrom = 0
@@ -207,6 +232,20 @@ export class ThreadSocket {
   private replayTotal = 0
   /** The `loadEarlier` in flight, if any — see the re-entrancy note there. */
   private earlierInFlight: Promise<void> | null = null
+  /**
+   * A page of history fetched before anybody asked for it, and the
+   * `windowFrom` it was fetched against.
+   *
+   * Paging back is two costs with very different shapes: a round trip to the
+   * server, which on a phone behind a tunnel is most of the wait, and the
+   * re-fold, which is CPU here and cannot start until the events arrive. Only
+   * the first can be paid in advance — so it is, when the reader gets near the
+   * top of the transcript, and the click that follows pays the fold alone. The
+   * stash is keyed by the position it was fetched for, because a page that
+   * arrived and was then folded describes a window that no longer exists.
+   */
+  private earlierPrefetch: { before: number; page: EarlierPage } | null = null
+  private prefetchInFlight: Promise<void> | null = null
   /** When this socket last heard ANY frame from the server, and the timer that
       checks it. Started at `caught_up` rather than at `connect()`: a replay is
       a socket that is provably talking, and a watchdog over it could only ever
@@ -325,6 +364,10 @@ export class ThreadSocket {
         const earlier = event.earlier ?? 0
         this.windowFrom = event.from
         this.earlier = earlier
+        /* The replay starts here, so this is what has been folded before any of
+           it arrives — a resume's own cursor, or the start of the window the
+           server chose. */
+        this.cursor = event.from
         // How much replay is coming, in events. Zero when the server said
         // nothing (an older one, which never had the field) — see onReplayProgress.
         this.replayTotal = Math.max(0, (event.to ?? 0) - event.from)
@@ -332,6 +375,8 @@ export class ThreadSocket {
         // Only worth carrying the events when there is something to fold them
         // in front of; see `raw`.
         if (!resumed) this.raw = earlier > 0 ? [] : null
+        // Fetched against a window this attach has just redrawn.
+        this.earlierPrefetch = null
         this.callbacks.onAttached(
           {
             from: event.from,
@@ -346,7 +391,13 @@ export class ThreadSocket {
       }
       case "caught_up":
         this.catchingUp = false
-        this.callbacks.onCaughtUp(event.cursor, event.promptActive, event.queue ?? [])
+        /* The server's cursor is the end of the replay it just sent. Ours is
+           the end of what we folded, which is the same number — unless a live
+           event overtook the bracket (an older server, which does not hold one
+           back while the archive streams), in which case ours is ahead and the
+           server's would give that event back on the next resume. */
+        this.cursor = Math.max(this.cursor, event.cursor)
+        this.callbacks.onCaughtUp(this.cursor, event.promptActive, event.queue ?? [])
         return
       /* The replay, arriving whole. Unrolled through this same switch so there
          is no second parser: `catchingUp` is already true (the `attached` that
@@ -370,6 +421,10 @@ export class ThreadSocket {
       case "session_config":
       case "turn_started":
       case "turn_ended":
+        // Monotonic: a re-attach mid-flight must never walk the cursor back to
+        // a position this device has already read past.
+        this.cursor = Math.max(this.cursor, event.seq + 1)
+        this.callbacks.onCursor(this.cursor)
         this.raw?.push(event)
         this.fold(event)
         return
@@ -523,12 +578,44 @@ export class ThreadSocket {
     return inFlight
   }
 
+  /**
+   * Fetch the next page of history without folding it, so the wait is over
+   * before the reader asks.
+   *
+   * Fire-and-forget by design: nothing on screen changes, a failure is not
+   * worth reporting (the button is still there and will ask again for real),
+   * and it must never contend with a `loadEarlier` that is genuinely in
+   * flight. Called when the top of the transcript comes near the viewport.
+   */
+  prefetchEarlier(): void {
+    if (this.earlier <= 0 || !this.raw) return
+    if (this.earlierInFlight || this.prefetchInFlight) return
+    if (this.earlierPrefetch?.before === this.windowFrom) return
+    const before = this.windowFrom
+    this.prefetchInFlight = this.requestEarlier(before)
+      .then((page) => {
+        // The window moved while this was out — a real page landed first, and
+        // this one is about a boundary that no longer exists.
+        if (this.windowFrom === before) this.earlierPrefetch = { before, page }
+      })
+      .catch(() => {})
+      .finally(() => {
+        this.prefetchInFlight = null
+      })
+  }
+
+  private async requestEarlier(before: number): Promise<EarlierPage> {
+    return (await this.request((id) => ({ id, cmd: "load_earlier", before }))) as EarlierPage
+  }
+
   private async fetchEarlier(): Promise<void> {
-    const page = (await this.request((id) => ({
-      id,
-      cmd: "load_earlier",
-      before: this.windowFrom,
-    }))) as EarlierPage
+    const before = this.windowFrom
+    /* A prefetch that is still out is the page this call wants: wait for it
+       rather than asking for the same range twice. */
+    if (this.prefetchInFlight) await this.prefetchInFlight
+    const stashed = this.earlierPrefetch?.before === before ? this.earlierPrefetch.page : null
+    this.earlierPrefetch = null
+    const page = stashed ?? (await this.requestEarlier(before))
     if (!this.raw) return // reattached under us; that replay is the authority
     const held = this.raw
     this.raw = [...page.events, ...held]

@@ -16,6 +16,7 @@ import {
   mcpServers as mcpServersTable,
   profileMcpServers,
   profiles as profilesTable,
+  projectTemplates as templatesTable,
   projects as projectsTable,
   routineMcpServers,
   routineRuns as routineRunsTable,
@@ -25,6 +26,9 @@ import {
   sessionQueue as queueTable,
   sessions as sessionsTable,
   skills as skillsTable,
+  templateCommands,
+  templateMcpServers,
+  templateSkills,
   boards as boardsTable,
   boardStatuses as boardStatusesTable,
   tasks as tasksTable,
@@ -44,7 +48,7 @@ function test(name: string, fn: () => void) {
 }
 
 function wipe() {
-  for (const table of [sessionsTable, profilesTable, projectsTable, mcpServersTable, skillsTable, commandsTable, personasTable, routinesTable, agentsTable, tasksTable, boardStatusesTable, boardsTable]) {
+  for (const table of [sessionsTable, profilesTable, projectsTable, mcpServersTable, skillsTable, commandsTable, personasTable, templatesTable, routinesTable, agentsTable, tasksTable, boardStatusesTable, boardsTable]) {
     db.delete(table).run();
   }
 }
@@ -66,6 +70,26 @@ function seed() {
   db.insert(personasTable).values({ id: "builtin:terse", name: "Terse", description: "d", prompt: "One line.", thinking: 0, effort: "low", seededVersion: 1, sortOrder: 10 }).run();
   db.insert(profilesTable).values({ id: "p1", name: "gw", agents: { fake: {} }, baseUrl: "http://gw", apiKey: "sk-live", defaultModel: "m", smallModel: "", logoUrl: "", models: [{ id: "m", label: "M", reasoningEfforts: [] }] }).run();
   db.insert(profileMcpServers).values({ profileId: "p1", mcpServerId: "m1" }).run();
+  /* A built-in template with all three kinds of link — the kit is the half a
+     bundle that only carried the row would silently drop. */
+  db.insert(templatesTable).values({
+    id: "builtin:ts-service",
+    name: "TypeScript service",
+    description: "Hono starter",
+    logoUrl: "",
+    repoUrl: "https://github.com/honojs/starter",
+    repoRef: null,
+    repoSubdir: "templates/nodejs",
+    runtime: "node",
+    tags: ["typescript", "server"],
+    setup: "pnpm install",
+    prompt: "Set up {{name}} in {{cwd}}.",
+    seededVersion: 1,
+    createdAt: now,
+  }).run();
+  db.insert(templateMcpServers).values({ templateId: "builtin:ts-service", mcpServerId: "m1" }).run();
+  db.insert(templateSkills).values({ templateId: "builtin:ts-service", skillId: "s1" }).run();
+  db.insert(templateCommands).values({ templateId: "builtin:ts-service", commandId: "c1" }).run();
   db.insert(projectsTable).values({ id: "w1", name: "ws", cwd: "/tmp/ws", logoUrl: "" }).run();
   db.insert(knowledgeTable).values({ id: "k1", projectId: "w1", title: "t", content: "c", createdAt: now, updatedAt: now }).run();
   db.insert(sessionsTable).values({ id: "t1", profileId: "p1", projectId: "w1", agentId: "fake", model: "m", effort: "", personaId: "builtin:terse", title: "Thread", acpSessionId: "acp-1", createdAt: now }).run();
@@ -169,6 +193,47 @@ test("a routine round-trips with its triggers, runs and links", () => {
   assert.equal(routine.dryRunCompleted, true);
   assert.equal(db.select().from(routineTriggersTable).all()[0]!.tz, "America/New_York");
   assert.equal(db.select().from(routineRunsTable).all()[0]!.output, "nothing changed");
+});
+
+test("a project template round-trips with its kit", () => {
+  seed();
+  const bundle = exportBundle({ includeSecrets: true, includeJournals: true });
+  assert.equal(bundle.templates.length, 1);
+  assert.deepEqual(bundle.templates[0]!.mcpServerIds, ["m1"]);
+  assert.deepEqual(bundle.templates[0]!.skillIds, ["s1"]);
+  assert.deepEqual(bundle.templates[0]!.commandIds, ["c1"]);
+  assert.equal(bundle.templates[0]!.seededVersion, 1, "a restored built-in is never re-seeded");
+  wipe();
+  const summary = importBundle(BundleSchema.parse(JSON.parse(JSON.stringify(bundle))), "replace");
+  assert.equal(summary.templates, 1);
+  const template = db.select().from(templatesTable).where(eq(templatesTable.id, "builtin:ts-service")).get()!;
+  assert.equal(template.repoUrl, "https://github.com/honojs/starter");
+  assert.equal(template.repoSubdir, "templates/nodejs");
+  assert.equal(template.repoRef, null);
+  assert.deepEqual(template.tags, ["typescript", "server"]);
+  assert.equal(template.prompt, "Set up {{name}} in {{cwd}}.");
+  assert.equal(count(templateMcpServers), 1);
+  assert.equal(count(templateSkills), 1);
+  assert.equal(count(templateCommands), 1);
+});
+
+/* The upsert must not cascade: an `INSERT OR REPLACE` here would delete the
+   template row and take its three join tables with it. */
+test("merging a renamed template keeps its kit, and replace drops what the bundle omits", () => {
+  seed();
+  const bundle = exportBundle({ includeSecrets: true, includeJournals: true });
+  bundle.templates[0]!.name = "renamed";
+  importBundle(bundle, "merge");
+  assert.equal(db.select().from(templatesTable).where(eq(templatesTable.id, "builtin:ts-service")).get()?.name, "renamed");
+  assert.equal(count(templateMcpServers), 1);
+  assert.equal(count(templateSkills), 1);
+  assert.equal(count(templateCommands), 1);
+
+  db.insert(templatesTable).values({ id: "mine", name: "Mine", repoUrl: "https://example.com/x", createdAt: 1 }).run();
+  importBundle(bundle, "merge");
+  assert.equal(count(templatesTable), 2, "merge keeps what the bundle does not name");
+  importBundle(bundle, "replace");
+  assert.equal(count(templatesTable), 1);
 });
 
 test("a trigger deleted after the export does not come back on a merge", () => {

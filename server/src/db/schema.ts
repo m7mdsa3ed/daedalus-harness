@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 import type { AutonomyPolicy } from "../autonomy.js";
@@ -274,6 +275,95 @@ export const personas = sqliteTable("personas", {
       list whose author's ordering has been thrown away. */
   sortOrder: integer("sort_order").notNull().default(0),
 });
+
+/**
+ * A starting point for a project: a git repo, the kit that goes with it, and
+ * the instruction the agent carries out in the first turn.
+ *
+ * The harness runs nothing here — no clone, no install, no scaffold. A
+ * template is *data*: the Studio creates an empty directory, records the
+ * project row, and hands `prompt` to a draft thread's composer. Every file
+ * that ends up in the directory is written by the agent in an ordinary turn,
+ * under the permission rules that already govern one.
+ *
+ * `runtime` is a free-text label the gallery groups by and the server never
+ * switches on, which is what makes adding Python or Go an entry in
+ * `BUILTIN_TEMPLATES` rather than a code branch.
+ *
+ * Seeded like `agents` and `personas`, with the same two versions and for the
+ * same reason: a template added in a later release reaches installs that
+ * already exist, and one the user deleted stays deleted.
+ */
+export const projectTemplates = sqliteTable("project_templates", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  /** Optional — a URL. Empty means "no mark of its own", like a project's. */
+  logoUrl: text("logo_url").notNull().default(""),
+  /** The starter the agent is told to clone. */
+  repoUrl: text("repo_url").notNull(),
+  /** Branch or tag; null = whatever the repo's default is. */
+  repoRef: text("repo_ref"),
+  /** A directory inside the repo, for a starter that lives in a monorepo;
+      null = the repo root. */
+  repoSubdir: text("repo_subdir"),
+  /** Free text — "node", later "python". A label, never a branch. */
+  runtime: text("runtime").notNull().default(""),
+  /** What the gallery filters on, stored as a JSON string-array. */
+  tags: text("tags", { mode: "json" }).$type<string[]>().notNull().default([]),
+  /** Markdown: install command, env file, dev command — what the agent must do
+      once the repo is on disk. Rendered into `prompt` by `renderPrompt`. */
+  setup: text("setup").notNull().default(""),
+  /** The body handed to the composer, with the same placeholders. */
+  prompt: text("prompt").notNull().default(""),
+  /** A row this release seeded (see `seedTemplates`); 0 = the user's own. */
+  seededVersion: integer("seeded_version").notNull().default(0),
+  createdAt: integer("created_at").notNull(),
+});
+
+/* The library links on a template — the "pre-configured" half, and the reason
+   a template is more than a repo URL: it says *and it comes with these tools*,
+   and those ids go straight to `POST /api/sessions`, which already takes them.
+   Same shape and same cascades as `profile_*` and `session_*` above, read and
+   written through the one descriptor-driven helper in `db/links.ts`. */
+export const templateMcpServers = sqliteTable(
+  "template_mcp_servers",
+  {
+    templateId: text("template_id")
+      .notNull()
+      .references(() => projectTemplates.id, { onDelete: "cascade" }),
+    mcpServerId: text("mcp_server_id")
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.templateId, t.mcpServerId] })],
+);
+
+export const templateSkills = sqliteTable(
+  "template_skills",
+  {
+    templateId: text("template_id")
+      .notNull()
+      .references(() => projectTemplates.id, { onDelete: "cascade" }),
+    skillId: text("skill_id")
+      .notNull()
+      .references(() => skills.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.templateId, t.skillId] })],
+);
+
+export const templateCommands = sqliteTable(
+  "template_commands",
+  {
+    templateId: text("template_id")
+      .notNull()
+      .references(() => projectTemplates.id, { onDelete: "cascade" }),
+    commandId: text("command_id")
+      .notNull()
+      .references(() => commands.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.templateId, t.commandId] })],
+);
 
 /** A titled knowledge-base entry, keyed to a project. The agent's `knowledge`
     MCP server reads and writes these; `project_id` scopes every query so
@@ -840,7 +930,32 @@ export const sessionEvents = sqliteTable(
         has rows in it. */
     at: integer("at").notNull().default(0),
   },
-  (t) => [uniqueIndex("session_events_seq").on(t.sessionId, t.seq)],
+  (t) => [
+    uniqueIndex("session_events_seq").on(t.sessionId, t.seq),
+    /**
+     * The turn boundaries, on their own.
+     *
+     * Every structural read of this table asks the same question — where do
+     * this session's turns begin — and none of them cares about anything else
+     * in it: `turnCount`, `turnStartAt`, `countTurnsBefore`, `turnStartsBefore`
+     * and the byte pass in `windowStart`. On the (session_id, seq) index that
+     * is a scan of every row of the session to find the sixty that are turns,
+     * and a single attach asks it four times (three inside `windowStart`, once
+     * more for `earlier`), as does every `load_earlier` page. A long thread is
+     * hundreds of thousands of rows, and the rows are the large ones — a scan
+     * reads the terminal output and the diffs it is skipping past.
+     *
+     * Partial, because `kind = 'turn_started'` is the only predicate any of
+     * them uses: the index holds one entry per turn rather than one per event,
+     * so it stays a page or two however long the thread gets, and the lookups
+     * become index-only. SQLite uses a partial index only where the query's
+     * WHERE provably implies the index's, which is why every one of those
+     * callers spells the equality out rather than filtering in JS.
+     */
+    index("session_events_turns")
+      .on(t.sessionId, t.seq)
+      .where(sql`kind = 'turn_started'`),
+  ],
 );
 
 /**

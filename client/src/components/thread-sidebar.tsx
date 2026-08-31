@@ -44,6 +44,7 @@ import {
   ListFilter,
   Pin,
   SearchIcon,
+  Sparkles,
   SquareKanban,
   SquarePen,
   Trash2,
@@ -76,7 +77,14 @@ import { ThreadList } from "@/components/sidebar/thread-list"
 import { UnreadCount } from "@/components/notifications/items"
 import type { ThreadStatus } from "@/components/sidebar/thread-row"
 import type { Actions } from "@/lib/actions"
-import { boardPath, notificationsPath, projectPath, settingsPath, threadPath } from "@/lib/router"
+import {
+  boardPath,
+  notificationsPath,
+  projectPath,
+  settingsPath,
+  studioPath,
+  threadPath,
+} from "@/lib/router"
 import { usePins } from "@/lib/pins"
 import { useNotifications } from "@/lib/notifications-inbox"
 import { useChord } from "@/lib/keybindings"
@@ -117,6 +125,7 @@ export function SidebarNav({
   const location = useLocation()
   const navigate = useNavigate()
   const inBoard = location.pathname.startsWith("/board")
+  const inStudio = location.pathname.startsWith("/studio")
   const inNotifications = location.pathname.startsWith("/notifications")
   const unread = useNotifications().unread
   // Whatever these two are bound to on this device — the tooltip has to say the
@@ -149,6 +158,21 @@ export function SidebarNav({
               <SearchIcon />
               <span>Search</span>
               <Kbd id="palette" />
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          {/* Sits with New thread and Search because it is the third way to
+              start one — from a template, in a directory that does not exist
+              yet. The editing half is Settings › Templates. */}
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="sm"
+              tooltip="Studio — start a project from a template"
+              isActive={inStudio}
+              onClick={() => void navigate(studioPath())}
+              className={ROW}
+            >
+              <Sparkles />
+              <span>Studio</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>

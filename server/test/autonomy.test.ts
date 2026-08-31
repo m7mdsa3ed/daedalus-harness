@@ -39,8 +39,15 @@ const { db, schema } = await import("../src/db/index.js");
 
 class MockWs extends EventEmitter {
   sent: string[] = [];
-  send(line: string) {
+  /** Open, as far as the socket router is concerned: it skips a replay whose
+      peer has gone away, so a mock that never says it is open replays nothing. */
+  readyState = 1;
+  /** The callback is how the replay paces itself against a real socket (it is
+      what `SessionSocket.sendFrame` awaits), so a mock that ignores it hangs
+      the attach rather than failing it. */
+  send(line: string, cb?: (error?: Error) => void) {
     this.sent.push(line);
+    cb?.();
   }
   close() {
     this.emit("close");
@@ -113,7 +120,7 @@ async function thread(autonomy?: AutonomyPolicy) {
   const session = manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, autonomy ? { autonomy } : {});
   await session.bridge!.ready;
   const ws = new MockWs();
-  assert.equal(manager.attach(session.id, ws as never), null);
+  assert.equal(await manager.attach(session.id, ws as never), null);
   opened.push(session.id);
   return { session, ws };
 }

@@ -647,6 +647,13 @@ export function useActions(settings: ServerSettings) {
           send({ type: "thread-replay", id, replay: { done, total } })
           commit()
         },
+        /* The resume point, kept current as the thread streams rather than
+           written once at `caught_up` — see `ThreadSocket.cursor` for what the
+           frozen one cost. Deliberately not a dispatch: nothing renders from
+           it, and it moves at the rate the agent writes. */
+        onCursor: (cursor) => {
+          journalCursors.set(id, cursor)
+        },
         onCaughtUp: (cursor, promptActive, queue) => {
           journalCursors.set(id, cursor)
           send({ type: "thread-replay", id, replay: null })
@@ -1460,6 +1467,16 @@ export function useActions(settings: ServerSettings) {
           dispatch({ type: "thread-window", id: sessionId, loadingEarlier: false })
           reportError(error, "Couldn't load earlier messages")
         }
+      },
+
+      /**
+       * The reader is approaching the top of the transcript: get the next page
+       * of history over the wire now, so the click that asks for it pays only
+       * the re-fold. Silent, idempotent and safe to call on every scroll — the
+       * socket drops the ones it does not need.
+       */
+      prefetchEarlier(sessionId: string) {
+        liveThreads.get(sessionId)?.prefetchEarlier()
       },
 
       /**

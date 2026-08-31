@@ -9,21 +9,32 @@ import {
   isBuiltinMcp,
 } from "../library.js";
 import { PersonaInputSchema, personas } from "../personas.js";
+import { TemplateInputSchema, templates } from "../templates.js";
 import { discoverCommands, discoverMcpServers, discoverSkills } from "../discover.js";
 
-/** The library: MCP servers, skills, slash commands and personas, shared
-    across projects — plus the import scan over the agents' own configs.
+/** The library: MCP servers, skills, slash commands, personas and project
+    templates, shared across projects — plus the import scan over the agents'
+    own configs.
 
     Personas are here rather than beside profiles because they are the same kind
     of thing as the other three: a reusable row a thread points at, with no
     credentials in it and nothing per-project about it. The only asymmetry is
-    that a thread names exactly one, where it links any number of the rest. */
+    that a thread names exactly one, where it links any number of the rest.
+
+    Templates are the fifth entry and not a loop of their own, because the links
+    they carry are written and read *inside* `templates.create`/`update`/`list`
+    — exactly as a profile's are — so nothing about the kit reaches this route.
+    The loop's contract is list/create/update/remove over a validated body, and
+    a template answers it verbatim; what a template does NOT share with the rest
+    is `POST /api/projects/from-template`, which is a project route and lives
+    with the projects. */
 export function libraryRoutes(app: Hono): void {
   for (const [base, reg, schema] of [
     ["mcp-servers", mcpServers, McpServerInputSchema],
     ["skills", skills, SkillInputSchema],
     ["commands", commands, CommandInputSchema],
     ["personas", personas, PersonaInputSchema],
+    ["templates", templates, TemplateInputSchema],
   ] as const) {
     app.get(`/api/${base}`, (c) => c.json(reg.list()));
     app.post(`/api/${base}`, async (c) => {

@@ -40,8 +40,15 @@ const { eq } = await import("drizzle-orm");
 
 class MockWs extends EventEmitter {
   sent: string[] = [];
-  send(line: string) {
+  /** Open, as far as the socket router is concerned: it skips a replay whose
+      peer has gone away, so a mock that never says it is open replays nothing. */
+  readyState = 1;
+  /** The callback is how the replay paces itself against a real socket (it is
+      what `SessionSocket.sendFrame` awaits), so a mock that ignores it hangs
+      the attach rather than failing it. */
+  send(line: string, cb?: (error?: Error) => void) {
     this.sent.push(line);
+    cb?.();
   }
   close() {
     this.emit("close");
@@ -103,7 +110,7 @@ manager.setWorkflowRunner(runner);
 const parent = manager.create(profile, "fake", project);
 await parent.bridge!.ready;
 const ws = new MockWs();
-assert.equal(manager.attach(parent.id, ws as never), null);
+assert.equal(await manager.attach(parent.id, ws as never), null);
 const updatesOf = (w: MockWs, kind: string) => w.of("update").filter((e) => e.update.sessionUpdate === kind);
 
 console.log("workflow");
@@ -155,7 +162,7 @@ await test("the run is mirrored into the parent's transcript, live and on replay
   assert.deepEqual(states, ["completed", "completed", "completed"]);
   // Journaled: a fresh attach sees the same three shapes again.
   const ws2 = new MockWs();
-  assert.equal(manager.attach(parent.id, ws2 as never, 0, true), null);
+  assert.equal(await manager.attach(parent.id, ws2 as never, 0, true), null);
   await waitFor(() => ws2.of("caught_up").length === 1, "replay");
   assert.equal(updatesOf(ws2, "subagent_spawned").length, 3);
   assert.equal(updatesOf(ws2, "subagent_state_update").length, 3);
@@ -177,7 +184,7 @@ await test("a step's token usage rides the parent's log, without its turn", asyn
   }
   // Journaled with everything else, which is what makes a step's cost replay.
   const ws3 = new MockWs();
-  assert.equal(manager.attach(parent.id, ws3 as never, 0, true), null);
+  assert.equal(await manager.attach(parent.id, ws3 as never, 0, true), null);
   await waitFor(() => ws3.of("caught_up").length === 1, "replay");
   assert.equal(updatesOf(ws3, "_daedalus/subagent_usage").length, 3);
   assert.equal(ws3.of("turn_ended").length, 0, "the children's turn events still never reach the parent");

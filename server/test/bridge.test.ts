@@ -42,8 +42,15 @@ class MockWs extends EventEmitter {
   /** Every close(code, reason) the manager asked for — the reason is capped at
       123 bytes by the WebSocket protocol, so it is worth asserting on. */
   closes: [number | undefined, string | undefined][] = [];
-  send(line: string) {
+  /** Open, as far as the socket router is concerned: it skips a replay whose
+      peer has gone away, so a mock that never says it is open replays nothing. */
+  readyState = 1;
+  /** The callback is how the replay paces itself against a real socket (it is
+      what `SessionSocket.sendFrame` awaits), so a mock that ignores it hangs
+      the attach rather than failing it. */
+  send(line: string, cb?: (error?: Error) => void) {
     this.sent.push(line);
+    cb?.();
   }
   close(code?: number, reason?: string) {
     this.closes.push([code, reason]);
@@ -102,7 +109,7 @@ assert.equal(session.acpSessionId, "acp-123", "a fresh session id is written dow
 assert.equal(session.acpSessionProvisional, true, "…but not yet as a proven one");
 
 const ws1 = new MockWs();
-assert.equal(manager.attach(session.id, ws1 as never), null, "attach should succeed");
+assert.equal(await manager.attach(session.id, ws1 as never), null, "attach should succeed");
 // The replay is bracketed, and the session's settings are already in the log —
 // so a client that attaches after the handshake still learns them.
 assert.equal(ws1.events[0].ev, "attached");
@@ -177,7 +184,7 @@ assert.equal(session.acpSessionProvisional, false);
 ws1.close();
 assert.equal(manager.list()[0].attached, false);
 const ws2 = new MockWs();
-assert.equal(manager.attach(session.id, ws2 as never, 0), null, "attach should succeed");
+assert.equal(await manager.attach(session.id, ws2 as never, 0), null, "attach should succeed");
 const journaled = (ws: MockWs) =>
   ws.events.filter((e) => e.ev === "update" || e.ev === "session_config" || e.ev === "turn_started" || e.ev === "turn_ended");
 assert.deepEqual(journaled(ws2), manager.journal(session.id)!.events, "a replay is the log");
@@ -196,7 +203,7 @@ assert.equal(ws2.of("caught_up")[0].cursor, session.eventCount);
 // `?batch=1` changes the number of frames and nothing else: the bracket still
 // brackets, and what is inside is the log in order.
 const ws2b = new MockWs();
-assert.equal(manager.attach(session.id, ws2b as never, 0, true), null, "attach should succeed");
+assert.equal(await manager.attach(session.id, ws2b as never, 0, true), null, "attach should succeed");
 assert.equal(ws2b.events[0].ev, "attached");
 assert.equal(ws2b.events[ws2b.events.length - 1].ev, "caught_up");
 assert.equal(journaled(ws2b).length, 0, "no journaled event rode on its own frame");
@@ -212,7 +219,7 @@ ws2b.close();
 
 // Cursor skips already-seen events; only the bracket is left.
 const ws3 = new MockWs();
-assert.equal(manager.attach(session.id, ws3 as never, session.eventCount), null, "attach should succeed");
+assert.equal(await manager.attach(session.id, ws3 as never, session.eventCount), null, "attach should succeed");
 assert.equal(journaled(ws3).length, 0);
 assert.equal(ws3.sent.length, 2, "attached + caught_up and nothing else");
 
@@ -222,8 +229,8 @@ ws2.close();
 ws3.close();
 const a = new MockWs();
 const b = new MockWs();
-assert.equal(manager.attach(session.id, a as never, session.eventCount), null, "attach should succeed");
-assert.equal(manager.attach(session.id, b as never, session.eventCount), null, "attach should succeed");
+assert.equal(await manager.attach(session.id, a as never, session.eventCount), null, "attach should succeed");
+assert.equal(await manager.attach(session.id, b as never, session.eventCount), null, "attach should succeed");
 assert.equal(manager.list()[0].peerCount, 2);
 
 // A prompt from one peer: the other sees the same updates and learns about the
@@ -411,7 +418,7 @@ assert.equal(manager.list()[0].attached, false);
 // it. The client used to drive this in three round trips; the server does it
 // inside respawn now, so nothing can navigate away halfway through.
 const tuner = new MockWs();
-assert.equal(manager.attach(session.id, tuner as never, session.eventCount), null);
+assert.equal(await manager.attach(session.id, tuner as never, session.eventCount), null);
 send(tuner, { id: 6, cmd: "set_config_option", configId: "verbose", value: true });
 await waitFor(() => tuner.of("reply").some((r) => r.id === 6), "the option is accepted");
 assert.equal(
@@ -466,8 +473,8 @@ assert.equal(
 // say "Internal error".
 const failer = new MockWs();
 const watcher = new MockWs();
-assert.equal(manager.attach(session.id, failer as never, session.eventCount), null);
-assert.equal(manager.attach(session.id, watcher as never, session.eventCount), null);
+assert.equal(await manager.attach(session.id, failer as never, session.eventCount), null);
+assert.equal(await manager.attach(session.id, watcher as never, session.eventCount), null);
 send(failer, { id: 8, cmd: "prompt", text: "please fail" });
 await waitFor(() => failer.of("turn_ended").length === 1, "the failed turn ends");
 const failure = failer.of("turn_ended")[0];
@@ -490,7 +497,7 @@ watcher.close();
 // than left hanging until the socket eventually closes.
 await manager.respawn(session.id, profile, "fake", project);
 const doomed = new MockWs();
-assert.equal(manager.attach(session.id, doomed as never, 0), null);
+assert.equal(await manager.attach(session.id, doomed as never, 0), null);
 send(doomed, { id: 9, cmd: "prompt", text: "now crash" });
 await waitFor(() => doomed.of("turn_ended").some((t) => t.error), "the abandoned prompt is answered");
 const abandoned = doomed.of("turn_ended").find((t) => t.error)!;
@@ -519,7 +526,7 @@ assert.ok(deleted, "a deleted thread stays in the list");
 assert.ok(deleted!.deletedAt, "…marked deleted");
 assert.equal(deleted!.exited, true, "…with its process gone");
 assert.match(
-  manager.attach(session.id, new MockWs() as never, 0) ?? "",
+  await manager.attach(session.id, new MockWs() as never, 0) ?? "",
   /trash/,
   "no attach while deleted, and the refusal says why",
 );
@@ -539,14 +546,14 @@ assert.equal(manager.list().find((s) => s.id === session.id), undefined, "purge 
 const reloading = manager.create(profile, "fake", project);
 await reloading.bridge!.ready;
 const before = new MockWs();
-assert.equal(manager.attach(reloading.id, before as never, 0), null, "attach should succeed");
+assert.equal(await manager.attach(reloading.id, before as never, 0), null, "attach should succeed");
 send(before, { id: 1, cmd: "prompt", text: "needs permission" });
 await waitFor(() => before.of("permission").length === 1, "the prompt raises a permission request");
 const askedId = before.of("permission")[0].requestId;
 
 before.close();
 const after = new MockWs();
-assert.equal(manager.attach(reloading.id, after as never, reloading.eventCount), null);
+assert.equal(await manager.attach(reloading.id, after as never, reloading.eventCount), null);
 const reasked = after.of("permission")[0];
 assert.ok(reasked, "the open permission request survives a reload");
 assert.equal(reasked.requestId, askedId, "…and it is the one the agent is still waiting on");
@@ -566,7 +573,7 @@ assert.equal(reloading.bridge!.promptActive, false);
 // Once answered it must NOT come back on the next attach — that would be a
 // dialog for a question nobody is asking any more.
 const later = new MockWs();
-assert.equal(manager.attach(reloading.id, later as never, reloading.eventCount), null);
+assert.equal(await manager.attach(reloading.id, later as never, reloading.eventCount), null);
 assert.equal(later.of("permission").length, 0, "an answered request is not replayed");
 
 // A dying process must not take an open question with it: the agent's promise
@@ -584,7 +591,7 @@ assert.equal(reloading.bridge, null, "purge retires the bridge with the process"
 const logged = manager.create(profile, "fake", project);
 await logged.bridge!.ready;
 const bulk = new MockWs();
-assert.equal(manager.attach(logged.id, bulk as never, 0), null, "attach should succeed");
+assert.equal(await manager.attach(logged.id, bulk as never, 0), null, "attach should succeed");
 for (let i = 0; i < 25; i++) {
   send(bulk, { id: 100 + i, cmd: "prompt", text: `turn ${i}` });
   await waitFor(() => bulk.of("turn_ended").length === i + 1, `turn ${i}`);
@@ -602,6 +609,77 @@ assert.deepEqual(
   "…including a user message per turn",
 );
 
+// --- a turn that lands while the replay is still going out ---
+
+/* The replay is paced against the socket now (it awaits each frame's write, so
+   a long archive does not stall every other thread's turn and a slow peer is
+   not handed the whole window at once), which means it yields — and a turn can
+   be journaled between two frames. That is what `Peer.pending` and the `to`
+   bound on `replayFrames` are for, and this is the case that proves them: the
+   events of that turn must reach the peer exactly once, after the bracket, as
+   the live events they are — not twice (once from the replay's trailing page
+   and once from the fan-out) and not before the history they follow.
+
+   `SlowWs` holds every frame callback until it is released, which parks the
+   attach mid-replay for as long as the test needs. */
+class SlowWs extends MockWs {
+  private held: (() => void)[] = [];
+  private open = false;
+  override send(line: string, cb?: (error?: Error) => void) {
+    this.sent.push(line);
+    if (!cb) return;
+    if (this.open) cb();
+    else this.held.push(() => cb());
+  }
+  /** Let the replay run to the end, and every frame after it. */
+  release() {
+    this.open = true;
+    const held = this.held;
+    this.held = [];
+    for (const resume of held) resume();
+  }
+}
+
+const interleaved = manager.create(profile, "fake", project);
+await interleaved.bridge!.ready;
+await manager.prompt(interleaved.id, "before the replay");
+const beforeCount = interleaved.eventCount;
+const slow = new SlowWs();
+const attaching = manager.attach(interleaved.id, slow as never, 0, true);
+// The attach is parked on its first frame. A whole turn happens under it.
+await manager.prompt(interleaved.id, "during the replay");
+await waitFor(() => interleaved.eventCount > beforeCount, "the turn was journaled");
+slow.release();
+assert.equal(await attaching, null, "the attach finishes once the socket drains");
+
+const attachedMid = slow.of("attached")[0];
+assert.equal(attachedMid.to, beforeCount, "the replay is bounded at the log it announced");
+assert.equal(
+  slow.of("caught_up")[0].cursor,
+  beforeCount,
+  "…and `caught_up` names that same end, not the log as it now stands",
+);
+const seen = [
+  ...slow.of("replay").flatMap((r) => r.events),
+  ...journaled(slow),
+].map((e) => (e as { seq: number }).seq);
+assert.deepEqual(
+  seen,
+  [...Array(interleaved.eventCount).keys()],
+  "every event once, in order: the replay's, then the turn that overtook it",
+);
+const bracket = slow.events.findIndex((e) => e.ev === "caught_up");
+assert.ok(
+  slow.events.slice(0, bracket).every((e) => e.ev === "attached" || e.ev === "replay"),
+  "nothing live jumped the bracket",
+);
+assert.ok(
+  journaled(slow).some((e) => e.ev === "turn_started" && e.text === "during the replay"),
+  "…and the turn arrived after it, as live",
+);
+slow.close();
+assert.ok(manager.purge(interleaved.id));
+
 // --- a retired thread keeps its log, and can be read from it ---
 
 // Retiring stops the process; it does not throw the transcript away. That is
@@ -613,7 +691,7 @@ assert.ok(archivedCursor > 0, "the thread has a log to keep");
 manager.retire(manager.get(logged.id)!);
 assert.equal(manager.journal(logged.id)!.cursor, archivedCursor, "retiring keeps the log");
 const reader = new MockWs();
-assert.equal(manager.attach(logged.id, reader as never, 0), null, "an archive can be attached to");
+assert.equal(await manager.attach(logged.id, reader as never, 0), null, "an archive can be attached to");
 const attached = reader.of("attached")[0];
 assert.equal(attached.archived, true, "…and says it has no agent behind it");
 assert.equal(attached.resumed, false);
@@ -659,7 +737,7 @@ assert.equal(reader.of("reply")[3].error, undefined);
 
 // --- windowed attach: only the tail, in whole steps, with the rest fetchable ---
 const windowed = new MockWs();
-assert.equal(manager.attach(logged.id, windowed as never, 0, true, { window: 5 }), null);
+assert.equal(await manager.attach(logged.id, windowed as never, 0, true, { window: 5 }), null);
 const windowAttach = windowed.of("attached")[0];
 assert.equal(windowAttach.from, turnStarts[20], "the replay starts at the 5th-last turn");
 assert.equal(windowAttach.earlier, 20, "…and says how many steps it withheld");
@@ -693,7 +771,7 @@ assert.equal(tailPage.earlier, 0);
 // the whole log — head included — rather than starting at that first turn.
 assert.ok(turnStarts[0] > 0, "this log has events before its first turn");
 const whole = new MockWs();
-assert.equal(manager.attach(logged.id, whole as never, 0, true, { window: 60 }), null);
+assert.equal(await manager.attach(logged.id, whole as never, 0, true, { window: 60 }), null);
 assert.equal(whole.of("attached")[0].from, 0, "a log inside the window replays from its head");
 assert.equal(whole.of("attached")[0].earlier, 0, "…and withholds nothing");
 assert.equal(
@@ -730,7 +808,7 @@ const fatStarts = manager
   .events.filter((e) => e.ev === "turn_started")
   .map((e) => (e as { seq: number }).seq);
 const capped = new MockWs();
-assert.equal(manager.attach(logged.id, capped as never, 0, true, { window: 60 }), null);
+assert.equal(await manager.attach(logged.id, capped as never, 0, true, { window: 60 }), null);
 const cappedAttach = capped.of("attached")[0];
 assert.ok(fatStarts.includes(cappedAttach.from), "the cut is still a turn boundary");
 assert.ok(cappedAttach.earlier > 0, "…and says how many turns it withheld");
@@ -760,7 +838,7 @@ const { enqueue, listQueue } = await import("../src/queue.js");
 const parked = enqueue(logged.id, "after restart");
 const restarted = new SessionManager({}, 1);
 const survivor = new MockWs();
-assert.equal(restarted.attach(logged.id, survivor as never, 0), null, "an archive can be attached to");
+assert.equal(await restarted.attach(logged.id, survivor as never, 0), null, "an archive can be attached to");
 assert.deepEqual(
   survivor.of("caught_up")[0].queue?.map((i) => i.text),
   ["after restart"],
@@ -776,7 +854,7 @@ assert.deepEqual(listQueue(logged.id), []);
 // Soft delete keeps the row and refuses new attachments; restore undoes it.
 assert.ok(manager.softDelete(logged.id));
 assert.equal(manager.list().find((s) => s.id === logged.id)?.deletedAt !== null, true);
-assert.equal(manager.attach(logged.id, new MockWs() as never, 0), "this thread is in the trash");
+assert.equal(await manager.attach(logged.id, new MockWs() as never, 0), "this thread is in the trash");
 assert.ok(manager.restore(logged.id));
 assert.equal(manager.list().find((s) => s.id === logged.id)?.deletedAt, null);
 assert.ok(manager.purge(logged.id));
@@ -788,7 +866,7 @@ assert.equal(manager.journal(logged.id), undefined, "purge forgets the thread");
 const orphan = manager.create(profile, "fake", project);
 await orphan.bridge!.ready;
 const orphanWs = new MockWs();
-manager.attach(orphan.id, orphanWs as never);
+await manager.attach(orphan.id, orphanWs as never);
 send(orphanWs, { id: 1, cmd: "prompt", text: "remember this" });
 await waitFor(() => orphanWs.of("turn_ended").length === 1, "the turn that records the session");
 assert.equal(orphan.acpSessionId, "acp-123");
@@ -808,7 +886,7 @@ assert.match(String((orphan.historyLost!.error.data as { details?: string }).det
 
 // And the peer is told, so an empty transcript cannot pass for a quiet one.
 const orphanWs2 = new MockWs();
-manager.attach(orphan.id, orphanWs2 as never);
+await manager.attach(orphan.id, orphanWs2 as never);
 assert.ok(
   (orphanWs2.events[0] as { historyLost?: unknown }).historyLost,
   "attach carries the lost history",
@@ -1044,7 +1122,7 @@ assert.deepEqual(
    so without one the respawn would fall back to `session/new` and prove
    nothing about the load path. */
 const styledWs = new MockWs();
-assert.equal(manager.attach(styled.id, styledWs as never), null);
+assert.equal(await manager.attach(styled.id, styledWs as never), null);
 send(styledWs, { id: 1, cmd: "prompt", text: "hi" });
 await waitFor(() => styledWs.of("turn_ended").length === 1, "the styled thread's first turn");
 assert.equal(styled.acpSessionProvisional, false, "the turn proved the id");

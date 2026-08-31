@@ -5,6 +5,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { loadConfig } from "./config.js";
 import { seedPersonas } from "./personas.js";
 import { seedAgents } from "./registry.js";
+import { seedTemplates } from "./templates.js";
 import { ensureDefaultBoard } from "./boards.js";
 import { SessionManager } from "./sessions.js";
 import { startScheduler, stopScheduler } from "./scheduler.js";
@@ -49,6 +50,10 @@ seedAgents();
 // Same rules, same reasons: only the personas this install has never been
 // offered, and never over a row the user has edited. See personas.seedPersonas.
 seedPersonas();
+// And the Studio's starting points, on the same rule: a template added in a
+// later release reaches installs that already exist, one the user deleted stays
+// deleted. See templates.seedTemplates.
+seedTemplates();
 /* The tasks board's first board and its four columns, seeded only into an
    install that has none. This is also the boards migration: the seeded column
    ids are the exact strings pre-boards tasks hold in `tasks.status`, so those
@@ -190,7 +195,38 @@ const server = serve({ fetch: app.fetch, hostname: config.host, port: config.por
   console.log(`token: ${config.token}`);
 });
 
-const wss = new WebSocketServer({ noServer: true });
+/**
+ * Compression, with a threshold — because the two things this socket carries
+ * are not the same payload.
+ *
+ * A replay frame is up to `REPLAY_CHUNK_BYTES` of ACP JSON: the same envelope
+ * keys over and over, terminal output, both sides of a diff. It compresses
+ * five to ten times over, and it is exactly the traffic `REPLAY_WINDOW_BYTES`
+ * exists to cap — so this buys window back rather than trimming it, which
+ * matters most on the one connection that feels it, a phone behind
+ * `pnpm dev:tunnel`. A live `update`, on the other hand, is a few hundred bytes
+ * of streamed text arriving thousands of times a turn, where a deflate call per
+ * message costs more than the bytes it saves.
+ *
+ * Hence `threshold`: below it a message goes out uncompressed, so the streaming
+ * path is untouched and only the frames pay. The rest is ws's own advice about
+ * per-connection zlib memory — a modest level and window, and a cap on how many
+ * sockets may be compressing at once, since this process also owns every agent
+ * child and must not spend a turn's latency deflating another thread's archive.
+ */
+const wss = new WebSocketServer({
+  noServer: true,
+  perMessageDeflate: {
+    threshold: 8 * 1024,
+    concurrencyLimit: 10,
+    zlibDeflateOptions: { level: 3, memLevel: 7 },
+    // Both ends keep a sliding window per socket otherwise; this is a long-lived
+    // connection per open thread, and the frames are self-similar enough that
+    // the context buys little next to what it holds.
+    serverNoContextTakeover: true,
+    clientNoContextTakeover: true,
+  },
+});
 
 /**
  * Liveness, because nothing else pings — `ws` does not do it on its own, and a
@@ -274,8 +310,9 @@ server.on("upgrade", (req, socket, head) => {
     // a transcript that begins in the middle, and a client that cannot ask for
     // the rest (`load_earlier`) must never be handed one.
     const window = Number(url.searchParams.get("window") ?? 0) || 0;
-    const refused = sessions.attach(sessionId, ws, cursor, batch, { window });
-    if (refused) ws.close(4004, refused);
+    void sessions.attach(sessionId, ws, cursor, batch, { window }).then((refused) => {
+      if (refused) ws.close(4004, refused);
+    });
   });
 });
 

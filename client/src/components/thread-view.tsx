@@ -273,6 +273,30 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
      since. Anything older is history, and history does not get a button. */
   const options = useViewOptions()
   const follow = useFollowStream(options.autoScroll)
+  /* Paging back costs a round trip and then a re-fold of the whole widened
+     window. Only the round trip can be paid before it is asked for, so it is:
+     when the top of the transcript comes within a screenful of the viewport,
+     the next page is fetched and held, and the button — which stays a button,
+     because a re-fold that moves the scroll position under a reader is not
+     something to do on their behalf — pays only the fold. */
+  const earlierRef = React.useRef<HTMLDivElement>(null)
+  const hasEarlier = thread.earlier > 0
+  React.useEffect(() => {
+    const node = earlierRef.current
+    const root = follow.viewport
+    if (!hasEarlier || !node || !root) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) actions.prefetchEarlier(sessionId)
+      },
+      // A screenful of warning. The observer fires once on connect too, which
+      // is right: a thread short enough to show its own top has already
+      // arrived at the boundary.
+      { root, rootMargin: "800px 0px 0px 0px" },
+    )
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [actions, follow.viewport, hasEarlier, thread.earlier, sessionId])
   /* Memoised separately: `.filter` would hand `rows` a fresh array every render
      even when nothing changed, and `rows`' memo depends on it. Two stable layers
      (items → visible → rows) is what lets a streaming update — which mutates one
@@ -402,17 +426,15 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   The empty state is not in here either: it sits with the
                   composer in the middle row, so the greeting and the box you
                   type into travel to the bottom together. */}
-              {thread.status === "connecting" && (
-                <MessageScrollerItem messageId="starting">
-                  <StartingLine draft={meta?.draft} replay={thread.replay} />
-                </MessageScrollerItem>
-              )}
               {/* The transcript begins in the middle: this thread was long
                   enough that the server sent only its tail. The rest is still
                   there and comes back a page at a time. */}
               {thread.earlier > 0 && (
                 <MessageScrollerItem messageId="earlier">
-                  <div className="mb-2 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                  <div
+                    ref={earlierRef}
+                    className="mb-2 flex items-center justify-center gap-2 text-xs text-muted-foreground"
+                  >
                     <Button
                       size="sm"
                       variant="outline"
@@ -486,10 +508,23 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                 </MessageScrollerItem>
                 )
               })}
-              {/* Suppressed while `connecting`: the StartingLine above already
-                  owns the wait, and two animated lines over one message read as
-                  "we don't know what is happening" rather than as progress.
-                  `caught_up` flips the status and hands the wait back here. */}
+              {/* The wait sits at the FOOT of the transcript, not its head: a
+                  replay arrives oldest-first and the scroller is pinned to the
+                  bottom, so a line at the top is the one place the reader is
+                  not looking — it announced the wait above content that was
+                  still landing under it, and then vanished from off-screen.
+                  Here it is where the next thing to happen will happen, in the
+                  same slot the working line takes once the thread is live. */}
+              {thread.status === "connecting" && (
+                <MessageScrollerItem messageId="starting">
+                  <StartingLine draft={meta?.draft} replay={thread.replay} />
+                </MessageScrollerItem>
+              )}
+              {/* Suppressed while `connecting`: the StartingLine just above
+                  already owns the wait, and two animated lines over one message
+                  read as "we don't know what is happening" rather than as
+                  progress. `caught_up` flips the status and hands the wait back
+                  here. */}
               {thread.turnActive && thread.status !== "connecting" && (
                 <MessageScrollerItem messageId="working">
                   <div className="harness-item-in">

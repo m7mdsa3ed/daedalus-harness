@@ -47,6 +47,7 @@ import {
   SearchIcon,
   ServerIcon,
   ShieldCheck,
+  Sparkles,
   Square,
   SquareKanban,
   SquareStack,
@@ -66,7 +67,7 @@ import { reportError } from "@/lib/errors"
 import { currentChoiceLabel } from "@/lib/session-options"
 import { useKeybindings } from "@/lib/keybindings"
 import { KEYS } from "@/lib/shortcuts"
-import { boardPath, newRoutinePath, settingsPath, threadPath } from "@/lib/router"
+import { boardPath, newRoutinePath, settingsPath, studioPath, threadPath } from "@/lib/router"
 import {
   activityAt,
   clearSettings,
@@ -246,6 +247,17 @@ export function RootPage() {
     keywords: "workspace directory cwd",
     icon: <FolderPlus />,
     onSelect: () => palette.run(palette.newProject),
+  })
+  /* Under Create beside New project, because it is the other way to make one —
+     the directory does not exist yet, and the first thread opens prefilled with
+     the instruction that fills it. */
+  items.push({
+    id: "create:studio",
+    group: "Create",
+    title: "New project from a template…",
+    keywords: "studio starter scaffold boilerplate clone repo gallery kit",
+    icon: <Sparkles />,
+    onSelect: () => palette.run(() => void navigate(studioPath())),
   })
   items.push({
     // Under Create because that is what it makes: threads. The conversation

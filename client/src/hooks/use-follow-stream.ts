@@ -54,6 +54,11 @@ export interface FollowStream {
   viewportRef: (el: HTMLDivElement | null) => void
   /** Attach to the scroller's content (the element that grows). */
   contentRef: (el: HTMLDivElement | null) => void
+  /** The viewport itself, once it is mounted — the scroll root anything else
+      measuring against this scroller has to name (an IntersectionObserver over
+      the transcript is not measuring the window). Held in state, so a consumer
+      that depends on it re-runs when it appears. */
+  viewport: HTMLDivElement | null
   /** True while the newest content is being kept in view. */
   pinned: boolean
   /** Jump to the end and resume following. */
@@ -155,5 +160,5 @@ export function useFollowStream(enabled: boolean): FollowStream {
     if (viewport) stick(viewport)
   }, [pin, stick, viewport])
 
-  return { viewportRef: setViewport, contentRef: setContent, pinned, follow }
+  return { viewportRef: setViewport, contentRef: setContent, viewport, pinned, follow }
 }

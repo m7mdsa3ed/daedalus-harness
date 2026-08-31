@@ -57,6 +57,36 @@ const TITLE_MAX = 200;
     carries no request bookkeeping any more. */
 export interface Peer {
   ws: WebSocket;
+  /**
+   * Live events held back while this peer's replay is still being written to
+   * the socket, or null once it is caught up and everything goes straight out.
+   *
+   * The replay used to be one synchronous loop, which made this unnecessary:
+   * nothing else could run between the first frame and `caught_up`, so no live
+   * event could overtake the history it belongs after. Now that the frames
+   * yield to the event loop (see `SessionSocket.attach` — a long replay must
+   * not stall every other thread's turn, and a slow client must not be handed
+   * megabytes at once), another thread's turn — or this one's — can journal an
+   * event while the archive is still going out. Sending it immediately would
+   * put it *before* the history it follows, and the replay's own trailing page
+   * would then send it a second time.
+   *
+   * So a peer mid-replay is a peer whose live events are queued, in order, and
+   * flushed the moment its `caught_up` has gone out. The buffer is bounded by
+   * the replay, which is bounded by the window.
+   */
+  pending: string[] | null;
+}
+
+/** Fan one already-serialized event out to a peer, respecting its replay
+    buffer. Everything that writes to a peer outside the attach bracket itself
+    goes through here. */
+export function sendToPeer(peer: Peer, line: string): void {
+  if (peer.pending) {
+    peer.pending.push(line);
+    return;
+  }
+  peer.ws.send(line);
 }
 
 export interface Session {
@@ -646,7 +676,7 @@ export class SessionManager {
   // ---- fan-out ----
 
   private send(peer: Peer, event: ThreadEvent): void {
-    peer.ws.send(JSON.stringify(event));
+    sendToPeer(peer, JSON.stringify(event));
   }
 
   /**
@@ -685,7 +715,7 @@ export class SessionManager {
     if (subs) for (const fn of subs) fn(out);
     if (session.peers.size === 0) return;
     const line = JSON.stringify(out);
-    for (const peer of session.peers) if (peer !== except) peer.ws.send(line);
+    for (const peer of session.peers) if (peer !== except) sendToPeer(peer, line);
   }
 
   /**
@@ -1952,6 +1982,11 @@ export class SessionManager {
    *
    * Returns null on success, or why it refused — that string becomes the close
    * reason. The mechanics live in SessionSocket.attach.
+   *
+   * Asynchronous because the replay is: the frames are paced against the
+   * socket rather than pushed at it in one run (see there). A refusal is still
+   * decided before the first await, so the caller's close-with-a-reason path
+   * is unchanged in everything but its shape.
    */
   attach(
     id: string,
@@ -1959,7 +1994,7 @@ export class SessionManager {
     cursor = 0,
     batch = false,
     opts: { window?: number } = {},
-  ): string | null {
+  ): Promise<string | null> {
     return this.socket.attach(id, ws, cursor, batch, opts);
   }
 }
