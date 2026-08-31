@@ -1,5 +1,6 @@
 /* The transcript as markdown — what you would paste into an issue. Behind
    "Copy transcript", and nothing else reads it. */
+import { autonomyLine } from "@/lib/autonomy-text"
 import type { ThreadItem } from "@/lib/store"
 
 export function transcriptText(items: ThreadItem[]): string {
@@ -51,6 +52,13 @@ function itemText(item: ThreadItem): string {
     // The summary is the only part of the pre-compaction history the agent
     // still has, so a pasted transcript that dropped it would not explain
     // what the agent was working from after this point.
+    /* An auto-answered question. In a pasted transcript this is often the most
+       important line on the page: it is where the run did something nobody was
+       asked about. */
+    case "autonomy": {
+      const line = autonomyLine(item)
+      return `> **${line.title}**\n> ${line.detail}`
+    }
     case "compaction":
       return [
         `_Context compacted (${item.status})_`,

@@ -191,6 +191,12 @@ export function ProjectFolder({
   )
 }
 
+/** A group-header control: the ✎ and + that sit beside a tier's label. One
+    class rather than one per group, because two tiers whose header buttons are
+    a pixel apart is exactly what the spacing scale exists to prevent. */
+export const HEADER_BUTTON =
+  "grid size-4 place-items-center rounded-sm text-muted-foreground transition-colors hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+
 /** A foldable sidebar tier. Open/closed is remembered per key. */
 export function FoldableGroup({
   groupKey,
@@ -198,6 +204,7 @@ export function FoldableGroup({
   icon,
   count,
   defaultOpen = true,
+  nested = false,
   action,
   children,
 }: {
@@ -207,6 +214,13 @@ export function FoldableGroup({
   /** Printed next to the label when the number is something you act on. */
   count?: number
   defaultOpen?: boolean
+  /** A tier inside another tier — Routines and Scheduled inside Automations.
+      It drops the inter-tier margin (the parent's own label is already the gap)
+      and quiets the label, so the outer group reads as the heading and the two
+      inner ones as its halves rather than as three peers. Its fold is still its
+      own: the halves are folded independently and remembered independently,
+      which is what stops one long list from burying the other. */
+  nested?: boolean
   /** A control that belongs to the group itself, not to a row in it — the
       Scheduled group's "+ new". Rendered only on hover, in the slot just
       before the chevron (where the count sits, which yields to it exactly as
@@ -228,7 +242,7 @@ export function FoldableGroup({
 
   return (
     <Collapsible open={open} onOpenChange={toggle}>
-      <SidebarGroup className={cn(TIER, GROUP)}>
+      <SidebarGroup className={cn(nested ? "mt-0.5" : TIER, GROUP)}>
         {/* The header row is the hover group, not the label: the action is
             the label's sibling (see above), and a `group-hover` on the label
             alone never reached it. */}
@@ -242,7 +256,11 @@ export function FoldableGroup({
           <CollapsibleTrigger
             render={
               <SidebarGroupLabel
-                className={cn(GROUP_LABEL, "hover:text-sidebar-foreground/70")}
+                className={cn(
+                  GROUP_LABEL,
+                  "hover:text-sidebar-foreground/70",
+                  nested && "font-semibold tracking-normal text-sidebar-foreground/60 normal-case"
+                )}
               />
             }
           >

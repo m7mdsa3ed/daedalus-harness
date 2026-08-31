@@ -21,6 +21,8 @@ import type {
   Persona,
   Profile,
   Project,
+  Routine,
+  RoutineRun,
   ScheduledMessage,
   SessionMeta,
   SkillDef,
@@ -206,7 +208,47 @@ export interface CompactionItem {
   parentId?: string
 }
 
-export type ThreadItem = TextItem | ToolItem | PlanItem | ErrorItem | CompactionItem | SubagentItem
+/**
+ * A question the harness answered for the user, from the journaled
+ * `_daedalus/autonomy_answer` update.
+ *
+ * The live `permission`/`elicitation` pair is what draws a card and resolves it
+ * under the reader's eyes, but neither event is journaled — so on a reload, or
+ * for a run nobody watched, this row is the only thing that says the question
+ * was ever asked. That is the whole point of it: a routine granted a standing
+ * `allow` has to be readable after the fact, in the transcript of the run that
+ * used it, next to the tool call it permitted.
+ */
+export interface AutonomyItem {
+  kind: "autonomy"
+  /** `autonomy:<toolCallId>` where there is one, else positional — a permission
+      names the call it is about, an elicitation names nothing. */
+  id: string
+  /** Which choke point asked. */
+  request: "permission" | "elicitation"
+  /** The ACP tool kind the stance was keyed on; absent when the agent omitted
+      it, which is the protocol saying nothing. */
+  toolKind?: acp.ToolKind
+  /** The agent's own title for the call, so the row reads as an act. */
+  title?: string
+  answer: "allow" | "deny" | "decline" | "cancel"
+  /** True when nobody came and the ask-timeout fallback answered — the
+      difference between "the run was allowed to do this" and "it gave up
+      waiting", which is also what makes a run `blocked`. */
+  timedOut: boolean
+  at?: number
+  /** A subagent's own auto-answer — see ToolItem.parentId. */
+  parentId?: string
+}
+
+export type ThreadItem =
+  | TextItem
+  | ToolItem
+  | PlanItem
+  | ErrorItem
+  | CompactionItem
+  | SubagentItem
+  | AutonomyItem
 
 export interface PendingPermission {
   /** The server's id for the question, so an answer from another device can be
@@ -282,6 +324,14 @@ export interface ThreadState {
   earlier: number
   /** A `load_earlier` is in flight — the button says so and does not stack. */
   loadingEarlier: boolean
+  /** How much of the replay has arrived, while one is running: `done`/`total`
+      in events, against the window the server named in `attached`. Null before
+      `attached` and again at `caught_up`, and null for the whole of a replay a
+      server too old to state its length sent — which is the distinction the
+      line above the composer is drawn from, since "waiting for the server" and
+      "folding a long conversation" are different waits and only the second one
+      is about the thread's size. */
+  replay: { done: number; total: number } | null
 }
 
 export interface State {
@@ -298,6 +348,13 @@ export interface State {
   sessions: SessionMeta[]
   /** Scheduled prompts on the server, one row per future/recurring delivery. */
   scheduled: ScheduledMessage[]
+  /** Saved thread-starts that fire on their own, read with the catalog. */
+  routines: Routine[]
+  /** A routine's runs, newest first, keyed by routine id — read on demand and
+      not at boot: the list is per routine, unbounded, and only the routine's
+      own page has ever asked for one. Absent means "not read yet", which is a
+      different screen from an empty array, and the page draws it as such. */
+  routineRuns: Record<string, RoutineRun[]>
   // Which thread is open and which screen is showing live in the URL — see lib/router.
   threads: Record<string, ThreadState>
 }
@@ -324,6 +381,7 @@ export const emptyThread: ThreadState = {
   archived: false,
   earlier: 0,
   loadingEarlier: false,
+  replay: null,
 }
 
 /**
@@ -659,6 +717,25 @@ export function applySessionUpdate(
         i.kind === "subagent" && i.id === id ? { ...i, usage: addUsage(i.usage ?? null, update.usage) } : i
       )
     }
+    /* The durable half of an auto-answered permission or elicitation. Appended
+       rather than folded onto the tool row it names: the tool call may not have
+       arrived yet (an agent asks before it acts) and, for an elicitation, there
+       is no tool row at all. Its place in the transcript is where the question
+       was answered, which is what a reader is looking for. */
+    case "_daedalus/autonomy_answer": {
+      const item: AutonomyItem = {
+        kind: "autonomy",
+        id: `autonomy:${update.toolCallId ?? `${update.kind}:${items.length}`}`,
+        request: update.kind,
+        ...(update.toolKind ? { toolKind: update.toolKind } : {}),
+        ...(update.title ? { title: update.title } : {}),
+        answer: update.answer.answer,
+        timedOut: update.answer.timedOut,
+        at: Date.now(),
+        ...(owner ? { parentId: owner } : {}),
+      }
+      return [...items, item]
+    }
     /* A child's context occupancy. Session-level for the thread — and dropped
        there — but a step IS a session, so on this side of the fence it is the
        one thing that says how full the worker's own window got. */
@@ -756,7 +833,15 @@ function applyMetaUpdate(
 /** A turn can end with tool calls still in flight (cancel, agent crash) — no
     further update will ever arrive for them, so settle them at turn end instead
     of leaving a spinner running forever. A compaction is the same bargain: its
-    terminal update is owed by the same process that just stopped talking. */
+    terminal update is owed by the same process that just stopped talking.
+ *
+ *  Which is exactly why **losing the socket is not a reason to run this**: the
+ *  turn is the server's and it keeps going with nobody attached, so a phone
+ *  backgrounded mid-run came back to a transcript full of failed tools and
+ *  `disconnected` workflow steps that a reconnect immediately contradicted —
+ *  the run had been fine the whole time. Callers that expect to come back and
+ *  be corrected (a close that will reconnect, a parked reconnect ladder) pass
+ *  `settle: false`; only an ending the *agent* reported settles. */
 function settleTools(items: ThreadItem[]): ThreadItem[] {
   return items.map((item) => {
     if (item.kind === "tool" && (item.status === "pending" || item.status === "in_progress")) {
@@ -820,9 +905,12 @@ export type Action =
       agents: AgentDef[]
       sessions: SessionMeta[]
       scheduled?: ScheduledMessage[]
+      routines?: Routine[]
     }
   | { type: "sessions"; sessions: SessionMeta[] }
   | { type: "scheduled"; scheduled: ScheduledMessage[] }
+  | { type: "routines"; routines: Routine[] }
+  | { type: "routine-runs"; routineId: string; runs: RoutineRun[] }
   | { type: "draft-session"; session: SessionMeta }
   | { type: "drop-draft-session"; id: string }
   | {
@@ -873,7 +961,7 @@ export type Action =
       closeCode?: number
       closeReason?: string
     }
-  | { type: "turn-active"; id: string; active: boolean }
+  | { type: "turn-active"; id: string; active: boolean; settle?: boolean }
   /** Windowing/archive bookkeeping, all of it absolute — set from `attached`
       and from the end of a re-fold, never accumulated. */
   | {
@@ -883,6 +971,8 @@ export type Action =
       earlier?: number
       loadingEarlier?: boolean
     }
+  /** Replay progress, or null when one is not running. */
+  | { type: "thread-replay"; id: string; replay: { done: number; total: number } | null }
   /** `sessionId` names a subagent's session when the update is a child's —
       see the `update` event in protocol.ts. Absent = the thread's own. */
   | { type: "update"; id: string; update: SessionUpdate; allowUserChunks?: boolean; sessionId?: string }
@@ -894,11 +984,20 @@ export type Action =
   /** The whole queue, absolute. */
   | { type: "queue"; id: string; items: QueuedMessage[] }
   | { type: "notice"; id: string; text: string }
-  | { type: "error"; id: string; title: string; reason?: string; detail?: string; retryText?: string }
+  | {
+      type: "error"
+      id: string
+      title: string
+      reason?: string
+      detail?: string
+      retryText?: string
+      settle?: boolean
+    }
   | { type: "dismiss-error"; id: string; itemId: string }
   | { type: "permission"; id: string; permission: PendingPermission | null }
   | { type: "elicitation"; id: string; elicitation: PendingElicitation | null }
   | { type: "session-title"; id: string; title: string }
+  | { type: "rename-session"; id: string; title: string }
   /** Absolute state, with one hole: an event may carry modes and leave the
       options out, which means "unchanged" and not "none". The reducer is where
       that is resolved, because during a batched replay the caller cannot read
@@ -946,9 +1045,16 @@ export function reducer(state: State, action: Action): State {
         agents: action.agents,
         sessions: action.sessions,
         scheduled: action.scheduled ?? state.scheduled,
+        routines: action.routines ?? state.routines,
       }
     case "scheduled":
       return { ...state, scheduled: action.scheduled }
+    case "routines":
+      return { ...state, routines: action.routines }
+    case "routine-runs":
+      /* Keyed rather than replaced wholesale: two routines' pages can be open
+         in two dock panels, and a refresh of one must not blank the other. */
+      return { ...state, routineRuns: { ...state.routineRuns, [action.routineId]: action.runs } }
     case "sessions": {
       /* The server's list is authoritative for every thread it knows about —
          but a draft is precisely one it has not been told about yet, so this
@@ -1032,6 +1138,8 @@ export function reducer(state: State, action: Action): State {
         ...(action.earlier !== undefined ? { earlier: action.earlier } : {}),
         ...(action.loadingEarlier !== undefined ? { loadingEarlier: action.loadingEarlier } : {}),
       })
+    case "thread-replay":
+      return withThread(state, action.id, { replay: action.replay })
     case "thread-status":
       // Only a close carries a code; clear it otherwise so a stale reason can't
       // leak into the banner of the next connection.
@@ -1039,11 +1147,18 @@ export function reducer(state: State, action: Action): State {
         status: action.status,
         closeCode: action.status === "closed" ? action.closeCode : undefined,
         closeReason: action.status === "closed" ? action.closeReason : undefined,
+        /* A replay only ever runs while connecting, so every other status is an
+           exit from one — `caught_up` clears it too, but a socket that died
+           mid-replay never reaches that and must not leave a half-filled bar
+           on a thread that has stopped loading. */
+        ...(action.status === "connecting" ? {} : { replay: null }),
       })
     case "turn-active": {
       const next = withThread(state, action.id, {
         turnActive: action.active,
-        ...(action.active ? null : { items: settleTools(thread(state, action.id).items) }),
+        ...(action.active || action.settle === false
+          ? null
+          : { items: settleTools(thread(state, action.id).items) }),
       })
       /* A turn is the activity the lists order by, and the server has just
          recorded one — but only for the thread it happened in, and the next
@@ -1128,20 +1243,24 @@ export function reducer(state: State, action: Action): State {
           items: [...items.slice(0, -1), { ...last, retryText: action.retryText }],
         })
       }
+      const withRow: ThreadItem[] = [
+        ...items,
+        {
+          kind: "error",
+          id: mintItemId("error"),
+          title: action.title,
+          reason: action.reason,
+          detail: action.detail,
+          retryText: action.retryText,
+          at: Date.now(),
+        },
+      ]
       return withThread(state, action.id, {
-        // A prompt that died mid-turn leaves tool calls spinning forever.
-        items: settleTools([
-          ...items,
-          {
-            kind: "error",
-            id: mintItemId("error"),
-            title: action.title,
-            reason: action.reason,
-            detail: action.detail,
-            retryText: action.retryText,
-            at: Date.now(),
-          },
-        ]),
+        // A prompt that died mid-turn leaves tool calls spinning forever — but
+        // only settle when the agent is what failed. `settle: false` is a
+        // failure of *this device's connection*, which says nothing about the
+        // work: see the note on `settleTools`.
+        items: action.settle === false ? withRow : settleTools(withRow),
       })
     }
     case "dismiss-error":
@@ -1157,6 +1276,15 @@ export function reducer(state: State, action: Action): State {
         ...state,
         sessions: state.sessions.map((s) =>
           s.id === action.id && s.title === "New thread" ? { ...s, title: action.title } : s
+        ),
+      }
+    /* The sniff above yields to a name that was chosen; this one is that name,
+       so it replaces whatever the title was. */
+    case "rename-session":
+      return {
+        ...state,
+        sessions: state.sessions.map((s) =>
+          s.id === action.id ? { ...s, title: action.title } : s
         ),
       }
     case "session-config":
@@ -1204,6 +1332,8 @@ export const initialState: State = {
   agents: [],
   sessions: [],
   scheduled: [],
+  routines: [],
+  routineRuns: {},
   threads: {},
 }
 

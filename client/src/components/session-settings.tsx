@@ -292,8 +292,21 @@ function OptionRow({
   )
 }
 
-export function SessionSettingsButton() {
-  const [open, setOpen] = React.useState(false)
+/**
+ * How every thread is drawn on this device.
+ *
+ * The dialog only — what opens it is a row in the app header's one menu
+ * (components/thread-menu). It used to carry its own eye button beside that
+ * menu; three icon buttons in a 12px-tall header, two of which opened menus,
+ * was a row you had to learn rather than read.
+ */
+export function SessionSettingsDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
   const options = useViewOptions()
   const changedKeys = React.useMemo(
     () => new Set(ALL_OPTIONS.filter(({ key }) => options[key] !== VIEW_DEFAULTS[key]).map((o) => o.key)),
@@ -309,68 +322,56 @@ export function SessionSettingsButton() {
   )
 
   return (
-    <>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        className="shrink-0 text-muted-foreground hover:text-foreground"
-        onClick={() => setOpen(true)}
-        title="View settings"
-      >
-        <Eye />
-        <span className="sr-only">View settings</span>
-      </Button>
-      <ResponsiveDialog open={open} onOpenChange={setOpen}>
-        <ResponsiveDialogContent className="sm:max-w-lg">
-          <ResponsiveDialogHeader>
-            <ResponsiveDialogTitle>View settings</ResponsiveDialogTitle>
-            <ResponsiveDialogDescription>
-              How every thread is displayed on this device. The agent is not told, and other
-              clients are not affected.
-            </ResponsiveDialogDescription>
-          </ResponsiveDialogHeader>
-          <div className="flex flex-col gap-5">
-            {GROUPS.map((group) => (
-              <section key={group.id} className="flex flex-col gap-2">
-                <header className="flex items-baseline gap-2 px-1">
-                  <h3 className="text-[11px] font-semibold tracking-wide text-foreground uppercase">
-                    {group.label}
-                  </h3>
-                  <p className="min-w-0 truncate text-[11px] text-muted-foreground/70">
-                    {group.hint}
-                  </p>
-                </header>
-                <div className="divide-y divide-border/50 overflow-hidden rounded-xl border border-border/60 bg-card/40">
-                  {group.options.map((option) => (
-                    <OptionRow
-                      key={option.key}
-                      option={option}
-                      value={options[option.key]}
-                      changed={changedKeys.has(option.key)}
-                      moot={mootKeys.has(option.key) ? MOOT_NOTE : undefined}
-                    />
-                  ))}
-                </div>
-              </section>
-            ))}
-          </div>
-          <ResponsiveDialogFooter className="items-center sm:justify-between">
-            <p className="text-[11px] text-muted-foreground">
-              {changedKeys.size === 0
-                ? "Every option is at its default."
-                : `${changedKeys.size} option${changedKeys.size === 1 ? "" : "s"} changed from the defaults.`}
-            </p>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={changedKeys.size === 0}
-              onClick={() => resetViewOptions()}
-            >
-              <RotateCcw /> Reset
-            </Button>
-          </ResponsiveDialogFooter>
-        </ResponsiveDialogContent>
-      </ResponsiveDialog>
-    </>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className="sm:max-w-lg">
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>View settings</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
+            How every thread is displayed on this device. The agent is not told, and other
+            clients are not affected.
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
+        <div className="flex flex-col gap-5">
+          {GROUPS.map((group) => (
+            <section key={group.id} className="flex flex-col gap-2">
+              <header className="flex items-baseline gap-2 px-1">
+                <h3 className="text-[11px] font-semibold tracking-wide text-foreground uppercase">
+                  {group.label}
+                </h3>
+                <p className="min-w-0 truncate text-[11px] text-muted-foreground/70">
+                  {group.hint}
+                </p>
+              </header>
+              <div className="divide-y divide-border/50 overflow-hidden rounded-xl border border-border/60 bg-card/40">
+                {group.options.map((option) => (
+                  <OptionRow
+                    key={option.key}
+                    option={option}
+                    value={options[option.key]}
+                    changed={changedKeys.has(option.key)}
+                    moot={mootKeys.has(option.key) ? MOOT_NOTE : undefined}
+                  />
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+        <ResponsiveDialogFooter className="items-center sm:justify-between">
+          <p className="text-[11px] text-muted-foreground">
+            {changedKeys.size === 0
+              ? "Every option is at its default."
+              : `${changedKeys.size} option${changedKeys.size === 1 ? "" : "s"} changed from the defaults.`}
+          </p>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={changedKeys.size === 0}
+            onClick={() => resetViewOptions()}
+          >
+            <RotateCcw /> Reset
+          </Button>
+        </ResponsiveDialogFooter>
+    </ResponsiveDialogContent>
+    </ResponsiveDialog>
   )
 }

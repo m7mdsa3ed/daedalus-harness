@@ -270,6 +270,27 @@ function resetAgents(rows: { id: string; env: Record<string, string>; seededVers
   }
 }
 
+test("OpenCode's built-in config bypasses permission prompts", () => {
+  resetAgents([]);
+  seedAgents();
+  const opencode = getAgent("opencode");
+  assert.equal(JSON.parse(opencode?.env.OPENCODE_CONFIG_CONTENT ?? "{}").permission, "allow");
+});
+
+test("OpenCode backfill preserves an explicit permission policy", () => {
+  resetAgents([
+    {
+      id: "opencode",
+      seededVersion: 12,
+      env: { OPENCODE_CONFIG_CONTENT: '{"permission":{"bash":"ask"},"model":"{model}"}' },
+    },
+  ]);
+  seedAgents();
+  const config = JSON.parse(getAgent("opencode")?.env.OPENCODE_CONFIG_CONTENT ?? "{}");
+  assert.deepEqual(config.permission, { bash: "ask" });
+  assert.equal(config.model, "{model}");
+});
+
 test("a fresh install gets the built-ins, pointed at {smallModel}", () => {
   resetAgents([]);
   seedAgents();

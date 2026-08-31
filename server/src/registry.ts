@@ -184,6 +184,23 @@ function withOpencodePersonaKey(env: Record<string, string>): Record<string, str
   };
 }
 
+/** Enable OpenCode's non-interactive permission mode when the built-in config
+    is still the user's untouched template. An explicit permission policy is
+    always preserved: users who configured `ask`/`deny` keep that choice. */
+function withOpencodeBypass(env: Record<string, string>): Record<string, string> {
+  const template = env.OPENCODE_CONFIG_CONTENT;
+  if (!template?.trimStart().startsWith("{")) return env;
+  if (template.includes('"permission"') || template.includes('"permissions"')) return env;
+  const at = template.indexOf("{") + 1;
+  const key = '"permission":"allow"';
+  const rest = template.slice(at).trimStart();
+  return {
+    ...env,
+    OPENCODE_CONFIG_CONTENT:
+      template.slice(0, at) + key + (rest.startsWith("}") ? "" : ",") + template.slice(at),
+  };
+}
+
 /**
  * The quota probes seed 10 adds, by agent id.
  *
@@ -504,10 +521,12 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // Seed 12 adds `instructions`, which is how a persona reaches OpenCode. It
     // is a list of *file paths*, not text, so it takes `{personaFile}` and
     // `writePersonaPrompt` puts the prompt somewhere for it to point at.
-    since: 12,
+    // Seed 13 enables OpenCode's permission bypass for the built-in template;
+    // this is deliberately merged only when no permission policy exists.
+    since: 13,
     introduced: 1,
     backfill: (existing) => ({
-      env: withOpencodePersonaKey(existing.env),
+      env: withOpencodeBypass(withOpencodePersonaKey(existing.env)),
       personaVia: existing.personaVia ?? "env",
     }),
     id: "opencode",
@@ -521,7 +540,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
       DAEDALUS_OPENCODE_BASE_URL: "{baseUrl?https://api.opencode.ai}",
       DAEDALUS_OPENCODE_MODEL: "{model}",
       OPENCODE_CONFIG_CONTENT:
-        '{"instructions":["{personaFile}"],"model":"{env:DAEDALUS_OPENCODE_MODEL}","provider":{"opencode":{"npm":"@ai-sdk/openai-compatible","name":"OpenCode","options":{"baseURL":"{env:DAEDALUS_OPENCODE_BASE_URL}","apiKey":"{env:DAEDALUS_OPENCODE_API_KEY}"}}}}',
+        '{"permission":"allow","instructions":["{personaFile}"],"model":"{env:DAEDALUS_OPENCODE_MODEL}","provider":{"opencode":{"npm":"@ai-sdk/openai-compatible","name":"OpenCode","options":{"baseURL":"{env:DAEDALUS_OPENCODE_BASE_URL}","apiKey":"{env:DAEDALUS_OPENCODE_API_KEY}"}}}}',
     },
   },
 ];

@@ -249,6 +249,66 @@ export class SessionJournal {
     return row?.seq ?? null;
   }
 
+  /**
+   * Where an unresumed attach should start: the oldest turn boundary that fits
+   * **both** budgets, or 0 when the whole log fits and nothing is withheld.
+   *
+   * The step budget alone was the older rule and it measured the wrong thing.
+   * A step is a turn, and a turn is anything from one sentence to a build log
+   * streamed through `_meta.terminal_output_delta` — so sixty of them is a
+   * screenful on one thread and several megabytes on the next, and it is the
+   * second one that leaves someone watching a spinner. Bytes is the budget the
+   * frame cut in `replayFrames` already runs on, for the same reason and on the
+   * same payloads; the window simply never had one.
+   *
+   * The steps are applied first, so the byte pass never scans more than the
+   * step window would have sent anyway, and it reads `seq`/`kind`/`length()`
+   * rather than the payloads themselves — the size of the replay is measured
+   * without materializing it. The window function accumulates each row's tail
+   * (descending order, default frame), and the answer is the *oldest*
+   * `turn_started` whose tail still fits.
+   *
+   * The floor is a whole turn even when that turn alone busts the budget: the
+   * cut is only ever made at a `turn_started` (a transcript that begins mid-turn
+   * re-folds into a half turn the reducer never saw opened), so one enormous
+   * turn is sent whole and the budget is missed rather than the rule broken.
+   */
+  windowStart(sessionId: string, steps: number, maxBytes: number): number {
+    if (steps <= 0) return 0;
+    this.flush();
+    const skip = this.turnCount(sessionId) - steps;
+    const stepFloor = skip > 0 ? this.turnStartAt(sessionId, skip) ?? 0 : 0;
+    const row = this.db
+      .all<{ seq: number }>(sql`
+        select seq from (
+          select seq, kind,
+                 sum(length(payload)) over (order by seq desc) as tail
+            from session_events
+           where session_id = ${sessionId} and seq >= ${stepFloor}
+        )
+        where kind = 'turn_started' and tail <= ${maxBytes}
+        order by seq asc
+        limit 1
+      `)
+      .at(0);
+    /* Not one whole turn fits: send the newest on its own. A window of no turns
+       at all would be a blank transcript for a thread that has one, and there
+       is nothing below the floor to fall back to. */
+    const cut = row
+      ? Math.max(stepFloor, row.seq)
+      : this.turnStartsBefore(sessionId, Number.MAX_SAFE_INTEGER, 1).at(0) ?? stepFloor;
+    /* The cut is made only when a turn is genuinely being withheld. Jumping to
+       the first turn of the window unconditionally looks equivalent and is not:
+       a log need not begin with a `turn_started`, because a revive clears it and
+       refills it from the `session/load` replay — the whole prior conversation,
+       with no turn boundaries in it. Starting at the oldest turn there would
+       drop everything the load put back while `earlier` said 0 (no whole turns
+       lie behind it), so nothing would offer it back either. Same rule as
+       `earlierPage`: the window that reaches the oldest turn takes the head
+       along, which is the only way that head is ever read. */
+    return this.countTurnsBefore(sessionId, cut) === 0 ? 0 : cut;
+  }
+
   /** The page of whole turns immediately before `before`, plus how many turns
       are still behind it. Empty when `before` is already the head of the log.
    *

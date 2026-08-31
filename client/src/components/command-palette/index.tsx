@@ -52,6 +52,7 @@ import {
   ThemePage,
 } from "./choice-pages"
 import { RootPage } from "./root-page"
+import { RoutineActivityPage, RunRoutinePage } from "./routine-pages"
 import { SearchPage } from "./search-page"
 
 export { PaletteContext, usePalette } from "./context"
@@ -197,7 +198,12 @@ export function CommandPalette({
             {/* The search page says its own "nothing found", per section and per
                 clock — a single global one cannot tell "no messages" from
                 "still asking". */}
-            {page !== "search" && <CommandEmpty>No matches.</CommandEmpty>}
+            {/* The activity page says its own "nothing yet", per cause: an
+                empty digest can mean no routines, a read still out, or a read
+                that failed, and one global line cannot tell them apart. */}
+            {page !== "search" && page !== "routine-activity" && (
+              <CommandEmpty>No matches.</CommandEmpty>
+            )}
             {page === "root" && <RootPage />}
             {page === "search" && <SearchPage />}
             {page === "projects" && <ProjectsPage />}
@@ -207,6 +213,8 @@ export function CommandPalette({
             {page === "effort" && <EffortPage />}
             {page === "mode" && <ModePage />}
             {page === "persona" && <PersonaPage />}
+            {page === "routines" && <RunRoutinePage />}
+            {page === "routine-activity" && <RoutineActivityPage />}
           </CommandList>
         </Command>
       </PaletteContext.Provider>

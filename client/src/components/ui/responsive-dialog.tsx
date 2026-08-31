@@ -111,10 +111,16 @@ type ContentProps = Omit<
   "className" | "style" | "color" | "children"
 > & {
   className?: string
+  /* The scroll region between header and footer. An escape hatch, not a second
+     layout: a body that is itself two scrolling panes (the workflow run's
+     sidebar + step pane) has to turn the outer region's padding and its
+     `overflow-y-auto` off, or the inner panes can never own their own scroll.
+     Merged last, so `p-0 overflow-hidden` wins over the defaults. */
+  bodyClassName?: string
   children?: React.ReactNode
 }
 
-function ResponsiveDialogContent({ className, children, ...props }: ContentProps) {
+function ResponsiveDialogContent({ className, bodyClassName, children, ...props }: ContentProps) {
   const isMobile = React.useContext(MobileCtx)
   const { header, body, footer } = partitionChildren(children)
 
@@ -158,7 +164,8 @@ function ResponsiveDialogContent({ className, children, ...props }: ContentProps
               <div
                 className={cn(
                   "flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-4 py-4",
-                  !footer && "pb-[max(1rem,env(safe-area-inset-bottom))]"
+                  !footer && "pb-[max(1rem,env(safe-area-inset-bottom))]",
+                  bodyClassName
                 )}
               >
                 {body}
@@ -192,7 +199,7 @@ function ResponsiveDialogContent({ className, children, ...props }: ContentProps
         {...props}
       >
         {header}
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-5">{body}</div>
+        <div className={cn("flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-5", bodyClassName)}>{body}</div>
         {footer}
         <CloseButton Close={DialogPrimitive.Close} />
       </DialogPrimitive.Popup>

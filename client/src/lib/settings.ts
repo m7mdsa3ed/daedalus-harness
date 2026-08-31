@@ -547,3 +547,286 @@ export async function updateScheduled(
   })
 }
 
+
+/* ── routines ──────────────────────────────────────────────────────────────
+   A routine is a saved thread-start that fires on its own. The interfaces
+   below mirror the server's rows one field per column, the way
+   `ScheduledMessage` mirrors `scheduled_messages` — the server sends the row
+   itself (`RunView` in `server/src/routines.ts` is an alias of the row, and
+   `Routine` is the row plus its links), so anything else here would be a
+   projection nobody made.
+
+   One thing reads differently from `ScheduledMessage` and it is worth naming:
+   these booleans are real booleans, not SQLite's 0/1. The routine columns are
+   declared `mode: "boolean"` where `scheduled_messages.enabled` deliberately
+   is not, so drizzle hands the route a `true` and JSON carries it through. */
+
+/** What the harness answers with when the agent asks. `"ask"` is the ordinary
+    thread's behaviour exactly: park, tell the peers, wait for a human. */
+export type Stance = "allow" | "deny" | "ask"
+
+/**
+ * How a routine's runs answer the agent, mirroring `server/src/autonomy.ts` —
+ * which is where the design lives and the only place it is explained. Kept as
+ * a mirror rather than an import because the server is not a package the client
+ * builds against (the ACP SDK is the only type-only exception, and it is a
+ * published one).
+ *
+ * `permissions` is keyed by ACP tool kind — a protocol field, so naming one
+ * here hardcodes nothing about any agent. Unknown and absent keys both fall
+ * through to `default` server-side, which is why this is a loose record: a form
+ * that could only offer the kinds this file happens to list would refuse a kind
+ * a later ACP release adds.
+ */
+export interface AutonomyPolicy {
+  permissions: { default: Stance } & Record<string, Stance>
+  /** `"decline"` lets the turn carry on and say it was skipped; `"ask"` parks. */
+  elicitations: "decline" | "ask"
+  /** How long an `ask` waits for a human before `askFallback` answers it.
+      Zero or less disables the timer — a park that waits forever. */
+  askTimeoutSeconds: number
+  askFallback: "deny" | "cancel"
+  /** Wall-clock ceiling for the whole run, in seconds. Zero or less = none. */
+  maxRunSeconds: number
+  maxRunTokens?: number
+  /** Refuse to fire when the profile's plan is nearly gone. A provider with no
+      windows reports `api-key` and the check is simply not applied — "no quota"
+      is an answer, not a failure. */
+  minQuotaPercent?: number
+}
+
+/** The default a new routine is written with, and the only policy that is
+    exactly today's behaviour. Matches `ASK_EVERYTHING` in the server's
+    `autonomy.ts`; a form that opened on anything else would be a grant made by
+    a default rather than by a person. */
+export const ASK_EVERYTHING: AutonomyPolicy = {
+  permissions: { default: "ask" },
+  elicitations: "ask",
+  askTimeoutSeconds: 300,
+  askFallback: "deny",
+  maxRunSeconds: 30 * 60,
+}
+
+/** What a fire actually runs: one prompt, or a whole declarative workflow
+    (`server/src/workflow-schema.ts`, verbatim — the definition is opaque here,
+    exactly as a workflow tool's payload is). */
+export type RoutineBody =
+  | { kind: "prompt"; text: string }
+  | { kind: "workflow"; definition: Record<string, unknown> }
+
+/** What happens to a run's answer once its turn settles. Optional and plural;
+    a failed one is recorded on the run and never fails the run. Named for the
+    column it lives in (`Routine.onFinish`); the server calls the same union
+    `RoutineAction`. */
+export type OnFinishAction =
+  | { kind: "push" }
+  | { kind: "knowledge"; title?: string }
+  | { kind: "task"; boardId?: string; statusId?: string; title?: string }
+  | { kind: "routine"; routineId: string }
+
+/** One `onFinish` action's outcome, as the run recorded it. */
+export interface OnFinishRecord {
+  kind: string
+  ok: boolean
+  error?: string
+  /** The row the action created, when it created one. */
+  ref?: string
+}
+
+/** What a fire does when the routine's previous run is still going. */
+export type RoutineOverlap = "skip" | "queue"
+
+/**
+ * A saved thread-start that fires on its own — everything `POST /api/sessions`
+ * carries, because a fire is `create(...)` with these values and then one
+ * prompt. That is the constraint the shape is built on: a routine must not be
+ * able to start a thread the composer could not start.
+ */
+export interface Routine {
+  id: string
+  name: string
+  /** Free text shown in the list; null = none. */
+  description: string | null
+  /** False = every trigger on this routine is inert. The row is kept and still
+      listed — disabling is how a routine is parked while its prompt is
+      reworked, where deleting would take the run history with it. */
+  enabled: boolean
+  projectId: string
+  profileId: string
+  agentId: string
+  /** Empty string = defer to the profile/agent, exactly as a thread does. */
+  model: string
+  effort: string
+  /** Null for none. Not a foreign key server-side: a deleted persona reads as
+      "none" at the next fire. */
+  personaId: string | null
+  /** Picks against the agent's advertised selectors, replayed after
+      `session/new`. Opaque ACP option ids — never enumerated. */
+  configChoices: Record<string, string | boolean>
+  body: RoutineBody
+  /** An optional JSON schema for the run's answer, which buys the run one
+      repair turn and then a structured `RoutineRun.verdict`. Null means the
+      status stays bare — "the turn ended" and nothing more. */
+  output: Record<string, unknown> | null
+  onFinish: OnFinishAction[]
+  overlap: RoutineOverlap
+  autonomy: AutonomyPolicy
+  /** One run has completed under this routine. The form may not widen
+      `autonomy.permissions.default` to `allow` until it has — the difference
+      between an informed grant and a dismissed dialog. Set by the engine, and
+      deliberately not patchable. */
+  dryRunCompleted: boolean
+  createdAt: number
+  updatedAt: number
+  /** Library entries every run gets, on top of its profile's. Nested (not
+      flattened the way `Profile` spreads them) because the server sends them
+      that way: they are a join table, never columns on the row. */
+  links: { mcpServerIds: string[]; skillIds: string[]; commandIds: string[] }
+}
+
+/** `POST /api/routines`. The links go in flat, as three id arrays, which is
+    what `POST /api/sessions` already takes — `Routine.links` is the shape that
+    comes *back*. */
+export interface RoutineInput {
+  name: string
+  description?: string | null
+  enabled?: boolean
+  projectId: string
+  profileId: string
+  agentId: string
+  model?: string
+  effort?: string
+  personaId?: string | null
+  configChoices?: Record<string, string | boolean>
+  body: RoutineBody
+  output?: Record<string, unknown> | null
+  onFinish?: OnFinishAction[]
+  overlap?: RoutineOverlap
+  autonomy: AutonomyPolicy
+  mcpServerIds?: string[]
+  skillIds?: string[]
+  commandIds?: string[]
+}
+
+/** `PATCH /api/routines/:id`. Every field of the input, optional — except
+    `dryRunCompleted`, which is absent on purpose: it is the engine's record
+    that a run has completed, and a patch that could set it would make the gate
+    it guards decorative. */
+export type RoutinePatch = Partial<RoutineInput>
+
+export type RoutineTriggerKind = "schedule" | "api" | "git"
+
+/**
+ * One way a routine fires. Several per routine, combinable, each enabled on its
+ * own; the three kinds share a row because they share everything after the fire.
+ *
+ * This is the server's row minus one column: `secretHash` never leaves the
+ * server, and `hasToken` is the boolean the UI actually asks for. A hash has no
+ * use on a surface whose only questions are "does this have a token" and "how
+ * old is it" — `secretCreatedAt` answers the second.
+ */
+export interface RoutineTrigger {
+  id: string
+  routineId: string
+  kind: RoutineTriggerKind
+  enabled: boolean
+  /** 5-field cron. Null for a one-off (`atMs`) and for the other two kinds.
+      The presets write cron; there is no second representation. */
+  cron: string | null
+  /** IANA zone the cron is read in; null = the server's own. */
+  tz: string | null
+  /** Epoch ms of a single fire; null for a recurring one. */
+  atMs: number | null
+  /** Checked at fire time, never at edit time. A refused fire writes a
+      `skipped` run saying why and does not disturb `nextFireAt`. */
+  condition: { gitChangedSince?: "lastRun" } | null
+  /** Epoch ms of the next fire, stagger included. Null when the trigger has no
+      clock (`api`, `git`, or a spent one-off) — and null for a few seconds
+      after a schedule trigger is created, because the sweep is what arms it. */
+  nextFireAt: number | null
+  /** Whether a long-lived token exists. The token itself is returned exactly
+      once, by `mintRoutineTriggerToken`, and is never readable again. */
+  hasToken: boolean
+  /** Epoch ms the current token was minted, so the UI can say how old the
+      credential it cannot show is. Null when there is none. */
+  secretCreatedAt: number | null
+  /** The branch whose HEAD moving fires this, or null for "any branch". */
+  branch: string | null
+  /** Path globs; a change matching any fires. Empty = any path. */
+  paths: string[]
+  /** Debounce for the watcher, ms — a rebase is hundreds of events and one
+      intent. */
+  debounceMs: number
+  /** The git oid the last evaluation saw. Null until the first fire, which is
+      why the first fire of such a trigger always runs. */
+  lastSeen: string | null
+  lastFiredAt: number | null
+  /** Why the last evaluation could not fire; null once one works. */
+  lastError: string | null
+  createdAt: number
+}
+
+/** `POST /api/routines/:id/triggers`. A new trigger arrives with a null clock
+    on purpose: null is inert, and the server's sweep is the one thing that
+    knows when the next slot is — it arms `nextFireAt` on its next pass. */
+export interface RoutineTriggerInput {
+  kind: RoutineTriggerKind
+  enabled?: boolean
+  cron?: string | null
+  tz?: string | null
+  atMs?: number | null
+  condition?: { gitChangedSince?: "lastRun" } | null
+  branch?: string | null
+  paths?: string[]
+  debounceMs?: number
+}
+
+export type RoutineTriggerPatch = Partial<RoutineTriggerInput>
+
+export type RoutineRunStatus = "running" | "completed" | "failed" | "blocked" | "skipped"
+
+/** Which door fired a run. `routine` is the chaining action. */
+export type RoutineSource = "schedule" | "api" | "git" | "manual" | "routine"
+
+/**
+ * One run of a routine, and one real thread.
+ *
+ * `sessionId` is an ordinary session id: it opens with `threadPath(sessionId)`
+ * like any other thread, because that is exactly what it is — its own
+ * transcript, searchable, openable and revivable, retired the moment its turn
+ * settles. There is nothing new to route.
+ */
+export interface RoutineRun {
+  id: string
+  routineId: string
+  /** The trigger that fired it, or null for a manual run (and for a fire that
+      came in on the server's own boot key rather than a stored token). */
+  triggerId: string | null
+  /** Minted per fire and shared by every run that fire produced — one today. */
+  fireId: string
+  /** The run's thread, or null for a run skipped before one was made. */
+  sessionId: string | null
+  source: RoutineSource
+  /** The caller's own words, if the fire brought any. Never parsed: it reaches
+      the agent inside an untrusted wrapper. */
+  payload: string | null
+  /** A "Run now, forced to ask" — the run that clears `dryRunCompleted`. */
+  dryRun: boolean
+  status: RoutineRunStatus
+  /** Why a `skipped` run was skipped, why a `blocked` one is blocked, or why a
+      `failed` one failed. One column because it is one sentence to one reader. */
+  error: string | null
+  /** The run's final prose. */
+  output: string | null
+  /** The parsed answer when the routine declared an `output` schema — the only
+      field here about the *work* rather than the process, which is why it and
+      not `status` is what a run list leads with. */
+  verdict: unknown
+  actions: OnFinishRecord[]
+  /** The git oid this run saw, for the next `gitChangedSince` comparison. */
+  headOid: string | null
+  /** Summed from the run's settled turns. Null on a run that took none. */
+  tokens: number | null
+  startedAt: number
+  endedAt: number | null
+}

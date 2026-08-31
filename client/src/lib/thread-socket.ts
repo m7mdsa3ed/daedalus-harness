@@ -20,8 +20,32 @@ import { wsUrl, type ServerSettings } from "./settings"
  * stop a months-old archive from costing its whole history to open at the end.
  * Below this the transcript arrives whole and `earlier` is 0, so nothing about
  * the ordinary thread changes — no button, no paging, no retained raw events.
+ *
+ * Steps are only half the budget, and the half the *server* keeps: it also cuts
+ * on `REPLAY_WINDOW_BYTES`, whichever binds first, because a step is a turn and
+ * a turn is not a size. This number can afford to be generous precisely because
+ * that one is not.
  */
 export const REPLAY_WINDOW_STEPS = 60
+
+/**
+ * How often a connected socket asks the server whether it is still there.
+ *
+ * The server pings at the frame level (`index.ts`), which the browser answers
+ * by itself and never surfaces to JS — so that half proves the client is alive
+ * to the SERVER and tells this end nothing. This is the other direction, and
+ * it has to be an application-level `ping` command precisely because an idle
+ * thread is legitimately silent for hours: without asking, "heard nothing" and
+ * "the path is dead" are the same observation.
+ */
+const LIVENESS_PING_MS = 30_000
+/** Two missed rounds, plus room for a slow answer. */
+const LIVENESS_SILENCE_MS = LIVENESS_PING_MS * 2 + 15_000
+/** The close code a socket the watchdog gave up on reports. Deliberately
+    outside `NON_RECONNECTABLE_CLOSE_CODES` (a dead path is the case that most
+    wants a reconnect) and unknown to `closedState`, whose default — "lost the
+    connection to the server, it may have restarted" — is exactly right. */
+const SILENT_CLOSE_CODE = 4100
 
 
 /**
@@ -115,9 +139,18 @@ export interface ThreadCallbacks {
       conversation: the replay that follows is an empty transcript, and the only
       difference between that and a brand new thread is this field. */
   onAttached: (
-    info: { from: number; resumed: boolean; earlier: number; archived: boolean },
+    info: { from: number; to: number; resumed: boolean; earlier: number; archived: boolean },
     historyLost?: HistoryLost
   ) => void
+  /** A `replay` frame landed and its events have been folded. `done`/`total`
+      are events, counted against the window the server named in `attached`, and
+      exist so a long replay can say how long it is rather than apologising for
+      taking a while — the same bargain the service worker's precache bar makes.
+      Not raised at all when the server did not state a total (one that predates
+      the field, or a non-batch replay with no frames to count): a total of zero
+      is not a small number, it is the absence of one, and a bar drawn against
+      it is a lie that jumps. */
+  onReplayProgress: (done: number, total: number) => void
   /** A `load_earlier` page arrived and the transcript is about to be re-folded
       from the start of the widened window. Brackets the re-fold with
       `onRewound` exactly as `attached`/`caught_up` bracket a replay — same
@@ -168,8 +201,23 @@ export class ThreadSocket {
       holds, and how many steps (turns) are behind it on the server. */
   private windowFrom = 0
   private earlier = 0
+  /** Events replayed so far in this attach, and how many the server said were
+      coming. Reset by every `attached`; 0/0 outside a replay. */
+  private replayed = 0
+  private replayTotal = 0
   /** The `loadEarlier` in flight, if any — see the re-entrancy note there. */
   private earlierInFlight: Promise<void> | null = null
+  /** When this socket last heard ANY frame from the server, and the timer that
+      checks it. Started at `caught_up` rather than at `connect()`: a replay is
+      a socket that is provably talking, and a watchdog over it could only ever
+      fire on a healthy connection mid-stream. */
+  private lastSeenAt = 0
+  private watchdog: ReturnType<typeof setInterval> | null = null
+  /** Set by the first answered ping. Until then silence is not evidence: a
+      server that predates the `ping` command answers nothing at all, and
+      enforcing the deadline against one would reconnect a healthy socket every
+      75 seconds forever. */
+  private livenessProven = false
 
   constructor(serverSessionId: string, settings: ServerSettings, callbacks: ThreadCallbacks) {
     this.serverSessionId = serverSessionId
@@ -223,10 +271,15 @@ export class ThreadSocket {
         } catch {
           return
         }
+        // Any frame at all is proof the path is alive — the watchdog's deadline
+        // is measured from here, and the ping it sends is only there to make an
+        // idle thread produce one.
+        this.lastSeenAt = Date.now()
         // `caught_up` is what "connected" means: before it, the socket is
         // replaying and a caller that acted on it would prompt into history.
         if (parsed.ev === "caught_up") {
           this.callbacks.onStatus("connected")
+          this.startWatchdog()
           done()
         }
         this.handle(parsed)
@@ -242,6 +295,7 @@ export class ThreadSocket {
         // would mark a live connection dead and book a phantom reconnect.
         if (this.ws !== ws) return
         this.ws = null
+        this.stopWatchdog()
         this.failInflight(new Error(this.closeInfo.reason || "the connection to the thread closed"))
         this.callbacks.onStatus("closed", this.closeInfo)
         // A handshake that never finished: the close reason is the server's own
@@ -271,11 +325,21 @@ export class ThreadSocket {
         const earlier = event.earlier ?? 0
         this.windowFrom = event.from
         this.earlier = earlier
+        // How much replay is coming, in events. Zero when the server said
+        // nothing (an older one, which never had the field) — see onReplayProgress.
+        this.replayTotal = Math.max(0, (event.to ?? 0) - event.from)
+        this.replayed = 0
         // Only worth carrying the events when there is something to fold them
         // in front of; see `raw`.
         if (!resumed) this.raw = earlier > 0 ? [] : null
         this.callbacks.onAttached(
-          { from: event.from, resumed, earlier, archived: event.archived ?? false },
+          {
+            from: event.from,
+            to: event.to ?? event.from,
+            resumed,
+            earlier,
+            archived: event.archived ?? false,
+          },
           event.historyLost
         )
         return
@@ -291,6 +355,16 @@ export class ThreadSocket {
          wakes up to receive it changed. */
       case "replay":
         for (const journaled of event.events) this.handle(journaled)
+        /* Said once per frame rather than once per event: the frame is already
+           the unit the server cut the replay into and the unit the reducer
+           commits, so it is the only point at which the count and what is on
+           screen agree. Clamped, because the log can grow between the total the
+           server read at attach and the last frame it sends — a bar that says
+           1.1 of 1 is worse than one that sits at full for a beat. */
+        if (this.replayTotal > 0) {
+          this.replayed = Math.min(this.replayTotal, this.replayed + event.events.length)
+          this.callbacks.onReplayProgress(this.replayed, this.replayTotal)
+        }
         return
       case "update":
       case "session_config":
@@ -489,6 +563,7 @@ export class ThreadSocket {
 
   close(): void {
     this.clientInitiatedClose = true
+    this.stopWatchdog()
     // The close event may not fire before the caller checks, so stamp the flag
     // here — otherwise onStatus reads a close we asked for as one we didn't and
     // schedules a phantom reconnect.
@@ -497,6 +572,69 @@ export class ThreadSocket {
     this.ws = null
     this.failInflight(new Error("the thread was closed"))
     ws?.close()
+  }
+
+  // ---- liveness ----
+
+  private startWatchdog(): void {
+    if (this.watchdog) return
+    this.lastSeenAt = Date.now()
+    this.watchdog = setInterval(() => this.beat(), LIVENESS_PING_MS)
+  }
+
+  private stopWatchdog(): void {
+    if (!this.watchdog) return
+    clearInterval(this.watchdog)
+    this.watchdog = null
+  }
+
+  private beat(): void {
+    if (!this.ws) {
+      this.stopWatchdog()
+      return
+    }
+    if (this.livenessProven && Date.now() - this.lastSeenAt > LIVENESS_SILENCE_MS) {
+      this.giveUp()
+      return
+    }
+    /* A rejection here is the socket dying, which the close path already
+       reports — and an unhandled one would surface as a global error about a
+       thread that is merely reconnecting. The deadline above is what acts on
+       silence; this only has to be sent. */
+    this.request((id) => ({ id, cmd: "ping" })).then(
+      () => {
+        this.livenessProven = true
+      },
+      () => {},
+    )
+  }
+
+  /**
+   * Report a socket that stopped answering as closed, without waiting for the
+   * browser to notice.
+   *
+   * `ws.close()` alone would not do: the closing handshake needs the very peer
+   * that has stopped answering, so the event can be minutes away or never. So
+   * the status is synthesized here and the real `close` — whenever it lands —
+   * is swallowed by the `this.ws !== ws` guard, exactly as it is for a socket
+   * a reconnect has already replaced. `clientInitiatedClose` is deliberately
+   * NOT set: this is a dead connection being reported, not one we are done
+   * with, and `onStatus` has to book the ordinary reconnect for it.
+   */
+  private giveUp(): void {
+    const ws = this.ws
+    if (!ws) return
+    this.stopWatchdog()
+    this.ws = null
+    const reason = "the connection stopped answering"
+    this.closeInfo = { clientInitiated: false, code: SILENT_CLOSE_CODE, reason }
+    this.failInflight(new Error(reason))
+    this.callbacks.onStatus("closed", this.closeInfo)
+    try {
+      ws.close()
+    } catch {
+      /* already unusable — the point was the status, which is out */
+    }
   }
 
   // ---- plumbing ----

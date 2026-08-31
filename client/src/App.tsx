@@ -2,6 +2,7 @@ import * as React from "react"
 import { AppShell } from "@/components/app-shell"
 import { AppToaster } from "@/components/app-toaster"
 import { ConfirmProvider } from "@/components/confirm-dialog"
+import { PromptProvider } from "@/components/prompt-dialog"
 import { ConnectScreen } from "@/components/connect-screen"
 import { useActions } from "@/lib/actions"
 import { refreshNotificationOffer } from "@/lib/notifications"
@@ -21,25 +22,27 @@ function App() {
   return (
     <ThemeProvider>
       <ConfirmProvider>
-        <StoreProvider state={state} dispatch={dispatch}>
-          {settings && !adding ? (
-            <Connected key={settings.id} settings={settings} onAddServer={() => setAdding(true)} />
-          ) : (
-            <ConnectScreen
-              onConnected={(next) => {
-                if (adding) return location.assign("/")
-                setSettings(next)
-              }}
-              onCancel={settings && adding ? () => setAdding(false) : undefined}
-            />
-          )}
-          {/* Bottom-trailing on a desktop, top on a phone, and no `theme` prop
-              to reconcile: the Base UI toast is drawn entirely out of the
-              palette's own tokens, so it follows the app's mode rather than the
-              OS's the way sonner's hardcoded per-theme colours had to be talked
-              out of. */}
-          <AppToaster />
-        </StoreProvider>
+        <PromptProvider>
+          <StoreProvider state={state} dispatch={dispatch}>
+            {settings && !adding ? (
+              <Connected key={settings.id} settings={settings} onAddServer={() => setAdding(true)} />
+            ) : (
+              <ConnectScreen
+                onConnected={(next) => {
+                  if (adding) return location.assign("/")
+                  setSettings(next)
+                }}
+                onCancel={settings && adding ? () => setAdding(false) : undefined}
+              />
+            )}
+            {/* Bottom-trailing on a desktop, top on a phone, and no `theme` prop
+                to reconcile: the Base UI toast is drawn entirely out of the
+                palette's own tokens, so it follows the app's mode rather than the
+                OS's the way sonner's hardcoded per-theme colours had to be talked
+                out of. */}
+            <AppToaster />
+          </StoreProvider>
+        </PromptProvider>
       </ConfirmProvider>
     </ThemeProvider>
   )

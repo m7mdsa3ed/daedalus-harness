@@ -6,10 +6,12 @@ import { ImportThreadsDialog } from "@/components/import-threads"
 import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
 import { Logo } from "@/components/ui/logo"
 import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
-import { OpenPanelMenu } from "@/components/workspace/open-panel-menu"
-import { SessionSettingsButton } from "@/components/session-settings"
+import { ThreadHeaderMenu } from "@/components/thread-menu"
+import { NotificationBell } from "@/components/notifications/bell"
+import { NotificationsInboxPage } from "@/components/notifications/page"
 import type { PanelKind } from "@/lib/workspace/panels"
 import { openTerminal } from "@/components/workspace/terminal-panel"
+import { RoutinesPage } from "@/components/routines-page"
 import { SchedulePage } from "@/components/schedule-page"
 import { TasksBoard } from "@/components/tasks-board"
 import type { DockviewApi } from "dockview-react"
@@ -53,6 +55,7 @@ import { ProjectPage } from "@/components/project-page"
 import {
   SETTINGS_NAV_GROUPS,
   SETTINGS_SECTIONS,
+  settingsMaxWidth,
   type SettingsSectionId,
 } from "@/components/settings/sections"
 import { SettingsLayout } from "@/components/settings/layout"
@@ -138,8 +141,9 @@ export function AppShell({
   const inSchedule = location.pathname.startsWith("/schedules")
   const inBoard = location.pathname.startsWith("/board")
   const inProject = location.pathname.startsWith("/projects")
+  const inNotifications = location.pathname.startsWith("/notifications")
   const sessionId =
-    inSettings || inSchedule || inBoard || inProject
+    inSettings || inSchedule || inBoard || inProject || inNotifications
       ? null
       : currentThreadId(location.pathname, location.search)
   const section = sectionOf(inSettings ? (location.pathname.split("/")[2] ?? "") : "")
@@ -505,6 +509,8 @@ export function AppShell({
                       ? (location.pathname.endsWith("/new") ? "New schedule" : "Schedules")
                       : inBoard
                         ? "Tasks"
+                        : inNotifications
+                          ? "Notifications"
                         : inProject
                           ? (state.projects.find(
                               (p) => p.id === location.pathname.split("/")[2]
@@ -518,6 +524,8 @@ export function AppShell({
                 <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Scheduled messages</span>
               ) : inBoard ? (
                 <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Board</span>
+              ) : inNotifications ? (
+                <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Inbox</span>
               ) : inProject ? (
                 <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Project</span>
               ) : (
@@ -542,20 +550,33 @@ export function AppShell({
             {/* The workspace's one entry point. In the header rather than on the
                 tab strip: there is exactly one of it however the dock is split,
                 and it survives a narrow screen, which is where it matters —
-                nothing else on a phone can reach these panels. */}
-            {!inSettings && !inSchedule && !inBoard && !inProject && (
-              <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
-                {/* View settings are device-global — one reading setup for every
-                    thread — so there is exactly one of them here, where the
-                    composer row would have drawn one per mounted chat panel. */}
-                <SessionSettingsButton />
-                <OpenPanelMenu
+                nothing else on a phone can reach these panels or this thread's
+                own actions. */}
+            <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+              {/* The bell is on every route, which is the whole reason it moved
+                  off the sidebar's nav: a count is only useful where it is
+                  always in view, and in the collapsed rail it was a capsule
+                  pinned to the corner of a row. The sidebar keeps the row —
+                  it goes to the inbox page. */}
+              <NotificationBell />
+              {/* One menu, not three icons. It holds what the + held (new
+                  thread, the workspace panels), what the eye held (view
+                  settings) and what the routed thread can be asked to do —
+                  Refresh first. Three targets in a 12px header is a row you
+                  have to learn rather than read, and on a phone it is three
+                  targets in the space of one. */}
+              {!inSettings && !inSchedule && !inBoard && !inProject && !inNotifications && (
+                <ThreadHeaderMenu
+                  actions={actions}
+                  session={active}
                   onNewTab={newThreadInTab}
-                  onOpen={openWorkspacePanel}
-                  canOpenPanels={!!active}
+                  onOpenPanel={openWorkspacePanel}
+                  onOpenInNewTab={() => {
+                    if (active) dock.openChat(active.id, { newTab: true })
+                  }}
                 />
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </header>
         <Routes>
@@ -616,6 +637,41 @@ export function AppShell({
               }
             />
           ))}
+          {/* /routines is the list, /routines/new the form, /routines/<id> one
+              routine — one component reads the path (see RoutinesPage). The
+              frame is the settings frame's width rather than the schedules
+              page's max-w-3xl: the autonomy control is ten labelled rows each
+              with a three-way choice trailing it, and at a form's measure the
+              label wraps under the control it belongs to. */}
+          {["/routines", "/routines/new", "/routines/:routineId"].map((path) => (
+            <Route
+              key={path}
+              path={path}
+              element={
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <div
+                    className={cn(
+                      "mx-auto w-full px-4 pt-6 pb-16 sm:px-8",
+                      settingsMaxWidth(location.pathname)
+                    )}
+                  >
+                    <RoutinesPage actions={actions} settings={settings} />
+                  </div>
+                </div>
+              }
+            />
+          ))}
+          {/* The inbox as a place — the header's bell is the glance at it. */}
+          <Route
+            path="/notifications"
+            element={
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <div className="mx-auto w-full max-w-3xl px-4 pt-6 pb-16 sm:px-8">
+                  <NotificationsInboxPage />
+                </div>
+              </div>
+            }
+          />
           {/* A project's own page: the overview, its threads and its numbers.
               Outside /settings on purpose — settings holds the *form*, and a
               workspace with a history is not a settings screen. */}

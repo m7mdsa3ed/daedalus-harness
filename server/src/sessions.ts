@@ -21,6 +21,7 @@ import { WEB_SEARCH_SERVER_NAME, toMcpServerEnv } from "./websearch.js";
 import { pruneWebSearchUsage, recordWebSearchUsage } from "./websearch-usage.js";
 import { KNOWLEDGE_SERVER_NAME, toKnowledgeServerEnv } from "./knowledge-db.js";
 import { AcpBridge, spawnAgent, type BridgeHost } from "./acp-bridge.js";
+import type { AutonomyPolicy } from "./autonomy.js";
 import { WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
 import { deleteSearchIndex } from "./search.js";
 import { getQuota, invalidateQuota } from "./quota.js";
@@ -43,6 +44,13 @@ import {
   removeQueuedMany,
   updateQueued,
 } from "./queue.js";
+
+/** What the first prompt's opening words are cut to when they become a title. */
+const TITLE_SNIFF_MAX = 60;
+/** What a hand-typed title is cut to — longer than the sniff's, because a name
+    somebody chose is worth more room than one nobody did, and bounded at all
+    only so the column cannot hold a whole prompt. */
+const TITLE_MAX = 200;
 
 /** One attached client. Several may share a session; they are subscribers to
     one server-side ACP client, not ACP clients themselves — which is why a peer
@@ -141,6 +149,36 @@ export interface Session {
       child never pushes, is never idle-retired, is hidden from the sidebar and
       is never handed the workflow server itself. Persisted. */
   parentSessionId: string | null;
+  /** How this thread answers the agent's own questions, or null for the
+      ordinary thread with a human in front of it (`autonomy.ts`).
+
+      In memory only — deliberately NOT a column. It is set when something
+      starts an unattended run and it dies with the process, because a run a
+      person later revives by hand is a thread with a human in front of it and
+      must not inherit a standing grant from whatever started it. Persisting it
+      would make "open last night's run and continue it" silently autonomous,
+      which is exactly the surprise this feature cannot afford. It does survive
+      a *respawn* — a profile change, a revive inside the run — because the
+      field is on the session and the bridge reads it back through its host
+      rather than being handed it at spawn. */
+  autonomy: AutonomyPolicy | null;
+  /** The run deadline's timer. Armed once, on the SESSION, when a policy naming
+      `maxRunSeconds` is set — never per prompt: a queue drain starts a second
+      turn on the same run, and a deadline that reset with each turn would not
+      be a deadline. Cleared by `retire`. */
+  deadline: ReturnType<typeof setTimeout> | null;
+  /** How many of this thread's questions fell through to `askFallback` because
+      nobody came. What lets a caller call such a run *blocked* — a state a
+      person can act on — rather than merely finished, and distinct from a run
+      that was refused something by policy and carried on to say so. Goes with
+      the process; nothing durable reads it yet. */
+  autonomyBlocked: number;
+  /** Why the harness cancelled this thread's turn, when it was the harness and
+      not a person. A Stop and a run deadline are the same `stopReason:
+      "cancelled"` on the wire, and the caller waiting on the turn has no other
+      way to tell "the user pressed Stop" from "this run ran out of time".
+      Cleared with the process. */
+  cancelReason: "deadline" | null;
   /** The profile this process was actually spawned on. Equal to `profileId`
       until the thread is moved to another provider without restarting, and the
       gap is what says the child's env — its credentials, and for Claude Code
@@ -436,6 +474,14 @@ export class SessionManager {
         exited: true,
         respawnChain: null,
         queueChain: null,
+        /* Autonomy is not a column and never revives with a thread: a run a
+           person opens by hand tomorrow is a thread with a human in front of
+           it, and it must not come back holding last night's standing grant.
+           See `Session.autonomy`. */
+        autonomy: null,
+        deadline: null,
+        autonomyBlocked: 0,
+        cancelReason: null,
         // All three belong to a process, and there is none until this thread is
         // revived — the spawn that revives it sets them from the row it reads.
         spawnProfileId: row.profileId,
@@ -817,6 +863,10 @@ export class SessionManager {
       onElicitationRequest: () => {
         if (!session.parentSessionId) this.events.onElicitationRequest?.(session);
       },
+      autonomy: () => session.autonomy,
+      onAutonomyBlocked: () => {
+        session.autonomyBlocked += 1;
+      },
       hasQueued: () => !session.queueChain && listQueue(session.id).length > 0,
       /* The drain runs here, synchronously after `turn_ended` was journaled,
          so the log reads turn_ended(continued) → turn_started(combined). The
@@ -992,6 +1042,13 @@ export class SessionManager {
       /** How this thread should be worked on — picked on the draft, and (for a
           workflow step) inherited from the parent along with everything else. */
       personaId?: string;
+      /** Answer the agent's own questions for the user instead of parking them
+          (`autonomy.ts`). Given here rather than set afterwards because the
+          first question can arrive before the caller's next statement runs: the
+          handshake and the first prompt are already in flight by the time
+          `create` returns, and a policy applied a tick late is a policy that
+          missed the request it existed for. */
+      autonomy?: AutonomyPolicy;
     } = {},
   ): Session {
     const session = this.blankSession(profile, agentId, project, links, {
@@ -1001,6 +1058,7 @@ export class SessionManager {
       personaId: opts.personaId,
       title: opts.title,
       parentSessionId: opts.parentSessionId,
+      autonomy: opts.autonomy,
     });
     this.sessions.set(session.id, session);
     // Before the bridge: the event rows reference this one, so the session has
@@ -1008,7 +1066,55 @@ export class SessionManager {
     this.persist(session);
     this.persistLinks(session);
     this.start(session, profile, project, model, effort, { configChoices, restore: opts.restore });
+    this.armDeadline(session);
     return session;
+  }
+
+  /**
+   * Change (or drop) a live thread's autonomy policy.
+   *
+   * Exists because a policy has to be lowerable under a running process — the
+   * dry-run switch, and "stop answering for me" on a run somebody is now
+   * watching — without killing the agent mid-tool-call. That is also why the
+   * bridge reads the policy through its host on every request instead of being
+   * handed one at spawn: this method would otherwise only take effect at the
+   * next respawn, which for a run in flight is never.
+   *
+   * The deadline is armed but never re-armed: a policy raised mid-run must not
+   * be able to buy the run more wall-clock than it started with, or the ceiling
+   * is advisory.
+   */
+  setAutonomy(id: string, policy: AutonomyPolicy | null): void {
+    const session = this.sessions.get(id);
+    if (!session) return;
+    session.autonomy = policy;
+    this.armDeadline(session);
+  }
+
+  /**
+   * Arm the run deadline, once, on the session.
+   *
+   * Not on a prompt: a queue drain starts a second turn on the same run, and a
+   * deadline that reset with it would not be a deadline — an unattended thread
+   * that keeps finding something else to say would never reach one. It fires
+   * through the ordinary `cancel()`, which notifies the agent and answers every
+   * question it is still blocked on, so a deadline looks to the rest of the
+   * system exactly like a Stop. `cancelReason` is what tells the two apart.
+   */
+  private armDeadline(session: Session): void {
+    const seconds = session.autonomy?.maxRunSeconds ?? 0;
+    if (seconds <= 0 || session.deadline) return;
+    const timer = setTimeout(() => {
+      session.deadline = null;
+      const bridge = session.bridge;
+      if (session.exited || !bridge) return;
+      session.cancelReason = "deadline";
+      /* Swallowed: the deadline fires from a timer with nobody to reject to,
+         and a cancel that fails on a process already going away is not news. */
+      void bridge.cancel().catch(() => {});
+    }, seconds * 1000);
+    timer.unref();
+    session.deadline = timer;
   }
 
   /** A thread with no process behind it yet — everything `create` and `import`
@@ -1025,6 +1131,7 @@ export class SessionManager {
       personaId?: string;
       title?: string;
       parentSessionId?: string;
+      autonomy?: AutonomyPolicy;
       /** An imported thread already had a life before this row existed; its
           own last-activity time is where it belongs in the list. */
       createdAt?: number;
@@ -1064,6 +1171,10 @@ export class SessionManager {
       respawnChain: null,
       queueChain: null,
       parentSessionId: opts.parentSessionId ?? null,
+      autonomy: opts.autonomy ?? null,
+      deadline: null,
+      autonomyBlocked: 0,
+      cancelReason: null,
       spawnProfileId: profile.id,
       viaGateway: false,
       websearchViaMcp: false,
@@ -1553,7 +1664,7 @@ export class SessionManager {
     const turnId = bridge.promptActive && bridge.currentTurnId ? bridge.currentTurnId : randomUUID();
     bridge.prompt(text, peer, turnId);
     if (text && session.title === "New thread") {
-      session.title = text.slice(0, 60);
+      session.title = text.slice(0, TITLE_SNIFF_MAX);
       this.persist(session);
     }
     return { turnId };
@@ -1697,6 +1808,11 @@ export class SessionManager {
     // one with a transcript behind it.
     session.liveAcpSessionId = null;
     session.historyLost = null;
+    /* The deadline belongs to the process it was going to cancel. Left armed it
+       would sit unref'd for its full span holding a closure over a dead
+       session — harmless, and still a timer nobody can explain in a heap dump. */
+    if (session.deadline) clearTimeout(session.deadline);
+    session.deadline = null;
     /* The log is NOT cleared here any more, and that is what makes a retired
        thread readable. Closing the bridge ends whatever turn was in flight, and
        that last event is the end of this archive — so it is journaled like the
@@ -1739,6 +1855,26 @@ export class SessionManager {
     }));
   }
 
+
+  /**
+   * Name a thread by hand.
+   *
+   * The title is the user's the moment they set one, which is what makes this
+   * more than a column write: the first-prompt sniff in `startTurn` only ever
+   * fires on the literal "New thread", so a renamed thread — including one
+   * renamed before it was ever sent to — keeps the name through its first turn.
+   * Capped rather than refused, since the sniff's own titles are a slice too;
+   * an empty name is refused, because a row with no label is unreachable.
+   */
+  rename(id: string, title: string): string | null {
+    const session = this.sessions.get(id);
+    if (!session) return null;
+    const next = title.trim().slice(0, TITLE_MAX);
+    if (!next) return null;
+    session.title = next;
+    this.persist(session);
+    return next;
+  }
 
   /**
    * Delete a thread the reversible way: the process goes, the row stays.

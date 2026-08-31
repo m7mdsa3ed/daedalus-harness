@@ -12,7 +12,9 @@ import {
   FoldVerticalIcon,
   ListTodoIcon,
   RotateCwIcon,
+  ShieldCheckIcon,
   TriangleAlertIcon,
+  UserRoundXIcon,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"
@@ -23,7 +25,8 @@ import { useStreamedText } from "@/hooks/use-streamed-text"
 import { shortPath, type TaskNotification, type TodoEntry } from "@/lib/tools"
 import type { TurnSources } from "@/lib/sources"
 import { cn } from "@/lib/utils"
-import type { CompactionItem, PlanItem, ThreadItem } from "@/lib/store"
+import { autonomyLine } from "@/lib/autonomy-text"
+import type { AutonomyItem, CompactionItem, PlanItem, ThreadItem } from "@/lib/store"
 
 /* Explanatory agents emit their insight box as two backticked rule lines around
    the body — as markdown that's a pair of code chips with a wall of dashes.
@@ -392,6 +395,42 @@ export const CompactionStep = React.memo(function CompactionStep({
   )
 })
 CompactionStep.displayName = "CompactionStep"
+
+/**
+ * A question the harness answered for the user, in the transcript where it
+ * happened.
+ *
+ * This row is the audit trail. The live permission card appears and resolves
+ * itself under a watching reader, but neither event is journaled — so for a run
+ * that fired on a schedule with nobody attached, and for every reload
+ * afterwards, this is the only thing in the thread that says the agent asked at
+ * all. It is drawn as a real row and not a muted aside for that reason: what it
+ * records is the moment a routine did something no one was consulted about.
+ *
+ * `attention` is the ask-timeout, which is a different fact from any stance —
+ * nobody came — and is the state a person can act on, so it takes the failed
+ * tint the rest do not.
+ */
+export const AutonomyStep = React.memo(function AutonomyStep({
+  item,
+  showTimestamp,
+}: {
+  item: AutonomyItem
+  showTimestamp?: boolean
+}) {
+  const line = autonomyLine(item)
+  return (
+    <StepRow
+      icon={line.attention ? UserRoundXIcon : ShieldCheckIcon}
+      status={line.attention ? "failed" : null}
+      mono={false}
+      target={line.title}
+      metric={showTimestamp && item.at !== undefined ? <Timestamp at={item.at} /> : undefined}
+      detail={<p className="text-xs leading-relaxed text-muted-foreground">{line.detail}</p>}
+    />
+  )
+})
+AutonomyStep.displayName = "AutonomyStep"
 
 /**
  * The pages a turn's answer rests on, under the answer: what the agent read

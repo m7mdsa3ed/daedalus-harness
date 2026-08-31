@@ -648,6 +648,15 @@ send(reader, { id: 902, cmd: "load_earlier", before: 0 });
 await waitFor(() => reader.of("reply").length === 3, "the head of the log");
 assert.deepEqual(reader.of("reply")[2].result, { events: [], earlier: 0 }, "nothing before the head");
 
+// A ping is about the socket, not the agent, so it is answered where a prompt
+// is refused: an archived thread has no process and must still say it is there.
+// Silence is what the client's watchdog reads as a dead path, and reconnecting
+// an archive means spawning an agent to prove a WebSocket is open.
+send(reader, { id: 904, cmd: "ping" });
+await waitFor(() => reader.of("reply").length === 4, "a ping is answered with no agent running");
+assert.deepEqual(reader.of("reply")[3].result, {}, "…with a bare result and no error");
+assert.equal(reader.of("reply")[3].error, undefined);
+
 // --- windowed attach: only the tail, in whole steps, with the rest fetchable ---
 const windowed = new MockWs();
 assert.equal(manager.attach(logged.id, windowed as never, 0, true, { window: 5 }), null);
@@ -692,6 +701,56 @@ assert.equal(
   archivedCursor,
   "…which is every event, including the ones before the first turn",
 );
+
+// --- the window is capped in bytes too, because a step is not a size ---
+
+// Steps bound the replay in turns, which is the unit the transcript is cut in
+// and not the unit the wait is paid in: a turn is anything from one sentence to
+// a build log streamed through `_meta.terminal_output_delta`, so sixty of them
+// is a screenful on one thread and megabytes on the next. The bytes are what
+// someone actually waits for, and `REPLAY_WINDOW_BYTES` is the second budget —
+// whichever binds first. Six fat turns are appended to a log of 25 thin ones so
+// the step budget below (60) cannot be what cuts it.
+const { SessionJournal } = await import("../src/session-journal.js");
+const { REPLAY_WINDOW_BYTES } = await import("../src/protocol.js");
+const { db: fatDb } = await import("../src/db/index.js");
+const fat = new SessionJournal(fatDb);
+const fatSession = manager.get(logged.id)!;
+const FAT = "x".repeat(400 * 1024);
+for (let i = 0; i < 6; i += 1) {
+  fat.append(fatSession, { ev: "turn_started", text: `fat ${i}`, turnId: `fat-${i}` } as never);
+  fat.append(fatSession, {
+    ev: "update",
+    update: { sessionUpdate: "tool_call", toolCallId: `fat-${i}`, title: "big", rawInput: { FAT } },
+  } as never);
+}
+fat.flush();
+const fatStarts = manager
+  .journal(logged.id)!
+  .events.filter((e) => e.ev === "turn_started")
+  .map((e) => (e as { seq: number }).seq);
+const capped = new MockWs();
+assert.equal(manager.attach(logged.id, capped as never, 0, true, { window: 60 }), null);
+const cappedAttach = capped.of("attached")[0];
+assert.ok(fatStarts.includes(cappedAttach.from), "the cut is still a turn boundary");
+assert.ok(cappedAttach.earlier > 0, "…and says how many turns it withheld");
+// The budget is honoured, and honoured *maximally* — one more turn would bust
+// it. A cut that merely fits is also what "send nothing" would be.
+const sizeFrom = (seq: number) =>
+  manager
+    .journal(logged.id)!
+    .events.filter((e) => (e as { seq: number }).seq >= seq)
+    .reduce((n, e) => n + JSON.stringify(e).length, 0);
+assert.ok(sizeFrom(cappedAttach.from) <= REPLAY_WINDOW_BYTES, "the replay fits the byte budget");
+const oneMore = fatStarts[fatStarts.indexOf(cappedAttach.from) - 1];
+assert.ok(oneMore !== undefined && sizeFrom(oneMore) > REPLAY_WINDOW_BYTES, "…and only just");
+
+// `attached` states where the replay ends as well as where it starts: the
+// client counts what it unrolls against it, which is the difference between a
+// progress bar and an apology. Same number `caught_up` carries, read in the
+// same tick so the two cannot disagree.
+assert.equal(cappedAttach.to, manager.journal(logged.id)!.cursor, "attached says how far it runs");
+assert.equal(capped.of("caught_up")[0].cursor, cappedAttach.to);
 
 // --- the queue outlives the process ---
 

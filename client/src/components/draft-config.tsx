@@ -31,7 +31,7 @@ const NO_PERSONA = "__none__"
 
 /** The shared read of a draft's current configuration — both controls below
     need the same lookups, and they must not disagree about what is selected. */
-function useDraft(meta: SessionMeta, actions: Actions) {
+function useDraft(meta: SessionMeta, actions: Actions, remember = true) {
   const { state } = useStore()
   const project = state.projects.find((p) => p.id === meta.projectId)
   const profile = state.profiles.find((p) => p.id === meta.profileId)
@@ -44,8 +44,14 @@ function useDraft(meta: SessionMeta, actions: Actions) {
 
   const configure = (next: Parameters<Actions["configureDraft"]>[1]) => {
     actions.configureDraft(meta.id, next)
-    // Remembered for the next new thread: the agent you reach for is a habit,
-    // not a decision worth making twice.
+    /* Remembered for the next new thread: the agent you reach for is a habit,
+       not a decision worth making twice. Not always, though — `remember: false`
+       is for a caller that reuses these controls to configure something that is
+       NOT the thread you are about to start (a routine's saved thread-start).
+       Picking a profile there is a statement about that routine, and letting it
+       move the defaults would mean editing a nightly job silently changed what
+       the next ⌘N opens on. */
+    if (!remember) return
     saveThreadDefaults({
       projectId: next.projectId ?? meta.projectId,
       profileId: next.profileId ?? meta.profileId,
@@ -72,8 +78,18 @@ function useDraft(meta: SessionMeta, actions: Actions) {
  * Draft-only. Once the session exists the project is fixed (it is the agent's
  * cwd) and the agent is the process that is running.
  */
-export function DraftScopeRow({ meta, actions }: { meta: SessionMeta; actions: Actions }) {
-  const { state, project, profile, agent, configure } = useDraft(meta, actions)
+export function DraftScopeRow({
+  meta,
+  actions,
+  remember = true,
+}: {
+  meta: SessionMeta
+  actions: Actions
+  /** False when these controls are editing a saved configuration rather than
+      the draft you are about to send — see `useDraft`. */
+  remember?: boolean
+}) {
+  const { state, project, profile, agent, configure } = useDraft(meta, actions, remember)
 
   /* On the strip's collapsed line this row is its two answers: which agent will
      take the thread, and which project it will run in. That is the whole point
@@ -136,7 +152,7 @@ export function DraftScopeRow({ meta, actions }: { meta: SessionMeta; actions: A
         onSelect={(id) => configure({ projectId: id })}
       />
       {divider}
-      <ThreadToolsMenu meta={meta} actions={actions} editable />
+      <ThreadToolsMenu meta={meta} actions={actions} editable remember={remember} />
     </div>
   )
 }
@@ -215,11 +231,14 @@ function PickerMenu({
 export function DraftConfigPopover({
   meta,
   actions,
+  remember = true,
 }: {
   meta: SessionMeta
   actions: Actions
+  /** See `DraftScopeRow`. */
+  remember?: boolean
 }) {
-  const { state, profile, agent, agentProfiles, configure } = useDraft(meta, actions)
+  const { state, profile, agent, agentProfiles, configure } = useDraft(meta, actions, remember)
   const models = profile?.models ?? []
   const resolvedModel = models.find((m) => m.id === (meta.model || profile?.defaultModel))
 

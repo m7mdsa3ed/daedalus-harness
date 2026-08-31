@@ -1,7 +1,7 @@
 /* The right-hand end of a tab strip.
 
    Only the split action now: the + moved to the app header
-   (`open-panel-menu`), because a per-group copy meant a split dock had two of
+   (`workspace/panel-items`), because a per-group copy meant a split dock had two of
    them with no obvious answer to which one you press, and the strip is the
    first thing to get cramped on a narrow screen — which is exactly where an
    affordance for opening panels matters most, there being no keyboard. */

@@ -11,7 +11,9 @@
    /                     home (no thread open)
    /t/<sessionId>        one thread
    /projects/<id>        one project: overview, threads, metrics
-   /settings/<section>   settings, one page per section (components/settings/) */
+   /settings/<section>   settings, one page per section (components/settings/)
+   /notifications        the inbox: every notice the server recorded
+   /routines             every routine; /routines/new and /routines/<id> its form */
 import * as React from "react"
 import { matchPath, useNavigate, type NavigateFunction } from "react-router"
 
@@ -27,6 +29,17 @@ export const schedulesPath = () => `/schedules`
 export const schedulePath = (sessionId?: string) =>
   `/schedules/new${sessionId ? `?session=${encodeURIComponent(sessionId)}` : ""}`
 export const boardPath = () => `/board`
+/* The inbox as a place. The header's bell is the glance at it; this is the
+   whole history, and it is not a settings screen — Settings › Notifications is
+   where push is *configured*, which is a different question. */
+export const notificationsPath = () => `/notifications`
+/* Routines are a top-level place, not a settings section — the same call
+   `/schedules` and `/board` make. Settings holds things you configure once; a
+   routine has a history (its runs), fires on its own, and is opened to be read
+   as much as to be edited. */
+export const routinesPath = () => `/routines`
+export const newRoutinePath = () => `/routines/new`
+export const routinePath = (routineId: string) => `/routines/${encodeURIComponent(routineId)}`
 
 /** The thread the URL points at, if any — legacy /?session= deep links too. */
 export function currentThreadId(

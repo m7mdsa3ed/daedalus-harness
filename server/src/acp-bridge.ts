@@ -8,12 +8,15 @@ import { mentionLinks } from "./mentions.js";
 import type { PersonaSpawn } from "./personas.js";
 import { getAgent, resolveSpawn } from "./registry.js";
 import type {
+  AutoAnswer,
+  AutonomyAnswer,
   HistoryLost,
   RestoreState,
   SessionUpdate,
   ThreadEvent,
   WireError,
 } from "./protocol.js";
+import { optionFor, stanceFor, type AutonomyPolicy } from "./autonomy.js";
 import type { Peer } from "./sessions.js";
 import { WEB_SEARCH_SERVER_NAME } from "./websearch.js";
 import { CLAUDE_WORKFLOW_TOOL, WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
@@ -163,6 +166,12 @@ interface PendingRequest {
       blocked can be handed the question rather than a dead thread. */
   payload: acp.RequestPermissionRequest | acp.CreateElicitationRequest;
   settle: (response: never) => void;
+  /** The ask-timeout fallback for this request, when a policy armed one. Held
+      on the entry rather than in a second map so `settle` — the ONE place a
+      question ever leaves `pending`, whoever answered it — is also the one
+      place the timer is cleared. A fallback that fired against an already
+      answered request would emit a second `request_answered` for it. */
+  timer?: ReturnType<typeof setTimeout>;
 }
 
 export interface BridgeHost {
@@ -179,6 +188,26 @@ export interface BridgeHost {
   /** Push hooks. Fired only when nobody is attached to see the thread. */
   onPermissionRequest(): void;
   onElicitationRequest(): void;
+  /** How this session answers a permission or an elicitation for the user, or
+      null for the ordinary park-and-wait (`autonomy.ts`).
+
+      Read at the top of `park()` on every request rather than captured as a
+      BridgeOption at spawn, for two reasons. A policy is a property of the
+      RUN, and a run outlives its process: a respawn — a profile change, a
+      revive — rebuilds the bridge from the session row, and a policy that
+      travelled in the handshake would be silently dropped there, turning an
+      unattended run into one parked on a question nobody will answer. And it
+      has to be lowerable under a running process: "cancel this run" and the
+      dry-run switch both mean stop answering, now, without killing the agent
+      mid-tool-call. Nothing about autonomy travels in the handshake at all —
+      the agent is never told, which is the point. */
+  autonomy(): AutonomyPolicy | null;
+  /** A parked question fell through to `askFallback` — nobody came. Counted on
+      the session rather than the bridge (which dies with the process) because
+      it is what makes a run `blocked` rather than merely finished: the state a
+      person can act on, and deliberately distinct from a run that was refused
+      something by policy and carried on to say so. */
+  onAutonomyBlocked(): void;
   /** Is there something queued that should follow a turn that ended cleanly?
       Read in the same tick as `turn_ended` is emitted, so the event can say
       `continued` about a drain that has not happened yet. */
@@ -712,6 +741,18 @@ export class AcpBridge {
   /**
    * The agent is asking the user something. Hold the promise, tell every peer,
    * and — when nobody is attached — let the push hook say so on a phone.
+   *
+   * This is also the one choke point every ACP agent's questions pass through,
+   * which is why a session's autonomy policy is consulted here and nowhere
+   * else (`autonomy.ts`). An answered-by-policy request still goes through the
+   * whole of the park/settle machinery — it is entered in `pending`, the
+   * `permission`/`elicitation` event is emitted, and only then is it settled,
+   * which emits `request_answered` exactly as a human answer does. Resolving
+   * the promise directly and skipping the pair would be shorter and would make
+   * an automated grant invisible: a watching browser would see nothing, and
+   * after the fact there would be no record that the question was ever asked.
+   * A standing grant that leaves no trace is the one thing this feature must
+   * not ship. So: nothing is silent, and there is one code path.
    */
   private park<R>(
     kind: "permission" | "elicitation",
@@ -719,24 +760,106 @@ export class AcpBridge {
     toolCallId: string | undefined,
   ): Promise<R> {
     const requestId = `r${this.nextRequestId++}`;
+    const policy = this.host.autonomy();
+    const decided = policy ? this.decide(policy, kind, request) : null;
     return new Promise<R>((resolve) => {
-      this.pending.set(requestId, {
+      const entry: PendingRequest = {
         requestId,
         kind,
         toolCallId,
         payload: request,
         settle: resolve as (response: never) => void,
-      });
+      };
+      this.pending.set(requestId, entry);
       this.host.emit(
         kind === "permission"
           ? { ev: "permission", requestId, request: request as acp.RequestPermissionRequest }
           : { ev: "elicitation", requestId, request: request as acp.CreateElicitationRequest },
       );
+      if (decided) {
+        /* Settled in the same tick, deliberately: a microtask's worth of delay
+           would be a window in which `settleAll()` (a cancel, a dying process)
+           could answer this request with `cancelled` instead, and the peers
+           would be told the policy's answer was something it never was. The
+           events still leave in the order a human answer produces them. */
+        this.settle(entry, decided.response as never, undefined, decided.auto);
+        return;
+      }
+      /* A real park under an `ask` stance, plus the deadline that keeps it from
+         being forever. The park stays a genuine park: a human who gets there
+         first wins through the ordinary first-answer-wins path, and `settle`
+         clears this timer on the way out. */
+      if (policy && policy.askTimeoutSeconds > 0) {
+        entry.timer = setTimeout(() => {
+          const open = this.pending.get(requestId);
+          if (!open) return; // somebody answered; the timer lost the race
+          this.host.onAutonomyBlocked();
+          const fallback = this.fallback(kind, policy.askFallback, request);
+          this.settle(open, fallback.response as never, undefined, fallback.auto);
+        }, policy.askTimeoutSeconds * 1000);
+        entry.timer.unref();
+      }
       if (this.host.peerCount() === 0) {
         if (kind === "permission") this.host.onPermissionRequest();
         else this.host.onElicitationRequest();
       }
     });
+  }
+
+  /** What the policy answers this request with, or null to park it for a human.
+      Null is the honest outcome in two different cases and they are not worth
+      separating here: the stance is `ask`, or the stance is decided but the
+      agent advertised no option shaped like it — see `optionFor`. */
+  private decide(
+    policy: AutonomyPolicy,
+    kind: "permission" | "elicitation",
+    request: acp.RequestPermissionRequest | acp.CreateElicitationRequest,
+  ): { response: unknown; auto: AutoAnswer } | null {
+    if (kind === "elicitation") {
+      if (policy.elicitations !== "decline") return null;
+      /* `decline` and not `cancel`: the bridges read a decline as "the user
+         skipped this question" and the turn carries on, where a cancel aborts
+         the tool call that asked. An unattended run should get on with it. */
+      return { response: { action: "decline" }, auto: { answer: "decline", timedOut: false } };
+    }
+    const permission = request as acp.RequestPermissionRequest;
+    /* `toolCall.kind` is optional and nullable in the protocol, and an agent
+       that omits it is saying nothing — which falls to `default`, never to a
+       guess made from the tool's name. */
+    const stance = stanceFor(policy, permission.toolCall?.kind);
+    if (stance === "ask") return null;
+    const option = optionFor(permission.options, stance);
+    if (!option) return null;
+    return {
+      response: { outcome: { outcome: "selected", optionId: option.optionId } },
+      auto: { answer: stance, timedOut: false },
+    };
+  }
+
+  /** The answer for a question nobody came to. `deny` still speaks the agent's
+      own vocabulary where it offered one; with no reject-shaped option there is
+      nothing to select, so it degrades to `cancelled` — which is what an
+      unanswerable question has always meant here. */
+  private fallback(
+    kind: "permission" | "elicitation",
+    askFallback: "deny" | "cancel",
+    request: acp.RequestPermissionRequest | acp.CreateElicitationRequest,
+  ): { response: unknown; auto: AutoAnswer } {
+    if (kind === "elicitation") {
+      const answer = askFallback === "deny" ? "decline" : "cancel";
+      return { response: { action: answer }, auto: { answer, timedOut: true } };
+    }
+    const option =
+      askFallback === "deny"
+        ? optionFor((request as acp.RequestPermissionRequest).options, "deny")
+        : null;
+    if (option) {
+      return {
+        response: { outcome: { outcome: "selected", optionId: option.optionId } },
+        auto: { answer: "deny", timedOut: true },
+      };
+    }
+    return { response: { outcome: { outcome: "cancelled" } }, auto: { answer: "cancel", timedOut: true } };
   }
 
   /**
@@ -927,13 +1050,53 @@ export class AcpBridge {
     );
   }
 
-  private settle(entry: PendingRequest, response: never, except?: Peer): void {
+  private settle(entry: PendingRequest, response: never, except?: Peer, auto?: AutoAnswer): void {
     this.pending.delete(entry.requestId);
+    /* Whoever won — a peer, the policy, the ask timeout, a dying process — the
+       question is gone, so its fallback timer must go with it. Cleared here
+       because this is the one exit every one of those paths takes. */
+    if (entry.timer) clearTimeout(entry.timer);
     entry.settle(response);
     this.host.emit(
-      { ev: "request_answered", requestId: entry.requestId, toolCallId: entry.toolCallId },
+      {
+        ev: "request_answered",
+        requestId: entry.requestId,
+        toolCallId: entry.toolCallId,
+        ...(auto ? { auto } : {}),
+      },
       except,
     );
+    /* And, when the harness answered rather than a person, say it once more as
+       an `update` — which IS journaled, where neither of the two events above
+       is. The live pair is what a browser draws; this is what survives to be
+       read afterwards by someone asking what a routine was allowed to do while
+       nobody was watching. Emitted after `request_answered` so the ordering a
+       peer sees is unchanged, and only for an auto answer: a human answering
+       their own card needs no paper trail, and the tool call the permission
+       allowed is journaled regardless. */
+    if (auto) this.emitAutonomyAnswer(entry, auto);
+  }
+
+  /** The durable half of an auto-answer. Everything it carries is either the
+      harness's own vocabulary or a protocol field — never an option name and
+      never a vendor tool name, so the record reads the same whichever runtime
+      produced it. */
+  private emitAutonomyAnswer(entry: PendingRequest, answer: AutoAnswer): void {
+    const toolCall =
+      entry.kind === "permission" ? (entry.payload as acp.RequestPermissionRequest).toolCall : undefined;
+    const update: AutonomyAnswer = {
+      sessionUpdate: "_daedalus/autonomy_answer",
+      kind: entry.kind,
+      ...(entry.toolCallId ? { toolCallId: entry.toolCallId } : {}),
+      ...(toolCall?.kind ? { toolKind: toolCall.kind } : {}),
+      ...(toolCall?.title ? { title: toolCall.title } : {}),
+      answer,
+    };
+    /* `seq: 0` is the placeholder every `update` leaves here; the event log
+       assigns the real one on append (see the emit above). `historyReplay` is
+       false because this is something that happened now, not a line the agent
+       re-narrated out of a loaded session. */
+    this.host.emit({ ev: "update", seq: 0, update, historyReplay: false });
   }
 
   /**

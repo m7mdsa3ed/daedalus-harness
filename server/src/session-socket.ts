@@ -3,6 +3,7 @@ import { toWireError } from "./acp-bridge.js";
 import { listQueue } from "./queue.js";
 import type { SessionJournal } from "./session-journal.js";
 import type { Peer, Session } from "./sessions.js";
+import { REPLAY_WINDOW_BYTES } from "./protocol.js";
 import type { PromptReply, ThreadCommand, ThreadEvent, WireError } from "./protocol.js";
 
 /**
@@ -85,25 +86,23 @@ export class SessionSocket {
        Never applied to a resume — the client is asking for a delta it already
        knows the size of, and windowing that would hide events it is missing.
 
-       The cut is only made when there is genuinely something to withhold
-       (`skip > 0`). Jumping to the first `turn_started` unconditionally looks
-       equivalent and is not, because a log does not have to begin with one: a
-       revive clears the journal and refills it from the `session/load` replay,
-       which is the whole prior conversation with no turn boundaries in it, and
-       the first `turn_started` is then the turn the user typed *after* the
-       revive. So a thread of one turn, well inside any window, replayed from
-       that seq and dropped everything the load had put back — `earlier` said 0
-       (there are no whole turns behind it), so nothing offered it back either.
-       A crash-and-revive lost the conversation on screen while every event of
-       it sat in the table. */
+       Steps are not the whole budget, because a step is not a size: `windowStart`
+       cuts on `REPLAY_WINDOW_BYTES` too, whichever binds first. Everything else
+       about the cut — that it lands on a turn boundary, that it is made only
+       when a turn is genuinely withheld, and that the window reaching the oldest
+       turn takes the log's headless start along with it — is that method's, and
+       the reasoning is written there. */
     const journal = this.host.journal;
     const window = opts.window && opts.window > 0 ? opts.window : 0;
-    const skip = window ? journal.turnCount(session.id) - window : 0;
-    const from = resumed ? cursor : skip > 0 ? journal.turnStartAt(session.id, skip) ?? 0 : 0;
+    const from = resumed ? cursor : journal.windowStart(session.id, window, REPLAY_WINDOW_BYTES);
 
     this.send(peer, {
       ev: "attached",
       from,
+      // The log's length, read here and again below for `caught_up` — one tick,
+      // so the two cannot disagree. It is what makes the replay a quantity on
+      // the client rather than a wait of unknown length.
+      to: session.eventCount,
       resumed,
       earlier: resumed ? 0 : journal.countTurnsBefore(session.id, from),
       archived: session.bridge === null,
@@ -150,6 +149,16 @@ export class SessionSocket {
        paging back through history is a read of the journal, and an archived
        thread — one with no process at all — is exactly where someone is doing
        it. Requiring an agent for it would mean spawning one to scroll. */
+    /* Liveness, answered before everything for the same reason `load_earlier`
+       is answered before the bridge check and then some: the question is about
+       the socket, not the agent, so a thread whose process is gone must still
+       say it is there — the client reads silence as a dead path and reconnects,
+       which for an archived thread would mean spawning an agent to prove a
+       WebSocket is open. */
+    if (command.cmd === "ping") {
+      this.send(peer, { ev: "reply", id: command.id, result: {} });
+      return;
+    }
     if (command.cmd === "load_earlier") {
       this.send(peer, { ev: "reply", id: command.id, result: this.host.journal.earlierPage(session.id, command.before) });
       return;

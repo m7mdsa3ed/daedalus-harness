@@ -1,16 +1,6 @@
 /* ── One thread, one line ── the row, its info card, and its menus. */
 import * as React from "react"
-import {
-  ExternalLink,
-  Link as LinkIcon,
-  MoreVertical,
-  Pin,
-  PinOff,
-  Trash2,
-  Undo2,
-} from "lucide-react"
-import { toast } from "@/lib/toast"
-import { reportError } from "@/lib/errors"
+import { MoreVertical } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,13 +16,8 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { AgentIcon, ProjectIcon } from "@/components/entity-icon"
-import {
-  ItemContextMenu,
-  renderMenuItems,
-  type MenuItemSpec,
-} from "@/components/item-context-menu"
-import { threadPath } from "@/lib/router"
-import { togglePin } from "@/lib/pins"
+import { flattenMenuItems, ItemContextMenu, renderMenuItems } from "@/components/item-context-menu"
+import { threadMenuItems, trashMenuItems } from "@/components/thread-menu"
 import { activityAt, type SessionMeta } from "@/lib/settings"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
@@ -65,6 +50,7 @@ export const ThreadRow = React.memo(function ThreadRow({
   active,
   pinned,
   onOpen,
+  onRename,
   onDelete,
   onRestore,
   onPurge,
@@ -75,6 +61,7 @@ export const ThreadRow = React.memo(function ThreadRow({
   active: boolean
   pinned: boolean
   onOpen: (session: SessionMeta, newTab?: boolean) => void
+  onRename: (session: SessionMeta) => void
   onDelete: (session: SessionMeta) => void
   onRestore: (session: SessionMeta) => void
   onPurge: (session: SessionMeta) => void
@@ -86,9 +73,10 @@ export const ThreadRow = React.memo(function ThreadRow({
         ? trashMenuItems(session, onRestore, onPurge)
         : threadMenuItems(session, pinned, {
             openInNewTab: () => onOpen(session, true),
+            onRename,
             onDelete,
           }),
-    [session, trash, pinned, onOpen, onDelete, onRestore, onPurge]
+    [session, trash, pinned, onOpen, onRename, onDelete, onRestore, onPurge]
   )
   const { isMobile } = useSidebar()
   const [infoOpen, setInfoOpen] = React.useState(false)
@@ -191,8 +179,10 @@ export const ThreadRow = React.memo(function ThreadRow({
           {card}
           {isMobile && (
             <div className="flex flex-col gap-0.5 border-t border-border/60 pt-2">
-              {items.map((item, index) =>
-                item.type === "separator" ? null : (
+              {/* Flattened: this list draws its own rows, so a submenu here
+                  would be a row that opens nothing. */}
+              {flattenMenuItems(items).map((item, index) =>
+                item.type === "separator" || item.type === "sub" ? null : (
                   <button
                     key={index}
                     type="button"
@@ -307,57 +297,4 @@ function ThreadInfoCard({
       </dl>
     </div>
   )
-}
-
-/** The row menu for a live thread — Trash rows get their own two items. */
-function threadMenuItems(
-  session: SessionMeta,
-  pinned: boolean,
-  handlers: {
-    openInNewTab: () => void
-    onDelete: (session: SessionMeta) => void
-  }
-): MenuItemSpec[] {
-  return [
-    {
-      label: pinned ? "Unpin" : "Pin to top",
-      icon: pinned ? <PinOff /> : <Pin />,
-      onClick: () => togglePin(session.id),
-    },
-    { label: "Open in new tab", icon: <ExternalLink />, onClick: handlers.openInNewTab },
-    {
-      label: "Copy link",
-      icon: <LinkIcon />,
-      onClick: () => {
-        navigator.clipboard
-          .writeText(new URL(threadPath(session.id), window.location.origin).toString())
-          .then(() => toast.success("Link copied"))
-          .catch((err) => reportError(err, "Couldn't copy the link"))
-      },
-    },
-    { type: "separator" },
-    {
-      label: "Delete",
-      icon: <Trash2 />,
-      destructive: true,
-      onClick: () => handlers.onDelete(session),
-    },
-  ]
-}
-
-function trashMenuItems(
-  session: SessionMeta,
-  restore: (session: SessionMeta) => void,
-  purge: (session: SessionMeta) => void
-): MenuItemSpec[] {
-  return [
-    { label: "Restore", icon: <Undo2 />, onClick: () => restore(session) },
-    { type: "separator" },
-    {
-      label: "Delete forever",
-      icon: <Trash2 />,
-      destructive: true,
-      onClick: () => purge(session),
-    },
-  ]
 }

@@ -12,6 +12,7 @@ import { getAgent, listAgents } from "../registry.js";
 import { defaultProfileFor, getProfile, listProfiles, profileSupports } from "../profiles.js";
 import { getProject } from "../projects.js";
 import type { Push } from "../push.js";
+import { clearNotifications, listNotifications, markNotificationsRead, unreadNotifications } from "../notifications.js";
 import type { SessionManager } from "../sessions.js";
 import { bearerToken, workspace } from "./helpers.js";
 
@@ -231,6 +232,33 @@ export function miscRoutes(
     const { token } = await c.req.json();
     if (typeof token !== "string" || !token) return c.json({ error: "token required" }, 400);
     push.unregisterToken(token);
+    return c.json({ ok: true });
+  });
+
+  /* ── the notification inbox (notifications.ts) ──
+     The pill in the sidebar reads these. Listed newest first with the unread
+     count beside them; read is acknowledged by id, or all at once. */
+  app.get("/api/notifications", (c) => {
+    const limit = Number.parseInt(c.req.query("limit") ?? "", 10);
+    return c.json({
+      items: listNotifications(Number.isFinite(limit) && limit > 0 ? limit : undefined),
+      unread: unreadNotifications(),
+    });
+  });
+
+  app.post("/api/notifications/read", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { ids?: unknown };
+    const ids = Array.isArray(body.ids) ? body.ids.filter((x): x is string => typeof x === "string") : null;
+    markNotificationsRead(ids);
+    return c.json({ ok: true, unread: unreadNotifications() });
+  });
+
+  /* Clear the whole inbox (a "clear" action in the pill), or only entries older
+     than `?before=` (ms). Deleting is lossy where marking read is not, so this
+     is the explicit user gesture, never implied by opening the pill. */
+  app.delete("/api/notifications", async (c) => {
+    const before = Number.parseInt(c.req.query("before") ?? "", 10);
+    clearNotifications(Number.isFinite(before) ? before : undefined);
     return c.json({ ok: true });
   });
 }

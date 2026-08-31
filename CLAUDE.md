@@ -439,7 +439,16 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   attach starts at 0; a *resume* starts at this device's own cursor (`journalCursors` /
   `resumeCursor` in `actions.ts`, so a dropped socket costs a delta and not the thread); and
   a *windowed* attach starts wherever the server chose, because the thread was longer than
-  `REPLAY_WINDOW_STEPS`. **The window and every `load_earlier` page are counted in steps
+  `REPLAY_WINDOW_STEPS` **or heavier than `REPLAY_WINDOW_BYTES`** — two budgets, whichever
+  binds first (`SessionJournal.windowStart`), because a step is a turn and a turn is not a
+  size: one is a sentence, the next is a build log streamed through
+  `_meta.terminal_output_delta`, so sixty of them is a screenful on one thread and megabytes
+  on the next, and it was the second that left someone watching a spinner. Bytes is the
+  budget `REPLAY_CHUNK_BYTES` already runs the *frame* cut on, for the same reason and on
+  the same payloads; the window simply never had one. Steps are applied first, so the byte
+  pass never measures more than the step window would have sent anyway, and it reads
+  `length(payload)` rather than the payloads — the replay is sized without being
+  materialized. **The window and every `load_earlier` page are counted in steps
   (turns), never events**: the server cuts only at journaled `turn_started` seqs
   (`SessionManager.turnStartAt`/`earlierPage`), so `attached.from` is always a turn's
   opening event and a page is whole turns — an event-counted cut landed mid-turn and the
@@ -448,8 +457,8 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   cut has to be written around**: a revive clears the journal and refills it from the
   `session/load` replay, which is the entire prior conversation with no turn boundaries in
   it, so the first `turn_started` is the turn taken *after* the revive. So the window is
-  applied **only when a turn is actually being withheld** (`skip > 0` in
-  `SessionSocket.attach`) — jumping to "the first turn of the window" unconditionally looks
+  applied **only when a turn is actually being withheld** (`countTurnsBefore(cut) > 0` in
+  `windowStart`) — jumping to "the first turn of the window" unconditionally looks
   equivalent and is not: a revived thread of one turn, far inside any window, replayed from
   that turn's seq and dropped everything the load had put back, while `earlier` said 0
   (there are no whole *turns* behind it) so nothing offered it back either. A server crash
@@ -478,9 +487,24 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   It is **opt-in** (`?batch=1`, which `wsUrl` sets): a client that predates the shape would
   drop the frame, and with it the `caught_up` inside, leaving a thread that never finishes
   connecting rather than one that merely renders slowly. The client folds it to match: the
-  bracket also opens and closes a **buffer** in `makeCallbacks`, so the whole history is one
-  `batch` action — one commit — rather than one render per event of a transcript nobody has
-  looked at yet. Which is why everything thread-scoped in there goes through `send`, never
+  bracket also opens and closes a **buffer** in `makeCallbacks`, so the history commits in
+  `batch` actions — **one per frame** — rather than one render per event of a transcript
+  nobody has looked at yet. It used to be one commit for the whole replay, which overshot in
+  the other direction: the screen stayed empty for the *entire* wait, so a long thread said
+  nothing until it could say everything. A frame is the server's own cut and a handful of
+  them carry a window, so committing per frame paints the transcript progressively and still
+  costs an order of magnitude fewer renders than an event at a time — `commit` keeps
+  buffering where `flush` closes the buffer, and the array is replaced rather than emptied,
+  since the actions in it have just been handed to the reducer. Each frame also raises
+  `onReplayProgress`, counted against the `to` that `attached` now states — the log's length,
+  read in the same tick as `caught_up`'s `cursor` so the two cannot disagree — which is what
+  turns the wait into a quantity: `ThreadState.replay` drives a bar in `StartingLine` instead
+  of a line apologising for a length it had no evidence for. Before `attached` the client
+  knows nothing about the thread's *size* (the wait is the network, the socket, or a server
+  busy with another thread's turn), so that case says so instead, and a replay the server
+  never sized — or one too short to be felt — draws no bar at all, on the service worker's
+  rule: a spinner is how "not known yet" is said, and a bar against no total is a lie that
+  jumps. Which is why everything thread-scoped in there goes through `send`, never
   `dispatch` (a direct dispatch jumps the queue and lands ahead of the `thread-reset` still
   sitting in the buffer — `recordError` takes the sink as an argument for exactly that
   reason), and why a socket that dies mid-replay flushes too: `caught_up` is the ordinary

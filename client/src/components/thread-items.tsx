@@ -14,7 +14,12 @@ import {
 } from "lucide-react"
 import { ChevronLeftIcon, ChevronRightIcon, CopyIcon, Maximize2Icon } from "lucide-react"
 import { Tabs } from "@base-ui/react/tabs"
-import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import {
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle,
+} from "@/components/ui/responsive-dialog"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
@@ -44,6 +49,7 @@ import {
 } from "@/components/tool-views"
 import { copyText, formatElapsed, StepRow, useElapsed, yieldToTextSelection } from "@/components/step-row"
 import {
+  AutonomyStep,
   CompactionStep,
   ErrorRow,
   PlanStep,
@@ -773,13 +779,13 @@ function WorkflowStepPanel({
   const panelTokens = view.showTokens ? stepUsage(group) : undefined
   return (
     <Tabs.Panel value={group.id} className="flex min-h-0 min-w-0 flex-1 flex-col outline-none">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border/40 px-3 py-2 sm:px-4">
+      <div className="flex shrink-0 items-center gap-2 border-b border-border/40 px-3 py-2 md:px-4">
         <Button
           variant="ghost"
           size="icon"
           aria-label="Back to steps"
           onClick={onBack}
-          className="-ml-1 size-7 shrink-0 text-muted-foreground sm:hidden"
+          className="-ml-1 size-7 shrink-0 text-muted-foreground md:hidden"
         >
           <ChevronLeftIcon className="size-4" />
         </Button>
@@ -809,7 +815,7 @@ function WorkflowStepPanel({
         <WorkflowPill state={state as WfState} />
       </div>
       {/* The pane owns the scroll, so a long rail never grows the dialog. */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2.5 sm:px-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 pt-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] md:px-4 md:pb-2.5">
         <SubagentBody group={group} stepThread={stepThread} showTimestamps={showTimestamps} />
       </div>
     </Tabs.Panel>
@@ -928,6 +934,10 @@ function WorkflowMeter({ phases, className }: { phases: PhaseView[]; className?:
           {(phase.steps.length ? phase.steps : [null]).map((step, i) => (
             <span
               key={i}
+              /* A segment is one step, so it says which — the strip is the only
+                 part of the card that draws every step, and on the card there
+                 is no list under it to read the name off. */
+              title={step ? `${step.name || "step"} — ${stateOfStep(step)}` : undefined}
               className={cn(
                 "h-1 min-w-1 flex-1 rounded-pill transition-colors duration-300",
                 /* Not `harness-shimmer`: it paints through
@@ -1072,7 +1082,8 @@ function RunCard({
     .join(" · ")
 
   const runningStep = all.find((step) => step.group?.active)?.group ?? null
-  const failedStep = all.find((step) => step.group && stepStateOf(step.group) === "failed")?.group ?? null
+  const failedSteps = all.filter((step) => step.group && stepStateOf(step.group) === "failed")
+  const failedStep = failedSteps[0]?.group ?? null
   /* The card's foot line: what is being written right now, else the step that
      failed — the two things a reader would open the dialog to find. */
   const activity = runningStep ? currentActivity(runningStep.children) : undefined
@@ -1094,22 +1105,24 @@ function RunCard({
   }
 
   return (
-    <Dialog open={open} onOpenChange={openPreview}>
+    <ResponsiveDialog open={open} onOpenChange={openPreview}>
       {/* The whole card is the trigger — one target, no interactive rows left
           inside it — so its children are spans: a button holds phrasing
-          content. */}
-      <DialogTrigger
-        render={
-          <button
-            type="button"
-            aria-label={ariaLabel}
-            className={cn(
-              "group/wfc my-1 block w-full overflow-hidden rounded-lg border border-border/60 text-start",
-              "transition-colors duration-150 hover:border-border hover:bg-muted/30",
-              "focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-ring"
-            )}
-          />
-        }
+          content. A plain button rather than a `DialogTrigger`, because the
+          modal here is the responsive one and on a phone its root is a Drawer:
+          one trigger cannot render into both, and `openPreview` is what has to
+          run either way (it is where the landing step is chosen). */}
+      <button
+        type="button"
+        aria-label={ariaLabel}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => openPreview(true)}
+        className={cn(
+          "group/wfc my-1 block w-full overflow-hidden rounded-lg border border-border/60 text-start",
+          "transition-colors duration-150 hover:border-border hover:bg-muted/30",
+          "focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        )}
       >
         <span className="flex items-center gap-2 bg-muted/25 px-2.5 py-1.5 transition-colors duration-150 group-hover/wfc:bg-muted/40">
           <span
@@ -1167,24 +1180,37 @@ function RunCard({
               <>
                 <XIcon aria-hidden className="size-3 shrink-0 text-destructive" />
                 <span className="min-w-0 truncate text-[11px] leading-4 text-destructive">
-                  {stepNameOf(failedStep!)} failed
+                  {/* One failure reads by name — that is what the reader came
+                      back for. Several would have to be a list the card has no
+                      room for, so it says how many and the dialog names them. */}
+                  {failedSteps.length > 1
+                    ? `${failedSteps.length} steps failed`
+                    : `${stepNameOf(failedStep!)} failed`}
                 </span>
               </>
             )}
           </span>
         )}
-      </DialogTrigger>
-      <DialogContent
+      </button>
+      {/* A centred dialog on a desktop, a bottom sheet on a phone — the run is
+          N whole transcripts, which is exactly the content a phone wants as a
+          sheet it can swipe away rather than a box inset from every edge.
+          `bodyClassName` turns the shared scroll region off: the two panes
+          below own their own scroll. */}
+      <ResponsiveDialogContent
+        bodyClassName="overflow-hidden p-0"
         className={cn(
-          "flex h-[min(44rem,calc(100svh-2rem))] w-[min(60rem,calc(100vw-1rem))] flex-col gap-0 overflow-hidden p-0",
-          "sm:max-w-[calc(100vw-3rem)]"
+          "flex flex-col gap-0 overflow-hidden p-0",
+          "h-[calc(100dvh-6rem)]",
+          "md:h-[min(44rem,calc(100svh-2rem))] md:max-h-[calc(100svh-2rem)]",
+          "md:w-[min(60rem,calc(100vw-3rem))] md:max-w-[calc(100vw-3rem)]"
         )}
       >
         {/* The card's header, restated where the card can no longer be seen:
             the dialog covers the transcript, so it has to say which run it is
-            showing. `pr-12` clears the dialog's own close button. */}
-        <div className="shrink-0 border-b border-border/40">
-          <div className="flex items-center gap-2.5 py-3 pr-12 pl-4">
+            showing. `pr-12` clears the modal's own close button. */}
+        <ResponsiveDialogHeader className="gap-2 px-4 py-3 pr-12">
+          <div className="flex items-center gap-2.5">
             <span
               aria-hidden
               className={cn(
@@ -1199,7 +1225,7 @@ function RunCard({
               <RunIcon className="size-4" />
             </span>
             <span className="flex min-w-0 flex-1 flex-col">
-              <DialogTitle
+              <ResponsiveDialogTitle
                 className={cn(
                   "truncate text-sm leading-4 font-medium",
                   failed ? "text-destructive" : "text-foreground",
@@ -1207,7 +1233,7 @@ function RunCard({
                 )}
               >
                 {name}
-              </DialogTitle>
+              </ResponsiveDialogTitle>
               {subtitle && (
                 <span className="truncate text-[11px] leading-4 tabular-nums text-muted-foreground/60">
                   {subtitle}
@@ -1216,8 +1242,8 @@ function RunCard({
             </span>
             <WorkflowPill state={runState} />
           </div>
-          {all.length > 0 && <WorkflowMeter phases={phases} className="px-4 pb-2.5" />}
-        </div>
+          {all.length > 0 && <WorkflowMeter phases={phases} />}
+        </ResponsiveDialogHeader>
         {/* Sidebar and pane. On a desktop they sit side by side; on a phone
             they are one column and selecting swaps the list for the panel,
             whose header grows the way back (see `WorkflowStepPanel`).
@@ -1236,8 +1262,10 @@ function RunCard({
         >
           <Tabs.List
             className={cn(
-              "flex w-full flex-col overflow-y-auto p-1.5 pb-2 outline-none sm:w-64 sm:shrink-0 sm:border-r sm:border-border/40",
-              selected !== null && "max-sm:hidden"
+              "flex w-full flex-col overflow-y-auto overscroll-contain p-1.5 outline-none",
+              "pb-[max(0.5rem,env(safe-area-inset-bottom))]",
+              "md:w-64 md:shrink-0 md:border-r md:border-border/40 md:pb-2",
+              selected !== null && "max-md:hidden"
             )}
           >
             {/* A run whose first spawn has arrived but whose outline has not
@@ -1264,7 +1292,7 @@ function RunCard({
           </Tabs.List>
           {/* One panel per step; Base UI mounts only the selected one, so a
               run of nine steps costs one transcript and not nine. */}
-          <div className={cn("min-h-0 min-w-0 flex-1 flex-col", selected === null ? "hidden sm:flex" : "flex")}>
+          <div className={cn("min-h-0 min-w-0 flex-1 flex-col", selected === null ? "hidden md:flex" : "flex")}>
             {runSteps.map((step) => (
               <WorkflowStepPanel
                 key={step.id}
@@ -1283,8 +1311,8 @@ function RunCard({
             )}
           </div>
         </Tabs.Root>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   )
 }
 
@@ -1567,6 +1595,8 @@ export const ThreadItemView = React.memo(function ThreadItemView({
       return <PlanStep item={item} />
     case "compaction":
       return <CompactionStep item={item} showTimestamp={showTimestamps} />
+    case "autonomy":
+      return <AutonomyStep item={item} showTimestamp={showTimestamps} />
     case "subagent":
       // An announced session with nothing filed under it yet — `buildRows`
       // wraps every one it sees, so this is the bare item reaching a row view

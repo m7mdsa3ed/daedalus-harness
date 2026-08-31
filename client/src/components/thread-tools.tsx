@@ -59,12 +59,16 @@ export function ThreadToolsMenu({
   actions,
   editable,
   className,
+  remember = true,
 }: {
   meta: SessionMeta
   actions: Actions
   /** A draft can still choose; a started thread's links are already spawned. */
   editable: boolean
   className?: string
+  /** False when this menu is editing a saved configuration rather than the
+      draft you are about to send (a routine's kit) — see DraftScopeRow. */
+  remember?: boolean
 }) {
   const { state } = useStore()
   const profile = state.profiles.find((p) => p.id === meta.profileId)
@@ -82,8 +86,9 @@ export function ThreadToolsMenu({
     const next = on ? [...own[key].filter((x) => x !== id), id] : own[key].filter((x) => x !== id)
     actions.configureDraft(meta.id, { [key]: next })
     // Remembered like the agent is: a reload rebuilds the draft from these,
-    // and the next thread starts with the same kit.
-    saveThreadDefaults({ ...own, [key]: next })
+    // and the next thread starts with the same kit. Unless this menu is not
+    // about the next thread at all — see `remember`.
+    if (remember) saveThreadDefaults({ ...own, [key]: next })
   }
   const extra = own.mcpServerIds.length + own.skillIds.length + own.commandIds.length
   const total =
@@ -219,7 +224,7 @@ export function ThreadToolsMenu({
               onClick={() => {
                 const cleared = { mcpServerIds: [], skillIds: [], commandIds: [] }
                 actions.configureDraft(meta.id, cleared)
-                saveThreadDefaults(cleared)
+                if (remember) saveThreadDefaults(cleared)
               }}
             >
               Clear this thread&rsquo;s picks

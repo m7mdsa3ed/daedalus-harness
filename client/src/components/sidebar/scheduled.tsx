@@ -31,15 +31,17 @@ import { scheduleSkipped, scheduleWhen } from "@/lib/schedule"
 import { isTopLevel, type ScheduledMessage } from "@/lib/settings"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
-import { FoldableGroup } from "./groups"
+import { FoldableGroup, HEADER_BUTTON } from "./groups"
 import { ACTION, MENU } from "./scale"
 
 /** Upcoming prompts the server will deliver even with no browser open — the
-    sidebar's "Automations". It names the thread it will land in, so its row
-    opens that thread. Shown even when empty, because a section that hides
-    itself is also the one place nobody can find to create the first item;
-    the + on the label reuses the schedule page and its picker, which is why
-    it needs a live thread to exist at all. */
+    lower half of the Automations tier. It names the thread it will land in, so
+    its row opens that thread, and that is precisely what distinguishes it from
+    the Routines half above: a scheduled message speaks into a conversation that
+    already exists, where a routine starts one from nothing. Shown even when
+    empty, because a section that hides itself is also the one place nobody can
+    find to create the first item; the + on the label reuses the schedule page
+    and its picker, which is why it needs a live thread to exist at all. */
 export function ScheduledGroup({ actions }: { actions: Actions }) {
   const { state } = useStore()
   const navigate = useNavigate()
@@ -83,11 +85,9 @@ export function ScheduledGroup({ actions }: { actions: Actions }) {
       .catch((err) => reportError(err, "Couldn't update the schedule"))
   }
 
-  const HEADER_BUTTON =
-    "grid size-4 place-items-center rounded-sm text-muted-foreground transition-colors hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-
   return (
     <FoldableGroup
+      nested
       groupKey="__scheduled"
       label="Scheduled"
       icon={<CalendarClock className="size-3 shrink-0" />}

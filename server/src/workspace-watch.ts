@@ -46,6 +46,8 @@ type Listener = (batch: WatchBatch) => void;
 interface ProjectWatch {
   watcher: FSWatcher;
   listeners: Set<Listener>;
+  /** Told when the watch is torn down under them — see `watchProject`. */
+  closers: Set<() => void>;
   pending: Map<string, WatchEvent["kind"]>;
   overflow: boolean;
   timer: ReturnType<typeof setTimeout> | null;
@@ -86,8 +88,19 @@ function flush(projectId: string): void {
  *
  * Throws the usual `WorkspaceError` when the project is unknown or its
  * directory is missing — the caller is a route, and those are its 404s.
+ *
+ * `onClose` is called when the watch goes away for a reason that is not this
+ * subscriber leaving — an `fs.watch` error tearing it down, the project being
+ * deleted, the process shutting down. A route does not need it: its socket dies
+ * with the request. A long-lived subscriber does, because otherwise its handle
+ * is silently a no-op forever and whatever it was watching for simply stops
+ * happening, with nothing anywhere saying so.
  */
-export function watchProject(projectId: string, listener: Listener): () => void {
+export function watchProject(
+  projectId: string,
+  listener: Listener,
+  onClose?: () => void,
+): () => void {
   let entry = watches.get(projectId);
   if (!entry) {
     const root = projectRoot(projectId);
@@ -95,6 +108,7 @@ export function watchProject(projectId: string, listener: Listener): () => void 
       // Recursive watching is native on Linux from Node 20; this server is 22.
       watcher: watch(root, { recursive: true, persistent: false }),
       listeners: new Set(),
+      closers: new Set(),
       pending: new Map(),
       overflow: false,
       timer: null,
@@ -124,10 +138,12 @@ export function watchProject(projectId: string, listener: Listener): () => void 
   }
 
   entry.listeners.add(listener);
+  if (onClose) entry.closers.add(onClose);
   return () => {
     const current = watches.get(projectId);
     if (!current) return;
     current.listeners.delete(listener);
+    if (onClose) current.closers.delete(onClose);
     if (current.listeners.size === 0) closeWatch(projectId);
   };
 }
@@ -143,6 +159,17 @@ function closeWatch(projectId: string): void {
   } catch {
     /* already gone */
   }
+  /* After the entry is gone from the map, so a subscriber that resubscribes
+     from here builds a fresh watch rather than adding itself to the one being
+     torn down. */
+  for (const closer of [...entry.closers]) {
+    try {
+      closer();
+    } catch (err) {
+      console.error("[workspace] watch closer threw", err);
+    }
+  }
+  entry.closers.clear();
 }
 
 /** Drop every watcher — project deleted, or the process is shutting down. */

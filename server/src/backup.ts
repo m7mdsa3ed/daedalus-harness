@@ -9,11 +9,15 @@ import {
   db,
   knowledge as knowledgeTable,
   mcpServers as mcpServersTable,
+  notifications as notificationsTable,
   personas as personasTable,
   profiles as profilesTable,
   projectPreviews as previewsTable,
   projects as projectsTable,
   pushTokens as pushTokensTable,
+  routineRuns as routineRunsTable,
+  routineTriggers as routineTriggersTable,
+  routines as routinesTable,
   scheduledMessages as scheduledTable,
   sessionEvents as eventsTable,
   sessionQueue as queueTable,
@@ -25,8 +29,14 @@ import {
   webSearchUsage as usageTable,
   workflowRuns as workflowRunsTable,
   type NameValue,
+  type RoutineBody,
 } from "./db/index.js";
+import type { AutonomyPolicy } from "./autonomy.js";
 import { PROFILE_LINKS, SESSION_LINKS, emptyLinks, readLinks, writeLinks, type LinkSet, type Tx } from "./db/links.js";
+/* The routine link descriptor lives with the engine rather than in db/links.ts
+   — see the note there. It is imported for its links exactly as PROFILE_LINKS
+   and SESSION_LINKS are used above. */
+import { ROUTINE_LINKS } from "./routines.js";
 import { readWebSearch, saveWebSearch, type WebSearchConfig } from "./config.js";
 import { ensureDefaultBoard, reconcileTaskStatuses } from "./boards.js";
 
@@ -265,6 +275,103 @@ const WorkflowRunRow = z.object({
   endedAt: int.nullish(),
 });
 
+/* Routines and their two children (routines.ts). A routine is a root: nothing
+   in the bundle points at it, and its project/profile/agent/persona ids are
+   deliberately not foreign keys, so a routine whose project the bundle does not
+   carry still restores — "this routine's project no longer exists" is a
+   sentence the UI can say, where a dropped row is not. */
+const RoutineRow = z.object({
+  id: str.min(1),
+  name: str,
+  description: optStr,
+  enabled: z.boolean().default(true),
+  projectId: str,
+  profileId: str,
+  agentId: str,
+  model: str.default(""),
+  effort: str.default(""),
+  personaId: optStr,
+  configChoices: z.record(str, z.union([str, z.boolean()])).default({}),
+  /* Opaque but required. Their INTERNALS are deliberately not validated here:
+     `body` holds a whole workflow definition (workflow-schema.ts owns that
+     shape) and `autonomy` a policy (autonomy.ts owns that one), and restating
+     either would be a second copy to keep in step. `z.custom` rather than
+     `z.unknown()` because both columns are NOT NULL and an `unknown` key is
+     OPTIONAL in zod — a bundle missing one would parse here and then fail the
+     insert, taking the whole transaction down instead of answering 400 at the
+     boundary. */
+  body: z.custom<RoutineBody>((v) => v !== null && typeof v === "object"),
+  output: z.record(str, z.unknown()).nullish(),
+  onFinish: z.array(json).default([]),
+  overlap: z.enum(["skip", "queue"]).default("skip"),
+  autonomy: z.custom<AutonomyPolicy>((v) => v !== null && typeof v === "object"),
+  /* Carried, and it is the one field here where carrying it is a security
+     decision rather than a convenience: it records that a run has completed
+     under this routine, which is what unlocks a blanket `allow`. A restore that
+     dropped it would re-lock a grant the user already made informedly; a
+     restore that invented it would unlock one they never did. So it travels
+     exactly as it was. */
+  dryRunCompleted: z.boolean().default(false),
+  createdAt: int,
+  updatedAt: int,
+  mcpServerIds: z.array(str).default([]),
+  skillIds: z.array(str).default([]),
+  commandIds: z.array(str).default([]),
+});
+
+const RoutineTriggerRow = z.object({
+  id: str.min(1),
+  routineId: str.min(1),
+  kind: z.enum(["schedule", "api", "git"]),
+  enabled: z.boolean().default(true),
+  cron: optStr,
+  tz: optStr,
+  atMs: int.nullish(),
+  condition: z.object({ gitChangedSince: z.literal("lastRun").optional() }).nullish(),
+  /* The clock is carried rather than recomputed: a one-off's slot is a fact
+     about when the user asked for it, and a recurring one is re-armed by the
+     sweep within SWEEP_MS anyway. A restored slot already in the past fires
+     once and rolls forward, which is the same collapse a server that was off
+     overnight already does. */
+  nextFireAt: int.nullish(),
+  /** Absent = redacted on export; "" is also read as "nothing to say". The
+      stored value is a sha-256, not the token — but it is the only credential
+      here that starts a process on this machine, so it follows the same
+      opt-out every other secret does. */
+  secretHash: str.optional(),
+  secretCreatedAt: int.nullish(),
+  branch: optStr,
+  paths: z.array(str).default([]),
+  debounceMs: int.default(30_000),
+  lastSeen: optStr,
+  lastFiredAt: int.nullish(),
+  lastError: optStr,
+  createdAt: int,
+});
+
+const RoutineRunRow = z.object({
+  id: str.min(1),
+  routineId: str.min(1),
+  triggerId: optStr,
+  fireId: str,
+  /** The run's thread. Not filtered against the sessions table on import: it is
+      not a foreign key precisely so that deleting a thread does not delete the
+      history of the run that made it. */
+  sessionId: optStr,
+  source: z.enum(["schedule", "api", "git", "manual", "routine"]),
+  payload: optStr,
+  dryRun: z.boolean().default(false),
+  status: z.enum(["running", "completed", "failed", "blocked", "skipped"]),
+  error: optStr,
+  output: optStr,
+  verdict: json,
+  actions: z.array(json).default([]),
+  headOid: optStr,
+  tokens: int.nullish(),
+  startedAt: int,
+  endedAt: int.nullish(),
+});
+
 const EventRow = z.object({
   sessionId: str.min(1),
   seq: int,
@@ -343,6 +450,16 @@ const UsageRow = z.object({
 
 const PushTokenRow = z.object({ token: str.min(1), createdAt: int });
 
+const NotificationRow = z.object({
+  id: str.min(1),
+  kind: z.enum(["permission", "question", "turn_finished", "turn_failed"]),
+  sessionId: optStr,
+  threadTitle: optStr,
+  body: optStr,
+  read: z.boolean().default(false),
+  createdAt: int,
+});
+
 const WebSearchBlock = z.object({
   searchApiBaseUrl: str,
   /** Absent = redacted on export. */
@@ -370,12 +487,16 @@ export const BundleSchema = z.object({
   queue: z.array(QueueRow).default([]),
   scheduled: z.array(ScheduledRow).default([]),
   workflowRuns: z.array(WorkflowRunRow).default([]),
+  routines: z.array(RoutineRow).default([]),
+  routineTriggers: z.array(RoutineTriggerRow).default([]),
+  routineRuns: z.array(RoutineRunRow).default([]),
   events: z.array(EventRow).default([]),
   boards: z.array(BoardRow).default([]),
   boardStatuses: z.array(BoardStatusRow).default([]),
   tasks: z.array(TaskRow).default([]),
   webSearchUsage: z.array(UsageRow).default([]),
   pushTokens: z.array(PushTokenRow).default([]),
+  notifications: z.array(NotificationRow).default([]),
   config: z.object({ webSearch: WebSearchBlock.optional() }).default({}),
 });
 
@@ -398,6 +519,8 @@ export function exportBundle(opts: ExportOptions): Bundle {
   const profiles = db.select().from(profilesTable).all();
   const sessions = db.select().from(sessionsTable).all();
   const mcpServers = db.select().from(mcpServersTable).all();
+  const routines = db.select().from(routinesTable).all();
+  const triggers = db.select().from(routineTriggersTable).all();
   const webSearch = readWebSearch();
 
   return {
@@ -427,6 +550,14 @@ export function exportBundle(opts: ExportOptions): Bundle {
     queue: db.select().from(queueTable).all(),
     scheduled: db.select().from(scheduledTable).all(),
     workflowRuns: db.select().from(workflowRunsTable).all(),
+    routines: withLinks(routines, readLinks(ROUTINE_LINKS, routines.map((r) => r.id))),
+    /* A trigger's token hash is a credential like a profile's key: the key is
+       ABSENT under `secrets=0`, not blanked to "", because absent is what the
+       import reads as "keep whatever this install already holds". */
+    routineTriggers: opts.includeSecrets
+      ? triggers
+      : triggers.map(({ secretHash: _s, ...rest }) => rest),
+    routineRuns: db.select().from(routineRunsTable).all(),
     events: opts.includeJournals
       ? db.select().from(eventsTable).orderBy(eventsTable.sessionId, eventsTable.seq).all()
       : [],
@@ -435,6 +566,7 @@ export function exportBundle(opts: ExportOptions): Bundle {
     tasks: db.select().from(tasksTable).all(),
     webSearchUsage: db.select().from(usageTable).all(),
     pushTokens: db.select().from(pushTokensTable).all(),
+    notifications: db.select().from(notificationsTable).all(),
     config: webSearch
       ? {
           webSearch: opts.includeSecrets
@@ -450,7 +582,8 @@ export type ImportMode = "merge" | "replace";
 export type ImportSummary = Record<
   | "agents" | "profiles" | "mcpServers" | "skills" | "commands" | "personas" | "projects" | "knowledge" | "previews"
   | "sessions" | "queue" | "scheduled" | "workflowRuns" | "events" | "boards" | "boardStatuses" | "tasks"
-  | "webSearchUsage" | "pushTokens",
+  | "routines" | "routineTriggers" | "routineRuns"
+  | "webSearchUsage" | "pushTokens" | "notifications",
   number
 > & {
   /** Rows dropped because the row they belong to is in neither the bundle
@@ -535,7 +668,8 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
   const summary: ImportSummary = {
     agents: 0, profiles: 0, mcpServers: 0, skills: 0, commands: 0, personas: 0, projects: 0, knowledge: 0, previews: 0,
     sessions: 0, queue: 0, scheduled: 0, workflowRuns: 0, events: 0, boards: 0, boardStatuses: 0, tasks: 0,
-    webSearchUsage: 0, pushTokens: 0,
+    routines: 0, routineTriggers: 0, routineRuns: 0,
+    webSearchUsage: 0, pushTokens: 0, notifications: 0,
     orphaned: 0, missingSecrets: false,
   };
 
@@ -543,6 +677,7 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
   // secrets a redacted bundle is allowed to keep.
   const existingProfiles = new Map(db.select().from(profilesTable).all().map((p) => [p.id, p]));
   const existingMcp = new Map(db.select().from(mcpServersTable).all().map((s) => [s.id, s]));
+  const existingTriggers = new Map(db.select().from(routineTriggersTable).all().map((t) => [t.id, t]));
   const existingWebSearch = readWebSearch();
 
   db.transaction((tx) => {
@@ -552,7 +687,10 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
       for (const table of [
         sessionsTable, profilesTable, projectsTable, mcpServersTable, skillsTable, commandsTable,
         personasTable,
+        // A root of its own: its triggers, runs and links all cascade from it.
+        routinesTable,
         agentsTable, tasksTable, boardStatusesTable, boardsTable, usageTable, pushTokensTable,
+        notificationsTable,
         agentOptionsTable,
       ]) {
         tx.delete(table).run();
@@ -687,6 +825,88 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
     insertChunked(tx, eventsTable, events);
     summary.events = events.length;
 
+    /* Routines, and the two tables that hang off them. A root: nothing points
+       at a routine, so this sits outside the session block entirely — a routine
+       survives its project, its profile and the thread of every run it made,
+       which is the whole reason none of those ids is a foreign key. */
+    upsertChunked(
+      tx,
+      routinesTable,
+      "id",
+      bundle.routines.map((r) => {
+        const { mcpServerIds: _m, skillIds: _s, commandIds: _c, ...columns } = r;
+        return {
+          ...columns,
+          description: columns.description ?? null,
+          personaId: columns.personaId ?? null,
+          output: columns.output ?? null,
+        };
+      }),
+    );
+    summary.routines = bundle.routines.length;
+    for (const r of bundle.routines) writeLinks(tx, ROUTINE_LINKS, r.id, r);
+
+    const routineIds = new Set(tx.select({ id: routinesTable.id }).from(routinesTable).all().map((r) => r.id));
+    const ownRoutines = [...new Set(bundle.routines.map((r) => r.id))];
+    /* Both children are replaced as a unit for every routine the bundle names,
+       the same rule a thread's queue and log follow and for a sharper reason
+       than tidiness: a trigger the user deleted would otherwise come back on a
+       merge, and a run history stitched from two installs has a *newest* run
+       that came from the other machine — which is exactly the row
+       `lastRunHeadOid` reads to decide whether anything has changed since. */
+    for (let i = 0; i < ownRoutines.length; i += CHUNK) {
+      const ids = ownRoutines.slice(i, i + CHUNK);
+      tx.delete(routineTriggersTable).where(inArray(routineTriggersTable.routineId, ids)).run();
+      tx.delete(routineRunsTable).where(inArray(routineRunsTable.routineId, ids)).run();
+    }
+    const ownedRoutine = <T extends { routineId: string }>(rows: T[]): T[] => {
+      const kept = rows.filter((r) => routineIds.has(r.routineId));
+      summary.orphaned += rows.length - kept.length;
+      return kept;
+    };
+    const triggers = ownedRoutine(bundle.routineTriggers).map((t) => {
+      // A blank (or absent) hash where the install already holds one keeps the
+      // install's — the same bargain a redacted profile key makes, so a
+      // redacted bundle merged over its own install leaves every token working.
+      /* No `missingSecrets` here, unlike a profile's key: `secrets=0` strips
+         the hash from EVERY trigger, and a trigger that never had a token looks
+         identical afterwards to one whose token was redacted — so the flag
+         could only ever be raised on every install that has a schedule. */
+      const was = existingTriggers.get(t.id);
+      return {
+        ...t,
+        cron: t.cron ?? null,
+        tz: t.tz ?? null,
+        atMs: t.atMs ?? null,
+        condition: t.condition ?? null,
+        nextFireAt: t.nextFireAt ?? null,
+        secretHash: t.secretHash || (was?.secretHash ?? null),
+        secretCreatedAt: t.secretCreatedAt ?? was?.secretCreatedAt ?? null,
+        branch: t.branch ?? null,
+        lastSeen: t.lastSeen ?? null,
+        lastFiredAt: t.lastFiredAt ?? null,
+        lastError: t.lastError ?? null,
+      };
+    });
+    insertChunked(tx, routineTriggersTable, triggers);
+    summary.routineTriggers = triggers.length;
+    const routineRuns = ownedRoutine(bundle.routineRuns).map((r) => ({
+      ...r,
+      triggerId: r.triggerId ?? null,
+      sessionId: r.sessionId ?? null,
+      payload: r.payload ?? null,
+      error: r.error ?? null,
+      output: r.output ?? null,
+      /* `verdict` is genuinely nullable JSON and `undefined` is not a value the
+         driver can bind — a run with no output schema carries none. */
+      verdict: r.verdict ?? null,
+      headOid: r.headOid ?? null,
+      tokens: r.tokens ?? null,
+      endedAt: r.endedAt ?? null,
+    }));
+    insertChunked(tx, routineRunsTable, routineRuns);
+    summary.routineRuns = routineRuns.length;
+
     // The standalone tables. Boards and their columns go in before the tasks
     // that point at them, so `reconcileTaskStatuses` below has something to
     // reconcile against.
@@ -716,6 +936,8 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
     summary.webSearchUsage = bundle.webSearchUsage.length;
     insertChunked(tx, pushTokensTable, bundle.pushTokens);
     summary.pushTokens = bundle.pushTokens.length;
+    upsertChunked(tx, notificationsTable, "id", bundle.notifications);
+    summary.notifications = bundle.notifications.length;
   });
 
   /* A bundle written before boards existed carries tasks and no boards, and a

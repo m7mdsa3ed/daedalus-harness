@@ -20,6 +20,7 @@ import { notifyThreadEvent } from "./notifications"
 import { prunePins } from "./pins"
 import {
   api,
+  ApiError,
   profileAgentIds,
   updateScheduled,
   type AgentDef,
@@ -27,6 +28,13 @@ import {
   type Persona,
   type Profile,
   type Project,
+  type Routine,
+  type RoutineInput,
+  type RoutinePatch,
+  type RoutineRun,
+  type RoutineTrigger,
+  type RoutineTriggerInput,
+  type RoutineTriggerPatch,
   type ScheduledMessage,
   type ScheduledPatch,
   type ServerSettings,
@@ -74,6 +82,53 @@ const refreshCatalogIfStale = () => {
   refreshCatalogOnReturn?.()
 }
 let networkListenersInstalled = false
+/**
+ * How often a parked thread asks whether the server is back.
+ *
+ * `online` and `visibilitychange` are the only other things that un-park one,
+ * and neither fires for the case that parks threads most often: the server
+ * restarts while the tab stays focused and the network never drops. There is a
+ * network the whole time, so `navigator.onLine` stays true and says nothing
+ * about whether anything is listening — so without this, a thread that gave up
+ * during a deploy stays parked until somebody clicks Reconnect.
+ */
+const HEALTH_POLL_MS = 20_000
+let healthPollTimer: ReturnType<typeof setInterval> | null = null
+/** Bound inside `useActions` (it needs the settings), like the two above. */
+let probeServer: (() => Promise<boolean>) | null = null
+/** One probe answers every caller for a moment: a server restart drops every
+    thread the dock has open, and each of them would otherwise ask separately,
+    in the same tick, on every rung of its own ladder. */
+const HEALTH_PROBE_TTL_MS = 1_000
+let healthProbe: { at: number; promise: Promise<boolean> } | null = null
+const serverReachable = (): Promise<boolean> => {
+  // Nothing bound yet — assume reachable, so this can only ever remove work,
+  // never gate a reconnect on a probe that cannot run.
+  if (!probeServer) return Promise.resolve(true)
+  const now = Date.now()
+  if (healthProbe && now - healthProbe.at < HEALTH_PROBE_TTL_MS) return healthProbe.promise
+  const promise = probeServer()
+  healthProbe = { at: now, promise }
+  return promise
+}
+/** Runs only while something is parked, and stops itself when nothing is —
+    which is why no un-parking path has to remember to call it. */
+const startHealthPoll = () => {
+  if (healthPollTimer) return
+  healthPollTimer = setInterval(() => {
+    if (reconnectWaiting.size === 0) {
+      clearInterval(healthPollTimer!)
+      healthPollTimer = null
+      return
+    }
+    // Offline is already covered by the `online` listener, and a probe against
+    // a network that cannot answer is a request nobody can act on.
+    if (typeof navigator !== "undefined" && !navigator.onLine) return
+    void serverReachable().then((ok) => {
+      if (ok) retryWaitingThreads?.()
+    })
+  }, HEALTH_POLL_MS)
+}
 const installNetworkListeners = () => {
   if (networkListenersInstalled || typeof window === "undefined") return
   networkListenersInstalled = true
@@ -142,6 +197,10 @@ export function useActions(settings: ServerSettings) {
          or the error lands in a thread that is about to be reset out from
          under it. */
       emit: (action: Action) => void = dispatch,
+      /* False when the failure is this device's connection rather than the
+         agent's answer: a reconnect is coming and it re-folds the transcript,
+         so nothing in flight is over. */
+      settle = true,
     ) => {
       const info = describeError(err)
       console.error(`[${context}]`, err)
@@ -156,6 +215,7 @@ export function useActions(settings: ServerSettings) {
         reason: info.title,
         detail: info.detail,
         retryText,
+        settle,
       })
       return info
     }
@@ -163,6 +223,20 @@ export function useActions(settings: ServerSettings) {
     /** `silent` is the automatic-backoff path: a failed attempt is not worth a
         transcript row of its own — scheduleReconnect reports once, at give-up. */
     const reconnectThread = async (sessionId: string, silent = false) => {
+      /* An automatic attempt asks the cheap unauthenticated question first.
+         Every rung of every thread's ladder otherwise costs a full
+         `/api/sessions?deleted=1` — the whole list, deleted rows included, once
+         per open transcript per round — to discover what one shared health
+         probe already knows. A user-initiated reconnect skips the gate: it was
+         asked for, and it should fail against the real route rather than
+         against a probe. */
+      if (silent && !(await serverReachable())) {
+        throw new ApiError({
+          status: 0,
+          path: "/api/health",
+          serverMessage: "the server did not answer a health check",
+        })
+      }
       // User-initiated (or backoff-driven) reattach: drop any half-open socket so
       // openThread's `connected` short-circuit can't skip the reconnect.
       liveThreads.get(sessionId)?.close()
@@ -208,6 +282,7 @@ export function useActions(settings: ServerSettings) {
          `online` listener retries it the moment there is a network to try. */
       if (typeof navigator !== "undefined" && !navigator.onLine) {
         reconnectWaiting.add(sessionId)
+        startHealthPoll()
         dispatch({ type: "thread-status", id: sessionId, status: "connecting" })
         return
       }
@@ -216,6 +291,12 @@ export function useActions(settings: ServerSettings) {
         // Parked, not abandoned: coming back online or refocusing the tab
         // resets the counter and tries again without waiting for the user.
         reconnectWaiting.add(sessionId)
+        /* The ladder is a fast detector, not the whole budget: five rungs cover
+           about 16 seconds, and a deploy (build, schema push, restart) takes
+           longer than that, so giving up before the server is back is the
+           ORDINARY outcome rather than an edge case. The poll is the slow tail
+           — one shared request every 20s that un-parks every thread at once. */
+        startHealthPoll()
         // Giving up silently is how a thread ends up looking merely quiet.
         // Say so, in the thread, where the Revive button already lives.
         const info = lastError ? describeError(lastError) : undefined
@@ -223,8 +304,14 @@ export function useActions(settings: ServerSettings) {
           type: "error",
           id: sessionId,
           title: `Lost the connection to this thread — ${RECONNECT_MAX_ATTEMPTS} reconnect attempts failed`,
-          reason: info?.title ?? "The server or the agent process is no longer reachable.",
+          // The row is the end of the ladder, not the end of the attempt, and
+          // saying only the first reads as abandoned — which is what sent people
+          // hunting for a button the thread was about to make unnecessary.
+          reason: `${info?.title ?? "The server or the agent process is no longer reachable."} Still watching — this reconnects on its own once the server answers.`,
           detail: info?.detail,
+          // Parked, not abandoned — so nothing in the transcript is over
+          // either. The reconnect this row promises re-folds it.
+          settle: false,
         })
         return
       }
@@ -274,6 +361,19 @@ export function useActions(settings: ServerSettings) {
         })
       }
     }
+    /* Bound like the two above, and for the same reason: the poll is
+       module-level (it outlives React) but the question needs this connection's
+       URL and token. `/api/health` exempts itself from the token check, so this
+       answers on a server whose credentials have since changed — which is the
+       right reading, since what it is asking is only "is anything listening". */
+    probeServer = async () => {
+      try {
+        await api(settings, "/api/health")
+        return true
+      } catch {
+        return false
+      }
+    }
     installNetworkListeners()
 
     /** The thread's title, for a notification about it. */
@@ -290,6 +390,15 @@ export function useActions(settings: ServerSettings) {
          history lands as one `batch`. Nothing else changes: the callbacks below
          run in the same order on the same events, and a live socket (buffer
          null) still commits every action the moment it arrives.
+
+         Held back until the end, though, it overshot: the screen stayed empty
+         for the *whole* replay, so the wait was total rather than progressive
+         and a long thread said nothing until it could say everything. So the
+         buffer is committed per `replay` frame (`commit`) and only closed at the
+         end (`flush`) — the frame is the server's own cut, a handful of them
+         carry a window, and the transcript paints from the first one while the
+         rest are still arriving. Still an order of magnitude fewer renders than
+         one per event, which is the cost the buffer exists to remove.
 
          Two rules keep it honest. Everything thread-scoped goes through `send`,
          never `dispatch` — a stray direct dispatch would jump the queue and land
@@ -316,6 +425,16 @@ export function useActions(settings: ServerSettings) {
         const pending = buffer
         buffer = null
         if (pending?.length) dispatch({ type: "batch", actions: pending })
+      }
+      /* Commit what has been folded so far and keep buffering. The array is
+         replaced rather than emptied in place, because the actions in it are
+         about to be handed to the reducer and a buffer that kept collecting
+         into the same array would be mutating a batch already dispatched. */
+      const commit = () => {
+        const pending = buffer
+        if (!pending?.length) return
+        buffer = []
+        dispatch({ type: "batch", actions: pending })
       }
       return {
         onUpdate: (update, historyReplay, sessionId) =>
@@ -372,14 +491,18 @@ export function useActions(settings: ServerSettings) {
              status is about a connection nobody is using — letting it through
              marks the live thread dead and, worse, books a reconnect against it. */
           if (owner.thread && liveThreads.get(id) !== owner.thread) return
-          if (status === "connected") {
-            reconnectAttempts.delete(id)
-            reconnectWaiting.delete(id)
-          } else if (
+          /* Whether this close is the end of the thread's story or an
+             interruption in ours. A reconnect always revives and re-folds the
+             transcript, so anything left in flight is about to be answered by
+             the server's own account of it. */
+          const willReconnect =
             status === "closed" &&
             !closeInfo?.clientInitiated &&
             !NON_RECONNECTABLE_CLOSE_CODES.has(closeInfo?.code ?? 0)
-          ) {
+          if (status === "connected") {
+            reconnectAttempts.delete(id)
+            reconnectWaiting.delete(id)
+          } else if (willReconnect) {
             // The close frame's reason is the server's own account of what
             // happened ("agent exited (1)") — carry it into the give-up message.
             scheduleReconnect(
@@ -399,8 +522,16 @@ export function useActions(settings: ServerSettings) {
           /* A dead socket ends any turn it was carrying. The server does answer
              the prompts an exiting agent never will — but if the close beats the
              `turn_ended` to this tab, the working indicator would outlive the
-             process and only a reload would clear it. */
-          if (status === "closed") send({ type: "turn-active", id, active: false })
+             process and only a reload would clear it.
+
+             The indicator is all it ends, though: `settle: false` while a
+             reconnect is coming, because the turn is the server's and it runs
+             on with nobody attached. Settling here is what made a backgrounded
+             phone come back to failed tools and disconnected workflow steps
+             that the very next attach contradicted. */
+          if (status === "closed") {
+            send({ type: "turn-active", id, active: false, settle: !willReconnect })
+          }
           /* Last, so the status and whatever history was already buffered commit
              together: a close during the replay is the one exit `caught_up`
              never gets to make. */
@@ -475,8 +606,14 @@ export function useActions(settings: ServerSettings) {
            used to be read off `from > 0`, which stopped being enough once the
            server could pick a `from` of its own for a windowed attach — a case
            where `from` is large and the transcript must still be replaced. */
-        onAttached: ({ resumed, earlier, archived }, historyLost) => {
+        onAttached: ({ from, to, resumed, earlier, archived }, historyLost) => {
           buffer = []
+          /* How long this is going to be, before any of it arrives. Zero total
+             means the server did not say (one that predates the field), which
+             is not the same as a short replay and must not read as one — see
+             the `replay` field. */
+          const total = Math.max(0, to - from)
+          send({ type: "thread-replay", id, replay: total > 0 ? { done: 0, total } : null })
           /* Keep what is on screen when resuming; replace it otherwise. A reset
              would throw away the transcript a delta is about to extend, and a
              delta appended onto a stale transcript would double-render whatever
@@ -503,8 +640,16 @@ export function useActions(settings: ServerSettings) {
             )
         },
         // A turn may still be running server-side; `turn_ended` clears it.
+        /* A frame of history landed. Commit it — the transcript grows a screenful
+           at a time instead of appearing whole at the end — and say where the
+           replay has got to. */
+        onReplayProgress: (done, total) => {
+          send({ type: "thread-replay", id, replay: { done, total } })
+          commit()
+        },
         onCaughtUp: (cursor, promptActive, queue) => {
           journalCursors.set(id, cursor)
+          send({ type: "thread-replay", id, replay: null })
           if (promptActive) send({ type: "turn-active", id, active: true })
           // Not journaled, so it rides here — the way an open permission is
           // handed over after the replay rather than replayed.
@@ -650,6 +795,11 @@ export function useActions(settings: ServerSettings) {
           mcpServerIds: meta.mcpServerIds ?? [],
           skillIds: meta.skillIds ?? [],
           commandIds: meta.commandIds ?? [],
+          /* A draft renamed before it was ever sent to: the name travels with
+             the create call, and the server's first-prompt sniff then leaves
+             it alone. Left out when nobody has named it, so the sniff still
+             titles the thread from what was typed. */
+          title: meta.title && meta.title !== "New thread" ? meta.title : undefined,
         }),
       })
       // Swaps the draft row for the server's own — see the `sessions` reducer.
@@ -719,6 +869,27 @@ export function useActions(settings: ServerSettings) {
       dispatch({ type: "scheduled", scheduled })
     }
 
+    /* Hoisted for the same reason `refreshScheduled` is: every routine mutation
+       below has to re-read the list after it writes, and a bare call to a
+       sibling method of the returned object does not resolve. */
+    const refreshRoutines = async () => {
+      const routines = await api<Routine[]>(settings, "/api/routines")
+      dispatch({ type: "routines", routines })
+    }
+
+    /* Hoisted for the same reason: `runRoutine` re-reads the routine's runs
+       after firing, and reaching a sibling through `this` would break the
+       moment a component destructured the action off the object. */
+    const refreshRoutineRuns = async (routineId: string, limit?: number) => {
+      const query = limit ? `?limit=${limit}` : ""
+      const runs = await api<RoutineRun[]>(
+        settings,
+        `/api/routines/${encodeURIComponent(routineId)}/runs${query}`
+      )
+      dispatch({ type: "routine-runs", routineId, runs })
+      return runs
+    }
+
     const refreshSessions = async () => {
       const sessions = await api<SessionMeta[]>(settings, "/api/sessions?deleted=1")
       // The server's list is the authority on what still exists, so this is the
@@ -759,7 +930,7 @@ export function useActions(settings: ServerSettings) {
       try {
         await connectThread(meta, opts)
       } catch (error) {
-        recordError(meta.id, error, "Couldn't connect to this thread")
+        recordError(meta.id, error, "Couldn't connect to this thread", undefined, dispatch, false)
         throw error
       }
     }
@@ -839,8 +1010,18 @@ export function useActions(settings: ServerSettings) {
       refreshSessions,
 
       async bootstrap() {
-        const [profiles, projects, mcpServers, skills, commands, personas, agents, sessions, scheduled] =
-          await Promise.all([
+        const [
+          profiles,
+          projects,
+          mcpServers,
+          skills,
+          commands,
+          personas,
+          agents,
+          sessions,
+          scheduled,
+          routines,
+        ] = await Promise.all([
             api<Profile[]>(settings, "/api/profiles"),
             api<Project[]>(settings, "/api/projects"),
             api<McpServerDef[]>(settings, "/api/mcp-servers"),
@@ -850,6 +1031,7 @@ export function useActions(settings: ServerSettings) {
             api<AgentDef[]>(settings, "/api/agents"),
             api<SessionMeta[]>(settings, "/api/sessions?deleted=1"),
             api<ScheduledMessage[]>(settings, "/api/scheduled"),
+            api<Routine[]>(settings, "/api/routines"),
           ])
         // Boot is a catalog read; the visibility throttle starts from here.
         catalogRefreshedAt = Date.now()
@@ -864,6 +1046,7 @@ export function useActions(settings: ServerSettings) {
           agents,
           sessions,
           scheduled,
+          routines,
         })
         return { profiles, projects, agents, sessions }
       },
@@ -980,6 +1163,149 @@ export function useActions(settings: ServerSettings) {
       async cancelSchedule(id: string) {
         await api(settings, `/api/scheduled/${id}`, { method: "DELETE" })
         await refreshScheduled()
+      },
+
+      // ---- routines ----
+      /* The whole surface is here rather than half of it in lib/settings, for
+         the reason the scheduled block already gives: a mutation's job is not
+         done when the server answers 200, it is done when the list every screen
+         reads has been re-read. A page calling `api()` itself would leave a
+         deleted routine on screen until something else happened to refresh. */
+
+      refreshRoutines,
+
+      /**
+       * A routine's runs, newest first. Read on demand — never at boot and
+       * never on a timer: the list is per routine and grows without bound, and
+       * only the routine's own page has ever wanted one. The store keys them by
+       * routine, so a page that has not asked yet holds `undefined` rather than
+       * `[]` — "not read" and "has never run" are different screens.
+       */
+      refreshRoutineRuns,
+
+      async createRoutine(input: RoutineInput) {
+        const routine = await api<Routine>(settings, "/api/routines", {
+          method: "POST",
+          body: JSON.stringify(input),
+        })
+        await refreshRoutines()
+        return routine
+      },
+
+      /**
+       * Edit a routine in place. Everything the form holds is patchable except
+       * `dryRunCompleted`, which the server refuses: it is the engine's own
+       * record that a run has completed under this routine, and a patch that
+       * could set it would make the blanket-`allow` gate it guards decorative.
+       */
+      async updateRoutine(id: string, patch: RoutinePatch) {
+        const routine = await api<Routine>(settings, `/api/routines/${encodeURIComponent(id)}`, {
+          method: "PATCH",
+          body: JSON.stringify(patch),
+        })
+        await refreshRoutines()
+        return routine
+      },
+
+      async deleteRoutine(id: string) {
+        await api(settings, `/api/routines/${encodeURIComponent(id)}`, { method: "DELETE" })
+        await refreshRoutines()
+      },
+
+      /**
+       * Fire a routine by hand. Answers as soon as the run row exists, not when
+       * the run is over — the caller wants the row to link to, and a review
+       * that takes half an hour would otherwise be a request that hangs for it.
+       * The returned run therefore usually reads `running` with a null
+       * `sessionId`; the runs list is what fills in afterwards.
+       *
+       * `dryRun` forces `ask` everywhere for this one run whatever the
+       * routine's policy says, and it is the run that clears the routine's
+       * `dryRunCompleted` gate — so the routine is re-read after it, not just
+       * the run list.
+       */
+      async runRoutine(id: string, opts: { text?: string; dryRun?: boolean } = {}) {
+        const run = await api<RoutineRun>(
+          settings,
+          `/api/routines/${encodeURIComponent(id)}/run`,
+          { method: "POST", body: JSON.stringify(opts) }
+        )
+        await Promise.all([refreshRoutines(), refreshRoutineRuns(id)])
+        return run
+      },
+
+      /* Stop a run that is still going — the one action here that is about what
+         is happening rather than about what will. Takes the routine id as well
+         as the run's so the list can be re-read: a run row carries its routine,
+         but the store is keyed by routine and there is nothing to look it up
+         with once the caller has only a run. */
+      async cancelRoutineRun(routineId: string, runId: string) {
+        await api<{ stopped: boolean }>(
+          settings,
+          `/api/routines/runs/${encodeURIComponent(runId)}/cancel`,
+          { method: "POST" }
+        )
+        await refreshRoutineRuns(routineId)
+      },
+
+      /* Triggers are returned, not stored. They are read on one routine's
+         detail page, they are the only thing on it that no other screen shows,
+         and a slice for them would be a cache with exactly one reader. */
+
+      async listRoutineTriggers(routineId: string) {
+        return api<RoutineTrigger[]>(
+          settings,
+          `/api/routines/${encodeURIComponent(routineId)}/triggers`
+        )
+      },
+
+      async createRoutineTrigger(routineId: string, input: RoutineTriggerInput) {
+        return api<RoutineTrigger>(
+          settings,
+          `/api/routines/${encodeURIComponent(routineId)}/triggers`,
+          { method: "POST", body: JSON.stringify(input) }
+        )
+      },
+
+      async updateRoutineTrigger(id: string, patch: RoutineTriggerPatch) {
+        return api<RoutineTrigger>(
+          settings,
+          `/api/routines/triggers/${encodeURIComponent(id)}`,
+          { method: "PATCH", body: JSON.stringify(patch) }
+        )
+      },
+
+      async deleteRoutineTrigger(id: string) {
+        await api(settings, `/api/routines/triggers/${encodeURIComponent(id)}`, {
+          method: "DELETE",
+        })
+      },
+
+      /**
+       * Mint or rotate this trigger's long-lived token.
+       *
+       * The token is in this answer and nowhere else — only its sha-256 is
+       * stored — so a caller that does not show it here cannot show it later,
+       * and a rotation is a new mint. It is deliberately not put in the store:
+       * a credential that outlives the dialog it was shown in is a credential
+       * in a state dump.
+       */
+      async mintRoutineTriggerToken(id: string) {
+        const { token } = await api<{ token: string }>(
+          settings,
+          `/api/routines/triggers/${encodeURIComponent(id)}/token`,
+          { method: "POST" }
+        )
+        return token
+      },
+
+      /** Take the token away without deleting the trigger — a rotation backed
+          out of, or one believed leaked. The trigger stays, inert to everything
+          outside the server process. */
+      async revokeRoutineTriggerToken(id: string) {
+        await api(settings, `/api/routines/triggers/${encodeURIComponent(id)}/token`, {
+          method: "DELETE",
+        })
       },
 
       /**
@@ -1142,25 +1468,43 @@ export function useActions(settings: ServerSettings) {
        * can react too. Callers must not toast it a second time.
        */
       async send(sessionId: string, text: string, opts: { steer?: boolean } = {}) {
-        /* First message on a draft: this is the moment the thread becomes real.
-           Create it, then connect, then prompt. A failure leaves the draft a
-           draft and lands the text in a Retry row like any other send failure —
-           and retrying re-runs this, which is correct: if the POST is what
-           failed, the id is still free. */
+        /* First message on a draft: show the message instantly, then create the
+           thread on the server. A failure leaves the draft a draft and lands the
+           text in a Retry row like any other send failure — and retrying re-runs
+           this, which is correct: if the POST is what failed, the id is still
+           free. */
         const draft = stateRef.current.sessions.find((s) => s.id === sessionId && s.draft)
         if (draft) {
+          /* Show the message and connecting state instantly rather than waiting
+             for the full server round-trip — the agent spawn, handshake and
+             WebSocket replay can take seconds. On failure, clean up the
+             optimistic state and record a Retry-able error. */
+          dispatch({ type: "user-message", id: sessionId, text })
+          dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
+          dispatch({ type: "turn-active", id: sessionId, active: true })
           try {
             await createSession(draft)
           } catch (error) {
-            /* `createSession` turns the status to `connecting` before it asks
-               the server for anything, so a failure has to turn it back: it is
-               what draws the "Spawning the agent…" line, and a shimmer that
-               never resolves under the error row says the opposite of what the
-               row says. Back to `idle` — the draft is still a draft, and the
-               Retry on that row runs this again. */
             dispatch({ type: "thread-status", id: sessionId, status: "idle" })
+            dispatch({ type: "drop-user-message", id: sessionId })
+            dispatch({ type: "turn-active", id: sessionId, active: false })
             recordError(sessionId, error, "Couldn't start this thread", text)
             throw error
+          }
+          /* The optimistic bubble above does not survive the connect it is
+             waiting for: the fresh attach is not a resume, so `onAttached`
+             sends a `thread-reset` and the replay that follows is empty — the
+             prompt has not been dispatched yet, so there is no journaled
+             `turn_started` to redraw it from, and this device is the one peer
+             that never gets one. The message simply vanished until a reload
+             replayed it. So put it back, but only if the reset really took it:
+             re-dispatching blindly would double the bubble on any path that
+             kept the transcript. */
+          const restored = stateRef.current.threads[sessionId]?.items ?? []
+          if (!restored.some((item) => item.kind === "user" && !item.turnId)) {
+            dispatch({ type: "user-message", id: sessionId, text })
+            dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
+            dispatch({ type: "turn-active", id: sessionId, active: true })
           }
         }
         /* An archived thread is attached, but to the journal rather than to an
@@ -1199,9 +1543,9 @@ export function useActions(settings: ServerSettings) {
            asked otherwise. No bubble and no indicator here: the `queue` event
            draws the row, and when the turn ends the drained prompt comes back
            as a `turn_started` with no origin — so this device draws the bubble
-           then, exactly like every other peer. If the turn ended before the
+           then, exactly like every other peer. If the turn ended before this
            server saw this, `queue_add` drains at once and the same holds. */
-        if (alreadyRunning && !opts.steer) {
+        if (!draft && alreadyRunning && !opts.steer) {
           try {
             await thread.queueAdd(text)
           } catch (error) {
@@ -1210,12 +1554,16 @@ export function useActions(settings: ServerSettings) {
           }
           return
         }
-        dispatch({ type: "user-message", id: sessionId, text })
-        dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
+        /* A draft already dispatched its optimistic bubble and turn-active
+           above — only emit them for threads that were already live. */
+        if (!draft) {
+          dispatch({ type: "user-message", id: sessionId, text })
+          dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
+        }
         /* This device is the one peer that does not get a `turn_started` — it
            already put the message on screen — so it lights its own indicator.
            `turn_ended` is what clears it, here and everywhere else. */
-        dispatch({ type: "turn-active", id: sessionId, active: true })
+        if (!draft) dispatch({ type: "turn-active", id: sessionId, active: true })
         try {
           /* Resolves when the server has dispatched the prompt, not when the
              turn ends: how the turn went reaches every device on the thread as
@@ -1231,7 +1579,11 @@ export function useActions(settings: ServerSettings) {
           }
           dispatch({ type: "tag-user-turn", id: sessionId, turnId: reply.turnId })
         } catch (error) {
-          if (!alreadyRunning) dispatch({ type: "turn-active", id: sessionId, active: false })
+          /* For a draft we set turn-active ourselves above, so clear it on
+             failure — the prompt never reached the agent. For a non-draft
+             where alreadyRunning was true, another turn is genuinely active
+             and must not be disturbed. */
+          if (!alreadyRunning || draft) dispatch({ type: "turn-active", id: sessionId, active: false })
           recordError(sessionId, error, "The agent couldn't answer this message", text)
           throw error
         }
@@ -1393,6 +1745,29 @@ export function useActions(settings: ServerSettings) {
            only the session/load replay surfaces it — without this the rule (and
            the Continue button on it) would not appear until a reload. */
         dispatch({ type: "notice", id: sessionId, text: "Request interrupted by user" })
+      },
+
+      /** Name a thread by hand.
+       *
+       * A draft has no server row, so its name lives in the store until the
+       * first message carries it into `POST /api/sessions` — which is why the
+       * create call sends the title at all. For a started thread the server is
+       * asked first and the store follows its answer, because the server is
+       * what trims and caps it and a row saying something else is a list that
+       * disagrees with the thread it names. */
+      async renameThread(sessionId: string, title: string) {
+        const next = title.trim()
+        if (!next) return
+        if (stateRef.current.sessions.find((s) => s.id === sessionId)?.draft) {
+          dispatch({ type: "rename-session", id: sessionId, title: next })
+          return
+        }
+        const { title: named } = await api<{ title: string }>(
+          settings,
+          `/api/sessions/${sessionId}`,
+          { method: "PATCH", body: JSON.stringify({ title: next }) }
+        )
+        dispatch({ type: "rename-session", id: sessionId, title: named })
       },
 
       /** Reversible: the agent process dies, the thread moves to Trash.

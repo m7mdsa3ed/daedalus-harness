@@ -20,6 +20,11 @@ export type PageId =
   /** ACP's permission mode — default / accept edits / plan. Not `persona`. */
   | "mode"
   | "persona"
+  /** The routines, as things to fire. */
+  | "routines"
+  /** What the routines have been doing — runs across every routine, newest
+      first. A reading page, not a doing one; see `routine-pages.tsx`. */
+  | "routine-activity"
 
 export interface Palette {
   page: PageId
@@ -59,6 +64,8 @@ export const PAGE_LABEL: Record<PageId, string> = {
   effort: "Effort",
   mode: "Permission mode",
   persona: "Persona",
+  routines: "Run routine",
+  "routine-activity": "Routine activity",
 }
 
 export const PAGE_PLACEHOLDER: Record<PageId, string> = {
@@ -71,4 +78,6 @@ export const PAGE_PLACEHOLDER: Record<PageId, string> = {
   effort: "Search effort levels…",
   mode: "Search permission modes…",
   persona: "Search personas…",
+  routines: "Search routines…",
+  "routine-activity": "Search recent runs…",
 }

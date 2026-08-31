@@ -28,6 +28,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       effort,
       personaId,
       configChoices,
+      title,
       mcpServerIds,
       skillIds,
       commandIds,
@@ -66,6 +67,10 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       // persona at spawn, which is what "gone" should mean — see
       // `resolvePersonaSpawn` and the schema's note on the missing foreign key.
       personaId: typeof personaId === "string" ? personaId : undefined,
+      /* A draft can be renamed before it has ever been sent to, and that name
+         has to survive becoming a real thread — `create` keeps it and the
+         first-prompt sniff then leaves it alone. */
+      title: typeof title === "string" && title.trim() ? title.trim() : undefined,
     });
     /* Wait for the handshake. A 201 therefore means the agent has answered
        session/new, its settings have been applied, and the first `session_config`
@@ -273,6 +278,21 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     const purge = c.req.query("purge") === "1";
     const ok = purge ? sessions.purge(c.req.param("id")) : sessions.softDelete(c.req.param("id"));
     return ok ? c.json({ ok: true }) : c.json({ error: "not found" }, 404);
+  });
+
+  /* Rename. PATCH because it edits one field of the thread and leaves the
+     process, the transcript and everything else exactly as they were — it is
+     answered with no bridge, like the queue edits, so naming an archived
+     thread does not cost a spawn. */
+  app.patch("/api/sessions/:id", async (c) => {
+    const { title } = await c.req.json();
+    if (typeof title !== "string") return c.json({ error: "title must be a string" }, 400);
+    if (!sessions.get(c.req.param("id"))) return c.json({ error: "not found" }, 404);
+    const named = sessions.rename(c.req.param("id"), title);
+    // The row exists, so the only way back is an empty name — which is a bad
+    // request, not a missing thread.
+    if (named === null) return c.json({ error: "title must not be empty" }, 400);
+    return c.json({ title: named });
   });
 
   app.post("/api/sessions/:id/restore", (c) =>

@@ -298,6 +298,78 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       out({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn", usage: { totalTokens: 5 } } });
       return;
     }
+    /* `perm:<kind>` parks the turn on a permission request whose tool call
+       carries that ACP kind, which is the field an autonomy policy is keyed on
+       — so the per-kind split can be driven from the prompt. `perm:none` omits
+       the kind entirely: an agent saying nothing must fall to `default` rather
+       than to a guess. Checked before the plain "permission" branch below,
+       which bridge.test.ts still drives and which must keep its exact shape. */
+    if (asked.startsWith("perm:")) {
+      const kind = asked.slice("perm:".length).split(/\s/)[0];
+      const permId = `perm-${++permCounter}`;
+      parkedTurns.set(permId, msg.id);
+      out({
+        jsonrpc: "2.0",
+        id: permId,
+        method: "session/request_permission",
+        params: {
+          sessionId: "acp-123",
+          toolCall: {
+            toolCallId: `t-${permId}`,
+            title: `tool of kind ${kind}`,
+            ...(kind === "none" ? {} : { kind }),
+          },
+          options: [
+            { optionId: "allow", name: "Allow", kind: "allow_once" },
+            { optionId: "allow-all", name: "Allow every time", kind: "allow_always" },
+            { optionId: "reject", name: "Reject", kind: "reject_once" },
+          ],
+        },
+      });
+      return;
+    }
+    /* A permission request offering nothing allow-shaped. The harness may only
+       ever select an option the agent itself advertised, so an `allow` stance
+       has nothing to send and has to fall through to a real park — this is what
+       proves it does rather than inventing an optionId. */
+    if (asked.startsWith("perm-noallow")) {
+      const permId = `perm-${++permCounter}`;
+      parkedTurns.set(permId, msg.id);
+      out({
+        jsonrpc: "2.0",
+        id: permId,
+        method: "session/request_permission",
+        params: {
+          sessionId: "acp-123",
+          toolCall: { toolCallId: `t-${permId}`, title: "rm -rf /", kind: "execute" },
+          options: [{ optionId: "reject", name: "Reject", kind: "reject_once" }],
+        },
+      });
+      return;
+    }
+    /* `elicit:` asks the user a form question and parks the turn on the answer,
+       the same way a permission does — the two are one code path in the bridge
+       and an autonomy policy answers both, so both need a live sample. */
+    if (asked.startsWith("elicit:")) {
+      const elicitId = `elicit-${++permCounter}`;
+      parkedTurns.set(elicitId, msg.id);
+      out({
+        jsonrpc: "2.0",
+        id: elicitId,
+        method: "elicitation/create",
+        params: {
+          sessionId: "acp-123",
+          toolCallId: `t-${elicitId}`,
+          mode: "form",
+          message: asked.slice("elicit:".length) || "Which way?",
+          requestedSchema: {
+            type: "object",
+            properties: { choice: { type: "string", title: "Choice" } },
+          },
+        },
+      });
+      return;
+    }
     // A prompt mentioning "permission" parks the turn on a permission request,
     // so both the UI and the multi-peer arbitration have something to exercise.
     if (asked.includes("permission")) {
@@ -393,7 +465,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     }
     parkedTurns.clear();
   } else if (msg.method === undefined && parkedTurns.has(msg.id)) {
-    // The answer to a permission request — finish the turn it was blocking.
+    /* The answer to a permission or an elicitation — finish the turn it was
+       blocking, and say what the answer was, because for an auto-answered
+       question that is the only place the selected option is visible from the
+       agent's side. Spelled generically: an elicitation's answer carries an
+       `action` where a permission's carries an `outcome`. */
     const promptId = parkedTurns.get(msg.id);
     parkedTurns.delete(msg.id);
     out({
@@ -401,7 +477,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       method: "session/update",
       params: {
         sessionId: "acp-123",
-        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `permission: ${JSON.stringify(msg.result?.outcome ?? msg.error)}` } },
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `answered: ${JSON.stringify(msg.result ?? msg.error)}` } },
       },
     });
     out({ jsonrpc: "2.0", id: promptId, result: { stopReason: "end_turn", usage: { totalTokens: 10 } } });

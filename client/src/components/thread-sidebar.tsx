@@ -9,7 +9,9 @@
      │ Projects                           one folder per project, ALL its
      │   ▸ harness              + ·       threads, by period; + starts one *in* it
      │   ▸ website
-     │ Scheduled                          what the server will send later
+     │ Automations                        what happens with nobody watching
+     │   Routines                        …start a new thread on their own
+     │   Scheduled                       …speak into one that already exists
      │ Trash                              folded shut
      └ <server> / Settings                the "account" row
 
@@ -31,11 +33,12 @@
    list is shared, and one person's sidebar must not reorder another's).
 
    The pieces live under `components/sidebar/` — the spacing scale, the
-   memoized row/list, the folder/group primitives and the Scheduled tier —
+   memoized row/list, the folder/group primitives and the Automations tier —
    with this file as the layout that stacks them (and the stable import path
    for the scale). */
 import * as React from "react"
 import {
+  BellIcon,
   Clock,
   FolderIcon,
   ListFilter,
@@ -68,12 +71,14 @@ import {
 import { useConfirm } from "@/components/confirm-dialog"
 import { FoldableGroup, ProjectFolder } from "@/components/sidebar/groups"
 import { GROUP, GROUP_LABEL, MENU, PROJECT_PAGE_SIZE, ROW, TIER } from "@/components/sidebar/scale"
-import { ScheduledGroup } from "@/components/sidebar/scheduled"
+import { AutomationsGroup } from "@/components/sidebar/automations"
 import { ThreadList } from "@/components/sidebar/thread-list"
+import { UnreadCount } from "@/components/notifications/items"
 import type { ThreadStatus } from "@/components/sidebar/thread-row"
 import type { Actions } from "@/lib/actions"
-import { boardPath, projectPath, settingsPath, threadPath } from "@/lib/router"
+import { boardPath, notificationsPath, projectPath, settingsPath, threadPath } from "@/lib/router"
 import { usePins } from "@/lib/pins"
+import { useNotifications } from "@/lib/notifications-inbox"
 import { useChord } from "@/lib/keybindings"
 import { formatChord, type ShortcutId } from "@/lib/shortcuts"
 import { Shortcut } from "@/components/shortcut"
@@ -112,6 +117,8 @@ export function SidebarNav({
   const location = useLocation()
   const navigate = useNavigate()
   const inBoard = location.pathname.startsWith("/board")
+  const inNotifications = location.pathname.startsWith("/notifications")
+  const unread = useNotifications().unread
   // Whatever these two are bound to on this device — the tooltip has to say the
   // key that actually works, not the one the release shipped.
   const newThreadChord = useChord("newThread") ?? ""
@@ -154,6 +161,29 @@ export function SidebarNav({
             >
               <SquareKanban />
               <span>Tasks</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          {/* A row, not the badge itself: the count capsule lives on the
+              header's bell now, where it is visible on every route and does not
+              have to be flung into a corner to survive the icon rail. This row
+              is the way to the whole inbox, and it carries the count only as
+              the reason to press it. */}
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="sm"
+              tooltip="Notifications"
+              isActive={inNotifications}
+              onClick={() => void navigate(notificationsPath())}
+              className={ROW}
+            >
+              <BellIcon />
+              <span>Notifications</span>
+              {unread > 0 && (
+                <UnreadCount
+                  count={unread}
+                  className="ml-auto group-data-[collapsible=icon]:absolute group-data-[collapsible=icon]:top-0.5 group-data-[collapsible=icon]:right-0.5 group-data-[collapsible=icon]:ml-0"
+                />
+              )}
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -445,7 +475,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
         </SidebarGroup>
       )}
 
-      <ScheduledGroup actions={actions} />
+      <AutomationsGroup actions={actions} />
 
       {/* Trash folds, and folds shut by default: it is where things go, not
           where anyone works. */}

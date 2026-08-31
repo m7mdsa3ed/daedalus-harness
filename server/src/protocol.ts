@@ -166,14 +166,76 @@ export interface SubagentUsage {
   _meta?: Record<string, unknown> | null;
 }
 
+/**
+ * A question the harness answered for the user, said again as an `update` so it
+ * is journaled.
+ *
+ * The harness's own, hence the prefix — the same bargain `_daedalus/subagent_usage`
+ * makes, and for the same reason. The live pair (`permission`/`elicitation` then
+ * `request_answered` carrying `auto`) is what a watching browser draws and
+ * resolves, but neither is in `JOURNALED_EVENTS`, so with nobody attached an
+ * auto-granted permission would leave no record anywhere that the question was
+ * ever asked. A standing grant that runs unattended and is unauditable
+ * afterwards is the one thing this feature must not ship.
+ *
+ * It is an `update` and NOT a fifth journaled event kind precisely so live and
+ * replay stay one code path: the reducer already folds updates, the replay
+ * already carries them, and a client that predates this variant ignores an
+ * update it does not recognise rather than failing to connect.
+ *
+ * Emitted only for a question the POLICY answered. A human's answer is not
+ * recorded here — the tool call it permitted is journaled either way, and a
+ * person answering a card on their own screen is not the thing that needed a
+ * paper trail.
+ */
+export interface AutonomyAnswer {
+  sessionUpdate: "_daedalus/autonomy_answer";
+  /** Which choke point asked — a permission for a tool, or an elicitation. */
+  kind: "permission" | "elicitation";
+  /** The tool call the permission was about, when it named one. */
+  toolCallId?: string;
+  /** The ACP tool kind the stance was keyed on; absent when the agent omitted
+      it, which is the protocol saying nothing and falls to `default`. */
+  toolKind?: acp.ToolKind;
+  /** The agent's own title for the call, so the record reads as something that
+      happened rather than as an id. */
+  title?: string;
+  /** What was sent back, and whether nobody came. */
+  answer: AutoAnswer;
+  _meta?: Record<string, unknown> | null;
+}
+
 /** Everything a `session/update` can carry: the SDK's union plus the RFD's. */
-export type SessionUpdate = acp.SessionUpdate | SubagentSpawned | SubagentStateUpdate | SubagentUsage;
+export type SessionUpdate =
+  | acp.SessionUpdate
+  | SubagentSpawned
+  | SubagentStateUpdate
+  | SubagentUsage
+  | AutonomyAnswer;
 
 /** What a respawn has to put back: the agent's configuration minus the two
     settings the profile owns. See AcpBridge.captureRestoreState. */
 export interface RestoreState {
   modeId?: string;
   configOptions: acp.SessionConfigOption[];
+}
+
+/**
+ * A question the harness answered for the user, rather than a person answering
+ * it (`autonomy.ts`). Rides `request_answered` so a watching browser draws the
+ * card and then sees it resolve itself — an auto-granted permission must be
+ * visible while it happens and legible afterwards, never silent.
+ */
+export interface AutoAnswer {
+  /** What was sent back, in the harness's own vocabulary rather than the
+      agent's: the optionId that carried it is the agent's and means nothing to
+      a reader of another thread. */
+  answer: "allow" | "deny" | "decline" | "cancel";
+  /** True when this was the ask-timeout fallback rather than a stance the
+      policy stated outright. The difference is the whole of "the run was
+      allowed to do this" versus "nobody came", which is also what makes a run
+      `blocked` rather than merely finished. */
+  timedOut: boolean;
 }
 
 /**
@@ -225,7 +287,14 @@ export type ThreadCommand =
       the step's `turn_started` — see `attached.from`). Answered with
       `EarlierPage`. Only useful to a client that asked for a windowed attach —
       see `attached.earlier`. */
-  | { id: number; cmd: "load_earlier"; before: number };
+  | { id: number; cmd: "load_earlier"; before: number }
+  /** Liveness only — answered `{}` by any server that understands it, with no
+      agent process required (see `load_earlier` for why that matters). The
+      server pings at the frame level, which a browser answers on its own and
+      never surfaces to JS; this is the other direction, and the one the client
+      can actually observe: a reply proves the socket is still a path to a
+      server that is awake, which no amount of silence on an idle thread does. */
+  | { id: number; cmd: "ping" };
 
 // ---- server -> client ----
 
@@ -254,6 +323,25 @@ export const REPLAY_CHUNK_SIZE = 500;
  * is exactly the spike bulk replay was introduced to remove.
  */
 export const REPLAY_CHUNK_BYTES = 256 * 1024;
+
+/**
+ * The most payload bytes an unresumed attach replays before it starts
+ * withholding whole turns.
+ *
+ * The step budget the client names (`REPLAY_WINDOW_STEPS`) bounds the replay in
+ * *turns*, which is the unit the transcript is cut in but not the unit the wait
+ * is paid in: a turn is anything from one sentence to a build log, so sixty of
+ * them is unbounded in size and one thread's window is another's whole archive.
+ * This is the same budget `REPLAY_CHUNK_BYTES` applies to a single frame, one
+ * level up — that one decides how the payload is sliced, and only this one
+ * decides how much of it there is.
+ *
+ * Deliberately generous next to the frame budget: the point is to catch the
+ * thread whose window is megabytes, not to trim an ordinary one. What is
+ * withheld is not lost — `earlier` counts it and `load_earlier` pages it back
+ * exactly as it does for a step-capped window.
+ */
+export const REPLAY_WINDOW_BYTES = 2 * 1024 * 1024;
 
 /** How many journaled steps one `load_earlier` page returns. A **step** is a
     turn — the log is cut only at `turn_started` boundaries, so a page is always
@@ -289,6 +377,14 @@ export type ThreadEvent =
           `turn_started` of the first step in the tail — whole turns only,
           never a cut inside one. */
       from: number;
+      /** The seq the replay ends at — the log's length at attach time, the same
+          number `caught_up` carries as `cursor`. Said here, before the events,
+          because it is the only thing that turns the wait into a quantity: the
+          client counts what it unrolls and `to - from` is the denominator. It
+          costs nothing to state (`attach` already reads it in this tick for the
+          `caught_up` below) and the alternative is a progress readout that
+          learns its own total at the moment it stops needing one. */
+      to: number;
       /** Whether `from` is the client's OWN cursor — i.e. the replay continues
           the transcript already on screen rather than replacing it.
 
@@ -385,7 +481,7 @@ export type ThreadEvent =
      request simply is not in the map, so there is nothing to filter. */
   | { ev: "permission"; requestId: string; request: acp.RequestPermissionRequest }
   | { ev: "elicitation"; requestId: string; request: acp.CreateElicitationRequest }
-  | { ev: "request_answered"; requestId: string; toolCallId?: string }
+  | { ev: "request_answered"; requestId: string; toolCallId?: string; auto?: AutoAnswer }
   /** The whole queue, **absolute** — never a delta — to every peer including
       the one whose command changed it: ids are minted server-side, so no peer's
       own picture is authoritative. Not journaled: like a permission it is

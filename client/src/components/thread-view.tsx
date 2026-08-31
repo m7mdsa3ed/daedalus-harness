@@ -2,6 +2,7 @@ import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
 import { Archive, ArrowUp, ChevronUp, History, Mic, RotateCw, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Progress } from "@/components/ui/progress"
 import { Shortcut } from "@/components/shortcut"
 import {
   ActivityIndicator,
@@ -403,7 +404,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   type into travel to the bottom together. */}
               {thread.status === "connecting" && (
                 <MessageScrollerItem messageId="starting">
-                  <StartingLine draft={meta?.draft} />
+                  <StartingLine draft={meta?.draft} replay={thread.replay} />
                 </MessageScrollerItem>
               )}
               {/* The transcript begins in the middle: this thread was long
@@ -575,32 +576,72 @@ function ThreadWelcome({ draft }: { draft?: boolean }) {
   )
 }
 
-/** The one line a starting thread is allowed to say, staged through the two
-    phases the client can actually tell apart: while the draft flag holds, the
-    POST that spawns the agent and runs the handshake is in flight; once the
-    server's row has replaced it, the socket is attached and replaying the
-    journal toward `caught_up`. Distinguishing "spawning" from "stuck" matters
-    more than a third fake stage would, so past SLOW_MS the line admits the
-    wait rather than shimmering identically forever. */
+/** The one line a starting thread is allowed to say, staged through the phases
+    the client can actually tell apart: while the draft flag holds, the POST that
+    spawns the agent and runs the handshake is in flight; once the server's row
+    has replaced it, the socket is opening; and once `attached` has landed, the
+    journal is replaying toward `caught_up`.
+
+    The last of those is the one that used to be missing, and its absence made
+    the line say something it had no evidence for. Before `attached` this client
+    knows nothing about the thread's *size* — the wait is the network, the
+    socket, or a server busy with someone else's turn — yet the slow line blamed
+    "a long conversation" either way, sending the reader to look at a length that
+    was frequently not the problem. So the two waits are told apart, and only the
+    second one is allowed to talk about the conversation: it is the one with a
+    number behind it.
+
+    That number is why there is a bar rather than a longer apology. `attached`
+    states where the replay ends, so the wait is a quantity from the first frame
+    and the reader can see it moving. The rule is the service worker's, which had
+    the same problem in a harder form (see `sw.ts`): no bar until the total is
+    known, because a spinner is how "not known yet" is said and a bar drawn
+    against nothing is a lie that jumps. A *short* replay draws none either — it
+    is over in a blink, and a bar that appears and vanishes is noise about work
+    nobody waited for. */
 const SLOW_MS = 6_000
 
-function StartingLine({ draft }: { draft?: boolean }) {
+/** Replays smaller than this fold imperceptibly; below it the progress is true
+    but not worth drawing. */
+const LONG_REPLAY_EVENTS = 400
+
+function StartingLine({
+  draft,
+  replay,
+}: {
+  draft?: boolean
+  replay?: ThreadState["replay"]
+}) {
   const [slow, setSlow] = React.useState(false)
   React.useEffect(() => {
     const timer = setTimeout(() => setSlow(true), SLOW_MS)
     return () => clearTimeout(timer)
   }, [])
+  const long = replay !== null && replay !== undefined && replay.total >= LONG_REPLAY_EVENTS
   return (
     <div className="py-2">
       <div className="harness-shimmer text-xs text-primary">
-        {draft ? "Spawning the agent…" : "Connecting…"}
+        {draft ? "Spawning the agent…" : long ? "Loading this conversation…" : "Connecting…"}
       </div>
-      {slow && (
-        <div className="pt-1 text-xs text-muted-foreground">
-          {draft
-            ? "Still starting — the first launch of an agent can take a while."
-            : "Still connecting — a long conversation takes a moment to load."}
+      {long ? (
+        <div className="flex max-w-xs items-center gap-2 pt-1.5">
+          <Progress
+            value={replay.done}
+            max={replay.total}
+            className="flex-1 [&_[data-slot=progress-track]]:h-1"
+          />
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {Math.min(99, Math.floor((replay.done / replay.total) * 100))}%
+          </span>
         </div>
+      ) : (
+        slow && (
+          <div className="pt-1 text-xs text-muted-foreground">
+            {draft
+              ? "Still starting — the first launch of an agent can take a while."
+              : "Still connecting — the server hasn't sent this thread's history yet."}
+          </div>
+        )
       )}
     </div>
   )

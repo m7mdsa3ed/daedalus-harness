@@ -1,7 +1,7 @@
 import { isAbsolute, join } from "node:path";
 import { eq, inArray } from "drizzle-orm";
 import { DATA_DIR, type FcmConfig } from "./config.js";
-import { db, pushTokens } from "./db/index.js";
+import { db, pushTokens, routineRuns, routines } from "./db/index.js";
 
 const listTokens = (): string[] => db.select({ token: pushTokens.token }).from(pushTokens).all().map((r) => r.token);
 
@@ -31,6 +31,33 @@ function webpushTopic(title: string, sessionId: string | undefined): string {
   return hash.toString(16).padStart(8, "0");
 }
 
+/**
+ * The routine a thread is a run of, or null for an ordinary thread.
+ *
+ * Two queries rather than a join, which is what the rest of the server does.
+ * Failures are swallowed: a notification that cannot name its routine is worth
+ * strictly more than no notification at all.
+ */
+function routineNameFor(sessionId: string | undefined): string | null {
+  if (!sessionId) return null;
+  try {
+    const run = db
+      .select({ routineId: routineRuns.routineId })
+      .from(routineRuns)
+      .where(eq(routineRuns.sessionId, sessionId))
+      .get();
+    if (!run) return null;
+    const routine = db
+      .select({ name: routines.name })
+      .from(routines)
+      .where(eq(routines.id, run.routineId))
+      .get();
+    return routine?.name ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export class Push {
   private messaging: import("firebase-admin/messaging").Messaging | null = null;
 
@@ -56,8 +83,23 @@ export class Push {
     db.delete(pushTokens).where(eq(pushTokens.token, token)).run();
   }
 
-  async send(title: string, body: string, data: Record<string, string>): Promise<void> {
+  async send(rawTitle: string, body: string, data: Record<string, string>): Promise<void> {
     if (!this.fcm) return;
+    /* A routine run is an ordinary thread as far as every hook that raises a
+       notification is concerned, so all three of them ("Permission needed",
+       "The agent has a question", "Turn finished") arrive here spelled for a
+       thread somebody opened — while the whole point of a routine is that
+       nobody did. The name leads, because a phone truncates a title's tail and
+       *which* routine is what is being scanned for; the event follows and is
+       repeated in the body anyway.
+
+       Done here rather than at the call site so it covers all three hooks at
+       once — the unattended "Permission needed" is the one that most needs to
+       say whose question it is — and so the `Topic` below is hashed from the
+       rewritten title, which keeps two routines' notifications from collapsing
+       onto each other while a phone is unreachable. */
+    const routine = routineNameFor(data.sessionId);
+    const title = routine ? `${routine} — ${rawTitle}` : rawTitle;
     if (!this.messaging) {
       const { initializeApp, cert } = await import("firebase-admin/app");
       const { getMessaging } = await import("firebase-admin/messaging");

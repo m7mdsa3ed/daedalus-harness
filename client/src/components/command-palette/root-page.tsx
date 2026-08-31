@@ -53,6 +53,7 @@ import {
   SquareTerminalIcon,
   Sun,
   Trash2,
+  Zap,
 } from "lucide-react"
 import { useNavigate } from "react-router"
 
@@ -65,7 +66,7 @@ import { reportError } from "@/lib/errors"
 import { currentChoiceLabel } from "@/lib/session-options"
 import { useKeybindings } from "@/lib/keybindings"
 import { KEYS } from "@/lib/shortcuts"
-import { boardPath, settingsPath, threadPath } from "@/lib/router"
+import { boardPath, newRoutinePath, settingsPath, threadPath } from "@/lib/router"
 import {
   activityAt,
   clearSettings,
@@ -158,6 +159,19 @@ export function RootPage() {
     icon: <SearchIcon />,
     onSelect: () => palette.descend("search"),
   })
+  if (state.routines.length > 0) {
+    /* The one surface that answers "what have these been doing while I wasn't
+       watching?" — one chord away on purpose, because a standing grant to act
+       unattended is only tolerable if checking on it is cheap. */
+    items.push({
+      id: "jump:routine-activity",
+      group: "Jump",
+      title: "Routine activity…",
+      keywords: "runs verdicts automation history blocked failed digest what happened",
+      icon: <Zap />,
+      onSelect: () => palette.descend("routine-activity"),
+    })
+  }
   if (state.projects.length > 0) {
     items.push({
       id: "jump:projects",
@@ -243,6 +257,31 @@ export function RootPage() {
     icon: <DownloadIcon />,
     onSelect: () => palette.run(palette.importThreads),
   })
+  /* Under Create because that is what a routine makes: threads, without you.
+     The activity row is under Jump instead — it goes somewhere to read. */
+  items.push({
+    id: "create:routine",
+    group: "Create",
+    title: "New routine",
+    keywords: "automation schedule cron webhook git trigger unattended fires on its own",
+    icon: <Zap />,
+    onSelect: () => palette.run(() => void navigate(newRoutinePath())),
+  })
+  if (state.routines.length > 0) {
+    items.push({
+      id: "create:run-routine",
+      group: "Create",
+      title: "Run routine…",
+      keywords: "automation fire now start trigger",
+      icon: <Zap />,
+      trailing: (
+        <span className="ml-auto shrink-0 text-[11px] text-muted-foreground tabular-nums">
+          {state.routines.length}
+        </span>
+      ),
+      onSelect: () => palette.descend("routines"),
+    })
+  }
   items.push({
     id: "create:board",
     group: "Create",

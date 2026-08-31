@@ -1,7 +1,7 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, type WebSocket } from "ws";
 import { loadConfig } from "./config.js";
 import { seedPersonas } from "./personas.js";
 import { seedAgents } from "./registry.js";
@@ -10,6 +10,9 @@ import { SessionManager } from "./sessions.js";
 import { startScheduler, stopScheduler } from "./scheduler.js";
 import { WorkflowRunner } from "./workflows.js";
 import { workflowRoutes } from "./routes/workflows.js";
+import { routineRoutes } from "./routes/routines.js";
+import { RoutineGitTriggers } from "./routine-git-trigger.js";
+import { RoutineEngine } from "./routines.js";
 import { TaskTailer } from "./tasks.js";
 import { stopWatching } from "./workspace-watch.js";
 import { attachTerminal, killProjectTerminals } from "./terminals.js";
@@ -17,6 +20,7 @@ import { adoptOrphans, stopAllIdes } from "./ide.js";
 import { parseIdePath, proxyIdeUpgrade } from "./ide-proxy.js";
 import { configureGatewayShim } from "./gateway-shim.js";
 import { Push } from "./push.js";
+import { addNotification } from "./notifications.js";
 import { backfillSearchIndex } from "./search.js";
 import { bearerToken } from "./routes/helpers.js";
 import { miscRoutes } from "./routes/misc.js";
@@ -59,21 +63,44 @@ const pushBody = (title: string, error?: unknown): string => {
       : null;
   return message ? `${title} — ${message}` : title;
 };
+/** The failure's own line, pulled apart from the title the way `push` sends it:
+    a pill's body is the event (the error, the tool), its title is the thread. */
+const failureDetail = (error?: unknown): string | undefined => {
+  const message =
+    error && typeof error === "object" && typeof (error as { message?: unknown }).message === "string"
+      ? ((error as { message: string }).message)
+      : null;
+  return message ?? undefined;
+};
 let workflows: WorkflowRunner | null = null;
+let routines: RoutineEngine | null = null;
+let routineGitTriggers: RoutineGitTriggers | null = null;
 const sessions = new SessionManager(
   {
-    onPermissionRequest: (s) =>
-      push.send("Permission needed", s.title, { sessionId: s.id }).catch(console.error),
-    onElicitationRequest: (s) =>
-      push.send("The agent has a question", s.title, { sessionId: s.id }).catch(console.error),
-    onTurnEnd: (s, error) =>
+    onPermissionRequest: (s) => {
+      addNotification("permission", s);
+      push.send("Permission needed", s.title, { sessionId: s.id }).catch(console.error);
+    },
+    onElicitationRequest: (s) => {
+      addNotification("question", s);
+      push.send("The agent has a question", s.title, { sessionId: s.id }).catch(console.error);
+    },
+    onTurnEnd: (s, error) => {
+      addNotification(error ? "turn_failed" : "turn_finished", s, failureDetail(error));
       push
         .send(error ? "Turn failed" : "Turn finished", pushBody(s.title, error), { sessionId: s.id })
-        .catch(console.error),
-    // A thread whose process went away cannot be waiting on a workflow answer.
+        .catch(console.error);
+    },
+    // A thread whose process went away cannot be waiting on a workflow answer,
+    // and a routine run whose thread went away is over — its wait would
+    // otherwise reject a minute later with a bare "thread retired", or never at
+    // all if the run was waiting on a workflow rather than on a turn.
     // Guarded: the manager's own boot (a purge of an expired trash row) can
-    // retire a thread before the runner below exists.
-    onProcessGone: (s) => workflows?.cancelForParent(s.id, "the thread's agent process ended"),
+    // retire a thread before either engine below exists.
+    onProcessGone: (s) => {
+      workflows?.cancelForParent(s.id, "the thread's agent process ended");
+      routines?.cancelForSession(s.id, "the run's agent process ended");
+    },
   },
   config.sessionIdleMinutes,
   config.sessionJournalRetentionDays,
@@ -85,6 +112,26 @@ const sessions = new SessionManager(
 workflows = new WorkflowRunner(sessions, { port: config.port });
 sessions.setWorkflowRunner(workflows);
 workflows.recoverAtBoot();
+/* The routine engine (routines.ts) — a saved thread-start that fires on its
+   own. After the workflow runner because a workflow-bodied routine hands its
+   run's thread to it, and neither can be given the other at its own
+   construction. Same recovery rule for the same reason: every run was this
+   process's child, so a row still marked running did not survive. `notify` is
+   the `push` finish action; the engine takes it as a callback rather than
+   importing Push, which is what lets a test drive it with neither. */
+routines = new RoutineEngine(sessions, {
+  port: config.port,
+  workflows,
+  notify: (title, body, data) => push.send(title, body, data).catch(console.error),
+});
+routines.recoverAtBoot();
+/* The `git` trigger kind (routine-git-trigger.ts): a project watcher that fires
+   a routine when the repository under it moves. Separate from the scheduler
+   because it has no clock — it is woken by the filesystem, not by a sweep — and
+   it watches only the projects that have an enabled git trigger, so a process
+   with none holds no handles. */
+routineGitTriggers = new RoutineGitTriggers({ engine: routines });
+routineGitTriggers.start();
 // Tails background-task journals (files an agent disclosed in a tool result)
 // and fans each new line out to the owning thread's peers — see tasks.ts.
 const tasks = new TaskTailer((sessionId, transcriptDir, event) =>
@@ -123,7 +170,10 @@ app.use("/api/*", async (c, next) => {
 
 /* The routes, by domain (src/routes/). Registered after the middleware so
    everything under /api is behind the token; /api/health exempts itself above,
-   and /ide/* + /gw/* are outside /api with the key-in-path rule instead. The
+   and /ide/* + /gw/* + /wf/* + /rt/* are outside /api with the key-in-path rule
+   instead — /rt (the routine fire door) additionally accepts a trigger's own
+   stored token in that position, because a per-boot key is not a credential an
+   alerting tool outside this process can hold across a restart. The
    backup route additionally refuses `?token=` — see routes/misc.ts. */
 miscRoutes(app, { config, sessions, push });
 profileRoutes(app, { sessions });
@@ -133,6 +183,7 @@ libraryRoutes(app);
 sessionRoutes(app, { sessions });
 taskRoutes(app, { sessions, tasks });
 workflowRoutes(app, { runner: workflows });
+routineRoutes(app, { engine: routines });
 
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
   console.log(`daedalus server on http://${info.address}:${info.port}`);
@@ -140,6 +191,45 @@ const server = serve({ fetch: app.fetch, hostname: config.host, port: config.por
 });
 
 const wss = new WebSocketServer({ noServer: true });
+
+/**
+ * Liveness, because nothing else pings — `ws` does not do it on its own, and a
+ * socket that dies WITHOUT a close frame (a suspended laptop, a NAT idle
+ * timeout, a quick tunnel dropping) stays `OPEN` on both ends forever. The
+ * browser never hears a `close`, so its reconnect ladder never starts and the
+ * thread merely goes quiet — the one failure the give-up message in
+ * `actions.ts` cannot describe, because it never fires.
+ *
+ * It is also what keeps `peers.size` honest, which is load-bearing elsewhere:
+ * the server pushes a notification only while a thread has no peer attached,
+ * so one zombie peer silently suppresses every push to the phone.
+ */
+const WS_HEARTBEAT_MS = 30_000;
+/** Sockets that have answered since the last round. A WeakSet rather than a
+    field on the socket, so nothing is left to clean up when one is dropped. */
+const wsAlive = new WeakSet<WebSocket>();
+/** Called for every socket this server owns — thread and terminal alike. The
+    browser answers a ping frame itself, so this buys the client nothing to
+    implement; the client's own watchdog covers the other direction. */
+function trackLiveness(ws: WebSocket): void {
+  wsAlive.add(ws);
+  ws.on("pong", () => wsAlive.add(ws));
+}
+const heartbeat = setInterval(() => {
+  for (const ws of wss.clients) {
+    /* Missed a whole round: `terminate()` and not `close()`, since a half-open
+       socket will not answer the closing handshake either — it would sit in
+       CLOSING until the OS gave up, still counted as a peer. */
+    if (!wsAlive.has(ws)) {
+      ws.terminate();
+      continue;
+    }
+    wsAlive.delete(ws);
+    ws.ping();
+  }
+}, WS_HEARTBEAT_MS);
+// Nothing about a heartbeat should hold the process open on its own.
+heartbeat.unref();
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url ?? "/", "http://localhost");
   /* The editor's socket is not one of ours: VS Code's whole session — the
@@ -162,6 +252,7 @@ server.on("upgrade", (req, socket, head) => {
     return;
   }
   wss.handleUpgrade(req, socket, head, (ws) => {
+    trackLiveness(ws);
     // The refusal reason rides the close frame — the client shows it verbatim
     // rather than guessing from the code.
     if (url.pathname === "/terminal") {
@@ -202,11 +293,16 @@ async function shutdown(code: number): Promise<never> {
   if (shuttingDown) return new Promise<never>(() => {}); // first caller owns the exit
   shuttingDown = true;
   try {
+    /* Before `stopWatching`, so the closers it fires cannot race a resubscribe:
+       `stop()` is what tells the git triggers to stay down. */
+    routineGitTriggers?.stop();
     stopWatching();
     killProjectTerminals();
     stopAllIdes();
     stopScheduler();
+    clearInterval(heartbeat);
     workflows?.shutdown();
+    routines?.shutdown();
     sessions.shutdown();
   } catch (error) {
     console.error("[shutdown]", error);

@@ -1,5 +1,7 @@
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
+import type { AutonomyPolicy } from "../autonomy.js";
+
 /*
  * The harness's own data. Everything that used to be a `data/*.json` file lives
  * here; `data/config.json` is the one deliberate holdout (see config.ts — it is
@@ -453,6 +455,307 @@ export interface WorkflowStepRecord {
 }
 
 /**
+ * Routines — a saved thread-start that fires on its own.
+ *
+ * `AutonomyPolicy` is imported as a type from `../autonomy.js` rather than
+ * restated here (this file otherwise imports nothing but drizzle): the policy is
+ * the wire shape *and* the engine's shape, and a second copy in the schema would
+ * be a second thing to keep in step. `QuotaSnapshot` living in `protocol.ts` and
+ * being read by `db/schema.ts`'s neighbours is the same bargain.
+ */
+
+/** What a routine's fire actually runs. A prompt, or a whole declarative
+    workflow (`workflow-schema.ts`, verbatim) — the second costs almost nothing
+    and is most of the point: the engine that runs phased pipelines against a
+    real thread already exists, and a routine that could only ask one question
+    nightly would be the weaker half of a machine already built. */
+export type RoutineBody =
+  | { kind: "prompt"; text: string }
+  | { kind: "workflow"; definition: Record<string, unknown> };
+
+/** What happens to a run's answer. Every one is built out of something that
+    already exists, and every one is optional and plural. A failed action is
+    recorded on the run and never fails the run: the work already happened. */
+export type RoutineAction =
+  | { kind: "push" }
+  | { kind: "knowledge"; title?: string }
+  | { kind: "task"; boardId?: string; statusId?: string; title?: string }
+  | { kind: "routine"; routineId: string };
+
+/** One entry of `routine_runs.actions` — what an `onFinish` action did, its
+    failure included. `ref` names whatever it created (a knowledge entry's id, a
+    card's id, a chained run's id) so the UI can link to it. */
+export interface RoutineActionRecord {
+  kind: string;
+  ok: boolean;
+  error?: string;
+  ref?: string;
+}
+
+/** `skip` (the default) is what stops a nightly review that is still running
+    from becoming two agents in one cwd; `queue` waits for the live run. */
+export type RoutineOverlap = "skip" | "queue";
+
+/**
+ * A saved thread-start that fires on its own.
+ *
+ * Everything a `POST /api/sessions` body carries, this row stores — profile,
+ * agent, project, model, effort, persona, config choices, links — because a
+ * fire is literally `manager.create(...)` with those values and then one
+ * prompt. That is the constraint that keeps this small: **a routine must not be
+ * able to start a thread the composer could not start.** A field a routine
+ * needs and a draft does not means the draft is missing it.
+ *
+ * The project lives here and not on a trigger: a git trigger names a project by
+ * construction, and letting a trigger override it would double the shape of the
+ * fire path for a fan-out nothing asks for yet — which `routine_runs.fire_id`
+ * is here to make a later feature rather than a later migration.
+ *
+ * None of profile/agent/project/persona is a foreign key, for the reason
+ * `sessions` gives at its own three: a routine has to outlive a profile being
+ * renamed away under it, and "this routine's project no longer exists" is a
+ * sentence the UI can say where a vanished row is not.
+ */
+export const routines = sqliteTable(
+  "routines",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description"),
+    /** False = every trigger is inert. The row is kept and listed — a disabled
+        routine is a state, not a deletion, and its history stays readable. */
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    /** The workspace every run of this routine opens in. Not a foreign key: a
+        deleted project must leave a routine the UI can say that about. */
+    projectId: text("project_id").notNull(),
+    profileId: text("profile_id").notNull(),
+    agentId: text("agent_id").notNull(),
+    /** "" = defer to the profile/agent, exactly as an unset draft does. */
+    model: text("model").notNull().default(""),
+    effort: text("effort").notNull().default(""),
+    /** Null for none, like `sessions.persona_id`, and not a foreign key. */
+    personaId: text("persona_id"),
+    /** The draft's own picks against the agent's advertised selectors, replayed
+        after `session/new` exactly as `POST /api/sessions` replays them. */
+    configChoices: text("config_choices", { mode: "json" })
+      .$type<Record<string, string | boolean>>()
+      .notNull()
+      .default({}),
+    /** Prompt or workflow — see RoutineBody. */
+    body: text("body", { mode: "json" }).$type<RoutineBody>().notNull(),
+    /** An optional JSON schema for the run's answer: the same field a workflow
+        step takes and compiled the same way, which buys the run one repair turn
+        and then a structured `routine_runs.verdict`. Null means the status stays
+        honest and bare — "the turn ended" and nothing more. */
+    output: text("output", { mode: "json" }).$type<Record<string, unknown>>(),
+    onFinish: text("on_finish", { mode: "json" }).$type<RoutineAction[]>().notNull().default([]),
+    overlap: text("overlap", { enum: ["skip", "queue"] })
+      .$type<RoutineOverlap>()
+      .notNull()
+      .default("skip"),
+    /** How this routine's runs answer the agent (see autonomy.ts). Stored whole
+        rather than spread into columns: it is one policy, always read together,
+        and it is the shape the form edits. */
+    autonomy: text("autonomy", { mode: "json" }).$type<AutonomyPolicy>().notNull(),
+    /** One run has completed. A routine cannot be widened to a blanket `allow`
+        until it has — the difference between an informed grant and a dismissed
+        dialog, and it costs exactly this boolean. */
+    dryRunCompleted: integer("dry_run_completed", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("routines_project").on(t.projectId)],
+);
+
+export type RoutineTriggerKind = "schedule" | "api" | "git";
+
+/**
+ * One way a routine fires. Several per routine, combinable, each enabled on its
+ * own. The three kinds share a row because they share everything after the
+ * fire: the run, the payload wrapper and the UI are identical whichever front
+ * door was used, which is also why a GitHub webhook receiver is a later phase
+ * and not a later table.
+ */
+export const routineTriggers = sqliteTable(
+  "routine_triggers",
+  {
+    id: text("id").primaryKey(),
+    routineId: text("routine_id")
+      .notNull()
+      .references(() => routines.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["schedule", "api", "git"] }).$type<RoutineTriggerKind>().notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    // ── schedule ──
+    /** 5-field cron. Null for a one-off (`at_ms`) and for the other kinds.
+        UI presets write cron expressions; there is no second representation. */
+    cron: text("cron"),
+    /** IANA zone the cron is read in. Null = the server's own. */
+    tz: text("tz"),
+    /** Epoch ms of a one-off fire; null for a recurring one. */
+    atMs: integer("at_ms"),
+    /** Checked at fire time, never at edit time. Today only
+        `{gitChangedSince: "lastRun"}` — one HEAD read against what the last run
+        recorded, which is the difference between a nightly review that reports
+        on yesterday and one that says "nothing happened" thirty times. */
+    condition: text("condition", { mode: "json" }).$type<{ gitChangedSince?: "lastRun" }>(),
+    /** Epoch ms of the next fire, stagger included, recomputed after each one.
+        Null when this trigger has no clock. Indexed: it is what the sweep asks. */
+    nextFireAt: integer("next_fire_at"),
+    // ── api ──
+    /** sha-256 of the long-lived per-trigger token, never the token. This is
+        the only stored credential in the harness that STARTS A PROCESS on the
+        machine — a profile's key has to be replayed verbatim to a provider and
+        the key-in-path routes are per-boot and unstored — so it is held hashed
+        and compared in constant time. Shown once, at mint. */
+    secretHash: text("secret_hash"),
+    /** When the token was minted, so the UI can say how old the credential it
+        cannot show is. Null when there is none. */
+    secretCreatedAt: integer("secret_created_at"),
+    // ── git ──
+    /** Branch whose HEAD moving fires this, or null for "any". */
+    branch: text("branch"),
+    /** Path globs; a change matching any of them fires. Empty = any path. */
+    paths: text("paths", { mode: "json" }).$type<string[]>().notNull().default([]),
+    /** Debounce for the watcher, ms. */
+    debounceMs: integer("debounce_ms").notNull().default(30_000),
+    /** What the last evaluation recorded — the git oid a `gitChangedSince` or a
+        `git` trigger compares against. Null until the first fire. */
+    lastSeen: text("last_seen"),
+    lastFiredAt: integer("last_fired_at"),
+    lastError: text("last_error"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("routine_triggers_routine").on(t.routineId),
+    index("routine_triggers_next").on(t.nextFireAt),
+  ],
+);
+
+/** `blocked` is the run that fell through to `askFallback` — the state a person
+    can act on, and deliberately distinct from the run that was refused
+    something and carried on to say so, which is an ordinary completion.
+    `skipped` is what a fire condition or the quota floor writes: not an error,
+    and it does not disturb `next_fire_at`. */
+export type RoutineRunStatus = "running" | "completed" | "failed" | "blocked" | "skipped";
+
+/**
+ * One run of a routine, and one real thread.
+ *
+ * The thread is an ordinary session with its own transcript, searchable,
+ * openable and revivable — NOT a workflow step: `parent_session_id` stays null
+ * (a routine has no parent thread) and this row is what names it. Like a step
+ * it is retired the moment its turn settles (`onSessionDurable`), so "continue
+ * this run by hand" is the ordinary revive path.
+ *
+ * `session_id` is **not** a foreign key, for the reason
+ * `sessions.parent_session_id` is not: an SQL cascade would delete the thread's
+ * row underneath the manager's in-memory map, whose journals, FTS rows and
+ * process are the manager's to take down. It is also nullable — a `skipped` run
+ * never made one, and neither has a `running` one that has not spawned yet.
+ *
+ * `fire_id` is minted per fire and shared by every run that fire produced.
+ * Today that is always one, and the column looks redundant; it is here from day
+ * one because the moment a routine names more than one project a fire produces
+ * N runs, and adding the grouping afterwards is a data rewrite of the one table
+ * this feature accumulates rows in fastest.
+ */
+export const routineRuns = sqliteTable(
+  "routine_runs",
+  {
+    id: text("id").primaryKey(),
+    routineId: text("routine_id")
+      .notNull()
+      .references(() => routines.id, { onDelete: "cascade" }),
+    /** Which trigger fired it, when one did. Not a foreign key and nullable: a
+        deleted trigger must not take the run history it produced with it. */
+    triggerId: text("trigger_id"),
+    fireId: text("fire_id").notNull(),
+    sessionId: text("session_id"),
+    /** Which door fired it, and the caller's own words if it brought any. The
+        text is NEVER parsed and never interpolated: it reaches the agent inside
+        the untrusted wrapper (`FIRE_PAYLOAD_OPEN`/`_CLOSE` in routines.ts). */
+    source: text("source", { enum: ["schedule", "api", "git", "manual", "routine"] }).notNull(),
+    payload: text("payload"),
+    /** True for a "Run now, forced to ask" — what clears `dry_run_completed`'s
+        gate, and what makes a run's own autonomy differ from the routine's. */
+    dryRun: integer("dry_run", { mode: "boolean" }).notNull().default(false),
+    status: text("status", { enum: ["running", "completed", "failed", "blocked", "skipped"] })
+      .$type<RoutineRunStatus>()
+      .notNull(),
+    /** Why a `skipped` run was skipped, why a `blocked` one is blocked, or why a
+        failed one failed. One column and not three: they are the same sentence
+        to the same reader, and two would only raise the question of which to
+        show. */
+    error: text("error"),
+    /** The run's final prose, accumulated from `agent_message_chunk`s the way
+        workflows.ts does it and capped at LIMITS.outputBytes. */
+    output: text("output"),
+    /** The parsed, validated answer when the routine declared an `output`
+        schema — the only thing on the row that is about the *work* rather than
+        about the process, which is why it and not `status` is the list column. */
+    verdict: text("verdict", { mode: "json" }).$type<unknown>(),
+    /** What `onFinish` did, one entry per action, failures included. An action's
+        failure is recorded and never fails the run. */
+    actions: text("actions", { mode: "json" })
+      .$type<RoutineActionRecord[]>()
+      .notNull()
+      .default([]),
+    /** The git oid this run saw, for the next `gitChangedSince` comparison. */
+    headOid: text("head_oid"),
+    /** Summed from the run's settled turns, for `maxRunTokens` and the digest. */
+    tokens: integer("tokens"),
+    startedAt: integer("started_at").notNull(),
+    endedAt: integer("ended_at"),
+  },
+  (t) => [
+    index("routine_runs_routine").on(t.routineId, t.startedAt),
+    index("routine_runs_fire").on(t.fireId),
+  ],
+);
+
+/** A routine's library links — the third owner `db/links.ts` predicted, and a
+    descriptor there rather than a third copy of the queries. Same shape as
+    `session_mcp_servers` down to the cascades. */
+export const routineMcpServers = sqliteTable(
+  "routine_mcp_servers",
+  {
+    routineId: text("routine_id")
+      .notNull()
+      .references(() => routines.id, { onDelete: "cascade" }),
+    mcpServerId: text("mcp_server_id")
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.routineId, t.mcpServerId] })],
+);
+
+export const routineSkills = sqliteTable(
+  "routine_skills",
+  {
+    routineId: text("routine_id")
+      .notNull()
+      .references(() => routines.id, { onDelete: "cascade" }),
+    skillId: text("skill_id")
+      .notNull()
+      .references(() => skills.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.routineId, t.skillId] })],
+);
+
+export const routineCommands = sqliteTable(
+  "routine_commands",
+  {
+    routineId: text("routine_id")
+      .notNull()
+      .references(() => routines.id, { onDelete: "cascade" }),
+    commandId: text("command_id")
+      .notNull()
+      .references(() => commands.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.routineId, t.commandId] })],
+);
+
+/**
  * A thread's durable event log — the same events the live socket sends.
  *
  * This used to be raw ACP frames, which forced the client to carry a second
@@ -578,6 +881,45 @@ export const pushTokens = sqliteTable("push_tokens", {
   token: text("token").primaryKey(),
   createdAt: integer("created_at").notNull(),
 });
+
+/**
+ * The harness's own saved notification (`notifications.ts`), the durable inbox
+ * the client's notification pill reads. The four things the server already
+ * surfaces to a device as FCM push — a turn finished, a turn failed, the agent
+ * wants permission, the agent asked a question — are recorded here too, so a
+ * client sees them even when FCM is not configured and after the push was
+ * dismissed. Read/unread is device-independent (it is "has anyone looked at
+ * this"), and `read` is set on the user's behalf by `markRead`.
+ *
+ * Fields are snapshotted (`title`, `body`, `threadTitle`) the way
+ * `web_search_usage` names are, so a notification stays intelligible after a
+ * thread is deleted. `session_id` is a plain id for navigation, not a foreign
+ * key: nothing here should take a thread down with it.
+ */
+export const notifications = sqliteTable(
+  "notifications",
+  {
+    id: text("id").primaryKey(),
+    /** One of the kinds `notifications.ts` knows how to label and tint. Spelled
+        as an enum here rather than bare text so the one place that has to agree
+        with it — the backup bundle's row schema — is checked by the compiler
+        instead of at import time, where a bad kind is a rolled-back restore. */
+    kind: text("kind", { enum: ["permission", "question", "turn_finished", "turn_failed"] }).notNull(),
+    /** The thread the notice is about — what a click navigates to. Null for a
+        notice with no thread (none today, kept for the future). */
+    sessionId: text("session_id"),
+    threadTitle: text("thread_title"),
+    /** The notice's own line — the error message, the tool wanting permission. */
+    body: text("body"),
+    /** 1 once a client has marked it read; unread is what the pill counts. */
+    read: integer("read", { mode: "boolean" }).notNull().default(false),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("notifications_created").on(t.createdAt),
+    index("notifications_unread").on(t.read, t.createdAt),
+  ],
+);
 
 /**
  * What a profile's agent answered when we asked it what it can be configured

@@ -1,11 +1,9 @@
 /* ── The memoized thread list ── rows plus the hoisted handlers they share. */
 import * as React from "react"
 import { ChevronRight } from "lucide-react"
-import { toast } from "@/lib/toast"
 import { useLocation, useNavigate } from "react-router"
-import { reportError } from "@/lib/errors"
 import { SidebarMenu, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"
-import { useConfirm } from "@/components/confirm-dialog"
+import { useThreadRowActions } from "@/components/thread-menu"
 import type { Actions } from "@/lib/actions"
 import { currentThreadId, threadPath } from "@/lib/router"
 import { markNewTab } from "@/lib/session-tabs"
@@ -53,81 +51,20 @@ export const ThreadList = React.memo(function ThreadList({
   const location = useLocation()
   const navigate = useNavigate()
   const activeThreadId = currentThreadId(location.pathname, location.search)
-  const confirm = useConfirm()
   const pins = usePins()
   const pinSet = React.useMemo(() => new Set(pins), [pins])
   const { isMobile, setOpenMobile } = useSidebar()
 
   /* Delete stops the agent and moves the thread to Trash. Recoverable, but not
      free — the process dies and a running turn dies with it — so it asks, and
-     the toast still offers the one-click way back. Wrapped in useCallback (as
-     are the three below) so the memoized rows see the same handler across
-     renders. */
-  const remove = React.useCallback(async (session: SessionMeta) => {
-    /* A draft was never started: no process to stop, no server row, and nothing
-       for Trash to hold. Discarding it is the whole operation. */
-    if (session.draft) {
-      if (
-        !(await confirm({
-          title: "Discard this thread?",
-          description:
-            "It was never started, so there is no agent to stop and nothing to restore afterwards.",
-          confirmLabel: "Discard",
-          destructive: true,
-        }))
-      )
-        return
-      if (activeThreadId === session.id) void navigate("/")
-      void actions.deleteThread(session.id)
-      return
-    }
-    if (
-      !(await confirm({
-        title: `Delete "${session.title}"?`,
-        description:
-          "The agent process is stopped and the thread moves to Trash, where it can be restored.",
-        confirmLabel: "Delete",
-        destructive: true,
-      }))
-    )
-      return
-    // Leave the route first: a deleted thread has no page to show.
-    if (activeThreadId === session.id) void navigate("/")
-    actions
-      .deleteThread(session.id)
-      .then(() =>
-        toast("Moved to Trash", {
-          description: session.title,
-          action: {
-            label: "Undo",
-            onClick: () => {
-              actions
-                .restoreThread(session.id)
-                .catch((err) => reportError(err, "Couldn't restore the thread"))
-            },
-          },
-        })
-      )
-      .catch((err) => reportError(err, "Couldn't delete the thread"))
-  }, [confirm, activeThreadId, navigate, actions])
-
-  const restore = React.useCallback((session: SessionMeta) => {
-    actions.restoreThread(session.id).catch((err) => reportError(err, "Couldn't restore the thread"))
-  }, [actions])
-
-  const purge = React.useCallback(async (session: SessionMeta) => {
-    if (
-      !(await confirm({
-        title: `Delete "${session.title}" forever?`,
-        description:
-          "The harness forgets this thread. Only the agent's own transcript file would still have the conversation.",
-        confirmLabel: "Delete forever",
-        destructive: true,
-      }))
-    )
-      return
-    actions.purgeThread(session.id).catch((err) => reportError(err, "Couldn't delete the thread"))
-  }, [confirm, actions])
+     the toast still offers the one-click way back. The three handlers are the
+     header menu's too (components/thread-menu), which is why they are a hook
+     rather than three closures here; memoized inside it, so the memoized rows
+     see the same handler across renders. */
+  const { rename, remove, restore, purge } = useThreadRowActions(actions, {
+    activeThreadId,
+    onLeave: () => void navigate("/"),
+  })
 
   const open = React.useCallback((session: SessionMeta, newTab = false) => {
     if (isMobile) setOpenMobile(false)
@@ -183,6 +120,7 @@ export const ThreadList = React.memo(function ThreadList({
               active={activeThreadId === session.id}
               pinned={pinSet.has(session.id)}
               onOpen={open}
+              onRename={rename}
               onDelete={remove}
               onRestore={restore}
               onPurge={purge}

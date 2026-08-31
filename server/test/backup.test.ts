@@ -17,6 +17,10 @@ import {
   profileMcpServers,
   profiles as profilesTable,
   projects as projectsTable,
+  routineMcpServers,
+  routineRuns as routineRunsTable,
+  routineTriggers as routineTriggersTable,
+  routines as routinesTable,
   sessionEvents as eventsTable,
   sessionQueue as queueTable,
   sessions as sessionsTable,
@@ -40,7 +44,7 @@ function test(name: string, fn: () => void) {
 }
 
 function wipe() {
-  for (const table of [sessionsTable, profilesTable, projectsTable, mcpServersTable, skillsTable, commandsTable, personasTable, agentsTable, tasksTable, boardStatusesTable, boardsTable]) {
+  for (const table of [sessionsTable, profilesTable, projectsTable, mcpServersTable, skillsTable, commandsTable, personasTable, routinesTable, agentsTable, tasksTable, boardStatusesTable, boardsTable]) {
     db.delete(table).run();
   }
 }
@@ -71,6 +75,45 @@ function seed() {
   ]).run();
   db.insert(queueTable).values({ id: "q1", sessionId: "t1", position: 0, text: "later", createdAt: now }).run();
   db.insert(tasksTable).values({ id: "task1", title: "Do it", createdAt: now, updatedAt: now }).run();
+  /* A routine with all three of its tables populated, and a token on the
+     trigger — the credential the `secrets=0` rule has to reach. */
+  db.insert(routinesTable).values({
+    id: "r1",
+    name: "Nightly review",
+    projectId: "w1",
+    profileId: "p1",
+    agentId: "fake",
+    model: "m",
+    effort: "",
+    body: { kind: "prompt", text: "Review yesterday." },
+    autonomy: { permissions: { default: "ask" }, elicitations: "ask", askTimeoutSeconds: 300, askFallback: "deny", maxRunSeconds: 1800 },
+    dryRunCompleted: true,
+    createdAt: now,
+    updatedAt: now,
+  }).run();
+  db.insert(routineMcpServers).values({ routineId: "r1", mcpServerId: "m1" }).run();
+  db.insert(routineTriggersTable).values({
+    id: "trg1",
+    routineId: "r1",
+    kind: "schedule",
+    cron: "30 2 * * *",
+    tz: "America/New_York",
+    nextFireAt: now + 3600_000,
+    secretHash: "deadbeef",
+    secretCreatedAt: now,
+    createdAt: now,
+  }).run();
+  db.insert(routineRunsTable).values({
+    id: "run1",
+    routineId: "r1",
+    fireId: "f1",
+    sessionId: "t1",
+    source: "schedule",
+    status: "completed",
+    output: "nothing changed",
+    startedAt: now,
+    endedAt: now + 1000,
+  }).run();
 }
 
 const count = (table: SQLiteTable) => db.select().from(table).all().length;
@@ -108,11 +151,48 @@ test("a 0 thinking budget survives the round trip as 0, not as absent", () => {
   assert.equal(db.select().from(personasTable).all()[0]!.thinking, 0);
 });
 
+test("a routine round-trips with its triggers, runs and links", () => {
+  seed();
+  const bundle = exportBundle({ includeSecrets: true, includeJournals: true });
+  assert.deepEqual(bundle.routines[0]!.mcpServerIds, ["m1"]);
+  assert.equal(bundle.routines[0]!.dryRunCompleted, true, "the grant the user already made informedly");
+  assert.equal(bundle.routineTriggers[0]!.secretHash, "deadbeef");
+  wipe();
+  const summary = importBundle(BundleSchema.parse(JSON.parse(JSON.stringify(bundle))), "replace");
+  assert.equal(summary.routines, 1);
+  assert.equal(summary.routineTriggers, 1);
+  assert.equal(summary.routineRuns, 1);
+  assert.equal(count(routineMcpServers), 1);
+  const routine = db.select().from(routinesTable).where(eq(routinesTable.id, "r1")).get()!;
+  assert.deepEqual(routine.body, { kind: "prompt", text: "Review yesterday." });
+  assert.equal(routine.autonomy.permissions.default, "ask");
+  assert.equal(routine.dryRunCompleted, true);
+  assert.equal(db.select().from(routineTriggersTable).all()[0]!.tz, "America/New_York");
+  assert.equal(db.select().from(routineRunsTable).all()[0]!.output, "nothing changed");
+});
+
+test("a trigger deleted after the export does not come back on a merge", () => {
+  // Both children are replaced per routine, not upserted by id: a merge that
+  // only added rows would resurrect a trigger the user deliberately removed,
+  // and leave a run history whose NEWEST row came from another install — which
+  // is the row `lastRunHeadOid` reads to decide whether anything has changed.
+  seed();
+  const bundle = exportBundle({ includeSecrets: true, includeJournals: true });
+  db.insert(routineTriggersTable).values({ id: "trg2", routineId: "r1", kind: "api", createdAt: 1 }).run();
+  importBundle(BundleSchema.parse(JSON.parse(JSON.stringify(bundle))), "merge");
+  assert.equal(count(routineTriggersTable), 1);
+  assert.equal(db.select().from(routineTriggersTable).all()[0]!.id, "trg1");
+});
+
 test("a redacted export carries no secrets", () => {
   seed();
   const bundle = exportBundle({ includeSecrets: false, includeJournals: false });
   assert.equal("apiKey" in bundle.profiles[0]!, false);
   assert.deepEqual(bundle.mcpServers[0]!.headers, [{ name: "Authorization", value: "" }]);
+  // Absent, not blanked — absent is what the import reads as "keep what this
+  // install already holds". The stored value is only a hash, but it is the one
+  // credential that starts a process on this machine.
+  assert.equal("secretHash" in bundle.routineTriggers[0]!, false);
   assert.equal(bundle.events.length, 0);
   assert.deepEqual(bundle.redacted, { secrets: true, journals: true });
 });
@@ -209,6 +289,11 @@ test("a redacted bundle merged over its own install keeps the install's secrets"
   assert.deepEqual(db.select().from(mcpServersTable).where(eq(mcpServersTable.id, "m1")).get()?.headers, [
     { name: "Authorization", value: "Bearer s3cret" },
   ]);
+  assert.equal(
+    db.select().from(routineTriggersTable).where(eq(routineTriggersTable.id, "trg1")).get()?.secretHash,
+    "deadbeef",
+    "a redacted trigger token keeps working after a merge over its own install",
+  );
 });
 
 test("a redacted bundle on a fresh install says so", () => {
@@ -232,8 +317,13 @@ test("rows whose parent exists nowhere are dropped, not fatal", () => {
   const bundle = exportBundle({ includeSecrets: true, includeJournals: true });
   bundle.knowledge.push({ id: "k-orphan", projectId: "nope", title: "t", content: "c", tags: null, createdAt: 1, updatedAt: 1 });
   bundle.queue.push({ id: "q-orphan", sessionId: "nope", position: 0, text: "x", createdAt: 1 });
+  bundle.routineRuns.push({
+    id: "run-orphan", routineId: "nope", fireId: "f", sessionId: null, source: "manual",
+    payload: null, dryRun: false, status: "completed", error: null, output: null, verdict: null,
+    actions: [], headOid: null, tokens: null, triggerId: null, startedAt: 1, endedAt: null,
+  });
   const summary = importBundle(bundle, "replace");
-  assert.equal(summary.orphaned, 2);
+  assert.equal(summary.orphaned, 3);
   assert.equal(count(knowledgeTable), 1);
 });
 
