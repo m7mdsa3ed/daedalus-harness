@@ -3,9 +3,8 @@
    share. Not a route of its own. */
 import * as React from "react"
 import { Download, Pencil, Plus, Trash2 } from "lucide-react"
-import { toast } from "sonner"
 import { useNavigate } from "react-router"
-import { reportError } from "@/lib/errors"
+import { reportError, reportPromise } from "@/lib/errors"
 import { Button } from "@/components/ui/button"
 import { PickerSkeleton } from "@/components/ui/skeletons"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -128,23 +127,28 @@ export function LibraryImportPage({
       })
   }, [settings, kind])
 
-  const save = async (e: React.FormEvent) => {
+  /* One POST per selected row, in sequence — so the wait grows with the
+     selection and is the kind a person starts wondering about. The promise
+     toast says the import is running and then becomes its own receipt. */
+  const save = (e: React.FormEvent) => {
     e.preventDefault()
     setBusy(true)
-    try {
+    const importAll = async () => {
       for (const id of selected) {
         const item = found?.find((f) => f.id === id)
         if (!item) continue
         const { id: _id, source: _source, ...payload } = item
         await api(settings, endpoint, { method: "POST", body: JSON.stringify(payload) })
       }
-      toast.success(`Imported ${selected.length} ${noun}${selected.length === 1 ? "" : "s"}`)
       await refresh()
-      void navigate(settingsPath(meta.id))
-    } catch (err) {
-      reportError(err, `Couldn't import the ${noun}s`)
-      setBusy(false)
     }
+    void reportPromise(importAll(), {
+      loading: `Importing ${selected.length} ${noun}${selected.length === 1 ? "" : "s"}…`,
+      success: `Imported ${selected.length} ${noun}${selected.length === 1 ? "" : "s"}`,
+      context: `Couldn't import the ${noun}s`,
+    })
+      .then(() => void navigate(settingsPath(meta.id)))
+      .catch(() => setBusy(false))
   }
 
   const all = found?.map((f) => f.id) ?? []

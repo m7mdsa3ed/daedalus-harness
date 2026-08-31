@@ -4,7 +4,7 @@
 import * as React from "react"
 import type { IDockviewPanelHeaderProps } from "dockview-react"
 import { XIcon } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/lib/toast"
 
 import { Button } from "@/components/ui/button"
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"

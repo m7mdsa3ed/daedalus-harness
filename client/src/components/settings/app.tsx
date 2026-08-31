@@ -6,7 +6,8 @@
    they sit under General now, below the server list, since both halves are
    "this device" and one page is easier to find than two. */
 import * as React from "react"
-import { toast } from "sonner"
+import { toast } from "@/lib/toast"
+import { reportPromise } from "@/lib/errors"
 import { AlertTriangle, CheckCircle2, Info } from "lucide-react"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
@@ -137,21 +138,20 @@ export function SiteDataGroup() {
      a re-render: an unregistered worker keeps controlling the page it already
      controls, so until the document goes away the shell on screen is still the
      one that was just thrown out. */
-  const run = async (kind: "cache" | "all") => {
+  const run = (kind: "cache" | "all") => {
     setBusy(kind)
-    try {
-      const report = kind === "cache" ? await clearAppCache() : await clearAllSiteData()
-      toast(kind === "cache" ? "App cache cleared" : "Site data cleared", {
-        description: `${summarize(report)} Reloading…`,
-      })
-      // Long enough to read; the reload is the half that actually takes effect.
-      window.setTimeout(() => location.assign("/"), 900)
-    } catch (error) {
-      setBusy(null)
-      toast.error("Couldn't clear it", {
-        description: error instanceof Error ? error.message : String(error),
-      })
-    }
+    void reportPromise(kind === "cache" ? clearAppCache() : clearAllSiteData(), {
+      loading: kind === "cache" ? "Clearing the app cache…" : "Clearing every byte this site stored…",
+      success: (report) => {
+        // Long enough to read; the reload is the half that actually takes effect.
+        window.setTimeout(() => location.assign("/"), 900)
+        return {
+          title: kind === "cache" ? "App cache cleared" : "Site data cleared",
+          description: `${summarize(report)} Reloading…`,
+        }
+      },
+      context: "Couldn't clear it",
+    }).catch(() => setBusy(null))
   }
 
   return (

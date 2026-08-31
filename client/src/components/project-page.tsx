@@ -27,6 +27,7 @@ import {
   CalendarClockIcon,
   CheckIcon,
   CopyIcon,
+  DownloadIcon,
   FolderIcon,
   MessagesSquareIcon,
   Pencil,
@@ -39,6 +40,7 @@ import { Navigate, useNavigate, useParams } from "react-router"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AgentIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
+import { ImportThreadsDialog } from "@/components/import-threads"
 import { useStartThreadIn } from "@/components/thread-sidebar"
 import type { Actions } from "@/lib/actions"
 import { describeError } from "@/lib/errors"
@@ -78,6 +80,7 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
   const navigate = useNavigate()
   const startIn = useStartThreadIn(actions)
   const { stats, error, loading, refresh } = useProjectStats(project.id)
+  const [importing, setImporting] = React.useState(false)
 
   /* The live half. Steps are excluded exactly as they are everywhere else —
      they are reached from their parent's transcript, never listed — and the
@@ -111,9 +114,16 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
         <ProjectHeader
           project={project}
           onNewThread={() => startIn(project)}
+          onImport={() => setImporting(true)}
           onEdit={() => void navigate(settingsFormPath("projects", project.id))}
           onRefresh={refresh}
           refreshing={loading}
+        />
+        <ImportThreadsDialog
+          open={importing}
+          onOpenChange={setImporting}
+          actions={actions}
+          projectId={project.id}
         />
 
         {/* The one health answer the page can give. A project whose directory
@@ -247,12 +257,14 @@ function threadStatus(session: SessionMeta, thread: ThreadState | undefined) {
 function ProjectHeader({
   project,
   onNewThread,
+  onImport,
   onEdit,
   onRefresh,
   refreshing,
 }: {
   project: Project
   onNewThread: () => void
+  onImport: () => void
   onEdit: () => void
   onRefresh: () => void
   refreshing: boolean
@@ -297,6 +309,11 @@ function ProjectHeader({
         <Button variant="ghost" size="icon" title="Refresh" onClick={onRefresh}>
           <RefreshCwIcon className={cn(refreshing && "animate-spin")} />
           <span className="sr-only">Refresh</span>
+        </Button>
+        {/* Work started in a terminal is still work in this project — the way
+            in is beside the way to start new work. */}
+        <Button variant="outline" onClick={onImport}>
+          <DownloadIcon /> Import
         </Button>
         <Button variant="outline" onClick={onEdit}>
           <Pencil /> Edit

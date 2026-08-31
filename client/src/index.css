@@ -321,15 +321,6 @@
   }
 }
 
-/* ── Toast content colour ──
-   Sonner hardcodes the description per theme (#3f3f3f light, 91% grey dark)
-   instead of reading a variable, so it never follows the palette. One extra
-   attribute outranks both of sonner's rules regardless of import order, and
-   pins the content line to the same muted tone everything else uses. */
-[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-description] {
-  color: var(--muted-foreground);
-}
-
 /* ── Glass surface backgrounds ──
    The theme tokens are opaque on purpose (they are the no-blur fallback and
    what the theme builder edits); where backdrop-filter exists, the surface

@@ -1,7 +1,7 @@
 /* ── The memoized thread list ── rows plus the hoisted handlers they share. */
 import * as React from "react"
 import { ChevronRight } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/lib/toast"
 import { useLocation, useNavigate } from "react-router"
 import { reportError } from "@/lib/errors"
 import { SidebarMenu, SidebarMenuItem, useSidebar } from "@/components/ui/sidebar"

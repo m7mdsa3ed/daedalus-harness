@@ -15,7 +15,7 @@ import {
   Trash2,
 } from "lucide-react"
 import { useLocation, useNavigate, useSearchParams } from "react-router"
-import { toast } from "sonner"
+import { toast } from "@/lib/toast"
 
 import { useConfirm } from "@/components/confirm-dialog"
 import { EmptyCard, Field, FormPageHeader, FormSection, Group, PageForm } from "@/components/settings/primitives"

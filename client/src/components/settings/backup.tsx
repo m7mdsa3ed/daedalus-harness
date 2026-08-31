@@ -1,5 +1,4 @@
 import * as React from "react"
-import { toast } from "sonner"
 import { AlertTriangle, Download, FileJson, Upload } from "lucide-react"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
@@ -7,7 +6,7 @@ import { Switch } from "@/components/ui/switch"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
 import { Spinner } from "@/components/ui/spinner"
-import { reportError } from "@/lib/errors"
+import { reportError, reportPromise } from "@/lib/errors"
 import { ApiError, api, type ServerSettings } from "@/lib/settings"
 import { PageHeader, Group, Row } from "./primitives"
 import { sectionMeta } from "./sections"
@@ -128,16 +127,24 @@ function ExportGroup({ settings }: { settings: ServerSettings }) {
   const [journals, setJournals] = React.useState(true)
   const [busy, setBusy] = React.useState(false)
 
-  const run = async () => {
+  /* An export is the server serialising every table it has, so it is the
+     archetypal case for the promise toast: the spinner in the button says the
+     click landed, and this says what is happening to someone who has already
+     looked away from it. */
+  const run = () => {
     setBusy(true)
-    try {
-      const { name, bytes } = await downloadBackup(settings, { secrets, journals })
-      toast("Backup exported", { description: `${name} · ${formatBytes(bytes)}` })
-    } catch (err) {
-      reportError(err, "Couldn't export the backup")
-    } finally {
-      setBusy(false)
-    }
+    // The rejection is already on screen (and marked reported) — swallowing it
+    // here is what keeps the global net from saying the same thing twice.
+    void reportPromise(downloadBackup(settings, { secrets, journals }), {
+      loading: "Exporting the backup…",
+      success: ({ name, bytes }) => ({
+        title: "Backup exported",
+        description: `${name} · ${formatBytes(bytes)}`,
+      }),
+      context: "Couldn't export the backup",
+    })
+      .catch(() => {})
+      .finally(() => setBusy(false))
   }
 
   return (
@@ -199,25 +206,32 @@ function ImportGroup({ settings }: { settings: ServerSettings }) {
     })
     if (!ok) return
     setBusy(true)
-    try {
-      const summary = await api<ImportSummary>(settings, `/api/backup/import?mode=${mode}`, {
+    /* The one toast covers the whole import — an import stops threads, rewrites
+       tables and reloads the manager, so "working" is a state worth naming, and
+       the reload at the end means a second toast would only flash. */
+    void reportPromise(
+      api<ImportSummary>(settings, `/api/backup/import?mode=${mode}`, {
         method: "POST",
         body: file.text,
-      })
-      const total = TABLES.reduce((n, [key]) => n + (summary[key] ?? 0), 0)
-      const notes = [
-        summary.orphaned ? `${summary.orphaned} row(s) skipped — their project or thread exists nowhere` : null,
-        summary.missingSecrets ? "the backup carried no credentials and this server had none to keep" : null,
-      ].filter(Boolean)
-      toast("Backup imported — reloading", {
-        description: `${total} rows${notes.length ? ` · ${notes.join(" · ")}` : ""}`,
-      })
-      // Everything the app holds may have changed; reboot it against the new state.
-      setTimeout(() => window.location.reload(), 1200)
-    } catch (err) {
-      reportError(err, "Couldn't import the backup")
-      setBusy(false)
-    }
+      }),
+      {
+        loading: mode === "replace" ? "Replacing this server's data…" : "Merging the backup in…",
+        success: (summary) => {
+          const total = TABLES.reduce((n, [key]) => n + (summary[key] ?? 0), 0)
+          const notes = [
+            summary.orphaned ? `${summary.orphaned} row(s) skipped — their project or thread exists nowhere` : null,
+            summary.missingSecrets ? "the backup carried no credentials and this server had none to keep" : null,
+          ].filter(Boolean)
+          // Everything the app holds may have changed; reboot it against the new state.
+          setTimeout(() => window.location.reload(), 1200)
+          return {
+            title: "Backup imported — reloading",
+            description: `${total} rows${notes.length ? ` · ${notes.join(" · ")}` : ""}`,
+          }
+        },
+        context: "Couldn't import the backup",
+      }
+    ).catch(() => setBusy(false))
   }
 
   return (

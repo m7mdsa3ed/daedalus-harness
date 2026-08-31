@@ -837,6 +837,39 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   the thread just falls back to reviving. `list()` and the respawn route report `liveAcpSessionId ??
   acpSessionId` — "what is this thread on right now" — which is also what `tasks.ts` matches
   transcript directories against.
+- **Importing a thread writes a pointer, never a transcript** — which is why the feature is
+  two routes and no new lifecycle. Work started in `claude`, `codex` or `opencode` outside
+  the harness is a real conversation in that agent's own store with nothing here naming it,
+  and naming it is the whole of what a thread *is* (the rule above). So
+  `POST /api/sessions/import` writes rows — `acpSessionId` set, `acpSessionProvisional`
+  false, `exited` true, no process — through `SessionManager.importSession`, which is
+  `create()` minus the `start()` (both build the row through the same `blankSession`). The
+  row that leaves is exactly the shape an idle-retired thread has after a restart, so
+  **opening it is the existing revive path**: `openThread` sees `exited && cursor === 0`,
+  respawns, and `session/load` streams the conversation back as ordinary journaled updates
+  that index for search and replay from then on. Nothing in the store, the reducer or the
+  socket learned a word about imports. One round trip however many are picked, because none
+  of them spawns anything. The listing is the other half and it is **ACP's own
+  `session/list`** (`server/src/session-list.ts`), never a runtime's files: all three
+  runtimes implement it (verified against claude-agent-acp, codex-acp 1.7 and opencode
+  1.18), reading `~/.claude/projects/*.jsonl` or a rollout directory would be exactly the
+  per-agent knowledge this codebase refuses to carry, and an agent that does not advertise
+  `sessionCapabilities.list` — or answers `-32601` — comes back `{supported: false}`, which
+  is an answer the dialog prints in words rather than an error. It asks with **no `cwd`
+  filter** and follows `nextCursor` inside the one spawned process (`MAX_LIST_PAGES` /
+  `MAX_LIST_SESSIONS`, `truncated` when the budget runs out), so the answer is machine-wide
+  and each entry carries the directory it ran in: `components/import-threads.tsx` groups by
+  that cwd, maps each to a project, and offers "Add project" for a directory the harness has
+  never been pointed at — a conversation has to have a cwd to run in, and that is what a
+  project is. Rows whose `acpSessionId` a thread already holds come back marked `existing`
+  (deleted ones included, so a thread in Trash reads as Trash instead of being imported
+  twice). The spawn/handshake/deadline/kill scaffolding is `withAgentConnection` in
+  `probe.ts`, shared with the option probe — with one deliberate asymmetry: the probe
+  materializes the profile's skills and model allowlist because it is about to open a
+  session in that cwd, and the listing, which opens none, materializes nothing. The dialog
+  defaults its scan to the agent's **virtual Default profile**: a listing is about the
+  machine's own login, and codex filters its thread list by the spawned profile's model
+  provider, so a gateway profile can answer with none of the CLI's work.
 - **A capability we don't advertise is a feature the agent turns off.** The `initialize`
   handshake in `server/src/acp-bridge.ts` is not a formality: claude-agent-acp puts `AskUserQuestion` on
   the session's `disallowedTools` unless the client claims `elicitation.form`, so without it
@@ -926,7 +959,7 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   which is the only thing that knows the worker is `/dev-sw.js?dev-sw` as a module in
   dev and a classic `/sw.js` in a build. Updates are `registerType: "prompt"`, not
   auto: a new worker installs and waits, and `registerPwa` offers it as one pinned
-  sonner toast (fixed id, so an hourly re-check replaces rather than stacks) whose
+  toast (fixed id, so an hourly re-check replaces rather than stacks) whose
   Reload calls `updateSW(true)` — the worker only `skipWaiting()`s on that message.
   **That one toast has three faces**, because a build is a whole precache and the
   install is a download, not an instant: `watchInstalling` (off `updatefound`, and off
@@ -1090,6 +1123,31 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   comes back on reload from the journaled `turn_ended` (which carries the prompt text, so
   the rebuilt row still offers Retry). `installGlobalErrorReporting()` in `main.tsx` is
   the floor under both.
+- **Toasts are shadcn's Base UI toast, bottom-trailing, and raised through one
+  module.** `components/ui/toast.tsx` is the registry component (`Toast.Provider` +
+  `createToastManager`) kept close to as it ships so a later `shadcn add toast` diffs
+  cleanly — sonner is gone, and with it the two workarounds it needed: the `theme` prop
+  forced past next-themes (this one is drawn entirely out of the palette's tokens) and
+  the `[data-sonner-toast] [data-description]` override in `index.css` for a description
+  colour sonner hardcoded per theme. `lib/toast.ts` is the sentence form of the manager
+  and the only thing call sites import: `toast(title, {description, action, id,
+  duration})` plus `.success/.error/.warning/.info/.loading/.dismiss/.promise`, which is
+  the vocabulary the app was already written in. Two translations live there and nowhere
+  else — a fixed `id` is an **upsert** (`add({id})`, which the pwa-update and
+  enable-notifications offers both depend on to replace rather than stack), and
+  `duration: Infinity` is Base UI's `timeout: 0`, the same idea spelled with the
+  opposite sentinel. **Anything with a visible wait uses the promise form**, and through
+  `reportPromise` in `errors.ts` rather than `toast.promise` directly: one card that is a
+  spinner while the work runs and becomes its own outcome, with the failure branch wired
+  through `describeError` so a rejection reads exactly like the `reportError` toast it
+  replaces — same headline, same detail, same Copy — instead of the `String(err)` a promise
+  toast otherwise degrades to. It marks the rejection reported and passes it on, so a caller
+  can still reset its busy state without the global net saying it twice. The layout rules
+  are in the component: the action button sits *inline* beside a bare title and *under* a
+  description (next to wrapping text it would squeeze the copy into a gutter), and
+  descriptions wrap on `[overflow-wrap:anywhere]` with `whitespace-pre-wrap` and a
+  five-line clamp, because what they carry is paths, commands and server errors — one long
+  unspaced token used to push the card wide rather than break.
 - The server splices the agent's stderr into errors on the way out
   (`SessionManager.enrichError`, `data.stderr`) — "Internal error" is a code, not an
   explanation, and the explanation was only ever on stderr. When the process dies mid-turn

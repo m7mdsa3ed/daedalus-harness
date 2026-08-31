@@ -2,6 +2,7 @@ import * as React from "react"
 import { ChevronLeft, Plus, ServerIcon, Settings2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { CommandPalette, useCommandPalette } from "@/components/command-palette"
+import { ImportThreadsDialog } from "@/components/import-threads"
 import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
 import { Logo } from "@/components/ui/logo"
 import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
@@ -129,6 +130,7 @@ export function AppShell({
   const [resizing, setResizing] = React.useState(false)
   const palette = useCommandPalette()
   const shortcuts = useShortcutsHelp()
+  const [importing, setImporting] = React.useState(false)
   const inSettings = location.pathname.startsWith("/settings")
   const inSchedule = location.pathname.startsWith("/schedules")
   const inBoard = location.pathname.startsWith("/board")
@@ -627,9 +629,13 @@ export function AppShell({
         dock={dock}
         onNewThread={startThread}
         onNewProject={() => void navigate(settingsFormPath("projects"))}
+        onImportThreads={() => setImporting(true)}
         onShortcuts={() => shortcuts.setOpen(true)}
       />
       <ShortcutsHelp open={shortcuts.open} onOpenChange={shortcuts.setOpen} />
+      {/* Owned here rather than by the palette, which unmounts as soon as a
+          command runs. The project page mounts its own, scoped to itself. */}
+      <ImportThreadsDialog open={importing} onOpenChange={setImporting} actions={actions} />
     </SidebarProvider>
   )
 }

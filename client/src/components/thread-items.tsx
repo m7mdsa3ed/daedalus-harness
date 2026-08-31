@@ -162,11 +162,18 @@ const RAIL_CLASS = "mt-0.5 ml-[calc(0.75rem-1px)] space-y-0.5 border-l border-bo
    is `-left-[11px]`, which is where the container's border used to sit, so
    nothing else moved. Tool steps only: every row in a run is a StepRow with
    that geometry, where a subagent's rail also carries prose, which has no mark
-   to meet. */
+   to meet.
+
+   The width is 13px and not 11px — two more than the distance to the row's
+   content edge — because the mark it turns into is a 14px *box* with the glyph
+   inset inside it. Ending the curve at x=0 landed it on the box's edge and left
+   a hairline of daylight before the icon actually starts, so the rail read as
+   pointing at the step rather than joining it; the extra 2px tuck under the
+   glyph's leading edge, where the line is hidden by the mark itself. */
 const RUN_RAIL_CLASS = "mt-0.5 ml-[calc(0.75rem-1px)] space-y-0.5 pl-2.5"
 
 const RAIL_ELBOW =
-  "relative before:absolute before:-top-0.5 before:-left-[11px] before:h-4 before:w-[11px] before:rounded-bl-[6px] before:border-b before:border-l before:border-border/60"
+  "relative before:absolute before:-top-0.5 before:-left-[11px] before:h-4 before:w-[13px] before:rounded-bl-[6px] before:border-b before:border-l before:border-border/60"
 
 /** The rail continuing past a step to the one under it — every step but the
     last, which is what makes the run's line end on its own last elbow. */

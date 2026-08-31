@@ -12,7 +12,7 @@
 // describeError() normalizes all of them to { title, detail }; reportError()
 // is the toast form. Nothing in the app should call `String(err)` on a caught
 // value again.
-import { toast } from "sonner"
+import { toast } from "@/lib/toast"
 import { ApiError } from "./settings"
 
 export interface ErrorInfo {
@@ -208,6 +208,62 @@ export function reportError(err: unknown, context?: string): ErrorInfo {
     },
   })
   return info
+}
+
+/**
+ * One toast for the whole of an operation: a spinner while it runs, then the
+ * same card becomes the outcome. This is `toast.promise` with the failure
+ * branch wired through `describeError`, so a rejected job reads exactly like
+ * the toast `reportError` would have raised for it — same headline, same
+ * detail, same Copy — instead of the bare `String(err)` a promise toast
+ * usually degrades to.
+ *
+ * Use it wherever the work takes long enough to notice (a backup, an import,
+ * a save that crosses the network): a success toast on its own can only say
+ * that something finished, never that it had started.
+ *
+ * The rejection is passed on, so a caller can still clean up — but it is
+ * marked reported, so neither the global net nor a `.catch(reportError)` says
+ * it twice.
+ */
+export function reportPromise<T>(
+  promise: Promise<T>,
+  {
+    loading,
+    success,
+    context,
+  }: {
+    loading: string
+    /** The settled headline — a function when it wants to count what it got. */
+    success: string | ((value: T) => string | { title: string; description?: string })
+    /** Names the action that failed, e.g. "Couldn't export the backup". */
+    context?: string
+  }
+): Promise<T> {
+  return toast.promise(promise, {
+    loading,
+    success: (value: T) => (typeof success === "function" ? success(value) : success),
+    error: (err: unknown) => {
+      const info = describeError(err)
+      console.error(`[${context ?? "error"}]`, err)
+      markReported(err)
+      // A cancel the user asked for is not news — but the loading toast is
+      // already on screen and something has to replace it, so it says the
+      // plain fact and goes away quickly rather than reporting a failure.
+      if (info.kind === "cancelled") return { title: "Cancelled", duration: 2500 }
+      const body = joinDetail(context ? info.title : undefined, info.detail)
+      const full = errorText(err, context)
+      return {
+        title: context ?? info.title,
+        description: body ? truncate(body, 400) : undefined,
+        duration: 10_000,
+        action: {
+          label: "Copy",
+          onClick: () => void navigator.clipboard?.writeText(full).catch(() => {}),
+        },
+      }
+    },
+  })
 }
 
 /**

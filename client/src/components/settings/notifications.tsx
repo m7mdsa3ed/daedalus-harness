@@ -1,4 +1,4 @@
-import { toast } from "sonner"
+import { toast } from "@/lib/toast"
 import { BellRingIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {

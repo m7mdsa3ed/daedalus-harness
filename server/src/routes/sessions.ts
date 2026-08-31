@@ -2,6 +2,7 @@ import type { Hono } from "hono";
 import { getAgent } from "../registry.js";
 import { getProfile, profileSupports, resolveProfileAgent } from "../profiles.js";
 import { getProject } from "../projects.js";
+import { listAgentSessions } from "../session-list.js";
 import type { SessionManager } from "../sessions.js";
 
 const UUID_RE =/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -66,6 +67,100 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
        thread that is genuinely ready rather than one still booting. */
     await session.bridge!.ready;
     return c.json({ id: session.id }, 201);
+  });
+
+  /**
+   * What this runtime already has that the harness does not: the agent's own
+   * `session/list`, spawned for the question and killed after it.
+   *
+   * POST rather than GET because it starts a process, which is the precedent
+   * `POST /api/profiles/:id/options` set. `projectId` supplies only the cwd to
+   * spawn *in* — the listing itself is machine-wide, and each session carries
+   * the cwd it ran in so the client can group by project.
+   */
+  app.post("/api/sessions/importable", async (c) => {
+    const { profileId, agentId: askedAgent, projectId } = await c.req.json();
+    const profile = getProfile(profileId);
+    if (!profile) return c.json({ error: "unknown profile" }, 404);
+    const agentId = resolveProfileAgent(profile, askedAgent);
+    if (!agentId || !getAgent(agentId)) {
+      return c.json({ error: "unknown agent for this profile" }, 404);
+    }
+    const project = getProject(projectId);
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    return c.json(await listAgentSessions(profile, agentId, project));
+  });
+
+  /**
+   * Adopt those conversations as threads. One round trip however many are
+   * picked: an import writes rows and spawns nothing (see
+   * `SessionManager.importSession`), and opening one is what loads it.
+   *
+   * Each row carries its own `projectId` because the dialog groups by the cwd
+   * the conversation ran in, and one import may span several projects.
+   */
+  app.post("/api/sessions/import", async (c) => {
+    const {
+      profileId,
+      agentId: askedAgent,
+      sessions: asked,
+      mcpServerIds,
+      skillIds,
+      commandIds,
+    } = await c.req.json();
+    const profile = getProfile(profileId);
+    if (!profile) return c.json({ error: "unknown profile" }, 404);
+    const agentId = resolveProfileAgent(profile, askedAgent);
+    if (!agentId || !getAgent(agentId)) {
+      return c.json({ error: "unknown agent for this profile" }, 404);
+    }
+    if (!Array.isArray(asked) || asked.length === 0) {
+      return c.json({ error: "no sessions to import" }, 400);
+    }
+    const ids = (v: unknown): string[] =>
+      Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+    const links = {
+      mcpServerIds: ids(mcpServerIds),
+      skillIds: ids(skillIds),
+      commandIds: ids(commandIds),
+    };
+    // Every thread already here, by the conversation it points at — what makes
+    // a second import of the same session a skip rather than a duplicate.
+    const taken = new Map(
+      sessions
+        .list()
+        .filter((s) => s.acpSessionId)
+        .map((s) => [s.acpSessionId as string, s.id]),
+    );
+    const created: { id: string; acpSessionId: string }[] = [];
+    const skipped: { acpSessionId: string; reason: string }[] = [];
+    for (const entry of asked) {
+      const acpSessionId = typeof entry?.acpSessionId === "string" ? entry.acpSessionId : "";
+      if (!acpSessionId) {
+        skipped.push({ acpSessionId: String(entry?.acpSessionId ?? ""), reason: "no session id" });
+        continue;
+      }
+      const existing = taken.get(acpSessionId);
+      if (existing) {
+        skipped.push({ acpSessionId, reason: "already imported" });
+        continue;
+      }
+      const project = getProject(entry?.projectId);
+      if (!project) {
+        skipped.push({ acpSessionId, reason: "unknown project" });
+        continue;
+      }
+      const session = sessions.importSession(
+        profile,
+        agentId,
+        project,
+        { acpSessionId, title: entry?.title ?? null, updatedAt: entry?.updatedAt ?? null },
+        links,
+      );
+      taken.set(acpSessionId, session.id);
+      created.push({ id: session.id, acpSessionId });
+    }
+    return c.json({ created, skipped }, created.length ? 201 : 200);
   });
 
   /**

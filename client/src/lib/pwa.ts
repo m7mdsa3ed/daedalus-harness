@@ -10,7 +10,7 @@
  * The worker needs nothing from us at runtime: it holds no Firebase config
  * (see src/sw.ts for why), so there is no channel to keep open.
  */
-import { toast } from "sonner"
+import { toast } from "@/lib/toast"
 import { registerSW } from "virtual:pwa-register"
 
 /** A long-lived tab never navigates, so it would never notice a deploy — and
@@ -125,7 +125,9 @@ function offerUpdate(): void {
         void applyPwaUpdate()
       },
     },
-    cancel: { label: "Later", onClick: () => toast.dismiss(UPDATE_TOAST_ID) },
+    // "Later" is the toast's own close button now — the Base UI card carries
+    // one on every toast, so a second dismiss control would be two ways to say
+    // nothing sitting beside the one way to say yes.
   })
 }
 

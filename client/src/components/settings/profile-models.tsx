@@ -1,6 +1,6 @@
 import * as React from "react"
 import { Download, Pencil, Plus, Star, Trash2 } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/lib/toast"
 import { reportError } from "@/lib/errors"
 import { api, type ModelCandidate, type ServerSettings } from "@/lib/settings"
 import { Badge } from "@/components/ui/badge"

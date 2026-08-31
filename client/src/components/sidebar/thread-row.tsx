@@ -9,7 +9,7 @@ import {
   Trash2,
   Undo2,
 } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/lib/toast"
 import { reportError } from "@/lib/errors"
 import {
   DropdownMenu,

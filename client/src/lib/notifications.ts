@@ -4,18 +4,18 @@
    permission. Two channels, layered by how far away the user is:
 
      - looking at the thread            → nothing (the transcript/dialog says it)
-     - app open, elsewhere              → a sonner toast (this module)
+     - app open, elsewhere              → an in-app toast (this module)
      - window hidden                    → system notification too (if granted)
      - no client attached at all        → the SERVER sends FCM push (push.ts on
                                           the server; this module is not involved)
 
-   The in-app toast is the same normal sonner toast the rest of the app raises
-   (the "Moved to Trash" one), not a header takeover — a notification should not
-   displace the thread title you are reading.
+   The in-app toast is the same normal toast the rest of the app raises (the
+   "Moved to Trash" one) — bottom-trailing corner, not a header takeover: a
+   notification should not displace the thread title you are reading.
 
    Preferences are device-local (localStorage), same pattern as view-options —
    what interrupts you on this device is not the server's business. */
-import { toast } from "sonner"
+import { toast } from "@/lib/toast"
 import { useSyncExternalStore } from "react"
 import { pushRegistration } from "./pwa"
 import { currentThreadId, navigateTo, threadPath } from "./router"
@@ -108,7 +108,7 @@ export async function requestSystemNotifications(): Promise<boolean> {
 /* ── The enable-notifications offer ──
    Whether the app should still be ASKING for permission: the browser has never
    been asked (permission is "default") and the user hasn't waved the offer
-   away. It surfaces as a persistent sonner toast, and is re-checked whenever
+   away. It surfaces as a persistent toast, and is re-checked whenever
    permission or the dismissal changes. */
 
 const OFFER_DISMISSED_KEY = "ui.notifications.offerDismissed"
@@ -232,7 +232,7 @@ export function notifyThreadEvent(
   const label = EVENT_LABELS[event]
   const body = [title, detail].filter(Boolean).join(" — ")
 
-  /* In-app, a normal sonner toast. The actionable events — the ones that are
+  /* In-app, a normal toast. The actionable events — the ones that are
      waiting on the user — carry an "Open" affordance (and, for a failure, an
      error tone); a turn that merely finished needs no button. */
   const actionable = event === "permissionNeeded" || event === "questionAsked" || event === "turnFailed"

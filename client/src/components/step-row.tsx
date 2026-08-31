@@ -5,7 +5,7 @@
    without importing each other. */
 import * as React from "react"
 import { ChevronRightIcon } from "lucide-react"
-import { toast } from "sonner"
+import { toast } from "@/lib/toast"
 import { reportError } from "@/lib/errors"
 import { FileBadge } from "@/components/tool-parts"
 import type { FileRange } from "@/lib/tools"

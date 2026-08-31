@@ -13,6 +13,7 @@ import {
   ArrowLeft,
   Copy,
   Cpu,
+  DownloadIcon,
   FolderIcon,
   FolderPlus,
   MonitorIcon,
@@ -44,7 +45,7 @@ import {
   Trash2,
 } from "lucide-react"
 import type * as acp from "@agentclientprotocol/sdk"
-import { toast } from "sonner"
+import { toast } from "@/lib/toast"
 import { reportError } from "@/lib/errors"
 import {
   currentChoiceLabel,
@@ -70,7 +71,8 @@ import { useHotkey } from "@/hooks/use-hotkey"
 import { KEYS, matchesChord } from "@/lib/shortcuts"
 import { Shortcut } from "@/components/shortcut"
 import { SETTINGS_SECTIONS } from "@/components/settings/sections"
-import { ProjectIcon } from "@/components/entity-icon"
+import { AgentIcon, ProjectIcon } from "@/components/entity-icon"
+import { loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import type { Actions } from "@/lib/actions"
 import { customThemeValue } from "@/lib/custom-themes"
 import { togglePin, usePins } from "@/lib/pins"
@@ -84,6 +86,7 @@ import {
   loadServers,
   loadSettings,
   setActiveServer,
+  type Project,
   type SessionMeta,
 } from "@/lib/settings"
 import { searchThreads, snippetParts, type SearchResult } from "@/lib/search"
@@ -186,6 +189,7 @@ export function CommandPalette({
   dock,
   onNewThread,
   onNewProject,
+  onImportThreads,
   onShortcuts,
 }: {
   open: boolean
@@ -196,6 +200,9 @@ export function CommandPalette({
       first message — see `startThread` in app-shell. */
   onNewThread: (opts?: { text?: string; projectId?: string }) => void
   onNewProject: () => void
+  /** Opens the import dialog, which app-shell owns — it outlives the palette,
+      which unmounts the moment a command runs. */
+  onImportThreads: () => void
   onShortcuts: () => void
 }) {
   const { state } = useStore()
@@ -283,6 +290,46 @@ export function CommandPalette({
   const projectName = (projectId: string) =>
     state.projects.find((project) => project.id === projectId)?.name ?? "Other"
 
+  /* ── Where a bare "New thread" lands ──
+     ⌘N resolves the remembered defaults and routes; the palette used to offer
+     that as an unlabelled row, so the one thing it decides for you — the
+     project, which is the cwd the agent runs in — was only discoverable after
+     the thread existed. Resolved here with the same functions, read once per
+     open (localStorage), and said on the row. */
+  const startTarget = React.useMemo(() => {
+    if (!open) return null
+    const defaults = loadThreadDefaults()
+    const project =
+      state.projects.find((project) => project.id === defaults.projectId) ?? state.projects[0]
+    const start = resolveThreadStart(defaults, state.profiles)
+    return project && start ? { project, ...start } : null
+  }, [open, state.projects, state.profiles])
+  const agentName = (agentId: string) =>
+    state.agents.find((agent) => agent.id === agentId)?.name ?? agentId
+
+  /** Newest turn per project — what orders the project list when you are
+      choosing where to start, since the one you worked in last is the one you
+      are most likely to want next. */
+  const projectActivity = React.useMemo(() => {
+    const latest = new Map<string, number>()
+    for (const session of sessions) {
+      const at = activityAt(session)
+      if (at > (latest.get(session.projectId) ?? 0)) latest.set(session.projectId, at)
+    }
+    return latest
+  }, [sessions])
+
+  // The default first (it is what ↵ on the row above would have done), then
+  // by last activity — a fresh project with no threads sorts last, not first.
+  const startProjects = React.useMemo(() => {
+    const preferred = startTarget?.project.id
+    return [...state.projects].sort((a, b) => {
+      if (a.id === preferred) return -1
+      if (b.id === preferred) return 1
+      return (projectActivity.get(b.id) ?? 0) - (projectActivity.get(a.id) ?? 0)
+    })
+  }, [state.projects, startTarget, projectActivity])
+
   /* Retuning is one ACP call to the running agent — nothing restarts, nothing
      is replayed, and it is safe in the middle of a turn. That is why there is
      no confirmation here any more. */
@@ -325,11 +372,16 @@ export function CommandPalette({
     run(() => onNewThread({ text, projectId }))
   }
 
-  const askElsewhere = () => {
-    setAskText(query.trim())
+  /* The project page, entered two ways: with a message in hand (the query is
+     prose, so it cannot stay in the box — no project row would match it) or
+     empty, which is a plain "new thread in…". `askText` is the difference and
+     the page reads it for both its heading and what it does on select. */
+  const startElsewhere = (text = "") => {
+    setAskText(text)
     setQuery("")
     setPage("start")
   }
+  const askElsewhere = () => startElsewhere(query.trim())
 
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (page === "root" && query.trim() && matchesChord(event, KEYS.send)) {
@@ -463,22 +515,34 @@ export function CommandPalette({
               agent runs in, which is the one part of "start a thread" the
               remembered defaults can genuinely get wrong. */}
           {page === "start" && (
-            <CommandGroup heading={`Start “${askText}” in`}>
-              {back}
-              {state.projects.map((project) => (
+            <>
+              <CommandGroup heading={askText ? `Start “${askText}” in` : "New thread in"}>
+                {back}
+                {startProjects.map((project) => (
+                  <ProjectStartRow
+                    key={project.id}
+                    project={project}
+                    lastActivity={projectActivity.get(project.id)}
+                    isDefault={project.id === startTarget?.project.id}
+                    onSelect={() =>
+                      run(() => onNewThread({ text: askText || undefined, projectId: project.id }))
+                    }
+                  />
+                ))}
+              </CommandGroup>
+              {/* A workspace that is not on the list yet is the other reason to
+                  be on this page, so it is not a dead end. */}
+              <CommandSeparator />
+              <CommandGroup>
                 <CommandItem
-                  key={project.id}
-                  value={`project ${project.name} ${project.cwd}`}
-                  onSelect={() => run(() => onNewThread({ text: askText, projectId: project.id }))}
+                  value="new project workspace directory cwd"
+                  onSelect={() => run(onNewProject)}
                 >
-                  <ProjectIcon project={project} className="size-4" />
-                  <span className="truncate">{project.name}</span>
-                  <span className="ml-auto truncate font-mono text-[11px] text-muted-foreground">
-                    {project.cwd}
-                  </span>
+                  <FolderPlus />
+                  New project…
                 </CommandItem>
-              ))}
-            </CommandGroup>
+              </CommandGroup>
+            </>
           )}
 
           {page === "root" && (
@@ -486,20 +550,54 @@ export function CommandPalette({
               <CommandGroup heading="Create">
                 <CommandItem
                   value="new thread session chat start"
-                  onSelect={() => run(onNewThread)}
+                  onSelect={() => run(() => onNewThread())}
                 >
                   <Plus />
                   New thread
+                  {/* What ↵ here is about to pick, in the order it is decided:
+                      the project (the cwd), then the pair that runs in it. */}
+                  {startTarget && (
+                    <span className="ml-auto flex min-w-0 shrink items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <ProjectIcon project={startTarget.project} className="size-3.5" />
+                      <span className="truncate">{startTarget.project.name}</span>
+                      <span className="opacity-70">·</span>
+                      <AgentIcon agentId={startTarget.agentId} className="size-3.5" />
+                      {/* The palette is a viewport dialog, not a panel — so the
+                          breakpoint is the window's. */}
+                      <span className="hidden truncate sm:inline">
+                        {agentName(startTarget.agentId)}
+                      </span>
+                    </span>
+                  )}
                   <CommandShortcut>
                     <Shortcut chord={KEYS.newThread} />
                   </CommandShortcut>
                 </CommandItem>
+                {state.projects.length > 1 && (
+                  <CommandItem
+                    value="new thread in project workspace another elsewhere"
+                    onSelect={() => startElsewhere()}
+                  >
+                    <FolderIcon />
+                    New thread in another project…
+                  </CommandItem>
+                )}
                 <CommandItem
                   value="new project workspace directory cwd"
                   onSelect={() => run(onNewProject)}
                 >
                   <FolderPlus />
                   New project
+                </CommandItem>
+                {/* Under Create because that is what it makes: threads. The
+                    conversation already exists in the agent's own store — this
+                    is the harness adopting it. */}
+                <CommandItem
+                  value="import threads sessions claude codex opencode existing resume"
+                  onSelect={() => run(onImportThreads)}
+                >
+                  <DownloadIcon />
+                  Import threads…
                 </CommandItem>
                 <CommandItem
                   value="tasks board kanban todos todo list"
@@ -982,6 +1080,40 @@ function ChoiceItem({
     >
       <Icon className={selected ? "text-primary" : undefined} />
       <span className={capitalize ? "capitalize" : undefined}>{label}</span>
+    </CommandItem>
+  )
+}
+
+/** One project on the "new thread in…" page: its mark and name, the cwd the
+    agent would run in, and when it was last worked in — the three things that
+    tell one workspace from another. The default is called out because it is
+    what the row above (and ⌘N) would have chosen. */
+function ProjectStartRow({
+  project,
+  lastActivity,
+  isDefault,
+  onSelect,
+}: {
+  project: Project
+  lastActivity: number | undefined
+  isDefault: boolean
+  onSelect: () => void
+}) {
+  return (
+    <CommandItem value={`project ${project.name} ${project.cwd}`} onSelect={onSelect}>
+      <ProjectIcon project={project} className="size-4" />
+      <span className="truncate">{project.name}</span>
+      {isDefault && (
+        <span className="shrink-0 rounded-sm bg-muted px-1.5 py-px text-[10px] text-muted-foreground">
+          Last used
+        </span>
+      )}
+      <span className="ml-auto flex min-w-0 shrink items-center gap-2 text-[11px] text-muted-foreground">
+        <span className="truncate font-mono">{project.cwd}</span>
+        {lastActivity ? (
+          <span className="shrink-0 tabular-nums opacity-70">{shortAge(lastActivity)}</span>
+        ) : null}
+      </span>
     </CommandItem>
   )
 }

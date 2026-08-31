@@ -978,8 +978,43 @@ export class SessionManager {
       restore?: import("./protocol.js").RestoreState;
     } = {},
   ): Session {
-    const session: Session = {
-      id: id ?? randomUUID(),
+    const session = this.blankSession(profile, agentId, project, links, {
+      id,
+      model,
+      effort,
+      title: opts.title,
+      parentSessionId: opts.parentSessionId,
+    });
+    this.sessions.set(session.id, session);
+    // Before the bridge: the event rows reference this one, so the session has
+    // to exist by the time the agent's first update arrives.
+    this.persist(session);
+    this.persistLinks(session);
+    this.start(session, profile, project, model, effort, { configChoices, restore: opts.restore });
+    return session;
+  }
+
+  /** A thread with no process behind it yet — everything `create` and `import`
+      agree on, which is every field but the ones a spawn fills in. */
+  private blankSession(
+    profile: Profile,
+    agentId: string,
+    project: Project,
+    links: LinkSet,
+    opts: {
+      id?: string;
+      model?: string;
+      effort?: string;
+      title?: string;
+      parentSessionId?: string;
+      /** An imported thread already had a life before this row existed; its
+          own last-activity time is where it belongs in the list. */
+      createdAt?: number;
+    },
+  ): Session {
+    const now = Date.now();
+    return {
+      id: opts.id ?? randomUUID(),
       profileId: profile.id,
       projectId: project.id,
       links,
@@ -989,14 +1024,14 @@ export class SessionManager {
       agentId,
       profile,
       project,
-      model: model || profile.defaultModel || "",
-      effort: effort ?? "",
+      model: opts.model || profile.defaultModel || "",
+      effort: opts.effort ?? "",
       title: opts.title ?? "New thread",
       acpSessionProvisional: false,
       liveAcpSessionId: null,
       historyLost: null,
-      createdAt: Date.now(),
-      lastActivityAt: Date.now(),
+      createdAt: opts.createdAt ?? now,
+      lastActivityAt: opts.createdAt ?? now,
       eventCount: 0,
       stderr: [],
       stderrCount: 0,
@@ -1004,7 +1039,7 @@ export class SessionManager {
       proc: null,
       bridge: null,
       peers: new Set(),
-      detachedAt: Date.now(),
+      detachedAt: now,
       deletedAt: null,
       exited: false,
       respawnChain: null,
@@ -1015,12 +1050,44 @@ export class SessionManager {
       websearchViaMcp: false,
       websearchCalls: new Set(),
     };
+  }
+
+  /**
+   * Adopt a conversation that already exists in the agent's own store.
+   *
+   * The whole of a thread's identity is `acpSessionId` — the conversation lives
+   * in the agent, and a revive is `session/load` (see `respawnNow`). So an
+   * import writes a *pointer* and nothing else: no process is spawned, no
+   * transcript is copied, and the row it leaves is exactly the shape an
+   * idle-retired thread has after a restart. Opening it takes the revive path
+   * every retired thread takes, which is what loads the history, journals it and
+   * indexes it for search.
+   *
+   * The id is not provisional: the agent listed this session itself, so it is as
+   * proven as an id gets before a turn settles on it — and if the load is
+   * refused anyway, keeping it is what lets the next attempt try again instead
+   * of stranding a transcript that is still on disk.
+   */
+  importSession(
+    profile: Profile,
+    agentId: string,
+    project: Project,
+    info: { acpSessionId: string; title?: string | null; updatedAt?: string | null },
+    links: LinkSet = emptyLinks(),
+  ): Session {
+    const updatedAt = info.updatedAt ? Date.parse(info.updatedAt) : NaN;
+    const session = this.blankSession(profile, agentId, project, links, {
+      title: info.title?.trim() || "Imported thread",
+      createdAt: Number.isNaN(updatedAt) ? undefined : updatedAt,
+    });
+    session.acpSessionId = info.acpSessionId;
+    // No process, and none until someone opens it. `exited` is what every path
+    // that asks "is this thread live" reads, including the client's own
+    // openThread — which is the one that revives it.
+    session.exited = true;
     this.sessions.set(session.id, session);
-    // Before the bridge: the event rows reference this one, so the session has
-    // to exist by the time the agent's first update arrives.
     this.persist(session);
     this.persistLinks(session);
-    this.start(session, profile, project, model, effort, { configChoices, restore: opts.restore });
     return session;
   }
 
