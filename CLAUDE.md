@@ -148,10 +148,26 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   on `ThreadList`): Today / Yesterday / Previous 7 days / Previous 30 days, then
   by month. Counted in calendar days, so 00:10 says "Yesterday" about 23:50, and
   the headings are inserted over the rows that are *visible*, so `limit` still
-  counts threads and "Show more" can never reveal an empty heading. Rows are one line and title-only: a running turn
+  counts threads and "Show more" can never reveal an empty heading.
+  **Every one of those orders — and the period a row is filed under — is
+  `activityAt` (`lib/settings.ts`), the last *turn*, never `createdAt`**: a
+  thread is recent because something was said in it, so an old thread picked up
+  this morning belongs at the top of Recents and under Today, and ordering by
+  creation buried it under threads nothing had happened in for weeks. The clock
+  is `sessions.last_activity_at`, bumped server-side in `SessionManager.emit` on
+  the journaled `turn_started`/`turn_ended` — once per turn, not once per
+  streamed token — and reported by `list()`. **Reading is not activity**:
+  attaching journals nothing, so opening yesterday's thread does not promote it,
+  which is also why the client's own optimistic stamp (the `turn-active` case in
+  the store) fires on a turn *starting* only — `turn_ended` is replayed, and
+  stamping on it would move a thread to the top of the list for having been
+  scrolled. Rows written before the column existed read 0 and are backfilled
+  from the journal's own `max(at)` in `reload`, once, rather than by a migration.
+  Rows are one line and title-only: a running turn
   **shimmers the title** (`harness-shimmer`, the same band as the working line and a live
   thought), a thread waiting on you gets an amber dot at the trailing edge; agent,
-  profile, model, project and start time live in `ThreadInfoCard` — one popover
+  profile, model, project, start time and — when it says something the start
+  time does not — last active live in `ThreadInfoCard` — one popover
   that opens on hover (Base UI `openOnHover`) and, on a phone, on long press,
   where it also carries the row's actions (it replaces the right-click menu there). Every row, label and group draws from
   one scale (`ROW`/`MENU`/`GROUP`/`TIER`, exported for the settings nav too). The
@@ -593,68 +609,57 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   name, step, index/total, this step's `phase`) — decoded only in `lib/tools/subagents.ts`
   (`workflowInfoOf`), stamped onto the `SubagentItem`, and folded at view time by
   `mergeWorkflowRuns` (`transcript-rows.ts`) into one `workflow-group` row per run, which
-  `WorkflowRun` (`thread-items.tsx`) draws as a single card — a two-line header (an icon
-  chip in the run's state tint, the run's name over `done/total · running phase · elapsed`,
-  and the state as a word in `WorkflowPill`), then the meter, then a band per phase
-  (`WorkflowPhaseBand`) over the steps as a **table** (`WorkflowStepRow`: mark, ordinal,
-  the definition's step name, what it did, how long), a row each — instead of N stray
-  subagent rows. The name shares its line with nothing now: beside the pips, the clock and
-  the counter it was the one thing that truncated at a panel's width, and it is the only
-  thing that identifies the run in a long transcript. **The meter is one segment per
-  step**, grouped by phase and tinted per step state (`WorkflowMeter`), and it replaces
-  both of the readings that used to sit apart — a pip per phase in the header and a
-  `done/total` bar drawn into the header's hairline. Neither was enough alone: the bar
-  said how far through the run was and nothing about where it went wrong, the pips said
-  which stage it was in and nothing about how big a stage was. Segments share the width in
-  proportion to a phase's step count, so a phase of six does not read the length of a phase
-  of one. Every state colour in the card — the meter's fills, a step's mark disc, a phase's
-  count pill, the header chip — comes from one table (`WF_TONE`/`wfTone`), because the four
-  of them were each picking their own and a failed step could read destructive in the table
-  and merely muted in the strip above it. The
-  activity column answers the tense it is in — settled, `summarise`'s counts ("read 2
-  files"); live, `currentActivity`, the newest call still open, because the counts describe
-  what a working step did a minute ago and that column is the only thing the table says
-  about a running step at all. A running row is tinted `bg-primary/5` and a failed one
-  `bg-destructive/5` (the two rows anyone is looking for), a pending row's activity cell
-  says `waiting` rather than sitting blank — a column of blanks reads as missing data, not
-  as work not yet done — and every row carries its state as `sr-only` text, since the mark
-  that states it is an icon. **The table is a vertical tab list, not an accordion**: the
-  step rows are Base UI `Tabs.Tab`s inside one `Tabs.List` and the selected step's
-  `SubagentBody` is its `Tabs.Panel`, beside the list at `@panel-md` and stacked under it
-  below that. Opening two steps in place used to push the rest off screen and leave the
-  table — the thing the card is for — unreadable; as tabs the shape holds still whatever
-  you are reading, and the run becomes walkable (↑/↓ between steps, Enter to pick,
-  Home/End to the ends, all of it Base UI's). Selection is **manual** — `activateOnFocus`
-  is deliberately off, because a panel is a whole transcript and activating on focus would
-  mean tabbing *past* a run on the way somewhere else opened one. Base UI registers tabs by
-  ref and sorts them by document position, so the rows can stay nested under their phase's
-  rail; the phase bands and pending rows ride inside the list too and are simply not tabs,
-  so they never take the roving focus. Folding a phase clears a selection inside it (a
-  panel whose tab is off screen points at nothing), only the selected panel is mounted
-  (`keepMounted` off, so nine steps cost one transcript), the panel names its step because
-  stacked it sits under the whole list rather than under its row, and closing is a button
-  rather than a second click on the row — a tab list that deselects on re-click loses your
-  place by accident. Mobile is the pointer's question, not the panel's: rows and bands take
-  `max-md:py-1.5` so a finger has a target, while the dense default that makes a nine-step
-  run readable stays everywhere else. The activity column is now spared at *both* ends —
-  no room below `@panel-sm`, and no need at `@panel-md`, where the panel beside the list
-  shows the work in full and the list wants the width for the step's name. A table rather
-  than the rail of `SubagentStep`s it was, because a run is not one agent's sequence of
-  steps but N threads with a shape the user wrote, and that shape reads down a column;
-  a row still expands into `SubagentBody`, the very same brief/thread-link/rail/report a
-  step draws on its own, which is what `SubagentStep` was split around so both can use it.
-  **The shape is drawn before it happens**: the same stamp carries `plan`, the whole outline
-  (phases and the step names in them), repeated on *every* spawn — so the card opens with
-  every step of the definition, the ones the runner has not reached yet dimmed
-  (`WorkflowPendingRow`), and `phasesOf` is what joins the outline to the steps that have
-  started. Repeating it is what keeps it journaled and replayed for free: an outline sent
-  once would have to be an event kind of its own, and a card built only from spawns can
-  only ever say what has already happened. A flat definition's outline is one phase named
-  `null`, whose band is left out — that is the plain table this card always drew, and it is
-  also what a journal written before phases existed replays as, since `phasesOf` falls back
-  to the arrived steps when there is no plan. A finished phase folds away while the run is
-  live and every phase opens once it settles: mid-run the question is which stage it is in,
-  afterwards it is what happened.
+  `WorkflowRun` (`thread-items.tsx`) draws as a **compact preview card that opens the run
+  in a dialog** — instead of N stray subagent rows, and instead of the phase-banded table
+  the card itself used to hold: a run is N whole threads, and a transcript column is the
+  wrong room to read one in (the table fought the panel for width, and a step's events
+  ended up in a pane inside a card inside a transcript). The card answers the passing
+  reader's questions and nothing else: a two-line header (an icon chip in the run's state
+  tint, the run's name over `done/total · running phase · elapsed`, the state as a word in
+  `WorkflowPill`), the meter, and a foot line that live says the step being written plus
+  `currentActivity` (the newest call still open — `summarise`'s counts describe what a
+  working step did a minute ago) and settled-failed names the step that failed. The whole
+  card is one `DialogTrigger` button (children are spans — a button holds phrasing
+  content), with a standing `Maximize2Icon` hint: hover is not the only way in, just the
+  first one discovered. **The meter is one segment per step**, grouped by phase and tinted
+  per step state (`WorkflowMeter`, `className` from the caller since card and dialog pad
+  differently), replacing the pip-per-phase and done/total bar that used to sit apart:
+  segments share width in proportion to a phase's step count, so a phase of six does not
+  read the length of a phase of one. Every state colour anywhere — meter fills, mark
+  discs, count pills, chips — comes from one table (`WF_TONE`/`wfTone`), because four
+  surfaces each picking their own let a failed step read destructive in one and merely
+  muted in another. **The dialog is the run**: it restates the card's header (it covers
+  the transcript, so it must say which run it is showing) over a two-pane body — a
+  sidebar of the run's phases with their steps under them, and the selected step's events
+  beside it. The sidebar is a Base UI `Tabs.List`: each started step is a `Tabs.Tab`
+  (`WorkflowStepTab`: state mark in its tinted disc, the definition's step name, a live
+  second line of `currentActivity` while it runs, duration trailing) and the selected
+  step's `SubagentBody` — the very same brief/thread-link/rail/report a step draws on its
+  own, which is what `SubagentStep` was split around — is its `Tabs.Panel`
+  (`WorkflowStepPanel`), scrolling in its own pane so a long rail never grows the dialog.
+  Phase headers (`WorkflowPhaseHeader`: name, duration, done/total pill) are sticky and
+  are not tabs — nor are pending rows — so they never take the roving focus and ↑/↓ walk
+  the steps, Enter picks, Home/End reach the ends. Selection is **manual**
+  (`activateOnFocus` off: a panel is a whole transcript) and only the selected panel
+  mounts (`keepMounted` off, so nine steps cost one transcript). Phases no longer fold —
+  the dialog has the room the card never did. Opening the dialog lands on the running
+  step, else the failed one, else the first, and keeps a pick made last time; on a phone
+  (`useIsMobile`) it opens on the list instead, because there the panel *replaces* the
+  list (`max-sm:hidden` both ways) and the panel header grows a back button — the two
+  panes are viewport-anchored now, so their breakpoints are `sm:`, not `@panel-*`. A
+  running row is tinted `bg-primary/5` and a failed one `bg-destructive/5` (the two rows
+  anyone is looking for), a pending row trails `waiting` rather than sitting blank, and
+  every row carries its state as `sr-only` text, since the mark that states it is an
+  icon. **The shape is drawn before it happens**: the same stamp carries `plan`, the
+  whole outline (phases and the step names in them), repeated on *every* spawn — so the
+  meter and the sidebar show every step of the definition from the first spawn, the ones
+  the runner has not reached yet dimmed (`WorkflowPendingItem`), and `phasesOf` is what
+  joins the outline to the steps that have started. Repeating it is what keeps it
+  journaled and replayed for free: an outline sent once would have to be an event kind of
+  its own, and a view built only from spawns can only ever say what has already happened.
+  A flat definition's outline is one phase named `null`, whose header is left out — a
+  plain step list, which is also what a journal written before phases existed replays as,
+  since `phasesOf` falls back to the arrived steps when there is no plan.
   A settled step's duration is start-to-last-activity (`lastActivityAt`): nothing records
   when a step *ended*, and the reducer never marks one done. Only `update`s are mirrored: a child's
   `turn_started`/`turn_ended` on the parent's log would cut the parent's replay windows at
@@ -700,10 +705,19 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   against the fake agent (`echo:` prompts).
 - **MCP servers, skills and commands have two owners, and the agent gets the union.**
   A profile links them (the provider setup: a gateway's own servers, the skills that go with
-  a house style), and a thread picks its own on the draft's composer strip (`DraftToolsMenu`
-  in `draft-config.tsx`, where the profile's show checked and locked, so the thread's picks
-  are exactly the additions). A project links nothing — it is the directory, not the
-  toolset; the `project_*` link tables it once had are gone. Both
+  a house style), and a thread picks its own on the draft's composer strip
+  (`ThreadToolsMenu` in `components/thread-tools.tsx`, where the profile's show checked and
+  locked, so the thread's picks are exactly the additions). **That control outlives the
+  draft**: the same component, `editable={false}`, sits in the composer's control row beside
+  `SessionConfigPopover` for the whole of a started thread and reads the kit back — what the
+  agent was spawned with, each entry saying whether it came from the profile or from the
+  thread — because the picks were only ever visible while they were still hypothetical, and
+  vanished at the moment they started mattering. It is a read-out and not a picker there:
+  the links are written once at create and are what a revive spawns with, so there is
+  nothing to toggle. A read-out lists only what is linked (a started thread has no use for
+  the rest of the library) and draws nothing at all when a thread carries no tools. A
+  project links nothing — it is the directory, not the toolset; the `project_*` link tables
+  it once had are gone. Both
   owners are join tables with `ON DELETE CASCADE` — `profile_*`, `session_*` — read and
   written through one descriptor-driven helper, `server/src/db/links.ts`
   (`readLinks`/`writeLinks`/`unionLinks`), so a stale id links nothing and nothing filters.
@@ -914,6 +928,15 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   auto: a new worker installs and waits, and `registerPwa` offers it as one pinned
   sonner toast (fixed id, so an hourly re-check replaces rather than stacks) whose
   Reload calls `updateSW(true)` — the worker only `skipWaiting()`s on that message.
+  **That one toast has three faces**, because a build is a whole precache and the
+  install is a download, not an instant: `watchInstalling` (off `updatefound`, and off
+  the worker already in flight when `onRegisteredSW` lands) puts a *loading* toast up
+  while the new worker installs, `onNeedRefresh` replaces it in place with the
+  Reload/Later offer, and Reload replaces it again with a loading toast while the
+  handover and reload happen. Only when something already controls the page — on a
+  first install there is no old version, nothing will be offered at the end of it, and
+  the announcement would be a lie. A failed install (`redundant`) dismisses the toast
+  rather than leaving a spinner turning against nothing.
   Silently taking over would swap the precache under a page whose JS is already
   running, so a lazy chunk it asks for next is a hash that no longer exists, and it
   would reload the tab mid-turn. Reloading is cheap on purpose — drafts are in

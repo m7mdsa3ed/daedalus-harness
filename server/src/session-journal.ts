@@ -291,6 +291,22 @@ export class SessionJournal {
     );
   }
 
+  /** When each session's log was last written — `max(at)` per session. What
+      backfills `Session.lastActivityAt` for a thread whose row predates that
+      column, so ordering by activity is right for threads that existed before
+      anything recorded it. One grouped scan at boot, not per thread. */
+  lastActivityBySession(): Map<string, number> {
+    this.flush();
+    return new Map(
+      this.db
+        .select({ sessionId: eventsTable.sessionId, at: sql<number>`max(${eventsTable.at})` })
+        .from(eventsTable)
+        .groupBy(eventsTable.sessionId)
+        .all()
+        .map((row) => [row.sessionId, row.at] as const),
+    );
+  }
+
   /**
    * Drop whole logs whose newest event predates `cutoff`, skipping the ids in
    * `liveIds` (a running thread's log is what its peers are attached to).

@@ -70,7 +70,19 @@ async function unregisterRetiredWorkers(): Promise<void> {
    One toast, not a queue: it is pinned open (`duration: Infinity`) under a
    fixed id, so the hourly re-check replaces it rather than stacking a second
    copy on a tab that has been open all day. "Later" only dismisses the toast —
-   the update stays waiting and is applied by the next ordinary reload. */
+   the update stays waiting and is applied by the next ordinary reload.
+
+   That one toast has three faces, in the order they actually happen. A build
+   is a whole precache, so the gap between "there is a new version" and "it is
+   ready to swap in" is a download, not an instant — announcing only the
+   *finished* install left that stretch silent, and offering a Reload button
+   during it would be a button that cannot work yet. So: a **loading** toast
+   while the new worker installs, replaced in place (same id) by the
+   Reload/Later offer once it is waiting, and replaced again by a loading
+   toast on Reload, because handing over and reloading is itself a round trip
+   through the worker and the button would otherwise sit there looking
+   unpressed. A failed install (`redundant`) takes the toast away rather than
+   leaving it spinning forever. */
 
 const UPDATE_TOAST_ID = "pwa-update"
 
@@ -86,6 +98,14 @@ export async function applyPwaUpdate(): Promise<void> {
     say so after the toast has been dismissed. */
 export const pwaUpdateReady = (): boolean => applyUpdate !== null
 
+function announceInstalling(): void {
+  toast.loading("Downloading a new version of Daedalus", {
+    id: UPDATE_TOAST_ID,
+    description: "You can keep working — you'll be asked before anything reloads.",
+    duration: Infinity,
+  })
+}
+
 function offerUpdate(): void {
   toast("A new version of Daedalus is ready", {
     id: UPDATE_TOAST_ID,
@@ -94,10 +114,40 @@ function offerUpdate(): void {
     action: {
       label: "Reload",
       onClick: () => {
+        // Replaces the offer in place: the reload is one round trip through
+        // the worker away, and a button that stays drawn after a click reads
+        // as one that did not take.
+        toast.loading("Updating Daedalus…", {
+          id: UPDATE_TOAST_ID,
+          description: "Reloading with the new version.",
+          duration: Infinity,
+        })
         void applyPwaUpdate()
       },
     },
     cancel: { label: "Later", onClick: () => toast.dismiss(UPDATE_TOAST_ID) },
+  })
+}
+
+/**
+ * Follow a worker that is installing, so the download has a face.
+ *
+ * Only when something is already controlling the page: on a first install
+ * there is no old version to replace, nothing will be offered at the end of
+ * it, and "downloading a new version" would be a lie told to someone opening
+ * the app for the first time.
+ *
+ * The `installed` end of it is not handled here — that is exactly when
+ * `onNeedRefresh` fires, and it replaces this toast with the offer.
+ */
+function watchInstalling(worker: ServiceWorker | null): void {
+  if (!worker || !navigator.serviceWorker.controller) return
+  if (worker.state === "activated" || worker.state === "redundant") return
+  announceInstalling()
+  worker.addEventListener("statechange", () => {
+    // The install failed: there is no update to offer, so take the spinner
+    // away rather than leaving it turning against nothing.
+    if (worker.state === "redundant") toast.dismiss(UPDATE_TOAST_ID)
   })
 }
 
@@ -124,6 +174,13 @@ function registerAppWorker(): void {
     },
     onRegisteredSW(_swUrl, registration) {
       if (!registration) return
+      // An update found by this very registration can beat the callback that
+      // hands us the registration, so the worker already in flight is checked
+      // as well as the ones announced later.
+      watchInstalling(registration.installing)
+      registration.addEventListener("updatefound", () => {
+        watchInstalling(registration.installing)
+      })
       setInterval(() => {
         // Offline, `update()` rejects — there is nothing to do about that but
         // wait for the next tick.

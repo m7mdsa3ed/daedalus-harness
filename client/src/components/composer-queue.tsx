@@ -270,7 +270,7 @@ function QueueRow({
       {!last && (
         <span
           aria-hidden
-          className="absolute top-7 -bottom-1 left-3 w-px -translate-x-1/2 bg-border/50"
+          className="absolute top-7 -bottom-1 left-3 w-px -translate-x-1/2 rounded-full bg-border/50"
         />
       )}
       {/* The position, in the icon column the header's disc sits in — the order

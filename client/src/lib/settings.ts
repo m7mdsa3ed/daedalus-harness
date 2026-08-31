@@ -429,6 +429,12 @@ export interface SessionMeta {
   title: string
   acpSessionId?: string
   createdAt: number
+  /** Epoch ms of the newest turn on this thread — what every "recent" list
+      orders by. Creation is not activity: a thread from last month picked up
+      this morning is the most recent one there is, and ordering by `createdAt`
+      buried it. Absent from a server that predates it, which is what
+      `activityAt` falls back for. */
+  lastActivityAt?: number
   /** Epoch ms this thread was deleted; null = live. Deleted threads still come
       down the wire — they live in Trash until they are purged or restored. */
   deletedAt: number | null
@@ -461,6 +467,12 @@ export interface SessionMeta {
 
 /** A thread that is nobody's workflow step — the only kind the lists show. */
 export const isTopLevel = (s: SessionMeta): boolean => !s.parentSessionId
+
+/** When this thread was last *worked in* — the one clock every list sorts and
+    groups by. A draft and a server too old to report activity have only their
+    creation to go on, which is the same answer for a thread nothing has
+    happened in yet. */
+export const activityAt = (s: SessionMeta): number => s.lastActivityAt || s.createdAt
 
 /** A scheduled prompt: the server sends `text` to `sessionId`'s agent at
     `nextAt`, and again every `everyMs` until cancelled. The server owns

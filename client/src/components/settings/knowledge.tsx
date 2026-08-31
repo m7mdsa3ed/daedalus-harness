@@ -89,7 +89,9 @@ export function KnowledgePage() {
   const actions = (
     <div className="flex flex-wrap items-center justify-end gap-2">
       <Select value={projectId} onValueChange={(value) => setProjectId(value ?? ALL)}>
-        <SelectTrigger className="w-44">
+        {/* Full width on a phone, where the header's action block is the whole
+            column and a 176px trigger beside two buttons leaves neither room. */}
+        <SelectTrigger className="w-full max-sm:h-9 sm:w-44">
           <SelectValue>{projectId === ALL ? "All projects" : (projectName(projectId) ?? "Project")}</SelectValue>
         </SelectTrigger>
         <SelectContent>

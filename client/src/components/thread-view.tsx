@@ -894,7 +894,17 @@ function Composer({
                     revive spawns with, so this is a read-out rather than the
                     picker the strip carried. It draws nothing when the thread
                     carries no tools. */}
-                {meta && <ThreadToolsMenu meta={meta} actions={actions} editable={false} />}
+                {meta && (
+                  <ThreadToolsMenu
+                    meta={meta}
+                    actions={actions}
+                    editable={false}
+                    /* The strip's own dimensions are the strip's; in the
+                       composer row it wears the same 32px, chrome-less shape
+                       as the config trigger beside it. */
+                    className="h-8 gap-1.5 px-2 text-xs hover:bg-transparent hover:text-foreground data-popup-open:bg-transparent"
+                  />
+                )}
               </>
             )}
             <SessionSettingsButton />

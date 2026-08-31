@@ -20,6 +20,7 @@ import {
   Keyboard,
   LogOut,
   MessageSquareIcon,
+  MessageSquarePlusIcon,
   Minus,
   Monitor,
   Moon,
@@ -66,7 +67,7 @@ import { useSidebar } from "@/components/ui/sidebar"
 import type { WorkspaceDock } from "@/components/workspace/dock"
 import { openTerminal } from "@/components/workspace/terminal-panel"
 import { useHotkey } from "@/hooks/use-hotkey"
-import { KEYS } from "@/lib/shortcuts"
+import { KEYS, matchesChord } from "@/lib/shortcuts"
 import { Shortcut } from "@/components/shortcut"
 import { SETTINGS_SECTIONS } from "@/components/settings/sections"
 import { ProjectIcon } from "@/components/entity-icon"
@@ -77,6 +78,7 @@ import { shortAge } from "@/lib/time"
 import { useLocation, useNavigate } from "react-router"
 import { boardPath, currentThreadId, projectPath, settingsPath, threadPath } from "@/lib/router"
 import {
+  activityAt,
   clearSettings,
   isTopLevel,
   loadServers,
@@ -114,7 +116,7 @@ const MODES = [
 ] as const
 
 /** Sub-lists the palette can descend into, each a filtered second screen. */
-type Page = "root" | "theme" | "model" | "effort" | "mode"
+type Page = "root" | "theme" | "model" | "effort" | "mode" | "start"
 
 /** The transcript as markdown — what you would paste into an issue. */
 function transcriptText(items: ThreadItem[]): string {
@@ -190,7 +192,9 @@ export function CommandPalette({
   onOpenChange: (open: boolean) => void
   actions: Actions
   dock: WorkspaceDock
-  onNewThread: () => void
+  /** Mints a draft thread and routes to it. With `text`, it also sends that
+      first message — see `startThread` in app-shell. */
+  onNewThread: (opts?: { text?: string; projectId?: string }) => void
   onNewProject: () => void
   onShortcuts: () => void
 }) {
@@ -204,6 +208,10 @@ export function CommandPalette({
   const { toggleSidebar, setOpenMobile } = useSidebar()
   const [page, setPage] = React.useState<Page>("root")
   const [query, setQuery] = React.useState("")
+  /* The message being started, held while the project page filters on its own
+     query. It cannot stay in the box: the text is prose, and a prose query
+     matches no project row — the list would be empty under it. */
+  const [askText, setAskText] = React.useState("")
   const pins = usePins()
   const servers = React.useMemo(loadServers, [])
   const activeServer = React.useMemo(loadSettings, [])
@@ -214,6 +222,7 @@ export function CommandPalette({
     if (open) {
       setPage("root")
       setQuery("")
+      setAskText("")
     }
   }, [open])
 
@@ -270,7 +279,7 @@ export function CommandPalette({
   const sessions = state.sessions
     .filter(isTopLevel)
     .filter((session) => !session.deletedAt)
-    .sort((a, b) => b.createdAt - a.createdAt)
+    .sort((a, b) => activityAt(b) - activityAt(a))
   const projectName = (projectId: string) =>
     state.projects.find((project) => project.id === projectId)?.name ?? "Other"
 
@@ -296,8 +305,39 @@ export function CommandPalette({
       .catch((err) => reportError(err, "Couldn't copy the transcript"))
   }
 
-  // Backspace on an empty query walks back out of a sub-page.
+  /* ── The input is also a composer ──
+     The most common thing to want with a text box is to say something into it,
+     so the query doubles as a first message: it starts a thread and is sent as
+     the opening prompt, in one gesture, with nothing to click in between.
+
+     ⌘↵ is the composer's own send chord (`KEYS.send`), which is why it is this
+     one and not a new binding to learn. The row below offers the same by mouse
+     and prints the chord, so the key is listed where it is bound.
+
+     The row sits LAST on purpose. cmdk selects the first item, so a start-a-
+     thread row above the commands would make a bare ↵ spawn an agent and spend
+     a turn on whatever half-typed word was in the box. Last means it is the
+     fallback: ↵ reaches it exactly when nothing else matched, which is when
+     what was typed was prose rather than a command. */
+  const startFromQuery = (projectId?: string) => {
+    const text = query.trim()
+    if (!text) return
+    run(() => onNewThread({ text, projectId }))
+  }
+
+  const askElsewhere = () => {
+    setAskText(query.trim())
+    setQuery("")
+    setPage("start")
+  }
+
   const onKeyDown = (event: React.KeyboardEvent) => {
+    if (page === "root" && query.trim() && matchesChord(event, KEYS.send)) {
+      event.preventDefault()
+      startFromQuery()
+      return
+    }
+    // Backspace on an empty query walks back out of a sub-page.
     if (page !== "root" && event.key === "Backspace" && !query) {
       event.preventDefault()
       setPage("root")
@@ -415,6 +455,28 @@ export function CommandPalette({
                     })
                   }
                 />
+              ))}
+            </CommandGroup>
+          )}
+
+          {/* Same message, another workspace. The project decides the cwd the
+              agent runs in, which is the one part of "start a thread" the
+              remembered defaults can genuinely get wrong. */}
+          {page === "start" && (
+            <CommandGroup heading={`Start “${askText}” in`}>
+              {back}
+              {state.projects.map((project) => (
+                <CommandItem
+                  key={project.id}
+                  value={`project ${project.name} ${project.cwd}`}
+                  onSelect={() => run(() => onNewThread({ text: askText, projectId: project.id }))}
+                >
+                  <ProjectIcon project={project} className="size-4" />
+                  <span className="truncate">{project.name}</span>
+                  <span className="ml-auto truncate font-mono text-[11px] text-muted-foreground">
+                    {project.cwd}
+                  </span>
+                </CommandItem>
               ))}
             </CommandGroup>
           )}
@@ -844,6 +906,38 @@ export function CommandPalette({
                   Disconnect from this server
                 </CommandItem>
               </CommandGroup>
+
+              {/* Last group in the list — see the note on `startFromQuery`. The
+                  query rides in each value so cmdk can never filter away the
+                  row that is *about* the query. */}
+              {query.trim().length > 0 && (
+                <>
+                  <CommandSeparator />
+                  <CommandGroup heading="Start a thread">
+                    <CommandItem
+                      value={`ask start new thread send ${query}`}
+                      onSelect={() => startFromQuery()}
+                    >
+                      <MessageSquarePlusIcon />
+                      <span className="truncate">
+                        Start a new thread — “{query.trim()}”
+                      </span>
+                      <CommandShortcut>
+                        <Shortcut chord={KEYS.send} />
+                      </CommandShortcut>
+                    </CommandItem>
+                    {state.projects.length > 1 && (
+                      <CommandItem
+                        value={`ask start in project workspace ${query}`}
+                        onSelect={askElsewhere}
+                      >
+                        <FolderIcon />
+                        Start it in another project…
+                      </CommandItem>
+                    )}
+                  </CommandGroup>
+                </>
+              )}
             </>
           )}
         </CommandList>
@@ -858,6 +952,7 @@ const PLACEHOLDERS: Record<Page, string> = {
   model: "Search models…",
   effort: "Search effort levels…",
   mode: "Search permission modes…",
+  start: "Search projects…",
 }
 
 /** One option in a sub-page — the tick comes from CommandItem's data-checked. */
@@ -911,7 +1006,7 @@ function ThreadItemRow({
       <span className="ml-auto flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
         <FolderIcon className="size-3" />
         {project}
-        <span className="tabular-nums opacity-70">· {shortAge(session.createdAt)}</span>
+        <span className="tabular-nums opacity-70">· {shortAge(activityAt(session))}</span>
       </span>
     </CommandItem>
   )

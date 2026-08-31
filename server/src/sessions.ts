@@ -86,6 +86,13 @@ export interface Session {
       cleared by the next spawn — the same lifetime as the process it describes. */
   historyLost: HistoryLost | null;
   createdAt: number;
+  /** Epoch ms of the newest turn on this thread — the sidebar's order. A
+      thread is recent because something was *said* in it, not because it was
+      opened first, so this moves with every turn (once per turn: the journaled
+      `turn_started`/`turn_ended`, never per streamed update) and starts at
+      `createdAt`. Persisted; backfilled from the journal for rows written
+      before it existed. */
+  lastActivityAt: number;
   /** Events ever journaled for this session. `cursor` is an index into this,
       not into any array — the log itself is a table (see session-journal.ts),
       so nothing about a long thread is held in memory. */
@@ -380,16 +387,26 @@ export class SessionManager {
    */
   reload(): void {
     const counts = this.log.nextSeqBySession();
+    /* Rows written before `last_activity_at` existed carry 0, and a thread
+       that has never been ordered by activity would sort to the bottom of a
+       list it may well belong at the top of. The journal already knows when it
+       was last written to, so the backfill is one grouped scan here rather
+       than a migration — and it is written back, so it happens once. */
+    const activity = this.log.lastActivityBySession();
     const rows = db.select().from(sessionsTable).all();
     const links = readLinks(SESSION_LINKS, rows.map((r) => r.id));
     const seen = new Set<string>();
+    const backfilled: Session[] = [];
     for (const row of rows) {
       seen.add(row.id);
       const current = this.sessions.get(row.id);
       if (current && !current.exited) continue;
       if (current) this.closePeers(current, 4000, "session reloaded");
-      this.sessions.set(row.id, {
+      const lastActivityAt =
+        row.lastActivityAt || activity.get(row.id) || row.createdAt;
+      const session: Session = {
         ...row,
+        lastActivityAt,
         links: links.get(row.id) ?? emptyLinks(),
         acpSessionId: row.acpSessionId ?? undefined,
         profile: null,
@@ -416,8 +433,11 @@ export class SessionManager {
         viaGateway: false,
         websearchViaMcp: false,
         websearchCalls: new Set(),
-      });
+      };
+      this.sessions.set(row.id, session);
+      if (row.lastActivityAt !== lastActivityAt) backfilled.push(session);
     }
+    for (const session of backfilled) this.persist(session);
     for (const [id, session] of this.sessions) {
       if (seen.has(id)) continue;
       this.closePeers(session, 4000, "session purged");
@@ -477,6 +497,7 @@ export class SessionManager {
         acpSessionId: s.acpSessionId ?? null,
         acpSessionProvisional: s.acpSessionProvisional,
         createdAt: s.createdAt,
+        lastActivityAt: s.lastActivityAt,
         deletedAt: s.deletedAt,
         parentSessionId: s.parentSessionId,
       };
@@ -594,6 +615,14 @@ export class SessionManager {
         projectId: session.projectId,
         projectName: session.project?.name ?? session.projectId,
       }, event.update, session.websearchCalls);
+    }
+    /* A turn is the unit of activity. Both ends of it are journaled exactly
+       once, so bumping here costs one row write per turn rather than one per
+       streamed token — and a thread merely opened to read yesterday's work
+       does not claim to be today's, because attaching journals nothing. */
+    if (event.ev === "turn_started" || event.ev === "turn_ended") {
+      session.lastActivityAt = Date.now();
+      this.persist(session);
     }
     const out = JOURNALED.has(event.ev) ? this.log.append(session, event) : event;
     const subs = this.subscribers.get(session.id);
@@ -967,6 +996,7 @@ export class SessionManager {
       liveAcpSessionId: null,
       historyLost: null,
       createdAt: Date.now(),
+      lastActivityAt: Date.now(),
       eventCount: 0,
       stderr: [],
       stderrCount: 0,
@@ -1573,6 +1603,7 @@ export class SessionManager {
          with no process. */
       acpSessionId: s.liveAcpSessionId ?? s.acpSessionId,
       createdAt: s.createdAt,
+      lastActivityAt: s.lastActivityAt || s.createdAt,
       deletedAt: s.deletedAt,
       attached: s.peers.size > 0,
       peerCount: s.peers.size,

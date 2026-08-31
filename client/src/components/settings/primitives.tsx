@@ -45,7 +45,15 @@ export function Group({ label, children }: { label?: string; children: React.Rea
   )
 }
 
-/** One line in a Group: label/description on the left, control on the right. */
+/** One line in a Group: label/description on the left, control on the right.
+
+    The text block has a *basis*, not `flex-1`: with a zero basis it could shrink
+    without limit, so a row whose actions are three text buttons — the servers
+    list — squeezed the name to a truncated word and the URL to a two-character
+    column rather than ever wrapping. Given a real minimum the wrap happens on
+    its own, per row and per viewport: a switch or a pair of icon buttons still
+    sits inline, a wide cluster drops to a second line and stays right-aligned.
+    `sm:flex-nowrap` keeps every row on one line once there is room for one. */
 export function Row({
   icon: Icon,
   title,
@@ -62,11 +70,13 @@ export function Row({
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 sm:flex-nowrap">
       {Icon &&
         (React.isValidElement(Icon) ? Icon : <Icon className="size-4 shrink-0 text-muted-foreground" />)}
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 grow basis-48">
         <div className="truncate text-sm font-medium">{title}</div>
         {subtitle && <div className="mt-0.5 text-xs break-all text-muted-foreground">{subtitle}</div>}
       </div>
-      {children && <div className="ml-auto flex shrink-0 items-center gap-1.5">{children}</div>}
+      {children && (
+        <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1.5">{children}</div>
+      )}
     </div>
   )
 }

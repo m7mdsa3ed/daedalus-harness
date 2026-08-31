@@ -33,7 +33,7 @@ import {
 } from "@/components/item-context-menu"
 import { threadPath } from "@/lib/router"
 import { togglePin } from "@/lib/pins"
-import { type SessionMeta } from "@/lib/settings"
+import { activityAt, type SessionMeta } from "@/lib/settings"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { FLOAT_ACTION, FLOAT_ROW, ROW } from "./scale"
@@ -284,6 +284,11 @@ function ThreadInfoCard({
     ],
     ["Started", when(session.createdAt)],
   ]
+  /* The list orders by activity now, so the card says what the position means
+     — and only when it differs from the start, since a thread with one turn in
+     it would otherwise print the same timestamp twice. */
+  if (activityAt(session) - session.createdAt > 60_000)
+    rows.push(["Last active", when(activityAt(session))])
   if (session.parentSessionId) {
     const parent = store.sessions.find((s) => s.id === session.parentSessionId)
     rows.push(["Step of", parent?.title ?? "a workflow"])

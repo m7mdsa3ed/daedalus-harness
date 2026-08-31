@@ -43,7 +43,7 @@ import {
   AgentRequestWell,
   REQUEST_BUTTON,
 } from "./agent-request"
-import { FileBadge, Prose } from "./tool-parts"
+import { FileBadge, PlanFullscreen, Prose } from "./tool-parts"
 import { KIND_ICONS, KIND_LABELS, ToolCallContent } from "./thread-items"
 import type { PendingPermission } from "@/lib/store"
 import { isTypingTarget } from "@/lib/shortcuts"
@@ -301,21 +301,27 @@ function PlanApproval({
             </AgentRequestWell>
           </CollapsibleContent>
           {/* Under the plan, not above it: while it is open this is the way out
-              of a long read, and that belongs at the end of what it closes. */}
-          <CollapsibleTrigger
-            render={
-              <button
-                type="button"
-                className="mt-2 flex w-fit items-center gap-1 text-[11px] text-muted-foreground/80 transition-colors hover:text-foreground"
+              of a long read, and that belongs at the end of what it closes.
+              Beside it, the way *in* to a longer one — the band above stops at
+              half the panel, and a plan can be longer than that is worth
+              scrolling through in a column. */}
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <CollapsibleTrigger
+              render={
+                <button
+                  type="button"
+                  className="flex w-fit items-center gap-1 text-[11px] text-muted-foreground/80 transition-colors hover:text-foreground"
+                />
+              }
+            >
+              <ChevronDownIcon
+                aria-hidden
+                className={cn("size-3 transition-transform duration-200", open && "rotate-180")}
               />
-            }
-          >
-            <ChevronDownIcon
-              aria-hidden
-              className={cn("size-3 transition-transform duration-200", open && "rotate-180")}
-            />
-            {open ? "Hide the plan" : "Show the plan"}
-          </CollapsibleTrigger>
+              {open ? "Hide the plan" : "Show the plan"}
+            </CollapsibleTrigger>
+            <PlanFullscreen plan={plan} title={title} />
+          </div>
         </Collapsible>
       </AgentRequestBody>
       <PermissionOptions request={request} resolve={resolve} optionsRef={optionsRef} />

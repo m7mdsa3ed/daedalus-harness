@@ -905,11 +905,30 @@ export function reducer(state: State, action: Action): State {
         closeCode: action.status === "closed" ? action.closeCode : undefined,
         closeReason: action.status === "closed" ? action.closeReason : undefined,
       })
-    case "turn-active":
-      return withThread(state, action.id, {
+    case "turn-active": {
+      const next = withThread(state, action.id, {
         turnActive: action.active,
         ...(action.active ? null : { items: settleTools(thread(state, action.id).items) }),
       })
+      /* A turn is the activity the lists order by, and the server has just
+         recorded one — but only for the thread it happened in, and the next
+         `refreshSessions` is minutes away. Stamping it here is what moves a
+         thread picked up after a week to the top of Recents as it is being
+         used, rather than after the next refresh. The server's own value wins
+         whenever that list lands.
+
+         Only a turn *starting*: `turn_ended` is replayed, and stamping on it
+         would make merely opening an old thread promote it to the top of
+         Recents — reading is not activity, which is the same rule the server
+         keeps by journaling nothing on attach. */
+      if (!action.active) return next
+      return {
+        ...next,
+        sessions: next.sessions.map((s) =>
+          s.id === action.id ? { ...s, lastActivityAt: Date.now() } : s
+        ),
+      }
+    }
     case "update":
       return {
         ...state,

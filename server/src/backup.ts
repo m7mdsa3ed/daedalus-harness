@@ -191,6 +191,9 @@ const SessionRow = z.object({
   acpSessionId: optStr,
   acpSessionProvisional: z.boolean().default(false),
   createdAt: int,
+  /* Absent in a bundle written before threads were ordered by activity; 0 is
+     what `reload` backfills from the imported journal. */
+  lastActivityAt: int.default(0),
   deletedAt: int.nullish(),
   parentSessionId: optStr,
   mcpServerIds: z.array(str).default([]),

@@ -26,6 +26,17 @@ import { extractWebFetch, extractWebSearch } from "./web"
 export function toolSummary(item: ToolItem, active: boolean): string | null {
   if (item.status === "failed") return "error"
 
+  /* A question's story is the answer, not the first line of whatever the
+     bridge echoed back — so a collapsed row already says what was chosen. */
+  const questions = extractQuestions(item)
+  if (questions) {
+    const picked = questions.flatMap((question) => question.answer ?? [])
+    if (picked.length > 0) {
+      const line = picked.join(", ")
+      return line.length > 44 ? `${line.slice(0, 44)}…` : line
+    }
+  }
+
   const diffs = item.content.filter(
     (block): block is Extract<typeof block, { type: "diff" }> => block.type === "diff"
   )

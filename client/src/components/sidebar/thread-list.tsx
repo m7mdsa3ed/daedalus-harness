@@ -10,7 +10,7 @@ import type { Actions } from "@/lib/actions"
 import { currentThreadId, threadPath } from "@/lib/router"
 import { markNewTab } from "@/lib/session-tabs"
 import { usePins } from "@/lib/pins"
-import { type SessionMeta } from "@/lib/settings"
+import { activityAt, type SessionMeta } from "@/lib/settings"
 import { periodLabel } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { MENU } from "./scale"
@@ -156,9 +156,9 @@ export const ThreadList = React.memo(function ThreadList({
   return (
     <SidebarMenu ref={listRef} onKeyDown={onListKeyDown} className={MENU}>
       {visible.map((session, index) => {
-        const label = grouped ? periodLabel(session.createdAt) : null
+        const label = grouped ? periodLabel(activityAt(session)) : null
         const heading =
-          label && (index === 0 || label !== periodLabel(visible[index - 1]!.createdAt))
+          label && (index === 0 || label !== periodLabel(activityAt(visible[index - 1]!)))
         return (
           <React.Fragment key={session.id}>
             {heading && (

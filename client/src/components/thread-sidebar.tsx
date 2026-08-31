@@ -76,7 +76,7 @@ import { boardPath, projectPath, settingsPath, threadPath } from "@/lib/router"
 import { usePins } from "@/lib/pins"
 import { formatChord, KEYS } from "@/lib/shortcuts"
 import { Shortcut } from "@/components/shortcut"
-import { isTopLevel, type Project, type SessionMeta } from "@/lib/settings"
+import { activityAt, isTopLevel, type Project, type SessionMeta } from "@/lib/settings"
 import { defaultsForProfile, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import { useStore, type ThreadState as LiveThreadState } from "@/lib/store"
 import { cn } from "@/lib/utils"
@@ -323,7 +323,10 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
       .filter((session) => !!session.deletedAt)
       .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0))
 
-    const newestFirst = [...live].sort((a, b) => b.createdAt - a.createdAt)
+    /* By last activity, not by creation: a thread is recent because something
+       was said in it, so picking up an old one brings it back to the top
+       instead of leaving it wherever it was started. */
+    const newestFirst = [...live].sort((a, b) => activityAt(b) - activityAt(a))
     const pinSet = new Set(pins)
     // Pinned keeps the order pins were added in, not the order threads were
     // created: the group you built by hand should stay where you put it.

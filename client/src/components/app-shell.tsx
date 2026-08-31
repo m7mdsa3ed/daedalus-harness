@@ -208,11 +208,21 @@ export function AppShell({
      row in the store and navigate. Nothing is created on the server and no
      agent is spawned until the first message — see actions.newDraftThread. The
      agent/profile/model picker moved onto the composer of the empty thread,
-     which is where the choice is actually about to matter. */
-  const startThread = () => {
+     which is where the choice is actually about to matter.
+
+     `text` is the one thing that changes the shape of this: the palette can
+     hand over a first message, in which case the draft is created, routed to
+     AND sent in the same gesture — `actions.send` is what turns a draft into a
+     real session, and it does not need the composer to be mounted to do it, so
+     the thread is already spawning while the transcript is still opening.
+     A failure lands in that thread as a Retry row like any other send. */
+  const startThread = (opts: { text?: string; projectId?: string } = {}) => {
     if (!ready) return openSettings("projects")
     const defaults = loadThreadDefaults()
-    const project = state.projects.find((p) => p.id === defaults.projectId) ?? state.projects[0]
+    const project =
+      (opts.projectId ? state.projects.find((p) => p.id === opts.projectId) : undefined) ??
+      state.projects.find((p) => p.id === defaults.projectId) ??
+      state.projects[0]
     const start = resolveThreadStart(defaults, state.profiles)
     if (!project || !start) return openSettings("projects")
     const id = actions.newDraftThread({
@@ -221,6 +231,8 @@ export function AppShell({
       ...defaultsForProfile(defaults, start.profile.id),
     })
     void navigate(threadPath(id))
+    const text = opts.text?.trim()
+    if (text) void actions.send(id, text).catch(() => {})
   }
   // The key handler is bound once; the ref keeps it pointed at the live closure.
   const startThreadRef = React.useRef(startThread)
@@ -724,7 +736,7 @@ function EmptyState({
             : "A thread needs one project and one profile before it can run."}
         </p>
         <div className="mt-5 flex justify-center">
-          <Button onClick={ready ? onNewThread : () => onOpenSettings("projects")}>
+          <Button onClick={ready ? () => onNewThread() : () => onOpenSettings("projects")}>
             {ready ? (
               <>
                 <Plus className="size-4" /> New thread

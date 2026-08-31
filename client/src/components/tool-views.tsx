@@ -15,6 +15,7 @@
 import * as React from "react"
 import {
   BotIcon,
+  CheckIcon,
   ChevronRightIcon,
   FileWarningIcon,
   GlobeIcon,
@@ -31,6 +32,7 @@ import {
   Highlighted,
   PANE,
   PANE_MAX_H,
+  PlanFullscreen,
   Prose,
   ProsePreview,
   ShellScript,
@@ -1003,44 +1005,88 @@ function QuestionsDetail({ item }: { item: ToolItem }) {
   if (!questions) return null
   return (
     <div className="space-y-2">
-      {questions.map((question, index) => (
-        <div key={index} className="space-y-1.5">
-          <div className="flex items-start gap-1.5 text-xs">
-            <MessageCircleQuestionIcon className="mt-1 size-3 shrink-0 text-muted-foreground/60" />
-            <span className="min-w-0 flex-1 text-foreground">
-              <ProsePreview text={question.question} />
-            </span>
-            {question.multiSelect && (
-              <span className="shrink-0 rounded bg-muted/60 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                multi-select
+      {questions.map((question, index) => {
+        const answer = question.answer ?? []
+        /* An answer that matches no option is the free-text "Other" the
+           AskUserQuestion bridges pair with a select field — it has no row of
+           its own to mark, so it gets one below the list. */
+        const custom = answer.filter(
+          (picked) => !question.options.some((option) => option.label === picked)
+        )
+        const spelled = question.options.length === 0 ? answer : custom
+        return (
+          <div key={index} className="space-y-1.5">
+            <div className="flex items-start gap-1.5 text-xs">
+              <MessageCircleQuestionIcon className="mt-1 size-3 shrink-0 text-muted-foreground/60" />
+              <span className="min-w-0 flex-1 text-foreground">
+                <ProsePreview text={question.question} />
               </span>
+              {question.multiSelect && (
+                <span className="shrink-0 rounded bg-muted/60 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                  multi-select
+                </span>
+              )}
+            </div>
+            {question.options.length > 0 && (
+              <ul className="ms-5 space-y-1">
+                {question.options.map((option, optionIndex) => {
+                  const chosen = answer.includes(option.label)
+                  return (
+                    <li
+                      key={optionIndex}
+                      className={cn(
+                        "flex items-start gap-2 rounded-lg px-2 py-1 text-[11.5px]",
+                        chosen ? "bg-primary/10 ring-1 ring-primary/25" : "bg-background/40"
+                      )}
+                    >
+                      {chosen ? (
+                        <CheckIcon className="mt-[0.15em] size-3 shrink-0 text-primary" />
+                      ) : (
+                        <span
+                          aria-hidden
+                          className="mt-[0.4em] size-1.5 shrink-0 rounded-full bg-muted-foreground/40"
+                        />
+                      )}
+                      <span className="min-w-0">
+                        <ProsePreview
+                          text={option.label}
+                          className={cn("font-medium", chosen ? "text-foreground" : "text-foreground/90")}
+                        />
+                        {option.description && (
+                          <span className="block text-muted-foreground/70">
+                            <ProsePreview text={option.description} />
+                          </span>
+                        )}
+                      </span>
+                      {chosen && <span className="sr-only">chosen</span>}
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+            {/* The answer stated in words as well as marked in the list: with no
+                options at all (a free-text question) the mark has nothing to sit
+                on, and a long list makes the one tinted row easy to miss. */}
+            {(spelled.length > 0 || question.notes) && (
+              <div className="ms-5 space-y-0.5 text-[11.5px]">
+                {spelled.map((picked, pickedIndex) => (
+                  <p key={pickedIndex} className="flex items-start gap-1.5">
+                    <CheckIcon className="mt-[0.15em] size-3 shrink-0 text-primary" />
+                    <span className="min-w-0 text-foreground">
+                      <ProsePreview text={picked} />
+                    </span>
+                  </p>
+                ))}
+                {question.notes && (
+                  <p className="text-muted-foreground/80">
+                    <ProsePreview text={question.notes} />
+                  </p>
+                )}
+              </div>
             )}
           </div>
-          {question.options.length > 0 && (
-            <ul className="ms-5 space-y-1">
-              {question.options.map((option, optionIndex) => (
-                <li
-                  key={optionIndex}
-                  className="flex items-start gap-2 rounded-lg bg-background/40 px-2 py-1 text-[11.5px]"
-                >
-                  <span
-                    aria-hidden
-                    className="mt-[0.4em] size-1.5 shrink-0 rounded-full bg-muted-foreground/40"
-                  />
-                  <span className="min-w-0">
-                    <ProsePreview text={option.label} className="font-medium text-foreground/90" />
-                    {option.description && (
-                      <span className="block text-muted-foreground/70">
-                        <ProsePreview text={option.description} />
-                      </span>
-                    )}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
@@ -1108,8 +1154,14 @@ function PlanProposalDetail({ item }: { item: ToolItem }) {
     return <SmartBlock text={toolOutputText(item).text} />
   }
   return (
-    <div className={cn(PANE_MAX_H, "overflow-auto rounded-md border border-border/50 bg-muted/40 px-2.5 py-2")}>
-      <Prose text={plan} />
+    <div className="space-y-2">
+      <div className={cn(PANE_MAX_H, "overflow-auto rounded-md border border-border/50 bg-muted/40 px-2.5 py-2")}>
+        <Prose text={plan} />
+      </div>
+      {/* The same way out of the capped pane the approval card offers, so a
+          plan reads the same whether it is still being asked about or already
+          answered. */}
+      <PlanFullscreen plan={plan} title={item.title} />
     </div>
   )
 }

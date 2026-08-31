@@ -147,17 +147,36 @@ const PEEK = 3
     row's icon column, and a rail inside a rail indents once more. */
 const RAIL_CLASS = "mt-0.5 ml-[calc(0.75rem-1px)] space-y-0.5 border-l border-border/60 pl-2.5"
 
-/** The elbow that ties one step to the rail it hangs off — a hairline from the
-    rail across the `pl-2.5` gutter to the step's icon column. Without it the
-    rail is a line drawn *beside* a list; with it each step is visibly on the
-    line, which is what makes a run read as one branch of the transcript rather
-    than as an indented block of its own. `top-[0.875rem]` is the middle of the
-    row's first line box (`py-0.5` + `leading-6`), so it meets the leading mark
-    however many lines the row grows to. Tool steps only: every row in a run is
-    a StepRow with that geometry, where a subagent's rail also carries prose,
-    which has no mark to meet. */
-const RAIL_LINK_CLASS =
-  "relative before:absolute before:top-[0.875rem] before:-left-2.5 before:h-px before:w-2.5 before:bg-border/60"
+/* ── A run's rail ──
+   Drawn per step rather than as one border down the box around them: the line
+   has to *stop* at the last step's elbow (a tail running on under the last row
+   is a branch that goes nowhere), and a border on the container cannot know
+   which child is last. So `RUN_RAIL_CLASS` is the same geometry as `RAIL_CLASS`
+   with the border taken off, and each step carries its own piece of it.
+
+   Each piece is an elbow: the rail down the step's left, turning into its icon
+   column on a curve. `before:h-4` ends the turn at 14px — the middle of the
+   row's first line box (`py-0.5` + `leading-6`) — so it meets the leading mark
+   however many lines the row grows to, and the `-top-0.5` closes the 2px
+   `space-y` gap over it so consecutive elbows read as one line. The left edge
+   is `-left-[11px]`, which is where the container's border used to sit, so
+   nothing else moved. Tool steps only: every row in a run is a StepRow with
+   that geometry, where a subagent's rail also carries prose, which has no mark
+   to meet. */
+const RUN_RAIL_CLASS = "mt-0.5 ml-[calc(0.75rem-1px)] space-y-0.5 pl-2.5"
+
+const RAIL_ELBOW =
+  "relative before:absolute before:-top-0.5 before:-left-[11px] before:h-4 before:w-[11px] before:rounded-bl-[6px] before:border-b before:border-l before:border-border/60"
+
+/** The rail continuing past a step to the one under it — every step but the
+    last, which is what makes the run's line end on its own last elbow. */
+const RAIL_TAIL =
+  "after:absolute after:top-[0.875rem] after:-bottom-0.5 after:-left-[11px] after:w-px after:bg-border/60"
+
+/** A straight length of the same rail, for a row in it that is not a step (the
+    "N earlier steps" line) — it passes the line on without claiming an elbow. */
+const RAIL_THROUGH =
+  "relative before:absolute before:-top-0.5 before:-bottom-0.5 before:-left-[11px] before:w-px before:bg-border/60"
 
 /** "N earlier steps" — the top of a peeking rail. */
 function EarlierSteps({ count, onClick }: { count: number; onClick: () => void }) {
@@ -240,12 +259,23 @@ export const ToolRun = React.memo(function ToolRun({
       {showing.length > 0 && (
         /* One rail for both states, so expanding a peeking run grows the list
            in place instead of swapping one layout for another. */
-        <div className={RAIL_CLASS}>
-          {hidden > 0 && <EarlierSteps count={hidden} onClick={() => setOpen(true)} />}
+        <div className={RUN_RAIL_CLASS}>
+          {hidden > 0 && (
+            <div className={RAIL_THROUGH}>
+              <EarlierSteps count={hidden} onClick={() => setOpen(true)} />
+            </div>
+          )}
           {/* Not `[data-message-id]` rows, so the transcript's entrance does
               not reach them on its own — the class is the same animation. */}
-          {showing.map((item) => (
-            <div key={item.id} className={cn("harness-item-in", RAIL_LINK_CLASS)}>
+          {showing.map((item, index) => (
+            <div
+              key={item.id}
+              className={cn(
+                "harness-item-in",
+                RAIL_ELBOW,
+                index < showing.length - 1 && RAIL_TAIL
+              )}
+            >
               <ToolStep item={item} showTimestamp={showTimestamps} />
             </div>
           ))}

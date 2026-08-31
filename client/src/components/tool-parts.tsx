@@ -14,15 +14,18 @@ import type * as acp from "@agentclientprotocol/sdk"
 import {
   ArrowLeftRightIcon,
   BrainIcon,
+  ClipboardListIcon,
   CornerDownRightIcon,
   FileTextIcon,
   GlobeIcon,
+  Maximize2Icon,
   PencilLineIcon,
   SearchIcon,
   SquareTerminalIcon,
   ToggleLeftIcon,
   Trash2Icon,
 } from "lucide-react"
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { DiffView } from "@/components/ui/diff-view"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { isPlainClick, useThreadLinks } from "@/lib/workspace/thread-links"
@@ -191,6 +194,72 @@ export const ProsePreview = React.memo(function ProsePreview({
   )
 })
 ProsePreview.displayName = "ProsePreview"
+
+/**
+ * A plan, read at full size. Both places a plan proposal is drawn — the
+ * approval card at the tail of the transcript and the settled `plan` tool view
+ * — show it inside a band that stops at half the panel, because the answers
+ * below it must stay on screen and a transcript column is narrow. That is the
+ * right default and the wrong ceiling: a forty-step plan is a document, and
+ * reading one through a half-panel window that is also being scrolled by the
+ * stream is what this is the way out of.
+ *
+ * So it is an *option*, never a replacement: the inline plan stays exactly
+ * where it was and this opens the same markdown in a dialog the size of the
+ * window. It is a reader and nothing else — no answers ride in here, since the
+ * card keeps its action bar and a dialog covering the transcript is the wrong
+ * place to be asked something. Escape closes it and, because `overlayOpen()`
+ * sees an open `role="dialog"`, the thread's own Escape/digit/Enter bindings
+ * stand down while it is up, so closing the reader can never also answer the
+ * permission behind it.
+ */
+export function PlanFullscreen({
+  plan,
+  title,
+  className,
+}: {
+  plan: string
+  title?: string | null
+  className?: string
+}) {
+  return (
+    <Dialog>
+      <DialogTrigger
+        render={
+          <button
+            type="button"
+            className={cn(
+              "flex w-fit items-center gap-1 text-[11px] text-muted-foreground/80 transition-colors hover:text-foreground",
+              className
+            )}
+          />
+        }
+      >
+        <Maximize2Icon aria-hidden className="size-3" />
+        Full screen
+      </DialogTrigger>
+      {/* Nearly the whole window: a plan is the one payload where the limit on
+          reading it was the room, and `pr-12` clears the dialog's own close
+          button the way the workflow dialog's header does. */}
+      <DialogContent className="flex h-[calc(100svh-2rem)] w-[min(64rem,calc(100vw-1rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-[calc(100vw-2rem)]">
+        <div className="flex shrink-0 items-center gap-2.5 border-b border-border/40 py-3 pr-12 pl-4">
+          <span
+            aria-hidden
+            className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground/70"
+          >
+            <ClipboardListIcon className="size-4" />
+          </span>
+          <DialogTitle className="min-w-0 flex-1 truncate text-sm leading-4 font-medium">
+            {title || "Plan"}
+          </DialogTitle>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto overscroll-contain px-5 py-4">
+          <Prose text={plan} />
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
 /* Agents stream output as many small text blocks (one per result, per line).
    Rendering a bordered box per block turns six one-liners into six panels —

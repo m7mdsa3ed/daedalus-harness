@@ -44,7 +44,7 @@ import type { Actions } from "@/lib/actions"
 import { describeError } from "@/lib/errors"
 import { settingsFormPath, settingsPath, schedulesPath, threadPath } from "@/lib/router"
 import { scheduleWhen } from "@/lib/schedule"
-import { isTopLevel, type Project, type ScheduledMessage, type SessionMeta } from "@/lib/settings"
+import { activityAt, isTopLevel, type Project, type ScheduledMessage, type SessionMeta } from "@/lib/settings"
 import { useStore, type ThreadState } from "@/lib/store"
 import { shortAge } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -86,7 +86,7 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
     const mine = state.sessions.filter(isTopLevel).filter((s) => s.projectId === project.id)
     const threads = mine
       .filter((s) => !s.deletedAt)
-      .sort((a, b) => b.createdAt - a.createdAt)
+      .sort((a, b) => activityAt(b) - activityAt(a))
     const statusOf = (s: SessionMeta) => threadStatus(s, state.threads[s.id])
     return {
       threads,
@@ -492,9 +492,9 @@ function ThreadsCard({
                   </span>
                   <span
                     className="shrink-0 text-[11px] text-muted-foreground tabular-nums"
-                    title={new Date(session.createdAt).toLocaleString()}
+                    title={new Date(activityAt(session)).toLocaleString()}
                   >
-                    {shortAge(session.createdAt)}
+                    {shortAge(activityAt(session))}
                   </span>
                 </button>
               </li>

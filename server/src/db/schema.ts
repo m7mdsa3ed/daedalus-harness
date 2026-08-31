@@ -323,6 +323,14 @@ export const sessions = sqliteTable(
       .notNull()
       .default(false),
     createdAt: integer("created_at").notNull(),
+    /** Epoch ms of the last turn on this thread — what the sidebar orders by.
+        Creation is not activity: a thread started weeks ago and picked up this
+        morning belongs at the top, and ordering by `created_at` buried it under
+        threads nothing had been said in since. Bumped once per turn (the
+        journaled `turn_started`/`turn_ended`, never per streamed event), and 0
+        on a row written before the column existed — `reload` backfills those
+        from the journal's own `max(at)`, falling back to `created_at`. */
+    lastActivityAt: integer("last_activity_at").notNull().default(0),
     /** Epoch ms this thread was deleted; null = live. Deleted threads keep
         their row (and their acpSessionId) so a delete stays undoable. */
     deletedAt: integer("deleted_at"),

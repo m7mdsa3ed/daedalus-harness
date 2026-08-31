@@ -125,20 +125,28 @@ function ServersGroup({ active }: { active: ServerSettings }) {
               title={server.name}
               subtitle={<span className="font-mono">{server.url}</span>}
             >
+              {/* On a phone these three drop to their own line (see Row), where
+                  a 32px-high ghost button is a poor target — so they grow back
+                  to the default height there. */}
               {isActive ? (
                 <Badge variant="secondary" className="gap-1.5">
                   <span className="size-1.5 rounded-full bg-emerald-500" />
                   Connected
                 </Badge>
               ) : (
-                <Button variant="outline" size="sm" onClick={() => switchTo(server)}>
+                <Button variant="outline" size="sm" className="max-sm:h-9" onClick={() => switchTo(server)}>
                   Switch
                 </Button>
               )}
-              <Button variant="ghost" size="sm" onClick={() => startRename(server)}>
+              <Button variant="ghost" size="sm" className="max-sm:h-9" onClick={() => startRename(server)}>
                 Rename
               </Button>
-              <Button variant="ghost" size="sm" className="text-destructive" onClick={() => void forget(server)}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive max-sm:h-9"
+                onClick={() => void forget(server)}
+              >
                 {isActive ? "Disconnect" : "Forget"}
               </Button>
             </Row>
