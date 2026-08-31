@@ -481,7 +481,7 @@ function FilterChip({
       onClick={onClick}
       aria-pressed={active}
       aria-label={`Filter by ${children}`}
-      className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+      className={`rounded-pill border px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
         active
           ? "border-primary/40 bg-primary/10 text-primary"
           : "border-transparent bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground"

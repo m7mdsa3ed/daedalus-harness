@@ -19,6 +19,7 @@ import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-me
 import { ContentBlockView, Prose, SmartBlock, SourceChip, Timestamp } from "@/components/tool-parts"
 import { TodoList } from "@/components/tool-views"
 import { copyText, formatElapsed, StepRow, yieldToTextSelection } from "@/components/step-row"
+import { useStreamedText } from "@/hooks/use-streamed-text"
 import { shortPath, type TaskNotification, type TodoEntry } from "@/lib/tools"
 import type { TurnSources } from "@/lib/sources"
 import { cn } from "@/lib/utils"
@@ -89,6 +90,19 @@ function AgentBlock({
       <Prose text={body} />
     </aside>
   )
+}
+
+/**
+ * Agent prose on the row that is currently being written.
+ *
+ * A component rather than a hook call at the `case "agent"` site: the kind
+ * switch in `RowView` is a chain of returns, so a hook there would be a
+ * conditional one. Everything else about the row is unchanged — `item.text` is
+ * still the whole message everywhere it is read (copy, sources, search); only
+ * the painted slice is paced.
+ */
+export function StreamedAgentText({ text, streaming }: { text: string; streaming: boolean }) {
+  return <AgentText text={useStreamedText(text, streaming)} />
 }
 
 export function AgentText({ text }: { text: string }) {
@@ -290,7 +304,7 @@ export const ErrorRow = React.memo(function ErrorRow({
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-6 gap-1 rounded-full px-2 text-[11px]"
+                  className="h-6 gap-1 rounded-pill px-2 text-[11px]"
                   onClick={onRetry}
                   title="Send that message again"
                 >
@@ -302,7 +316,7 @@ export const ErrorRow = React.memo(function ErrorRow({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-6 gap-1 rounded-full px-2 text-[11px]"
+                  className="h-6 gap-1 rounded-pill px-2 text-[11px]"
                   onClick={() =>
                     void navigator.clipboard
                       ?.writeText([item.title, item.reason, item.detail].filter(Boolean).join("\n"))
@@ -317,7 +331,7 @@ export const ErrorRow = React.memo(function ErrorRow({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-6 rounded-full px-2 text-[11px] text-muted-foreground"
+                  className="h-6 rounded-pill px-2 text-[11px] text-muted-foreground"
                   onClick={onDismiss}
                 >
                   Dismiss

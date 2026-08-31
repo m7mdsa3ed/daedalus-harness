@@ -614,7 +614,7 @@ export function Favicon({ url, className }: { url: string; className?: string })
       loading="lazy"
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}
-      className={cn("size-3.5 shrink-0 rounded-[3px] bg-background/60", className)}
+      className={cn("size-3.5 shrink-0 rounded-sm bg-background/60", className)}
     />
   )
 }

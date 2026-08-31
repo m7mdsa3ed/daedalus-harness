@@ -5,6 +5,8 @@
 //   - cancel interrupts a parked step and retires its thread
 //   - every step is mirrored into the parent's log as RFD subagent events,
 //     live and on replay; the child is a real session with parentSessionId
+//   - a step's token usage reaches the parent as an update of its own, while
+//     the child's turn events still do not
 //   - the loopback key resolves the caller; a step may not start a workflow;
 //     a step is never handed the workflow server
 //   - the parent's process going away cancels its runs
@@ -159,6 +161,26 @@ await test("the run is mirrored into the parent's transcript, live and on replay
   assert.equal(updatesOf(ws2, "subagent_state_update").length, 3);
   assert.ok(ws2.of("update").some((e) => e.sessionId === childIds[0]), "forwarded updates replay with the child's id");
   assert.equal(ws2.of("turn_started").length, 0, "the children's turns are not the parent's turns");
+});
+
+await test("a step's token usage rides the parent's log, without its turn", async () => {
+  const spent = updatesOf(ws, "_daedalus/subagent_usage");
+  assert.equal(spent.length, 3, "one per step's settled turn");
+  assert.ok(spent.every((e) => e.sessionId === undefined), "it is the parent's own update, like the spawn");
+  const childIds = updatesOf(ws, "subagent_spawned").map(
+    (e) => (e.update as { subagentSessionId: string }).subagentSessionId,
+  );
+  for (const e of spent) {
+    const u = e.update as { subagentSessionId: string; usage: { totalTokens: number } };
+    assert.ok(childIds.includes(u.subagentSessionId), "it names the step it is about");
+    assert.ok(u.usage.totalTokens > 0, "the reading is the child's own turn_ended");
+  }
+  // Journaled with everything else, which is what makes a step's cost replay.
+  const ws3 = new MockWs();
+  assert.equal(manager.attach(parent.id, ws3 as never, 0, true), null);
+  await waitFor(() => ws3.of("caught_up").length === 1, "replay");
+  assert.equal(updatesOf(ws3, "_daedalus/subagent_usage").length, 3);
+  assert.equal(ws3.of("turn_ended").length, 0, "the children's turn events still never reach the parent");
 });
 
 await test("phases are a barrier, and every spawn carries the outline", async () => {

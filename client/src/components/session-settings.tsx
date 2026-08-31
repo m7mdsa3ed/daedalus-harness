@@ -4,7 +4,11 @@
    they live here and not in SessionConfigPopover, which respawns the agent
    process to change model/effort/mode. They are global to this device — one
    reading setup for every thread — and persisted, so the dialog takes no
-   session and the button can sit on any transcript.
+   session — so the button sits in the **app header** (app-shell.tsx), beside
+   the panel menu, and not in a thread's composer row. Being global is the
+   argument: the dock can mount several chat panels at once, and each of them
+   drew its own copy of one device-wide dialog, while the header has exactly one
+   of it however the dock is split.
 
    The list is declarative and **grouped**: add an entry to a group's `options`
    and the row appears. Grouping is the whole layout argument — thirteen equally
@@ -27,12 +31,14 @@ import {
   Brain,
   Clock,
   Code,
+  Coins,
   Columns2,
   Eye,
   Globe,
   LayoutList,
   ListTree,
   Maximize2,
+  MessageSquareText,
   MousePointer2,
   RotateCcw,
   Rows3,
@@ -53,6 +59,7 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
 import {
+  ANSWERS_ONLY_SUPPRESSES,
   resetViewOptions,
   setViewOption,
   useViewOptions,
@@ -116,6 +123,13 @@ const GROUPS: Group[] = [
     hint: "How much of each step is spelled out.",
     options: [
       {
+        key: "answersOnly",
+        icon: MessageSquareText,
+        title: "Answers only",
+        description:
+          "Keep the conversation and drop the work: your messages and the agent's replies, without thinking, tool steps, plans or subagents. Errors stay, and nothing is deleted — the steps come back when you turn it off.",
+      },
+      {
         key: "showThinking",
         icon: Brain,
         title: "Show thinking",
@@ -140,6 +154,13 @@ const GROUPS: Group[] = [
         title: "Show sources",
         description:
           "Site favicons under a web step, and the pages an answer cited under the finished turn.",
+      },
+      {
+        key: "showTokens",
+        icon: Coins,
+        title: "Show token usage",
+        description:
+          "What each finished turn cost, under it — and the same figure on every workflow step and subagent. Only what the agent reports: a runtime that does not meter tokens shows none.",
       },
       {
         key: "showTimestamps",
@@ -196,14 +217,25 @@ const GROUPS: Group[] = [
 
 const ALL_OPTIONS = GROUPS.flatMap((group) => group.options)
 
+/** What a row says in place of its description while another option has
+    already settled it. One sentence, and it names the option responsible —
+    a greyed switch with no reason is a bug report. */
+const MOOT_NOTE = "Nothing to apply it to while Answers only is on."
+
 function OptionRow({
   option,
   value,
   changed,
+  moot,
 }: {
   option: Option
   value: boolean
   changed: boolean
+  /** Another option has already decided this one — the row says so and is
+      inert, rather than offering a switch that would change nothing on
+      screen. Disabled, never rewritten: the value is still the reader's and
+      comes back the moment the option above it goes off. */
+  moot?: string
 }) {
   const { icon: Icon, key, title, description } = option
   return (
@@ -212,8 +244,15 @@ function OptionRow({
        the association would be decorative and the pointer cursor a lie. */
     <div
       role="presentation"
-      onClick={() => setViewOption(key, !value)}
-      className="flex cursor-pointer items-start gap-3 px-3 py-2.5 transition-colors hover:bg-muted/40"
+      aria-disabled={moot ? true : undefined}
+      onClick={() => {
+        if (moot) return
+        setViewOption(key, !value)
+      }}
+      className={cn(
+        "flex items-start gap-3 px-3 py-2.5 transition-colors",
+        moot ? "opacity-55" : "cursor-pointer hover:bg-muted/40"
+      )}
     >
       <span
         aria-hidden
@@ -237,13 +276,14 @@ function OptionRow({
           )}
         </span>
         <span className="text-[11px] leading-4 text-balance text-muted-foreground">
-          {description}
+          {moot ?? description}
         </span>
       </span>
       {/* Stopped, or the row's own handler would toggle it straight back. */}
       <span className="mt-0.5 shrink-0" onClick={(event) => event.stopPropagation()}>
         <Switch
           checked={value}
+          disabled={moot !== undefined}
           onCheckedChange={(checked) => setViewOption(key, checked)}
           aria-label={title}
         />
@@ -259,13 +299,21 @@ export function SessionSettingsButton() {
     () => new Set(ALL_OPTIONS.filter(({ key }) => options[key] !== VIEW_DEFAULTS[key]).map((o) => o.key)),
     [options]
   )
+  /* "Answers only" takes the rows these describe off the screen, so the
+     switches for them have nothing left to say. Which ones is stated in
+     lib/view-options beside the option, not here: the dialog draws the
+     consequence, it does not decide it. */
+  const mootKeys = React.useMemo(
+    () => new Set(options.answersOnly ? ANSWERS_ONLY_SUPPRESSES : []),
+    [options.answersOnly]
+  )
 
   return (
     <>
       <Button
         variant="ghost"
         size="icon-sm"
-        className="shrink-0 rounded-lg text-muted-foreground hover:text-foreground"
+        className="shrink-0 text-muted-foreground hover:text-foreground"
         onClick={() => setOpen(true)}
         title="View settings"
       >
@@ -299,6 +347,7 @@ export function SessionSettingsButton() {
                       option={option}
                       value={options[option.key]}
                       changed={changedKeys.has(option.key)}
+                      moot={mootKeys.has(option.key) ? MOOT_NOTE : undefined}
                     />
                   ))}
                 </div>

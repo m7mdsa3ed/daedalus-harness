@@ -35,7 +35,7 @@ function ToastViewport({ className, ...props }: ToastPrimitive.Viewport.Props) {
       data-slot="toast-viewport"
       className={cn(
         "pointer-events-none fixed z-50 w-auto outline-none",
-        "inset-x-[max(0.75rem,env(safe-area-inset-left))] bottom-[max(0.75rem,env(safe-area-inset-bottom))] mx-auto max-w-md",
+        "inset-x-[max(0.75rem,env(safe-area-inset-left))] bottom-[max(0.75rem,env(safe-area-inset-bottom))] mx-auto max-w-sm",
         "sm:right-[max(1rem,env(safe-area-inset-right))] sm:bottom-[max(1rem,env(safe-area-inset-bottom))] sm:left-auto sm:mx-0 sm:w-full",
         className
       )}
@@ -49,7 +49,7 @@ function Toast({ className, ...props }: ToastPrimitive.Root.Props) {
     <ToastPrimitive.Root
       data-slot="toast"
       className={cn(
-        "group/toast pointer-events-auto absolute right-0 bottom-0 z-[calc(1000-var(--toast-index))] w-full origin-bottom rounded-2xl border bg-popover/95 text-popover-foreground shadow-xl ring-1 ring-black/[0.03] backdrop-blur-md will-change-transform outline-none select-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:ring-white/[0.04]",
+        "group/toast pointer-events-auto absolute right-0 bottom-0 z-[calc(1000-var(--toast-index))] w-full origin-bottom rounded-xl border bg-popover/95 text-popover-foreground shadow-xl ring-1 ring-black/[0.03] backdrop-blur-md will-change-transform outline-none select-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:ring-white/[0.04]",
         /* Type tints. The whole card is not coloured — only the hairline and a
            wash — so an error still reads as a notification and not as a
            destructive dialog. */
@@ -57,7 +57,7 @@ function Toast({ className, ...props }: ToastPrimitive.Root.Props) {
         /* The stacking machinery is Base UI's own: index-driven offset, scale
            and swipe transforms. Left as shipped — the numbers are what make a
            collapsed pile peek rather than overlap. */
-        "[--gap:0.75rem] [--height:var(--toast-frontmost-height,var(--toast-height))] [--offset-y:calc(var(--toast-offset-y)*-1+calc(var(--toast-index)*var(--gap)*-1)+var(--toast-swipe-movement-y))] [--peek:0.75rem] [--scale:calc(max(0,1-(var(--toast-index)*0.1)))] [--shrink:calc(1-var(--scale))]",
+        "[--gap:0.5rem] [--height:var(--toast-frontmost-height,var(--toast-height))] [--offset-y:calc(var(--toast-offset-y)*-1+calc(var(--toast-index)*var(--gap)*-1)+var(--toast-swipe-movement-y))] [--peek:0.5rem] [--scale:calc(max(0,1-(var(--toast-index)*0.1)))] [--shrink:calc(1-var(--scale))]",
         "h-(--height) [transform:translateX(var(--toast-swipe-movement-x))_translateY(calc(var(--toast-swipe-movement-y)-(var(--toast-index)*var(--peek))-(var(--shrink)*var(--height))))_scale(var(--scale))] [transition:transform_500ms_cubic-bezier(0.22,1,0.36,1),opacity_500ms,height_150ms]",
         "after:absolute after:top-full after:left-0 after:h-[calc(var(--gap)+1px)] after:w-full after:content-['']",
         "data-expanded:h-(--toast-height) data-expanded:[transform:translateX(var(--toast-swipe-movement-x))_translateY(var(--offset-y))]",
@@ -85,7 +85,7 @@ function ToastContent({ className, ...props }: ToastPrimitive.Content.Props) {
       className={cn(
         // `items-start`, not `items-center`: a two-line description must not
         // drag the icon and the close button down to its middle.
-        "flex h-full items-start gap-3 overflow-hidden p-3.5 transition-opacity duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] data-behind:opacity-0 data-expanded:opacity-100",
+        "flex h-full items-start gap-2.5 overflow-hidden p-2.5 transition-opacity duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] data-behind:opacity-0 data-expanded:opacity-100",
         className
       )}
       {...props}
@@ -98,7 +98,7 @@ function ToastTitle({ className, ...props }: ToastPrimitive.Title.Props) {
     <ToastPrimitive.Title
       data-slot="toast-title"
       className={cn(
-        "text-sm leading-5 font-medium text-balance [overflow-wrap:anywhere]",
+        "text-sm leading-4.5 font-medium text-balance [overflow-wrap:anywhere]",
         className
       )}
       {...props}
@@ -110,14 +110,16 @@ function ToastTitle({ className, ...props }: ToastPrimitive.Title.Props) {
    rules are the load-bearing part: `anywhere` breaks a long unspaced token
    (a URL, a stack frame) instead of letting it push the card wide, and
    `pre-wrap` keeps the line breaks an error message already has. The clamp is
-   the ceiling — reportError truncates at 400 chars, which is still ten lines
-   in a 24rem column. */
+   the ceiling — reportError truncates at 400 chars, which is still many lines
+   in a column this narrow, and a toast is a headline with a hint under it, not
+   a place to read a stack trace: the detail is in the console and, where the
+   failure belongs to a surface, in that surface's own error note. */
 function ToastDescription({ className, ...props }: ToastPrimitive.Description.Props) {
   return (
     <ToastPrimitive.Description
       data-slot="toast-description"
       className={cn(
-        "line-clamp-5 text-sm leading-5 whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]",
+        "line-clamp-3 text-xs leading-4.5 whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]",
         className
       )}
       {...props}
@@ -127,7 +129,7 @@ function ToastDescription({ className, ...props }: ToastPrimitive.Description.Pr
 
 function ToastAction({
   className,
-  render = <Button variant="outline" size="sm" />,
+  render = <Button variant="outline" size="xs" />,
   ...props
 }: ToastPrimitive.Action.Props) {
   return (
@@ -176,7 +178,7 @@ function ToastIcon({ type }: { type: string | undefined }) {
   return (
     <span
       data-slot="toast-icon"
-      className="mt-px shrink-0 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4.5"
+      className="mt-px shrink-0 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4"
     >
       <HugeiconsIcon
         icon={entry.icon}
@@ -201,12 +203,12 @@ function ToastList() {
       <Toast key={toastItem.id} toast={toastItem}>
         <ToastContent>
           <ToastIcon type={toastItem.type} />
-          <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             <ToastTitle />
             <ToastDescription />
-            {stacked ? <ToastAction className="mt-1.5 self-start" /> : null}
+            {stacked ? <ToastAction className="mt-1 self-start" /> : null}
           </div>
-          {stacked ? null : <ToastAction className="mt-px" />}
+          {stacked ? null : <ToastAction className="-mt-0.5" />}
           <ToastClose />
         </ToastContent>
       </Toast>

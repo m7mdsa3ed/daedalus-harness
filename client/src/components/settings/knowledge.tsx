@@ -20,7 +20,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { reportError } from "@/lib/errors"
+import { ErrorNote } from "@/components/error-note"
+import { captureError, reportError, type InlineError } from "@/lib/errors"
 import { useStore } from "@/lib/store"
 import {
   addKnowledge,
@@ -63,7 +64,16 @@ export function KnowledgePage() {
   }, [refresh])
 
   const remove = async (entry: KnowledgeEntryAcross) => {
-    if (!(await confirm({ title: `Delete "${entry.title}"?`, destructive: true, confirmLabel: "Delete" }))) return
+    if (
+      !(await confirm({
+        title: `Delete "${entry.title}"?`,
+        description:
+          "The entry is removed from this project's knowledge base, so agents working in it stop seeing it. This cannot be undone.",
+        destructive: true,
+        confirmLabel: "Delete",
+      }))
+    )
+      return
     setBusy(true)
     try {
       await deleteKnowledge(entry.projectId, entry.id)
@@ -222,11 +232,13 @@ function AddEntryDialog({
   const [content, setContent] = React.useState("")
   const [tags, setTags] = React.useState("")
   const [saving, setSaving] = React.useState(false)
+  const [error, setError] = React.useState<InlineError | null>(null)
   const canSave = Boolean(projectId && title.trim() && content.trim()) && !saving
 
   const save = async () => {
     if (!canSave) return
     setSaving(true)
+    setError(null)
     try {
       await addKnowledge(projectId, {
         title: title.trim(),
@@ -235,7 +247,7 @@ function AddEntryDialog({
       })
       await onAdded()
     } catch (err) {
-      reportError(err, "Couldn't add the knowledge entry")
+      setError(captureError(err, "Couldn't add the knowledge entry"))
       setSaving(false)
     }
   }
@@ -274,6 +286,7 @@ function AddEntryDialog({
             <Input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="architecture, decisions" />
           </Field>
         </div>
+        <ErrorNote error={error} />
         <ResponsiveDialogFooter>
           <Button variant="outline" onClick={onClose}>
             Cancel

@@ -31,7 +31,8 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import type { Actions } from "@/lib/actions"
-import { reportError } from "@/lib/errors"
+import { ErrorNote } from "@/components/error-note"
+import { captureError, reportError, type InlineError } from "@/lib/errors"
 import { schedulePath, schedulesPath } from "@/lib/router"
 import {
   DAY,
@@ -107,6 +108,8 @@ function SchedulesListPage({ actions }: { actions: Actions }) {
     if (
       !(await confirm({
         title: "Cancel this scheduled message?",
+        description:
+          "It is removed from the schedule and never sent. The thread itself is untouched, and you can schedule the message again.",
         destructive: true,
         confirmLabel: "Cancel schedule",
       }))
@@ -294,6 +297,7 @@ function EditScheduleForm({
   const [at, setAt] = React.useState(() => toLocalInput(item.nextAt))
   const [recurrence, setRecurrence] = React.useState<EditRecurrence>(initialRecurrence)
   const [busy, setBusy] = React.useState(false)
+  const [error, setError] = React.useState<InlineError | null>(null)
 
   const nextAt = fromLocalInput(at)
   const valid = text.trim().length > 0 && nextAt > 0
@@ -305,6 +309,7 @@ function EditScheduleForm({
     event.preventDefault()
     if (!valid || busy) return
     setBusy(true)
+    setError(null)
     try {
       await actions.updateSchedule(item.id, {
         text: text.trim(),
@@ -314,7 +319,7 @@ function EditScheduleForm({
       toast.success("Schedule updated")
       onDone()
     } catch (error) {
-      reportError(error, "Couldn't update the schedule")
+      setError(captureError(error, "Couldn't update the schedule"))
       setBusy(false)
     }
   }
@@ -349,6 +354,7 @@ function EditScheduleForm({
           </Select>
         </Field>
       </div>
+      <ErrorNote error={error} />
       <div className="flex justify-end gap-2">
         <Button type="button" size="sm" variant="ghost" onClick={onDone}>
           Cancel
@@ -380,6 +386,7 @@ function NewSchedulePage({ actions }: { actions: Actions }) {
   const [recurrence, setRecurrence] = React.useState<Recurrence>("once")
   const [target, setTarget] = React.useState(initialTarget)
   const [busy, setBusy] = React.useState(false)
+  const [error, setError] = React.useState<InlineError | null>(null)
 
   const back = () => void navigate(routeState.returnTo ?? schedulesPath())
   const nextAt = fromLocalInput(at)
@@ -389,6 +396,7 @@ function NewSchedulePage({ actions }: { actions: Actions }) {
     event.preventDefault()
     if (!valid) return
     setBusy(true)
+    setError(null)
     try {
       await actions.createSchedule({
         sessionId: target,
@@ -399,7 +407,7 @@ function NewSchedulePage({ actions }: { actions: Actions }) {
       toast.success(recurrence === "once" ? "Message scheduled" : "Recurring message scheduled")
       back()
     } catch (error) {
-      reportError(error, "Couldn't schedule the message")
+      setError(captureError(error, "Couldn't schedule the message"))
       setBusy(false)
     }
   }
@@ -473,6 +481,7 @@ function NewSchedulePage({ actions }: { actions: Actions }) {
               ? "This fires once, then the schedule is removed."
               : `Repeats ${RECURRENCE_LABEL[recurrence].toLowerCase()} until you cancel it.`}
           </p>
+          <ErrorNote error={error} />
           <footer className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
             <Button type="button" variant="outline" onClick={back}>
               Cancel

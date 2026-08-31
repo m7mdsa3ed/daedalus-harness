@@ -20,6 +20,10 @@ writeJson(join(process.env.DAEDALUS_DATA_DIR!, "agents.json"), [
     command: "node",
     args: [join(dirname(fileURLToPath(import.meta.url)), "fake-agent.mjs")],
     env: { FAKE_KEY: "{apiKey}", FAKE_EMPTY: "{baseUrl}" },
+    // Which door a persona reaches this agent through. Without it the bridge
+    // sends none at all, which is the correct behaviour for an agent that has
+    // not said it takes one — and would make the assertions below vacuous.
+    personaVia: "acp-meta",
   },
 ]);
 
@@ -879,6 +883,93 @@ assert.deepEqual(getProfile(linkedProfile.id)!.mcpServerIds, [], "the link went 
 // A stale id in a request links nothing rather than failing the whole write.
 const staleProfile = createProfile({ ...profileInput, name: "stale", mcpServerIds: ["gone"] });
 assert.deepEqual(getProfile(staleProfile.id)!.mcpServerIds, []);
+
+// --- a persona reaches the agent through session/new AND session/load ---
+// The two together are the whole reason a persona change is affordable: `_meta`
+// is only read when a session is created or loaded, so switching costs a
+// respawn — and a respawn ends in `session/load`, which is what carries the new
+// instructions onto the *existing* conversation instead of an empty one.
+const { personas } = await import("../src/personas.js");
+const persona = personas.create({
+  name: "Terse",
+  description: "",
+  prompt: "Answer in one line.",
+  thinking: 0,
+  effort: null,
+  sortOrder: 0,
+});
+
+const metaLog = (): { method: string; meta: Record<string, any> | null }[] =>
+  existsSync(join(process.env.DAEDALUS_DATA_DIR!, "fake-session-meta.jsonl"))
+    ? readFileSync(join(process.env.DAEDALUS_DATA_DIR!, "fake-session-meta.jsonl"), "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+    : [];
+
+// A thread with no persona says nothing about one: `_meta` carries no
+// systemPrompt at all, rather than an empty append the agent would still apply.
+const beforePlain = metaLog().length;
+const plain = manager.create(profile, "fake", project);
+await plain.bridge!.ready;
+const plainMeta = metaLog().slice(beforePlain).find((e) => e.method === "session/new");
+assert.ok(plainMeta, "session/new was recorded");
+assert.equal(plainMeta!.meta?.systemPrompt, undefined, "no persona means no systemPrompt");
+assert.equal(plainMeta!.meta?.claudeCode?.options?.thinking, undefined, "…and no thinking budget");
+
+// Picked at create time, before any process exists.
+const mark = metaLog().length;
+const styled = manager.create(
+  profile,
+  "fake",
+  project,
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  { mcpServerIds: [], skillIds: [], commandIds: [] },
+  { personaId: persona.id },
+);
+await styled.bridge!.ready;
+const newMeta = metaLog().slice(mark).find((e) => e.method === "session/new");
+assert.deepEqual(
+  newMeta!.meta?.systemPrompt,
+  { append: "Answer in one line." },
+  "the persona is appended to the agent's own prompt, never a replacement",
+);
+assert.deepEqual(
+  newMeta!.meta?.claudeCode?.options?.thinking,
+  { type: "disabled" },
+  "a 0 budget is thinking off, not an absent budget",
+);
+
+// And again on the respawn that a persona change (or any other) costs: the
+// conversation is restored by session/load, and the instructions ride with it.
+/* A turn first: `session/load` is only attempted for an id a turn has proven,
+   so without one the respawn would fall back to `session/new` and prove
+   nothing about the load path. */
+const styledWs = new MockWs();
+assert.equal(manager.attach(styled.id, styledWs as never), null);
+send(styledWs, { id: 1, cmd: "prompt", text: "hi" });
+await waitFor(() => styledWs.of("turn_ended").length === 1, "the styled thread's first turn");
+assert.equal(styled.acpSessionProvisional, false, "the turn proved the id");
+const beforeLoad = metaLog().length;
+await manager.respawn(styled.id, profile, "fake", project);
+const loadMeta = metaLog().slice(beforeLoad).find((e) => e.method === "session/load");
+assert.ok(loadMeta, "the respawn loaded the conversation rather than starting a new one");
+assert.deepEqual(
+  loadMeta!.meta?.systemPrompt,
+  { append: "Answer in one line." },
+  "session/load carries the persona too — this is what makes a switch keep the thread",
+);
+
+// Dropping it is a real value, not an omission: the next spawn says nothing
+// about a system prompt again.
+const dropped = metaLog().length;
+await manager.applyConfig(styled.id, { profile, agentId: "fake", project, personaId: "" });
+assert.equal(styled.personaId, "", "the row records that the thread has no persona now");
+const droppedMeta = metaLog().slice(dropped).find((e) => e.meta);
+assert.equal(droppedMeta?.meta?.systemPrompt, undefined, "and the agent is told nothing about one");
 
 console.log("bridge.test.ts OK");
 process.exit(0);

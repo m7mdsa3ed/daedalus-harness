@@ -107,7 +107,7 @@ function ElicitationStep({
           <ProsePreview text={prompt} className="text-[15px] leading-snug" />
         </QuestionnaireTitle>
         {chip && (
-          <span className="mt-px shrink-0 rounded-full bg-background/60 px-2 py-0.5 text-[10px] leading-4 tracking-wide text-muted-foreground">
+          <span className="mt-px shrink-0 rounded-pill bg-background/60 px-2 py-0.5 text-[10px] leading-4 tracking-wide text-muted-foreground">
             {chip}
           </span>
         )}

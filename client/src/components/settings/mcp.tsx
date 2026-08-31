@@ -23,7 +23,7 @@ import { FormPageHeader, PageForm, Field, FormActions, lines, pairs } from "./pr
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { LibraryImportPage, LibrarySection, saveLibraryEntry } from "./library"
-import { reportError } from "@/lib/errors"
+import { captureError, reportError, type InlineError } from "@/lib/errors"
 import { settingsPath } from "@/lib/router"
 
 type BuiltinKind = "web-search" | "knowledge" | "workflow"
@@ -137,11 +137,13 @@ function McpForm({
     headers: server?.type === "http" ? server.headers.map((h) => `${h.name}: ${h.value}`).join("\n") : "",
   }))
   const [busy, setBusy] = React.useState(false)
+  const [saveError, setSaveError] = React.useState<InlineError | null>(null)
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault()
     setBusy(true)
+    setSaveError(null)
     try {
       const payload =
         form.type === "http"
@@ -156,7 +158,7 @@ function McpForm({
       await saveLibraryEntry(settings, "/api/mcp-servers", server?.id, payload)
       onDone(true)
     } catch (err) {
-      reportError(err, "Couldn't save the MCP server")
+      setSaveError(captureError(err, "Couldn't save the MCP server"))
       setBusy(false)
     }
   }
@@ -234,7 +236,7 @@ function McpForm({
           </Field>
         </>
       )}
-      <FormActions busy={busy} onCancel={() => onDone(false)} />
+      <FormActions busy={busy} onCancel={() => onDone(false)} error={saveError} />
       </PageForm>
     </>
   )

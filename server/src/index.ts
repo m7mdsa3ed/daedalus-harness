@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { WebSocketServer } from "ws";
 import { loadConfig } from "./config.js";
+import { seedPersonas } from "./personas.js";
 import { seedAgents } from "./registry.js";
 import { ensureDefaultBoard } from "./boards.js";
 import { SessionManager } from "./sessions.js";
@@ -41,6 +42,9 @@ await adoptOrphans();
 // Adds only the built-in agents this install has never been offered; a user's
 // edits and deletions are left alone. See registry.seedAgents.
 seedAgents();
+// Same rules, same reasons: only the personas this install has never been
+// offered, and never over a row the user has edited. See personas.seedPersonas.
+seedPersonas();
 /* The tasks board's first board and its four columns, seeded only into an
    install that has none. This is also the boards migration: the seeded column
    ids are the exact strings pre-boards tasks hold in `tasks.status`, so those

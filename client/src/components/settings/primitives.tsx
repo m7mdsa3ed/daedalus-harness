@@ -4,10 +4,12 @@
    it is on. */
 import * as React from "react"
 import { ArrowLeft, type LucideIcon } from "lucide-react"
+import { ErrorNote } from "@/components/error-note"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import type { InlineError } from "@/lib/errors"
 import { cn } from "@/lib/utils"
 import { type SectionMeta } from "./sections"
 
@@ -262,15 +264,31 @@ export function Picker<T extends { id: string; name: string }>({
   )
 }
 
-export function FormActions({ busy, onCancel }: { busy: boolean; onCancel: () => void }) {
+/** Every route-backed form's footer — and, since it is the one place all of
+    them share, where a failed save is said. Inline rather than as a toast: the
+    form stays on screen with the user's unsaved values in it, and a Save that
+    silently did nothing is indistinguishable from one that worked until you
+    navigate away and find it didn't. */
+export function FormActions({
+  busy,
+  onCancel,
+  error,
+}: {
+  busy: boolean
+  onCancel: () => void
+  error?: InlineError | null
+}) {
   return (
-    <footer className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
-      <Button type="button" variant="outline" onClick={onCancel}>
-        Cancel
-      </Button>
-      <Button type="submit" disabled={busy}>
-        {busy ? "Saving…" : "Save"}
-      </Button>
+    <footer className="flex flex-col gap-3 border-t pt-4">
+      <ErrorNote error={error ?? null} />
+      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <Button type="button" variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={busy}>
+          {busy ? "Saving…" : "Save"}
+        </Button>
+      </div>
     </footer>
   )
 }

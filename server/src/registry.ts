@@ -2,6 +2,9 @@ import { desc, eq, like } from "drizzle-orm";
 import { agentOptions, agents as agentsTable, db, type QuotaProbe } from "./db/index.js";
 import { gatewayUrlFor } from "./gateway-shim.js";
 import { writeCodexModelCatalog } from "./model-catalog.js";
+// Type-only: personas.ts imports `usesPersonaFile` from here at runtime, and
+// the dependency has to stay one-directional.
+import type { PersonaSpawn } from "./personas.js";
 import { profileBaseUrl, profileSupports, type Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 
@@ -62,6 +65,28 @@ export interface AgentDef {
    * to repoint this one too.
    */
   quotaProbe?: QuotaProbe | null;
+  /**
+   * How a thread's persona (`personas.ts`) reaches this agent, or null/absent
+   * when nothing is known to work and the persona is simply not applied.
+   *
+   * Declared with the agent for the same reason `spawnCategories`, `liveConfig`
+   * and `quotaProbe` are: which door a runtime opens is a fact about the
+   * runtime, and a user who repoints `command` at a fork has to be able to
+   * repoint this with it.
+   *
+   *  - `"acp-meta"` (claude-code): the ACP `_meta` block on `session/new` and
+   *    `session/load`. `_meta.systemPrompt` as an *object* is merged over the
+   *    agent's own preset with the type and preset locked, so `{append}` adds
+   *    to the CLI's system prompt instead of replacing it; and
+   *    `_meta.claudeCode.options` is spread straight into the Agent SDK's query
+   *    options, which is where the `thinking` budget goes. Built by
+   *    `AcpBridge.sessionMeta`, not here — it is protocol, not environment.
+   *  - `"env"` (codex, opencode): a key in the agent's own config template,
+   *    filled from `{personaPrompt}` (inline text) or `{personaFile}` (a path).
+   *    Which of the two an agent wants is the template's business — it asks by
+   *    naming the placeholder — exactly as the Codex catalog does.
+   */
+  personaVia?: "acp-meta" | "env" | null;
 }
 
 /** A default agent, plus the seed releases that bear on it. Give a new default
@@ -95,6 +120,69 @@ type SeedAgent = AgentDef & {
     for its dialect because the file it points at is Codex-shaped: an agent that
     wants one asks for it by using this name in its env. */
 const CODEX_CATALOG_VAR = "codexModelCatalog";
+
+/* ── The two persona placeholders ──
+ *
+ * An `"env"` agent asks for a persona in one of two shapes, and it asks by
+ * naming the placeholder rather than by being recognized here:
+ *
+ *   {personaPrompt} — the instruction text itself, for a runtime that takes it
+ *     inline (codex's `developer_instructions`). It is substituted into a JSON
+ *     *string literal* inside a config template, so the value handed to `fill`
+ *     is already JSON-escaped — see `resolveSpawn`. That is the only reason it
+ *     is safe: a persona is multi-line prose full of quotes and newlines, and
+ *     dropping it raw into CODEX_CONFIG produced a template that no longer
+ *     parsed, which `resolveEnvValue` then passed through verbatim.
+ *   {personaFile} — a path to a file holding the same text, for a runtime that
+ *     will only read instructions off disk (opencode's `instructions`, which is
+ *     a list of paths). Written by `writePersonaPrompt`.
+ *
+ * Both resolve empty for a thread with no persona, and the key they fill prunes
+ * away — the same contract `{model}` and `{codexModelCatalog}` already have.
+ */
+const PERSONA_PROMPT_VAR = "personaPrompt";
+const PERSONA_FILE_VAR = "personaFile";
+
+/** Does this agent's env ask for the persona as a file? What tells the caller
+    whether writing one is worth the file write — the same "ask the template,
+    don't match on the agent's id" rule the Codex catalog uses. */
+export function usesPersonaFile(agent: AgentDef): boolean {
+  return Object.values(agent.env).some((t) => t.includes(`{${PERSONA_FILE_VAR}}`));
+}
+
+/** Add codex's `developer_instructions` to an existing CODEX_CONFIG. Textual
+    and single-key, exactly like `withCodexCatalogKey` and for the same reason:
+    the template is not JSON until its placeholders are filled, and everything
+    else in there is the user's. */
+function withCodexPersonaKey(env: Record<string, string>): Record<string, string> {
+  const template = env.CODEX_CONFIG;
+  if (!template?.trimStart().startsWith("{")) return env;
+  if (template.includes("developer_instructions")) return env;
+  const at = template.indexOf("{") + 1;
+  const key = `"developer_instructions":"{${PERSONA_PROMPT_VAR}}"`;
+  const rest = template.slice(at).trimStart();
+  return {
+    ...env,
+    CODEX_CONFIG: template.slice(0, at) + key + (rest.startsWith("}") ? "" : ",") + template.slice(at),
+  };
+}
+
+/** The same move for opencode, whose `instructions` is a list of file paths —
+    hence `{personaFile}` and not `{personaPrompt}`. A thread with no persona
+    resolves it to `[""]`, which `pruneJson` empties and then drops entirely. */
+function withOpencodePersonaKey(env: Record<string, string>): Record<string, string> {
+  const template = env.OPENCODE_CONFIG_CONTENT;
+  if (!template?.trimStart().startsWith("{")) return env;
+  if (template.includes('"instructions"')) return env;
+  const at = template.indexOf("{") + 1;
+  const key = `"instructions":["{${PERSONA_FILE_VAR}}"]`;
+  const rest = template.slice(at).trimStart();
+  return {
+    ...env,
+    OPENCODE_CONFIG_CONTENT:
+      template.slice(0, at) + key + (rest.startsWith("}") ? "" : ",") + template.slice(at),
+  };
+}
 
 /**
  * The quota probes seed 10 adds, by agent id.
@@ -316,18 +404,21 @@ const SPAWN_CATEGORIES: Record<string, "model" | "effort"> = {
  */
 const DEFAULT_AGENTS: SeedAgent[] = [
   {
-    since: 11,
+    since: 12,
     introduced: 1,
     // Seed 4 moved the haiku keys to {smallModel}; seed 5 added the alias keys;
     // seed 6 appends the 1M conditional to all of them; seed 8 routes the
     // endpoint through the gateway shim; seed 10 adds the quota probe; seed 11
-    // says the model can be changed without a restart. One backfill applies all
+    // says the model can be changed without a restart; seed 12 says a persona
+    // reaches this agent through ACP `_meta` (nothing in the env changes, so
+    // the probe cache is untouched — see `seedAgents`). One backfill applies all
     // of them, because an install stamped below 4 jumps straight here and never
     // sees the earlier rules on its own.
     backfill: (existing) => ({
       env: withGatewayUrl(withLongContextSuffix(withAliasModelKeys(withSmallModelVar(existing.env)))),
       quotaProbe: existing.quotaProbe ?? QUOTA_PROBES["claude-code"],
       liveConfig: existing.liveConfig ?? "acp",
+      personaVia: existing.personaVia ?? "acp-meta",
     }),
     id: "claude-code",
     name: "Claude Code",
@@ -343,6 +434,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     spawnCategories: SPAWN_CATEGORIES,
     quotaProbe: QUOTA_PROBES["claude-code"],
     liveConfig: "acp",
+    personaVia: "acp-meta",
   },
   {
     // Official ACP adapter for OpenAI Codex. Auth: CODEX_API_KEY, or ChatGPT
@@ -367,12 +459,17 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // agent through the shim rather than through a restart — see `liveConfig`,
     // and note that it is *because* the catalog key above turned out not to
     // change what codex will accept live.
-    since: 11,
+    // Seed 12 adds `developer_instructions` — codex's own append-shaped
+    // instruction slot, and the door a persona reaches it through. Not
+    // `base_instructions`: that replaces codex's entire system prompt and is
+    // not a ConfigToml key at all.
+    since: 12,
     introduced: 2,
     backfill: (existing) => ({
-      env: withCodexGatewayUrl(withCodexCatalogKey(existing.env)),
+      env: withCodexPersonaKey(withCodexGatewayUrl(withCodexCatalogKey(existing.env))),
       quotaProbe: existing.quotaProbe ?? QUOTA_PROBES.codex,
       liveConfig: existing.liveConfig ?? "gateway",
+      personaVia: existing.personaVia ?? "env",
     }),
     id: "codex",
     name: "Codex",
@@ -381,11 +478,12 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     spawnCategories: SPAWN_CATEGORIES,
     quotaProbe: QUOTA_PROBES.codex,
     liveConfig: "gateway",
+    personaVia: "env",
     env: {
       CODEX_API_KEY: "{apiKey}",
       MODEL_PROVIDER: "{baseUrl?daedalus}",
       CODEX_CONFIG:
-        '{"model":"{model}","model_reasoning_effort":"{effort}","model_context_window":{contextWindow},"model_max_output_tokens":{maxOutputTokens},"model_catalog_json":"{codexModelCatalog}","model_provider":"{baseUrl?daedalus}","model_providers":{"daedalus":{"name":"{baseUrl?Daedalus gateway}","base_url":"{gatewayUrl}","env_key":"{baseUrl?CODEX_API_KEY}","wire_api":"{baseUrl?responses}"}}}',
+        '{"developer_instructions":"{personaPrompt}","model":"{model}","model_reasoning_effort":"{effort}","model_context_window":{contextWindow},"model_max_output_tokens":{maxOutputTokens},"model_catalog_json":"{codexModelCatalog}","model_provider":"{baseUrl?daedalus}","model_providers":{"daedalus":{"name":"{baseUrl?Daedalus gateway}","base_url":"{gatewayUrl}","env_key":"{baseUrl?CODEX_API_KEY}","wire_api":"{baseUrl?responses}"}}}',
     },
   },
   {
@@ -403,19 +501,27 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // / OPENAI_API_KEY already in the host shell). The DAEDALUS_* vars are
     // normally set in .env (or shell) for a global default; a stored profile
     // overrides them per-thread.
-    since: 1,
+    // Seed 12 adds `instructions`, which is how a persona reaches OpenCode. It
+    // is a list of *file paths*, not text, so it takes `{personaFile}` and
+    // `writePersonaPrompt` puts the prompt somewhere for it to point at.
+    since: 12,
     introduced: 1,
+    backfill: (existing) => ({
+      env: withOpencodePersonaKey(existing.env),
+      personaVia: existing.personaVia ?? "env",
+    }),
     id: "opencode",
     name: "OpenCode",
     command: "opencode",
     args: ["acp"],
     spawnCategories: SPAWN_CATEGORIES,
+    personaVia: "env",
     env: {
       DAEDALUS_OPENCODE_API_KEY: "{apiKey}",
       DAEDALUS_OPENCODE_BASE_URL: "{baseUrl?https://api.opencode.ai}",
       DAEDALUS_OPENCODE_MODEL: "{model}",
       OPENCODE_CONFIG_CONTENT:
-        '{"model":"{env:DAEDALUS_OPENCODE_MODEL}","provider":{"opencode":{"npm":"@ai-sdk/openai-compatible","name":"OpenCode","options":{"baseURL":"{env:DAEDALUS_OPENCODE_BASE_URL}","apiKey":"{env:DAEDALUS_OPENCODE_API_KEY}"}}}}',
+        '{"instructions":["{personaFile}"],"model":"{env:DAEDALUS_OPENCODE_MODEL}","provider":{"opencode":{"npm":"@ai-sdk/openai-compatible","name":"OpenCode","options":{"baseURL":"{env:DAEDALUS_OPENCODE_BASE_URL}","apiKey":"{env:DAEDALUS_OPENCODE_API_KEY}"}}}}',
     },
   },
 ];
@@ -454,6 +560,7 @@ export function seedAgents(): void {
           spawnCategories: agent.spawnCategories ?? null,
           quotaProbe: agent.quotaProbe ?? null,
           liveConfig: agent.liveConfig ?? null,
+          personaVia: agent.personaVia ?? null,
           seededVersion: since,
         })
         .run();
@@ -472,6 +579,7 @@ export function seedAgents(): void {
         spawnCategories: existing.spawnCategories ?? agent.spawnCategories ?? null,
         quotaProbe: existing.quotaProbe ?? agent.quotaProbe ?? null,
         liveConfig: existing.liveConfig ?? agent.liveConfig ?? null,
+        personaVia: existing.personaVia ?? agent.personaVia ?? null,
         ...added,
       })
       .where(eq(agentsTable.id, agent.id))
@@ -631,6 +739,11 @@ export function resolveSpawn(
   effort?: string,
   /** The thread being spawned for, when there is one — see `gatewayUrlFor`. */
   sessionId?: string,
+  /** The thread's persona, for an agent that takes one through its env. Absent
+      for a thread with no persona, for the probe (which opens no session), and
+      for an `"acp-meta"` agent, whose persona travels in the ACP handshake
+      instead — see `AgentDef.personaVia`. */
+  persona?: PersonaSpawn,
 ) {
   const resolvedModel = model || profile.defaultModel || "";
   // Catalog metadata for the selected model. Fills unquoted JSON slots, so the
@@ -668,6 +781,19 @@ export function resolveSpawn(
     contextWindow: modelMeta?.contextWindow ? String(modelMeta.contextWindow) : "null",
     maxOutputTokens: modelMeta?.maxOutputTokens ? String(modelMeta.maxOutputTokens) : "null",
     cwd: project.cwd,
+    /* JSON-escaped, and only ever correct inside a JSON string literal — which
+       is the only place a template names it. A persona is multi-line prose with
+       quotes and apostrophes in it; substituted raw, it closed the string it
+       was sitting in and CODEX_CONFIG stopped being parseable, at which point
+       `resolveEnvValue` passes the wreckage through unpruned. `JSON.stringify`
+       gives the escaped form; the slice drops the quotes the template already
+       has. */
+    [PERSONA_PROMPT_VAR]: persona ? JSON.stringify(persona.prompt).slice(1, -1) : "",
+    /* Written by the caller, not here: it is one file per *session*, and this
+       function is also called by the probe, which has no session. An agent that
+       wants the file and a caller that did not write one resolve empty, and the
+       key prunes away like every other unset one. */
+    [PERSONA_FILE_VAR]: persona?.file ?? "",
   };
   /* Costs a file write and (once per process) a `codex debug models` spawn, so
      it is only paid when an env template actually asks for it. A profile with

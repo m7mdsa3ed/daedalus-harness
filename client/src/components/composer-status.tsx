@@ -25,13 +25,8 @@ import type { SessionMeta } from "@/lib/settings"
 import { extractSubagent, extractTodos, toolHeading, toolViewOf } from "@/lib/tools"
 import { activeSubagents, buildRows } from "@/lib/transcript-rows"
 import type { ThreadState, ToolItem } from "@/lib/store"
+import { formatTokens } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
-
-function formatTokens(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`
-  return String(value)
-}
 
 /** Above this the agent is about to compact, so the popover says so. */
 const COMPACTION_WARN = 85
@@ -120,14 +115,14 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
                   <span className={cn("font-medium tabular-nums", tone.text)}>{percent}%</span>
                 </div>
                 <div
-                  className="mt-1 h-1 w-full overflow-hidden rounded-full bg-muted"
+                  className="mt-1 h-1 w-full overflow-hidden rounded-pill bg-muted"
                   role="progressbar"
                   aria-label={window.label}
                   aria-valuenow={percent}
                   aria-valuemin={0}
                   aria-valuemax={100}
                 >
-                  <div className={cn("h-full rounded-full transition-all", tone.bar)} style={{ width: `${percent}%` }} />
+                  <div className={cn("h-full rounded-pill transition-all", tone.bar)} style={{ width: `${percent}%` }} />
                 </div>
                 {reset && <p className="mt-0.5 text-[10px] text-muted-foreground">Resets {reset}</p>}
               </div>
@@ -210,13 +205,13 @@ export function ContextIndicator({
         </div>
         {context && (
           <div
-            className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+            className="h-1.5 w-full overflow-hidden rounded-pill bg-muted"
             role="progressbar"
             aria-valuenow={percent}
             aria-valuemin={0}
             aria-valuemax={100}
           >
-            <div className={cn("h-full rounded-full transition-all", tone?.bar)} style={{ width: `${percent}%` }} />
+            <div className={cn("h-full rounded-pill transition-all", tone?.bar)} style={{ width: `${percent}%` }} />
           </div>
         )}
         {context && percent >= COMPACTION_WARN && (

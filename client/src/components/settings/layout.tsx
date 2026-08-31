@@ -1,13 +1,19 @@
 /* ── Settings layout route ──
    The frame every settings page renders inside: centered column, one error
    boundary per page, and the outlet context that hands each page the server
-   connection and the actions. Pages read it back via useSettingsPage(). */
+   connection and the actions. Pages read it back via useSettingsPage().
+
+   The column's width is `settingsMaxWidth` (sections.ts) rather than a
+   constant, because a couple of pages — the theme studio above all — are not
+   forms and cannot be read at a form's measure. */
 import { Outlet, useLocation, useOutletContext } from "react-router"
 import { ErrorBoundary } from "@/components/error-boundary"
 import { SettingsSectionSkeleton } from "@/components/ui/skeletons"
 import type { Actions } from "@/lib/actions"
 import { useScrollRestoration } from "@/lib/scroll-restoration"
+import { cn } from "@/lib/utils"
 import type { ServerSettings } from "@/lib/settings"
+import { settingsMaxWidth } from "./sections"
 
 export interface SettingsPageContext {
   settings: ServerSettings
@@ -31,7 +37,12 @@ export function SettingsLayout({
   const scrollRef = useScrollRestoration<HTMLDivElement>(location.pathname)
   return (
     <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto w-full max-w-3xl px-4 pt-6 pb-16 sm:px-8">
+      <div
+        className={cn(
+          "mx-auto w-full px-4 pt-6 pb-16 sm:px-8",
+          settingsMaxWidth(location.pathname)
+        )}
+      >
         {loading ? (
           <SettingsSectionSkeleton />
         ) : (

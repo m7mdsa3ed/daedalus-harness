@@ -1,8 +1,27 @@
 // Minimal ACP-ish agent: answers requests, streams one update per prompt,
 // and exercises modes / config options / usage so the client UI can be tested.
+import { appendFileSync } from "node:fs";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + "\n");
+
+/* The `_meta` this agent was handed when its session was created or loaded,
+   written to disk rather than echoed as an update: the test needs to assert on
+   it, and inventing a transcript row to carry it would change what every other
+   assertion in bridge.test.ts sees. One JSON object per line, appended, so a
+   respawn's `session/load` is a second line and not a lost first one. */
+const RECORD = process.env.DAEDALUS_DATA_DIR
+  ? join(process.env.DAEDALUS_DATA_DIR, "fake-session-meta.jsonl")
+  : null;
+const recordSessionMeta = (method, params) => {
+  if (!RECORD) return;
+  try {
+    appendFileSync(RECORD, JSON.stringify({ method, meta: params?._meta ?? null }) + "\n");
+  } catch {
+    // The recording is a test convenience; the agent still has to answer.
+  }
+};
 
 // `category` is what tells the client which selector is the model and which is
 // the reasoning level, so those two get promoted out of the generic "Agent
@@ -190,6 +209,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     });
   }
   else if (msg.method === "session/new") {
+    recordSessionMeta("session/new", msg.params);
     out({
       jsonrpc: "2.0",
       id: msg.id,
@@ -208,6 +228,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     });
   }
   else if (msg.method === "session/load") {
+    recordSessionMeta("session/load", msg.params);
     /* A session this agent has no record of. Real agents answer exactly like
        this — codex says "no rollout found for thread id …" — and it is the
        failure that used to cost a thread its history, because the client's

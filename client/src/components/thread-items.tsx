@@ -1,4 +1,5 @@
 import * as React from "react"
+import type * as acp from "@agentclientprotocol/sdk"
 import {
   ArrowUpRightIcon,
   BotIcon,
@@ -43,11 +44,11 @@ import {
 } from "@/components/tool-views"
 import { copyText, formatElapsed, StepRow, useElapsed, yieldToTextSelection } from "@/components/step-row"
 import {
-  AgentText,
   CompactionStep,
   ErrorRow,
   PlanStep,
   SourcesStrip,
+  StreamedAgentText,
   TaskNotificationCard,
 } from "@/components/thread-cards"
 import {
@@ -60,6 +61,8 @@ import {
   webInput,
 } from "@/lib/tools"
 import type { Row, SubagentGroup, ToolRunGroup, WorkflowGroup } from "@/lib/transcript-rows"
+import { formatTokens, sumUsage } from "@/lib/tokens"
+import { StepTokens, TokenFigure, TokenSummary, useStepTokens } from "@/components/token-usage"
 import { cn } from "@/lib/utils"
 import { useViewOptionsContext } from "@/lib/view-options"
 import { useStore, type ThreadItem, type ToolItem } from "@/lib/store"
@@ -404,6 +407,7 @@ export const SubagentStep = React.memo(function SubagentStep({
     .join(", ")
   const stepThread = useStepThread(group)
   const hasBody = subagentHasBody(group, stepThread)
+  const tokens = view.showTokens ? stepUsage(group) : undefined
 
   return (
     <StepRow
@@ -415,10 +419,14 @@ export const SubagentStep = React.memo(function SubagentStep({
       mono={false}
       startedAt={head.startedAt}
       metric={
-        prose || showTimestamps ? (
+        prose || showTimestamps || tokens ? (
           <>
             {prose}
-            {prose && showTimestamps && " · "}
+            {prose && tokens && " · "}
+            {/* Bare text, not the popover form: this sits inside StepRow's own
+                disclosure button, and a button may not hold a button. */}
+            {tokens && <TokenFigure usage={tokens} />}
+            {(prose || tokens) && showTimestamps && " · "}
             {showTimestamps && <Timestamp at={head.at} />}
           </>
         ) : undefined
@@ -514,6 +522,14 @@ function stepStateOf(group: SubagentGroup): "running" | "completed" | "failed" |
   return head.status === "failed" ? "failed" : head.status === "completed" ? "completed" : "running"
 }
 
+/** What a step spent, when its runtime reported it. Only the RFD/workflow head
+    has one: a Task-tool head is a call on the *parent's* session, so its tokens
+    are already inside the parent turn's own reading and counting them here
+    would say the same tokens twice. */
+function stepUsage(group: SubagentGroup): acp.Usage | undefined {
+  return group.head.kind === "subagent" ? group.head.usage : undefined
+}
+
 const WF_STATE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   running: LoaderCircleIcon,
   completed: CheckIcon,
@@ -572,7 +588,7 @@ function WorkflowPill({ state }: { state: WfState }) {
   return (
     <span
       className={cn(
-        "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-4 tracking-wide uppercase",
+        "shrink-0 rounded-pill px-1.5 py-0.5 text-[10px] font-medium leading-4 tracking-wide uppercase",
         wfTone(state).chip
       )}
     >
@@ -634,6 +650,8 @@ function WorkflowStepTab({ group }: { group: SubagentGroup }) {
   const selectable = subagentHasBody(group, stepThread)
   const ms = useStepElapsed(group)
   const Mark = WF_STATE_ICONS[state] ?? LoaderCircleIcon
+  const view = useViewOptionsContext()
+  const tokens = view.showTokens ? stepUsage(group) : undefined
   /* Live, the second line says what the step is on right now. */
   const activity = active ? currentActivity(group.children) : undefined
   /* Only a step that did not simply succeed spends the trailing text on a
@@ -703,6 +721,14 @@ function WorkflowStepTab({ group }: { group: SubagentGroup }) {
         {trailing}
         {trailing && ms !== null && " · "}
         {ms !== null && formatElapsed(ms)}
+        {/* Under the duration rather than beside it: the trailing column is
+            already two facts wide on a failed step, and a third would push the
+            step's own name out of a sidebar that is deliberately narrow. */}
+        {tokens && (
+          <span className="block text-muted-foreground/40">
+            <TokenFigure usage={tokens} />
+          </span>
+        )}
       </span>
     </Tabs.Tab>
   )
@@ -734,6 +760,8 @@ function WorkflowStepPanel({
   const failed = state === "failed"
   const active = group.active
   const ms = useStepElapsed(group)
+  const view = useViewOptionsContext()
+  const panelTokens = view.showTokens ? stepUsage(group) : undefined
   return (
     <Tabs.Panel value={group.id} className="flex min-h-0 min-w-0 flex-1 flex-col outline-none">
       <div className="flex shrink-0 items-center gap-2 border-b border-border/40 px-3 py-2 sm:px-4">
@@ -758,6 +786,16 @@ function WorkflowStepPanel({
         </span>
         {ms !== null && (
           <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground/50">{formatElapsed(ms)}</span>
+        )}
+        {/* The pane is ordinary flow content — no enclosing button — so this is
+            the one place a step can offer the whole breakdown. */}
+        {panelTokens && (
+          <TokenSummary
+            usage={panelTokens}
+            context={group.head.kind === "subagent" ? group.head.context : undefined}
+            label="This step"
+            className="shrink-0"
+          />
         )}
         <WorkflowPill state={state as WfState} />
       </div>
@@ -882,7 +920,7 @@ function WorkflowMeter({ phases, className }: { phases: PhaseView[]; className?:
             <span
               key={i}
               className={cn(
-                "h-1 min-w-1 flex-1 rounded-full transition-colors duration-300",
+                "h-1 min-w-1 flex-1 rounded-pill transition-colors duration-300",
                 /* Not `harness-shimmer`: it paints through
                    `background-clip: text`, and a segment has no text. */
                 wfTone(step ? stateOfStep(step) : "pending").fill
@@ -932,7 +970,7 @@ function WorkflowPhaseHeader({ phase }: { phase: PhaseView }) {
       )}
       {/* The count is a pill so the heading carries a piece of its state's
           colour beside the step marks below it. */}
-      <span className={cn("shrink-0 rounded-full px-1.5 text-[10px] leading-5 tabular-nums", wfTone(state).chip)}>
+      <span className={cn("shrink-0 rounded-pill px-1.5 text-[10px] leading-5 tabular-nums", wfTone(state).chip)}>
         {done}/{phase.steps.length}
       </span>
     </div>
@@ -994,10 +1032,16 @@ export const WorkflowRun = React.memo(function WorkflowRun({
      run's shape (how many steps, which stage), and the pill is its state. A
      run whose outline has not arrived has neither yet. */
   const runningPhase = phases.find((phase) => phaseStateOf(phase) === "running")
+  /* The run's cost is its steps' — a workflow spends nothing of its own. Summed
+     at view time rather than accumulated anywhere, so a step arriving late (or
+     a replay rebuilding the lot) simply adds to it. */
+  const view = useViewOptionsContext()
+  const runTokens = view.showTokens ? sumUsage(group.steps.map(stepUsage)) : null
   const subtitle = [
     total > 0 ? `${done}/${total} steps` : null,
     banded && runningPhase?.name ? runningPhase.name : null,
     elapsedMs !== null && elapsedMs >= 2000 ? formatElapsed(elapsedMs) : null,
+    runTokens ? `${formatTokens(runTokens.totalTokens)} tokens` : null,
   ]
     .filter(Boolean)
     .join(" · ")
@@ -1300,6 +1344,10 @@ export const ThreadItemView = React.memo(function ThreadItemView({
   streaming?: boolean
 }) {
   const view = useViewOptionsContext()
+  /* Read here rather than in the one case that prints it: a switch is not a
+     place a hook can live. Only a thought uses it — a tool row draws its own
+     inside ToolStep, and the other kinds are not steps. */
+  const stepTokens = useStepTokens(item.id)
   switch (item.kind) {
     case "error":
       return (
@@ -1347,7 +1395,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
             <MessageContent>
               <Bubble variant="ghost">
                 <BubbleContent className="text-sm leading-relaxed">
-                  <AgentText text={item.text} />
+                  <StreamedAgentText text={item.text} streaming={streaming} />
                 </BubbleContent>
               </Bubble>
             </MessageContent>
@@ -1377,7 +1425,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
             <Button
               variant="outline"
               size="sm"
-              className="h-6 shrink-0 gap-1 rounded-full px-2 text-[11px]"
+              className="h-6 shrink-0 gap-1 rounded-pill px-2 text-[11px]"
               onClick={onContinue}
               title="Ask the agent to pick up where it stopped"
             >
@@ -1400,6 +1448,11 @@ export const ThreadItemView = React.memo(function ThreadItemView({
          extra render. Clipped from the front because `truncate` cuts the
          end, and the end is the part that is new. */
       const preview = thoughtPreview(reasoning, streaming)
+      /* A request that ended on its thinking — no tool call after it — files
+         its cost here, and this is the row that has to print it or the reading
+         is simply lost. Never while it streams: the figure lands with the
+         request that is still being written. */
+      const tokens = view.showTokens && !streaming ? stepTokens : undefined
 
       return (
         <StepRow
@@ -1407,6 +1460,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
           status={streaming ? "in_progress" : null}
           label={streaming ? "thinking" : undefined}
           startedAt={streaming ? item.at : undefined}
+          metric={tokens ? <StepTokens tokens={tokens} /> : undefined}
           mono={false}
           defaultOpen={view.showThinking}
           openSetting={view.showThinking}
@@ -1465,6 +1519,11 @@ const ToolStep = React.memo(function ToolStep({
      empty box is worse than no chevron. "Expand tool output" overrides the
      second, so the body is there to read without a click. */
   const hasBody = toolHasDetail(item)
+  /* What the request that ended on this call cost. Only the step it ended on
+     carries one, so most rows in a run have none — that is the reading being
+     honest about which step it can be pinned to, not a gap. */
+  const stepTokens = useStepTokens(item.id)
+  const tokens = view.showTokens ? stepTokens : undefined
   /* What the agent said it was doing beats what it typed: a Bash call carries
      both, and the command truncates to nothing useful in a row this wide.
      A subagent's step drops the child's name its runtime may have prefixed —
@@ -1487,7 +1546,15 @@ const ToolStep = React.memo(function ToolStep({
          belonged to out of view. What happened is in the body — the diff, the
          output, the matches — where it is the thing being read rather than a
          teaser for it. `failed` still reaches the row, as the label. */
-      metric={showTimestamp ? <Timestamp at={item.at} /> : undefined}
+      metric={
+        tokens || showTimestamp ? (
+          <>
+            {tokens ? <StepTokens tokens={tokens} /> : null}
+            {tokens && showTimestamp ? " · " : null}
+            {showTimestamp ? <Timestamp at={item.at} /> : null}
+          </>
+        ) : undefined
+      }
       startedAt={item.startedAt}
       detail={hasBody || active ? <ToolDetail item={item} active={active} /> : undefined}
       below={<ToolSources item={item} />}

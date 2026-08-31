@@ -300,6 +300,33 @@ export interface CommandDef {
   content: string
 }
 
+/**
+ * How a thread wants to be worked on: a block of instructions appended to the
+ * agent's own system prompt, plus the two dials that go with it.
+ *
+ * The client never assembles the prompt or sends it anywhere — a persona is an
+ * id on the thread, and the server hands it to the runtime through whichever
+ * door that runtime opens (`server/src/personas.ts`). Which is why picking one
+ * costs a respawn: every agent we ship reads it only as a session is created or
+ * loaded, so there is nothing to change on a running process. The conversation
+ * survives, because the respawn ends in `session/load`.
+ */
+export interface Persona {
+  id: string
+  name: string
+  description: string
+  prompt: string
+  /** null = leave the runtime's own default alone; 0 = thinking off; >0 = a
+      token budget. Only runtimes with thinking as their own axis honour it. */
+  thinking: number | null
+  /** Applied to the thread when the persona is *picked*, and never again — the
+      effort row underneath stays the user's. Null = the persona has no opinion. */
+  effort: string | null
+  /** 0 for a persona the user made; the seed release for a built-in. */
+  seededVersion: number
+  sortOrder: number
+}
+
 /** Entries discovered in the agents' own configs, offered for import. */
 export interface ImportCandidates {
   mcpServers: (Omit<McpServerDef, "id"> & { source: string })[]
@@ -426,6 +453,8 @@ export interface SessionMeta {
   agentId: string
   model: string
   effort: string
+  /** The thread's persona (`Persona`), or "" for none. */
+  personaId?: string
   title: string
   acpSessionId?: string
   createdAt: number

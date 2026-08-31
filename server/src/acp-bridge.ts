@@ -5,6 +5,7 @@ import * as acp from "@agentclientprotocol/sdk";
 import { profileSupports, type Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 import { mentionLinks } from "./mentions.js";
+import type { PersonaSpawn } from "./personas.js";
 import { getAgent, resolveSpawn } from "./registry.js";
 import type {
   HistoryLost,
@@ -52,6 +53,10 @@ export function spawnAgent(
       credentials and model behind it stay the harness's to change while the
       process runs. The probe has no thread and passes nothing. */
   sessionId?: string,
+  /** The thread's persona, for an agent whose `personaVia` is `"env"`. An
+      `"acp-meta"` agent's persona travels in the handshake instead
+      (`sessionMeta`), and the probe has no thread and passes nothing. */
+  persona?: PersonaSpawn,
 ): ChildProcessWithoutNullStreams {
   const agent = getAgent(agentId);
   if (!agent) throw new Error(`unknown agent: ${agentId}`);
@@ -61,7 +66,15 @@ export function spawnAgent(
   // Skills/commands are NOT materialized here: what belongs in the cwd is the
   // union across the project's live threads, which only the SessionManager
   // knows (`materializeFor`). The probe writes the project's own set itself.
-  const { command, args, env, cwd } = resolveSpawn(agent, profile, project, model, effort, sessionId);
+  const { command, args, env, cwd } = resolveSpawn(
+    agent,
+    profile,
+    project,
+    model,
+    effort,
+    sessionId,
+    agent.personaVia === "env" ? persona : undefined,
+  );
   return spawn(command, args, {
     cwd,
     env: { ...process.env, ...env },
@@ -217,6 +230,11 @@ export interface BridgeOptions {
   /** The harness's workflow MCP server is replacing claude-code's built-in
       Workflow tool, for the same reason and with the same allow rule. */
   workflowViaMcp?: boolean;
+  /** The thread's persona, for an agent whose `personaVia` is `"acp-meta"` —
+      see `sessionMeta`. Undefined for every other agent and for a thread with
+      no persona; an `"env"` agent's persona was placed by `resolveSpawn`
+      before this process existed. */
+  persona?: PersonaSpawn;
 }
 
 export class AcpBridge {
@@ -379,11 +397,30 @@ export class AcpBridge {
   }
 
   /**
-   * The ACP `_meta` block carrying claude-code bridge options that this client
-   * does not model itself. `_meta` is passed through intact (it is the
-   * extensibility escape hatch), so dropping `disallowedTools` here is the only
-   * way to switch the built-in web tools off. Empty for non-claude-code agents
-   * and for sessions without the web-search server.
+   * The ACP `_meta` block for `session/new` and `session/load` — the two
+   * requests that carry claude-code bridge options this client does not model
+   * itself. `_meta` is passed through intact (it is the extensibility escape
+   * hatch), so dropping `disallowedTools` here is the only way to switch the
+   * built-in web tools off. Empty for non-claude-code agents and for sessions
+   * with neither the web-search server nor a persona.
+   *
+   * The **persona** rides here too, for an agent whose `personaVia` is
+   * `"acp-meta"`, and it is why this is built once and used by both requests
+   * rather than only by `newSession`: claude-agent-acp forwards `_meta` from
+   * `session/load` into the same `createSession` path, so a respawn — which is
+   * what a persona change costs — reapplies it against the loaded conversation
+   * instead of starting an empty one. Two keys, and they are deliberately at
+   * different levels of the block:
+   *
+   *  - `systemPrompt` as an **object** is merged over the agent's own
+   *    `{type:"preset", preset:"claude_code"}` with the type and preset locked,
+   *    so `{append}` adds to the CLI's system prompt. A *string* there would
+   *    replace it wholesale, which is a different feature and not this one — a
+   *    persona is a preference about how to work, not a new agent.
+   *  - `thinking` goes inside `claudeCode.options`, which the adapter spreads
+   *    straight into the Agent SDK's query options. It is a separate axis from
+   *    effort (the agent exposes both, and they do different things), so `null`
+   *    has to mean "leave the runtime's own default alone" while `0` means off.
    *
    * The allow rule is the other half, and it is not optional. A disallowed
    * tool lands in the session's `alwaysDenyRules`, and the auto-mode
@@ -399,7 +436,10 @@ export class AcpBridge {
    * allow says "this one instead". Verified with the CLI: the same prompt on
    * the same gateway went from two denials to none.
    */
-  private claudeMeta(opts: BridgeOptions): Record<string, unknown> {
+  private sessionMeta(opts: BridgeOptions): Record<string, unknown> {
+    const meta: Record<string, unknown> = {};
+    const options: Record<string, unknown> = {};
+
     const disallowedTools: string[] = [];
     const allowedTools: string[] = [];
     if (opts.websearchViaMcp) {
@@ -410,15 +450,25 @@ export class AcpBridge {
       disallowedTools.push(CLAUDE_WORKFLOW_TOOL);
       allowedTools.push(`mcp__${WORKFLOW_SERVER_NAME}`);
     }
-    if (disallowedTools.length === 0) return {};
-    return { claudeCode: { options: { disallowedTools, allowedTools } } };
+    if (disallowedTools.length > 0) Object.assign(options, { disallowedTools, allowedTools });
+
+    if (opts.persona) {
+      meta.systemPrompt = { append: opts.persona.prompt };
+      const budget = opts.persona.thinking;
+      if (budget !== null && budget !== undefined) {
+        options.thinking = budget > 0 ? { type: "enabled", budgetTokens: budget } : { type: "disabled" };
+      }
+    }
+
+    if (Object.keys(options).length > 0) meta.claudeCode = { options };
+    return meta;
   }
 
   private async newSession(opts: BridgeOptions): Promise<void> {
     const response = await this.connection.agent.request(acp.methods.agent.session.new, {
       cwd: opts.cwd,
       mcpServers: opts.mcpServers,
-      _meta: this.claudeMeta(opts),
+      _meta: this.sessionMeta(opts),
     });
     this.adoptSession(response.sessionId, response.modes ?? null, response.configOptions ?? [], false);
   }
@@ -452,7 +502,7 @@ export class AcpBridge {
         sessionId: acpSessionId,
         cwd: opts.cwd,
         mcpServers: opts.mcpServers,
-        _meta: this.claudeMeta(opts),
+        _meta: this.sessionMeta(opts),
       });
       this.adoptSession(acpSessionId, response?.modes ?? null, response?.configOptions ?? [], true);
     } catch (error) {

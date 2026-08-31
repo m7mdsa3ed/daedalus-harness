@@ -2,7 +2,7 @@ import * as React from "react"
 import { KeyRound, Pencil, Plus, Trash2 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
 import { dropAgentOptions } from "@/lib/agent-options"
-import { reportError } from "@/lib/errors"
+import { captureError, reportError, type InlineError } from "@/lib/errors"
 import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
@@ -66,7 +66,15 @@ export function ProfilesPage() {
   const navigate = useNavigate()
 
   const remove = async (profile: Profile) => {
-    if (!(await confirm({ title: `Delete profile "${profile.name}"?`, destructive: true, confirmLabel: "Delete" })))
+    if (
+      !(await confirm({
+        title: `Delete profile "${profile.name}"?`,
+        description:
+          "Its credentials, model catalog and linked tools are removed from this server. Threads on it keep their transcripts, but have to be moved to another profile before they can run again.",
+        destructive: true,
+        confirmLabel: "Delete",
+      }))
+    )
       return
     try {
       await api(settings, `/api/profiles/${profile.id}`, { method: "DELETE" })
@@ -236,6 +244,7 @@ function ProfileForm({
   ]
   const [rows, setRows] = React.useState<ModelRow[]>(() => toModelRows(profile?.models ?? []))
   const [busy, setBusy] = React.useState(false)
+  const [saveError, setSaveError] = React.useState<InlineError | null>(null)
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
   const patchRow = (uid: string, patch: Partial<ModelRow>) =>
     setRows((r) => r.map((row) => (row.uid === uid ? { ...row, ...patch } : row)))
@@ -267,6 +276,7 @@ function ProfileForm({
   const save = async (e: React.FormEvent) => {
     e.preventDefault()
     setBusy(true)
+    setSaveError(null)
     try {
       const models = rowsToModels(rows)
       if (Object.keys(links).length === 0) {
@@ -304,7 +314,7 @@ function ProfileForm({
       }
       onDone(true)
     } catch (err) {
-      reportError(err, "Couldn't save the profile")
+      setSaveError(captureError(err, "Couldn't save the profile"))
       setBusy(false)
     }
   }
@@ -492,7 +502,7 @@ function ProfileForm({
           />
         </Field>
       </FormSection>
-      <FormActions busy={busy} onCancel={() => onDone(false)} />
+      <FormActions busy={busy} onCancel={() => onDone(false)} error={saveError} />
       </PageForm>
     </>
   )

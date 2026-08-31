@@ -15,6 +15,7 @@ import {
   Plug,
   Search,
   Server,
+  Drama,
   Sparkles,
   SquareSlash,
 } from "lucide-react"
@@ -84,6 +85,14 @@ export const SETTINGS_SECTIONS = [
       "Reusable prompts invoked as /name from the composer. Attach them to a profile, or pick them on a new thread; they are written into <cwd>/.claude/commands at spawn and the agent advertises them like its own.",
   },
   {
+    id: "personas",
+    label: "Personas",
+    icon: Drama,
+    title: "Personas",
+    description:
+      "How a thread wants to be worked on: a block of instructions appended to the agent's own system prompt, plus an optional thinking budget and effort. A thread picks one in its settings menu; the server hands it to each runtime through the door that runtime opens for it, so nothing is smuggled into your messages.",
+  },
+  {
     id: "profiles",
     label: "Profiles",
     icon: KeyRound,
@@ -129,12 +138,35 @@ export type SectionMeta = (typeof SETTINGS_SECTIONS)[number]
 export const sectionMeta = (id: SettingsSectionId): SectionMeta =>
   SETTINGS_SECTIONS.find((s) => s.id === id) ?? SETTINGS_SECTIONS[0]
 
+/* ── How wide a settings page may get ──
+   One column width for the whole section, set by the layout, because a page
+   choosing its own would mean the frame jumping width as you move between
+   them. The default is the reading width for a form: wide enough for a label
+   beside its control and a two-up grid, narrow enough that a line of body copy
+   does not run past what an eye tracks back from (page headers additionally
+   clamp their prose at 65ch).
+
+   A handful of pages are not forms. The theme studio is two columns — controls
+   beside a sticky preview of the app — and at a form's width neither half has
+   room: the preview shrinks to a thumbnail and the colour grid wraps its
+   light/dark pair onto separate lines, which is the one comparison the whole
+   screen exists to make. Those get the full width of the frame.
+
+   Matched on the pathname rather than declared per route because the layout is
+   what renders the container and it only knows the location; keeping the list
+   here rather than in layout.tsx keeps route facts in the module that already
+   owns them. */
+const FULL_WIDTH_SETTINGS: readonly RegExp[] = [/^\/settings\/appearance\/themes\//]
+
+export const settingsMaxWidth = (pathname: string): string =>
+  FULL_WIDTH_SETTINGS.some((pattern) => pattern.test(pathname)) ? "max-w-none" : "max-w-5xl"
+
 export const SETTINGS_NAV_GROUPS: readonly {
   label: string
   sections: readonly SettingsSectionId[]
 }[] = [
   { label: "Preferences", sections: ["general", "appearance", "notifications", "web-search"] },
-  { label: "Workspace", sections: ["projects", "knowledge", "mcp", "skills", "commands"] },
+  { label: "Workspace", sections: ["projects", "knowledge", "mcp", "skills", "commands", "personas"] },
   { label: "Agents", sections: ["profiles", "agents", "usage"] },
   { label: "Server", sections: ["backup"] },
 ] as const

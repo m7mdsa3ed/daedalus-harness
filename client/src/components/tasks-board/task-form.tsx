@@ -31,7 +31,8 @@ import {
 } from "@/lib/tasks-board"
 import { COLOR_DOT, type BoardStatus } from "@/lib/boards"
 import { cn } from "@/lib/utils"
-import { reportError } from "@/lib/errors"
+import { ErrorNote } from "@/components/error-note"
+import { captureError, type InlineError } from "@/lib/errors"
 import { TaskEditor } from "./task-editor"
 
 /* `statusId` is a free string, not an enum: the columns are the board's rows
@@ -108,6 +109,11 @@ export function TaskFormDialog({
 }) {
   const [busy, setBusy] = React.useState(false)
   const [deleting, setDeleting] = React.useState(false)
+  /* Save and Delete share one slot above the footer: only one of them can be
+     in flight, and it is the footer's own buttons that failed. Inline because
+     the dialog covers the corner a toast lands in — and because the values the
+     user typed are still here to correct and send again. */
+  const [error, setError] = React.useState<InlineError | null>(null)
   const blank = React.useMemo(
     () => empty(defaultStatusId || statuses[0]?.id || ""),
     [defaultStatusId, statuses],
@@ -120,6 +126,7 @@ export function TaskFormDialog({
 
   const submit = form.handleSubmit(async (values) => {
     setBusy(true)
+    setError(null)
     try {
       await onSave({
         title: values.title,
@@ -138,7 +145,7 @@ export function TaskFormDialog({
       toast.success(task ? "Task updated" : "Task created")
       onOpenChange(false)
     } catch (err) {
-      reportError(err, task ? "Couldn't update the task" : "Couldn't create the task")
+      setError(captureError(err, task ? "Couldn't update the task" : "Couldn't create the task"))
     } finally {
       setBusy(false)
     }
@@ -147,12 +154,13 @@ export function TaskFormDialog({
   const doDelete = async () => {
     if (!onDelete) return
     setDeleting(true)
+    setError(null)
     try {
       await onDelete()
       toast.success("Task deleted")
       onOpenChange(false)
     } catch (err) {
-      reportError(err, "Couldn't delete the task")
+      setError(captureError(err, "Couldn't delete the task"))
     } finally {
       setDeleting(false)
     }
@@ -293,6 +301,8 @@ export function TaskFormDialog({
               </div>
             </aside>
           </div>
+
+          <ErrorNote error={error} className="mx-5 mb-3 sm:mx-6" />
 
           <footer className="flex flex-col-reverse gap-3 border-t px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <div>

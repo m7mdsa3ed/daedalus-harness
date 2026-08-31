@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react"
 import { BOOT_COLORS } from "./boot-colors"
+import { BUILTIN_THEMES, type BuiltinTheme } from "./builtin-themes"
 import {
   customThemeId,
   customThemesSnapshot,
@@ -21,22 +22,19 @@ type Theme = "light" | "dark" | "system"
 /** A palette id: a built-in one, or `custom:<id>` from the theme builder. */
 export type ColorTheme = string
 
-/** The palettes that ship in styles/themes.css. Adding one means adding a
-    block there and an entry here — nothing else in the app knows their names. */
-export const BUILTIN_THEMES = [
-  { value: "default", label: "Default" },
-  { value: "ocean", label: "Ocean" },
-  { value: "forest", label: "Forest" },
-  { value: "violet", label: "Violet" },
-  { value: "sunset", label: "Sunset" },
-  { value: "rose", label: "Rose" },
-  { value: "amber", label: "Amber" },
-  { value: "slate", label: "Slate" },
-  { value: "claude", label: "Claude" },
-  { value: "codex", label: "Codex" },
-  { value: "gemini", label: "Gemini" },
-  { value: "copilot", label: "Copilot" },
-] as const
+/* The themes that ship in styles/themes.css. The list itself is **generated**
+   alongside the CSS by scripts/gen-themes.mjs (`pnpm themes`) and re-exported
+   here so every existing importer keeps its path. It used to be hand-written
+   in this file with a "keep in sync" comment at both ends, which is exactly how
+   Sunset, Rose, Amber and Slate outlived the blocks that painted them.
+
+   A theme is no longer only a palette: each also sets a radius, three font
+   roles, a depth, a glass strength, a measure and a tracking, and the generator
+   refuses to write a file where two of them share a design signature or where a
+   preset value is worn by none. Anyone wearing a theme that has been removed is
+   put back on Default by `colorThemeExists` below — the same path a deleted
+   custom theme already took. */
+export { BUILTIN_THEMES, type BuiltinTheme }
 
 export const DEFAULT_COLOR_THEME = "default"
 

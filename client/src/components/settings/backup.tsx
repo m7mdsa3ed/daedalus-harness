@@ -6,7 +6,8 @@ import { Switch } from "@/components/ui/switch"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
 import { Spinner } from "@/components/ui/spinner"
-import { reportError, reportPromise } from "@/lib/errors"
+import { ErrorNote } from "@/components/error-note"
+import { captureError, reportPromise, type InlineError } from "@/lib/errors"
 import { ApiError, api, type ServerSettings } from "@/lib/settings"
 import { PageHeader, Group, Row } from "./primitives"
 import { sectionMeta } from "./sections"
@@ -181,15 +182,20 @@ function ImportGroup({ settings }: { settings: ServerSettings }) {
   const [file, setFile] = React.useState<{ name: string; size: number; text: string; peek: BundlePeek } | null>(null)
   const [mode, setMode] = React.useState<"merge" | "replace">("merge")
   const [busy, setBusy] = React.useState(false)
+  /* An unreadable or unparseable file leaves the row saying "Choose a backup
+     file" — exactly what it said before the pick. The reason has to be next to
+     the button, not in a corner. */
+  const [pickError, setPickError] = React.useState<InlineError | null>(null)
 
   const pick = async (picked: File | undefined) => {
     if (!picked) return
+    setPickError(null)
     try {
       const text = await picked.text()
       setFile({ name: picked.name, size: picked.size, text, peek: peek(text) })
     } catch (err) {
       setFile(null)
-      reportError(err, "Couldn't read that file")
+      setPickError(captureError(err, "Couldn't read that file"))
     }
   }
 
@@ -260,6 +266,11 @@ function ImportGroup({ settings }: { settings: ServerSettings }) {
           {file ? "Choose another" : "Choose file"}
         </Button>
       </Row>
+      {pickError && (
+        <div className="px-4 py-3">
+          <ErrorNote error={pickError} />
+        </div>
+      )}
       {file && (
         <>
           <div className="px-4 py-3">

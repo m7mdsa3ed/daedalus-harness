@@ -22,6 +22,8 @@ import { useStore, type ThreadState } from "@/lib/store"
 
 /** Sentinel for "whatever the profile says", which is not itself a model id. */
 const DEFAULT_CHOICE = "__default__"
+/** Sentinel for "no persona", which is not itself a persona id. */
+const NO_PERSONA = "__none__"
 
 /**
  * Everything about how this thread is answering, behind one compact trigger.
@@ -131,9 +133,13 @@ export function SessionConfigPopover({
       ? currentChoiceLabel(liveEffort)
       : null
 
-  /* The same three settings as one string, for the collapsed trigger's tooltip
-     and its accessible name. */
-  const triggerLabel = [modelLabel, effortLabel, modeLabel].filter(Boolean).join(" · ")
+  const persona = state.personas.find((p) => p.id === meta.personaId)
+
+  /* The same settings as one string, for the collapsed trigger's tooltip and
+     its accessible name. */
+  const triggerLabel = [persona?.name, modelLabel, effortLabel, modeLabel]
+    .filter(Boolean)
+    .join(" · ")
 
   /** Live ACP change: one call to the running agent, safe mid-turn. */
   const set = (option: acp.SessionConfigOption, value: string | boolean) =>
@@ -191,6 +197,28 @@ export function SessionConfigPopover({
       .catch((err) => reportError(err, "Couldn't switch profile"))
   }
 
+  /* Always asks, whatever `liveReconfig` says, because this one is not a claim
+     about the agent: no runtime we ship reads a persona anywhere but at
+     `session/new`/`session/load`, so the restart is certain rather than likely.
+     What the confirmation is really for is the turn — the conversation comes
+     back, the turn in flight does not. */
+  const changePersona = async (personaId: string) => {
+    const next = state.personas.find((p) => p.id === personaId)
+    if (
+      !(await confirm({
+        title: next ? `Work this thread as "${next.name}"?` : "Drop this thread's persona?",
+        description: thread.turnActive
+          ? "The agent reads this at startup, so it restarts. The running turn stops, then the conversation is restored."
+          : "The agent reads this at startup, so it restarts. The conversation is restored.",
+        confirmLabel: next ? "Switch" : "Drop",
+      }))
+    )
+      return
+    actions
+      .changeThreadPersona(meta, personaId)
+      .catch((err) => reportError(err, "Couldn't change how this thread works"))
+  }
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -210,6 +238,7 @@ export function SessionConfigPopover({
             {/* The mode rides along in the trigger: it left the composer, and a
                 silently-active "accept edits" is the one setting you must see. */}
             <span className="max-w-56 truncate max-md:sr-only">
+              {persona && <span>{persona.name} · </span>}
               {modelLabel}
               {effortLabel && <span className="capitalize"> · {effortLabel}</span>}
               {modeLabel && ` · ${modeLabel}`}
@@ -220,6 +249,20 @@ export function SessionConfigPopover({
       <DropdownMenuContent align="start" className="w-60">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Session</DropdownMenuLabel>
+          {/* First, because it is the one row here that is about the work
+              rather than about the machinery — and because it is the only one
+              whose choices do not depend on the profile below it. */}
+          {state.personas.length > 0 && (
+            <MenuRow
+              label="Persona"
+              value={meta.personaId || NO_PERSONA}
+              choices={[
+                { value: NO_PERSONA, name: "None" },
+                ...state.personas.map((p) => ({ value: p.id, name: p.name })),
+              ]}
+              onSelect={(value) => void changePersona(value === NO_PERSONA ? "" : value)}
+            />
+          )}
           {agentProfiles.length > 1 && (
             <MenuRow
               label="Profile"

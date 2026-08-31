@@ -144,8 +144,30 @@ export interface SubagentStateUpdate {
   _meta?: Record<string, unknown> | null;
 }
 
+/**
+ * What a subagent's turn cost, on the parent's session.
+ *
+ * The harness's own, not the RFD's — hence the prefix, which is also what keeps
+ * it out of the way of a variant ACP may one day name. Tokens travel in exactly
+ * one place on the wire, `turn_ended`, and a child's `turn_ended` is
+ * deliberately never mirrored onto the parent (its turns are not the parent's,
+ * and a foreign turn boundary would cut the parent's replay windows at a turn
+ * it never had). So the runner reads the usage off the child's own settled turn
+ * and says it again here, as an ordinary journaled `update` — which is what
+ * makes a step's cost replay for free, exactly like its spawn and its state.
+ *
+ * Per turn, like the `Usage` it carries: a step that takes a repair turn sends
+ * two, and the reader adds them up.
+ */
+export interface SubagentUsage {
+  sessionUpdate: "_daedalus/subagent_usage";
+  subagentSessionId: string;
+  usage: acp.Usage;
+  _meta?: Record<string, unknown> | null;
+}
+
 /** Everything a `session/update` can carry: the SDK's union plus the RFD's. */
-export type SessionUpdate = acp.SessionUpdate | SubagentSpawned | SubagentStateUpdate;
+export type SessionUpdate = acp.SessionUpdate | SubagentSpawned | SubagentStateUpdate | SubagentUsage;
 
 /** What a respawn has to put back: the agent's configuration minus the two
     settings the profile owns. See AcpBridge.captureRestoreState. */
@@ -338,7 +360,7 @@ export type ThreadEvent =
       peer including the one that asked — the change may have been rewritten on
       the way (a profile's default model standing in for a cleared one), so the
       answer, not the request, is what every menu should draw. */
-  | { ev: "spawn_config"; profileId: string; model: string; effort: string }
+  | { ev: "spawn_config"; profileId: string; model: string; effort: string; personaId?: string }
   /** A turn began, and whose words began it. Fanned out to every peer except
       the sender, which already showed its own message. */
   | { ev: "turn_started"; seq: number; turnId: string; text: string }

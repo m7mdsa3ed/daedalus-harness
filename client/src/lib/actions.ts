@@ -24,6 +24,7 @@ import {
   updateScheduled,
   type AgentDef,
   type McpServerDef,
+  type Persona,
   type Profile,
   type Project,
   type ScheduledMessage,
@@ -430,13 +431,13 @@ export function useActions(settings: ServerSettings) {
            restarted. Live-only, so it never arrives inside a replay — and it
            carries the row's own state rather than the agent's, which is why it
            patches the session and not the thread. */
-        onSpawnConfig: (profileId, model, effort) =>
-          send({ type: "spawn-config", id, profileId, model, effort }),
+        onSpawnConfig: (profileId, model, effort, personaId) =>
+          send({ type: "spawn-config", id, profileId, model, effort, personaId }),
         onTtft: (ms) => send({ type: "ttft", id, ms }),
         onQuota: (quota) => send({ type: "quota", id, quota }),
-        onTurnEnded: (usage, error, promptText, catchingUp, continued) => {
+        onTurnEnded: (usage, error, promptText, catchingUp, continued, turnId) => {
           send({ type: "turn-active", id, active: false })
-          if (usage) send({ type: "usage", id, usage })
+          if (usage) send({ type: "usage", id, usage, turnId })
           if (error) {
             // Recorded in the transcript either way — a failure that survived a
             // reload is still the answer to the message above it, and carries the
@@ -516,11 +517,18 @@ export function useActions(settings: ServerSettings) {
            holding a question open while someone scrolls back, and a question
            that vanished because the transcript above it grew would be a real
            loss. Only `items` is rebuilt, because only `items` is what the fold
-           produces. */
+           produces. Per-step usage goes with them: it is derived from where an
+           update landed in the transcript being rebuilt (see `markStepUsage`),
+           so carrying the cursor over would have the fold's first reading
+           measured against a position from the last one. */
         onRewind: () => {
           buffer = []
           const current = stateRef.current.threads[id] ?? emptyThread
-          send({ type: "thread-reset", id, thread: { ...current, items: [] } })
+          send({
+            type: "thread-reset",
+            id,
+            thread: { ...current, items: [], stepUsage: {}, usageMark: null },
+          })
         },
         /* The re-fold is committed as one render. `turnActive` is put back
            afterwards because the fold derives it from the events it saw, and a
@@ -562,7 +570,7 @@ export function useActions(settings: ServerSettings) {
      */
     const changeThreadConfig = async (
       meta: SessionMeta,
-      next: { profileId?: string; model?: string; effort?: string },
+      next: { profileId?: string; model?: string; effort?: string; personaId?: string },
       context: string
     ) => {
       let live = false
@@ -574,6 +582,11 @@ export function useActions(settings: ServerSettings) {
             agentId: meta.agentId,
             model: next.model ?? meta.model ?? undefined,
             effort: next.effort ?? meta.effort ?? undefined,
+            /* Deliberately not `?? meta.personaId`: sending the current value
+               back would be indistinguishable from asking for it, and the
+               server reads a *changed* persona as "apply its effort too". Only
+               a real pick travels. */
+            personaId: next.personaId,
           }),
         })
         live = reply.live
@@ -622,6 +635,10 @@ export function useActions(settings: ServerSettings) {
           projectId: project.id,
           model: meta.model || undefined,
           effort: meta.effort || undefined,
+          /* How this thread should be worked on. Picked on the draft like the
+             rest of this, and — unlike a started thread's — free: nothing is
+             running yet, so there is no respawn to pay for. */
+          personaId: meta.personaId || undefined,
           /* Settings picked on the draft, against the option set the agent last
              advertised. The server applies them the moment session/new answers,
              best-effort: a remembered option the agent no longer offers must not
@@ -668,15 +685,20 @@ export function useActions(settings: ServerSettings) {
        object because the visibility listener bound above calls it, and there is
        no `this` in scope here. */
     const refreshCatalog = async () => {
-      const [profiles, agents] = await Promise.all([
+      const [profiles, agents, personas] = await Promise.all([
         api<Profile[]>(settings, "/api/profiles"),
         api<AgentDef[]>(settings, "/api/agents"),
+        /* Read here too, and for the same reason the registry is: a persona
+           added or edited on another device is otherwise invisible until a
+           reload, and this client is a PWA that stays open for days. */
+        api<Persona[]>(settings, "/api/personas"),
       ])
       // A deleted profile's remembered option set is dead weight, and its id
       // will never be asked for again.
       pruneAgentOptions(profiles.map((profile) => profile.id))
       dispatch({ type: "profiles", profiles })
       dispatch({ type: "agents", agents })
+      dispatch({ type: "personas", personas })
     }
 
     /* What the visibility listener calls, bound the way `retryWaitingThreads`
@@ -817,13 +839,14 @@ export function useActions(settings: ServerSettings) {
       refreshSessions,
 
       async bootstrap() {
-        const [profiles, projects, mcpServers, skills, commands, agents, sessions, scheduled] =
+        const [profiles, projects, mcpServers, skills, commands, personas, agents, sessions, scheduled] =
           await Promise.all([
             api<Profile[]>(settings, "/api/profiles"),
             api<Project[]>(settings, "/api/projects"),
             api<McpServerDef[]>(settings, "/api/mcp-servers"),
             api<SkillDef[]>(settings, "/api/skills"),
             api<CommandDef[]>(settings, "/api/commands"),
+            api<Persona[]>(settings, "/api/personas"),
             api<AgentDef[]>(settings, "/api/agents"),
             api<SessionMeta[]>(settings, "/api/sessions?deleted=1"),
             api<ScheduledMessage[]>(settings, "/api/scheduled"),
@@ -837,6 +860,7 @@ export function useActions(settings: ServerSettings) {
           mcpServers,
           skills,
           commands,
+          personas,
           agents,
           sessions,
           scheduled,
@@ -898,6 +922,11 @@ export function useActions(settings: ServerSettings) {
       async refreshCommands() {
         const commands = await api<CommandDef[]>(settings, "/api/commands")
         dispatch({ type: "commands", commands })
+      },
+
+      async refreshPersonas() {
+        const personas = await api<Persona[]>(settings, "/api/personas")
+        dispatch({ type: "personas", personas })
       },
 
       refreshScheduled,
@@ -970,7 +999,8 @@ export function useActions(settings: ServerSettings) {
            does — read here rather than by each caller, so a reload that
            re-adopts an unsent draft gets its MCP servers, skills and commands
            back along with its profile. */
-        const tools = defaultToolPicks(loadThreadDefaults())
+        const defaults = loadThreadDefaults()
+        const tools = defaultToolPicks(defaults)
         dispatch({
           type: "draft-session",
           session: {
@@ -980,6 +1010,10 @@ export function useActions(settings: ServerSettings) {
             agentId: opts.agentId ?? profileAgentIds(profile)[0] ?? "",
             model: model ?? "",
             effort: effort ?? "",
+            /* Remembered like the tool picks, and read here for the same
+               reason: a reload that re-adopts an unsent draft has to get back
+               the way it was going to be worked on, not just its profile. */
+            personaId: defaults.personaId ?? "",
             title: "New thread",
             createdAt: Date.now(),
             deletedAt: null,
@@ -1040,7 +1074,15 @@ export function useActions(settings: ServerSettings) {
         next: Partial<
           Pick<
             SessionMeta,
-            "projectId" | "profileId" | "agentId" | "model" | "effort" | "mcpServerIds" | "skillIds" | "commandIds"
+            | "projectId"
+            | "profileId"
+            | "agentId"
+            | "model"
+            | "effort"
+            | "personaId"
+            | "mcpServerIds"
+            | "skillIds"
+            | "commandIds"
           >
         >
       ) {
@@ -1231,6 +1273,25 @@ export function useActions(settings: ServerSettings) {
           its own model catalog. */
       async changeSpawnConfig(meta: SessionMeta, next: { model?: string; effort?: string }) {
         await changeThreadConfig(meta, next, "Couldn't change this thread's model")
+      },
+
+      /**
+       * Change how this thread is worked on.
+       *
+       * Always a respawn — no runtime we ship will take a persona on a running
+       * process — so `changeThreadConfig`'s `live: false` tail is the ordinary
+       * path here rather than the fallback: the socket closes, the cursor is
+       * dropped and the thread reattaches from 0 against the conversation
+       * `session/load` has just restored. `""` is a real value and means no
+       * persona; model and profile are left alone, because a persona says
+       * nothing about either.
+       */
+      async changeThreadPersona(meta: SessionMeta, personaId: string) {
+        await changeThreadConfig(
+          meta,
+          { personaId },
+          "Couldn't change how this thread works"
+        )
       },
 
       /* Mode and config changes are optimistic in the UI, so a rejection has to

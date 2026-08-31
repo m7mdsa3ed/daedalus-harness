@@ -70,8 +70,8 @@ function WindowBar({ window }: { window: QuotaWindow }) {
         <span className="min-w-0 truncate text-sm">{window.label}</span>
         <span className={cn("shrink-0 text-sm font-medium tabular-nums", tone.text)}>{percent}%</span>
       </div>
-      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
-        <div className={cn("h-full rounded-full transition-[width]", tone.bar)} style={{ width: `${percent}%` }} />
+      <div className="mt-1.5 h-1.5 overflow-hidden rounded-pill bg-muted">
+        <div className={cn("h-full rounded-pill transition-[width]", tone.bar)} style={{ width: `${percent}%` }} />
       </div>
       {reset && <p className="mt-1 text-xs text-muted-foreground">Resets {reset}</p>}
     </div>

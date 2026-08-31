@@ -1,22 +1,53 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+/* The bundled typeface catalog. Every family here is offerable by
+   lib/fonts.ts's FONT_CATALOG and nameable by a built-in theme — a built-in
+   has to paint correctly on a cold, offline first load, which a Google family
+   fetched at runtime cannot promise. */
 @import "@fontsource-variable/inter";
 @import "@fontsource-variable/roboto";
 @import "@fontsource-variable/figtree";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+@import "@fontsource-variable/jetbrains-mono";
+@import "@fontsource-variable/source-serif-4";
+@import "@fontsource/newsreader";
 @import "./styles/themes.css";
 @plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
+  /* ── The shape scale ──
+     Every step is a *multiple* of --radius, not an offset from it. At the
+     default 0.625rem (10px) the two are identical to the digit — 6/8/10/14/
+     18/22/26 — which is why this could be changed under a shipped app; away
+     from it they are not the same idea at all. An offset scale never reaches
+     zero: a theme asking for square corners still drew 8px on every card and
+     18px on every dialog, because `calc(0px + 8px)` is 8px. Worse, the small
+     steps went *negative*, and a negative border-radius is an invalid
+     declaration the browser drops, so `rounded-sm` silently fell back to
+     whatever it would have been. Multiplying makes the whole scale collapse to
+     0 when --radius is 0 and open up proportionally when it is large, so a
+     theme's shape reads as one decision instead of as a base value with seven
+     unrelated corrections bolted to it.
+
+     --radius-pill is the exception and is NOT derived: it is what `rounded-pill`
+     draws, for the badges, count chips and filter buttons that are capsules at
+     every ordinary radius. Deriving it would mean a square theme with capsule
+     badges (a multiple of 0 is 0, but a multiple of 4px is still a capsule on a
+     20px-tall badge, since border-radius clamps to half the box). So each shape
+     preset states it — see RADIUS_PRESETS in lib/custom-themes.ts. True circles
+     — avatars, status dots, radio marks — keep `rounded-full` and never move. */
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-  --radius-2xl: calc(var(--radius) + 8px);
-  --radius-3xl: calc(var(--radius) + 12px);
-  --radius-4xl: calc(var(--radius) + 16px);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+  --radius-pill: var(--app-radius-pill);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -51,10 +82,18 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  --shadow-glass: 0 8px 32px oklch(0 0 0 / 6%), 0 1px 4px oklch(0 0 0 / 4%);
-  --shadow-glass-lg: 0 16px 48px oklch(0 0 0 / 10%), 0 2px 8px oklch(0 0 0 / 6%);
-  --font-heading: var(--font-sans);
-  --font-sans: 'Figtree Variable', sans-serif;
+  /* Shadows and fonts go through the same indirection the colours do — a
+     Tailwind theme var pointing at a plain custom property — because that is
+     what makes them themeable at runtime. A value declared *directly* in
+     `@theme` is resolved when Tailwind builds the stylesheet, so a
+     `[data-color-theme]` block could never override it; a value declared as
+     `var(--app-*)` is resolved at paint, which is when the theme exists.
+     The `--app-*` defaults live in `:root` below. */
+  --shadow-glass: var(--app-shadow-glass);
+  --shadow-glass-lg: var(--app-shadow-glass-lg);
+  --font-sans: var(--app-font-sans);
+  --font-heading: var(--app-font-heading);
+  --font-mono: var(--app-font-mono);
 
   /* One body size for the whole app — chat prose, sidebar, settings, controls.
      The kit is downsized to text-xs everywhere, so this is *the* size knob;
@@ -73,6 +112,31 @@
 
 :root {
   --radius: 0.625rem;
+
+  /* ── The shape, type and depth floor ──
+     What a theme that says nothing about them gets. Every one of these is
+     overridable by a `:root[data-color-theme=…]` block (styles/themes.css for
+     the built-ins, the runtime <style> for user-made ones), which outranks
+     this by one attribute selector.
+
+     `--app-tracking` is applied to `body` in @layer base rather than through a
+     Tailwind var: letter-spacing is inherited, so setting it once at the root
+     of the document is the whole implementation, and routing it through a
+     utility would mean every component opting in.
+
+     The font stacks and the depth pairs are named, not spelled — both
+     vocabularies live in styles/themes.css so that a built-in theme, a
+     user-made one and this floor all resolve through one declaration. The
+     `--depth-*` pair is redeclared there under `.dark`, which is why there is
+     no dark override for the two shadows here. */
+  --app-radius-pill: calc(infinity * 1px);
+  --app-blur: 14px;
+  --app-font-sans: var(--font-family-figtree);
+  --app-font-heading: var(--app-font-sans);
+  --app-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --app-tracking: 0em;
+  --app-shadow-glass: var(--depth-soft-glass);
+  --app-shadow-glass-lg: var(--depth-soft-glass-lg);
 
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
@@ -218,6 +282,9 @@
 
   body {
     background-color: var(--background);
+    /* Inherited, so declaring it once here is the whole implementation of a
+       theme's tracking — see --app-tracking in :root. */
+    letter-spacing: var(--app-tracking, 0em);
     @apply bg-background text-foreground;
   }
 
@@ -236,13 +303,13 @@
      is what makes them read as frosted glass. */
   @supports (backdrop-filter: blur(0)) or (-webkit-backdrop-filter: blur(0)) {
     [data-slot="card"] {
-      @apply shadow-glass backdrop-blur-[14px] backdrop-saturate-[1.3];
+      @apply shadow-glass backdrop-blur-[var(--app-blur)] backdrop-saturate-[1.3];
     }
 
     /* Dialogs are opaque on purpose (see the glass backgrounds block below);
        only sheets get the blur. */
     [data-slot="sheet-content"] {
-      @apply shadow-glass-lg backdrop-blur-[28px] backdrop-saturate-[1.45];
+      @apply shadow-glass-lg backdrop-blur-[calc(var(--app-blur)*2)] backdrop-saturate-[1.45];
     }
 
     [data-slot="popover-content"],
@@ -254,11 +321,11 @@
     [data-slot="context-menu-sub-content"],
     [data-slot="menubar-content"],
     [data-slot="menubar-sub-content"] {
-      @apply shadow-glass-lg backdrop-blur-[26px] backdrop-saturate-[1.5];
+      @apply shadow-glass-lg backdrop-blur-[calc(var(--app-blur)*1.85)] backdrop-saturate-[1.5];
     }
 
     [data-sidebar="sidebar"] {
-      @apply relative overflow-hidden backdrop-blur-[14px] backdrop-saturate-[1.15];
+      @apply relative overflow-hidden backdrop-blur-[var(--app-blur)] backdrop-saturate-[1.15];
       background-color: var(--sidebar);
     }
 
@@ -521,7 +588,7 @@ html[data-desktop-vibrancy="true"] body::before {
 
 @supports (backdrop-filter: blur(0)) or (-webkit-backdrop-filter: blur(0)) {
   html[data-desktop-vibrancy="true"] [data-sidebar="sidebar"] {
-    @apply backdrop-blur-[14px] backdrop-saturate-[1.15];
+    @apply backdrop-blur-[var(--app-blur)] backdrop-saturate-[1.15];
     background-color: color-mix(in oklch, var(--sidebar) 55%, transparent);
   }
 }

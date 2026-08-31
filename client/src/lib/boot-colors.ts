@@ -20,7 +20,12 @@
    `[data-color-theme="default"]` in `src/styles/themes.css`, in hex because
    these are read by platforms rather than by CSS. Nothing can compute them at
    build time — the stylesheet is Tailwind's to produce — so changing that
-   palette's `--background` means changing this too.
+   theme's `--background` means changing this too.
+
+   Default's background is the one value `scripts/gen-themes.mjs` does not
+   derive from the theme's hue: it is pinned in that theme's `overrides`,
+   precisely so this pair stays true. Every other theme's background moves when
+   its hue does, and none of them is ever the boot colour.
 
    Only the Default palette lives here, and only as a floor: it is what shows on
    a first-ever load and behind a blocked script. Every load after one paints

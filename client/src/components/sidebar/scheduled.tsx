@@ -53,6 +53,8 @@ export function ScheduledGroup({ actions }: { actions: Actions }) {
     if (
       !(await confirm({
         title: "Cancel this scheduled message?",
+        description:
+          "It is removed from the schedule and never sent. The thread itself is untouched, and you can schedule the message again.",
         destructive: true,
         confirmLabel: "Cancel schedule",
       }))

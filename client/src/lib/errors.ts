@@ -174,6 +174,39 @@ export function describeError(err: unknown): ErrorInfo {
   return { title: "Something went wrong", detail: dataDetail(err), kind: "unknown" }
 }
 
+/** A failure prepared for a surface that will hold it: same normalization as
+    the toast, minus the toast. `text` is the untruncated clipboard form, so a
+    note that draws this needs nothing but the object. */
+export interface InlineError extends ErrorInfo {
+  /** Names the action that failed — the headline, exactly as in a toast. */
+  context?: string
+  text: string
+}
+
+/**
+ * The inline counterpart of `reportError`: normalize, log, mark reported — and
+ * hand the result back to be *drawn* rather than raising a card that floats
+ * away in a corner.
+ *
+ * This exists because a toast is the wrong instrument for a failure inside a
+ * dialog or a form. The user's eyes are in the modal they opened, the toast is
+ * bottom-trailing behind it, and the thing they were doing gives no sign it did
+ * not happen — a scan that answers nothing and a scan that failed look
+ * identical. A failure belongs next to the control that caused it, for the same
+ * reason `actions.recordError` puts a turn's failure in the transcript instead
+ * of over it.
+ *
+ * Returns null for a cancel the user asked for, which is not news here either —
+ * so an aborted request leaves no banner behind.
+ */
+export function captureError(err: unknown, context?: string): InlineError | null {
+  const info = describeError(err)
+  console.error(`[${context ?? "error"}]`, err)
+  if (info.kind === "cancelled") return null
+  markReported(err)
+  return { ...info, context, text: errorText(err, context) }
+}
+
 /** The whole thing on one clipboard-shaped string. */
 export function errorText(err: unknown, context?: string): string {
   const info = describeError(err)

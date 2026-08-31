@@ -38,7 +38,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import type { Actions } from "@/lib/actions"
-import { reportError } from "@/lib/errors"
+import { ErrorNote } from "@/components/error-note"
+import { captureError, type InlineError } from "@/lib/errors"
 import {
   baseName,
   createProjectAt,
@@ -85,6 +86,12 @@ export function ImportThreadsDialog({
   const [importing, setImporting] = React.useState(false)
   const [filter, setFilter] = React.useState("")
   const [picked, setPicked] = React.useState<Set<string>>(new Set())
+  /* Two failures, two places: the scan's stands where the list would have
+     been, the import's over the button that started it. Neither is a toast —
+     this dialog covers the corner one would appear in, and a scan that failed
+     otherwise looks exactly like a scan that found nothing. */
+  const [scanError, setScanError] = React.useState<InlineError | null>(null)
+  const [importError, setImportError] = React.useState<InlineError | null>(null)
 
   /* Which pair to ask. The remembered new-thread pair is the habit worth
      following, but the scan defaults to the agent's *virtual Default* profile
@@ -114,6 +121,8 @@ export function ImportThreadsDialog({
     setUnsupported(false)
     setTruncated(false)
     setPicked(new Set())
+    setScanError(null)
+    setImportError(null)
   }
   const pickAgent = (next: string) => {
     setAgentId(next)
@@ -138,7 +147,7 @@ export function ImportThreadsDialog({
       setUnsupported(!listing.supported)
       setTruncated(listing.truncated)
     } catch (err) {
-      reportError(err, "Couldn't list this agent's past sessions")
+      setScanError(captureError(err, "Couldn't list this agent's past sessions"))
     } finally {
       setScanning(false)
     }
@@ -207,11 +216,14 @@ export function ImportThreadsDialog({
   }
 
   const addProject = async (cwd: string) => {
+    setScanError(null)
     try {
       await createProjectAt(cwd, baseName(cwd))
       await actions.refreshProjects()
     } catch (err) {
-      reportError(err, "Couldn't create the project")
+      // Shares the list's slot: it is the list's own button that failed, and
+      // the rows it would have unlocked are what the user is looking at.
+      setScanError(captureError(err, "Couldn't create the project"))
     }
   }
 
@@ -230,6 +242,7 @@ export function ImportThreadsDialog({
     )
     if (!chosen.length) return
     setImporting(true)
+    setImportError(null)
     try {
       const result = await importSessions({
         profileId,
@@ -249,7 +262,9 @@ export function ImportThreadsDialog({
       // One import is a thread the user meant to open; several are a list.
       if (n === 1) void navigate(threadPath(result.created[0].id))
     } catch (err) {
-      reportError(err, "Couldn't import the threads")
+      // The dialog stays open on a failure, so the note has somewhere to live
+      // and the picks are still there to retry with.
+      setImportError(captureError(err, "Couldn't import the threads"))
     } finally {
       setImporting(false)
     }
@@ -343,10 +358,14 @@ export function ImportThreadsDialog({
             />
           )}
 
-          <div className="min-h-24 flex-1 overflow-y-auto">
+          <div className="min-h-24 flex-1 space-y-3 overflow-y-auto">
+            {/* Above whatever else the region holds: after a failed scan there
+                is nothing else, and after a failed "Add project" the rows it
+                was about are right underneath it. */}
+            <ErrorNote error={scanError} onRetry={() => void scan()} retryLabel="Scan again" />
             {scanning ? (
               <Note>Asking {agentName(agentId)} what it has…</Note>
-            ) : unsupported ? (
+            ) : scanError && !sessions ? null : unsupported ? (
               <Note>
                 {agentName(agentId)} on this machine can't list its past sessions, so there
                 is nothing to import from it.
@@ -388,6 +407,11 @@ export function ImportThreadsDialog({
             )}
           </div>
         </div>
+
+        {/* Not in the scrolling list: the button that failed is in the footer,
+            and a note that can scroll out of sight is one the user can miss
+            exactly as they miss a toast. */}
+        <ErrorNote error={importError} />
 
         <ResponsiveDialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>

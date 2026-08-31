@@ -75,6 +75,28 @@ export function rowTailId(row: Row): string {
 }
 
 /**
+ * Answers only (view-options): the conversation with the work taken out.
+ *
+ * Kept: the user's messages, the agent's prose, the notices that carry an
+ * interrupted turn's Continue button, and errors — a failure hidden reads as
+ * an answer that never came, which is the one thing this option must not do.
+ * Dropped: thoughts, tool calls, plans, compactions, subagent sessions.
+ *
+ * A `parentId` is dropped whatever its kind: a subagent's own prose is the
+ * work, not the thread's answer, and its head is gone anyway — leaving it in
+ * would put a worker's running commentary in the flow as if the thread had
+ * said it. Filtering the ITEMS rather than the rows is the point: nesting and
+ * grouping then have nothing to build out of, so nothing downstream — the
+ * rail, the memos, the row views — learns a word about this option.
+ */
+export function isAnswerItem(item: ThreadItem): boolean {
+  if (item.parentId) return false
+  return (
+    item.kind === "user" || item.kind === "agent" || item.kind === "notice" || item.kind === "error"
+  )
+}
+
+/**
  * The transcript as rows: subagents nested, then (optionally) runs grouped.
  * Nesting does not depend on the grouping option — a subagent's rail is not
  * a preference, it is where its steps belong.

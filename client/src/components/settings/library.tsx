@@ -4,7 +4,8 @@
 import * as React from "react"
 import { Download, Pencil, Plus, Trash2 } from "lucide-react"
 import { useNavigate } from "react-router"
-import { reportError, reportPromise } from "@/lib/errors"
+import { ErrorNote } from "@/components/error-note"
+import { captureError, reportError, reportPromise, type InlineError } from "@/lib/errors"
 import { Button } from "@/components/ui/button"
 import { PickerSkeleton } from "@/components/ui/skeletons"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -25,6 +26,7 @@ export function LibrarySection<T extends { id: string; name: string }>({
   refresh,
   extraActions,
   editable = () => true,
+  importable = true,
 }: {
   meta: SectionMeta
   items: T[]
@@ -37,12 +39,24 @@ export function LibrarySection<T extends { id: string; name: string }>({
   extraActions?: React.ReactNode
   /** Whether a row gets an Edit button. Every row can still be deleted. */
   editable?: (item: T) => boolean
+  /** Whether there is anything to import from. False for a library the agents'
+      own configs know nothing about (personas), where the button would open a
+      scan that can only ever come back empty. */
+  importable?: boolean
 }) {
   const navigate = useNavigate()
   const confirm = useConfirm()
 
   const remove = async (item: T) => {
-    if (!(await confirm({ title: `Delete "${item.name}"?`, destructive: true, confirmLabel: "Delete" }))) return
+    if (
+      !(await confirm({
+        title: `Delete "${item.name}"?`,
+        description: `The ${noun} is removed from the library and unlinked from every profile and thread that used it. Threads already running keep it until they are restarted.`,
+        destructive: true,
+        confirmLabel: "Delete",
+      }))
+    )
+      return
     try {
       await api(settings, `${endpoint}/${item.id}`, { method: "DELETE" })
       await refresh()
@@ -59,9 +73,11 @@ export function LibrarySection<T extends { id: string; name: string }>({
   const actions = (
     <div className="flex flex-wrap justify-end gap-2">
       {extraActions}
-      <Button variant="outline" onClick={() => void navigate(settingsFormPath(meta.id, "import"))}>
-        <Download className="size-4" /> Import
-      </Button>
+      {importable && (
+        <Button variant="outline" onClick={() => void navigate(settingsFormPath(meta.id, "import"))}>
+          <Download className="size-4" /> Import
+        </Button>
+      )}
       {newButton}
     </div>
   )
@@ -70,7 +86,15 @@ export function LibrarySection<T extends { id: string; name: string }>({
     <>
       <PageHeader meta={meta} action={actions} />
       {items.length === 0 ? (
-        <EmptyCard icon={meta.icon} text={`No ${noun}s yet — add one, or import from the agents' own configs.`} action={actions} />
+        <EmptyCard
+          icon={meta.icon}
+          text={
+            importable
+              ? `No ${noun}s yet — add one, or import from the agents' own configs.`
+              : `No ${noun}s yet.`
+          }
+          action={actions}
+        />
       ) : (
         <Group>
           {items.map((item) => (
@@ -117,12 +141,19 @@ export function LibraryImportPage({
   )
   const [selected, setSelected] = React.useState<string[]>([])
   const [busy, setBusy] = React.useState(false)
+  /* Drawn in place of the picker rather than toasted: the failure branch also
+     sets `found` to empty, and the picker's empty line says the library
+     already has everything — which is a different fact entirely. */
+  const [loadError, setLoadError] = React.useState<InlineError | null>(null)
 
   React.useEffect(() => {
     api<ImportCandidates>(settings, "/api/import")
-      .then((r) => setFound(r[kind].map((item, i) => ({ ...item, id: String(i) }))))
+      .then((r) => {
+        setFound(r[kind].map((item, i) => ({ ...item, id: String(i) })))
+        setLoadError(null)
+      })
       .catch((err) => {
-        reportError(err, "Couldn't load what there is to import")
+        setLoadError(captureError(err, "Couldn't load what there is to import"))
         setFound([])
       })
   }, [settings, kind])
@@ -165,6 +196,8 @@ export function LibraryImportPage({
         <div className="py-2">
           <PickerSkeleton rows={4} />
         </div>
+      ) : loadError ? (
+        <ErrorNote error={loadError} />
       ) : (
         <>
           <div className="flex flex-wrap items-start justify-between gap-2">

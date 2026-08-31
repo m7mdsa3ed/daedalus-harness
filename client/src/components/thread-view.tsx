@@ -1,4 +1,5 @@
 import * as React from "react"
+import type * as acp from "@agentclientprotocol/sdk"
 import { Archive, ArrowUp, ChevronUp, History, Mic, RotateCw, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Shortcut } from "@/components/shortcut"
@@ -38,12 +39,12 @@ import { SessionConfigPopover } from "./session-config"
 import { ThreadToolsMenu } from "./thread-tools"
 import { FileMentionMenu, useFileMentions } from "./file-mentions"
 import { HARNESS_COMMANDS, SlashCommandMenu, harnessCommandFor, useSlashCommands } from "./slash-commands"
-import { SessionSettingsButton } from "./session-settings"
+import { StepTokensProvider, TokenSummary } from "./token-usage"
 import { InlineElicitation } from "./elicitation-form"
 import { InlineApproval, primaryPermissionOption } from "./tool-approval"
 import { RowView, SourcesStrip } from "./thread-items"
 import { splitTurns, turnSources, type TurnSources } from "@/lib/sources"
-import { buildRows, rowTailId, type Row } from "@/lib/transcript-rows"
+import { buildRows, isAnswerItem, rowTailId, type Row } from "@/lib/transcript-rows"
 import { ThreadRail } from "./thread-rail"
 
 /**
@@ -78,8 +79,20 @@ function cachedTurnSources(turn: ThreadItem[]): TurnSources {
   return sources
 }
 
-function withTurnSources(items: ThreadItem[], turnActive: boolean): Map<string, TurnSources> {
-  const after = new Map<string, TurnSources>()
+/** Every finished turn, paired with the id of the row it ends on — the anchor
+    both footers hang off. A turn still streaming is left out: a strip that
+    grows under the reader is worse than one that arrives when the answer does.
+    Shared by the sources strip and the token figure, which are two answers to
+    "what came of this turn" and must sit in the same place.
+    The turn is always the WHOLE turn, even under `answersOnly`: what a turn
+    cited and what it cost are read off the steps, which is exactly what that
+    option takes off the screen. Only the anchor moves — to the last row of the
+    turn still drawn, since a footer hung off a hidden item is dropped. */
+function finishedTurns(
+  items: ThreadItem[],
+  turnActive: boolean,
+  answersOnly = false
+): { turn: ThreadItem[]; tailId: string }[] {
   const byId = new Map(items.map((item) => [item.id, item]))
   /* The row a turn ends on. A subagent's item is not a row of its own — it is
      drawn under the step that launched it — so a turn that ends inside a
@@ -94,13 +107,54 @@ function withTurnSources(items: ThreadItem[], turnActive: boolean): Map<string, 
     return current
   }
   const turns = splitTurns(items)
+  const out: { turn: ThreadItem[]; tailId: string }[] = []
+  const tailOf = (turn: ThreadItem[]): ThreadItem | undefined => {
+    if (!answersOnly) return turn[turn.length - 1]
+    for (let i = turn.length - 1; i >= 0; i--) if (isAnswerItem(turn[i])) return turn[i]
+    return undefined
+  }
   turns.forEach((turn, index) => {
     if (index === turns.length - 1 && turnActive) return
-    const last = turn[turn.length - 1]
+    const last = tailOf(turn)
     if (!last || turn[0].kind !== "user") return
-    const sources = cachedTurnSources(turn)
-    if (sources.sources.length > 0) after.set(rootOf(last).id, sources)
+    out.push({ turn, tailId: rootOf(last).id })
   })
+  return out
+}
+
+function withTurnSources(
+  items: ThreadItem[],
+  turnActive: boolean,
+  answersOnly: boolean
+): Map<string, TurnSources> {
+  const after = new Map<string, TurnSources>()
+  for (const { turn, tailId } of finishedTurns(items, turnActive, answersOnly)) {
+    const sources = cachedTurnSources(turn)
+    if (sources.sources.length > 0) after.set(tailId, sources)
+  }
+  return after
+}
+
+/** What each finished turn cost, keyed by the row it ends on. The numbers are
+    the store's (`turnUsage`, filed by `turn_ended`); the turn is matched to
+    them by the `turnId` on the message that opened it, which is the only thing
+    tying a transcript position to a reading that arrives long after it. A turn
+    whose agent reported no usage — or one older than this feature, replayed
+    from a journal that has the reading but whose user row was never tagged —
+    simply has no entry, and nothing is drawn. */
+function withTurnUsage(
+  items: ThreadItem[],
+  turnActive: boolean,
+  turnUsage: Record<string, acp.Usage>,
+  answersOnly: boolean
+): Map<string, acp.Usage> {
+  const after = new Map<string, acp.Usage>()
+  for (const { turn, tailId } of finishedTurns(items, turnActive, answersOnly)) {
+    const head = turn[0]
+    const turnId = head.kind === "user" ? head.turnId : undefined
+    const usage = turnId ? turnUsage[turnId] : undefined
+    if (usage) after.set(tailId, usage)
+  }
   return after
 }
 
@@ -209,8 +263,19 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
      markdown and file plans were rendered in neither place, and a plan lifted
      out of the flow loses the one thing the flow says about it — when, and
      after what, the agent decided on it. It still updates in place, since the
-     reducer replaces the item it already holds. */
-  const visible = thread.items
+     reducer replaces the item it already holds.
+
+     One exception, and it is the reader's own: `answersOnly` keeps the
+     conversation and drops the work (see lib/transcript-rows.isAnswerItem).
+     Filtered here, at the top of the derivation, so nesting, grouping, the
+     rail and every row memo below are unchanged — and identity-stable, since
+     `filter` preserves the item objects the reducer hands back. The full list
+     is still what the turn footers are computed from: what a turn cited and
+     what it cost are read off the steps this option hides. */
+  const visible = React.useMemo(
+    () => (options.answersOnly ? thread.items.filter(isAnswerItem) : thread.items),
+    [thread.items, options.answersOnly]
+  )
   /* Nesting folds a subagent's work under its step; grouping folds a *run*
      of steps into one row. Both are computed here, not in the reducer: they
      are ways of looking at the transcript, not changes to it, and toggling
@@ -223,14 +288,27 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
      Keyed by that item's id so the lookup below is one map hit per row, and
      a grouped run — whose last step may be the item — is checked by its tail. */
   const sourcesAfter = React.useMemo(
-    () => withTurnSources(visible, thread.turnActive),
-    [visible, thread.turnActive]
+    () => withTurnSources(thread.items, thread.turnActive, options.answersOnly),
+    [thread.items, thread.turnActive, options.answersOnly]
   )
   const sourcesFor = (row: Row): TurnSources | undefined => sourcesAfter.get(rowTailId(row))
+  /* What the turn cost, in the same slot the sources sit in — the two are the
+     turn's footer, and a reader looking for either looks in one place. */
+  const usageAfter = React.useMemo(
+    () => withTurnUsage(thread.items, thread.turnActive, thread.turnUsage, options.answersOnly),
+    [thread.items, thread.turnActive, thread.turnUsage, options.answersOnly]
+  )
+  const usageFor = (row: Row): acp.Usage | undefined => usageAfter.get(rowTailId(row))
   /* Hoisted out of the map below: `findIndex` inside `rows.map` was O(n²) per
      render, re-scanned on every streamed token. */
   const firstUserIndex = React.useMemo(() => rows.findIndex((r) => r.kind === "user"), [rows])
-  const last = visible[visible.length - 1]
+  /* The thread's true tail, not the filtered one: it is what "is this row the
+     one still being written" is asked against, and under `answersOnly` the
+     newest item is usually a step that is not on screen — measured against the
+     filtered list, the previous answer would wear the streaming caret for the
+     whole of a tool run. No row matches a hidden tail, which is the right
+     answer: the working line above the composer is what says a turn is live. */
+  const last = thread.items[thread.items.length - 1]
   const resumable =
     last?.kind === "notice" && !thread.turnActive && thread.status !== "closed"
       ? last.id
@@ -279,6 +357,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
         <MessageScroller className="min-h-0 flex-1">
           <MessageScrollerViewport ref={follow.viewportRef}>
             <ViewOptionsContext.Provider value={options}>
+            <StepTokensProvider value={thread.stepUsage}>
             <MessageScrollerContent
               ref={follow.contentRef}
               data-density={options.compactDensity ? "compact" : undefined}
@@ -373,6 +452,11 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                       <SourcesStrip turn={sourcesFor(row)!} />
                     </div>
                   )}
+                  {options.showTokens && usageFor(row) && (
+                    <div className="harness-item-in -ml-1">
+                      <TokenSummary usage={usageFor(row)!} label="This turn" />
+                    </div>
+                  )}
                 </MessageScrollerItem>
                 )
               })}
@@ -413,6 +497,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                 </MessageScrollerItem>
               )}
             </MessageScrollerContent>
+            </StepTokensProvider>
             </ViewOptionsContext.Provider>
           </MessageScrollerViewport>
           {/* The primitive's own scroll-to-end runs on click; re-pinning here as
@@ -907,7 +992,6 @@ function Composer({
                 )}
               </>
             )}
-            <SessionSettingsButton />
           </div>
           <ContextIndicator thread={thread} meta={meta} actions={actions} />
           {voice.supported && (

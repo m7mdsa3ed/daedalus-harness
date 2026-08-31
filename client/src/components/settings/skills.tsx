@@ -7,7 +7,7 @@ import { FormPageHeader, PageForm, Field, FormActions } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { LibraryImportPage, LibrarySection, saveLibraryEntry } from "./library"
-import { reportError } from "@/lib/errors"
+import { captureError, type InlineError } from "@/lib/errors"
 import { settingsPath } from "@/lib/router"
 
 export function SkillsPage() {
@@ -56,16 +56,18 @@ function SkillForm({
 }) {
   const [form, setForm] = React.useState(() => ({ name: skill?.name ?? "", path: skill?.path ?? "" }))
   const [busy, setBusy] = React.useState(false)
+  const [saveError, setSaveError] = React.useState<InlineError | null>(null)
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault()
     setBusy(true)
+    setSaveError(null)
     try {
       await saveLibraryEntry(settings, "/api/skills", skill?.id, form)
       onDone(true)
     } catch (err) {
-      reportError(err, "Couldn't save the skill")
+      setSaveError(captureError(err, "Couldn't save the skill"))
       setBusy(false)
     }
   }
@@ -90,7 +92,7 @@ function SkillForm({
           required
         />
       </Field>
-      <FormActions busy={busy} onCancel={() => onDone(false)} />
+      <FormActions busy={busy} onCancel={() => onDone(false)} error={saveError} />
       </PageForm>
     </>
   )

@@ -315,6 +315,10 @@ export class WorkflowRunner {
         parentSessionId: run.parent.id,
         title: `${run.def.name} · ${step.name}`,
         restore,
+        /* And how the parent works, for the same reason: a step is the same
+           actor working in another thread, so a parent running "quick fix"
+           must not spawn steps that refactor. */
+        personaId: run.parent.personaId,
       });
       this.patchStep(run, step.name, { sessionId: child.id });
       const childId = child.id;
@@ -359,6 +363,25 @@ export class WorkflowRunner {
          prose is also kept here: ACP's prompt response carries no text, so the
          stream is the only place a step's answer can be read from. */
       unsubscribe = this.manager.subscribe(childId, (event) => {
+        /* What the step's turn cost, said again on the parent. The turn event
+           itself is NOT mirrored — a child's turn boundaries on the parent's
+           log would cut its replay windows at turns it never had — so the
+           usage is lifted out of it onto an update of our own, which journals
+           and replays like everything else the step reports. Per turn, so a
+           step that took a repair turn reports twice and the client sums. */
+        if (event.ev === "turn_ended" && event.usage) {
+          this.manager.emitOn(run.parent.id, {
+            ev: "update",
+            seq: 0,
+            historyReplay: false,
+            update: {
+              sessionUpdate: "_daedalus/subagent_usage",
+              subagentSessionId: childId,
+              usage: event.usage,
+            },
+          });
+          return;
+        }
         if (event.ev !== "update" || event.historyReplay) return;
         this.manager.emitOn(run.parent.id, { ...event, seq: 0, sessionId: event.sessionId ?? childId });
         if (event.sessionId) return;

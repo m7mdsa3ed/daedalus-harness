@@ -9,6 +9,7 @@ import {
   db,
   knowledge as knowledgeTable,
   mcpServers as mcpServersTable,
+  personas as personasTable,
   profiles as profilesTable,
   projectPreviews as previewsTable,
   projects as projectsTable,
@@ -94,6 +95,10 @@ const AgentRow = z.object({
       args: z.array(str).default([]),
     })
     .nullish(),
+  /* Carried for the third time and the same reason: a restored row keeps its
+     `seededVersion`, so nothing would ever backfill the door a persona reaches
+     this agent through, and every thread's persona would silently do nothing. */
+  personaVia: z.enum(["acp-meta", "env"]).nullish(),
   seededVersion: int.default(0),
 });
 
@@ -154,6 +159,21 @@ const CommandRow = z.object({
   content: str,
 });
 
+/* A user's own personas travel; so do the built-ins, edits and all, for the
+   `seededVersion` reason above — a restored built-in is never re-seeded, so a
+   row that came back without its prompt would be a persona that does nothing
+   and cannot be repaired except by hand. */
+const PersonaRow = z.object({
+  id: str.min(1),
+  name: str,
+  description: str.default(""),
+  prompt: str,
+  thinking: int.nullish(),
+  effort: optStr,
+  seededVersion: int.default(0),
+  sortOrder: int.default(0),
+});
+
 const ProjectRow = z.object({
   id: str.min(1),
   name: str,
@@ -187,6 +207,9 @@ const SessionRow = z.object({
   agentId: str,
   model: str.default(""),
   effort: str.default(""),
+  /* Absent in a bundle written before personas existed, which reads as the
+     thread having none — which is exactly what it had. */
+  personaId: optStr,
   title: str.default("New thread"),
   acpSessionId: optStr,
   acpSessionProvisional: z.boolean().default(false),
@@ -339,6 +362,7 @@ export const BundleSchema = z.object({
   mcpServers: z.array(McpServerRow).default([]),
   skills: z.array(SkillRow).default([]),
   commands: z.array(CommandRow).default([]),
+  personas: z.array(PersonaRow).default([]),
   projects: z.array(ProjectRow).default([]),
   knowledge: z.array(KnowledgeRow).default([]),
   previews: z.array(PreviewRow).default([]),
@@ -395,6 +419,7 @@ export function exportBundle(opts: ExportOptions): Bundle {
       : mcpServers.map((s) => ({ ...s, headers: blankValues(s.headers), env: blankValues(s.env) })),
     skills: db.select().from(skillsTable).all(),
     commands: db.select().from(commandsTable).all(),
+    personas: db.select().from(personasTable).all(),
     projects: db.select().from(projectsTable).all(),
     knowledge: db.select().from(knowledgeTable).all(),
     previews: db.select().from(previewsTable).all(),
@@ -423,7 +448,7 @@ export function exportBundle(opts: ExportOptions): Bundle {
 export type ImportMode = "merge" | "replace";
 
 export type ImportSummary = Record<
-  | "agents" | "profiles" | "mcpServers" | "skills" | "commands" | "projects" | "knowledge" | "previews"
+  | "agents" | "profiles" | "mcpServers" | "skills" | "commands" | "personas" | "projects" | "knowledge" | "previews"
   | "sessions" | "queue" | "scheduled" | "workflowRuns" | "events" | "boards" | "boardStatuses" | "tasks"
   | "webSearchUsage" | "pushTokens",
   number
@@ -508,7 +533,7 @@ function keepPairs(incoming: NameValue[] | null | undefined, existing: NameValue
  */
 export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
   const summary: ImportSummary = {
-    agents: 0, profiles: 0, mcpServers: 0, skills: 0, commands: 0, projects: 0, knowledge: 0, previews: 0,
+    agents: 0, profiles: 0, mcpServers: 0, skills: 0, commands: 0, personas: 0, projects: 0, knowledge: 0, previews: 0,
     sessions: 0, queue: 0, scheduled: 0, workflowRuns: 0, events: 0, boards: 0, boardStatuses: 0, tasks: 0,
     webSearchUsage: 0, pushTokens: 0,
     orphaned: 0, missingSecrets: false,
@@ -526,6 +551,7 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
       // its parent, and the ones that do not (usage, tokens, tasks) stand alone.
       for (const table of [
         sessionsTable, profilesTable, projectsTable, mcpServersTable, skillsTable, commandsTable,
+        personasTable,
         agentsTable, tasksTable, boardStatusesTable, boardsTable, usageTable, pushTokensTable,
         agentOptionsTable,
       ]) {
@@ -571,6 +597,13 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
     summary.skills = bundle.skills.length;
     upsertChunked(tx, commandsTable, "id", bundle.commands.map((c) => ({ ...c, argumentHint: c.argumentHint ?? null })));
     summary.commands = bundle.commands.length;
+    upsertChunked(
+      tx,
+      personasTable,
+      "id",
+      bundle.personas.map((p) => ({ ...p, thinking: p.thinking ?? null, effort: p.effort ?? null })),
+    );
+    summary.personas = bundle.personas.length;
     upsertChunked(
       tx,
       projectsTable,

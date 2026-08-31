@@ -57,8 +57,14 @@ export interface ViewOptions {
   turnRail: boolean
   /** Favicon strips: the pages a step saw and the ones the answer cited. */
   showSources: boolean
+  /** What each turn, workflow step and subagent spent, in tokens. */
+  showTokens: boolean
   /** Drop the row entrance animation and the running-turn shimmer. */
   calmMotion: boolean
+  /** Hide the work and keep the conversation: your messages and the agent's
+   *  answers, with thinking, tool steps, plans, subagents and compactions left
+   *  out. Errors stay — a failure hidden reads as an answer that never came. */
+  answersOnly: boolean
 }
 
 export const VIEW_DEFAULTS: ViewOptions = {
@@ -74,8 +80,28 @@ export const VIEW_DEFAULTS: ViewOptions = {
   stepDividers: false,
   turnRail: true,
   showSources: true,
+  showTokens: false,
   calmMotion: false,
+  answersOnly: false,
 }
+
+/* ── Options that answer a question `answersOnly` has already answered ──
+   Not *forced* off — the stored value is the reader's and comes back the moment
+   the filter does — and not read defensively at the render sites either: with
+   no tool, thought or diff row on screen, "expand tool output" and "wrap code"
+   are already no-ops, so making them lie about their state would be a second
+   source of truth for nothing. What they need is to stop *offering* a choice
+   that changes nothing, which is a property of the dialog, so it is stated once
+   here and the rows read it. Deliberately not the whole Detail group:
+   timestamps, sources and token figures are all still on screen and still say
+   something about the turn that is left. */
+export const ANSWERS_ONLY_SUPPRESSES: readonly (keyof ViewOptions)[] = [
+  "showThinking",
+  "showToolDetails",
+  "groupTools",
+  "codeWrap",
+  "splitDiffs",
+]
 
 /** Carries the resolved options to the items that render the transcript, so the
  *  deep tool/diff/thought components can read them without prop drilling. */

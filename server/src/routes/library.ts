@@ -8,15 +8,22 @@ import {
   skills,
   isBuiltinMcp,
 } from "../library.js";
+import { PersonaInputSchema, personas } from "../personas.js";
 import { discoverCommands, discoverMcpServers, discoverSkills } from "../discover.js";
 
-/** The library: MCP servers, skills and slash commands, shared across
-    projects — plus the import scan over the agents' own configs. */
+/** The library: MCP servers, skills, slash commands and personas, shared
+    across projects — plus the import scan over the agents' own configs.
+
+    Personas are here rather than beside profiles because they are the same kind
+    of thing as the other three: a reusable row a thread points at, with no
+    credentials in it and nothing per-project about it. The only asymmetry is
+    that a thread names exactly one, where it links any number of the rest. */
 export function libraryRoutes(app: Hono): void {
   for (const [base, reg, schema] of [
     ["mcp-servers", mcpServers, McpServerInputSchema],
     ["skills", skills, SkillInputSchema],
     ["commands", commands, CommandInputSchema],
+    ["personas", personas, PersonaInputSchema],
   ] as const) {
     app.get(`/api/${base}`, (c) => c.json(reg.list()));
     app.post(`/api/${base}`, async (c) => {

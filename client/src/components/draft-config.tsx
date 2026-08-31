@@ -26,6 +26,8 @@ import { saveThreadDefaults } from "@/lib/thread-defaults"
 import { useStore } from "@/lib/store"
 
 const DEFAULT_CHOICE = "__default__"
+/** Sentinel for "no persona", which is not itself a persona id. */
+const NO_PERSONA = "__none__"
 
 /** The shared read of a draft's current configuration — both controls below
     need the same lookups, and they must not disagree about what is selected. */
@@ -50,6 +52,7 @@ function useDraft(meta: SessionMeta, actions: Actions) {
       agentId: next.agentId ?? meta.agentId,
       model: next.model ?? meta.model,
       effort: next.effort ?? meta.effort,
+      personaId: next.personaId ?? meta.personaId,
     })
   }
 
@@ -216,7 +219,7 @@ export function DraftConfigPopover({
   meta: SessionMeta
   actions: Actions
 }) {
-  const { profile, agent, agentProfiles, configure } = useDraft(meta, actions)
+  const { state, profile, agent, agentProfiles, configure } = useDraft(meta, actions)
   const models = profile?.models ?? []
   const resolvedModel = models.find((m) => m.id === (meta.model || profile?.defaultModel))
 
@@ -265,6 +268,7 @@ export function DraftConfigPopover({
   const optionValue = (option?: acp.SessionConfigOption) =>
     option?.type === "select" ? option.currentValue : ""
 
+  const persona = state.personas.find((p) => p.id === meta.personaId)
   const modelLabel = overridden
     ? (resolvedModel?.label ?? (meta.model || "Profile default"))
     : agentOptions.model
@@ -290,12 +294,13 @@ export function DraftConfigPopover({
             /* Icon-only on a phone — same collapse as SessionConfigPopover's
                trigger, which replaces this one the moment the thread starts. */
             className="h-8 gap-1.5 border-0 bg-transparent px-2 text-xs shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent max-md:w-8 max-md:px-0"
-            title={[modelLabel, effortLabel].filter(Boolean).join(" · ")}
+            title={[persona?.name, modelLabel, effortLabel].filter(Boolean).join(" · ")}
           >
             {/* Same rule as SessionConfigPopover's trigger: the profile's own
                 logo when it has one, the agent's mark otherwise. */}
             <ProfileIcon profile={profile} agentId={agent?.id ?? meta.agentId} className="size-4" />
             <span className="max-w-56 truncate max-md:sr-only">
+              {persona && <span>{persona.name} · </span>}
               {modelLabel}
               {effortLabel && <span className="capitalize"> · {effortLabel}</span>}
             </span>
@@ -305,9 +310,32 @@ export function DraftConfigPopover({
       <DropdownMenuContent align="start" className="w-60">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Start this thread with</DropdownMenuLabel>
-          {/* First, and above Model on purpose: the model and effort lists below
-              are this profile's, so which profile is selected decides what they
-              can even contain. */}
+          {/* Above Profile, because it is the only row here that does not
+              depend on one — and free on a draft, where the rest of this menu
+              is a set of placeholders and nothing has been spawned yet. A
+              persona that names an effort applies it on the spot; the row
+              below still shows it, and still overrides it. */}
+          {state.personas.length > 0 && (
+            <MenuRow
+              label="Persona"
+              value={meta.personaId || NO_PERSONA}
+              choices={[
+                { value: NO_PERSONA, name: "None" },
+                ...state.personas.map((p) => ({ value: p.id, name: p.name })),
+              ]}
+              onSelect={(value) => {
+                const picked = value === NO_PERSONA ? null : state.personas.find((p) => p.id === value)
+                configure({
+                  personaId: picked?.id ?? "",
+                  /* Only when the persona has an opinion: dropping to "" here
+                     would make picking "General chat" silently clear an effort
+                     the user chose on purpose. The server applies the same rule
+                     for a started thread. */
+                  ...(picked?.effort ? { effort: picked.effort } : {}),
+                })
+              }}
+            />
+          )}
           {agentProfiles.length > 1 && (
             <MenuRow
               label="Profile"

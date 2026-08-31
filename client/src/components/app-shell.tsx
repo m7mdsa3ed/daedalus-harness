@@ -7,6 +7,7 @@ import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
 import { Logo } from "@/components/ui/logo"
 import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
 import { OpenPanelMenu } from "@/components/workspace/open-panel-menu"
+import { SessionSettingsButton } from "@/components/session-settings"
 import type { PanelKind } from "@/lib/workspace/panels"
 import { openTerminal } from "@/components/workspace/terminal-panel"
 import { SchedulePage } from "@/components/schedule-page"
@@ -62,6 +63,7 @@ import { NotificationsPage } from "@/components/settings/notifications"
 import { McpFormPage, McpImportPage, McpPage } from "@/components/settings/mcp"
 import { SkillFormPage, SkillImportPage, SkillsPage } from "@/components/settings/skills"
 import { CommandFormPage, CommandImportPage, CommandsPage } from "@/components/settings/commands"
+import { PersonaFormPage, PersonasPage } from "@/components/settings/personas"
 import { ProfileFormPage, ProfilesPage } from "@/components/settings/profiles"
 import { AgentsPage } from "@/components/settings/agents"
 import { QuotaPage } from "@/components/settings/quota"
@@ -543,11 +545,17 @@ export function AppShell({
                 and it survives a narrow screen, which is where it matters —
                 nothing else on a phone can reach these panels. */}
             {!inSettings && !inSchedule && !inBoard && !inProject && (
-              <OpenPanelMenu
-                onNewTab={newThreadInTab}
-                onOpen={openWorkspacePanel}
-                canOpenPanels={!!active}
-              />
+              <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+                {/* View settings are device-global — one reading setup for every
+                    thread — so there is exactly one of them here, where the
+                    composer row would have drawn one per mounted chat panel. */}
+                <SessionSettingsButton />
+                <OpenPanelMenu
+                  onNewTab={newThreadInTab}
+                  onOpen={openWorkspacePanel}
+                  canOpenPanels={!!active}
+                />
+              </div>
             )}
           </div>
         </header>
@@ -580,6 +588,10 @@ export function AppShell({
             <Route path="commands" element={<CommandsPage />} />
             <Route path="commands/import" element={<CommandImportPage />} />
             <Route path="commands/:entryId" element={<CommandFormPage />} />
+            {/* No import route: nothing in the agents' own configs is a
+                persona to import — see settings/personas.tsx. */}
+            <Route path="personas" element={<PersonasPage />} />
+            <Route path="personas/:entryId" element={<PersonaFormPage />} />
             <Route path="profiles" element={<ProfilesPage />} />
             <Route path="profiles/:entryId" element={<ProfileFormPage />} />
             <Route path="agents" element={<AgentsPage />} />

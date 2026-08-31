@@ -120,7 +120,7 @@ function Column({
             <span className={cn("size-2 shrink-0 rounded-full", COLOR_DOT[status.color])} />
           )}
           <span className="truncate">{status.name}</span>
-          <span className="rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
+          <span className="rounded-pill bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
             {tasks.length}
           </span>
         </span>
@@ -385,7 +385,7 @@ export function Board({
                     <span className={cn("size-2 shrink-0 rounded-full", COLOR_DOT[status.color])} />
                   )}
                   <span className="truncate">{status.name}</span>
-                  <span className="rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
+                  <span className="rounded-pill bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
                     {inStatus.length}
                   </span>
                   <button

@@ -18,6 +18,12 @@ export interface ThreadDefaults {
   agentId?: string
   model?: string
   effort?: string
+  /** How the last thread you started was worked on. Not scoped to a profile
+      the way model and effort are — a persona is instructions, and they mean
+      the same thing on any provider — so it is carried whichever profile the
+      fallback lands on. A persona since deleted matches nothing and the draft
+      opens with none, which is the right answer either way. */
+  personaId?: string
   /** The library picks the last draft made on its composer strip — the MCP
       servers, skills and slash commands it brought on top of its profile's.
       Remembered so a reload (which rebuilds an unsent draft from these

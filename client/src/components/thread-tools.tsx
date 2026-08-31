@@ -1,15 +1,17 @@
 import * as React from "react"
-import { WrenchIcon } from "lucide-react"
+import { BlocksIcon, ServerIcon, SlashSquareIcon, WrenchIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import type { Actions } from "@/lib/actions"
@@ -39,6 +41,14 @@ type LinkKey = "mcpServerIds" | "skillIds" | "commandIds"
  *     it lists what is loaded and where each entry came from. It renders
  *     nothing at all when the thread carries none, since a control that only
  *     ever says "No tools" is a control worth not drawing.
+ *
+ * **The three kinds are submenus, not three stacked groups.** A library grows —
+ * a dozen MCP servers, a shelf of skills, every slash command — and one flat
+ * popup made the whole thing a scroll: the group you wanted was below the fold,
+ * and picking one server meant reading past every skill to be sure you had.
+ * The root is three rows now, each saying how many of that kind the thread is
+ * carrying and out of how many it could, so the count is legible without
+ * opening anything and the list you open is only the one you asked for.
  *
  * The project contributes nothing in either mode: it is the directory, not the
  * toolset.
@@ -78,8 +88,9 @@ export function ThreadToolsMenu({
   const total =
     extra + inherited.mcpServerIds.size + inherited.skillIds.size + inherited.commandIds.size
 
-  const group = <T extends { id: string; name: string }>(
+  const section = <T extends { id: string; name: string }>(
     title: string,
+    icon: React.ReactNode,
     key: LinkKey,
     items: T[],
     hint: (item: T) => string
@@ -91,45 +102,67 @@ export function ThreadToolsMenu({
       ? items
       : items.filter((item) => inherited[key].has(item.id) || own[key].includes(item.id))
     if (!editable && shown.length === 0) return null
+    const on = shown.filter(
+      (item) => inherited[key].has(item.id) || own[key].includes(item.id)
+    ).length
     return (
-      <DropdownMenuGroup>
-        <DropdownMenuLabel>{title}</DropdownMenuLabel>
-        {shown.length === 0 ? (
-          <DropdownMenuItem disabled className="text-xs">
-            None in the library.
-          </DropdownMenuItem>
-        ) : (
-          shown.map((item) => {
-            const from = inherited[key].has(item.id)
-            return (
-              <DropdownMenuCheckboxItem
-                key={item.id}
-                checked={from || own[key].includes(item.id)}
-                disabled={from || !editable}
-                closeOnClick={false}
-                onCheckedChange={(checked) => editable && toggle(key, item.id, checked === true)}
-              >
-                <span className="flex min-w-0 flex-col">
-                  <span className="truncate">{item.name}</span>
-                  <span className="truncate font-mono text-[10px] text-muted-foreground">
-                    {from ? "from profile" : hint(item)}
+      <DropdownMenuSub key={key}>
+        <DropdownMenuSubTrigger className="gap-2.5">
+          {icon}
+          <span className="truncate">{title}</span>
+          {/* The count is the point of the row: it is what the flat menu made
+              you open a group to learn. "2 of 9" while picking, a bare figure
+              once the thread has spawned and the library is no longer a
+              choice. */}
+          <span className="ml-auto pl-2 text-xs tabular-nums text-muted-foreground">
+            {editable ? (on === 0 ? `${shown.length}` : `${on} of ${shown.length}`) : on}
+          </span>
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent className="w-64">
+          {shown.length === 0 ? (
+            <DropdownMenuItem disabled className="text-xs">
+              None in the library.
+            </DropdownMenuItem>
+          ) : (
+            shown.map((item) => {
+              const from = inherited[key].has(item.id)
+              return (
+                <DropdownMenuCheckboxItem
+                  key={item.id}
+                  checked={from || own[key].includes(item.id)}
+                  disabled={from || !editable}
+                  closeOnClick={false}
+                  onCheckedChange={(checked) => editable && toggle(key, item.id, checked === true)}
+                >
+                  <span className="flex min-w-0 flex-col">
+                    <span className="truncate">{item.name}</span>
+                    <span className="truncate font-mono text-[10px] text-muted-foreground">
+                      {from ? "from profile" : hint(item)}
+                    </span>
                   </span>
-                </span>
-              </DropdownMenuCheckboxItem>
-            )
-          })
-        )}
-      </DropdownMenuGroup>
+                </DropdownMenuCheckboxItem>
+              )
+            })
+          )}
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
     )
   }
 
   // Nothing to read out, so nothing on the composer row.
   if (!editable && total === 0) return null
 
-  const groups = [
-    group("MCP servers", "mcpServerIds", state.mcpServers, mcpSubtitle),
-    group("Skills", "skillIds", state.skills, (s) => s.path),
-    group("Slash commands", "commandIds", state.commands, (c) => `/${c.name}`),
+  const iconClass = "size-4 text-muted-foreground"
+  const sections = [
+    section("MCP servers", <ServerIcon className={iconClass} />, "mcpServerIds", state.mcpServers, mcpSubtitle),
+    section("Skills", <BlocksIcon className={iconClass} />, "skillIds", state.skills, (s) => s.path),
+    section(
+      "Slash commands",
+      <SlashSquareIcon className={iconClass} />,
+      "commandIds",
+      state.commands,
+      (c) => `/${c.name}`
+    ),
   ].filter(Boolean)
 
   return (
@@ -165,14 +198,28 @@ export function ThreadToolsMenu({
         collisionAvoidance={
           editable ? { side: "none", fallbackAxisSide: "none" } : undefined
         }
-        className="w-64"
+        className="w-56"
       >
-        {groups.map((node, i) => (
-          <React.Fragment key={i}>
-            {i > 0 && <DropdownMenuSeparator />}
-            {node}
-          </React.Fragment>
-        ))}
+        <DropdownMenuLabel>
+          {editable ? "Tools for this thread" : "Running with"}
+        </DropdownMenuLabel>
+        {sections}
+        {/* Only offered when there is something of the thread's own to take
+            back: the profile's links are not this menu's to clear. */}
+        {editable && extra > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={() => {
+                const cleared = { mcpServerIds: [], skillIds: [], commandIds: [] }
+                actions.configureDraft(meta.id, cleared)
+                saveThreadDefaults(cleared)
+              }}
+            >
+              Clear this thread&rsquo;s picks
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   )

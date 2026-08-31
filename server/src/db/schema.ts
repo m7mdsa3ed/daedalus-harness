@@ -82,6 +82,11 @@ export const agents = sqliteTable("agents", {
       the agent for the same reason `spawnCategories` is: the *how to talk* is
       one of quota.ts's adapters, but the command to run is the user's. */
   quotaProbe: text("quota_probe", { mode: "json" }).$type<QuotaProbe>(),
+  /** Which door this runtime opens for a thread's persona (`personas.ts`):
+      `"acp-meta"` = the ACP `_meta` block on session/new and session/load,
+      `"env"` = a key in its own config template, filled from `{personaPrompt}`
+      or `{personaFile}`. Null = no known door, and a persona is not applied. */
+  personaVia: text("persona_via").$type<"acp-meta" | "env">(),
   /** Which release of DEFAULT_AGENTS seeded this row. A later release can add
       an agent to an install that already has rows without touching user edits —
       the old seed-if-the-file-is-empty rule could never do that. */
@@ -229,6 +234,45 @@ export const commands = sqliteTable("commands", {
   content: text("content").notNull(),
 });
 
+/**
+ * How a thread wants to be worked on — the instruction half of a thread's
+ * configuration, where the profile is the credentials half and the model is the
+ * engine.
+ *
+ * A persona is NOT prose the harness pastes in front of the user's message. It
+ * is fed to each runtime through the door that runtime already opens for it
+ * (`personas.ts`, `AgentDef.personaVia`), so the agent's own system prompt is
+ * appended to rather than replaced and nothing about the transcript changes:
+ * what the user typed is still exactly what is journaled.
+ *
+ * Seeded like `agents` and for the same reasons — `seededVersion` records the
+ * release a row was offered in, so a persona added later reaches installs that
+ * already exist and one the user deleted on purpose stays deleted.
+ */
+export const personas = sqliteTable("personas", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  /** The instruction block. Appended to the agent's own system prompt. */
+  prompt: text("prompt").notNull(),
+  /**
+   * The thinking budget, where the runtime has one as its own axis:
+   * null/absent = leave it alone, `0` = off, a positive integer = that many
+   * tokens. This is deliberately not the same knob as `effort`: claude-code
+   * exposes both and they mean different things (see `personas.ts`), and an
+   * agent that has only one gets only the one it has.
+   */
+  thinking: integer("thinking"),
+  /** A value out of the agent's own effort selector, applied at spawn like any
+      other effort. Null = whatever the thread already had. */
+  effort: text("effort"),
+  /** A row this release seeded (see `seedPersonas`); 0 = the user's own. */
+  seededVersion: integer("seeded_version").notNull().default(0),
+  /** Declared order in every menu. A list you have to read alphabetically is a
+      list whose author's ordering has been thrown away. */
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
 /** A titled knowledge-base entry, keyed to a project. The agent's `knowledge`
     MCP server reads and writes these; `project_id` scopes every query so
     nothing a workspace learns leaks into another. Search is substring `LIKE`
@@ -311,6 +355,12 @@ export const sessions = sqliteTable(
     agentId: text("agent_id").notNull(),
     model: text("model").notNull(),
     effort: text("effort").notNull(),
+    /** The persona this thread runs under, or null for none. Not a foreign key
+        either, and for the same reason `parent_session_id` below is not: a row
+        vanishing out from under a live thread is the manager's business, not
+        SQL's. A deleted persona simply reads as "none" on the next spawn, which
+        is exactly what it is. */
+    personaId: text("persona_id"),
     title: text("title").notNull(),
     /** The agent's own session id — what `session/load` is called with. */
     acpSessionId: text("acp_session_id"),

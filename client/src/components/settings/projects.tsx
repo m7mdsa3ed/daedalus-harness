@@ -1,7 +1,7 @@
 import * as React from "react"
 import { BookOpenIcon, FolderIcon, PanelsTopLeft, Pencil, Plus, RefreshCwIcon, Trash2 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
-import { reportError, describeError } from "@/lib/errors"
+import { captureError, reportError, type InlineError, describeError } from "@/lib/errors"
 import { Button } from "@/components/ui/button"
 import { ProjectIcon } from "@/components/entity-icon"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -24,7 +24,15 @@ export function ProjectsPage() {
   const navigate = useNavigate()
 
   const remove = async (project: Project) => {
-    if (!(await confirm({ title: `Delete project "${project.name}"?`, destructive: true, confirmLabel: "Delete" })))
+    if (
+      !(await confirm({
+        title: `Delete project "${project.name}"?`,
+        description:
+          "The directory on disk is left alone — this removes the harness's record of it, along with its knowledge entries and previews. Threads started in it keep their transcripts but lose their folder.",
+        destructive: true,
+        confirmLabel: "Delete",
+      }))
+    )
       return
     try {
       await api(settings, `/api/projects/${project.id}`, { method: "DELETE" })
@@ -115,11 +123,13 @@ export function ProjectForm({
     logoUrl: project?.logoUrl ?? "",
   }))
   const [busy, setBusy] = React.useState(false)
+  const [saveError, setSaveError] = React.useState<InlineError | null>(null)
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault()
     setBusy(true)
+    setSaveError(null)
     try {
       const payload = {
         name: form.name,
@@ -135,7 +145,7 @@ export function ProjectForm({
       }
       onDone(true)
     } catch (err) {
-      reportError(err, "Couldn't save the project")
+      setSaveError(captureError(err, "Couldn't save the project"))
       setBusy(false)
     }
   }
@@ -182,7 +192,7 @@ export function ProjectForm({
           </div>
         </Field>
       </FormSection>
-      <FormActions busy={busy} onCancel={() => onDone(false)} />
+      <FormActions busy={busy} onCancel={() => onDone(false)} error={saveError} />
       </PageForm>
       <div className="mt-8 border-t pt-6">
         <KnowledgeSection project={project} />

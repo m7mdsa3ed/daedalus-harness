@@ -82,7 +82,7 @@ export function TaskCard({
             {task.labels.slice(0, MAX_LABELS).map((label) => (
               <span
                 key={label}
-                className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                className="rounded-pill bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
               >
                 {label}
               </span>

@@ -75,7 +75,7 @@ export interface ThreadCallbacks {
   /** The thread moved to another profile, model or effort without restarting.
       Fanned out to every device, this one included — the server resolves what
       a cleared value means, so the answer is what to draw. */
-  onSpawnConfig: (profileId: string, model: string, effort: string) => void
+  onSpawnConfig: (profileId: string, model: string, effort: string, personaId?: string) => void
   /** Time-to-first-update for a turn, ms, measured server-side. */
   onTtft: (ms: number) => void
   /** What is left of the subscription this thread spends, re-read after a turn
@@ -92,7 +92,10 @@ export interface ThreadCallbacks {
     error: WireError | undefined,
     promptText: string | undefined,
     catchingUp: boolean,
-    continued: boolean
+    continued: boolean,
+    /** Which turn's numbers those are — what lets a turn print its own cost
+        where it sits, rather than only feeding the thread's running total. */
+    turnId: string
   ) => void
   /** The thread's queue, whole. Every change to it arrives this way — this
       device's own included, since the ids are the server's. */
@@ -309,7 +312,7 @@ export class ThreadSocket {
         this.callbacks.onQueue(event.items)
         return
       case "spawn_config":
-        this.callbacks.onSpawnConfig(event.profileId, event.model, event.effort)
+        this.callbacks.onSpawnConfig(event.profileId, event.model, event.effort, event.personaId)
         return
       case "ttft":
         this.callbacks.onTtft(event.ms)
@@ -351,7 +354,8 @@ export class ThreadSocket {
           event.error,
           event.promptText,
           this.catchingUp,
-          event.continued ?? false
+          event.continued ?? false,
+          event.turnId
         )
         return
     }

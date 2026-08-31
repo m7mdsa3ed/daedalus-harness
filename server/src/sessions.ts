@@ -9,6 +9,7 @@ import { db, sessions as sessionsTable } from "./db/index.js";
 import { SESSION_LINKS, emptyLinks, linksOf, readLinks, unionLinks, writeLinks, type LinkSet } from "./db/links.js";
 import { materializeModelAllowlist, materializeWorkspace } from "./materialize.js";
 import { mcpServers as mcpLibrary } from "./library.js";
+import { personaEffort, resolvePersonaSpawn } from "./personas.js";
 import type { Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 import { getProfile, listProfiles, profileBaseUrl, profileSupports } from "./profiles.js";
@@ -60,6 +61,11 @@ export interface Session {
   project: Project | null;
   model: string;
   effort: string;
+  /** How this thread wants to be worked on (`personas.ts`), or "" for no
+      persona. A spawn input like model and effort — and unlike them it can
+      never be applied live, because every runtime reads it only when a session
+      is created or loaded. See `applyConfigLive`. */
+  personaId: string;
   title: string;
   /** What this thread was started with, on top of its profile's links —
       picked on the draft, persisted with the row (db/links.ts), and what a
@@ -409,6 +415,9 @@ export class SessionManager {
         lastActivityAt,
         links: links.get(row.id) ?? emptyLinks(),
         acpSessionId: row.acpSessionId ?? undefined,
+        // Null in the column, "" in memory: every other spawn input on the
+        // session is a string, and "no persona" is not a third state.
+        personaId: row.personaId ?? "",
         profile: null,
         project: null,
         liveAcpSessionId: null,
@@ -493,6 +502,7 @@ export class SessionManager {
         agentId: s.agentId,
         model: s.model,
         effort: s.effort,
+        personaId: s.personaId || null,
         title: s.title,
         acpSessionId: s.acpSessionId ?? null,
         acpSessionProvisional: s.acpSessionProvisional,
@@ -976,12 +986,16 @@ export class SessionManager {
       /** Settings to put in place once the session exists — a step inheriting
           its parent's permission mode, the same way a respawn keeps its own. */
       restore?: import("./protocol.js").RestoreState;
+      /** How this thread should be worked on — picked on the draft, and (for a
+          workflow step) inherited from the parent along with everything else. */
+      personaId?: string;
     } = {},
   ): Session {
     const session = this.blankSession(profile, agentId, project, links, {
       id,
       model,
       effort,
+      personaId: opts.personaId,
       title: opts.title,
       parentSessionId: opts.parentSessionId,
     });
@@ -1005,6 +1019,7 @@ export class SessionManager {
       id?: string;
       model?: string;
       effort?: string;
+      personaId?: string;
       title?: string;
       parentSessionId?: string;
       /** An imported thread already had a life before this row existed; its
@@ -1026,6 +1041,7 @@ export class SessionManager {
       project,
       model: opts.model || profile.defaultModel || "",
       effort: opts.effort ?? "",
+      personaId: opts.personaId ?? "",
       title: opts.title ?? "New thread",
       acpSessionProvisional: false,
       liveAcpSessionId: null,
@@ -1128,6 +1144,14 @@ export class SessionManager {
     }
     session.spawnProfileId = profile.id;
     session.viaGateway = !!gatewayUrlFor(profile.id, session.agentId, profileBaseUrl(profile, session.agentId), session.id);
+    /* Resolved once and handed to both halves, because which half uses it is
+       the agent's business and not this one's: `spawnAgent` places it in the
+       env for an `"env"` agent, `AcpBridge` puts it in the handshake `_meta`
+       for an `"acp-meta"` one, and each ignores it for the other kind. Called
+       unconditionally — a thread that has just had its persona removed needs
+       the stale prompt file cleared as much as one that gained a persona needs
+       it written. */
+    const persona = resolvePersonaSpawn(session.id, session.personaId, agent);
     const proc = spawnAgent(
       profile,
       session.agentId,
@@ -1135,6 +1159,7 @@ export class SessionManager {
       ownsCatalog ? model : undefined,
       ownsCatalog ? effort : undefined,
       session.id,
+      persona,
     );
     const { mcpServers, websearchViaMcp, workflowViaMcp } = this.serversFor(session, profile, project);
     session.websearchViaMcp = websearchViaMcp;
@@ -1151,6 +1176,7 @@ export class SessionManager {
       agentOwned: ownsCatalog ? undefined : { model, effort },
       websearchViaMcp,
       workflowViaMcp,
+      persona: agent?.personaVia === "acp-meta" ? persona : undefined,
     });
     session.proc = proc;
     session.bridge = bridge; // flips the generation guard
@@ -1252,7 +1278,12 @@ export class SessionManager {
    *    reached the workspace allowlist after this process read it — because
    *    the alternative to asking is finding out by being refused, with the
    *    thread's record already changed;
-   *  - a thread with no live process at all, which is a revive.
+   *  - a thread with no live process at all, which is a revive;
+   *  - a **persona** change, which is not a matter of conservatism at all but
+   *    of where the value is read: every runtime takes a persona only as a
+   *    session is created or loaded (`personas.ts`), so there is no live path
+   *    to be careful about. The respawn is cheap in the way that matters —
+   *    it ends in `session/load`, so the conversation comes back with it.
    *
    * Answers `{ live }` so the caller can tell a client whether its socket
    * survived: a respawn clears the event log and every peer has to reattach,
@@ -1260,13 +1291,26 @@ export class SessionManager {
    */
   async applyConfig(
     id: string,
-    next: { profile: Profile; agentId: string; project: Project; model?: string; effort?: string },
+    next: { profile: Profile; agentId: string; project: Project; model?: string; effort?: string; personaId?: string },
   ): Promise<{ live: boolean }> {
     const session = this.sessions.get(id);
     if (!session) throw new Error("unknown session");
     if (session.deletedAt !== null) throw new Error("session deleted");
     if (await this.applyConfigLive(session, next)) return { live: true };
-    await this.respawn(id, next.profile, next.agentId, next.project, next.model, next.effort);
+    /* The row moves before the respawn rather than being passed to it, because
+       a persona is not a spawn argument the way model and effort are: `start`
+       reads it off the session (it has to, since a revive with no caller
+       spawns from the row alone). Written here so the process that comes back
+       is the one the user asked for. */
+    const changed = next.personaId !== undefined && next.personaId !== session.personaId;
+    if (next.personaId !== undefined) session.personaId = next.personaId;
+    /* A persona that names an effort applies it — but only at the moment it is
+       *picked*, never on every later spawn. Otherwise the persona would win
+       every argument: the user drops "Think more" to medium, changes their
+       model, and the respawn silently puts it back on high. Picking is a
+       statement about how to work; the effort row underneath stays theirs. */
+    const effort = (changed ? personaEffort(next.personaId) : undefined) ?? next.effort;
+    await this.respawn(id, next.profile, next.agentId, next.project, next.model, effort);
     return { live: false };
   }
 
@@ -1274,11 +1318,15 @@ export class SessionManager {
       and it is answered before anything about the thread has been changed. */
   private async applyConfigLive(
     session: Session,
-    next: { profile: Profile; agentId: string; project: Project; model?: string; effort?: string },
+    next: { profile: Profile; agentId: string; project: Project; model?: string; effort?: string; personaId?: string },
   ): Promise<boolean> {
     const agent = getAgent(session.agentId);
     if (!agent?.liveConfig) return false;
     if (next.agentId !== session.agentId) return false;
+    /* Nothing to be clever about: `_meta` is read at `session/new`/`session/load`
+       and codex's config is read at spawn, so a persona cannot be moved on a
+       running process by any runtime we ship. */
+    if (next.personaId !== undefined && next.personaId !== session.personaId) return false;
     // Mid-respawn, mid-revive, or no process: whatever is about to exist is
     // going to be spawned with these settings anyway.
     if (session.respawnChain || !session.bridge || session.exited) return false;
@@ -1344,7 +1392,13 @@ export class SessionManager {
     /* Every peer, the asking one included: nothing here went through the
        journal, so a device that is not the one holding the menu has no other
        way to learn the thread moved. */
-    this.emit(session, { ev: "spawn_config", profileId: session.profileId, model, effort });
+    this.emit(session, {
+      ev: "spawn_config",
+      profileId: session.profileId,
+      model,
+      effort,
+      personaId: session.personaId,
+    });
     return true;
   }
 
@@ -1662,6 +1716,7 @@ export class SessionManager {
       agentId: s.agentId,
       model: s.model,
       effort: s.effort,
+      personaId: s.personaId,
       title: s.title,
       ...s.links,
       /* The session anything asking today would mean: a task transcript's

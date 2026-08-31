@@ -19,7 +19,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
-import { reportError } from "@/lib/errors"
+import { ErrorNote } from "@/components/error-note"
+import { captureError, type InlineError } from "@/lib/errors"
 import {
   BOARD_COLORS,
   COLOR_DOT,
@@ -104,6 +105,7 @@ export function NameDialog({
   const [name, setName] = React.useState(initialName)
   const [color, setColor] = React.useState<BoardColor | null>(initialColor)
   const [busy, setBusy] = React.useState(false)
+  const [error, setError] = React.useState<InlineError | null>(null)
 
   // Re-seed each time it opens: the same dialog instance serves "rename this
   // column" for every column on the board.
@@ -117,11 +119,12 @@ export function NameDialog({
     event.preventDefault()
     if (!name.trim() || busy) return
     setBusy(true)
+    setError(null)
     try {
       await onSubmit({ name: name.trim(), color })
       onOpenChange(false)
     } catch (err) {
-      reportError(err, title)
+      setError(captureError(err, title))
     } finally {
       setBusy(false)
     }
@@ -152,6 +155,7 @@ export function NameDialog({
               <ColorPicker value={color} onChange={setColor} />
             </div>
           </div>
+          <ErrorNote error={error} />
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
@@ -191,6 +195,7 @@ export function DeleteStatusDialog({
 }) {
   const [moveTo, setMoveTo] = React.useState("")
   const [busy, setBusy] = React.useState(false)
+  const [error, setError] = React.useState<InlineError | null>(null)
 
   React.useEffect(() => {
     if (open) setMoveTo(siblings[0]?.id ?? "")
@@ -199,11 +204,12 @@ export function DeleteStatusDialog({
   const confirm = async () => {
     if (busy) return
     setBusy(true)
+    setError(null)
     try {
       await onConfirm(moveTo || undefined)
       onOpenChange(false)
     } catch (err) {
-      reportError(err, "Couldn't delete the column")
+      setError(captureError(err, "Couldn't delete the column"))
     } finally {
       setBusy(false)
     }
@@ -214,12 +220,12 @@ export function DeleteStatusDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Delete “{status?.name}”?</DialogTitle>
-          <DialogDescription>
-            {taskCount === 0
-              ? "The column is empty, so nothing moves."
-              : `${taskCount} ${taskCount === 1 ? "task" : "tasks"} will move to another column — nothing is deleted.`}
-          </DialogDescription>
         </DialogHeader>
+        <DialogDescription>
+          {taskCount === 0
+            ? "The column is empty, so nothing moves."
+            : `${taskCount} ${taskCount === 1 ? "task" : "tasks"} will move to another column — nothing is deleted.`}
+        </DialogDescription>
         {taskCount > 0 && siblings.length > 0 && (
           <div className="grid gap-2 py-2">
             <Label>Move its tasks to</Label>
@@ -239,6 +245,7 @@ export function DeleteStatusDialog({
             </Select>
           </div>
         )}
+        <ErrorNote error={error} />
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
@@ -273,15 +280,17 @@ export function DeleteBoardDialog({
   onConfirm: () => Promise<void>
 }) {
   const [busy, setBusy] = React.useState(false)
+  const [error, setError] = React.useState<InlineError | null>(null)
 
   const confirm = async () => {
     if (busy) return
     setBusy(true)
+    setError(null)
     try {
       await onConfirm()
       onOpenChange(false)
     } catch (err) {
-      reportError(err, "Couldn't delete the board")
+      setError(captureError(err, "Couldn't delete the board"))
     } finally {
       setBusy(false)
     }
@@ -292,12 +301,13 @@ export function DeleteBoardDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Delete “{name}”?</DialogTitle>
-          <DialogDescription>
-            {taskCount === 0
-              ? "The board is empty. Its columns are deleted with it."
-              : `Its columns and all ${taskCount} ${taskCount === 1 ? "task" : "tasks"} on it are deleted. This cannot be undone.`}
-          </DialogDescription>
         </DialogHeader>
+        <DialogDescription>
+          {taskCount === 0
+            ? "The board is empty. Its columns are deleted with it."
+            : `Its columns and all ${taskCount} ${taskCount === 1 ? "task" : "tasks"} on it are deleted. This cannot be undone.`}
+        </DialogDescription>
+        <ErrorNote error={error} />
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Cancel

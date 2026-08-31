@@ -1,5 +1,5 @@
 import * as React from "react"
-import { reportError } from "@/lib/errors"
+import { captureError, reportError, type InlineError } from "@/lib/errors"
 import { api } from "@/lib/settings"
 import { Input } from "@/components/ui/input"
 import { PageForm, PageHeader, Group, Field, FormActions } from "./primitives"
@@ -28,6 +28,7 @@ export function WebSearchPage() {
   })
   const [hasToken, setHasToken] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
+  const [saveError, setSaveError] = React.useState<InlineError | null>(null)
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
 
   const load = React.useCallback(async () => {
@@ -53,6 +54,7 @@ export function WebSearchPage() {
   const save = async (e: React.FormEvent) => {
     e.preventDefault()
     setBusy(true)
+    setSaveError(null)
     try {
       const saved = await api<WebSearchServerConfig>(settings, "/api/config/web-search", {
         method: "PUT",
@@ -67,7 +69,7 @@ export function WebSearchPage() {
       setHasToken(Boolean(saved.hasToken))
       setForm((f) => ({ ...f, searchApiToken: "" }))
     } catch (err) {
-      reportError(err, "Couldn't save the web-search config")
+      setSaveError(captureError(err, "Couldn't save the web-search config"))
     } finally {
       setBusy(false)
     }
@@ -104,7 +106,7 @@ export function WebSearchPage() {
             </Field>
           </div>
         </Group>
-        <FormActions busy={busy} onCancel={() => void load()} />
+        <FormActions busy={busy} onCancel={() => void load()} error={saveError} />
       </PageForm>
       <p className="px-1 text-xs text-pretty text-muted-foreground">
         The token only ever leaves the server process at spawn — it is never shown back to clients and never stored in

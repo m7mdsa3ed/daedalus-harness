@@ -26,6 +26,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       projectId,
       model,
       effort,
+      personaId,
       configChoices,
       mcpServerIds,
       skillIds,
@@ -60,6 +61,11 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       mcpServerIds: ids(mcpServerIds),
       skillIds: ids(skillIds),
       commandIds: ids(commandIds),
+    }, {
+      // Not validated: a persona id naming a row that is gone resolves to no
+      // persona at spawn, which is what "gone" should mean — see
+      // `resolvePersonaSpawn` and the schema's note on the missing foreign key.
+      personaId: typeof personaId === "string" ? personaId : undefined,
     });
     /* Wait for the handshake. A 201 therefore means the agent has answered
        session/new, its settings have been applied, and the first `session_config`
@@ -204,9 +210,9 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
   });
 
   /**
-   * Change this thread's profile, model or effort — the *first* thing a client
-   * asks for all three, because it is the only side that can tell whether a
-   * restart is needed.
+   * Change this thread's profile, model, effort or persona — the *first* thing
+   * a client asks for all four, because it is the only side that can tell
+   * whether a restart is needed.
    *
    * A live change answers `{live: true}` and every socket stays exactly where
    * it was; one that could not be made live falls through to the same respawn
@@ -220,7 +226,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     const session = sessions.get(c.req.param("id"));
     if (!session) return c.json({ error: "not found" }, 404);
     if (session.deletedAt !== null) return c.json({ error: "session deleted" }, 409);
-    const { profileId, agentId: askedAgent, model, effort } = await c.req.json();
+    const { profileId, agentId: askedAgent, model, effort, personaId } = await c.req.json();
     const profile = getProfile(profileId ?? session.profileId);
     if (!profile) return c.json({ error: "unknown profile" }, 404);
     const agentId = askedAgent ?? session.agentId;
@@ -229,7 +235,15 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     }
     const project = getProject(session.projectId);
     if (!project) return c.json({ error: "unknown project" }, 404);
-    const { live } = await sessions.applyConfig(session.id, { profile, agentId, project, model, effort });
+    const { live } = await sessions.applyConfig(session.id, {
+      profile,
+      agentId,
+      project,
+      model,
+      effort,
+      // Omitted means unchanged; "" is a real value and means no persona.
+      personaId: typeof personaId === "string" ? personaId : undefined,
+    });
     return c.json({
       ok: true,
       live,
@@ -238,6 +252,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       profileId: session.profileId,
       model: session.model,
       effort: session.effort,
+      personaId: session.personaId,
       acpSessionId: session.liveAcpSessionId ?? session.acpSessionId,
       ...(session.historyLost ? { historyLost: session.historyLost } : {}),
     });

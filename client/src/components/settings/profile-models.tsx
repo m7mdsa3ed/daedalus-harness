@@ -1,7 +1,8 @@
 import * as React from "react"
 import { Download, Pencil, Plus, Star, Trash2 } from "lucide-react"
 import { toast } from "@/lib/toast"
-import { reportError } from "@/lib/errors"
+import { ErrorNote } from "@/components/error-note"
+import { captureError, type InlineError } from "@/lib/errors"
 import { api, type ModelCandidate, type ServerSettings } from "@/lib/settings"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -684,6 +685,10 @@ function FetchModelsDialog({
   const [fetching, setFetching] = React.useState(true)
   const [fetched, setFetched] = React.useState<ModelCandidate[] | null>(null)
   const [selected, setSelected] = React.useState<string[]>([])
+  /* A failed fetch used to fall through to `setFetched([])`, which draws the
+     picker's own "nothing to add" — a provider that served no new models and a
+     request that never arrived, told apart by a toast behind the dialog. */
+  const [fetchError, setFetchError] = React.useState<InlineError | null>(null)
   /* The rows being filled, keyed by candidate id. Built when Next is pressed
      and kept across Back so a match made by hand survives a changed pick. */
   const [drafts, setDrafts] = React.useState<Record<string, ModelRow>>({})
@@ -691,6 +696,7 @@ function FetchModelsDialog({
   const fetchModels = React.useCallback(async () => {
     setFetching(true)
     setFetched(null)
+    setFetchError(null)
     try {
       const answer = await api<{ models: ModelCandidate[] }>(
         settings,
@@ -708,7 +714,7 @@ function FetchModelsDialog({
       setFetched(answer.models)
       setSelected([])
     } catch (err) {
-      reportError(err, "Couldn't fetch the provider's models")
+      setFetchError(captureError(err, "Couldn't fetch the provider's models"))
       setFetched([])
     } finally {
       setFetching(false)
@@ -762,6 +768,8 @@ function FetchModelsDialog({
               <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
                 Fetching…
               </p>
+            ) : fetchError ? (
+              <ErrorNote error={fetchError} onRetry={() => void fetchModels()} retryLabel="Fetch again" />
             ) : (
               <CandidatePicker candidates={candidates} selected={selected} onToggle={setSelected} />
             )}

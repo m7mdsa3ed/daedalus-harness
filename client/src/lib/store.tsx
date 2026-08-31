@@ -18,6 +18,7 @@ import type {
   AgentDef,
   CommandDef,
   McpServerDef,
+  Persona,
   Profile,
   Project,
   ScheduledMessage,
@@ -113,6 +114,15 @@ export interface SubagentItem {
       spawn's `_meta.daedalus.workflow`, read by `lib/tools.workflowInfoOf`.
       What lets `transcript-rows` fold a run's steps into one `WorkflowGroup`. */
   workflow?: WorkflowStepInfo
+  /** What this child's turns cost, accumulated — one `_daedalus/subagent_usage`
+      per settled turn, so a step that took a repair turn adds up. Absent for a
+      child whose runtime never reported any: an agent that does not meter is
+      not an agent that spent nothing, so the difference is kept. */
+  usage?: acp.Usage
+  /** The child's own context occupancy, from its `usage_update`. Its window is
+      not the thread's — a step is a whole separate session — which is exactly
+      why it is stamped here rather than reaching `ThreadState`. */
+  context?: acp.UsageUpdate
   startedAt: number
   at?: number
   parentId?: string
@@ -236,8 +246,23 @@ export interface ThreadState {
   availableCommands: acp.AvailableCommand[]
   /** Cumulative token usage from the last completed turn. */
   usage: acp.Usage | null
+  /** What each turn cost on its own, keyed by `turnId` — the same `turn_ended`
+      the running total above is folded from, kept unsummed so a turn can say
+      what it spent where it sits. Keyed rather than stamped onto the user item
+      because the item exists before the turn has an id (the optimistic send
+      tags it later, and a replay builds it from `turn_started`) and the usage
+      arrives after everything else in the turn. Journaled, so it replays. */
+  turnUsage: Record<string, acp.Usage>
   /** Context window occupancy from usage_update. */
   context: acp.UsageUpdate | null
+  /** What the model request that produced a step cost, keyed by item id — the
+      per-step half of `turnUsage`, and derived rather than reported: see
+      `markStepUsage`. Journaled like everything it is built from, so it
+      replays. */
+  stepUsage: Record<string, number>
+  /** The item the last `usage_update` was filed against — the cursor
+      `markStepUsage` reads to tell one model request from the next. */
+  usageMark: string | null
   /** Time to first update of the last turn, ms. */
   ttftMs: number | null
   /** What is left of the subscription this thread's (profile, agent) pair
@@ -263,6 +288,10 @@ export interface State {
   mcpServers: McpServerDef[]
   skills: SkillDef[]
   commands: CommandDef[]
+  /** The persona library. Read with the profiles and the agent registry, for
+      the same reason they are read together: one added on another device is
+      otherwise invisible until a reload. */
+  personas: Persona[]
   agents: AgentDef[]
   sessions: SessionMeta[]
   /** Scheduled prompts on the server, one row per future/recurring delivery. */
@@ -284,7 +313,10 @@ export const emptyThread: ThreadState = {
   configOptions: [],
   availableCommands: [],
   usage: null,
+  turnUsage: {},
   context: null,
+  stepUsage: {},
+  usageMark: null,
   ttftMs: null,
   quota: null,
   archived: false,
@@ -599,6 +631,8 @@ export function applySessionUpdate(
         task: update.task,
         capabilities: update.capabilities ?? {},
         workflow: workflowInfoOf(metaOf(update)) ?? existing?.workflow,
+        usage: existing?.usage,
+        context: existing?.context,
         state: existing?.state ?? "running",
         startedAt: existing?.startedAt ?? Date.now(),
         at: existing?.at ?? at,
@@ -612,9 +646,72 @@ export function applySessionUpdate(
       const id = subagentItemId(update.subagentSessionId)
       return items.map((i) => (i.kind === "subagent" && i.id === id ? { ...i, state: update.state } : i))
     }
+    /* What the step's turn cost, lifted off the child's own `turn_ended` by the
+       workflow runner (see SubagentUsage in the protocol). One per settled
+       turn, so it accumulates — `addUsage` is the same fold the thread's own
+       total uses, and each event is journaled exactly once, so a replay cannot
+       count a turn twice. */
+    case "_daedalus/subagent_usage": {
+      const id = subagentItemId(update.subagentSessionId)
+      return items.map((i) =>
+        i.kind === "subagent" && i.id === id ? { ...i, usage: addUsage(i.usage ?? null, update.usage) } : i
+      )
+    }
+    /* A child's context occupancy. Session-level for the thread — and dropped
+       there — but a step IS a session, so on this side of the fence it is the
+       one thing that says how full the worker's own window got. */
+    case "usage_update": {
+      if (!owner) return items
+      return items.map((i) => (i.kind === "subagent" && i.id === owner ? { ...i, context: update } : i))
+    }
     default:
       return items
   }
+}
+
+/**
+ * What one step cost, out of the only mid-turn reading there is.
+ *
+ * ACP reports tokens once, on `turn_ended` — that is the turn's bill and it is
+ * what the footer prints. Nothing in the protocol says what a *step* inside it
+ * cost. But `usage_update` is not the running context total it sounds like:
+ * both runtimes that send one fill `used` with the **last model request's** own
+ * token count (claude-agent-acp from the assistant message's `message_start` /
+ * `message_delta` usage, codex-acp from `tokenUsage.last`), which is exactly a
+ * step's bill — the context that request carried plus what it wrote.
+ *
+ * So the reading is real and only its *owner* has to be inferred, which is what
+ * the mark is for. A request reports twice: once when it opens, before it has
+ * written anything, and once when it closes, by which time the steps it decided
+ * on are in the transcript. The tail item is therefore unchanged for the first
+ * and has moved for the second — so a reading at a tail that has not moved is
+ * the next request opening and is dropped, and one at a tail that has is the
+ * request closing, filed against the last thing it produced. One figure per
+ * model request, on the step it ended with.
+ *
+ * Two deliberate limits. A tail is the last **top-level** item: a subagent's
+ * own requests are not metered here (claude-agent-acp reports only the main
+ * loop), so a reading that arrives while a rail is filling belongs to the Task
+ * call that owns the rail, not to whatever row is deepest. And a runtime that
+ * refines its reading a second time at the same tail is not read twice — the
+ * later, larger figure is dropped rather than risk reading the next request's
+ * opening as a refinement. The figure is drawn as approximate for both reasons.
+ */
+function markStepUsage(
+  thread: ThreadState,
+  update: acp.UsageUpdate
+): Pick<ThreadState, "stepUsage" | "usageMark"> {
+  const kept = { stepUsage: thread.stepUsage, usageMark: thread.usageMark }
+  if (!(update.used > 0)) return kept
+  let tail: ThreadItem | undefined
+  for (let i = thread.items.length - 1; i >= 0; i--) {
+    if (!thread.items[i].parentId) {
+      tail = thread.items[i]
+      break
+    }
+  }
+  if (!tail || thread.usageMark === tail.id) return kept
+  return { stepUsage: { ...thread.stepUsage, [tail.id]: update.used }, usageMark: tail.id }
 }
 
 /** Session-level (non-transcript) updates applied to ThreadState. */
@@ -631,9 +728,13 @@ function applyMetaUpdate(
     update.sessionUpdate === "current_mode_update" ||
     update.sessionUpdate === "config_option_update" ||
     update.sessionUpdate === "available_commands_update" ||
-    update.sessionUpdate === "usage_update" ||
     update.sessionUpdate === "session_info_update"
   if (sessionId && sessionLevel) return thread
+  /* The one session-level update a child still has somewhere to go: its
+     context occupancy is not the thread's, but it IS the step's, and the step
+     is an item. Everything else about a child's session dies here. */
+  if (sessionId && update.sessionUpdate === "usage_update")
+    return { ...thread, items: applySessionUpdate(thread.items, update, allowUserChunks, sessionId) }
   switch (update.sessionUpdate) {
     case "current_mode_update":
       return thread.modes
@@ -644,7 +745,7 @@ function applyMetaUpdate(
     case "available_commands_update":
       return { ...thread, availableCommands: update.availableCommands }
     case "usage_update":
-      return { ...thread, context: update }
+      return { ...thread, context: update, ...markStepUsage(thread, update) }
     default:
       return { ...thread, items: applySessionUpdate(thread.items, update, allowUserChunks, sessionId) }
   }
@@ -683,9 +784,13 @@ const addOptional = (a: number | null | undefined, b: number | null | undefined)
 /**
  * ACP's Usage doc-comments claim session totals, but agents send per-turn
  * numbers (observed: totalTokens falling between turns), so the running total
- * is ours to keep — and an average cache rate needs it. The `turn_ended` event
- * is the ONLY caller: it is the one place a turn's usage is reported, live and
- * on replay alike, so nothing can count the same turn twice.
+ * is ours to keep — and an average cache rate needs it.
+ *
+ * Both callers fold a `turn_ended`, and nothing else may: the thread's own, and
+ * a workflow step's, which the runner lifts off the child's settled turn and
+ * says again as `_daedalus/subagent_usage` (see the protocol). Each of those is
+ * journaled exactly once per turn, live and on replay alike, so neither total
+ * can count a turn twice.
  */
 export function addUsage(prev: acp.Usage | null, next: acp.Usage): acp.Usage {
   if (!prev) return next
@@ -709,6 +814,7 @@ export type Action =
       mcpServers: McpServerDef[]
       skills: SkillDef[]
       commands: CommandDef[]
+      personas?: Persona[]
       agents: AgentDef[]
       sessions: SessionMeta[]
       scheduled?: ScheduledMessage[]
@@ -723,7 +829,15 @@ export type Action =
       next: Partial<
         Pick<
           SessionMeta,
-          "projectId" | "profileId" | "agentId" | "model" | "effort" | "mcpServerIds" | "skillIds" | "commandIds"
+          | "projectId"
+          | "profileId"
+          | "agentId"
+          | "model"
+          | "effort"
+          | "personaId"
+          | "mcpServerIds"
+          | "skillIds"
+          | "commandIds"
         >
       >
     }
@@ -731,7 +845,14 @@ export type Action =
   /** A live profile/model/effort change, from this device or another. Patches
       the thread's row in place: the change did not restart anything, so there
       is no reload to carry it and no draft semantics to respect. */
-  | { type: "spawn-config"; id: string; profileId: string; model: string; effort: string }
+  | {
+      type: "spawn-config"
+      id: string
+      profileId: string
+      model: string
+      effort: string
+      personaId?: string
+    }
   | { type: "profiles"; profiles: Profile[] }
   /** The registry, re-read. Virtual "Default" profiles are derived from it
       server-side, so an agent the client has never heard of would otherwise
@@ -741,6 +862,7 @@ export type Action =
   | { type: "mcp-servers"; mcpServers: McpServerDef[] }
   | { type: "skills"; skills: SkillDef[] }
   | { type: "commands"; commands: CommandDef[] }
+  | { type: "personas"; personas: Persona[] }
   | { type: "thread-reset"; id: string; thread: ThreadState }
   | {
       type: "thread-status"
@@ -787,7 +909,7 @@ export type Action =
     }
   | { type: "mode"; id: string; modeId: string }
   | { type: "config-options"; id: string; configOptions: acp.SessionConfigOption[] }
-  | { type: "usage"; id: string; usage: acp.Usage }
+  | { type: "usage"; id: string; usage: acp.Usage; turnId?: string }
   | { type: "ttft"; id: string; ms: number }
   | { type: "quota"; id: string; quota: QuotaSnapshot }
   /** A run of actions folded into one commit. The replay is the only thing
@@ -818,6 +940,7 @@ export function reducer(state: State, action: Action): State {
         mcpServers: action.mcpServers,
         skills: action.skills,
         commands: action.commands,
+        personas: action.personas ?? state.personas,
         agents: action.agents,
         sessions: action.sessions,
         scheduled: action.scheduled ?? state.scheduled,
@@ -840,7 +963,15 @@ export function reducer(state: State, action: Action): State {
         ...state,
         sessions: state.sessions.map((session) =>
           session.id === action.id
-            ? { ...session, profileId: action.profileId, model: action.model, effort: action.effort }
+            ? {
+                ...session,
+                profileId: action.profileId,
+                model: action.model,
+                effort: action.effort,
+                // Omitted by a server that predates personas — leave whatever
+                // the row already carries rather than blanking it.
+                ...(action.personaId === undefined ? {} : { personaId: action.personaId }),
+              }
             : session
         ),
       }
@@ -889,6 +1020,8 @@ export function reducer(state: State, action: Action): State {
       return { ...state, skills: action.skills }
     case "commands":
       return { ...state, commands: action.commands }
+    case "personas":
+      return { ...state, personas: action.personas }
     case "thread-reset":
       return { ...state, threads: { ...state.threads, [action.id]: action.thread } }
     case "thread-window":
@@ -1037,8 +1170,17 @@ export function reducer(state: State, action: Action): State {
     }
     case "config-options":
       return withThread(state, action.id, { configOptions: action.configOptions })
-    case "usage":
-      return withThread(state, action.id, { usage: addUsage(thread(state, action.id).usage, action.usage) })
+    case "usage": {
+      const current = thread(state, action.id)
+      return withThread(state, action.id, {
+        usage: addUsage(current.usage, action.usage),
+        /* The same reading, kept twice: summed for the thread's own total and
+           filed under its turn for the footer that prints what this answer
+           cost. One `turn_ended` per turn, journaled once, so neither can
+           double-count on a replay. */
+        ...(action.turnId ? { turnUsage: { ...current.turnUsage, [action.turnId]: action.usage } } : null),
+      })
+    }
     case "ttft":
       return withThread(state, action.id, { ttftMs: action.ms })
     /* Absolute, like the queue: the server sends the whole reading, never a
@@ -1056,6 +1198,7 @@ export const initialState: State = {
   mcpServers: [],
   skills: [],
   commands: [],
+  personas: [],
   agents: [],
   sessions: [],
   scheduled: [],
