@@ -805,12 +805,13 @@ const ROW_SOURCES = 6
  */
 export function ToolSources({ item }: { item: ToolItem }) {
   const [all, setAll] = React.useState(false)
+  const view = useViewOptionsContext()
   const fetched = extractWebFetch(item)
   const search = fetched ? null : extractWebSearch(item)
   const pages: WebResult[] = fetched
     ? [{ title: fetched.prompt ?? "", url: fetched.url }]
     : (search?.results ?? [])
-  if (pages.length === 0) return null
+  if (pages.length === 0 || !view.showSources) return null
   const byHost = new Map<string, WebResult>()
   for (const page of pages) {
     const host = hostOf(page.url) || page.url
@@ -877,7 +878,7 @@ const SNIPPET_LINES = 3
 
 function WebResultList({ results }: { results: WebResult[] }) {
   return (
-    <ol className={cn(PANE, "max-h-[min(60vh,28rem)] divide-y divide-border/40 overflow-auto")}>
+    <ol className={cn(PANE, PANE_MAX_H, "divide-y divide-border/40 overflow-auto")}>
       {results.map((hit, index) => (
         <WebResultRow key={`${hit.url}-${index}`} hit={hit} />
       ))}

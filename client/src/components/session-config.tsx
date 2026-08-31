@@ -27,17 +27,23 @@ const DEFAULT_CHOICE = "__default__"
  *
  * Two sources feed it, and the profile decides which one owns the model:
  *
- *   - **A profile that lists models has overridden the agent.** Those ids reach
- *     the agent only through its env, so picking one restarts the process. This
- *     is the case a gateway profile exists for: point codex at a router and its
- *     own catalog is a list of models your endpoint does not serve, and the
- *     efforts it advertises belong to models it thinks it is running.
+ *   - **A profile that lists models has overridden the agent.** Its ids are the
+ *     ones this menu offers. This is the case a gateway profile exists for:
+ *     point codex at a router and its own catalog is a list of models your
+ *     endpoint does not serve, and the efforts it advertises belong to models it
+ *     thinks it is running.
  *   - **A profile that lists none defers to the agent**, whose `category:
- *     "model"` / `"thought_level"` selectors apply in a single ACP call with no
- *     restart at all.
+ *     "model"` / `"thought_level"` selectors are what the menu draws instead.
  *
  * Either way every *other* agent option is passed through untouched: the
  * override is scoped to the two settings the profile actually replaces.
+ *
+ * What is *not* decided here is whether a pick costs a restart. It used to be —
+ * an overridden model was env, and env means a respawn — but the server can now
+ * move most threads without one (see CLAUDE.md), and only the server knows
+ * which. So every pick goes down the same route and the answer comes back;
+ * `agent.liveConfig` is what this menu reads to decide whether to *warn* first,
+ * and it is a claim about the agent, not a promise about this call.
  */
 export function SessionConfigPopover({
   sessionId,
@@ -117,34 +123,47 @@ export function SessionConfigPopover({
       .setConfigOption(sessionId, option.id, value)
       .catch((err) => reportError(err, `Couldn't change ${option.name}`))
 
-  /** Env change: the process restarts, so a running turn dies with it. */
-  const respawnWith = async (next: { model?: string; effort?: string }) => {
+  /* Whether this agent can be reconfigured where it stands. A claim about the
+     runtime, not about this particular call: the server still decides, and
+     falls back to a restart for the cases it cannot do live. What it buys here
+     is silence — an agent that takes its model live has nothing to warn about,
+     and a confirmation for something instant is noise. */
+  const liveReconfig = !!agent?.liveConfig
+
+  /** A model or effort pick. Only warns when the pick is known to cost the
+      process, which for a running turn means costing the turn. */
+  const setSpawnConfig = async (next: { model?: string; effort?: string }) => {
     if (
+      !liveReconfig &&
       thread.turnActive &&
       !(await confirm({
         title: "Restart the agent?",
         description:
-          "This profile supplies its own models, which the agent reads at startup — switching restarts it. The running turn stops, then the conversation is restored.",
+          "This profile supplies its own models, which this agent reads at startup — switching restarts it. The running turn stops, then the conversation is restored.",
         confirmLabel: "Restart",
       }))
     )
       return
     actions
       .changeSpawnConfig(meta, next)
-      .catch((err) => reportError(err, "Couldn't restart the agent"))
+      .catch((err) => reportError(err, "Couldn't change the model"))
   }
 
-  /* Always asks, turn or no turn. Changing profile is not retuning: it is new
-     credentials, a new endpoint and a new model catalog, and the model you were
-     on almost certainly does not exist on the other side. */
+  /* Still always asks, even where the move is instant — and for a reason that
+     has nothing to do with restarting: a profile is a different endpoint, a
+     different credential and a different catalog, and the model you are on does
+     not carry over to it. That is worth confirming whatever it costs. */
   const changeProfile = async (profileId: string) => {
     const next = state.profiles.find((p) => p.id === profileId)
+    const restarts = !liveReconfig || !profile.baseUrl
     if (
       !(await confirm({
         title: `Move this thread to "${next?.name ?? "another profile"}"?`,
-        description: thread.turnActive
-          ? "The agent restarts on the new profile's credentials and default model — the running turn stops, then the conversation is restored."
-          : "The agent restarts on the new profile's credentials and default model. The conversation is restored, but the model you are on now does not carry over.",
+        description: restarts
+          ? thread.turnActive
+            ? "The agent restarts on the new profile's credentials and default model — the running turn stops, then the conversation is restored."
+            : "The agent restarts on the new profile's credentials and default model. The conversation is restored, but the model you are on now does not carry over."
+          : "The thread continues on the new profile's credentials and default model. Nothing restarts, but the model you are on now does not carry over.",
         confirmLabel: "Switch profile",
       }))
     )
@@ -207,7 +226,7 @@ export function SessionConfigPopover({
                  may not be in it — clear rather than carry a stale value into
                  the env. */
               onSelect={(value) =>
-                respawnWith({ model: value === DEFAULT_CHOICE ? "" : value, effort: "" })
+                setSpawnConfig({ model: value === DEFAULT_CHOICE ? "" : value, effort: "" })
               }
             />
           ) : (
@@ -228,7 +247,7 @@ export function SessionConfigPopover({
                 { value: DEFAULT_CHOICE, name: "Default" },
                 ...spawnEfforts.map((effort) => ({ value: effort, name: effort })),
               ]}
-              onSelect={(value) => respawnWith({ effort: value === DEFAULT_CHOICE ? "" : value })}
+              onSelect={(value) => setSpawnConfig({ effort: value === DEFAULT_CHOICE ? "" : value })}
             />
           ) : (
             liveEffort && (

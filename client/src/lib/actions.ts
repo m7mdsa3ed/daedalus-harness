@@ -35,6 +35,7 @@ import {
   type SkillDef,
   type CommandDef,
 } from "./settings"
+import { fetchQuota } from "./quota"
 import { emptyThread, useStore, type Action } from "./store"
 
 const RECONNECT_MAX_ATTEMPTS = 5
@@ -417,7 +418,14 @@ export function useActions(settings: ServerSettings) {
             saveAgentOptions(optionKey(meta.profileId, meta.agentId), configOptions)
           }
         },
+        /* The thread was moved to another profile, model or effort with nothing
+           restarted. Live-only, so it never arrives inside a replay — and it
+           carries the row's own state rather than the agent's, which is why it
+           patches the session and not the thread. */
+        onSpawnConfig: (profileId, model, effort) =>
+          send({ type: "spawn-config", id, profileId, model, effort }),
         onTtft: (ms) => send({ type: "ttft", id, ms }),
+        onQuota: (quota) => send({ type: "quota", id, quota }),
         onTurnEnded: (usage, error, promptText, catchingUp, continued) => {
           send({ type: "turn-active", id, active: false })
           if (usage) send({ type: "usage", id, usage })
@@ -534,38 +542,59 @@ export function useActions(settings: ServerSettings) {
       }
     }
 
-    /* Swap the agent process and put the conversation back.
-       The one move that needs this: profile, model and effort are all filled
-       into the agent's env template at spawn (server/src/registry.ts), so they
-       cannot be changed on a process that is already running. Callers decide
-       what to send — what they leave out, the server rebuilds from the profile's
-       own defaults.
-
-       All of it happens server-side now, in one call: spawn, session/load, and
-       putting back the mode and switches the restart reset. This used to be
-       three round trips driven from here, which meant closing the tab halfway
-       through left a half-restored thread. */
-    const respawnThread = async (
+    /**
+     * Change a thread's profile, model or effort — and let the server say what
+     * that costs.
+     *
+     * All three are placed by the agent's env at spawn, and all three used to
+     * mean the same thing here: kill the process, spawn another, put the
+     * conversation back. They do not any more. The endpoint and the credential
+     * live behind the harness's own gateway URL, which names the *thread*, and
+     * the model is either the agent's own selector or another rewrite on the
+     * same wire — so the common case is one request that changes nothing
+     * anybody can see. See CLAUDE.md.
+     *
+     * Which case it is cannot be known from here: it depends on the agent, on
+     * whether the thread is behind the shim at all, and on whether the running
+     * process will take the model. So the route decides and answers `live`, and
+     * only the falsy answer does the reconnect dance — a live change arrives
+     * back as a `spawn_config` event on the socket that is already open, on
+     * this device and on every other.
+     */
+    const changeThreadConfig = async (
       meta: SessionMeta,
-      body: { profileId: string; agentId?: string; model?: string; effort?: string },
+      next: { profileId?: string; model?: string; effort?: string },
       context: string
     ) => {
+      let live = false
       try {
-        liveThreads.get(meta.id)?.close()
-        await api(settings, `/api/sessions/${meta.id}/respawn`, {
+        const reply = await api<{ live: boolean }>(settings, `/api/sessions/${meta.id}/config`, {
           method: "POST",
-          body: JSON.stringify(body),
+          body: JSON.stringify({
+            profileId: next.profileId ?? meta.profileId,
+            agentId: meta.agentId,
+            model: next.model ?? meta.model ?? undefined,
+            effort: next.effort ?? meta.effort ?? undefined,
+          }),
         })
-        await refreshSessions()
-        /* The respawn clears the server's journal, so the saved cursor is past
-           its end. Drop it so the attach below is a clean `from: 0` rebuild
-           instead of relying on the server's clamp. */
-        journalCursors.delete(meta.id)
-        // The event log was rebuilt by the load replay; attaching from 0 reads it.
+        live = reply.live
+      } catch (error) {
+        recordError(meta.id, error, context)
+        throw error
+      }
+      await refreshSessions()
+      if (live) return
+      /* The server fell back to a respawn, so the event log was cleared under
+         this socket: the saved cursor is past its end and the thread has to be
+         attached again from 0. The same tail as `respawnThread`, which is still
+         the path for a revive. */
+      liveThreads.get(meta.id)?.close()
+      journalCursors.delete(meta.id)
+      try {
         await startThread(meta.id)
       } catch (error) {
-        // The old process is already gone at this point, so a failure here
-        // leaves a thread that needs reviving — say that, in the thread.
+        // The old process is gone by now, so a failure here leaves a thread
+        // that needs reviving — say that, in the thread.
         recordError(meta.id, error, context)
         throw error
       }
@@ -788,6 +817,30 @@ export function useActions(settings: ServerSettings) {
           scheduled,
         })
         return { profiles, projects, agents, sessions }
+      },
+
+      /**
+       * Read this thread's plan usage once, on demand.
+       *
+       * The socket sends one of these after every settled turn, so a thread that
+       * has been worked in already has one; this is for the other case — a
+       * thread just opened, or an archived one with no process at all, whose
+       * stats popover someone expanded. It asks under the thread's *own*
+       * profile, which is the honest reading: a gateway profile spends an API
+       * key and has no plan windows, and saying so is the answer.
+       *
+       * Failures are swallowed. The number is ambient, nobody asked a question
+       * by opening a popover, and a missing `claude` binary would otherwise
+       * raise a toast on every thread on the machine. Settings › Usage is where
+       * the failure is reported, because there it is the answer.
+       */
+      async loadQuota(meta: SessionMeta) {
+        try {
+          const quota = await fetchQuota(settings, meta.agentId, { profileId: meta.profileId })
+          dispatch({ type: "quota", id: meta.id, quota })
+        } catch {
+          /* ambient */
+        }
       },
 
       async refreshProfiles() {
@@ -1106,43 +1159,49 @@ export function useActions(settings: ServerSettings) {
       },
 
       /**
+       * Change a thread's profile, model or effort — and let the server say
+       * what that costs.
+       *
+       * All three are placed by the agent's env at spawn, and all three used to
+       * mean the same thing here: kill the process, spawn another, put the
+       * conversation back. They do not any more. The endpoint and the
+       * credential live behind the harness's own gateway URL, which names the
+       * *thread*, and the model is either the agent's own selector or another
+       * rewrite on the same wire — so the common case is now one request that
+       * changes nothing anybody can see. See CLAUDE.md.
+       *
+       * Which case it is, is not knowable from here: it depends on the agent,
+       * on whether the thread is behind the shim, and on whether the running
+       * process will take the model. So the route decides and answers `live`,
+       * and only the falsy answer does the reconnect dance — a live change
+       * arrives back as a `spawn_config` event on the socket that is already
+       * open, on this device and every other.
+       */
+      changeThreadConfig,
+
+      /**
        * Move a thread onto a different profile: different credentials, base URL
-       * and model catalog, all of which are process env.
+       * and model catalog.
        *
        * Model and effort are deliberately NOT carried over. They name a model in
        * the profile being left, which the profile being joined may not serve at
-       * all, so the new profile's own default is the honest starting point.
+       * all, so the new profile's own default is the honest starting point —
+       * and the server is what resolves "none" into it.
        */
       async changeProfile(meta: SessionMeta, profileId: string) {
         // Same agent, new provider: the menu only offers profiles that serve
         // this thread's agent, and the server refuses one that does not.
-        await respawnThread(
+        await changeThreadConfig(
           meta,
-          { profileId, agentId: meta.agentId },
+          { profileId, model: "", effort: "" },
           "Couldn't move this thread to that profile"
         )
       },
 
-      /**
-       * Change the model or reasoning effort of a thread whose profile carries
-       * its own model catalog.
-       *
-       * Those ids only reach the agent through its env, so this restarts the
-       * process — unlike the ACP path in `setConfigOption`, which is one call to
-       * a running agent. Which of the two a thread uses is the profile's answer:
-       * a profile that lists models has overridden whatever the agent would have
-       * advertised, and this is how those picks get applied. See CLAUDE.md.
-       */
+      /** Change the model or reasoning effort of a thread whose profile carries
+          its own model catalog. */
       async changeSpawnConfig(meta: SessionMeta, next: { model?: string; effort?: string }) {
-        await respawnThread(
-          meta,
-          {
-            profileId: meta.profileId,
-            model: next.model ?? meta.model ?? undefined,
-            effort: next.effort ?? meta.effort ?? undefined,
-          },
-          "Couldn't restart this thread's agent"
-        )
+        await changeThreadConfig(meta, next, "Couldn't change this thread's model")
       },
 
       /* Mode and config changes are optimistic in the UI, so a rejection has to

@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Archive, ArrowUp, ChevronUp, Clock, History, Mic, RotateCw, Square } from "lucide-react"
+import { Archive, ArrowUp, ChevronUp, History, Mic, RotateCw, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import {
@@ -33,10 +33,12 @@ import { KEYS, isInteractiveTarget, isTypingTarget, matchesChord, overlayOpen } 
 import { useStore, emptyThread, threadIsEmpty, type ThreadItem, type ThreadState } from "@/lib/store"
 import { useLocation, useNavigate } from "react-router"
 import { useViewOptions, ViewOptionsContext } from "@/lib/view-options"
+import { useFollowStream } from "@/hooks/use-follow-stream"
 import { cn } from "@/lib/utils"
 import { DraftConfigPopover, DraftScopeRow } from "./draft-config"
 import { SessionConfigPopover } from "./session-config"
-import { SlashCommandMenu, useSlashCommands } from "./slash-commands"
+import { FileMentionMenu, useFileMentions } from "./file-mentions"
+import { HARNESS_COMMANDS, SlashCommandMenu, harnessCommandFor, useSlashCommands } from "./slash-commands"
 import { SessionSettingsButton } from "./session-settings"
 import { InlineElicitation } from "./elicitation-form"
 import { primaryPermissionOption } from "./composer-approval"
@@ -195,6 +197,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
      the turn is over, the agent is still there, and nothing has been said
      since. Anything older is history, and history does not get a button. */
   const options = useViewOptions(sessionId)
+  const follow = useFollowStream(options.autoScroll)
   /* Memoised separately: `.filter` would hand `rows` a fresh array every render
      even when nothing changed, and `rows`' memo depends on it. Two stable layers
      (items → visible → rows) is what lets a streaming update — which mutates one
@@ -266,14 +269,19 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
       {/* `autoScroll` defaults to FALSE — without it the transcript never follows
            the stream. Every direct child of Content must be an Item with a
            `messageId`: the visibility/preservation scanner skips elements without
-           one, so unkeyed items are invisible to the scroller. */}
+           one, so unkeyed items are invisible to the scroller.
+           The primitive's own follow is kept (it is what hides the
+           scroll-to-bottom button while following) but it is not trusted on its
+           own — `useFollowStream` owns the pin. See hooks/use-follow-stream. */}
       <MessageScrollerProvider autoScroll={options.autoScroll}>
         <MessageScroller className="min-h-0 flex-1">
-          <MessageScrollerViewport>
+          <MessageScrollerViewport ref={follow.viewportRef}>
             <ViewOptionsContext.Provider value={options}>
             <MessageScrollerContent
+              ref={follow.contentRef}
               data-density={options.compactDensity ? "compact" : undefined}
               data-wrap={options.codeWrap ? "on" : undefined}
+              data-motion={options.calmMotion ? "calm" : undefined}
               className={cn(
                 "mx-auto w-full gap-0.5 px-4 py-4",
                 options.compactDensity && "gap-0 py-2",
@@ -353,7 +361,9 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                     showTimestamps={options.showTimestamps}
                     streaming={thread.turnActive && last !== undefined && rowTailId(row) === last.id}
                   />
-                  {sourcesFor(row) && <SourcesStrip turn={sourcesFor(row)!} />}
+                  {options.showSources && sourcesFor(row) && (
+                    <SourcesStrip turn={sourcesFor(row)!} />
+                  )}
                 </MessageScrollerItem>
                 )
               })}
@@ -378,7 +388,10 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
             </MessageScrollerContent>
             </ViewOptionsContext.Provider>
           </MessageScrollerViewport>
-          <MessageScrollerButton />
+          {/* The primitive's own scroll-to-end runs on click; re-pinning here as
+              well is what makes the button mean "and keep up from now on"
+              instead of "put me at the bottom once". */}
+          <MessageScrollerButton onClick={follow.follow} />
           {/* Inside the Root, not the Viewport: it is an overlay on the
               transcript, and it needs the Provider above it for
               `scrollToMessage`/`currentAnchorId`. It draws nothing under two
@@ -628,10 +641,26 @@ function Composer({
 
   /* The draft is cleared optimistically: a failure leaves a transcript row that
      carries the exact text and a Retry button, which is a better home for it
-     than a textarea the user has since typed into. */
+     than a textarea the user has since typed into.
+
+     `/schedule` is intercepted here rather than sent: it is the harness's own
+     command (see slash-commands.tsx), so its text opens the schedule form
+     pre-filled instead of reaching the agent — which is also why the draft is
+     NOT cleared on that path. The message has not been sent anywhere yet, and
+     the form is a place you can back out of. */
   const send = (opts: { steer?: boolean } = {}) => {
     const value = text.trim()
     if (!value) return
+    const command = draft ? null : harnessCommandFor(value, thread.availableCommands)
+    if (command?.name === "schedule") {
+      void navigate(schedulePath(sessionId), {
+        state: {
+          defaultText: command.args,
+          returnTo: location.pathname + location.search,
+        },
+      })
+      return
+    }
     setText("")
     clearDraft(sessionId)
     void actions.send(sessionId, value, opts).catch(() => {})
@@ -641,10 +670,31 @@ function Composer({
      in the key handler below: while that menu is open the arrows are its. */
   const history = usePromptHistory(thread.items, setText)
 
-  /* Running a command is just sending `/name args` as the prompt — the agent
-     resolves it — so the menu only completes the name. Drafts advertise no
-     commands (no process yet), which closes the menu on its own. */
-  const slash = useSlashCommands(text, thread.availableCommands, setText)
+  /* Running an agent command is just sending `/name args` as the prompt — the
+     agent resolves it — so the menu only completes the name. Drafts advertise
+     no commands (no process yet); they are also offered no harness commands,
+     because `/schedule` needs a thread the server knows about to schedule
+     against, which a draft is not until its first message. */
+  const slash = useSlashCommands(
+    text,
+    thread.availableCommands,
+    setText,
+    draft ? [] : HARNESS_COMMANDS
+  )
+
+  /* `@` completes a path in the project. It reads the token at the caret — a
+     file is named mid-sentence, unlike a command — so the textarea has to be
+     reachable. It goes after the command menu in the key handler for the same
+     reason history does: whichever menu is open owns the arrows. The two cannot
+     both be open (a `/name` token holds no `@`), but the order is stated rather
+     than relied upon. */
+  const composerRef = React.useRef<HTMLTextAreaElement>(null)
+  const mentions = useFileMentions({
+    text,
+    setText,
+    projectId: meta?.projectId,
+    inputRef: composerRef,
+  })
 
   return (
     <div className="px-4 pt-1 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
@@ -703,7 +753,10 @@ function Composer({
           >
             <History className="size-3" />
             <span>Earlier prompt</span>
-            <span className="ms-auto flex items-center gap-1.5">
+            {/* The way out, for the pointer that has one. Hidden on touch —
+                there is no Esc key on a phone, so it is an instruction that
+                cannot be followed taking up the end of the row. */}
+            <span className="ms-auto hidden items-center gap-1.5 sm:flex">
               <KbdGroup>
                 <Kbd>Esc</Kbd>
               </KbdGroup>
@@ -716,15 +769,20 @@ function Composer({
             the turn. It is a row, not an overlay, so the plan and the history
             notice stay readable while you complete a command. */}
         <SlashCommandMenu state={slash} />
+        <FileMentionMenu state={mentions} />
       </ComposerStrip>
       {/* relative/z-10: the composer paints over the strip's tucked bottom edge. */}
       <div className="relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl bg-composer p-2 shadow-glass-lg">
         <Textarea
+          ref={composerRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
+          onSelect={mentions.onSelect}
           onKeyDown={(e) => {
             // The command menu owns navigation keys (and Enter) while open.
             if (slash.onKeyDown(e)) return
+            // Then the `@` menu, for the same reason.
+            if (mentions.onKeyDown(e)) return
             if (history.onKeyDown(e)) return
             if (e.key !== "Enter") return
             /* Past the queue: into the turn that is already running. Checked
@@ -778,7 +836,7 @@ function Composer({
             )}
             <SessionSettingsButton sessionId={sessionId} />
           </div>
-          <ContextIndicator thread={thread} />
+          <ContextIndicator thread={thread} meta={meta} actions={actions} />
           {voice.supported && (
             <Button
               variant="ghost"
@@ -796,18 +854,6 @@ function Composer({
               <Mic />
             </Button>
           )}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="shrink-0 rounded-lg"
-            onClick={() => void navigate(schedulePath(sessionId), {
-              state: { defaultText: text, returnTo: location.pathname + location.search },
-            })}
-            disabled={disabled}
-            title="Schedule a message"
-          >
-            <Clock />
-          </Button>
           {thread.turnActive && (
             <Button
               variant="ghost"

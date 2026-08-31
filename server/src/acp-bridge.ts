@@ -4,6 +4,7 @@ import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import { profileSupports, type Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
+import { mentionLinks } from "./mentions.js";
 import { getAgent, resolveSpawn } from "./registry.js";
 import type {
   HistoryLost,
@@ -14,6 +15,7 @@ import type {
 } from "./protocol.js";
 import type { Peer } from "./sessions.js";
 import { WEB_SEARCH_SERVER_NAME } from "./websearch.js";
+import { CLAUDE_WORKFLOW_TOOL, WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
 
 /**
  * The ACP client, server-side.
@@ -45,6 +47,11 @@ export function spawnAgent(
   project: Project,
   model?: string,
   effort?: string,
+  /** The thread this process answers for, when there is one. It is what puts
+      the child's gateway URL under `/gw/<key>/s/<id>/…`, so the endpoint,
+      credentials and model behind it stay the harness's to change while the
+      process runs. The probe has no thread and passes nothing. */
+  sessionId?: string,
 ): ChildProcessWithoutNullStreams {
   const agent = getAgent(agentId);
   if (!agent) throw new Error(`unknown agent: ${agentId}`);
@@ -54,7 +61,7 @@ export function spawnAgent(
   // Skills/commands are NOT materialized here: what belongs in the cwd is the
   // union across the project's live threads, which only the SessionManager
   // knows (`materializeFor`). The probe writes the project's own set itself.
-  const { command, args, env, cwd } = resolveSpawn(agent, profile, project, model, effort);
+  const { command, args, env, cwd } = resolveSpawn(agent, profile, project, model, effort, sessionId);
   return spawn(command, args, {
     cwd,
     env: { ...process.env, ...env },
@@ -167,7 +174,7 @@ export interface BridgeHost {
       cancelled or failed, after which nothing should auto-follow; `continued`
       = `hasQueued()` said yes and the host is expected to drain now. The push
       hook lives behind this on the host's side, gated on both. */
-  onTurnSettled(info: { error?: WireError; interrupted: boolean; continued: boolean }): void;
+  onTurnSettled(info: { error?: WireError; interrupted: boolean; continued: boolean; turnId: string }): void;
   /** The agent accepted a `session/new` or a `session/load`: this is the
       session the running process is on. `proven` says which — a load that
       answered is the strongest evidence an id can have (the agent found the
@@ -207,6 +214,9 @@ export interface BridgeOptions {
       WebSearch/WebFetch. Only that agent declares those as server tools, so
       disallow them or the model keeps calling the originals instead of ours. */
   websearchViaMcp?: boolean;
+  /** The harness's workflow MCP server is replacing claude-code's built-in
+      Workflow tool, for the same reason and with the same allow rule. */
+  workflowViaMcp?: boolean;
 }
 
 export class AcpBridge {
@@ -220,6 +230,9 @@ export class AcpBridge {
 
   private readonly host: BridgeHost;
   private readonly connection: acp.ClientConnection;
+  /** The session's working directory — kept because an `@mention` in a prompt
+      is resolved against it (see `mentions.ts`). */
+  private readonly cwd: string;
   /** Prompts the agent has not answered yet. A turn is over when this hits
       zero — NOT when the first prompt returns, or steering (a second prompt
       sent mid-turn) would clear the indicator while the agent is still
@@ -243,6 +256,7 @@ export class AcpBridge {
 
   constructor(host: BridgeHost, proc: ChildProcessWithoutNullStreams, opts: BridgeOptions) {
     this.host = host;
+    this.cwd = opts.cwd;
     const stream = agentStream(proc);
     this.connection = acp
       .client({ name: "daedalus" })
@@ -386,15 +400,18 @@ export class AcpBridge {
    * the same gateway went from two denials to none.
    */
   private claudeMeta(opts: BridgeOptions): Record<string, unknown> {
-    if (!opts.websearchViaMcp) return {};
-    return {
-      claudeCode: {
-        options: {
-          disallowedTools: ["WebSearch", "WebFetch"],
-          allowedTools: [`mcp__${WEB_SEARCH_SERVER_NAME}`],
-        },
-      },
-    };
+    const disallowedTools: string[] = [];
+    const allowedTools: string[] = [];
+    if (opts.websearchViaMcp) {
+      disallowedTools.push("WebSearch", "WebFetch");
+      allowedTools.push(`mcp__${WEB_SEARCH_SERVER_NAME}`);
+    }
+    if (opts.workflowViaMcp) {
+      disallowedTools.push(CLAUDE_WORKFLOW_TOOL);
+      allowedTools.push(`mcp__${WORKFLOW_SERVER_NAME}`);
+    }
+    if (disallowedTools.length === 0) return {};
+    return { claudeCode: { options: { disallowedTools, allowedTools } } };
   }
 
   private async newSession(opts: BridgeOptions): Promise<void> {
@@ -515,20 +532,70 @@ export class AcpBridge {
    * value the agent no longer offers costs the pick, not the thread.
    */
   private async applyAgentOwned(state: { model?: string; effort?: string }): Promise<void> {
+    await this.setByCategory(state, "after the restart");
+  }
+
+  /** The agent's own selector for a category, if it advertises one. */
+  private selectorFor(category: string): acp.SessionConfigOption | undefined {
+    return this.configOptions.find((o) => o.type === "select" && o.category === category);
+  }
+
+  /**
+   * Will this agent take `value` as its model right now?
+   *
+   * Asked before a live model change is attempted, because the alternative to
+   * knowing is finding out by being refused — and by then the thread's record
+   * already says it moved. An agent validates a `set_config_option` against the
+   * values it advertised, so its own list is the honest answer; a profile whose
+   * models reached the allowlist after this process spawned is exactly the case
+   * that says no, and falls back to a respawn.
+   */
+  offersModel(value: string): boolean {
+    const option = this.selectorFor("model");
+    if (!option || option.type !== "select") return false;
+    if (option.currentValue === value) return true;
+    return option.options
+      .flatMap((entry) => ("options" in entry ? entry.options : [entry]))
+      .some((choice) => choice.value === value);
+  }
+
+  /**
+   * Set the model and/or effort on a running session through the agent's own
+   * selectors, and say which of them landed.
+   *
+   * By category, not by id: the record is "this thread runs on this model", and
+   * which config id carries the model is the agent's business — it can differ
+   * between agents and across upgrades. Best-effort throughout, which is what
+   * the caller's `context` describes: a value the agent no longer offers costs
+   * the pick, not the thread. A category the agent does not advertise at all
+   * reports `false`, and the caller decides whether that is worth a respawn.
+   */
+  async setByCategory(
+    next: { model?: string; effort?: string },
+    context: string,
+    origin?: Peer,
+  ): Promise<{ model: boolean; effort: boolean }> {
+    const placed = { model: false, effort: false };
     const wanted = [
-      ["model", state.model],
-      ["thought_level", state.effort],
+      ["model", "model", next.model],
+      ["thought_level", "effort", next.effort],
     ] as const;
-    for (const [category, value] of wanted) {
+    for (const [category, field, value] of wanted) {
       if (!value) continue;
-      const option = this.configOptions.find((o) => o.type === "select" && o.category === category);
-      if (!option || option.type !== "select" || option.currentValue === value) continue;
+      const option = this.selectorFor(category);
+      if (!option || option.type !== "select") continue;
+      if (option.currentValue === value) {
+        placed[field] = true;
+        continue;
+      }
       try {
-        await this.setConfigOption(option.id, value);
+        await this.setConfigOption(option.id, value, origin);
+        placed[field] = true;
       } catch (error) {
-        console.warn(`couldn't put ${category} back to ${value} after the restart`, error);
+        console.warn(`couldn't set ${category} to ${value} ${context}`, error);
       }
     }
+    return placed;
   }
 
   private async applyChoices(choices: Record<string, string | boolean>): Promise<void> {
@@ -661,7 +728,10 @@ export class AcpBridge {
     void this.connection.agent
       .request(acp.methods.agent.session.prompt, {
         sessionId,
-        prompt: [{ type: "text", text }],
+        /* The text is the prompt; the links are what an `@path` in it refers
+           to, for an agent that reads the protocol rather than the prose. Only
+           paths that exist inside the cwd become links — see mentions.ts. */
+        prompt: [{ type: "text", text }, ...mentionLinks(this.cwd, text)],
       })
       .then(
         (response) =>
@@ -724,7 +794,7 @@ export class AcpBridge {
       ...(continued ? { continued: true } : {}),
     });
     this.releaseIdle();
-    this.host.onTurnSettled({ error, interrupted, continued });
+    this.host.onTurnSettled({ error, interrupted, continued, turnId });
   }
 
   async setMode(modeId: string, origin?: Peer): Promise<void> {

@@ -32,7 +32,7 @@ export function PanelEmptyState({ className, ...props }: React.ComponentProps<"d
   return (
     <div
       className={cn(
-        "flex h-full min-h-0 flex-col items-center justify-center gap-3 p-6 text-center text-xs text-muted-foreground sm:p-8",
+        "flex h-full min-h-0 flex-col items-center justify-center gap-3 p-6 text-center text-xs text-muted-foreground @panel-sm:p-8",
         className
       )}
       {...props}

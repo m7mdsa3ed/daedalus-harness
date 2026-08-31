@@ -284,6 +284,10 @@ function ThreadInfoCard({
     ],
     ["Started", when(session.createdAt)],
   ]
+  if (session.parentSessionId) {
+    const parent = store.sessions.find((s) => s.id === session.parentSessionId)
+    rows.push(["Step of", parent?.title ?? "a workflow"])
+  }
   if (trash && session.deletedAt) rows.push(["Deleted", when(session.deletedAt)])
   return (
     <div className="flex flex-col gap-2 text-left text-xs">

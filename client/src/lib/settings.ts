@@ -235,6 +235,11 @@ export function wsUrl(
 export interface AgentDef {
   id: string
   name: string
+  /** Whether this runtime can be moved to another profile, model or effort
+      without being restarted, and how (server/src/registry.ts). The client
+      reads it for one thing only: whether a pick is worth warning about first.
+      The server still decides what each change actually costs. */
+  liveConfig?: "acp" | "gateway" | null
 }
 
 export interface McpServerStdio {
@@ -259,7 +264,7 @@ export interface McpServerHttp {
 export interface McpServerBuiltin {
   type: "builtin"
   name: string
-  builtin: "web-search" | "knowledge"
+  builtin: "web-search" | "knowledge" | "workflow"
 }
 
 /** Library entries projects, profiles and threads link to by id. */
@@ -267,7 +272,11 @@ export type McpServerDef = (McpServerStdio | McpServerHttp | McpServerBuiltin) &
 
 /** The one-line description a picker shows under an MCP server's name. */
 export function mcpSubtitle(s: McpServerDef): string {
-  if (s.type === "builtin") return s.builtin === "web-search" ? "built-in · web search + fetch" : "built-in · project knowledge base"
+  if (s.type === "builtin") {
+    if (s.builtin === "web-search") return "built-in · web search + fetch"
+    if (s.builtin === "workflow") return "built-in · workflows"
+    return "built-in · project knowledge base"
+  }
   return s.type === "http" ? s.url : [s.command, ...s.args].join(" ")
 }
 
@@ -307,6 +316,23 @@ export interface ProfileAgentLink {
   baseUrl?: string
 }
 
+/** Which provider API answers "how much of this plan is left" — the profile's
+    own reader, which outranks the agent's `/usage` CLI probe whenever it is set.
+    `kind` picks a server-side adapter (`server/src/usage-api.ts`); everything
+    else about the endpoint, the auth shape and the response is that adapter's,
+    deliberately, so this stays a choice and not a small URL language. */
+export type ProfileUsageKind = "none" | "zai"
+
+export interface ProfileUsage {
+  kind: ProfileUsageKind
+  /** Override the adapter's default host, or name the full endpoint outright.
+      Empty means the adapter decides. */
+  baseUrl: string
+  /** Like `Profile.hasApiKey`: the separate dashboard token, if one is stored,
+      reported as a boolean. Empty on save means "keep the stored one". */
+  hasApiKey: boolean
+}
+
 /** Provider configuration used in a session (credentials, models). Not bound
     to one agent: `agents` names every runtime it can spawn, and a thread is a
     (profile, agent) pair chosen when it is started. */
@@ -330,6 +356,10 @@ export interface Profile {
       of its own": the client falls back to the agent's mark, which is also
       what the virtual Default profile always shows. */
   logoUrl?: string
+  /** How this provider's subscription usage is read, when it sells one and
+      exposes an API for it. Null/absent means there is none, and the agent's
+      own probe (the machine's `claude`/`codex login`) answers instead. */
+  usage?: ProfileUsage | null
   /** Library entries every thread on this profile gets, on top of its
       project's. The same three a project and a thread carry; the agent sees
       the union. */
@@ -424,7 +454,13 @@ export interface SessionMeta {
   mcpServerIds?: string[]
   skillIds?: string[]
   commandIds?: string[]
+  /** The thread this one is a workflow step of; such threads are hidden from
+      the lists and reached from the parent's subagent row or by URL. */
+  parentSessionId?: string | null
 }
+
+/** A thread that is nobody's workflow step — the only kind the lists show. */
+export const isTopLevel = (s: SessionMeta): boolean => !s.parentSessionId
 
 /** A scheduled prompt: the server sends `text` to `sessionId`'s agent at
     `nextAt`, and again every `everyMs` until cancelled. The server owns

@@ -86,7 +86,7 @@ export function WebPanel({
   const [reloadKey, setReloadKey] = React.useState(0)
 
   React.useEffect(() => {
-    api.setTitle(url ? new URL(url).host : project ? `Preview — ${project.name}` : "Preview")
+    api.setTitle(url ? new URL(url).host : project ? `Browser — ${project.name}` : "Browser")
   }, [api, url, project])
 
   React.useEffect(() => {
@@ -115,7 +115,7 @@ export function WebPanel({
       const saved = await createPreview(projectId, new URL(url).host, url)
       setPreviews((current) => [...current, saved])
     } catch (err) {
-      reportError(err, "Couldn't save that preview")
+      reportError(err, "Couldn't save that page")
     }
   }
 
@@ -125,7 +125,7 @@ export function WebPanel({
       await deletePreview(projectId, preview.id)
       setPreviews((current) => current.filter((entry) => entry.id !== preview.id))
     } catch (err) {
-      reportError(err, "Couldn't remove that preview")
+      reportError(err, "Couldn't remove that page")
     }
   }
 
@@ -203,7 +203,7 @@ export function WebPanel({
             value={typed}
             onChange={(event) => setTyped(event.target.value)}
             placeholder="localhost:5173"
-            aria-label="Preview URL"
+            aria-label="Address"
             className="h-7 font-mono text-xs"
           />
         </form>
@@ -212,7 +212,7 @@ export function WebPanel({
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
-                <Button size="icon-xs" variant="ghost" aria-label="Saved previews" className="size-6">
+                <Button size="icon-xs" variant="ghost" aria-label="Saved pages" className="size-6">
                   <StarIcon className="size-3.5" />
                 </Button>
               }
@@ -237,8 +237,8 @@ export function WebPanel({
           <Button
             size="icon-xs"
             variant="ghost"
-            aria-label="Save this preview"
-            title="Save this preview"
+            aria-label="Save this page"
+            title="Save this page"
             className="size-6"
             onClick={() => void save()}
           >
@@ -287,7 +287,7 @@ export function WebPanel({
             <iframe
               key={reloadKey}
               src={url}
-              title={`Preview of ${url}`}
+              title={`Browser: ${url}`}
               className="h-full w-full border-0 bg-white"
               /* No `allow-same-origin`: a dev server is code being written and
                  does not get to reach into the app framing it. Scripts and

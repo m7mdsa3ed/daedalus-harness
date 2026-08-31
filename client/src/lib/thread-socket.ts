@@ -5,6 +5,7 @@ import type {
   JournaledEvent,
   PromptReply,
   QueuedMessage,
+  QuotaSnapshot,
   SessionUpdate,
   ThreadCommand,
   ThreadEvent,
@@ -71,8 +72,16 @@ export interface ThreadCallbacks {
     modeId: string | undefined,
     configOptions: acp.SessionConfigOption[] | undefined
   ) => void
+  /** The thread moved to another profile, model or effort without restarting.
+      Fanned out to every device, this one included — the server resolves what
+      a cleared value means, so the answer is what to draw. */
+  onSpawnConfig: (profileId: string, model: string, effort: string) => void
   /** Time-to-first-update for a turn, ms, measured server-side. */
   onTtft: (ms: number) => void
+  /** What is left of the subscription this thread spends, re-read after a turn
+      settled. Absolute and live-only — never journaled, so a replay never
+      redraws an old percentage as though it were now. */
+  onQuota: (quota: QuotaSnapshot) => void
   /** A turn began. Only ever seen for a prompt this device did NOT send — its
       own message is already on screen. `catchingUp` marks the replay. */
   onTurnStarted: (turnId: string, text: string, catchingUp: boolean) => void
@@ -299,8 +308,14 @@ export class ThreadSocket {
       case "queue":
         this.callbacks.onQueue(event.items)
         return
+      case "spawn_config":
+        this.callbacks.onSpawnConfig(event.profileId, event.model, event.effort)
+        return
       case "ttft":
         this.callbacks.onTtft(event.ms)
+        return
+      case "quota":
+        this.callbacks.onQuota(event.quota)
         return
       case "task_event":
         this.callbacks.onTaskEvent(event.transcriptDir, event.event)

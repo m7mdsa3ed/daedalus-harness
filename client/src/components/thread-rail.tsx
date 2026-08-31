@@ -161,7 +161,7 @@ export function ThreadRail({ items, wide }: { items: ThreadItem[]; wide?: boolea
       style={{
         insetInlineStart: `min(calc(50% + ${wide ? "41rem" : "var(--harness-chat-width) / 2"} + ${COLUMN_GAP}), calc(100% - ${EDGE_GAP}))`,
       }}
-      className="pointer-events-none absolute inset-y-0 z-20 hidden items-center md:flex"
+      className="pointer-events-none absolute inset-y-0 z-20 hidden items-center @panel-md:flex"
     >
       <div
         /* no-scrollbar (shadcn/tailwind.css), not scrollbar-thin: a scrollbar
@@ -214,7 +214,9 @@ export function ThreadRail({ items, wide }: { items: ThreadItem[]; wide?: boolea
       {/* Anchored to the tick, not to the pointer: the card is a label for a
           mark, so it stays put while the cursor travels the 12px to the next
           one. `end-full` opens it back over the transcript, which is the side
-          with room — the rail's other side is the window.
+          with room — the rail's other side is the panel's edge, which is also
+          what `cqw` caps the card against: a rail in a 400px panel beside a
+          terminal has no more room than one on a phone.
 
           Invisible until measured. `cardTop` needs the card's own height to
           centre and clamp it, which is only knowable after a layout, so the
@@ -225,7 +227,7 @@ export function ThreadRail({ items, wide }: { items: ThreadItem[]; wide?: boolea
           ref={cardRef}
           style={{ top: cardTop }}
           className={cn(
-            "pointer-events-none absolute end-full me-2 w-72 max-w-[60vw] rounded-lg border border-border/60 bg-popover/95 p-2.5 text-xs shadow-md backdrop-blur-sm transition-opacity duration-100",
+            "pointer-events-none absolute end-full me-2 w-72 max-w-[60cqw] rounded-lg border border-border/60 bg-popover/95 p-2.5 text-xs shadow-md backdrop-blur-sm transition-opacity duration-100",
             cardHeight === 0 && "opacity-0"
           )}
         >

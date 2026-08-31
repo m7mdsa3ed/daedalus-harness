@@ -41,7 +41,9 @@ import type { ThreadState } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { useStripSummary } from "./composer-strip"
 
-const ROW_BUTTON = "h-6 shrink-0 gap-1 rounded-md px-2 text-[11px]"
+/* Taller on a phone, where it is a thumb rather than a cursor. */
+const ROW_BUTTON = "h-7 shrink-0 gap-1 rounded-md px-2 text-[11px] sm:h-6"
+const ICON_BUTTON = "size-7 sm:size-6"
 
 export function ComposerQueue({
   sessionId,
@@ -69,37 +71,64 @@ export function ComposerQueue({
   const canSend = !closed && !thread.archived
   const canEdit = !closed
   const running = thread.turnActive
-  const stop = (e: React.MouseEvent) => {
-    // The buttons sit inside the collapsible's trigger row.
-    e.stopPropagation()
-    e.preventDefault()
-  }
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="w-full">
-      <CollapsibleTrigger
-        render={
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 px-2 py-1.5 text-left transition-colors hover:bg-accent/40"
-          />
-        }
-      >
-        {/* size-6, the ring's width on the checklist rows, so the queue's icon
-            sits on the same column as the plan's progress dial above it. */}
-        <span className="grid size-6 shrink-0 place-items-center text-primary">
-          <ListOrderedIcon aria-hidden className="size-3.5" />
-        </span>
-        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-          <span className="text-foreground">
-            {count === 1 ? "1 message" : `${count} messages`}
-          </span>{" "}
-          {running ? "waiting for this turn to end" : "waiting to be sent"}
-          {count > 0 && (
+      {/* The header is a row that CONTAINS the trigger, not a trigger that
+          contains the buttons. It used to be the latter — three buttons nested
+          inside the disclosure button, each cancelling the click it was sitting
+          in — which is invalid markup, is why `stop(e)` existed, and above all
+          could not wrap: `shrink-0` actions and a `flex-1` summary on one line
+          meant "Send all now" and "Clear" took ~150px of a 360px column and the
+          message they were about truncated to nothing. Now the summary and the
+          actions are siblings, so in a narrow panel the actions drop to their
+          own line under a summary that has the whole width, and from
+          `@panel-sm` up the row reads exactly as it did. */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2 py-1.5">
+        <CollapsibleTrigger
+          render={
+            <button
+              type="button"
+              className="-mx-1 flex min-w-0 flex-1 basis-full items-center gap-2 rounded-md px-1 py-1 text-left transition-colors hover:bg-accent/40 sm:py-0.5 @panel-sm:basis-0"
+            />
+          }
+        >
+          {/* size-6, the ring's width on the checklist rows, so the queue's icon
+              sits on the same column as the plan's progress dial above it. */}
+          <span className="grid size-6 shrink-0 place-items-center text-primary">
+            <ListOrderedIcon aria-hidden className="size-3.5" />
+          </span>
+          {/* One truncating line, so what gets cut is whatever is last — which
+              is why the order matters more than it looks. "waiting for this
+              turn to end" is ~180px of a 360px column, and with it in front the
+              ellipsis always landed before the message, leaving a row whose
+              only variable part said nothing. The clause is the least
+              informative thing here (the shelf's own collapsed line already
+              says "3 queued", and the composer already says whether a turn is
+              running), so it is the part that goes in a narrow panel and the
+              message keeps the room. */}
+          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+            <span className="text-foreground">
+              {count === 1 ? "1 message" : `${count} messages`}
+            </span>
+            <span className="hidden @panel-sm:inline">
+              {" "}
+              {running ? "waiting for this turn to end" : "waiting to be sent"}
+            </span>
             <span className="text-muted-foreground/60"> · {firstLine(items[0].text)}</span>
-          )}
-        </span>
-        <span className="flex shrink-0 items-center gap-1">
+          </span>
+          <span className="grid size-4 shrink-0 place-items-center">
+            <ChevronDownIcon
+              aria-hidden
+              className={cn(
+                "size-3.5 text-muted-foreground transition-transform duration-200",
+                open && "rotate-180"
+              )}
+            />
+          </span>
+          <span className="sr-only">{open ? "Hide queued messages" : "Show queued messages"}</span>
+        </CollapsibleTrigger>
+        <span className="ms-auto flex shrink-0 items-center gap-1">
           <Button
             variant="ghost"
             size="xs"
@@ -110,10 +139,7 @@ export function ComposerQueue({
                 ? "Stop the running turn and send everything queued as one message"
                 : "Send everything queued as one message"
             }
-            onClick={(e) => {
-              stop(e)
-              void actions.queueSendNow(sessionId).catch(() => {})
-            }}
+            onClick={() => void actions.queueSendNow(sessionId).catch(() => {})}
           >
             <SendHorizontalIcon />
             {running ? "Send all now" : "Send all"}
@@ -124,25 +150,12 @@ export function ComposerQueue({
             className={cn(ROW_BUTTON, "text-muted-foreground")}
             disabled={!canEdit}
             title="Forget every queued message"
-            onClick={(e) => {
-              stop(e)
-              void actions.queueClear(sessionId).catch(() => {})
-            }}
+            onClick={() => void actions.queueClear(sessionId).catch(() => {})}
           >
             Clear
           </Button>
-          <span className="grid size-4 place-items-center">
-            <ChevronDownIcon
-              aria-hidden
-              className={cn(
-                "size-3.5 text-muted-foreground transition-transform duration-200",
-                open && "rotate-180"
-              )}
-            />
-          </span>
         </span>
-        <span className="sr-only">{open ? "Hide queued messages" : "Show queued messages"}</span>
-      </CollapsibleTrigger>
+      </div>
       <CollapsibleContent className="harness-collapse">
         <ul className="space-y-0.5 border-t border-border/40 px-2 py-1.5">
           {items.map((item, index) => (
@@ -211,13 +224,18 @@ function QueueRow({
   }
 
   return (
-    <li className="flex items-start gap-2 text-xs">
+    /* Wraps for the same reason the header does: the message and four icon
+       buttons on one line left ~150px for the words in a narrow panel.
+       `basis-full` gives the text the row to itself and drops the actions
+       underneath it, right-aligned under the message they act on; from
+       `@panel-sm` up `basis-0` puts them back on the line. */
+    <li className="flex flex-wrap items-start gap-x-2 gap-y-1 py-0.5 text-xs sm:py-0">
       {/* The position, in the ring's column — the order is what a queue is. */}
       <span className="grid size-6 shrink-0 place-items-center text-[10px] font-semibold tabular-nums text-muted-foreground/70">
         {index + 1}
       </span>
       {editing ? (
-        <div className="flex min-w-0 flex-1 flex-col gap-1 py-0.5">
+        <div className="flex min-w-0 flex-1 basis-[calc(100%-2rem)] flex-col gap-1 py-0.5 @panel-sm:basis-0">
           <Textarea
             autoFocus
             value={draft}
@@ -247,7 +265,7 @@ function QueueRow({
         <button
           type="button"
           className={cn(
-            "min-w-0 flex-1 py-0.5 text-left leading-6 whitespace-pre-wrap break-words text-foreground",
+            "min-w-0 flex-1 basis-[calc(100%-2rem)] py-0.5 text-left leading-6 whitespace-pre-wrap break-words text-foreground @panel-sm:basis-0",
             !expanded && "line-clamp-3"
           )}
           title={expanded ? "Collapse" : "Show the whole message"}
@@ -257,11 +275,11 @@ function QueueRow({
         </button>
       )}
       {!editing && (
-        <span className="flex shrink-0 items-center gap-0.5 pt-0.5">
+        <span className="ms-auto flex shrink-0 items-center gap-0.5 pt-0.5">
           <Button
             variant="ghost"
             size="icon-xs"
-            className="text-primary hover:text-primary"
+            className={ICON_BUTTON + " text-primary hover:text-primary"}
             disabled={!canSend || busy}
             title={running ? "Stop the running turn and send this now" : "Send this now"}
             onClick={() => run(actions.queueSendNow(sessionId, item.id))}
@@ -282,6 +300,7 @@ function QueueRow({
           <Button
             variant="ghost"
             size="icon-xs"
+            className={ICON_BUTTON}
             disabled={!canEdit || busy}
             title="Edit"
             onClick={() => setEditing(true)}
@@ -291,7 +310,7 @@ function QueueRow({
           <Button
             variant="ghost"
             size="icon-xs"
-            className="text-muted-foreground hover:text-destructive"
+            className={ICON_BUTTON + " text-muted-foreground hover:text-destructive"}
             disabled={!canEdit || busy}
             title="Remove"
             onClick={() => run(actions.queueRemove(sessionId, item.id))}

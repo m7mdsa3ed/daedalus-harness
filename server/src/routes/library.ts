@@ -6,6 +6,7 @@ import {
   commands,
   mcpServers,
   skills,
+  isBuiltinMcp,
 } from "../library.js";
 import { discoverCommands, discoverMcpServers, discoverSkills } from "../discover.js";
 
@@ -38,7 +39,7 @@ export function libraryRoutes(app: Hono): void {
       row has a fixed id — so the button is safe to press again. */
   app.post("/api/mcp-servers/builtin/:kind", (c) => {
     const kind = c.req.param("kind");
-    if (kind !== "web-search" && kind !== "knowledge") return c.json({ error: "unknown builtin" }, 404);
+    if (!isBuiltinMcp(kind)) return c.json({ error: "unknown builtin" }, 404);
     return c.json(mcpServers.ensureBuiltin(kind), 201);
   });
 

@@ -14,6 +14,7 @@
    those — the types have to live somewhere both can reach without a cycle. */
 import type { SubagentItem, ThreadItem, ToolItem } from "./store"
 import { extractSubagent, isSubagentLaunch, subagentItemId } from "./tools"
+import type { WorkflowPlanPhase } from "./tools"
 
 /** A run of consecutive tool steps, folded into one row (view-options). */
 export interface ToolRunGroup {
@@ -40,13 +41,36 @@ export interface SubagentGroup {
   children: Row[]
 }
 
-export type Row = ThreadItem | ToolRunGroup | SubagentGroup
+/**
+ * A harness workflow run: every step the server spawned under one `runId`,
+ * folded into one row. The steps are the same `SubagentGroup`s they would
+ * have been on their own — the fold moves them, it does not reshape them —
+ * so a step's rail, its `active` flag and its "Open thread" link all keep
+ * working. Sits where the run's first step arrived; a second run is a
+ * second group.
+ */
+export interface WorkflowGroup {
+  kind: "workflow-group"
+  /** `workflow:<runId>`. */
+  id: string
+  /** The workflow's name, from the server's `_meta` stamp. */
+  name: string
+  steps: SubagentGroup[]
+  /** The definition's own shape — phases and the step names in them — when the
+      server sent it, so the card can draw the steps that have not spawned yet.
+      Taken from the first step that carries one: every spawn repeats it. */
+  plan?: WorkflowPlanPhase[]
+}
+
+export type Row = ThreadItem | ToolRunGroup | SubagentGroup | WorkflowGroup
 
 /** The id of the item a row stands for — for keys, scroll anchors and the
     "where does the Sources strip go" lookup, which is keyed by item id. A
-    run's is its last step's, since that is the item that ends the turn. */
+    run's is its last step's, since that is the item that ends the turn; a
+    workflow's is its last step's for the same reason. */
 export function rowTailId(row: Row): string {
   if (row.kind === "run") return row.items[row.items.length - 1].id
+  if (row.kind === "workflow-group") return rowTailId(row.steps[row.steps.length - 1])
   return row.id
 }
 
@@ -56,14 +80,52 @@ export function rowTailId(row: Row): string {
  * a preference, it is where its steps belong.
  */
 export function buildRows(items: ThreadItem[], groupTools: boolean, turnActive = false): Row[] {
-  const nested = nestSubagents(items, groupTools, turnActive)
+  const nested = mergeWorkflowRuns(nestSubagents(items, groupTools, turnActive))
   return groupTools ? groupToolRuns(nested) : nested
+}
+
+/**
+ * Fold the steps of a workflow run into one `WorkflowGroup`. A step is a
+ * top-level subagent group whose head session the server stamped with
+ * `_meta.daedalus.workflow` (read by `lib/tools.workflowInfoOf` into
+ * `SubagentItem.workflow`); an ordinary subagent carries no stamp and passes
+ * through untouched. Runs merge by `runId` — the group sits where the run's
+ * first step arrived, and steps keep arrival order, which is the runner's
+ * schedule order. Runs after nesting so a step's own children are already
+ * under it, and before `groupToolRuns`, which passes any non-tool row
+ * through whole.
+ */
+function mergeWorkflowRuns(rows: Row[]): Row[] {
+  const runs = new Map<string, WorkflowGroup>()
+  const out: Row[] = []
+  for (const row of rows) {
+    if (row.kind !== "subagent-group" || row.head.kind !== "subagent" || !row.head.workflow) {
+      out.push(row)
+      continue
+    }
+    const wf = row.head.workflow
+    const run = runs.get(wf.runId)
+    if (run) {
+      run.steps.push(row)
+      run.plan ??= wf.plan
+    } else {
+      const group: WorkflowGroup = { kind: "workflow-group", id: `workflow:${wf.runId}`, name: wf.name, steps: [row], plan: wf.plan }
+      runs.set(wf.runId, group)
+      out.push(group)
+    }
+  }
+  return out
 }
 
 /** Every subagent at work, at any depth — a worker's worker is a worker. */
 export function activeSubagents(rows: Row[]): SubagentGroup[] {
   const out: SubagentGroup[] = []
   for (const row of rows) {
+    if (row.kind === "workflow-group") {
+      // A run's steps are workers like any other; the run itself is not one.
+      out.push(...activeSubagents(row.steps))
+      continue
+    }
     if (row.kind !== "subagent-group") continue
     if (row.active) out.push(row)
     out.push(...activeSubagents(row.children))

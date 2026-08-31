@@ -87,6 +87,50 @@ const HOP_BY_HOP = new Set([
 
 let shim: { key: string; port: number } | null = null;
 
+/**
+ * What the thread behind a `/gw/<key>/s/…` URL is configured with *right now*.
+ *
+ * The whole reason the path names a session rather than a profile: a thread's
+ * profile, model and effort are the harness's to change while the agent runs,
+ * and a URL that named the profile baked the answer in at spawn. Resolved per
+ * request instead, from the SessionManager's own live state — so moving a
+ * thread to another provider retargets the very next call the child makes,
+ * with no restart and nothing for the child to notice.
+ */
+export interface GatewaySession {
+  profileId: string;
+  /** The thread's runtime. The row's, not the path's: only a respawn can
+      change it, and it decides which per-agent base URL applies. */
+  agentId: string;
+  /** The model to put on the wire, or "" to forward whatever the child asked
+      for. Set only when `rewriteModel` is true. */
+  model: string;
+  /** Reasoning effort to put on the wire, "" for whatever the child asked. */
+  effort: string;
+  /**
+   * Whether the model the child names is stale and must be replaced.
+   *
+   * True for an agent whose model is only ever ours to change on the wire
+   * (`liveConfig: "gateway"`), and true for *any* live-configured agent whose
+   * profile has changed since it spawned — its env still spells the old
+   * provider's ids, and Claude Code's side-job and alias vars are exactly that.
+   * False otherwise, which is the common case and the one that costs nothing:
+   * a request body is only ever read when this says the answer would differ.
+   */
+  rewriteModel: boolean;
+}
+
+type SessionResolver = (sessionId: string) => GatewaySession | undefined;
+
+let resolveSession: SessionResolver = () => undefined;
+
+/** The SessionManager hands its live state over at construction; until it does,
+    a session-scoped URL resolves to nothing and 404s — which is what a test
+    that boots the shim alone gets. */
+export function setGatewaySessionResolver(resolver: SessionResolver): void {
+  resolveSession = resolver;
+}
+
 /** Called once at boot with the port this server listens on. Until then
     `gatewayUrlFor` hands out nothing and a spawn goes straight to the gateway
     — which is also what a test that never boots a server gets. */
@@ -94,21 +138,35 @@ export function configureGatewayShim(opts: { port: number }): void {
   shim = { key: randomBytes(24).toString("hex"), port: opts.port };
 }
 
-/** The URL a spawned agent should use instead of `baseUrl`, or `""` when there
-    is no gateway to front (the virtual Default profile) or no shim yet. */
-export function gatewayUrlFor(profileId: string, agentId: string, baseUrl: string): string {
+/**
+ * The URL a spawned agent should use instead of `baseUrl`, or `""` when there
+ * is no gateway to front (the virtual Default profile) or no shim yet.
+ *
+ * `sessionId` is what makes the routing live, so a spawn on behalf of a thread
+ * always passes it; the probe (`probe.ts`) has no thread and gets the
+ * profile-scoped form, which resolves exactly as it always did.
+ */
+export function gatewayUrlFor(
+  profileId: string,
+  agentId: string,
+  baseUrl: string,
+  sessionId?: string,
+): string {
   if (!shim || !baseUrl.trim()) return "";
-  return `http://127.0.0.1:${shim.port}/gw/${shim.key}/${encodeURIComponent(profileId)}/${encodeURIComponent(agentId)}`;
+  const [kind, id] = sessionId ? (["s", sessionId] as const) : (["p", profileId] as const);
+  return `http://127.0.0.1:${shim.port}/gw/${shim.key}/${kind}/${encodeURIComponent(id)}/${encodeURIComponent(agentId)}`;
 }
 
-/** `/gw/<key>/<profileId>/<agentId>/rest…` → its parts, or null when the shape is not ours. */
+/** `/gw/<key>/<kind>/<id>/<agentId>/rest…` → its parts, or null when the shape
+    is not ours. `kind` is `s` for a thread and `p` for a bare profile. */
 export function parseGatewayPath(
   pathname: string,
-): { key: string; profileId: string; agentId: string; rest: string } | null {
+): { key: string; kind: "s" | "p"; id: string; agentId: string; rest: string } | null {
   if (!pathname.startsWith("/gw/")) return null;
   const parts = pathname.slice("/gw/".length).split("/");
-  const [key, profileId, agentId, ...rest] = parts;
-  if (!key || !profileId || !agentId) return null;
+  const [key, kind, id, agentId, ...rest] = parts;
+  if (!key || !id || !agentId) return null;
+  if (kind !== "s" && kind !== "p") return null;
   /* Dot segments in the forwarded remainder would be rejoined verbatim and
      could walk the upstream URL out of the profile's configured base. Reject
      them (raw or percent-encoded) rather than normalising — nothing legitimate
@@ -124,7 +182,8 @@ export function parseGatewayPath(
   }
   return {
     key,
-    profileId: decodeURIComponent(profileId),
+    kind,
+    id: decodeURIComponent(id),
     agentId: decodeURIComponent(agentId),
     rest: rest.length ? `/${rest.join("/")}` : "",
   };
@@ -360,6 +419,38 @@ export function renamespaceSse(namespaces: string[]): TransformStream<Uint8Array
 /** Logged once per namespace set, not once per request — a turn is many. */
 const loggedNamespaces = new Set<string>();
 
+/* ── The model the child asked for, replaced by the one the thread is on ──
+ *
+ * The narrowest possible edit, and it is the whole of "changing the model
+ * without restarting" for an agent that will not take one over ACP: the
+ * request already names a model, so the shim names a different one. Both
+ * dialects put it in the same place — Anthropic Messages and OpenAI Responses
+ * alike carry a top-level `model` — and Responses carries the effort under
+ * `reasoning.effort`, which is the other half of the same choice.
+ *
+ * Nothing else in the body is touched, and a request that names no model is
+ * left alone rather than given one: a call with no model is not a completion,
+ * and inventing a field is how a proxy breaks an endpoint it does not know.
+ */
+function applySessionModel(body: Json, model: string, effort: string): boolean {
+  let changed = false;
+  if (model && typeof body.model === "string" && body.model !== model) {
+    body.model = model;
+    changed = true;
+  }
+  if (effort) {
+    const reasoning = body.reasoning;
+    if (reasoning && typeof reasoning === "object" && !Array.isArray(reasoning)) {
+      const current = reasoning as Json;
+      if (current.effort !== effort) {
+        body.reasoning = { ...current, effort };
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
 /* ── The proxy ── */
 
 const notFound = (error: string) =>
@@ -371,34 +462,64 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
   const parsed = parseGatewayPath(url.pathname);
   if (!parsed) return notFound("not a gateway path");
   if (!shim || !safeKeyEqual(parsed.key, shim.key)) return notFound("unknown gateway key");
-  const profile = getProfile(parsed.profileId);
-  const baseUrl = profile ? profileBaseUrl(profile, parsed.agentId) : "";
+  /* A session-scoped URL is resolved through the manager on every request, so
+     the thread's *current* provider answers — that is what makes moving a
+     thread between profiles instant. A profile-scoped one (the probe) is the
+     older, static case and stays exactly as it was. */
+  const thread = parsed.kind === "s" ? resolveSession(parsed.id) : undefined;
+  if (parsed.kind === "s" && !thread) return notFound("unknown thread");
+  const agentId = thread?.agentId ?? parsed.agentId;
+  const profile = getProfile(thread?.profileId ?? parsed.id);
+  const baseUrl = profile ? profileBaseUrl(profile, agentId) : "";
   if (!baseUrl) return notFound("that profile has no base URL");
 
   const headers = new Headers();
   req.headers.forEach((value, name) => {
     if (!HOP_BY_HOP.has(name.toLowerCase())) headers.set(name, value);
   });
+  /* The child carries the credential it was spawned with, which is the wrong
+     one the moment the thread moves to another profile. Replace it in whatever
+     shape it arrived in — `x-api-key` for Anthropic, `Authorization: Bearer`
+     for OpenAI — rather than adding a header the upstream was not expecting.
+     A profile with no key of its own says nothing here: the child is on its
+     own auth (a ChatGPT login, a key already in the shell) and that is what
+     should travel. */
+  if (profile?.apiKey) {
+    if (headers.has("x-api-key")) headers.set("x-api-key", profile.apiKey);
+    if (headers.has("authorization")) headers.set("authorization", `Bearer ${profile.apiKey}`);
+  }
 
-  /* The Codex repair: a Responses request is the one body the shim reads,
-     and only to flatten namespace tools (see the header). Anything else — and
-     a Responses request with no namespace in it — goes through as a stream. */
+  /* Two reasons to read a request body, and both are narrow. The Codex repair
+     flattens namespace tools on `/responses` (see the header). The model
+     rewrite replaces an id the child was spawned with by the one the thread is
+     on now, and only for a thread whose `rewriteModel` says the two differ —
+     so an ordinary turn, on an ordinary thread, still streams straight through
+     and a multi-megabyte prompt still costs the shim nothing. */
+  const isResponses = /\/responses\/?$/.test(parsed.rest);
+  const rewriting = thread?.rewriteModel === true && (isResponses || /\/messages\/?$/.test(parsed.rest));
   let body: BodyInit | null = req.body;
   let namespaces: string[] = [];
-  if (req.method === "POST" && /\/responses\/?$/.test(parsed.rest) && /application\/json/i.test(req.headers.get("content-type") ?? "")) {
+  if (
+    req.method === "POST" &&
+    (isResponses || rewriting) &&
+    /application\/json/i.test(req.headers.get("content-type") ?? "")
+  ) {
     const text = await req.text();
     body = text;
     try {
-      const flat = flattenNamespaces(JSON.parse(text));
+      const parsedBody = JSON.parse(text) as Json;
+      let edited = rewriting ? applySessionModel(parsedBody, thread.model, thread.effort) : false;
+      const flat = isResponses ? flattenNamespaces(parsedBody) : null;
       if (flat) {
         namespaces = flat.namespaces;
-        body = JSON.stringify(flat.body);
-        const tag = `${parsed.profileId}/${parsed.agentId}:${namespaces.join(",")}`;
+        edited = true;
+        const tag = `${parsed.id}/${agentId}:${namespaces.join(",")}`;
         if (!loggedNamespaces.has(tag)) {
           loggedNamespaces.add(tag);
-          console.log(`[gateway-shim] flattening tool namespace(s) ${namespaces.join(", ")} for ${parsed.agentId} towards ${baseUrl}`);
+          console.log(`[gateway-shim] flattening tool namespace(s) ${namespaces.join(", ")} for ${agentId} towards ${baseUrl}`);
         }
       }
+      if (edited) body = JSON.stringify(flat ? flat.body : parsedBody);
     } catch {
       /* not JSON after all — forwarded as read */
     }

@@ -3,9 +3,9 @@
 
    v1 was one global key, which was fine while the dock only held threads: a
    thread id is unique, so the worst a second server could do was contribute
-   panels that pruned themselves. Panels are not like that — an `explorer:{id}`
+   panels that pruned themselves. Panels are not like that — an `editor:{id}`
    or a `terminal:{id}` from one server means something else entirely on
-   another, and restoring it would point a file tree at a project that does not
+   another, and restoring it would point an editor at a project that does not
    exist there. So the key carries the server.
 
    What it is NOT keyed by is the project. The dock is already cross-project —

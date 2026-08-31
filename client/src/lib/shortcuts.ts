@@ -124,15 +124,11 @@ export const KEYS = {
       that closes the app when the dock is empty is not a panel shortcut. */
   splitRight: "mod+\\",
   reopenPanel: "mod+shift+t",
-  /** Not `mod+b` — that is the app sidebar, and the two are different panes. */
-  explorer: "mod+shift+e",
   /** VS Code's panel chord, not its ⌃` terminal one: `matchesChord` folds Ctrl
       into `mod` by design (⌘ on Apple, Ctrl elsewhere), so a standalone `ctrl`
       is not part of the vocabulary — and ⌘` is macOS's own "cycle windows",
       which this app should not be taking. */
   terminal: "mod+j",
-  /** VS Code's, and free here. */
-  sourceControl: "mod+shift+g",
   output: "mod+shift+u",
   /** The editor panel's own — bound on the window when a dirty file is in
       front, and inside the editor itself where the caret lives. */
@@ -165,21 +161,9 @@ export const SHORTCUTS: ShortcutDef[] = [
   },
   {
     scope: "Global",
-    label: "Toggle source control",
-    chords: [KEYS.sourceControl],
-    note: "Staging, commits and branches for the current thread's project.",
-  },
-  {
-    scope: "Global",
     label: "Open a terminal",
     chords: [KEYS.terminal],
     note: "A shell on the Daedalus server, in the current thread's project directory.",
-  },
-  {
-    scope: "Global",
-    label: "Toggle the file explorer",
-    chords: [KEYS.explorer],
-    note: "The workspace tree for the current thread's project, beside the transcript.",
   },
   {
     scope: "Global",

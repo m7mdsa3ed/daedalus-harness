@@ -75,7 +75,7 @@ import type { Actions } from "@/lib/actions"
 import { boardPath, settingsPath, threadPath } from "@/lib/router"
 import { usePins } from "@/lib/pins"
 import { formatChord, KEYS } from "@/lib/shortcuts"
-import { type Project, type SessionMeta } from "@/lib/settings"
+import { isTopLevel, type Project, type SessionMeta } from "@/lib/settings"
 import { defaultsForProfile, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import { useStore, type ThreadState as LiveThreadState } from "@/lib/store"
 import { cn } from "@/lib/utils"
@@ -92,7 +92,14 @@ const RECENT_COUNT = 8
    than in it: New thread and Search used to be two icon buttons beside the
    brand, which vanished in the collapsed rail — the one place a create
    affordance is needed most. As menu rows they collapse to icons with
-   tooltips like everything else. */
+   tooltips like everything else.
+
+   Deliberately only the rows that start something. Plan usage used to sit here
+   too, as a peak-percentage badge that polled `GET /api/quota` every ten
+   minutes; it lives in Settings › Usage alone now. It was the one row that
+   worked rather than navigated — it made the sidebar ask the server a question
+   nobody had posed, on a timer, for a number that is only ever acted on by
+   going to the page that shows it properly. */
 export function SidebarNav({
   onNewThread,
   onSearch,
@@ -277,6 +284,14 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
   const pins = usePins()
   const view = useSidebarView()
   const startIn = useStartThreadIn(actions)
+  /* The icon rail is 3rem wide: a thread row there is a title clipped to
+     nothing, and a group label is already hidden by the primitive — so the
+     rail would be a column of blank rows and stray fold chevrons. Collapsed,
+     the list is not shown at all; the rail carries the fixed nav (New thread,
+     Search, Tasks) and nothing else. Mobile is unaffected — there the sidebar
+     is a sheet, always full width, whatever `open` says. */
+  const { state: sidebarState, isMobile } = useSidebar()
+  const railed = sidebarState === "collapsed" && !isMobile
 
   const statuses = useThreadStatuses(state.sessions, state.threads)
   const status = React.useCallback(
@@ -292,6 +307,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
     // Deleting is reversible, so a deleted thread leaves the tiers above but
     // not the sidebar: it drops into Trash until it is restored or purged.
     const live = state.sessions
+      .filter(isTopLevel)
       .filter((session) => !session.deletedAt)
       .filter((session) => {
         if (view.filter === "running") return statuses.get(session.id) === "running"
@@ -299,6 +315,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
         return true
       })
     const trashed = state.sessions
+      .filter(isTopLevel)
       .filter((session) => !!session.deletedAt)
       .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0))
 
@@ -337,6 +354,9 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
   const listProps = { actions, status }
   const filtered = view.filter !== "all"
   const nothingLive = live.length === 0
+
+  // After the hooks, never before: the lists above are all hook state.
+  if (railed) return null
 
   return (
     <>
@@ -453,24 +473,27 @@ function ViewMenu({ view }: { view: SidebarView }) {
         <span className="sr-only">Sort and filter threads</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="right" align="start" className="w-44">
-        <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
-          Sort
-        </DropdownMenuLabel>
+        {/* The label is Base UI's Menu.GroupLabel: it reads its group from
+            context and throws outside one, so it sits inside the radio group
+            it names rather than loose in the content. */}
         <DropdownMenuRadioGroup
           value={view.sort}
           onValueChange={(value) => writeView({ sort: value as SidebarSort })}
         >
+          <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
+            Sort
+          </DropdownMenuLabel>
           <DropdownMenuRadioItem value="recent">Recent first</DropdownMenuRadioItem>
           <DropdownMenuRadioItem value="project">By project</DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
-          Show
-        </DropdownMenuLabel>
         <DropdownMenuRadioGroup
           value={view.filter}
           onValueChange={(value) => writeView({ filter: value as SidebarFilter })}
         >
+          <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
+            Show
+          </DropdownMenuLabel>
           <DropdownMenuRadioItem value="all">All threads</DropdownMenuRadioItem>
           <DropdownMenuRadioItem value="running">Running</DropdownMenuRadioItem>
           <DropdownMenuRadioItem value="waiting">Needs you</DropdownMenuRadioItem>

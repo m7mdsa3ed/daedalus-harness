@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
-import type { QueuedMessage, SessionUpdate, SubagentState } from "@daedalus/protocol"
+import type { QueuedMessage, QuotaSnapshot, SessionUpdate, SubagentState } from "@daedalus/protocol"
 // Value import, but tools.ts imports only *types* from here — erased at build,
 // so there is no runtime cycle.
 import {
@@ -10,7 +10,9 @@ import {
   parseTaskNotification,
   subagentItemId,
   toolNameOf,
+  workflowInfoOf,
   type TerminalState,
+  type WorkflowStepInfo,
 } from "./tools"
 import type {
   AgentDef,
@@ -107,6 +109,10 @@ export interface SubagentItem {
   /** `running` until the parent reports otherwise. */
   state: "running" | SubagentState
   capabilities: { cancel?: boolean; close?: boolean }
+  /** Set when this session is a harness workflow step — the server stamps the
+      spawn's `_meta.daedalus.workflow`, read by `lib/tools.workflowInfoOf`.
+      What lets `transcript-rows` fold a run's steps into one `WorkflowGroup`. */
+  workflow?: WorkflowStepInfo
   startedAt: number
   at?: number
   parentId?: string
@@ -234,6 +240,11 @@ export interface ThreadState {
   context: acp.UsageUpdate | null
   /** Time to first update of the last turn, ms. */
   ttftMs: number | null
+  /** What is left of the subscription this thread's (profile, agent) pair
+      spends — see lib/quota.ts. Null until a turn settles or the composer's
+      stats popover asks for one: it is not part of the transcript, so nothing
+      replays it and an archived thread simply has none. */
+  quota: QuotaSnapshot | null
   /** No agent process behind this thread: what is on screen was served from the
       server's journal. The transcript is real and complete, but nothing can be
       sent until the thread is revived — which `actions.send` does on its own. */
@@ -275,6 +286,7 @@ export const emptyThread: ThreadState = {
   usage: null,
   context: null,
   ttftMs: null,
+  quota: null,
   archived: false,
   earlier: 0,
   loadingEarlier: false,
@@ -384,11 +396,16 @@ export function applySessionUpdate(
   /* `allowUserChunks` is set only by the replay path, so it doubles as "this is
      history": replayed items get no timestamp rather than the reload's. */
   const at = allowUserChunks ? undefined : Date.now()
-  /* Whose item this is. An update that arrived on a subagent's session (the
-     RFD: `sessionId` names the child) belongs to that child's `SubagentItem`;
-     otherwise the vendor `_meta` may name a parent (Claude Code's Task, or the
-     child session OpenCode projects); otherwise it is the thread's own. */
-  const owner = sessionId ? subagentItemId(sessionId) : parentToolIdOf(metaOf(update))
+  /* Whose item this is. The vendor `_meta` naming a parent tool call (Claude
+     Code's Task, or the child session OpenCode projects) wins even over an
+     update that arrived on a subagent's session (the RFD: `sessionId` names
+     the child): a workflow step's own Task tree arrives mirrored WITH the
+     step's session id AND the Task attribution, and filing it under the step
+     flattened the tree Claude Code's native transcript nests. The tool row the
+     meta names travels on the same mirrored stream, so the head always exists.
+     No meta, but a session — the child's item. Neither — the thread's own. */
+  const owner =
+    parentToolIdOf(metaOf(update)) ?? (sessionId ? subagentItemId(sessionId) : undefined)
   switch (update.sessionUpdate) {
     case "agent_message_chunk":
     case "agent_thought_chunk": {
@@ -480,8 +497,10 @@ export function applySessionUpdate(
           meta,
           terminal: applyTerminalMeta(i.terminal, metaOf(update)),
           // From the MERGED meta: a later update that repeats `toolName`
-          // without the parent must not lose an attribution already learned.
-          parentId: (sessionId ? owner : parentToolIdOf(meta)) ?? i.parentId,
+          // without the parent must not lose an attribution already learned —
+          // and the meta's tool parent outranks the session owner here for the
+          // same reason it does in `owner` above.
+          parentId: parentToolIdOf(meta) ?? owner ?? i.parentId,
         }
       })
     case "plan": {
@@ -579,6 +598,7 @@ export function applySessionUpdate(
         name: update.name,
         task: update.task,
         capabilities: update.capabilities ?? {},
+        workflow: workflowInfoOf(metaOf(update)) ?? existing?.workflow,
         state: existing?.state ?? "running",
         startedAt: existing?.startedAt ?? Date.now(),
         at: existing?.at ?? at,
@@ -708,6 +728,10 @@ export type Action =
       >
     }
   | { type: "draft-config-option"; id: string; configId: string; value: string | boolean }
+  /** A live profile/model/effort change, from this device or another. Patches
+      the thread's row in place: the change did not restart anything, so there
+      is no reload to carry it and no draft semantics to respect. */
+  | { type: "spawn-config"; id: string; profileId: string; model: string; effort: string }
   | { type: "profiles"; profiles: Profile[] }
   | { type: "projects"; projects: Project[] }
   | { type: "mcp-servers"; mcpServers: McpServerDef[] }
@@ -761,6 +785,7 @@ export type Action =
   | { type: "config-options"; id: string; configOptions: acp.SessionConfigOption[] }
   | { type: "usage"; id: string; usage: acp.Usage }
   | { type: "ttft"; id: string; ms: number }
+  | { type: "quota"; id: string; quota: QuotaSnapshot }
   /** A run of actions folded into one commit. The replay is the only thing
       that sends it: rebuilding a long thread is a few thousand of the actions
       above, and dispatching them one at a time is a few thousand renders of a
@@ -806,6 +831,15 @@ export function reducer(state: State, action: Action): State {
       const drafts = state.sessions.filter((session) => session.draft && !known.has(session.id))
       return { ...state, sessions: [...drafts, ...action.sessions] }
     }
+    case "spawn-config":
+      return {
+        ...state,
+        sessions: state.sessions.map((session) =>
+          session.id === action.id
+            ? { ...session, profileId: action.profileId, model: action.model, effort: action.effort }
+            : session
+        ),
+      }
     case "draft-session":
       return state.sessions.some((session) => session.id === action.session.id)
         ? state
@@ -982,6 +1016,10 @@ export function reducer(state: State, action: Action): State {
       return withThread(state, action.id, { usage: addUsage(thread(state, action.id).usage, action.usage) })
     case "ttft":
       return withThread(state, action.id, { ttftMs: action.ms })
+    /* Absolute, like the queue: the server sends the whole reading, never a
+       delta, so there is nothing to merge. */
+    case "quota":
+      return withThread(state, action.id, { quota: action.quota })
     default:
       return state
   }

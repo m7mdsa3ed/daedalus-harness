@@ -1,8 +1,8 @@
 import { desc, eq, like } from "drizzle-orm";
-import { agentOptions, agents as agentsTable, db } from "./db/index.js";
+import { agentOptions, agents as agentsTable, db, type QuotaProbe } from "./db/index.js";
 import { gatewayUrlFor } from "./gateway-shim.js";
 import { writeCodexModelCatalog } from "./model-catalog.js";
-import { profileBaseUrl, type Profile } from "./profiles.js";
+import { profileBaseUrl, profileSupports, type Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 
 /**
@@ -26,6 +26,42 @@ export interface AgentDef {
    * so it is declared with the agent.
    */
   spawnCategories?: Record<string, "model" | "effort"> | null;
+  /**
+   * How a model, effort or profile change reaches this agent without killing
+   * it — the other half of `spawnCategories`, which only ever said which knobs
+   * are env.
+   *
+   * Being env at spawn does not have to mean being env *forever*, and the two
+   * agents we ship prove it in opposite directions:
+   *
+   *  - `"acp"` (claude-code): its own model selector takes a gateway's ids
+   *    verbatim, provided they are in the `availableModels` allowlist it
+   *    resolves out of the workspace's settings — which is why the harness
+   *    writes that file (`materializeModelAllowlist`). A change is then one
+   *    `session/set_config_option`, and the agent stays truthful about what it
+   *    is running: its context window, its 1M beta and its mode gating all
+   *    follow a model it was actually told about.
+   *  - `"gateway"` (codex): it will not. Its `listModels` ignores
+   *    `model_catalog_json` entirely — measured against codex-acp 1.7 / codex
+   *    0.150, which answers `Invalid params` for every catalog model but the
+   *    one it spawned on, and offers no reasoning-effort selector for a gateway
+   *    id at all. So nothing is asked of the agent: the shim rewrites `model`
+   *    and `reasoning.effort` on the request body it is already reading, and
+   *    the harness is the only thing that knows the model changed.
+   *
+   * Null (opencode, and any agent someone adds) means neither is known to work,
+   * and the change costs a respawn exactly as it always did.
+   */
+  liveConfig?: "acp" | "gateway" | null;
+  /**
+   * How to read this runtime's subscription quota, or null/absent when it has
+   * none to read. Declared here rather than matched on the agent's id in
+   * quota.ts for the same reason `spawnCategories` is: which knob restarts a
+   * process, and which command reports a plan's usage, are facts about the
+   * agent, and a user who repoints `command` at a different binary must be able
+   * to repoint this one too.
+   */
+  quotaProbe?: QuotaProbe | null;
 }
 
 /** A default agent, plus the seed releases that bear on it. Give a new default
@@ -59,6 +95,27 @@ type SeedAgent = AgentDef & {
     for its dialect because the file it points at is Codex-shaped: an agent that
     wants one asks for it by using this name in its env. */
 const CODEX_CATALOG_VAR = "codexModelCatalog";
+
+/**
+ * The quota probes seed 10 adds, by agent id.
+ *
+ * Both read what the runtime's own interactive command reports — `/usage` in
+ * Claude Code, `/status` in Codex — through the one door each offers a script:
+ *
+ *   - `claude -p "/usage" --output-format json` works because that command is
+ *     registered `supportsNonInteractive`. It answers from local state with no
+ *     API round trip, so it is cheap enough to run per settled turn.
+ *   - `codex app-server` speaks JSON-RPC over stdio and answers
+ *     `account/rateLimits/read` with the same snapshot `/status` draws.
+ *
+ * Neither is the runtime's *ACP* binary: the ACP adapter is a session, and a
+ * session is not what has an account. So these name the plain CLI, and the
+ * agent's own `command` is left alone.
+ */
+const QUOTA_PROBES: Record<string, QuotaProbe> = {
+  "claude-code": { kind: "claude-cli", command: "claude", args: ["-p", "/usage", "--output-format", "json"] },
+  codex: { kind: "codex-app-server", command: "codex", args: ["app-server"] },
+};
 
 /**
  * Add `model_catalog_json` to an existing codex row's CODEX_CONFIG.
@@ -259,15 +316,18 @@ const SPAWN_CATEGORIES: Record<string, "model" | "effort"> = {
  */
 const DEFAULT_AGENTS: SeedAgent[] = [
   {
-    since: 8,
+    since: 11,
     introduced: 1,
     // Seed 4 moved the haiku keys to {smallModel}; seed 5 added the alias keys;
     // seed 6 appends the 1M conditional to all of them; seed 8 routes the
-    // endpoint through the gateway shim. One backfill applies all of them,
-    // because an install stamped below 4 jumps straight here and never sees
-    // the earlier rules on its own.
+    // endpoint through the gateway shim; seed 10 adds the quota probe; seed 11
+    // says the model can be changed without a restart. One backfill applies all
+    // of them, because an install stamped below 4 jumps straight here and never
+    // sees the earlier rules on its own.
     backfill: (existing) => ({
       env: withGatewayUrl(withLongContextSuffix(withAliasModelKeys(withSmallModelVar(existing.env)))),
+      quotaProbe: existing.quotaProbe ?? QUOTA_PROBES["claude-code"],
+      liveConfig: existing.liveConfig ?? "acp",
     }),
     id: "claude-code",
     name: "Claude Code",
@@ -281,6 +341,8 @@ const DEFAULT_AGENTS: SeedAgent[] = [
       }),
     ),
     spawnCategories: SPAWN_CATEGORIES,
+    quotaProbe: QUOTA_PROBES["claude-code"],
+    liveConfig: "acp",
   },
   {
     // Official ACP adapter for OpenAI Codex. Auth: CODEX_API_KEY, or ChatGPT
@@ -301,14 +363,24 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // already stamped never looks again. The merge is idempotent, so a row
     // that still has the key is left exactly as it is. Seed 9 routes the
     // provider's base_url through the gateway shim (withCodexGatewayUrl).
-    since: 9,
+    // Seed 10 adds the quota probe; seed 11 says a model change reaches this
+    // agent through the shim rather than through a restart — see `liveConfig`,
+    // and note that it is *because* the catalog key above turned out not to
+    // change what codex will accept live.
+    since: 11,
     introduced: 2,
-    backfill: (existing) => ({ env: withCodexGatewayUrl(withCodexCatalogKey(existing.env)) }),
+    backfill: (existing) => ({
+      env: withCodexGatewayUrl(withCodexCatalogKey(existing.env)),
+      quotaProbe: existing.quotaProbe ?? QUOTA_PROBES.codex,
+      liveConfig: existing.liveConfig ?? "gateway",
+    }),
     id: "codex",
     name: "Codex",
     command: "codex-acp",
     args: [],
     spawnCategories: SPAWN_CATEGORIES,
+    quotaProbe: QUOTA_PROBES.codex,
+    liveConfig: "gateway",
     env: {
       CODEX_API_KEY: "{apiKey}",
       MODEL_PROVIDER: "{baseUrl?daedalus}",
@@ -377,7 +449,13 @@ export function seedAgents(): void {
          re-check next boot is a no-op. */
       if (introduced <= applied) continue;
       db.insert(agentsTable)
-        .values({ ...agent, spawnCategories: agent.spawnCategories ?? null, seededVersion: since })
+        .values({
+          ...agent,
+          spawnCategories: agent.spawnCategories ?? null,
+          quotaProbe: agent.quotaProbe ?? null,
+          liveConfig: agent.liveConfig ?? null,
+          seededVersion: since,
+        })
         .run();
       continue;
     }
@@ -387,19 +465,26 @@ export function seedAgents(): void {
        those are the fields a user edits, and silently replacing them is how a
        harness loses someone's gateway configuration. A release that adds a
        single key inside one of them says so with `backfill`. */
+    const added = backfill?.(existing);
     db.update(agentsTable)
       .set({
         seededVersion: since,
         spawnCategories: existing.spawnCategories ?? agent.spawnCategories ?? null,
-        ...backfill?.(existing),
+        quotaProbe: existing.quotaProbe ?? agent.quotaProbe ?? null,
+        liveConfig: existing.liveConfig ?? agent.liveConfig ?? null,
+        ...added,
       })
       .where(eq(agentsTable.id, agent.id))
       .run();
-    /* The probe's cached answer was recorded by the old spawn, and what a
-       release adds here is exactly the kind of thing that changes it — a real
-       catalog is what makes Codex advertise an effort selector for a gateway
-       model at all. Drop this agent's entries so the next draft asks again. */
-    db.delete(agentOptions).where(like(agentOptions.key, `%:${agent.id}:%`)).run();
+    /* The probe's cached answer was recorded by the old spawn, and a release
+       that rewrites the env is exactly what changes it — a real catalog is what
+       makes Codex advertise an effort selector for a gateway model at all. So
+       the drop follows the env and nothing else: what an agent advertises is a
+       function of the environment it was spawned in, and a release that only
+       adds a field *beside* the env has changed nothing the agent would answer
+       differently. (Seed 10 adds the quota probe, but both its rows share a
+       backfill that also recomputes the env, so they still re-probe once.) */
+    if (added?.env) db.delete(agentOptions).where(like(agentOptions.key, `%:${agent.id}:%`)).run();
   }
 }
 
@@ -463,6 +548,80 @@ export function resolveEnvValue(template: string, vars: Record<string, string>):
   return value;
 }
 
+/* ── The model id an agent is told, vs the one the harness records ──
+ *
+ * They differ in exactly one way, and only for Claude Code: the 1M window is
+ * opted into by a `[1m]` suffix on the id rather than by a number (see
+ * `LONG_CONTEXT_SUFFIX`). The env template appends it through `{longContext?…}`
+ * at spawn, so the same rule has to be available to everything that names a
+ * model to a *running* agent — the live model change and the allowlist the
+ * picker is built from. The session row keeps the catalog's own id either way:
+ * it is what the profile lists and what every menu matches against.
+ */
+
+/** Does this profile's entry for `modelId` ask for the 1M suffix? Empty for an
+    id that already carries it — `sonnet[1m][1m]` names nothing. */
+function wantsLongContext(profile: Profile, modelId: string): boolean {
+  const meta = profile.models?.find((m) => m.id === modelId);
+  return (meta?.contextWindow ?? 0) >= 1_000_000 && !modelId.endsWith(LONG_CONTEXT_MARKER);
+}
+
+/** Whether this agent's env spells a model with the 1M conditional at all —
+    the same "ask the template, don't match on the agent's id" rule
+    `resolveSpawn` uses for the Codex catalog. */
+function usesLongContext(agent: AgentDef): boolean {
+  return Object.values(agent.env).some((t) => t.includes(LONG_CONTEXT_SUFFIX));
+}
+
+/** The id to hand this agent for one of the profile's models. */
+export function agentModelId(agent: AgentDef, profile: Profile, modelId: string): string {
+  if (!modelId || !usesLongContext(agent)) return modelId;
+  return wantsLongContext(profile, modelId) ? modelId + LONG_CONTEXT_MARKER : modelId;
+}
+
+/** The catalog id behind an id an agent reported back. Only ever strips a
+    suffix this profile would itself have added: a catalog whose ids genuinely
+    end in `[1m]` keeps them, because the stripped form names nothing there. */
+export function bareModelId(profile: Profile, modelId: string): string {
+  if (!modelId.endsWith(LONG_CONTEXT_MARKER)) return modelId;
+  if (profile.models?.some((m) => m.id === modelId)) return modelId;
+  const stripped = modelId.slice(0, -LONG_CONTEXT_MARKER.length);
+  return profile.models?.some((m) => m.id === stripped) ? stripped : modelId;
+}
+
+/**
+ * Every model id this agent might be asked to run, across every profile that
+ * can spawn it — what `materializeModelAllowlist` writes where Claude Code
+ * looks for its `availableModels`.
+ *
+ * The union, deliberately, and not the one profile the thread is on: the
+ * allowlist is read once at `session/new` and a thread outlives its profile
+ * choice, so a list scoped to the spawning profile would make the *next*
+ * profile's models unreachable without the restart this whole path exists to
+ * avoid. Nothing is leaked by the width of it — an id is not a credential, and
+ * only the harness's own menus ever pick one.
+ *
+ * `spawning` is the exception the union cannot express: `availableModels` is a
+ * *replacement*, not an addition — Claude Code's picker offers exactly what is
+ * in it — so a profile that overrides nothing must impose nothing, or the
+ * Default profile (which is the agent on its own subscription, and which
+ * deliberately has no `models[]`) opens a menu of some gateway's ids and none
+ * of the agent's own. Empty here means the key is dropped and the agent keeps
+ * its built-in list. Nothing is lost by narrowing it: a move on or off a
+ * profile with no catalog is exactly the case `applyConfig` will not do live,
+ * so the next profile's ids are written by the respawn that carries the thread
+ * there.
+ */
+export function modelAllowlistFor(agent: AgentDef, spawning: Profile, profiles: Profile[]): string[] {
+  if (!spawning.models?.length) return [];
+  const ids = new Set<string>();
+  for (const profile of profiles) {
+    if (!profileSupports(profile, agent.id)) continue;
+    for (const model of profile.models ?? []) ids.add(agentModelId(agent, profile, model.id));
+  }
+  return [...ids];
+}
+
 /** Resolve an agent definition against a profile (agent config) + project (workspace). */
 export function resolveSpawn(
   agent: AgentDef,
@@ -470,6 +629,8 @@ export function resolveSpawn(
   project: Project,
   model?: string,
   effort?: string,
+  /** The thread being spawned for, when there is one — see `gatewayUrlFor`. */
+  sessionId?: string,
 ) {
   const resolvedModel = model || profile.defaultModel || "";
   // Catalog metadata for the selected model. Fills unquoted JSON slots, so the
@@ -485,7 +646,8 @@ export function resolveSpawn(
     /* The same endpoint behind this server's gateway shim (see
        `withGatewayUrl`); the raw URL when no shim is configured. */
     gatewayUrl:
-      gatewayUrlFor(profile.id, agent.id, profileBaseUrl(profile, agent.id)) || profileBaseUrl(profile, agent.id),
+      gatewayUrlFor(profile.id, agent.id, profileBaseUrl(profile, agent.id), sessionId) ||
+      profileBaseUrl(profile, agent.id),
     model: resolvedModel,
     /* Always the session model: a profile means "run everything on this
        model", and the cheap side-jobs (the auto-mode classifier) and the alias
@@ -502,10 +664,7 @@ export function resolveSpawn(
        whenever the profile has no entry for the selected model — the model
        itself prunes away there too — and empty for an id that already carries
        the suffix, since a `sonnet[1m][1m]` names nothing. */
-    longContext:
-      (modelMeta?.contextWindow ?? 0) >= 1_000_000 && !resolvedModel.endsWith(LONG_CONTEXT_MARKER)
-        ? "1"
-        : "",
+    longContext: wantsLongContext(profile, resolvedModel) ? "1" : "",
     contextWindow: modelMeta?.contextWindow ? String(modelMeta.contextWindow) : "null",
     maxOutputTokens: modelMeta?.maxOutputTokens ? String(modelMeta.maxOutputTokens) : "null",
     cwd: project.cwd,

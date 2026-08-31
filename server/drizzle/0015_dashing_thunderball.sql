@@ -1,1 +1,0 @@
-ALTER TABLE `profiles` ADD `small_model` text;

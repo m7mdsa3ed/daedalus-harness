@@ -1,1 +1,0 @@
-ALTER TABLE `profiles` ADD `web_search` text;

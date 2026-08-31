@@ -26,16 +26,9 @@ import { KEYS, formatChord } from "@/lib/shortcuts"
 import type { PanelKind } from "@/lib/workspace/panels"
 
 const OPENABLE: { kind: PanelKind; label: string; chord?: string }[] = [
-  { kind: "explorer", label: "File explorer", chord: KEYS.explorer },
-  { kind: "source-control", label: "Source control", chord: KEYS.sourceControl },
   { kind: "terminal", label: "Terminal", chord: KEYS.terminal },
   { kind: "output", label: "Output & problems", chord: KEYS.output },
-  { kind: "web", label: "Preview" },
-  /* No chord, like Preview: every plausible one is either already taken here
-     or is a browser's own (⌘⇧I is devtools, ⌘⇧V is paste-as-plain-text in the
-     composer), and a global binding that fights the browser is worse than a
-     menu entry. */
-  { kind: "ide", label: "VS Code" },
+  { kind: "web", label: "Browser" },
 ]
 
 export function OpenPanelMenu({

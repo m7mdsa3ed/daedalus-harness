@@ -436,6 +436,135 @@ await test("discard refuses an empty path list", async () => {
   assert.equal(await status(() => git.discard(project.id, [])), 400);
 });
 
+await test("a project that is a folder of repositories, not one", async () => {
+  const workspace = mkdtempSync(join(tmpdir(), "daedalus-multi-"));
+  const init = (dir: string) => {
+    mkdirSync(dir, { recursive: true });
+    const run = (args: string[]) =>
+      execFileSync("git", args, { cwd: dir, stdio: "pipe", encoding: "utf8" });
+    run(["init", "--quiet", "-b", "main"]);
+    run(["config", "user.email", "test@example.com"]);
+    run(["config", "user.name", "Test"]);
+    writeFileSync(join(dir, "seed.txt"), "seed\n");
+    run(["add", "."]);
+    run(["commit", "--quiet", "-m", "first"]);
+    return run;
+  };
+
+  // The project root itself is not a repository; two of its subdirectories are,
+  // one of them a level down.
+  const alpha = init(join(workspace, "alpha"));
+  init(join(workspace, "nested", "beta"));
+  // A repository buried inside another one is not offered: what is under a
+  // checkout is that checkout's business.
+  init(join(workspace, "alpha", "vendor", "inner"));
+  mkdirSync(join(workspace, "node_modules", "pkg"), { recursive: true });
+  mkdirSync(join(workspace, "node_modules", "pkg", ".git"), { recursive: true });
+
+  const multi = createProject({ name: "multi", cwd: workspace, description: null });
+
+  const repos = await git.repositories(multi.id);
+  const paths = repos.map((r) => r.path).sort();
+  assert.deepEqual(paths, ["alpha", "nested/beta"], "found both, and only those");
+  assert.equal(repos.find((r) => r.path === "alpha")?.branch, "main");
+
+  // Without a repo the project answers "not a repository" — the subdirectories
+  // are repositories, the project is not.
+  assert.equal((await git.status(multi.id)).repository, false);
+
+  writeFileSync(join(workspace, "alpha", "seed.txt"), "changed\n");
+  writeFileSync(join(workspace, "alpha", "extra.txt"), "new\n");
+  const inAlpha = await git.status(multi.id, "alpha");
+  assert.equal(inAlpha.repository, true);
+  assert.equal(inAlpha.repo, "alpha", "the status says which repository it is");
+  assert.ok(
+    inAlpha.unstaged.some((f) => f.path === "seed.txt"),
+    "paths are relative to the repository, not the project",
+  );
+
+  // Staging, committing and reading a revision all land in that repository.
+  await git.stage(multi.id, [], "alpha");
+  const alphaStaged = (await git.status(multi.id, "alpha")).staged.map((f) => f.path);
+  // `vendor/inner` is staged too, as the gitlink git records for an embedded
+  // repository — that is git's own behaviour, not the panel's.
+  assert.ok(["extra.txt", "seed.txt"].every((p) => alphaStaged.includes(p)));
+  await git.commit(multi.id, "in alpha", { repo: "alpha" });
+  assert.deepEqual((await git.status(multi.id, "alpha")).staged, []);
+  assert.equal(
+    (await git.fileAt(multi.id, "alpha/seed.txt", "head")).content,
+    "changed\n",
+    "a revision is read from the repository that owns the file",
+  );
+  // The other repository was not touched by any of it.
+  assert.equal(alpha(["rev-list", "--count", "HEAD"]).trim(), "2");
+  assert.deepEqual((await git.status(multi.id, "nested/beta")).unstaged, []);
+
+  // A directory that is not a repository root is refused rather than answered
+  // with the enclosing repository's status under a path prefix that is a lie.
+  assert.equal(await status(() => git.status(multi.id, "alpha/vendor")), 400);
+  assert.equal(await status(() => git.stage(multi.id, ["x"], "nested")), 400);
+  // And the ordinary containment rule still applies to a client-supplied path.
+  assert.equal(await status(() => git.status(multi.id, "../..")), 403);
+
+  deleteProject(multi.id);
+  rmSync(workspace, { recursive: true, force: true });
+});
+
+await test("a project inside a larger repository sees only its own subtree", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "daedalus-nested-"));
+  const run = (args: string[]) =>
+    execFileSync("git", args, { cwd: repo, stdio: "pipe", encoding: "utf8" });
+  run(["init", "--quiet", "-b", "main"]);
+  run(["config", "user.email", "test@example.com"]);
+  run(["config", "user.name", "Test"]);
+  mkdirSync(join(repo, "packages", "app"), { recursive: true });
+  writeFileSync(join(repo, "packages", "app", "index.ts"), "export {}\n");
+  writeFileSync(join(repo, "top.txt"), "top\n");
+  run(["add", "."]);
+  run(["commit", "--quiet", "-m", "first"]);
+
+  const inner = createProject({
+    name: "app",
+    cwd: join(repo, "packages", "app"),
+    description: null,
+  });
+
+  writeFileSync(join(repo, "packages", "app", "index.ts"), "export const a = 1\n");
+  writeFileSync(join(repo, "top.txt"), "touched\n");
+
+  const s = await git.status(inner.id);
+  assert.equal(s.repository, true);
+  assert.equal(s.repo, "", "the repository the project belongs to is its own");
+  assert.deepEqual(
+    s.unstaged.map((f) => f.path),
+    ["index.ts"],
+    "the prefix is stripped, and the change above the project is not listed",
+  );
+
+  // "Stage everything" means everything this panel listed, not the whole
+  // repository — `git add --all` alone would have taken top.txt with it.
+  await git.stage(inner.id, []);
+  const staged = await git.status(inner.id);
+  assert.deepEqual(staged.staged.map((f) => f.path), ["index.ts"]);
+  assert.equal(
+    run(["diff", "--name-only", "--cached"]).trim(),
+    "packages/app/index.ts",
+    "nothing above the project was staged",
+  );
+
+  assert.equal(
+    (await git.fileAt(inner.id, "index.ts", "head")).content,
+    "export {}\n",
+    "a revision resolves relative to the project directory",
+  );
+
+  await git.unstage(inner.id, []);
+  assert.equal(run(["diff", "--name-only", "--cached"]).trim(), "");
+
+  deleteProject(inner.id);
+  rmSync(repo, { recursive: true, force: true });
+});
+
 // ── Terminals ────────────────────────────────────────────────────────────────
 await test("a terminal runs in the project directory and is bounded per project", async () => {
   const created = terminals.createTerminal(project.id, { cols: 100, rows: 30 });

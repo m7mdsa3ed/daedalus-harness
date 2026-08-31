@@ -43,7 +43,7 @@ import {
   scheduleSkipped,
   scheduleWhen,
 } from "@/lib/schedule"
-import type { ScheduledMessage } from "@/lib/settings"
+import { isTopLevel, type ScheduledMessage } from "@/lib/settings"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
@@ -369,7 +369,7 @@ function NewSchedulePage({ actions }: { actions: Actions }) {
   const location = useLocation()
   const [params] = useSearchParams()
   const routeState = (location.state ?? {}) as ScheduleLocationState
-  const sessions = state.sessions.filter((session) => !session.draft && !session.deletedAt)
+  const sessions = state.sessions.filter((session) => isTopLevel(session) && !session.draft && !session.deletedAt)
   const requested = params.get("session")
   const initialTarget = sessions.some((session) => session.id === requested)
     ? (requested ?? "")

@@ -15,6 +15,78 @@ import type * as acp from "@agentclientprotocol/sdk";
  * re-modelling them would buy nothing but a translation layer to keep in step.
  */
 
+/*
+ * ---- Subscription quota ----
+ *
+ * What Claude Code's `/usage` and Codex's `/status` report, normalized. Read by
+ * `server/src/quota.ts` (which owns the two adapters) and rendered by the
+ * client; declared *here*, with the rest of the wire, because it travels both
+ * ways — over the socket when a turn settles, and over `GET /api/quota` — and a
+ * second copy of the shape on the browser side is a second thing to keep in
+ * step.
+ */
+
+/** One limit window — a rolling five hours, a week, whatever the runtime meters. */
+export interface QuotaWindow {
+  /** Stable per runtime (`five_hour`, `seven_day`, `primary`, …). A key and an
+      order; never shown. */
+  id: string;
+  /** What the runtime calls it, shown as-is. */
+  label: string;
+  usedPercent: number;
+  /** Epoch ms when the window rolls over, when the runtime gives a timestamp. */
+  resetsAt?: number | null;
+  /** The runtime's own already-formatted reset string, when that is all it gave.
+      Claude Code prints `Aug 31, 9:59am (Africa/Cairo)` — localized, in the
+      *server's* timezone. Re-parsing that into an instant is guesswork nobody
+      asked for, so it is carried verbatim; a renderer prefers `resetsAt` when
+      both are present. */
+  resetsLabel?: string;
+  windowMinutes?: number | null;
+}
+
+export type QuotaStatus =
+  /** A plan with windows to report. */
+  | "subscription"
+  /** Authenticated, but metered per token — nothing to report. */
+  | "api-key"
+  /** The runtime is installed but nobody is logged in. */
+  | "unauthenticated"
+  /** This agent declares no probe: it has no subscription notion. */
+  | "unsupported"
+  /** The probe could not be run, or could not be understood. */
+  | "error";
+
+export interface QuotaSnapshot {
+  /** Empty for a `source: "profile"` reading: a provider's plan is one account
+      whatever runtime spends it, and the reading is shared across every agent
+      the profile serves. */
+  agentId: string;
+  /** The profile whose resolved env the probe ran under — a virtual
+      `default:<agentId>` is the machine's own login, anything else is that
+      profile's credentials. Part of the identity of the reading: the same agent
+      reports different things under different auth. */
+  profileId: string;
+  /** Which reader answered: the agent runtime's own CLI (`agent`), or the usage
+      API the profile's provider exposes (`profile`). Absent on readings taken
+      before providers existed, which were all `agent`. The two answer different
+      questions — "how is this machine's `claude login` doing" against "how is
+      this gateway plan doing" — so a page listing both has to say which. */
+  source?: "agent" | "profile";
+  status: QuotaStatus;
+  /** The plan the runtime names, when it names one (`pro`, `max`, `plus`). */
+  planName?: string | null;
+  windows: QuotaWindow[];
+  credits?: { balance: string | null; unlimited: boolean } | null;
+  /** What the runtime said, always — one adapter parses prose, and prose moves
+      between releases. A wording change then degrades to "here is the report,
+      unparsed" instead of to an empty card claiming 0%. */
+  raw: string;
+  fetchedAt: number;
+  /** Set only for `status: "error"`. */
+  error?: string;
+}
+
 /** A JSON-RPC error flattened for the wire. The shape matters: `lib/errors.ts`
     reads `code` for its title table and `data.stderr` for the agent's own
     output, so carrying prose instead would throw both away. */
@@ -259,6 +331,14 @@ export type ThreadEvent =
       modeId?: string;
       configOptions?: acp.SessionConfigOption[];
     }
+  /** The thread moved to another provider, model or effort *without* being
+      restarted (`SessionManager.applyConfig`). Absolute, like `session_config`,
+      but live-only and not journaled: it is the session row's own state, and a
+      peer attaching later reads it from the row instead. Fanned out to every
+      peer including the one that asked — the change may have been rewritten on
+      the way (a profile's default model standing in for a cleared one), so the
+      answer, not the request, is what every menu should draw. */
+  | { ev: "spawn_config"; profileId: string; model: string; effort: string }
   /** A turn began, and whose words began it. Fanned out to every peer except
       the sender, which already showed its own message. */
   | { ev: "turn_started"; seq: number; turnId: string; text: string }
@@ -292,6 +372,16 @@ export type ThreadEvent =
   /** Time to first update of a turn, measured server-side — so it no longer
       includes the WebSocket hop to the browser. */
   | { ev: "ttft"; ms: number }
+  /** What is left of the subscription this thread's (profile, agent) pair is
+      spending — see quota.ts. Sent when a turn settles, because the turn is what
+      moved the number.
+
+      Live-only and **absolute**, like `queue`: it is the current state of an
+      account, not a thing that happened in this thread, and journaling it would
+      make a replay redraw last week's percentages as though they were now. A
+      client that wants one before a turn ends asks `GET /api/quota` — the same
+      reading, through the same cache. See the QuotaSnapshot block above. */
+  | { ev: "quota"; quota: QuotaSnapshot }
   | { ev: "task_event"; transcriptDir: string; event: Record<string, unknown> }
   | { ev: "reply"; id: number; result?: unknown; error?: undefined }
   | { ev: "reply"; id: number; error: WireError; result?: undefined };

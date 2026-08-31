@@ -8,8 +8,10 @@
       1. add the field to `ViewOptions` and a value to `VIEW_DEFAULTS` — the
          interface is what types `session-settings.tsx`, so a typo is a build
          error rather than a switch that does nothing;
-      2. add a row to `OPTIONS` in `session-settings.tsx` (declarative — the
-         list renders itself);
+      2. add a row to the right group in `GROUPS` in `session-settings.tsx`
+         (declarative — the dialog renders itself). Which group is the design
+         decision: Layout, Detail, Code and diffs, Motion. An option that fits
+         none of them is probably not a view option;
       3. read it where the transcript renders, through `ViewOptionsContext`
          (`useViewOptionsContext`), not by threading props. Deep components —
          diffs, tool panes — are the reason the context exists.
@@ -51,6 +53,10 @@ export interface ViewOptions {
   stepDividers: boolean
   /** Tick marks down the right edge, one per user turn, to jump between them. */
   turnRail: boolean
+  /** Favicon strips: the pages a step saw and the ones the answer cited. */
+  showSources: boolean
+  /** Drop the row entrance animation and the running-turn shimmer. */
+  calmMotion: boolean
 }
 
 export const VIEW_DEFAULTS: ViewOptions = {
@@ -65,6 +71,8 @@ export const VIEW_DEFAULTS: ViewOptions = {
   splitDiffs: false,
   stepDividers: false,
   turnRail: true,
+  showSources: true,
+  calmMotion: false,
 }
 
 /** Carries the resolved options to the items that render the transcript, so the

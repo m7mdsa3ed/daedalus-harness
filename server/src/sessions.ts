@@ -7,18 +7,23 @@ import type { WebSocket } from "ws";
 import type * as acp from "@agentclientprotocol/sdk";
 import { db, sessions as sessionsTable } from "./db/index.js";
 import { SESSION_LINKS, emptyLinks, linksOf, readLinks, unionLinks, writeLinks, type LinkSet } from "./db/links.js";
-import { materializeWorkspace } from "./materialize.js";
+import { materializeModelAllowlist, materializeWorkspace } from "./materialize.js";
 import { mcpServers as mcpLibrary } from "./library.js";
 import type { Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
-import { getProfile } from "./profiles.js";
+import { getProfile, listProfiles, profileBaseUrl, profileSupports } from "./profiles.js";
+import { agentModelId, bareModelId, getAgent, modelAllowlistFor } from "./registry.js";
+import { gatewayUrlFor, setGatewaySessionResolver, type GatewaySession } from "./gateway-shim.js";
 import { getProject } from "./projects.js";
 import { getConfig, loadConfig } from "./config.js";
 import { WEB_SEARCH_SERVER_NAME, toMcpServerEnv } from "./websearch.js";
 import { pruneWebSearchUsage, recordWebSearchUsage } from "./websearch-usage.js";
 import { KNOWLEDGE_SERVER_NAME, toKnowledgeServerEnv } from "./knowledge-db.js";
 import { AcpBridge, spawnAgent, type BridgeHost } from "./acp-bridge.js";
+import { WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
 import { deleteSearchIndex } from "./search.js";
+import { getQuota, invalidateQuota } from "./quota.js";
+import { profileUsage } from "./usage-api.js";
 import { SessionJournal } from "./session-journal.js";
 import { SessionSocket } from "./session-socket.js";
 import {
@@ -119,6 +124,20 @@ export interface Session {
       the items it is about to send cannot also be drained by the turn it just
       cancelled. Null when idle. */
   queueChain: Promise<unknown> | null;
+  /** The thread this one is a workflow step of (workflows.ts), else null. A
+      child never pushes, is never idle-retired, is hidden from the sidebar and
+      is never handed the workflow server itself. Persisted. */
+  parentSessionId: string | null;
+  /** The profile this process was actually spawned on. Equal to `profileId`
+      until the thread is moved to another provider without restarting, and the
+      gap is what says the child's env — its credentials, and for Claude Code
+      the model ids pinned into its side-job and alias vars — is out of date and
+      has to be repaired on the wire (`gatewayStateOf`). Goes with the process. */
+  spawnProfileId: string;
+  /** Whether this process talks to its provider through the harness's shim. A
+      thread whose profile has no base URL (the virtual Default) does not, and
+      nothing about its provider can be changed under it. */
+  viaGateway: boolean;
   /** True only while this process has the profile-provided web-search MCP. */
   websearchViaMcp: boolean;
   /** toolCallIds of in-flight web-search/fetch calls, so a streamed update for
@@ -168,13 +187,21 @@ export function mcpServersFor(
   links: Pick<LinkSet, "mcpServerIds">,
   project: Pick<Project, "id">,
   config: ReturnType<typeof loadConfig>,
+  /** The `workflow` server as this thread may have it — null for a thread
+      that must not (a workflow step: one level, never a tree). */
+  workflow: StdioMcpServer | null = null,
 ): acp.McpServer[] {
   const linked = new Set(links.mcpServerIds);
   const out: acp.McpServer[] = [];
   for (const s of mcpLibrary.list()) {
     if (!linked.has(s.id)) continue;
     if (s.type === "builtin") {
-      const built = s.builtin === "web-search" ? websearchServer(config) : knowledgeServer(project);
+      const built =
+        s.builtin === "web-search"
+          ? websearchServer(config)
+          : s.builtin === "knowledge"
+            ? knowledgeServer(project)
+            : workflow;
       if (built) out.push(built);
     } else if (s.type === "http") {
       out.push({ type: "http", name: s.name, url: s.url, headers: s.headers });
@@ -242,6 +269,17 @@ export function knowledgeServer(project: Pick<Project, "id">): StdioMcpServer {
   return harnessMcpServer(KNOWLEDGE_SERVER_NAME, "knowledge-mcp", toKnowledgeServerEnv(project.id));
 }
 
+/** The harness's own `workflow` MCP server. The only thing it is handed is the
+    loopback URL that names the calling thread (`/wf/<key>/<sessionId>`): the
+    server process cannot reach the SessionManager, so it drives the run over
+    HTTP, and the key in that path is what lets the route act for exactly this
+    thread and no other. */
+export function workflowServer(session: Pick<Session, "id">, runner: WorkflowUrlSource): StdioMcpServer {
+  return harnessMcpServer(WORKFLOW_SERVER_NAME, "workflow-mcp", [
+    { name: "WORKFLOW_URL", value: runner.urlFor(session) },
+  ]);
+}
+
 export interface SessionEvents {
   /** Fired only while no client is attached — used for push notifications. */
   onPermissionRequest?: (session: Session) => void;
@@ -250,10 +288,36 @@ export interface SessionEvents {
   onElicitationRequest?: (session: Session) => void;
   /** `error` is the error the prompt failed with, when it failed. */
   onTurnEnd?: (session: Session, error?: unknown) => void;
+  /** The process is gone — retired, collapsed, or the thread deleted. Fired
+      for every session, live or not; the workflow runner cancels whatever this
+      thread was orchestrating. */
+  onProcessGone?: (session: Session) => void;
+}
+
+/** What the manager needs from the workflow runner (workflows.ts) to hand a
+    thread the `workflow` MCP server: the loopback URL that names the caller.
+    An interface rather than the class so the two modules do not import each
+    other — the runner is injected at boot (`setWorkflowRunner`). */
+export interface WorkflowUrlSource {
+  urlFor(session: Pick<Session, "id">): string;
+}
+
+/** A turn's outcome as `whenTurnSettled` reports it. */
+export interface TurnOutcome {
+  error?: WireError;
+  interrupted: boolean;
 }
 
 export class SessionManager {
   private sessions = new Map<string, Session>();
+  /** Server-side subscribers to a session's events (the workflow runner
+      mirroring a step into its parent). Tapped after the journal, whether or
+      not a peer is attached. */
+  private subscribers = new Map<string, Set<(event: ThreadEvent) => void>>();
+  /** One-shot waiters for a turn to settle, by session — see `whenTurnSettled`. */
+  private turnWaiters = new Map<string, { turnId: string; settle: (outcome: TurnOutcome) => void; fail: (error: Error) => void }[]>();
+  /** Injected at boot; null means no thread is handed the workflow server. */
+  private workflowRunner: WorkflowUrlSource | null = null;
 
   /** The event-journal concern — the buffered writes, the reads that flush
       first, the turn-boundary math and the replay framing — extracted to
@@ -280,9 +344,19 @@ export class SessionManager {
     this.pruneJournals();
     this.reload();
 
+    /* What answers a `/gw/<key>/s/<id>/…` request. The shim asks per request
+       rather than being told at spawn, which is the whole of "the endpoint,
+       credentials and model behind a running child are still ours to change"
+       — see `applyConfig`. */
+    setGatewaySessionResolver((id) => this.gatewayStateOf(id));
+
     const idleMs = idleMinutes * 60_000;
     setInterval(() => {
       for (const s of this.sessions.values()) {
+        /* Not a thread mid-turn: a parent blocked inside a workflow call with
+           no browser open was being retired under it. And never a workflow
+           step, which has no peers by design — its lifetime is its run's. */
+        if (s.parentSessionId || s.bridge?.promptActive) continue;
         if (!s.exited && s.peers.size === 0 && s.detachedAt && Date.now() - s.detachedAt > idleMs) {
           this.retire(s);
         }
@@ -336,7 +410,10 @@ export class SessionManager {
         exited: true,
         respawnChain: null,
         queueChain: null,
-        // Belongs to a process, and there is none until this thread is revived.
+        // All three belong to a process, and there is none until this thread is
+        // revived — the spawn that revives it sets them from the row it reads.
+        spawnProfileId: row.profileId,
+        viaGateway: false,
         websearchViaMcp: false,
         websearchCalls: new Set(),
       });
@@ -401,6 +478,7 @@ export class SessionManager {
         acpSessionProvisional: s.acpSessionProvisional,
         createdAt: s.createdAt,
         deletedAt: s.deletedAt,
+        parentSessionId: s.parentSessionId,
       };
       db.insert(sessionsTable).values(values).onConflictDoUpdate({
         target: sessionsTable.id,
@@ -500,12 +578,14 @@ export class SessionManager {
    * `except` is the peer whose own action produced the event — it has already
    * shown the result and being told again would double it.
    */
-  private emit(session: Session, event: ThreadEvent, except?: Peer): void {
+  private emit(session: Session, event: ThreadEvent, except?: Peer, mirrored = false): void {
     /* Closing a bridge rejects whatever it had in flight, and those rejections
        land a microtask later — after a purge has already deleted the row the
        event rows point at. Nothing is listening for them either way. */
     if (!this.sessions.has(session.id)) return;
-    if (session.websearchViaMcp && event.ev === "update" && !event.historyReplay) {
+    // A mirrored event is a step's, already recorded under the step's own
+    // thread — counting it again here would bill every search twice.
+    if (!mirrored && session.websearchViaMcp && event.ev === "update" && !event.historyReplay) {
       recordWebSearchUsage({
         sessionId: session.id,
         threadTitle: session.title,
@@ -516,9 +596,106 @@ export class SessionManager {
       }, event.update, session.websearchCalls);
     }
     const out = JOURNALED.has(event.ev) ? this.log.append(session, event) : event;
+    const subs = this.subscribers.get(session.id);
+    if (subs) for (const fn of subs) fn(out);
     if (session.peers.size === 0) return;
     const line = JSON.stringify(out);
     for (const peer of session.peers) if (peer !== except) peer.ws.send(line);
+  }
+
+  /**
+   * Re-read this thread's subscription quota and tell its peers, after a turn.
+   *
+   * Three things it refuses to do, each for its own reason. It does nothing for
+   * a **child session**: a workflow's five steps are five settled turns on one
+   * account, and probing per step would spawn five CLIs to learn the same number
+   * — the parent's own turn covers the run. It does nothing with **no peer
+   * attached**: the reading is for a screen, and a thread draining a queue
+   * overnight should not be spawning a process per turn for nobody. And it
+   * **swallows its own failure**: a missing `claude` binary must not surface as
+   * an error on a turn that succeeded — `getQuota` already records that verdict
+   * for the settings page to show, where it is the answer to a question someone
+   * actually asked.
+   *
+   * Deliberately not awaited. The turn is settled; nothing downstream of it may
+   * wait on a child process.
+   */
+  private refreshQuota(session: Session): void {
+    if (session.parentSessionId || session.peers.size === 0) return;
+    const agent = getAgent(session.agentId);
+    const profile = session.profile ?? getProfile(session.profileId);
+    const project = session.project ?? getProject(session.projectId);
+    /* Either reader will do: the agent's own probe, or the provider plan the
+       profile names — which outranks it, and is the only quota a thread on a
+       gateway has at all. */
+    if (!agent || !profile || !project) return;
+    if (!agent.quotaProbe && !profileUsage(profile)) return;
+    invalidateQuota(profile, agent.id);
+    void getQuota(agent, profile, project)
+      .then((quota) => this.emit(session, { ev: "quota", quota }))
+      .catch(() => {});
+  }
+
+  /** Hear every event of a session as it is journaled/fanned out — attached
+      peers or not. Returns the unsubscribe. */
+  subscribe(id: string, fn: (event: ThreadEvent) => void): () => void {
+    let set = this.subscribers.get(id);
+    if (!set) this.subscribers.set(id, (set = new Set()));
+    set.add(fn);
+    return () => {
+      set.delete(fn);
+      if (set.size === 0 && this.subscribers.get(id) === set) this.subscribers.delete(id);
+    };
+  }
+
+  /** A server-side subsystem putting an `update` on a thread's log — the
+      workflow runner mirroring a step into its parent. Journaled like any
+      update (which is what makes it replay), and flagged so the usage ledger
+      leaves it alone. */
+  emitOn(id: string, event: Extract<ThreadEvent, { ev: "update" }>): void {
+    const session = this.sessions.get(id);
+    if (session) this.emit(session, event, undefined, true);
+  }
+
+  /** Resolves when the named turn settles — cleanly, cancelled, or failed —
+      and rejects if the process goes away before it does. */
+  whenTurnSettled(id: string, turnId: string): Promise<TurnOutcome> {
+    return new Promise((settle, fail) => {
+      let list = this.turnWaiters.get(id);
+      if (!list) this.turnWaiters.set(id, (list = []));
+      list.push({ turnId, settle, fail });
+    });
+  }
+
+  private settleWaiters(session: Session, turnId: string, outcome: TurnOutcome): void {
+    const list = this.turnWaiters.get(session.id);
+    if (!list) return;
+    const rest = list.filter((w) => w.turnId !== turnId);
+    for (const w of list) if (w.turnId === turnId) w.settle(outcome);
+    if (rest.length) this.turnWaiters.set(session.id, rest);
+    else this.turnWaiters.delete(session.id);
+  }
+
+  /** The process is gone. Whatever it was still going to settle, it will not —
+      after the bridge's own rejections have had their microtask, so a turn the
+      close itself ended is reported as that turn's error, not as this. */
+  private processGone(session: Session, reason: string): void {
+    this.events.onProcessGone?.(session);
+    setImmediate(() => {
+      const list = this.turnWaiters.get(session.id);
+      if (!list) return;
+      this.turnWaiters.delete(session.id);
+      for (const w of list) w.fail(new Error(reason));
+    });
+  }
+
+  /** The live children of a thread — its workflow steps. */
+  childrenOf(id: string): Session[] {
+    return [...this.sessions.values()].filter((s) => s.parentSessionId === id);
+  }
+
+  setWorkflowRunner(runner: WorkflowUrlSource): void {
+    this.workflowRunner = runner;
   }
 
   /** A server-side subsystem (the task tailer) telling a thread's live peers
@@ -589,18 +766,31 @@ export class SessionManager {
         session.stderrMark = session.stderrCount;
       },
       enrichError: (error) => this.enrichError(session, error),
-      onPermissionRequest: () => this.events.onPermissionRequest?.(session),
-      onElicitationRequest: () => this.events.onElicitationRequest?.(session),
+      /* A workflow step never pushes: its question and its turn end belong to
+         the run, and a phone told "turn finished" per step would be told it
+         five times for one workflow. */
+      onPermissionRequest: () => {
+        if (!session.parentSessionId) this.events.onPermissionRequest?.(session);
+      },
+      onElicitationRequest: () => {
+        if (!session.parentSessionId) this.events.onElicitationRequest?.(session);
+      },
       hasQueued: () => !session.queueChain && listQueue(session.id).length > 0,
       /* The drain runs here, synchronously after `turn_ended` was journaled,
          so the log reads turn_ended(continued) → turn_started(combined). The
          push says "turn finished" only for a turn nothing follows. */
-      onTurnSettled: ({ error, continued }) => {
+      onTurnSettled: ({ error, interrupted, continued, turnId }) => {
+        this.settleWaiters(session, turnId, { error, interrupted });
+        /* A turn is what spends the plan, so it is also what dates the reading.
+           Before the `continued` return: a queue draining into the next turn is
+           still a turn that just ended, and skipping it would leave a long drain
+           showing the number from before any of it. */
+        this.refreshQuota(session);
         if (continued) {
           this.drainQueue(session);
           return;
         }
-        if (session.peers.size === 0) this.events.onTurnEnd?.(session, error);
+        if (session.peers.size === 0 && !session.parentSessionId) this.events.onTurnEnd?.(session, error);
       },
       /* Two callbacks where there was one, and the gap between them is the
          point — but the gap is about *precedence*, not about whether to write
@@ -659,7 +849,13 @@ export class SessionManager {
         session.historyLost = lost;
       },
       onSpawnStateChange: (next) => {
-        if (next.model !== undefined) session.model = next.model;
+        /* The agent reports the id it was given, which for Claude Code carries
+           the 1M suffix the env template appends. What the row holds is the
+           catalog's own id — the one every menu matches against and the one a
+           revive resolves the suffix from again. */
+        if (next.model !== undefined) {
+          session.model = session.profile ? bareModelId(session.profile, next.model) : next.model;
+        }
         if (next.effort !== undefined) session.effort = next.effort;
         this.persist(session);
       },
@@ -724,6 +920,7 @@ export class SessionManager {
   private collapse(session: Session, bridge: AcpBridge, reason: string): void {
     session.exited = true;
     bridge.close(new Error(reason));
+    this.processGone(session, reason);
     setTimeout(() => {
       if (session.bridge !== bridge) return;
       this.closePeers(session, 4001, truncateReason(reason));
@@ -742,6 +939,15 @@ export class SessionManager {
     id?: string,
     configChoices?: Record<string, string | boolean>,
     links: LinkSet = emptyLinks(),
+    opts: {
+      /** Make this a workflow step of that thread. */
+      parentSessionId?: string;
+      /** A title set before the first prompt, which the title sniff then leaves alone. */
+      title?: string;
+      /** Settings to put in place once the session exists — a step inheriting
+          its parent's permission mode, the same way a respawn keeps its own. */
+      restore?: import("./protocol.js").RestoreState;
+    } = {},
   ): Session {
     const session: Session = {
       id: id ?? randomUUID(),
@@ -756,7 +962,7 @@ export class SessionManager {
       project,
       model: model || profile.defaultModel || "",
       effort: effort ?? "",
-      title: "New thread",
+      title: opts.title ?? "New thread",
       acpSessionProvisional: false,
       liveAcpSessionId: null,
       historyLost: null,
@@ -773,6 +979,9 @@ export class SessionManager {
       exited: false,
       respawnChain: null,
       queueChain: null,
+      parentSessionId: opts.parentSessionId ?? null,
+      spawnProfileId: profile.id,
+      viaGateway: false,
       websearchViaMcp: false,
       websearchCalls: new Set(),
     };
@@ -781,7 +990,7 @@ export class SessionManager {
     // to exist by the time the agent's first update arrives.
     this.persist(session);
     this.persistLinks(session);
-    this.start(session, profile, project, model, effort, { configChoices });
+    this.start(session, profile, project, model, effort, { configChoices, restore: opts.restore });
     return session;
   }
 
@@ -809,14 +1018,28 @@ export class SessionManager {
        once the session exists instead. */
     const ownsCatalog = (profile.models?.length ?? 0) > 0;
     this.materializeFor(session, profile, project);
+    const agent = getAgent(session.agentId);
+    /* The allowlist an `"acp"`-live agent builds its model picker from. Written
+       before the spawn because it is read once, at `session/new`, and it is the
+       union across every profile that serves this agent rather than this one's
+       — a thread outlives its profile, and a list scoped to the spawning
+       profile would make the next one's models unreachable without exactly the
+       restart this is here to avoid. Empty for a profile with no catalog, which
+       hands the picker back to the agent's own models. */
+    if (agent?.liveConfig === "acp") {
+      materializeModelAllowlist(project.cwd, modelAllowlistFor(agent, profile, listProfiles()));
+    }
+    session.spawnProfileId = profile.id;
+    session.viaGateway = !!gatewayUrlFor(profile.id, session.agentId, profileBaseUrl(profile, session.agentId), session.id);
     const proc = spawnAgent(
       profile,
       session.agentId,
       project,
       ownsCatalog ? model : undefined,
       ownsCatalog ? effort : undefined,
+      session.id,
     );
-    const { mcpServers, websearchViaMcp } = this.serversFor(session, profile, project);
+    const { mcpServers, websearchViaMcp, workflowViaMcp } = this.serversFor(session, profile, project);
     session.websearchViaMcp = websearchViaMcp;
     session.websearchCalls = new Set(); // in-flight calls went with the old process
     // Both belong to the process about to be replaced, and the handshake below
@@ -830,6 +1053,7 @@ export class SessionManager {
       ...opts,
       agentOwned: ownsCatalog ? undefined : { model, effort },
       websearchViaMcp,
+      workflowViaMcp,
     });
     session.proc = proc;
     session.bridge = bridge; // flips the generation guard
@@ -848,15 +1072,183 @@ export class SessionManager {
   private serversFor(session: Session, profile: Profile, project: Project): {
     mcpServers: acp.McpServer[];
     websearchViaMcp: boolean;
+    workflowViaMcp: boolean;
   } {
     // getConfig, not loadConfig: this runs on every spawn, and re-reading and
     // re-parsing config.json each time bought nothing — saveWebSearch is the
     // only runtime writer and it invalidates the cache.
-    const mcpServers = mcpServersFor(this.effectiveLinks(session, profile), project, getConfig());
+    /* A workflow step is never handed the workflow server, whatever its
+       profile links: a step that could start a workflow makes the lifetime
+       accounting — caps, cancel propagation, restart recovery — a tree, and a
+       definition that spawns itself the obvious failure. One level. */
+    const workflow =
+      this.workflowRunner && !session.parentSessionId ? workflowServer(session, this.workflowRunner) : null;
+    const mcpServers = mcpServersFor(this.effectiveLinks(session, profile), project, getConfig(), workflow);
     return {
       mcpServers,
       websearchViaMcp: mcpServers.some((s) => s.name === WEB_SEARCH_SERVER_NAME),
+      workflowViaMcp: mcpServers.some((s) => s.name === WORKFLOW_SERVER_NAME),
     };
+  }
+
+  /* ── Changing a thread's provider, model or effort ──────────────────────
+   *
+   * All three used to mean the same thing: kill the process and spawn another,
+   * because all three are placed by the env template. They still are *at
+   * spawn* — but a running agent can be moved without being restarted, and the
+   * two halves of how are `AgentDef.liveConfig`:
+   *
+   *  - the endpoint and the credential are the shim's, not the child's. The
+   *    child talks to `/gw/<key>/s/<id>/…` and the shim resolves the thread's
+   *    profile per request (`gatewayStateOf`), so a profile change retargets
+   *    the very next call — including its `x-api-key`.
+   *  - the model is the agent's own selector where it will take one
+   *    (`"acp"`), and the shim's rewrite of the request body where it will not
+   *    (`"gateway"`).
+   *
+   * What is left over is still a respawn, and `applyConfig` is where the line
+   * is drawn — every case it cannot do live falls through to `respawn` rather
+   * than being refused, so the menu never has to know which is which.
+   */
+
+  /** What the shim needs to know about a thread, resolved per request. */
+  private gatewayStateOf(id: string): GatewaySession | undefined {
+    const session = this.sessions.get(id);
+    if (!session || !session.profile) return undefined;
+    const agent = getAgent(session.agentId);
+    const ownsCatalog = (session.profile.models?.length ?? 0) > 0;
+    /* Two ways the id the child names can be the wrong one. Codex is told its
+       model at spawn and will not be told another, so every request it makes
+       carries the stale id once the thread's model changes. And *any* agent
+       that has been moved to another profile is carrying that profile's ids in
+       its env — for Claude Code that is the side-job and alias vars, which name
+       models the new gateway very likely does not serve; the main model has
+       already been switched over ACP by then, but those have not. Everything
+       else forwards untouched, which is the case that costs nothing. */
+    const rewriteModel =
+      ownsCatalog &&
+      !!session.model &&
+      (agent?.liveConfig === "gateway" || session.profileId !== session.spawnProfileId);
+    return {
+      profileId: session.profileId,
+      agentId: session.agentId,
+      model: rewriteModel ? session.model : "",
+      effort: rewriteModel ? session.effort : "",
+      rewriteModel,
+    };
+  }
+
+  /**
+   * Move a thread to another profile, model or effort — without restarting it
+   * where that is possible, and by restarting it where it is not.
+   *
+   * The live path is the point, and it is deliberately conservative: anything
+   * it is not sure of falls back to the respawn that was always here. It
+   * refuses to be clever about four things in particular —
+   *
+   *  - a different **agent** is a different runtime, and nothing about a
+   *    running process survives that;
+   *  - a thread that is not behind the shim (the virtual Default profile has
+   *    no base URL to front) has no way to be retargeted, and neither has one
+   *    moving *to* such a profile;
+   *  - an `"acp"` agent that will not take the model — a profile whose models
+   *    reached the workspace allowlist after this process read it — because
+   *    the alternative to asking is finding out by being refused, with the
+   *    thread's record already changed;
+   *  - a thread with no live process at all, which is a revive.
+   *
+   * Answers `{ live }` so the caller can tell a client whether its socket
+   * survived: a respawn clears the event log and every peer has to reattach,
+   * and a live change is invisible to all of them but the menu that asked.
+   */
+  async applyConfig(
+    id: string,
+    next: { profile: Profile; agentId: string; project: Project; model?: string; effort?: string },
+  ): Promise<{ live: boolean }> {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error("unknown session");
+    if (session.deletedAt !== null) throw new Error("session deleted");
+    if (await this.applyConfigLive(session, next)) return { live: true };
+    await this.respawn(id, next.profile, next.agentId, next.project, next.model, next.effort);
+    return { live: false };
+  }
+
+  /** The live half of `applyConfig`; false means "this one needs a respawn",
+      and it is answered before anything about the thread has been changed. */
+  private async applyConfigLive(
+    session: Session,
+    next: { profile: Profile; agentId: string; project: Project; model?: string; effort?: string },
+  ): Promise<boolean> {
+    const agent = getAgent(session.agentId);
+    if (!agent?.liveConfig) return false;
+    if (next.agentId !== session.agentId) return false;
+    // Mid-respawn, mid-revive, or no process: whatever is about to exist is
+    // going to be spawned with these settings anyway.
+    if (session.respawnChain || !session.bridge || session.exited) return false;
+    const bridge = session.bridge;
+    const moving = next.profile.id !== session.profileId;
+    if (moving) {
+      // Nothing to retarget through, on one side or the other.
+      if (!session.viaGateway) return false;
+      if (!profileSupports(next.profile, session.agentId)) return false;
+      if (!gatewayUrlFor(next.profile.id, session.agentId, profileBaseUrl(next.profile, session.agentId), session.id)) {
+        return false;
+      }
+    }
+    const model = next.model || next.profile.defaultModel || "";
+    const effort = next.effort ?? "";
+    const ownsCatalog = (next.profile.models?.length ?? 0) > 0;
+    /* A profile with no catalog hands model and effort back to the agent (see
+       CLAUDE.md), and "back to the agent" is a different session state, not a
+       value we can set: the ids it would then own come out of its own selector
+       and the env that named them is still in the child. Respawn. */
+    if (moving && !ownsCatalog) return false;
+    if (!model) return false;
+
+    /* Asked before anything moves, because being refused after the record has
+       changed is the one failure this cannot recover from cheaply. */
+    const wire = agent.liveConfig === "acp" ? agentModelId(agent, next.profile, model) : "";
+    if (wire && !bridge.offersModel(wire)) return false;
+
+    /* The row moves first, and the order is load-bearing for a profile change:
+       the shim resolves the thread's provider per request, so between these two
+       statements a request either goes to the new gateway naming the new model
+       (row first — what the shim would rewrite it to anyway) or to the *old*
+       gateway naming the new model, which is a 404 the user did not ask for.
+       Nothing is lost if the change below then fails: `applyConfig` falls
+       through to a respawn that starts on exactly these settings. */
+    const previous = { profileId: session.profileId, profile: session.profile, model: session.model, effort: session.effort };
+    session.profileId = next.profile.id;
+    session.profile = next.profile;
+    session.model = model;
+    session.effort = effort;
+
+    if (wire) {
+      const placed = await bridge.setByCategory({ model: wire, effort }, "on the running agent");
+      /* Effort is the softer half, and only for this agent: Claude Code's env
+         has no effort var at all, so a restart would not have placed one either
+         — a selector the model does not offer costs the same nothing it always
+         did, and the row still records the pick for the next spawn. The model
+         is not soft, so a refusal puts the thread back as it was and lets the
+         respawn place it the old way. */
+      if (!placed.model) {
+        Object.assign(session, previous);
+        return false;
+      }
+      /* `setConfigOption` recorded the id it was given, which for Claude Code
+         carries the 1M suffix and was resolved against the profile the thread
+         was still on when the call went out. */
+      session.model = model;
+    }
+    /* `"gateway"` needs nothing said to the agent: the row is what the shim
+       reads on the next request, and the child never learns it moved. */
+
+    this.persist(session);
+    /* Every peer, the asking one included: nothing here went through the
+       journal, so a device that is not the one holding the menu has no other
+       way to learn the thread moved. */
+    this.emit(session, { ev: "spawn_config", profileId: session.profileId, model, effort });
+    return true;
   }
 
   /**
@@ -1162,6 +1554,7 @@ export class SessionManager {
     this.log.flush();
     this.resetStderr(session);
     proc?.kill();
+    this.processGone(session, "thread retired");
   }
 
   list() {
@@ -1186,6 +1579,7 @@ export class SessionManager {
       exited: s.exited,
       promptActive: s.bridge?.promptActive ?? false,
       cursor: s.eventCount,
+      parentSessionId: s.parentSessionId,
     }));
   }
 
@@ -1201,8 +1595,11 @@ export class SessionManager {
     if (!session || session.deletedAt !== null) return false;
     this.closePeers(session, 4000, "session deleted");
     session.deletedAt = Date.now();
+    // Retiring fires onProcessGone, which is where the runner cancels the run
+    // this thread was orchestrating; the steps then go to the trash with it.
     this.retire(session);
     this.persist(session);
+    for (const child of this.childrenOf(id)) this.softDelete(child.id);
     return true;
   }
 
@@ -1213,6 +1610,7 @@ export class SessionManager {
     // Still process-less: the client revives it the same way it revives any
     // retired thread.
     this.persist(session);
+    for (const child of this.childrenOf(id)) this.restore(child.id);
     return true;
   }
 
@@ -1220,6 +1618,10 @@ export class SessionManager {
   purge(id: string): boolean {
     const session = this.sessions.get(id);
     if (!session) return false;
+    /* Children first: `parent_session_id` is not a foreign key on purpose (see
+       schema.ts), so each step goes through this same path — its process, its
+       peers, its FTS rows, its slot in the map. */
+    for (const child of this.childrenOf(id)) this.purge(child.id);
     this.closePeers(session, 4000, "session purged");
     this.retire(session);
     this.sessions.delete(id);

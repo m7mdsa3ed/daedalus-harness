@@ -17,6 +17,7 @@ import {
   readFile as readWorkspaceFile,
   readFileBytes,
   renameEntry,
+  searchEntries,
   statFile,
   writeFile as writeWorkspaceFile,
 } from "../workspace-fs.js";
@@ -65,6 +66,19 @@ export function workspaceRoutes(app: Hono): void {
         ignored: flag(c, "ignored"),
       }),
     ),
+  );
+
+  /* Feeds the composer's `@` menu. Separate from `/tree` because it answers a
+     different question — "where is the file called roughly this", across the
+     whole project — and a `?q=` on a listing route would be two routes wearing
+     one path. */
+  app.get("/api/projects/:projectId/files/search", (c) =>
+    workspace(c, () => {
+      const limit = Number(c.req.query("limit"));
+      return searchEntries(c.req.param("projectId"), c.req.query("q"), {
+        limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
+      });
+    }),
   );
 
   app.get("/api/projects/:projectId/file", (c) =>
@@ -156,20 +170,32 @@ export function workspaceRoutes(app: Hono): void {
 
   /* Source control. Every write names its paths explicitly — there is no
      "everything" shortcut on discard, because the one destructive operation here
-     should not have a form where an empty list means the whole tree. */
+     should not have a form where an empty list means the whole tree.
+
+     `?repo=` / `body.repo` names which repository, project-relative, because a
+     project directory can hold several (or sit inside one). Absent means the
+     project's own — which is what every client before this sent. */
+  app.get("/api/projects/:projectId/git/repos", (c) =>
+    workspace(c, () => git.repositories(c.req.param("projectId"))),
+  );
+
   app.get("/api/projects/:projectId/git/status", (c) =>
-    workspace(c, () => git.status(c.req.param("projectId"))),
+    workspace(c, () => git.status(c.req.param("projectId"), c.req.query("repo"))),
   );
 
   app.get("/api/projects/:projectId/git/branches", (c) =>
-    workspace(c, () => git.branches(c.req.param("projectId"))),
+    workspace(c, () => git.branches(c.req.param("projectId"), c.req.query("repo"))),
   );
 
   app.get("/api/projects/:projectId/git/file", (c) => {
     const comparison = c.req.query("comparison");
     const side: git.Comparison =
       comparison === "staged" ? "staged" : comparison === "worktree" ? "worktree" : "head";
-    return workspace(c, () => git.fileAt(c.req.param("projectId"), c.req.query("path") ?? "", side));
+    /* No `?repo=`: the path is project-relative and names exactly one
+       worktree, so the server derives it. */
+    return workspace(c, () =>
+      git.fileAt(c.req.param("projectId"), c.req.query("path") ?? "", side),
+    );
   });
 
   app.post("/api/projects/:projectId/git/:action", async (c) => {
@@ -181,38 +207,44 @@ export function workspaceRoutes(app: Hono): void {
       branch?: unknown;
       create?: unknown;
       amend?: unknown;
+      repo?: unknown;
     };
     const paths = Array.isArray(body.paths)
       ? body.paths.filter((p): p is string => typeof p === "string")
       : [];
+    const repo = typeof body.repo === "string" ? body.repo : undefined;
 
     switch (action) {
       case "stage":
         return workspace(c, async () => {
-          await git.stage(projectId, paths);
-          return git.status(projectId);
+          await git.stage(projectId, paths, repo);
+          return git.status(projectId, repo);
         });
       case "unstage":
         return workspace(c, async () => {
-          await git.unstage(projectId, paths);
-          return git.status(projectId);
+          await git.unstage(projectId, paths, repo);
+          return git.status(projectId, repo);
         });
       case "discard":
         return workspace(c, async () => {
-          await git.discard(projectId, paths);
-          return git.status(projectId);
+          await git.discard(projectId, paths, repo);
+          return git.status(projectId, repo);
         });
       case "commit":
         return workspace(c, async () => {
           const result = await git.commit(projectId, String(body.message ?? ""), {
             amend: body.amend === true,
+            repo,
           });
-          return { ...result, status: await git.status(projectId) };
+          return { ...result, status: await git.status(projectId, repo) };
         });
       case "checkout":
         return workspace(c, async () => {
-          await git.checkout(projectId, String(body.branch ?? ""), { create: body.create === true });
-          return git.status(projectId);
+          await git.checkout(projectId, String(body.branch ?? ""), {
+            create: body.create === true,
+            repo,
+          });
+          return git.status(projectId, repo);
         });
       default:
         return c.json({ error: `unknown git action: ${action}` }, 404);

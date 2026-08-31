@@ -1,3 +1,4 @@
+import * as React from "react"
 import { useEffect, useMemo, useState } from "react"
 import {
   BotIcon,
@@ -18,6 +19,9 @@ import {
 import { Logo } from "@/components/ui/logo"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useStripSummary } from "@/components/composer-strip"
+import { formatReset, peakWindow, quotaStatusText, quotaTone } from "@/lib/quota"
+import type { Actions } from "@/lib/actions"
+import type { SessionMeta } from "@/lib/settings"
 import { extractSubagent, extractTodos, toolHeading, toolViewOf } from "@/lib/tools"
 import { activeSubagents, buildRows } from "@/lib/transcript-rows"
 import type { PlanItem, ThreadState, ToolItem } from "@/lib/store"
@@ -73,10 +77,88 @@ function Stat({ label, value, valueClass }: { label: string; value: string; valu
 }
 
 /**
+ * The plan behind the turn, under the turn's own numbers.
+ *
+ * Two different questions share this popover on purpose. The stats above it are
+ * about *this thread* — how full its context is, what the last turn cost. This
+ * is about the account the thread spends, which is the thing that decides
+ * whether there is a next turn at all, and there was nowhere in the app to see
+ * it. Settings › Usage is the full view; this is the glance.
+ *
+ * Fetched when the popover first opens rather than with the thread: it costs a
+ * process on the server, and a thread nobody expands should not pay for one.
+ * After that the socket keeps it current on its own — the server re-reads on
+ * every settled turn — so this asks once and then only listens.
+ */
+function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: SessionMeta; actions: Actions }) {
+  const { quota } = thread
+  const asked = React.useRef(false)
+  React.useEffect(() => {
+    if (asked.current || quota || !meta) return
+    asked.current = true
+    void actions.loadQuota(meta)
+  }, [quota, meta, actions])
+
+  if (!quota || quota.status === "unsupported") return null
+  const peak = peakWindow(quota)
+
+  return (
+    <div className="border-t pt-2">
+      <p className="font-medium">Plan usage</p>
+      {quota.windows.length === 0 ? (
+        <p className="mt-0.5 text-xs text-muted-foreground">{quotaStatusText(quota)}</p>
+      ) : (
+        <div className="mt-1.5 space-y-2">
+          {quota.windows.map((window) => {
+            const percent = Math.min(100, Math.max(0, Math.round(window.usedPercent)))
+            const tone = quotaTone(percent)
+            const reset = formatReset(window)
+            return (
+              <div key={window.id}>
+                <div className="flex items-baseline justify-between gap-2 text-xs">
+                  <span className="truncate text-muted-foreground">{window.label}</span>
+                  <span className={cn("font-medium tabular-nums", tone.text)}>{percent}%</span>
+                </div>
+                <div
+                  className="mt-1 h-1 w-full overflow-hidden rounded-full bg-muted"
+                  role="progressbar"
+                  aria-label={window.label}
+                  aria-valuenow={percent}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                >
+                  <div className={cn("h-full rounded-full transition-all", tone.bar)} style={{ width: `${percent}%` }} />
+                </div>
+                {reset && <p className="mt-0.5 text-[10px] text-muted-foreground">Resets {reset}</p>}
+              </div>
+            )
+          })}
+          {peak && peak.usedPercent >= 90 && (
+            <p className="rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-[11px] text-destructive">
+              Nearly out of plan — {peak.label.toLowerCase()} is {Math.round(peak.usedPercent)}% used.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
  * The single home for per-turn telemetry: context occupancy on the ring, and
  * tokens / cache rate / TTFT inside its popover. The header carries none of it.
  */
-export function ContextIndicator({ thread }: { thread: ThreadState }) {
+export function ContextIndicator({
+  thread,
+  meta,
+  actions,
+}: {
+  thread: ThreadState
+  /** The thread's row, for the (profile, agent) pair the quota is read under.
+      Absent for a draft, which has no server-side thread to ask about yet. */
+  meta?: SessionMeta
+  actions: Actions
+}) {
   const { context, usage, ttftMs } = thread
   if (!context && !usage && ttftMs === null) return null
 
@@ -186,6 +268,7 @@ export function ContextIndicator({ thread }: { thread: ThreadState }) {
             context size — a turn re-sends the context once per tool call. Revive resets them.
           </p>
         )}
+        <PlanUsage thread={thread} meta={meta} actions={actions} />
       </PopoverContent>
     </Popover>
   )
@@ -321,7 +404,11 @@ function ChecklistCollapsible({
               </span>
               <span
                 className={cn(
-                  "min-w-0 flex-1 leading-6",
+                  // break-words, not truncate: an expanded checklist is opened
+                  // to be read in full, and a step is often a path or a
+                  // command whose one long token would otherwise be clipped by
+                  // the strip's own `overflow-hidden` and read as missing.
+                  "min-w-0 flex-1 leading-6 break-words",
                   row.status === "completed"
                     ? "text-muted-foreground line-through opacity-70"
                     : row.status === "in_progress"
@@ -529,7 +616,7 @@ export function ComposerAgents({ thread }: { thread: ThreadState }) {
               <span className="grid size-6 shrink-0 place-items-center">
                 <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin text-primary" />
               </span>
-              <span className="min-w-0 flex-1 truncate leading-6 text-foreground">
+              <span className="min-w-0 flex-1 leading-6 break-words text-foreground">
                 {agent.name && <span className="font-mono text-muted-foreground">{agent.name} </span>}
                 {agent.task}
               </span>
@@ -579,7 +666,10 @@ export function ActivityIndicator({ thread }: { thread: ThreadState }) {
   return (
     <div
       aria-label="Agent working"
-      className="inline-flex items-center gap-2 text-primary"
+      // flex, not inline-flex: an inline-flex box is sized by its content, so
+      // the `truncate` below had nothing to truncate against and a long tool
+      // heading (a whole bash command, a long path) ran off the transcript.
+      className="flex min-w-0 max-w-full items-center gap-2 text-primary"
       role="status"
     >
       {/* The mark glints for as long as the turn runs — the same sweep the
@@ -591,7 +681,7 @@ export function ActivityIndicator({ thread }: { thread: ThreadState }) {
           text, and background-image doesn't inherit, so a nested span goes blank. */}
       {/* leading-6 matches a step row's line box, so the working line keeps the
           transcript's vertical rhythm. */}
-      <span aria-hidden className="harness-shimmer truncate text-xs leading-6">
+      <span aria-hidden className="harness-shimmer min-w-0 truncate text-xs leading-6">
         {message}…
       </span>
     </div>

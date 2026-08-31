@@ -1,7 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { eq, like } from "drizzle-orm";
 import { z } from "zod";
-import { agentOptions as agentOptionsTable, db, profiles as profilesTable, type ProfileAgentLink } from "./db/index.js";
+import {
+  USAGE_KINDS,
+  agentOptions as agentOptionsTable,
+  agentQuota as agentQuotaTable,
+  db,
+  profiles as profilesTable,
+  type ProfileAgentLink,
+  type ProfileUsage,
+} from "./db/index.js";
 import { PROFILE_LINKS, emptyLinks, linksOf, readLinks, writeLinks } from "./db/links.js";
 
 // A profile is the PROVIDER configuration used in a session (credentials,
@@ -43,6 +51,17 @@ export const ProfileInputSchema = z.object({
       that serves a genuinely cheaper tier worth using. Deliberately a bare id
       and not a `models[]` entry — nothing may pick it for a thread. */
   smallModel: z.string().optional().default(""),
+  /** How to read this provider's subscription usage, when it sells one and
+      exposes an API for it (see ProfileUsage / usage-api.ts). Absent or
+      `{kind:"none"}` means there is nothing to read, and the agent's own
+      `quotaProbe` — the machine's `claude`/`codex login` — answers instead. */
+  usage: z
+    .object({
+      kind: z.enum(USAGE_KINDS),
+      baseUrl: z.string().optional(),
+      apiKey: z.string().optional(),
+    })
+    .nullish(),
   /** Logo shown next to the profile in pickers — a URL (models.dev serves
       provider marks at https://models.dev/logos/<provider>.svg). Empty means
       "no logo of its own", and the client falls back to the agent's mark. */
@@ -95,6 +114,10 @@ export function defaultProfileFor(agentId: string, _agentName?: string): Profile
     // No logo, deliberately: the Default profile IS the agent as it ships,
     // and the client already draws the agent's own mark for it.
     logoUrl: "",
+    // No provider usage either, for the same reason: a Default carries no
+    // credentials, so there is no provider account to ask about. The agent's
+    // own probe is exactly the right reader here.
+    usage: null,
     ...emptyLinks(),
     virtual: true,
   };
@@ -145,6 +168,7 @@ function toProfile(row: Record<string, unknown>, links = linksOf(PROFILE_LINKS, 
     agents: (row.agents as Record<string, ProfileAgentLink> | null | undefined) ?? {},
     smallModel: (row.smallModel as string | null | undefined) ?? "",
     logoUrl: (row.logoUrl as string | null | undefined) ?? "",
+    usage: (row.usage as ProfileUsage | null | undefined) ?? null,
   };
 }
 
@@ -176,11 +200,18 @@ export function getProfile(id: string): Profile | undefined {
   return row ? toProfile(row) : undefined;
 }
 
-/** Secrets never leave the server: the API key is replaced by a boolean the
-    client uses to render the "leave empty to keep it" hint. */
+/** Secrets never leave the server: each key is replaced by a boolean the client
+    uses to render the "leave empty to keep it" hint. `usage.apiKey` is the
+    second one — a separate dashboard token where a provider issues one — and it
+    is redacted the same way rather than being sent back because it sits one
+    level down in a JSON column. */
 export function redact(profile: Profile) {
-  const { apiKey, ...rest } = profile;
-  return { ...rest, hasApiKey: Boolean(apiKey) };
+  const { apiKey, usage, ...rest } = profile;
+  return {
+    ...rest,
+    usage: usage ? { kind: usage.kind, baseUrl: usage.baseUrl ?? "", hasApiKey: Boolean(usage.apiKey) } : null,
+    hasApiKey: Boolean(apiKey),
+  };
 }
 
 /** The columns of the profiles table, without the link arrays that live in
@@ -199,12 +230,28 @@ export function createProfile(input: ProfileInput): Profile {
   return getProfile(profile.id)!;
 }
 
+/** The usage block as saved, with an empty `apiKey` reading as "keep the stored
+    one" — the same bargain the profile's own key makes, for the same reason:
+    the client is sent a boolean, so it has nothing to send back. A switch to
+    another provider still keeps it, which is deliberate; changing providers is
+    also how you would clear a key that no longer applies, and the alternative
+    is silently dropping a credential on an unrelated edit. */
+function keepUsageKey(next: ProfileInput["usage"], previous: ProfileUsage | null | undefined) {
+  if (!next) return next ?? null;
+  return { ...next, apiKey: next.apiKey || previous?.apiKey || "" };
+}
+
 export function updateProfile(id: string, input: ProfileInput): Profile | undefined {
   if (isVirtualProfile(id)) return undefined;
   const existing = db.select().from(profilesTable).where(eq(profilesTable.id, id)).get();
   if (!existing) return undefined;
   // Empty apiKey in an update means "keep the stored key" (the client never sees it).
-  const updated: Profile = { ...input, id, apiKey: input.apiKey || existing.apiKey };
+  const updated: Profile = {
+    ...input,
+    id,
+    apiKey: input.apiKey || existing.apiKey,
+    usage: keepUsageKey(input.usage, existing.usage),
+  };
   db.transaction((tx) => {
     tx.update(profilesTable).set(columnsOf(updated)).where(eq(profilesTable.id, id)).run();
     writeLinks(tx, PROFILE_LINKS, id, updated);
@@ -213,6 +260,11 @@ export function updateProfile(id: string, input: ProfileInput): Profile | undefi
        key may change what it serves). A stale row would keep answering the
        draft menu until someone found `?refresh=1`. */
     tx.delete(agentOptionsTable).where(like(agentOptionsTable.key, `${id}:%`)).run();
+    /* Same argument, and it did not apply before this profile could name a usage
+       provider: the quota cache expires on a TTL because a quota moves on its
+       own, but an edit to the credentials or the provider makes the cached
+       number an answer about a different account, which no TTL covers. */
+    tx.delete(agentQuotaTable).where(like(agentQuotaTable.key, `${id}:%`)).run();
   });
   return getProfile(id);
 }

@@ -1,7 +1,26 @@
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 import { z } from "zod";
 import { createScheduled, deleteScheduled, listScheduled, updateScheduled } from "../scheduler.js";
 import { TaskDirError, type TaskTailer } from "../tasks.js";
+import {
+  BoardError,
+  CreateBoardSchema,
+  CreateStatusSchema,
+  ReorderStatusesSchema,
+  UpdateBoardSchema,
+  UpdateStatusSchema,
+  createBoard,
+  createStatus,
+  deleteBoard,
+  deleteStatus,
+  getBoard,
+  listAllStatuses,
+  listBoards,
+  listStatuses,
+  reorderStatuses,
+  updateBoard,
+  updateStatus,
+} from "../boards.js";
 import {
   CreateTaskSchema,
   ReorderEntrySchema,
@@ -61,16 +80,96 @@ export function taskRoutes(app: Hono, deps: { sessions: SessionManager; tasks: T
     deleteScheduled(c.req.param("id")) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404),
   );
 
+  /* ── Boards and their columns ──
+     A board is a kanban and a status is one of its columns, both rows rather
+     than constants, which is what lets a user add a status. Deleting either is
+     destructive in a way a task delete is not (a column holds other people's
+     work), so both refuse to leave the app with nothing to render and
+     `deleteStatus` rehomes rather than cascades — see boards.ts. `BoardError`
+     carries the status code for the cases a caller can fix. */
+  const guard = async (c: Context, run: () => Response): Promise<Response> => {
+    try {
+      return run();
+    } catch (err) {
+      if (err instanceof BoardError)
+        return c.json({ error: err.message }, err.status === 404 ? 404 : 400);
+      throw err;
+    }
+  };
+
+  app.get("/api/boards", (c) =>
+    // One request for the whole switcher: the boards plus every column of
+    // every board, since the client needs a board's columns the instant it is
+    // selected and a request per board would make switching feel remote.
+    c.json({ boards: listBoards(), statuses: listAllStatuses() }),
+  );
+
+  app.post("/api/boards", crud(CreateBoardSchema, { lenientJson: true }).create(createBoard));
+
+  app.patch("/api/boards/:id", crud(UpdateBoardSchema, { lenientJson: true }).update(updateBoard));
+
+  app.delete("/api/boards/:id", (c) =>
+    guard(c, () =>
+      deleteBoard(c.req.param("id")) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404),
+    ),
+  );
+
+  app.get("/api/boards/:id/statuses", (c) =>
+    getBoard(c.req.param("id"))
+      ? c.json(listStatuses(c.req.param("id")))
+      : c.json({ error: "not found" }, 404),
+  );
+
+  app.post("/api/boards/:id/statuses", async (c) => {
+    const parsed = CreateStatusSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    return guard(c, () => c.json(createStatus(c.req.param("id"), parsed.data), 201));
+  });
+
+  app.post("/api/boards/:id/statuses/reorder", async (c) => {
+    const parsed = ReorderStatusesSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    if (!getBoard(c.req.param("id"))) return c.json({ error: "not found" }, 404);
+    return c.json(reorderStatuses(c.req.param("id"), parsed.data.ids));
+  });
+
+  app.patch("/api/statuses/:id", crud(UpdateStatusSchema, { lenientJson: true }).update(updateStatus));
+
+  /* `moveTo` is where this column's tasks go. Omitted, they go to the board's
+     first remaining column — never nowhere. */
+  app.delete("/api/statuses/:id", (c) => {
+    const moveTo = c.req.query("moveTo");
+    return guard(c, () =>
+      deleteStatus(c.req.param("id"), moveTo || undefined)
+        ? c.json({ ok: true })
+        : c.json({ error: "not found" }, 404),
+    );
+  });
+
   /* Tasks board. A standalone, top-level resource — no project/session/agent
      scoping yet, per "no connection between the agents and the board, initially".
      The whole board is small (a few hundred rows at most), so every mutation
      answers with the full list and the client reconciles from it rather than
      trying to diff. */
-  app.get("/api/tasks", (c) => c.json(listTasks()));
+  app.get("/api/tasks", (c) => {
+    const boardId = c.req.query("board");
+    return c.json(listTasks(boardId || undefined));
+  });
 
-  app.post("/api/tasks", crud(CreateTaskSchema, { lenientJson: true }).create(createTask));
+  app.post("/api/tasks", async (c) => {
+    const parsed = CreateTaskSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    return guard(c, () => c.json(createTask(parsed.data), 201));
+  });
 
-  app.patch("/api/tasks/:id", crud(UpdateTaskSchema, { lenientJson: true }).update(updateTask));
+  app.patch("/api/tasks/:id", async (c) => {
+    const parsed = UpdateTaskSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    return guard(c, () => {
+      const row = updateTask(c.req.param("id"), parsed.data);
+      return row ? c.json(row) : c.json({ error: "not found" }, 404);
+    });
+  });
 
   /* Whole-board reorder + status moves, one request. The body is the board's new
      column-by-column order; the server commits it atomically. */
@@ -79,8 +178,8 @@ export function taskRoutes(app: Hono, deps: { sessions: SessionManager; tasks: T
     const entries = Array.isArray(body.entries) ? body.entries : [];
     const parsed = z.array(ReorderEntrySchema).safeParse(entries);
     if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-    const board = typeof body.board === "string" && body.board.trim() ? body.board : "default";
-    return c.json(applyReorder(parsed.data, board));
+    const boardId = typeof body.board === "string" && body.board.trim() ? body.board : "default";
+    return guard(c, () => c.json(applyReorder(parsed.data, boardId)));
   });
 
   app.delete("/api/tasks/:id", (c) =>

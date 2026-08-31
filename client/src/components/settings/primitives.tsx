@@ -6,6 +6,7 @@ import * as React from "react"
 import { ArrowLeft, type LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { type SectionMeta } from "./sections"
@@ -139,42 +140,114 @@ export const pairs = (value: string, sep: string) =>
       : { name: line.slice(0, at).trim(), value: line.slice(at + sep.length).trim() }
   })
 
-/** Checkbox list for linking library entries (MCP servers, skills) to a project. */
+/** Checkbox list for linking library entries (MCP servers, skills) to a project.
+    `searchable` adds the filter box and the all/none pair — opt-in, because a
+    project's handful of links needs neither and a provider's model list needs
+    both. Both act on what the filter leaves visible, and selections outside it
+    are never touched: "none" after a search means none *of these*. */
 export function Picker<T extends { id: string; name: string }>({
   items,
   selected,
   onToggle,
   subtitle,
   empty,
+  searchable = false,
+  searchText = (item) => `${item.name} ${item.id}`,
+  searchPlaceholder = "Search…",
 }: {
   items: T[]
   selected: string[]
   onToggle: (ids: string[]) => void
   subtitle: (item: T) => React.ReactNode
   empty: string
+  searchable?: boolean
+  searchText?: (item: T) => string
+  searchPlaceholder?: string
 }) {
+  const [query, setQuery] = React.useState("")
+  const needle = query.trim().toLowerCase()
+  const shown = React.useMemo(
+    () => (needle ? items.filter((item) => searchText(item).toLowerCase().includes(needle)) : items),
+    // searchText is an inline arrow at every call site; the items and the query are what change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, needle],
+  )
+
   if (items.length === 0) {
     return <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">{empty}</p>
   }
-  return (
-    <div className="max-h-64 divide-y overflow-y-auto rounded-lg border">
-      {items.map((item) => (
-        <label key={item.id} className="flex cursor-pointer items-start gap-3 px-3 py-2 hover:bg-accent/50">
-          <Checkbox
-            className="mt-0.5"
-            checked={selected.includes(item.id)}
-            onCheckedChange={(checked) =>
-              onToggle(checked ? [...selected, item.id] : selected.filter((id) => id !== item.id))
-            }
-          />
-          <span className="min-w-0 flex-1">
-            <span className="block text-sm break-words">{item.name}</span>
-            <span className="mt-0.5 block font-mono text-[11px] break-all text-muted-foreground">
-              {subtitle(item)}
+
+  const shownIds = shown.map((item) => item.id)
+  const allShownSelected = shown.length > 0 && shownIds.every((id) => selected.includes(id))
+  const selectAll = () => onToggle([...selected, ...shownIds.filter((id) => !selected.includes(id))])
+  const selectNone = () => onToggle(selected.filter((id) => !shownIds.includes(id)))
+
+  const list =
+    shown.length === 0 ? (
+      <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
+        Nothing matches “{query.trim()}”.
+      </p>
+    ) : (
+      <div className="max-h-64 divide-y overflow-y-auto rounded-lg border">
+        {shown.map((item) => (
+          <label key={item.id} className="flex cursor-pointer items-start gap-3 px-3 py-2 hover:bg-accent/50">
+            <Checkbox
+              className="mt-0.5"
+              checked={selected.includes(item.id)}
+              onCheckedChange={(checked) =>
+                onToggle(checked ? [...selected, item.id] : selected.filter((id) => id !== item.id))
+              }
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm break-words">{item.name}</span>
+              <span className="mt-0.5 block font-mono text-[11px] break-all text-muted-foreground">
+                {subtitle(item)}
+              </span>
             </span>
-          </span>
-        </label>
-      ))}
+          </label>
+        ))}
+      </div>
+    )
+
+  if (!searchable) return list
+
+  const selectedShown = shownIds.filter((id) => selected.includes(id)).length
+  return (
+    <div className="space-y-2">
+      <Input
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder={searchPlaceholder}
+        className="h-8"
+      />
+      <div className="flex items-center gap-2 px-0.5 text-xs text-muted-foreground">
+        <span>
+          {selectedShown} of {shown.length} selected
+          {shown.length !== items.length ? ` · ${items.length} total` : ""}
+        </span>
+        <Button
+          type="button"
+          variant="link"
+          size="sm"
+          className="ml-auto h-auto p-0 text-xs"
+          disabled={shown.length === 0 || allShownSelected}
+          onClick={selectAll}
+        >
+          Select all
+        </Button>
+        <span aria-hidden>·</span>
+        <Button
+          type="button"
+          variant="link"
+          size="sm"
+          className="h-auto p-0 text-xs"
+          disabled={selectedShown === 0}
+          onClick={selectNone}
+        >
+          Select none
+        </Button>
+      </div>
+      {list}
     </div>
   )
 }

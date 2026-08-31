@@ -156,16 +156,38 @@ const FILE_KEYS = new Set(["file_path", "filePath", "path", "notebook_path"])
 
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
-/** Drop a file reference from the tail of a sentence, so "Read src/index.ts"
-    (the description) and a `src/index.ts` badge never say the path twice. The
-    full path is tried first, then the basename, then a dangling separator left
-    by stripping a basename that was only the last segment of the path. */
-function stripTrailingFileRef(text: string, path: string, name: string): string {
+/** Drop a file reference from a sentence, so "Read src/index.ts" (the
+    description) and a `src/index.ts` badge never say the path twice — the path
+    the row acted on belongs in the badge, once.
+
+    Two rules, because the two references are not equally safe to cut. A
+    reference that *looks* like a path — it has a separator or an extension — is
+    distinctive, so it goes wherever it appears: an agent writes "Read
+    src/index.ts (lines 1-80)" and "Reading src/index.ts to find the reducer"
+    as readily as it writes the path last, and the tail-only rule this replaces
+    left the whole path in the row for both. A bare word is not distinctive, and
+    "Update the index page" must not lose a word because the call read
+    `src/index`, so that one is still only cut from the tail. */
+const looksLikePath = (value: string): boolean => value.includes("/") || value.includes(".")
+
+function stripFileRef(text: string, path: string, name: string): string {
   let out = text
-  for (const ref of [path, name]) {
-    out = out.replace(new RegExp(`(?:\\s*[-–:]?\\s*${escapeRegExp(ref)})$`, "i"), "")
+  for (const ref of path === name ? [path] : [path, name]) {
+    const escaped = escapeRegExp(ref)
+    // `\b` only where it can match: an absolute path starts with "/", and a
+    // boundary between a space and a slash is not a boundary at all.
+    const start = /^\w/.test(ref) ? "\\b" : ""
+    out = looksLikePath(ref)
+      ? out.replace(new RegExp(`${start}${escaped}`, "gi"), " ")
+      : out.replace(new RegExp(`(?:\\s*[-–:]?\\s*${escaped})\\s*$`, "i"), " ")
   }
-  return out.replace(/[\s/:]+$/, "").trim()
+  return out
+    // Whatever the reference was sitting in: an empty pair of brackets or
+    // quotes, the separator that introduced it, the space it left behind.
+    .replace(/[([{'"`]\s*[)\]}'"`]/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s\-–:,]+|[\s/\-–:,]+$/g, "")
+    .trim()
 }
 
 /** The path this call acted on, when it acted on a file. Returns the full text
@@ -247,8 +269,6 @@ export function toolHeading(
      description's own mention of the path is cut so the sentence doesn't repeat
      the badge ("Read src/index.ts" becomes "Read" + a `src/index.ts` chip). */
   const file = fileTargetOf(item)
-  const fileInTitle =
-    file && description && description.toLowerCase().includes(file.name.toLowerCase())
 
   if (!description) {
     /* The agent sent no prose, so the title is the thing it acted on. Prefix it
@@ -265,21 +285,26 @@ export function toolHeading(
     return hasVerb ? { title: `${verb} ${target}`, prose: false } : { title: target, prose: false }
   }
   const title = firstLine(description)
-  const base: ToolHeading = { title, detail: title === target ? undefined : target, prose: true }
-  /* The description leads, and the file is drawn as the chip it mentions — the
-     path is dropped from both the title and the mono detail so the row never
-     says the path twice. A `Read src/index.ts` prose title keeps only "Read". */
-  if (file && fileInTitle) {
-    const cleaned = stripTrailingFileRef(title, file.path, file.name)
+  /* The description leads and the file is drawn as the chip — the path is
+     dropped from both the title and the mono caption, so a call that acted on
+     a file says the file exactly once, in the badge. That holds whether or not
+     the sentence happened to mention it: the caption is `target`, and for a
+     file call the target IS the path, so leaving it printed the path under
+     every prose-titled read. A title that was nothing *but* the path falls
+     back to the kind's verb ("Read"), which is what the badge needs beside it
+     to read as a sentence. */
+  if (file) {
+    const cleaned = stripFileRef(title, file.path, file.name)
+    const verb = KIND_VERB[toolKindOf({ ...item, title: item.title ?? "" })] ?? "Read"
     return {
-      title: cleaned || "Read",
+      title: cleaned || verb,
       detail: undefined,
       file: file.name,
       filePath: file.path,
       prose: true,
     }
   }
-  return base
+  return { title, detail: title === target ? undefined : target, prose: true }
 }
 
 /** The most useful single string in the input, if any — the "command". */

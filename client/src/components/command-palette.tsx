@@ -11,13 +11,10 @@
 import * as React from "react"
 import {
   ArrowLeft,
-  CodeXmlIcon,
   Copy,
   Cpu,
   FolderIcon,
   FolderPlus,
-  FolderTreeIcon,
-  GitBranchIcon,
   MonitorIcon,
   Gauge,
   Keyboard,
@@ -80,6 +77,7 @@ import { useLocation, useNavigate } from "react-router"
 import { boardPath, currentThreadId, settingsPath, threadPath } from "@/lib/router"
 import {
   clearSettings,
+  isTopLevel,
   loadServers,
   loadSettings,
   setActiveServer,
@@ -269,6 +267,7 @@ export function CommandPalette({
   // Deleted threads live in the sidebar's Trash, not in the jump list — the
   // palette is for going somewhere, and a deleted thread is nowhere to go.
   const sessions = state.sessions
+    .filter(isTopLevel)
     .filter((session) => !session.deletedAt)
     .sort((a, b) => b.createdAt - a.createdAt)
   const projectName = (projectId: string) =>
@@ -453,23 +452,6 @@ export function CommandPalette({
               <CommandGroup heading="Workspace">
                 {meta && (
                   <CommandItem
-                    value="explorer files tree open project folder"
-                    onSelect={() =>
-                      run(() =>
-                        dock.openPanel(
-                          { kind: "explorer", projectId: meta.projectId },
-                          { direction: "left" }
-                        )
-                      )
-                    }
-                  >
-                    <FolderTreeIcon />
-                    File explorer
-                    <CommandShortcut>{formatChord(KEYS.explorer)}</CommandShortcut>
-                  </CommandItem>
-                )}
-                {meta && (
-                  <CommandItem
                     value="output problems diagnostics errors log console"
                     onSelect={() =>
                       run(() =>
@@ -487,7 +469,7 @@ export function CommandPalette({
                 )}
                 {meta && (
                   <CommandItem
-                    value="preview browser dev server localhost web"
+                    value="browser preview dev server localhost web"
                     onSelect={() =>
                       run(() =>
                         dock.openPanel(
@@ -503,35 +485,7 @@ export function CommandPalette({
                     }
                   >
                     <MonitorIcon />
-                    Preview
-                  </CommandItem>
-                )}
-                {meta && (
-                  <CommandItem
-                    value="vscode vs code ide editor code-server full editor"
-                    onSelect={() =>
-                      run(() => dock.openPanel({ kind: "ide", projectId: meta.projectId }))
-                    }
-                  >
-                    <CodeXmlIcon />
-                    VS Code
-                  </CommandItem>
-                )}
-                {meta && (
-                  <CommandItem
-                    value="source control git changes commit branch staging"
-                    onSelect={() =>
-                      run(() =>
-                        dock.openPanel(
-                          { kind: "source-control", projectId: meta.projectId },
-                          { direction: "left" }
-                        )
-                      )
-                    }
-                  >
-                    <GitBranchIcon />
-                    Source control
-                    <CommandShortcut>{formatChord(KEYS.sourceControl)}</CommandShortcut>
+                    Browser
                   </CommandItem>
                 )}
                 {meta && (
@@ -574,7 +528,7 @@ export function CommandPalette({
                   Stack all tabs
                 </CommandItem>
                 <CommandItem
-                  value="layout ide preset explorer terminal"
+                  value="layout ide preset terminal output"
                   onSelect={() => run(() => dock.applyPreset("ide"))}
                 >
                   <Rows3 />

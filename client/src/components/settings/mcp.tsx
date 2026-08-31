@@ -11,7 +11,13 @@ import {
 } from "@/components/ui/select"
 import { api, mcpSubtitle, type McpServerDef, type ServerSettings } from "@/lib/settings"
 import { Button } from "@/components/ui/button"
-import { BookOpenIcon, GlobeIcon } from "lucide-react"
+import { BookOpenIcon, ChevronDownIcon, GlobeIcon, PlusIcon, WorkflowIcon } from "lucide-react"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { useStore } from "@/lib/store"
 import { FormPageHeader, PageForm, Field, FormActions, lines, pairs } from "./primitives"
 import { sectionMeta } from "./sections"
@@ -20,18 +26,27 @@ import { LibraryImportPage, LibrarySection, saveLibraryEntry } from "./library"
 import { reportError } from "@/lib/errors"
 import { settingsPath } from "@/lib/router"
 
+type BuiltinKind = "web-search" | "knowledge" | "workflow"
+
+const BUILTINS: { kind: BuiltinKind; label: string; hint: string; icon: typeof GlobeIcon }[] = [
+  { kind: "web-search", label: "Web search", icon: GlobeIcon, hint: "The harness's web search + fetch tools, on the backend in Settings › Web search" },
+  { kind: "knowledge", label: "Knowledge base", icon: BookOpenIcon, hint: "A per-project knowledge base the agent can read and write" },
+  { kind: "workflow", label: "Workflows", icon: WorkflowIcon, hint: "Run multi-step workflows: each step is a real thread, mirrored into the calling thread as a subagent" },
+]
+
 export function McpPage() {
   const { settings, actions } = useSettingsPage()
   const meta = sectionMeta("mcp")
   const { state } = useStore()
 
-  /* The harness's own two servers, added with one press rather than typed in:
+  /* The harness's own servers, added from one menu rather than typed in:
      there is nothing to type — the row is a handle, and the command, env and
      credentials are synthesized at spawn. Idempotent server-side (fixed id),
-     and hidden once present, since a second copy is the same row. */
-  const has = (kind: "web-search" | "knowledge") =>
+     and an entry is hidden once present, since a second copy is the same row;
+     the menu itself goes once all of them are. */
+  const has = (kind: BuiltinKind) =>
     state.mcpServers.some((s) => s.type === "builtin" && s.builtin === kind)
-  const inject = async (kind: "web-search" | "knowledge") => {
+  const inject = async (kind: BuiltinKind) => {
     try {
       await api(settings, `/api/mcp-servers/builtin/${kind}`, { method: "POST" })
       await actions.refreshMcpServers()
@@ -39,19 +54,25 @@ export function McpPage() {
       reportError(err, `Couldn't add the ${kind} server`)
     }
   }
-  const builtins = (
-    <>
-      {!has("web-search") && (
-        <Button variant="outline" onClick={() => void inject("web-search")} title="The harness's web search + fetch tools, on the backend in Settings › Web search">
-          <GlobeIcon className="size-4" /> Add web search
-        </Button>
-      )}
-      {!has("knowledge") && (
-        <Button variant="outline" onClick={() => void inject("knowledge")} title="A per-project knowledge base the agent can read and write">
-          <BookOpenIcon className="size-4" /> Add knowledge base
-        </Button>
-      )}
-    </>
+  const missing = BUILTINS.filter((b) => !has(b.kind))
+  const builtins = missing.length > 0 && (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button variant="outline" title="Add one of the harness's own MCP servers">
+            <PlusIcon className="size-4" /> Add built-in
+            <ChevronDownIcon className="size-3.5 opacity-60" />
+          </Button>
+        }
+      />
+      <DropdownMenuContent align="end" className="w-64">
+        {missing.map(({ kind, label, hint, icon: Icon }) => (
+          <DropdownMenuItem key={kind} onClick={() => void inject(kind)} title={hint}>
+            <Icon className="size-4" /> {label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 
   return (

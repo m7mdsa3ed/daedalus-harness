@@ -34,13 +34,23 @@ export const BUILTIN_MCP: Record<BuiltinMcp, { id: string; name: string; descrip
     name: "knowledge",
     description: "A per-project knowledge base the agent can read and write, scoped to the thread's project.",
   },
+  workflow: {
+    id: "builtin:workflow",
+    name: "workflow",
+    description:
+      "Run a declarative multi-step workflow: every step is a real thread on this server, mirrored into the calling thread as a subagent. Works on any agent; replaces Claude Code's built-in Workflow tool on threads that link it.",
+  },
 };
+
+export function isBuiltinMcp(kind: string): kind is BuiltinMcp {
+  return Object.hasOwn(BUILTIN_MCP, kind);
+}
 
 export const McpServerInputSchema = z.union([
   z.object({
     type: z.literal("builtin"),
     name: z.string().min(1),
-    builtin: z.enum(["web-search", "knowledge"]),
+    builtin: z.enum(["web-search", "knowledge", "workflow"]),
   }),
   z.object({
     type: z.literal("http"),

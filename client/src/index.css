@@ -61,6 +61,14 @@
      text-sm stays the title tier, text-[11px] the caption tier. */
   --text-xs: 0.8125rem;
   --text-xs--line-height: 1.125rem;
+
+  /* Container breakpoints for the dock (`components/workspace/panel-container`).
+     Deliberately the pixel values of `sm:` and `md:` rather than Tailwind's own
+     container scale (`@sm` is 24rem), because these replace media queries that
+     were written against those two numbers — a panel as wide as a phone should
+     lay out like one. */
+  --container-panel-sm: 40rem;
+  --container-panel-md: 48rem;
 }
 
 :root {
@@ -133,10 +141,10 @@
 }
 
 :root:not(.dark) {
-  /* Muted alone reads as barely-off-white on most palettes, so a touch of the
-     foreground sets the box one visible step below the page — a touch only:
-     more than this and the box reads as a grey slab rather than a surface. */
-  --composer: color-mix(in oklch, var(--muted) 97%, var(--foreground) 3%);
+  /* Muted alone reads as barely-off-white on most palettes; pulling it partway
+     back toward the card keeps the box a hair below the page without the grey
+     cast a foreground mix gave it — light and airy, but still visibly a box. */
+  --composer: color-mix(in oklch, var(--muted) 55%, var(--card) 45%);
 }
 
 .dark {
@@ -231,7 +239,8 @@
       @apply shadow-glass backdrop-blur-[14px] backdrop-saturate-[1.3];
     }
 
-    [data-slot="dialog-content"],
+    /* Dialogs are opaque on purpose (see the glass backgrounds block below);
+       only sheets get the blur. */
     [data-slot="sheet-content"] {
       @apply shadow-glass-lg backdrop-blur-[28px] backdrop-saturate-[1.45];
     }
@@ -331,7 +340,8 @@
     background-color: color-mix(in oklch, var(--card) 80%, transparent);
   }
 
-  [data-slot="dialog-content"],
+  /* Dialog content stays the opaque --popover token: a modal reads better as
+     a solid panel than as glass over a dimmed page. */
   [data-slot="sheet-content"] {
     background-color: color-mix(in oklch, var(--popover) 78%, transparent);
   }
@@ -725,6 +735,19 @@ html[data-desktop="true"]:not([data-desktop-platform="darwin"]) [data-drag-regio
   [data-slot="message-scroller-content"] [data-message-id] {
     animation: none;
   }
+}
+
+/* "Calm motion" (view options). The same result the OS-level preference gets,
+   asked for per thread: no row entrance, and a running turn's title states that
+   it is running with colour rather than with a sweep. Scoped to the transcript
+   column — the composer, the sidebar and the working line are not in it. */
+[data-slot="message-scroller-content"][data-motion="calm"] [data-message-id] {
+  animation: none;
+}
+[data-slot="message-scroller-content"][data-motion="calm"] .harness-shimmer {
+  background-image: none;
+  -webkit-text-fill-color: currentColor;
+  animation: none;
 }
 
 /* GFM tables. The scroll lives on the wrapper `<div class="harness-table">`

@@ -1,1 +1,0 @@
-ALTER TABLE `projects` ADD `logo_url` text;

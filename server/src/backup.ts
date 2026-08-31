@@ -3,6 +3,7 @@ import type { SQLiteColumn, SQLiteTable } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
 import {
   agentOptions as agentOptionsTable,
+  USAGE_KINDS,
   agents as agentsTable,
   commands as commandsTable,
   db,
@@ -17,12 +18,16 @@ import {
   sessionQueue as queueTable,
   sessions as sessionsTable,
   skills as skillsTable,
+  boards as boardsTable,
+  boardStatuses as boardStatusesTable,
   tasks as tasksTable,
   webSearchUsage as usageTable,
+  workflowRuns as workflowRunsTable,
   type NameValue,
 } from "./db/index.js";
 import { PROFILE_LINKS, SESSION_LINKS, emptyLinks, readLinks, writeLinks, type LinkSet, type Tx } from "./db/links.js";
 import { readWebSearch, saveWebSearch, type WebSearchConfig } from "./config.js";
+import { ensureDefaultBoard, reconcileTaskStatuses } from "./boards.js";
 
 /*
  * Export / import of everything the harness stores.
@@ -73,6 +78,22 @@ const AgentRow = z.object({
   args: z.array(str).default([]),
   env: z.record(str, str).default({}),
   spawnCategories: z.record(str, z.enum(["model", "effort"])).nullish(),
+  /* Carried, because a restored row keeps its `seededVersion` and so is never
+     backfilled again: an agent that came back without this would quietly go
+     back to restarting for every model change. */
+  liveConfig: z.enum(["acp", "gateway"]).nullish(),
+  /* Carried for the same reason, and it is the user's besides: the command is
+     editable, so a restored row that dropped it would silently stop reporting
+     plan usage with no backfill left to put it back. The *reading* is not
+     carried — `agent_quota` is a cache, and a percentage restored onto another
+     machine describes an account that machine may not even be logged into. */
+  quotaProbe: z
+    .object({
+      kind: z.enum(["claude-cli", "codex-app-server"]),
+      command: str,
+      args: z.array(str).default([]),
+    })
+    .nullish(),
   seededVersion: int.default(0),
 });
 
@@ -98,6 +119,13 @@ const ProfileRow = z.object({
   defaultModel: str.default(""),
   smallModel: optStr,
   logoUrl: optStr,
+  /** Which provider API reads this profile's plan (usage-api.ts). Carried
+      because it is configuration the user wrote, not a reading — the readings
+      in `agent_quota` are left out for the reason the probe cache is. Its
+      `apiKey` is blanked by `secrets=0` like every other credential. */
+  usage: z
+    .object({ kind: z.enum(USAGE_KINDS), baseUrl: optStr, apiKey: optStr })
+    .nullish(),
   models: z.array(ModelRow).default([]),
   mcpServerIds: z.array(str).default([]),
   skillIds: z.array(str).default([]),
@@ -108,7 +136,7 @@ const McpServerRow = z.object({
   id: str.min(1),
   type: z.enum(["http", "stdio", "builtin"]),
   name: str,
-  builtin: z.enum(["web-search", "knowledge"]).nullish(),
+  builtin: z.enum(["web-search", "knowledge", "workflow"]).nullish(),
   url: optStr,
   headers: nameValues.nullish(),
   command: optStr,
@@ -164,6 +192,7 @@ const SessionRow = z.object({
   acpSessionProvisional: z.boolean().default(false),
   createdAt: int,
   deletedAt: int.nullish(),
+  parentSessionId: optStr,
   mcpServerIds: z.array(str).default([]),
   skillIds: z.array(str).default([]),
   commandIds: z.array(str).default([]),
@@ -186,6 +215,30 @@ const ScheduledRow = z.object({
   createdAt: int,
 });
 
+const WorkflowRunRow = z.object({
+  id: str.min(1),
+  parentSessionId: str.min(1),
+  name: str,
+  definition: z.record(z.string(), z.unknown()),
+  inputs: z.record(z.string(), z.unknown()),
+  status: z.enum(["running", "completed", "failed", "cancelled"]),
+  error: optStr,
+  steps: z.array(
+    z.object({
+      name: str,
+      status: z.enum(["pending", "running", "completed", "failed", "cancelled", "skipped"]),
+      sessionId: str.nullable(),
+      attempt: int,
+      output: z.unknown(),
+      error: str.nullable(),
+      startedAt: int.nullable(),
+      endedAt: int.nullable(),
+    }),
+  ),
+  createdAt: int,
+  endedAt: int.nullish(),
+});
+
 const EventRow = z.object({
   sessionId: str.min(1),
   seq: int,
@@ -194,21 +247,58 @@ const EventRow = z.object({
   at: int.default(0),
 });
 
-const TaskRow = z.object({
+const BoardRow = z.object({
   id: str.min(1),
-  board: str.default("default"),
-  title: str,
-  description: optStr,
-  status: z.enum(["todo", "in_progress", "done", "blocked"]).default("todo"),
-  priority: z.enum(["low", "medium", "high", "urgent"]).default("medium"),
-  labels: z.array(str).default([]),
-  assignee: optStr,
-  dueAt: int.nullish(),
-  note: optStr,
+  name: str,
+  color: optStr,
   order: int.default(0),
   createdAt: int,
   updatedAt: int,
 });
+
+const BoardStatusRow = z.object({
+  id: str.min(1),
+  boardId: str.min(1),
+  name: str,
+  color: optStr,
+  order: int.default(0),
+  createdAt: int,
+  updatedAt: int,
+});
+
+/* A task's board and column are ids now, where a bundle written before boards
+   existed carries `board` (always "default") and `status` (one of four slugs).
+   Those are exactly the ids `ensureDefaultBoard` seeds, so the old keys are
+   renamed rather than translated — an old bundle imports into the default
+   board unchanged. */
+const TaskRow = z.preprocess(
+  (value) => {
+    if (!value || typeof value !== "object") return value;
+    const row = value as Record<string, unknown>;
+    if ("boardId" in row && "statusId" in row) return row;
+    const { board, status, ...rest } = row;
+    return {
+      ...rest,
+      boardId: row.boardId ?? board ?? "default",
+      statusId: row.statusId ?? status ?? "todo",
+    };
+  },
+  z.object({
+    id: str.min(1),
+    boardId: str.default("default"),
+    title: str,
+    description: optStr,
+    statusId: str.default("todo"),
+    priority: z.enum(["low", "medium", "high", "urgent"]).default("medium"),
+    labels: z.array(str).default([]),
+    assignee: optStr,
+    dueAt: int.nullish(),
+    note: optStr,
+    order: int.default(0),
+    createdAt: int,
+    updatedAt: int,
+  }),
+);
 
 const UsageRow = z.object({
   id: str.min(1),
@@ -252,7 +342,10 @@ export const BundleSchema = z.object({
   sessions: z.array(SessionRow).default([]),
   queue: z.array(QueueRow).default([]),
   scheduled: z.array(ScheduledRow).default([]),
+  workflowRuns: z.array(WorkflowRunRow).default([]),
   events: z.array(EventRow).default([]),
+  boards: z.array(BoardRow).default([]),
+  boardStatuses: z.array(BoardStatusRow).default([]),
   tasks: z.array(TaskRow).default([]),
   webSearchUsage: z.array(UsageRow).default([]),
   pushTokens: z.array(PushTokenRow).default([]),
@@ -287,8 +380,12 @@ export function exportBundle(opts: ExportOptions): Bundle {
     redacted: { secrets: !opts.includeSecrets, journals: !opts.includeJournals },
     agents: db.select().from(agentsTable).all(),
     profiles: withLinks(profiles, readLinks(PROFILE_LINKS, profiles.map((p) => p.id))).map((p) => {
-      const { apiKey, ...rest } = p;
-      return opts.includeSecrets ? { ...rest, apiKey } : rest;
+      const { apiKey, usage, ...rest } = p;
+      /* The usage provider's own token is the second credential on a profile
+         and is redacted with the first — `kind` and the host stay, since they
+         are configuration and say nothing secret. */
+      const safeUsage = usage && !opts.includeSecrets ? { ...usage, apiKey: "" } : usage;
+      return opts.includeSecrets ? { ...rest, usage: safeUsage, apiKey } : { ...rest, usage: safeUsage };
     }),
     mcpServers: opts.includeSecrets
       ? mcpServers
@@ -301,9 +398,12 @@ export function exportBundle(opts: ExportOptions): Bundle {
     sessions: withLinks(sessions, readLinks(SESSION_LINKS, sessions.map((s) => s.id))),
     queue: db.select().from(queueTable).all(),
     scheduled: db.select().from(scheduledTable).all(),
+    workflowRuns: db.select().from(workflowRunsTable).all(),
     events: opts.includeJournals
       ? db.select().from(eventsTable).orderBy(eventsTable.sessionId, eventsTable.seq).all()
       : [],
+    boards: db.select().from(boardsTable).all(),
+    boardStatuses: db.select().from(boardStatusesTable).all(),
     tasks: db.select().from(tasksTable).all(),
     webSearchUsage: db.select().from(usageTable).all(),
     pushTokens: db.select().from(pushTokensTable).all(),
@@ -321,7 +421,8 @@ export type ImportMode = "merge" | "replace";
 
 export type ImportSummary = Record<
   | "agents" | "profiles" | "mcpServers" | "skills" | "commands" | "projects" | "knowledge" | "previews"
-  | "sessions" | "queue" | "scheduled" | "events" | "tasks" | "webSearchUsage" | "pushTokens",
+  | "sessions" | "queue" | "scheduled" | "workflowRuns" | "events" | "boards" | "boardStatuses" | "tasks"
+  | "webSearchUsage" | "pushTokens",
   number
 > & {
   /** Rows dropped because the row they belong to is in neither the bundle
@@ -383,7 +484,12 @@ function keepSecrets(
   existing: typeof profilesTable.$inferSelect | undefined,
 ): { row: z.infer<typeof ProfileRow> & { apiKey: string }; missing: boolean } {
   const apiKey = incoming.apiKey || existing?.apiKey || "";
-  return { row: { ...incoming, apiKey }, missing: !apiKey && incoming.apiKey === undefined };
+  /* Same rule one level down: a redacted bundle merged over its own install
+     keeps the usage token it was exported without. */
+  const usage = incoming.usage
+    ? { ...incoming.usage, apiKey: incoming.usage.apiKey || (existing?.usage?.apiKey ?? "") }
+    : incoming.usage;
+  return { row: { ...incoming, apiKey, usage }, missing: !apiKey && incoming.apiKey === undefined };
 }
 
 function keepPairs(incoming: NameValue[] | null | undefined, existing: NameValue[] | null | undefined): NameValue[] | null {
@@ -400,7 +506,8 @@ function keepPairs(incoming: NameValue[] | null | undefined, existing: NameValue
 export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
   const summary: ImportSummary = {
     agents: 0, profiles: 0, mcpServers: 0, skills: 0, commands: 0, projects: 0, knowledge: 0, previews: 0,
-    sessions: 0, queue: 0, scheduled: 0, events: 0, tasks: 0, webSearchUsage: 0, pushTokens: 0,
+    sessions: 0, queue: 0, scheduled: 0, workflowRuns: 0, events: 0, boards: 0, boardStatuses: 0, tasks: 0,
+    webSearchUsage: 0, pushTokens: 0,
     orphaned: 0, missingSecrets: false,
   };
 
@@ -416,7 +523,8 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
       // its parent, and the ones that do not (usage, tokens, tasks) stand alone.
       for (const table of [
         sessionsTable, profilesTable, projectsTable, mcpServersTable, skillsTable, commandsTable,
-        agentsTable, tasksTable, usageTable, pushTokensTable, agentOptionsTable,
+        agentsTable, tasksTable, boardStatusesTable, boardsTable, usageTable, pushTokensTable,
+        agentOptionsTable,
       ]) {
         tx.delete(table).run();
       }
@@ -425,14 +533,14 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
     /* Parents, in dependency order. Every table below is an upsert by id in
        both modes (after `replace` emptied them, an upsert is a plain insert),
        so a merge keeps whatever the bundle does not name. */
-    upsertChunked(tx, agentsTable, "id", bundle.agents.map((a) => ({ ...a, spawnCategories: a.spawnCategories ?? null })));
+    upsertChunked(tx, agentsTable, "id", bundle.agents.map((a) => ({ ...a, spawnCategories: a.spawnCategories ?? null, liveConfig: a.liveConfig ?? null })));
     summary.agents = bundle.agents.length;
 
     const profileRows = bundle.profiles.map((p) => {
       const { row, missing } = keepSecrets(p, existingProfiles.get(p.id));
       if (missing) summary.missingSecrets = true;
       const { mcpServerIds: _m, skillIds: _s, commandIds: _c, ...columns } = row;
-      return { ...columns, smallModel: columns.smallModel ?? "", logoUrl: columns.logoUrl ?? "" };
+      return { ...columns, smallModel: columns.smallModel ?? "", logoUrl: columns.logoUrl ?? "", usage: columns.usage ?? null };
     });
     upsertChunked(tx, profilesTable, "id", profileRows);
     summary.profiles = bundle.profiles.length;
@@ -492,7 +600,12 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
       "id",
       bundle.sessions.map((s) => {
         const { mcpServerIds: _m, skillIds: _s, commandIds: _c, ...columns } = s;
-        return { ...columns, acpSessionId: columns.acpSessionId ?? null, deletedAt: columns.deletedAt ?? null };
+        return {
+          ...columns,
+          acpSessionId: columns.acpSessionId ?? null,
+          deletedAt: columns.deletedAt ?? null,
+          parentSessionId: columns.parentSessionId ?? null,
+        };
       }),
     );
     summary.sessions = bundle.sessions.length;
@@ -516,6 +629,7 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
         const ids = owned.slice(i, i + CHUNK);
         tx.delete(queueTable).where(inArray(queueTable.sessionId, ids)).run();
         tx.delete(scheduledTable).where(inArray(scheduledTable.sessionId, ids)).run();
+        tx.delete(workflowRunsTable).where(inArray(workflowRunsTable.parentSessionId, ids)).run();
         if (!bundle.redacted.journals) tx.delete(eventsTable).where(inArray(eventsTable.sessionId, ids)).run();
       }
     }
@@ -525,11 +639,30 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
     const scheduled = keep(bundle.scheduled.map((s) => ({ ...s, everyMs: s.everyMs ?? null })));
     insertChunked(tx, scheduledTable, scheduled);
     summary.scheduled = scheduled.length;
+    const runs = bundle.workflowRuns.filter((r) => sessionIds.has(r.parentSessionId));
+    summary.orphaned += bundle.workflowRuns.length - runs.length;
+    insertChunked(
+      tx,
+      workflowRunsTable,
+      runs.map((r) => ({ ...r, error: r.error ?? null, endedAt: r.endedAt ?? null })),
+    );
+    summary.workflowRuns = runs.length;
     const events = keep(bundle.events);
     insertChunked(tx, eventsTable, events);
     summary.events = events.length;
 
-    // The standalone tables.
+    // The standalone tables. Boards and their columns go in before the tasks
+    // that point at them, so `reconcileTaskStatuses` below has something to
+    // reconcile against.
+    upsertChunked(tx, boardsTable, "id", bundle.boards.map((b) => ({ ...b, color: b.color ?? null })));
+    summary.boards = bundle.boards.length;
+    upsertChunked(
+      tx,
+      boardStatusesTable,
+      "id",
+      bundle.boardStatuses.map((s) => ({ ...s, color: s.color ?? null })),
+    );
+    summary.boardStatuses = bundle.boardStatuses.length;
     upsertChunked(
       tx,
       tasksTable,
@@ -548,6 +681,15 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
     insertChunked(tx, pushTokensTable, bundle.pushTokens);
     summary.pushTokens = bundle.pushTokens.length;
   });
+
+  /* A bundle written before boards existed carries tasks and no boards, and a
+     `replace` emptied the ones this install had — so re-seed, then repair any
+     task left pointing at a column the bundle did not bring. Outside the
+     transaction because both are idempotent and neither may take the import
+     down with it: a task in the wrong column is recoverable, a rolled-back
+     import is not. */
+  ensureDefaultBoard();
+  summary.orphaned += reconcileTaskStatuses();
 
   // config.json is outside the transaction — it is a file — and is written
   // last so a failed transaction leaves it untouched.

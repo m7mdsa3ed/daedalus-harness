@@ -27,8 +27,7 @@ export const GROUP_LABEL =
              A folder row reserves `pr-8` for its + (the primitive's default);
              a thread row does NOT (`FLOAT_ROW`) — the title runs to the edge
              and the ⋯ floats over it on hover, painted in the row's own hover
-             colour with a short fade on its leading edge (`FLOAT_ACTION`), so
-             the text it covers ends softly instead of stopping 32px early on
+             colour (`FLOAT_ACTION`), instead of stopping 32px early on
              every row for a control that is only there when the pointer is.
      NEST    a folder's threads, indented so a child's icon sits under the
              folder's own — the border is the folder chevron's centre line. */
@@ -40,15 +39,9 @@ export const ACTION = "top-1.5! right-1"
 /* The thread row: no reserved gutter — see ACTION. The ⋯ then sits over the
    title, so it carries an opaque ground: `bg-sidebar-accent` is what the row
    itself is painted while hovered or active, the two states the button is
-   visible in, so it reads as part of the row rather than a chip on it. The
-   `before:` pseudo is the fade (the `after:` one is the primitive's touch
-   target). */
+   visible in, so it reads as part of the row rather than a chip on it. */
 export const FLOAT_ROW = "pr-2!"
-export const FLOAT_ACTION = cn(
-  ACTION,
-  "bg-sidebar-accent hover:bg-sidebar-border",
-  "before:pointer-events-none before:absolute before:top-0 before:right-full before:h-full before:w-5 before:bg-linear-to-l before:from-sidebar-accent before:to-transparent"
-)
+export const FLOAT_ACTION = cn(ACTION, "bg-sidebar-accent hover:bg-sidebar-border")
 export const NEST = "ml-4 border-l border-sidebar-border pl-2 py-0.5"
 
 /** Rows a long-tail list (a project folder, Trash) shows before "Show more". */

@@ -85,6 +85,29 @@ export function listDir(
   )
 }
 
+export interface WorkspaceSearch {
+  entries: WorkspaceEntry[]
+  /** More matched than were sent, or the walk hit its budget. */
+  truncated: boolean
+}
+
+/** Fuzzy path search across the whole project — what the composer's `@` menu
+    reads. An empty query answers with the project root's own listing. */
+export function searchFiles(
+  projectId: string,
+  query: string,
+  options: { limit?: number; signal?: AbortSignal } = {}
+): Promise<WorkspaceSearch> {
+  return api<WorkspaceSearch>(
+    server(),
+    `/api/projects/${encodeURIComponent(projectId)}/files/search${q({
+      q: query,
+      limit: options.limit ? String(options.limit) : undefined,
+    })}`,
+    { signal: options.signal }
+  )
+}
+
 export function readFile(
   projectId: string,
   path: string,

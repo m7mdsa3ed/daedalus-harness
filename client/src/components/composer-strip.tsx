@@ -143,10 +143,15 @@ export function ComposerStrip({ className, children, ...props }: React.Component
           // -mb-4/pb-4: the bottom four units sit behind the composer, which is
           // what makes the seam disappear. Keep the two in step.
           // Width follows the composer: minus whatever the composer actually is
-          // (capped on desktop, 100% of the container on mobile) the strip stays
-          // 3rem narrower — ~1.5rem inset each side — instead of running flush to
-          // the composer's edges when the fixed pixel cap doesn't engage.
-          "mx-auto -mb-4 w-full max-w-[calc(min(100%,var(--harness-composer-width))_-_3rem)]",
+          // (capped when there is room, 100% of the container when there is not)
+          // the strip stays narrower, so it reads as tucked behind rather than
+          // flush with it. The inset is 3rem of a wide composer and 1rem of a
+          // cramped one: 3rem of a 360px column is a sixth of the shelf spent on
+          // margin, and what it cost was the content — a queued message
+          // truncated to three words. Measured against the panel, so a chat
+          // squeezed beside a terminal gets the narrow inset the same way a
+          // phone does.
+          "mx-auto -mb-4 w-full max-w-[calc(min(100%,var(--harness-composer-width))_-_1rem)] @panel-sm:max-w-[calc(min(100%,var(--harness-composer-width))_-_3rem)]",
           "overflow-hidden rounded-t-xl bg-muted/70 pb-4 backdrop-blur-[14px]",
           // Nothing registered means nothing rendered: no summary line, no shelf.
           summaries.length === 0 && "hidden",
@@ -163,8 +168,11 @@ export function ComposerStrip({ className, children, ...props }: React.Component
               render={
                 <button
                   type="button"
-                  /* px-2: the strip's own gutter, the one every row sits in. */
-                  className="flex w-full items-center gap-2 px-2 py-1.5 text-left transition-colors hover:bg-accent/40"
+                  /* px-2: the strip's own gutter, the one every row sits in.
+                     The taller touch row is the phone's: this is the handle
+                     that opens the shelf, so it has to be hittable with a
+                     thumb over a composer. */
+                  className="flex w-full items-center gap-2 px-2 py-2 text-left transition-colors hover:bg-accent/40 sm:py-1.5"
                 />
               }
             >
@@ -189,7 +197,21 @@ export function ComposerStrip({ className, children, ...props }: React.Component
                       )}
                     >
                       {summary.icon && <summary.icon className="size-3 shrink-0" />}
-                      <span className="min-w-0 truncate">{summary.label}</span>
+                      {/* In a narrow panel the line has room for one set of
+                          words, and three labels sharing it truncated all three
+                          into initials. So only the first row — and any row that
+                          is actually waiting on an answer — spends its label
+                          there; the rest are their icon, which is what the eye
+                          counts anyway. Everything reads in full from
+                          `@panel-sm` up. */}
+                      <span
+                        className={cn(
+                          "min-w-0 truncate",
+                          index > 0 && !summary.urgent && "hidden @panel-sm:inline"
+                        )}
+                      >
+                        {summary.label}
+                      </span>
                     </span>
                   </React.Fragment>
                 ))}
@@ -216,7 +238,18 @@ export function ComposerStrip({ className, children, ...props }: React.Component
                 "what the shelf is" and "the rows that make it up", and has no
                 meaning when the shelf is one flat row. */}
             {many && <div className="border-t border-border/40" />}
-            {children}
+            {/* The shelf may not eat the screen. An expanded queue of ten
+                messages, or a forty-step checklist, is taller than the panel
+                — and the strip sits *under* the composer in the layout, so what
+                a too-tall shelf pushes off the bottom is the thing you were
+                typing into. Capped as a fraction of the panel (`--panel-h`,
+                falling back to the viewport outside the dock), the overflow
+                scrolls inside the shelf instead. `overscroll-contain` keeps that
+                scroll off the transcript. The *fraction* is still the device's:
+                a soft keyboard takes half the screen with it. */}
+            <div className="max-h-[calc(var(--panel-h,100svh)*0.45)] overflow-y-auto overscroll-contain sm:max-h-[calc(var(--panel-h,100svh)*0.6)]">
+              {children}
+            </div>
           </CollapsibleContent>
         </Collapsible>
       </div>

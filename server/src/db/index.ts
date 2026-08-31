@@ -1,9 +1,9 @@
 import Database from "better-sqlite3";
+import { execFileSync } from "node:child_process";
 import { existsSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { drizzle } from "drizzle-orm/better-sqlite3";
-import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { DATA_DIR, readJson } from "../config.js";
 import * as schema from "./schema.js";
 
@@ -11,7 +11,9 @@ export * from "./schema.js";
 export { schema };
 
 const DB_PATH = join(DATA_DIR, "daedalus.db");
-const MIGRATIONS = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "drizzle");
+/** `server/` — one level up from `src/db` and from `dist/db` alike, which is
+    where drizzle.config.ts and node_modules are. */
+const SERVER_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /*
  * better-sqlite3 rather than node:sqlite: it is what Drizzle's Node driver
@@ -36,8 +38,47 @@ client.pragma("busy_timeout = 5000");
 
 export const db = drizzle(client, { schema });
 
-migrate(db, { migrationsFolder: MIGRATIONS });
+ensureSchema();
 importLegacyJson();
+
+/**
+ * The schema is `schema.ts`, pushed — there are no migration files.
+ *
+ * A database that has never been opened (a first install, every test run) is
+ * given the whole schema here by running `drizzle-kit push` once, so nothing
+ * has to be done by hand before the first boot. A database that already has
+ * one is left alone: after a `schema.ts` change the operator runs
+ * `pnpm db:push` (`pm2:start` does it before restarting), which shows what it
+ * is about to change and asks before anything destructive — a step a server
+ * booting under a process manager must not take on its own, silently, on
+ * whatever schema it was started with.
+ *
+ * The FTS5 index over the journal is the one object push cannot manage (a
+ * virtual table; drizzle.config.ts hides it from push), so it is created here,
+ * idempotently, on every boot.
+ */
+function ensureSchema(): void {
+  const fresh = !client
+    .prepare("select 1 from sqlite_master where type = 'table' and name = 'sessions'")
+    .get();
+  if (fresh) {
+    console.log(`[db] new database at ${DB_PATH}; pushing the schema`);
+    execFileSync(join(SERVER_ROOT, "node_modules", ".bin", "drizzle-kit"), ["push", "--force"], {
+      cwd: SERVER_ROOT,
+      env: { ...process.env, DAEDALUS_DATA_DIR: DATA_DIR },
+      stdio: ["ignore", "ignore", "inherit"],
+    });
+  }
+  client.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS session_events_fts USING fts5(
+      text,
+      session_id UNINDEXED,
+      seq UNINDEXED,
+      at UNINDEXED,
+      tokenize = 'unicode61 remove_diacritics 2'
+    )
+  `);
+}
 
 /**
  * Move a pre-SQLite install's `data/*.json` into the database, once.

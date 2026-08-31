@@ -4,8 +4,11 @@ import { cors } from "hono/cors";
 import { WebSocketServer } from "ws";
 import { loadConfig } from "./config.js";
 import { seedAgents } from "./registry.js";
+import { ensureDefaultBoard } from "./boards.js";
 import { SessionManager } from "./sessions.js";
 import { startScheduler, stopScheduler } from "./scheduler.js";
+import { WorkflowRunner } from "./workflows.js";
+import { workflowRoutes } from "./routes/workflows.js";
 import { TaskTailer } from "./tasks.js";
 import { stopWatching } from "./workspace-watch.js";
 import { attachTerminal, killProjectTerminals } from "./terminals.js";
@@ -38,6 +41,11 @@ await adoptOrphans();
 // Adds only the built-in agents this install has never been offered; a user's
 // edits and deletions are left alone. See registry.seedAgents.
 seedAgents();
+/* The tasks board's first board and its four columns, seeded only into an
+   install that has none. This is also the boards migration: the seeded column
+   ids are the exact strings pre-boards tasks hold in `tasks.status`, so those
+   rows become legible without being rewritten. See boards.ensureDefaultBoard. */
+ensureDefaultBoard();
 const push = new Push(config.fcm);
 /** Thread title, with the failure's own message appended when there is one. */
 const pushBody = (title: string, error?: unknown): string => {
@@ -47,6 +55,7 @@ const pushBody = (title: string, error?: unknown): string => {
       : null;
   return message ? `${title} — ${message}` : title;
 };
+let workflows: WorkflowRunner | null = null;
 const sessions = new SessionManager(
   {
     onPermissionRequest: (s) =>
@@ -57,10 +66,21 @@ const sessions = new SessionManager(
       push
         .send(error ? "Turn failed" : "Turn finished", pushBody(s.title, error), { sessionId: s.id })
         .catch(console.error),
+    // A thread whose process went away cannot be waiting on a workflow answer.
+    // Guarded: the manager's own boot (a purge of an expired trash row) can
+    // retire a thread before the runner below exists.
+    onProcessGone: (s) => workflows?.cancelForParent(s.id, "the thread's agent process ended"),
   },
   config.sessionIdleMinutes,
   config.sessionJournalRetentionDays,
 );
+/* The workflow engine (workflows.ts). Wired both ways after construction: the
+   manager hands every top-level thread the `workflow` MCP server pointed at
+   the runner's loopback URL, and the runner drives the manager to run steps.
+   Runs the last process left "running" are closed first — nothing survived it. */
+workflows = new WorkflowRunner(sessions, { port: config.port });
+sessions.setWorkflowRunner(workflows);
+workflows.recoverAtBoot();
 // Tails background-task journals (files an agent disclosed in a tool result)
 // and fans each new line out to the owning thread's peers — see tasks.ts.
 const tasks = new TaskTailer((sessionId, transcriptDir, event) =>
@@ -108,6 +128,7 @@ ideRoutes(app);
 libraryRoutes(app);
 sessionRoutes(app, { sessions });
 taskRoutes(app, { sessions, tasks });
+workflowRoutes(app, { runner: workflows });
 
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
   console.log(`daedalus server on http://${info.address}:${info.port}`);
@@ -181,6 +202,7 @@ async function shutdown(code: number): Promise<never> {
     killProjectTerminals();
     stopAllIdes();
     stopScheduler();
+    workflows?.shutdown();
     sessions.shutdown();
   } catch (error) {
     console.error("[shutdown]", error);

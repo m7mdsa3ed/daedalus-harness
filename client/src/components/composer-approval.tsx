@@ -250,8 +250,10 @@ export function ComposerApproval({ permission }: { permission: PendingPermission
             )}
 
             {/* Evidence rides in a scrolled band: a long diff is read a page at a
-                time, and the shelf has no room to grow past the composer. */}
-            <div className="max-h-[50vh] space-y-2.5 overflow-auto">
+                time, and the shelf has no room to grow past the composer. Half
+                the *panel* — the shelf is inside one, and half a 1600px window
+                is taller than a chat docked above a terminal. */}
+            <div className="max-h-[calc(var(--panel-h,100svh)*0.5)] space-y-2.5 overflow-auto">
               {locations.length > 0 && (
                 <ul className="flex flex-wrap gap-1">
                   {locations.map((location, index) => (

@@ -4,8 +4,8 @@ import { db } from "./db/index.js";
 /*
  * Full-text search across thread transcripts.
  *
- * The index (`session_events_fts`, created by drizzle/0026_session_search.sql —
- * hand-written, because drizzle-kit cannot model a virtual table) holds the
+ * The index (`session_events_fts`, created at boot by `db/index.ts` — a
+ * virtual table, which drizzle-kit can neither model nor push) holds the
  * *user-and-agent-visible prose* of the journal, never the raw JSON: what the
  * user typed, what the agent answered and thought, and a tool call's title.
  * Tool rawInput/rawOutput stay out — a terminal dump or a diff would drown
@@ -90,6 +90,10 @@ interface SqlRunner {
 /** Index one journaled event. A no-op for events with no prose; returns
     whether a row was written. */
 export function indexEventRow(runner: SqlRunner, row: EventRow): boolean {
+  /* A workflow step's events are mirrored onto its parent's log carrying the
+     step's `sessionId` (workflows.ts); they are indexed once, under the step's
+     own thread, or every search hit in a step would come back twice. */
+  if (row.kind === "update" && (row.payload as { sessionId?: unknown }).sessionId) return false;
   const text = extractSearchText(row.kind, row.payload);
   if (!text) return false;
   runner.run(

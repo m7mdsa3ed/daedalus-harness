@@ -23,21 +23,24 @@ import {
 } from "@/components/ui/select"
 import {
   PRIORITY_LABEL,
-  STATUS_LABEL,
   TASK_PRIORITIES,
-  TASK_STATUSES,
   type Task,
   type TaskInput,
   type TaskPriority,
   type TaskStatus,
 } from "@/lib/tasks-board"
+import { COLOR_DOT, type BoardStatus } from "@/lib/boards"
+import { cn } from "@/lib/utils"
 import { reportError } from "@/lib/errors"
 import { TaskEditor } from "./task-editor"
 
+/* `statusId` is a free string, not an enum: the columns are the board's rows
+   (lib/boards.ts), so what is valid depends on which board this task is on and
+   is checked by the server. The Select only ever offers real ones. */
 const schema = z.object({
   title: z.string().trim().min(1, "A title is required").max(500),
   description: z.string().max(50_000).optional(),
-  status: z.enum(TASK_STATUSES),
+  statusId: z.string().min(1, "Pick a column"),
   priority: z.enum(TASK_PRIORITIES),
   labels: z.string().max(200).optional(),
   assignee: z.string().max(200).optional(),
@@ -46,15 +49,15 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>
 
-const EMPTY: FormValues = {
+const empty = (statusId: string): FormValues => ({
   title: "",
   description: "",
-  status: "todo",
+  statusId,
   priority: "medium",
   labels: "",
   assignee: "",
   dueAt: "",
-}
+})
 
 function toDateInput(ms: number | null): string {
   if (ms == null) return ""
@@ -67,7 +70,7 @@ function toForm(task: Task): FormValues {
   return {
     title: task.title,
     description: task.description ?? "",
-    status: task.status,
+    statusId: task.statusId,
     priority: task.priority,
     labels: task.labels.join(", "),
     assignee: task.assignee ?? "",
@@ -86,6 +89,8 @@ export function TaskFormDialog({
   open,
   onOpenChange,
   task,
+  statuses,
+  defaultStatusId,
   onSave,
   onDelete,
 }: {
@@ -93,16 +98,24 @@ export function TaskFormDialog({
   onOpenChange: (open: boolean) => void
   /** The task being edited, or null for a new one. */
   task: Task | null
+  /** The board's columns — what the Status select offers. */
+  statuses: BoardStatus[]
+  /** Column a new task starts in (the one whose "+" was pressed). */
+  defaultStatusId: string
   onSave: (input: TaskInput) => Promise<void>
   /** Present when editing: deletes the task and closes the dialog. */
   onDelete?: () => Promise<void>
 }) {
   const [busy, setBusy] = React.useState(false)
   const [deleting, setDeleting] = React.useState(false)
+  const blank = React.useMemo(
+    () => empty(defaultStatusId || statuses[0]?.id || ""),
+    [defaultStatusId, statuses],
+  )
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: EMPTY,
-    values: task ? toForm(task) : EMPTY,
+    defaultValues: blank,
+    values: task ? toForm(task) : blank,
   })
 
   const submit = form.handleSubmit(async (values) => {
@@ -111,7 +124,7 @@ export function TaskFormDialog({
       await onSave({
         title: values.title,
         description: values.description || null,
-        status: values.status,
+        statusId: values.statusId,
         priority: values.priority,
         labels: values.labels
           ? values.labels
@@ -153,7 +166,7 @@ export function TaskFormDialog({
           <DialogDescription>
             {task
               ? "Update the task's details. Board position is unchanged."
-              : "Add a task to the board. It starts in To do."}
+              : "Add a task to the board."}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="flex min-h-0 flex-col">
@@ -198,19 +211,26 @@ export function TaskFormDialog({
                 <Label>Status</Label>
                 <Controller
                   control={form.control}
-                  name="status"
+                  name="statusId"
                   render={({ field }) => (
                     <Select
                       value={field.value}
                       onValueChange={(v) => field.onChange(v as TaskStatus)}
                     >
                       <SelectTrigger className="w-full">
-                        <SelectValue>{STATUS_LABEL[field.value]}</SelectValue>
+                        <SelectValue>
+                          {statuses.find((s) => s.id === field.value)?.name ?? "Choose a column"}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
-                        {TASK_STATUSES.map((s) => (
-                          <SelectItem key={s} value={s}>
-                            {STATUS_LABEL[s]}
+                        {statuses.map((status) => (
+                          <SelectItem key={status.id} value={status.id}>
+                            <span className="inline-flex items-center gap-2">
+                              {status.color && (
+                                <span className={cn("size-2 rounded-full", COLOR_DOT[status.color])} />
+                              )}
+                              {status.name}
+                            </span>
                           </SelectItem>
                         ))}
                       </SelectContent>

@@ -3,6 +3,7 @@ import { CSS } from "@dnd-kit/utilities"
 import { CalendarIcon, Circle } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { COLOR_DOT, type BoardStatus } from "@/lib/boards"
 import {
   PRIORITY_LABEL,
   type Task,
@@ -123,10 +124,14 @@ export function TaskCard({
 /** A tiny non-draggable row for the list view — selects the task to edit. */
 export function TaskRow({
   task,
+  status,
   selected,
   onClick,
 }: {
   task: Task
+  /** The column the task is in, drawn inline. Omitted where the list already
+      groups by status and the heading says it. */
+  status?: BoardStatus | null
   selected: boolean
   onClick: () => void
 }) {
@@ -135,15 +140,28 @@ export function TaskRow({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex w-full items-center gap-3 rounded-lg border bg-card px-3 py-2 text-left text-sm text-card-foreground transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "flex w-full min-h-11 items-center gap-3 rounded-lg border bg-card px-3 py-2 text-left text-sm text-card-foreground transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         selected && "border-primary/40 bg-accent/40",
       )}
     >
+      <Circle
+        aria-hidden
+        className={cn("size-2.5 shrink-0 fill-current", PRIORITY_DOT[task.priority])}
+      />
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate font-medium">{task.title}</span>
         <span className="truncate text-xs text-muted-foreground">
-          {task.assignee ? `${task.assignee} · ` : ""}
-          {task.labels.join(", ") || "No labels"}
+          {status && (
+            <span className="inline-flex items-center gap-1 align-middle">
+              {status.color && (
+                <span className={cn("size-1.5 rounded-full", COLOR_DOT[status.color])} />
+              )}
+              {status.name}
+            </span>
+          )}
+          {status && (task.assignee || task.labels.length > 0) ? " · " : ""}
+          {task.assignee ? `${task.assignee}${task.labels.length ? " · " : ""}` : ""}
+          {task.labels.join(", ")}
         </span>
       </span>
       {task.dueAt != null && (

@@ -7,6 +7,13 @@ import { useConfirm } from "@/components/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { AgentIcon, ProfileIcon } from "@/components/entity-icon"
 import {
   api,
@@ -14,6 +21,7 @@ import {
   profileAgentIds,
   type Profile,
   type ProfileAgentLink,
+  type ProfileUsageKind,
   type ServerSettings,
 } from "@/lib/settings"
 import { useStore } from "@/lib/store"
@@ -28,6 +36,26 @@ import {
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { settingsFormPath, settingsPath } from "@/lib/router"
+
+/* The providers whose plan usage the server can read, and what to call them.
+   One entry per adapter in `server/src/usage-api.ts` — the labels are the only
+   part of this that is the client's, which is why there is no route to list
+   them: a `kind` this build does not know is a build that also could not draw
+   its fields. */
+const USAGE_PROVIDERS: { kind: ProfileUsageKind; label: string; hint: string; hostPlaceholder: string }[] = [
+  {
+    kind: "none",
+    label: "None",
+    hint: "This provider meters per token, or has no usage API. The agent's own /usage — your claude/codex login — answers instead.",
+    hostPlaceholder: "",
+  },
+  {
+    kind: "zai",
+    label: "Z.AI / Zhipu — GLM Coding Plan",
+    hint: "Reads the plan's rolling 5-hour and weekly token windows, and the monthly MCP tool allowance, from the provider's own monitor API. The platform (api.z.ai or open.bigmodel.cn) is picked from the base URL above unless you name a host.",
+    hostPlaceholder: "https://api.z.ai",
+  },
+]
 
 export function ProfilesPage() {
   const { settings, actions } = useSettingsPage()
@@ -165,6 +193,12 @@ function ProfileForm({
     mcpServerIds: profile?.mcpServerIds ?? [],
     skillIds: profile?.skillIds ?? [],
     commandIds: profile?.commandIds ?? [],
+    /* The usage reader, flattened into the form the way `apiKey` is: the token
+       is write-only (the server sends back a boolean), so an empty field means
+       "keep the stored one" here too. */
+    usageKind: (profile?.usage?.kind ?? "none") as ProfileUsageKind,
+    usageBaseUrl: profile?.usage?.baseUrl ?? "",
+    usageApiKey: "",
   }))
   /* Which agents this profile serves, and each one's optional base-URL
      override. A new profile starts on the first registered agent, so the form
@@ -246,6 +280,12 @@ function ProfileForm({
         // A default that no longer exists in the list is dropped.
         defaultModel: models.some((m) => m.id === form.defaultModel) ? form.defaultModel : "",
         logoUrl: form.logoUrl.trim(),
+        /* Null rather than `{kind:"none"}` so "no reader" is one state on the
+           wire and not two the server would both have to mean nothing by. */
+        usage:
+          form.usageKind === "none"
+            ? null
+            : { kind: form.usageKind, baseUrl: form.usageBaseUrl.trim(), apiKey: form.usageApiKey },
         mcpServerIds: form.mcpServerIds,
         skillIds: form.skillIds,
         commandIds: form.commandIds,
@@ -341,6 +381,63 @@ function ProfileForm({
           })}
         </div>
       </Field>
+      {/* Whose plan the threads on this profile actually spend. The agent's own
+          probe asks the *runtime's* CLI about this machine's login, which is
+          the right question for `claude login` and the wrong one for a gateway:
+          a thread running Claude Code against a GLM Coding Plan burns Z.AI's
+          windows while `claude -p /usage` reports an Anthropic account it never
+          touched. Set here, this reader wins — and it is one account, so every
+          agent on the profile shares one reading. */}
+      <FormSection label="Plan usage">
+        <Field
+          label="Usage provider"
+          hint={USAGE_PROVIDERS.find((p) => p.kind === form.usageKind)?.hint}
+        >
+          <Select
+            value={form.usageKind}
+            onValueChange={(kind) => set({ usageKind: (kind as ProfileUsageKind) ?? "none" })}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue>
+                {USAGE_PROVIDERS.find((p) => p.kind === form.usageKind)?.label ?? form.usageKind}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {USAGE_PROVIDERS.map((provider) => (
+                <SelectItem key={provider.kind} value={provider.kind}>
+                  {provider.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+        {form.usageKind !== "none" && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Usage host" hint="Optional — the provider's default unless it is served somewhere else.">
+              <Input
+                value={form.usageBaseUrl}
+                onChange={(e) => set({ usageBaseUrl: e.target.value })}
+                placeholder={USAGE_PROVIDERS.find((p) => p.kind === form.usageKind)?.hostPlaceholder}
+                className="font-mono text-xs"
+              />
+            </Field>
+            <Field
+              label="Usage API key"
+              hint={
+                profile?.usage?.hasApiKey
+                  ? "Stored — leave empty to keep it."
+                  : "Optional — leave empty to use this profile's own API key, which is the usual case."
+              }
+            >
+              <Input
+                type="password"
+                value={form.usageApiKey}
+                onChange={(e) => set({ usageApiKey: e.target.value })}
+              />
+            </Field>
+          </div>
+        )}
+      </FormSection>
       <ModelsSection
         rows={rows}
         defaultModel={form.defaultModel}

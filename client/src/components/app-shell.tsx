@@ -62,6 +62,7 @@ import { SkillFormPage, SkillImportPage, SkillsPage } from "@/components/setting
 import { CommandFormPage, CommandImportPage, CommandsPage } from "@/components/settings/commands"
 import { ProfileFormPage, ProfilesPage } from "@/components/settings/profiles"
 import { AgentsPage } from "@/components/settings/agents"
+import { QuotaPage } from "@/components/settings/quota"
 import { WebSearchPage } from "@/components/settings/web-search"
 import { BackupPage } from "@/components/settings/backup"
 import { ThemeEditorPage } from "@/components/theme-builder"
@@ -240,11 +241,6 @@ export function AppShell({
         else void openTerminal(dock, projectId)
         return
       }
-      if (kind === "editor") {
-        // No quick-open index yet; the explorer is where you pick a file.
-        dock.openPanel({ kind: "explorer", projectId }, { direction: "left" })
-        return
-      }
       if (kind === "web") {
         dock.openPanel(
           { kind: "web", trust: "project", projectId, viewId: "default" },
@@ -252,36 +248,14 @@ export function AppShell({
         )
         return
       }
-      if (kind === "ide") {
-        /* Centre, not a side rail: it is a whole editor, and a full VS Code in
-           a 280px column is not a workspace. It also does not toggle — closing
-           the panel would leave the server process running with nothing on
-           screen saying so, and reopening it is a fresh iframe load of an
-           entire IDE. Focus what is there instead. */
-        dock.openPanel({ kind: "ide", projectId })
-        return
-      }
-      const descriptor =
-        kind === "explorer"
-          ? ({ kind: "explorer", projectId } as const)
-          : kind === "source-control"
-            ? ({ kind: "source-control", projectId } as const)
-            : ({ kind: "output", projectId } as const)
+      const descriptor = { kind: "output", projectId } as const
       const id = panelId(descriptor)
       if (dock.isPanelOpen(id)) void dock.closePanel(id)
-      else dock.openPanel(descriptor, { direction: kind === "output" ? "below" : "left" })
+      else dock.openPanel(descriptor, { direction: "below" })
     },
     [dock]
   )
 
-  useHotkey(KEYS.explorer, (event) => {
-    event.preventDefault()
-    openWorkspacePanel("explorer")
-  })
-  useHotkey(KEYS.sourceControl, (event) => {
-    event.preventDefault()
-    openWorkspacePanel("source-control")
-  })
   useHotkey(KEYS.output, (event) => {
     event.preventDefault()
     openWorkspacePanel("output")
@@ -325,7 +299,10 @@ export function AppShell({
       // the way the Codex and Claude desktop sidebars open. `New project`
       // stays reachable from /settings/projects and the command palette.
       action: (
-        <SidebarNav onNewThread={() => startThreadRef.current()} onSearch={() => palette.setOpen(true)} />
+        <SidebarNav
+          onNewThread={() => startThreadRef.current()}
+          onSearch={() => palette.setOpen(true)}
+        />
       ),
       body: loading ? <SidebarGroupsSkeleton /> : <ThreadSidebar actions={actions} />,
     },
@@ -388,7 +365,13 @@ export function AppShell({
               type="button"
               onClick={() => void navigate("/")}
               aria-label="Go to homepage"
-              className="flex shrink-0 items-center gap-2 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              /* Collapsed, the brand is one more icon in the rail and has to
+                 sit on its axis: the nav rows below are 32px buttons inside a
+                 group's 8px padding, so their glyph centres on 24px — the
+                 rail's own centre. A bare 24px mark at the same 8px offset
+                 centres on 20 and reads as if it had slipped left. So in the
+                 rail the button becomes that same 32px box, centred. */
+              className="flex shrink-0 items-center gap-2 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center"
             >
               <Logo idle className="size-6 shrink-0" />
               <span className="brand-script text-xl leading-none group-data-[collapsible=icon]:hidden">
@@ -577,6 +560,7 @@ export function AppShell({
             <Route path="profiles" element={<ProfilesPage />} />
             <Route path="profiles/:entryId" element={<ProfileFormPage />} />
             <Route path="agents" element={<AgentsPage />} />
+            <Route path="usage" element={<QuotaPage />} />
             <Route path="web-search" element={<WebSearchPage />} />
             <Route path="backup" element={<BackupPage />} />
             {/* /settings/<unknown> — the sidebar still needs a page to light up. */}

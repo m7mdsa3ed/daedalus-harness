@@ -187,6 +187,73 @@ export const subagentItemId = (sessionId: string): string => `subagent:${session
  * `Explore: printf hello` — which reads twice inside a rail that is already
  * headed by that name.
  */
+/**
+ * A harness workflow step. The server stamps every RFD spawn it mirrors for a
+ * workflow with `_meta.daedalus.workflow` — which run this session belongs to
+ * and which step of it this is — and an ordinary subagent (a Codex RFD child,
+ * a Claude Code Task) carries no such meta, so this returning undefined is
+ * what keeps those drawing as plain subagent steps. Read from the reducer the
+ * way `parentToolIdOf` is: the store passes `_meta` through, never reads it.
+ */
+export interface WorkflowStepInfo {
+  runId: string
+  /** The workflow's name — the run's heading, repeated on every step. */
+  name: string
+  /** This step's name within the definition. */
+  step: string
+  /** Position in the definition, 0-based, when the server says. */
+  index?: number
+  total?: number
+  /** The phase the step was written under, when the definition had any. */
+  phase?: { index: number; name: string }
+  /** The whole run's outline — its phases and their step names, in definition
+      order. Repeated on every spawn so the card can draw the shape the user
+      wrote from the first step on, rather than growing a row per spawn. One
+      entry named `null` is a definition that had no phases. */
+  plan?: WorkflowPlanPhase[]
+}
+
+export interface WorkflowPlanPhase {
+  name: string | null
+  steps: string[]
+}
+
+export function workflowInfoOf(meta: unknown): WorkflowStepInfo | undefined {
+  const wf = asRecord(asRecord(asRecord(meta)?.daedalus)?.workflow)
+  const runId = str(wf?.runId)
+  const name = str(wf?.name)
+  const step = str(wf?.step)
+  if (!runId || !name || !step) return undefined
+  const phase = asRecord(wf?.phase)
+  const phaseName = str(phase?.name)
+  return {
+    runId,
+    name,
+    step,
+    index: typeof wf?.index === "number" ? wf.index : undefined,
+    total: typeof wf?.total === "number" ? wf.total : undefined,
+    phase:
+      phaseName && typeof phase?.index === "number" ? { index: phase.index, name: phaseName } : undefined,
+    plan: parsePlan(wf?.plan),
+  }
+}
+
+/** The outline, defensively: an older server sends none, and a step drawn from
+    a plan that is not a list of `{name, steps[]}` would be a card of holes. */
+function parsePlan(raw: unknown): WorkflowPlanPhase[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const out: WorkflowPlanPhase[] = []
+  for (const entry of raw) {
+    const phase = asRecord(entry)
+    if (!phase || !Array.isArray(phase.steps)) return undefined
+    out.push({
+      name: str(phase.name) ?? null,
+      steps: phase.steps.filter((s): s is string => typeof s === "string"),
+    })
+  }
+  return out.length ? out : undefined
+}
+
 export function childToolTitle(item: Pick<ToolItem, "title" | "meta">): string {
   const child = asRecord(asRecord(item.meta)?.["opencode/child-session"])
   const prefix = str(child?.title)

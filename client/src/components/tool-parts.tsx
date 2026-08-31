@@ -68,13 +68,19 @@ export const KIND_ICONS: Record<string, React.ComponentType<{ className?: string
    the twenty lines. */
 /* How tall an inline output pane grows before it starts scrolling.
 
-   Viewport-relative rather than the fixed 16rem this used to be: 256px is a
-   reasonable slab on a desktop and about four lines on a phone, where it reads
-   as truncated rather than as scrollable — and a table or a fenced block inside
-   a box that short is a scroll region you have to fight. The cap still exists,
+   Relative rather than the fixed 16rem this used to be: 256px is a reasonable
+   slab in a tall panel and about four lines in a short one, where it reads as
+   truncated rather than as scrollable — and a table or a fenced block inside a
+   box that short is a scroll region you have to fight. The cap still exists,
    because an unbounded pane in a transcript pushes everything after it off the
-   screen; it is just tall enough now that scrolling is the exception. */
-export const PANE_MAX_H = "max-h-[min(60vh,28rem)]"
+   screen; it is just tall enough now that scrolling is the exception.
+
+   The fraction is of the *panel* (`--panel-h`, published by
+   `workspace/panel-container`), not the viewport: a transcript docked under a
+   terminal is a third of the window tall, and 60vh there is a pane taller than
+   the thing it is in. Outside the dock the var is unset and the fallback makes
+   it the viewport again. */
+export const PANE_MAX_H = "max-h-[min(calc(var(--panel-h,100svh)*0.6),28rem)]"
 
 const REHYPE = [[rehypeHighlight, { detect: false, ignoreMissing: true }]] as never
 const REMARK = [remarkGfm]

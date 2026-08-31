@@ -33,6 +33,61 @@ export function materializeWorkspace(cwd: string, links: Pick<LinkSet, "skillIds
   materializeCommands(cwd, links.commandIds);
 }
 
+/* ── The model allowlist ──
+ *
+ * Claude Code's ACP adapter builds its model picker from `availableModels` in
+ * the settings the SDK resolves for the cwd, and *only* from there — the
+ * `CLAUDE_MODEL_CONFIG` env var reaches the SDK query but never the picker. A
+ * value the picker does not offer is refused by `session/set_config_option`,
+ * so writing this file is what makes a gateway's model ids switchable on a
+ * running agent instead of only nameable at spawn (registry.ts, `liveConfig`).
+ *
+ * `settings.local.json` and not `settings.json`: the local tier is the
+ * gitignored one, and this is machine state — a list of ids this harness can
+ * serve, not a decision about the repository. It is merged rather than
+ * written, because the file is the user's: their own keys are untouched, their
+ * own `availableModels` entries survive, and a manifest beside it records
+ * exactly which ids we added last time so the sweep only ever takes back its
+ * own — the same contract as the skills manifest above.
+ */
+const MODELS_MANIFEST = ".daedalus-models.json";
+
+export function materializeModelAllowlist(cwd: string, ids: string[]): void {
+  const dir = join(cwd, ".claude");
+  const settingsPath = join(dir, "settings.local.json");
+  const manifestPath = join(dir, MODELS_MANIFEST);
+  const ours = new Set(readManifest(manifestPath));
+  let settings: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(settingsPath, "utf8"));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      settings = parsed as Record<string, unknown>;
+    }
+  } catch {
+    /* absent, or not JSON we can safely rewrite — either way we start from
+       nothing rather than destroying something we cannot read */
+    if (existsSync(settingsPath)) return;
+  }
+  const existing = Array.isArray(settings.availableModels)
+    ? settings.availableModels.filter((v): v is string => typeof v === "string")
+    : [];
+  // Theirs first, ours after, each once: an entry we added last time and no
+  // longer serve drops out, one they typed themselves stays wherever it is.
+  const theirs = existing.filter((id) => !ours.has(id));
+  const merged = [...new Set([...theirs, ...ids])];
+  /* An empty union means no profile serving this agent has a catalog, and the
+     allowlist is not ours to impose: Claude Code reads `[]` as "nothing but
+     Default", which would take the agent's own models away. Drop the key back
+     to whatever the user had (usually nothing) instead. */
+  if (merged.length === 0) delete settings.availableModels;
+  else settings.availableModels = merged;
+  const wrote = ids.filter((id) => !theirs.includes(id));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+  if (wrote.length > 0) writeFileSync(manifestPath, JSON.stringify(wrote.sort()) + "\n");
+  else rmSync(manifestPath, { force: true });
+}
+
 /* The skills directory is shared with symlinks the user made by hand, so —
    like the commands sweep and its marker below — only links this harness wrote
    are ours to delete. A manifest in the directory records their names; links
@@ -40,7 +95,7 @@ export function materializeWorkspace(cwd: string, links: Pick<LinkSet, "skillIds
    recognized, which covers directories written before the manifest existed. */
 const SKILLS_MANIFEST = ".daedalus-managed.json";
 
-function readSkillsManifest(path: string): string[] {
+function readManifest(path: string): string[] {
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
     return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
@@ -55,7 +110,7 @@ function materializeSkills(cwd: string, skillIds: string[]): void {
   const skillsDir = join(cwd, ".claude", "skills");
   mkdirSync(skillsDir, { recursive: true });
   const manifestPath = join(skillsDir, SKILLS_MANIFEST);
-  const managed = new Set(readSkillsManifest(manifestPath));
+  const managed = new Set(readManifest(manifestPath));
   const known = new Set(all.map((s) => resolve(s.path)));
   // Remove stale daedalus-managed symlinks — and only those: a symlink the
   // user made by hand is not in the manifest and points outside the library.

@@ -1,20 +1,50 @@
 import * as React from "react"
-import { SearchIcon } from "lucide-react"
+import { MoreHorizontal, Pencil, Plus, SearchIcon, Trash2 } from "lucide-react"
 
 import { Input } from "@/components/ui/input"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { cn } from "@/lib/utils"
 import { reportError } from "@/lib/errors"
 import type { ServerSettings } from "@/lib/settings"
 import {
-  STATUS_LABEL,
-  STATUS_ORDER,
+  COLOR_DOT,
+  createBoard,
+  createStatus,
+  deleteBoard,
+  deleteStatus,
+  loadBoards,
+  reorderStatuses,
+  statusesOf,
+  updateBoard,
+  updateStatus,
+  useBoards,
+  type Board as BoardRow,
+  type BoardColor,
+  type BoardStatus,
+} from "@/lib/boards"
+import {
+  PRIORITY_LABEL,
   TASK_PRIORITIES,
-  TASK_STATUSES,
   createTask,
   deleteTask,
   loadTasks,
   reorderTasks,
   updateTask,
   useTasks,
+  type ReorderEntry,
   type Task,
   type TaskInput,
   type TaskPriority,
@@ -22,6 +52,9 @@ import {
 } from "@/lib/tasks-board"
 import { Board } from "./task-board"
 import { TaskFormDialog } from "./task-form"
+import { DeleteBoardDialog, DeleteStatusDialog, NameDialog } from "./board-dialogs"
+
+const BOARD_STORAGE_KEY = "ui.boardId"
 
 /** Dialog state: whether it is open, and the task being edited (null = new). */
 interface DialogState {
@@ -29,20 +62,98 @@ interface DialogState {
   task: Task | null
 }
 
+/** Which name-and-colour question the shared dialog is currently asking. */
+type NamingState =
+  | { kind: "new-board" }
+  | { kind: "rename-board"; board: BoardRow }
+  | { kind: "new-column" }
+  | { kind: "rename-column"; status: BoardStatus }
+  | null
+
+/**
+ * Weave the tasks a filter is hiding back into a column's new order.
+ *
+ * The kanban only ever sees the tasks that pass the search and filter chips, so
+ * the id list a drop produces is the *visible* order — and writing that back
+ * verbatim would renumber the column from 0 while the tasks filtered out of it
+ * kept their old positions, colliding with the new ones. (Before this, a drag
+ * with any filter active quietly scrambled the column's order the moment the
+ * filter was cleared.) Each hidden task is re-inserted after however many
+ * visible tasks preceded it originally, so clearing the filter shows it roughly
+ * where it was.
+ */
+function weaveHidden(fullOrder: Task[], visibleNewOrder: string[], moved: Set<string>): string[] {
+  const staying = new Set(visibleNewOrder)
+  const hidden: { id: string; anchor: number }[] = []
+  let seen = 0
+  for (const task of fullOrder) {
+    if (moved.has(task.id)) continue
+    if (staying.has(task.id)) seen++
+    else hidden.push({ id: task.id, anchor: seen })
+  }
+  if (hidden.length === 0) return visibleNewOrder
+  const out: string[] = []
+  let next = 0
+  for (let i = 0; i < visibleNewOrder.length; i++) {
+    while (next < hidden.length && hidden[next].anchor === i) out.push(hidden[next++].id)
+    out.push(visibleNewOrder[i])
+  }
+  while (next < hidden.length) out.push(hidden[next++].id)
+  return out
+}
+
 export function TasksBoard({ settings }: { settings: ServerSettings }) {
   const tasks = useTasks()
+  const { boards, statuses: allStatuses, loaded } = useBoards()
   const [dialog, setDialog] = React.useState<DialogState>({ open: false, task: null })
-  const [creatingStatus, setCreatingStatus] = React.useState<TaskStatus>("todo")
+  const [creatingStatus, setCreatingStatus] = React.useState<TaskStatus>("")
   const [query, setQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<TaskStatus | "all">("all")
   const [priorityFilter, setPriorityFilter] = React.useState<TaskPriority | "all">("all")
+  const [naming, setNaming] = React.useState<NamingState>(null)
+  const [deletingStatus, setDeletingStatus] = React.useState<BoardStatus | null>(null)
+  const [deletingBoard, setDeletingBoard] = React.useState(false)
+  const [boardId, setBoardId] = React.useState<string>(
+    () => localStorage.getItem(BOARD_STORAGE_KEY) ?? "",
+  )
 
   React.useEffect(() => {
+    loadBoards(settings).catch((err) => reportError(err, "Couldn't load the boards"))
     loadTasks(settings).catch((err) => reportError(err, "Couldn't load the tasks board"))
   }, [settings])
 
-  const filtered = tasks.filter((task) => {
-    if (statusFilter !== "all" && task.status !== statusFilter) return false
+  /* Settle on a board once the list arrives: the remembered one if it still
+     exists, else the first. Deleting the selected board therefore falls back
+     rather than rendering nothing. */
+  React.useEffect(() => {
+    if (!loaded || boards.length === 0) return
+    if (boards.some((b) => b.id === boardId)) return
+    setBoardId(boards[0].id)
+  }, [loaded, boards, boardId])
+
+  React.useEffect(() => {
+    if (boardId) localStorage.setItem(BOARD_STORAGE_KEY, boardId)
+  }, [boardId])
+
+  const board = boards.find((b) => b.id === boardId) ?? null
+  const statuses = React.useMemo(
+    () => (board ? statusesOf(allStatuses, board.id) : []),
+    [allStatuses, board],
+  )
+  const boardTasks = React.useMemo(
+    () => tasks.filter((task) => task.boardId === boardId),
+    [tasks, boardId],
+  )
+
+  // A filter naming a column of the board we just left means nothing here.
+  React.useEffect(() => {
+    if (statusFilter !== "all" && !statuses.some((s) => s.id === statusFilter)) {
+      setStatusFilter("all")
+    }
+  }, [statuses, statusFilter])
+
+  const filtered = boardTasks.filter((task) => {
+    if (statusFilter !== "all" && task.statusId !== statusFilter) return false
     if (priorityFilter !== "all" && task.priority !== priorityFilter) return false
     if (!query.trim()) return true
     const q = query.toLowerCase()
@@ -54,8 +165,8 @@ export function TasksBoard({ settings }: { settings: ServerSettings }) {
     )
   })
 
-  const openNew = (status: TaskStatus) => {
-    setCreatingStatus(status)
+  const openNew = (statusId: TaskStatus) => {
+    setCreatingStatus(statusId || statuses[0]?.id || "")
     setDialog({ open: true, task: null })
   }
 
@@ -63,36 +174,153 @@ export function TasksBoard({ settings }: { settings: ServerSettings }) {
     if (dialog.task) {
       await updateTask(settings, dialog.task.id, input)
     } else {
-      await createTask(settings, { ...input, status: creatingStatus })
+      await createTask(settings, { ...input, boardId, statusId: input.statusId || creatingStatus })
     }
   }
 
-  const handleMove = async (byStatus: Partial<Record<TaskStatus, string[]>>) => {
+  const handleMove = async (byStatus: Record<string, string[]>) => {
+    if (!board) return
     try {
-      // Rebuild the whole board's ordered ids. Columns the drag did not touch
-      // keep their current order; a task that moved columns is taken out of its
-      // old column here, since the authoritative `tasks` still lists it there.
+      /* Rebuild the whole board's ordered ids. Columns the drag did not touch
+         keep their current order; a task that moved columns is taken out of its
+         old column here, since the authoritative `tasks` still lists it there.
+         `order` is the index WITHIN a column — the server writes it verbatim. */
       const movedIds = new Set(Object.values(byStatus).flat())
-      const entries: { id: string; status: TaskStatus; order: number }[] = []
-      for (const status of STATUS_ORDER) {
-        const overrides = byStatus[status]
-        const ids =
-          overrides ??
-          tasks.filter((t) => t.status === status && !movedIds.has(t.id)).map((t) => t.id)
-        for (let i = 0; i < ids.length; i++) {
-          entries.push({ id: ids[i], status, order: i })
-        }
+      const entries: ReorderEntry[] = []
+      for (const status of statuses) {
+        const inColumn = boardTasks
+          .filter((task) => task.statusId === status.id)
+          .sort((a, b) => a.order - b.order)
+        const override = byStatus[status.id]
+        const ids = override
+          ? weaveHidden(inColumn, override, movedIds)
+          : inColumn.filter((task) => !movedIds.has(task.id)).map((task) => task.id)
+        ids.forEach((id, order) => entries.push({ id, statusId: status.id, order, boardId }))
       }
-      await reorderTasks(settings, entries)
+      await reorderTasks(settings, entries, boardId)
     } catch (err) {
       reportError(err, "Couldn't move the task")
+      // The board rendered the move optimistically; re-read so it stops showing
+      // a position the server never accepted.
+      loadTasks(settings, true).catch(() => {})
     }
   }
+
+  // ---- board and column edits ----
+
+  const submitNaming = async ({ name, color }: { name: string; color: BoardColor | null }) => {
+    if (!naming) return
+    switch (naming.kind) {
+      case "new-board": {
+        const created = await createBoard(settings, { name, color })
+        setBoardId(created.id)
+        return
+      }
+      case "rename-board":
+        return updateBoard(settings, naming.board.id, { name, color })
+      case "new-column":
+        if (!board) return
+        return void (await createStatus(settings, board.id, { name, color }))
+      case "rename-column":
+        return updateStatus(settings, naming.status.id, { name, color })
+    }
+  }
+
+  const moveColumn = async (status: BoardStatus, delta: -1 | 1) => {
+    if (!board) return
+    const ids = statuses.map((s) => s.id)
+    const from = ids.indexOf(status.id)
+    const to = from + delta
+    if (from === -1 || to < 0 || to >= ids.length) return
+    ids.splice(to, 0, ...ids.splice(from, 1))
+    try {
+      await reorderStatuses(settings, board.id, ids)
+    } catch (err) {
+      reportError(err, "Couldn't move the column")
+    }
+  }
+
+  const confirmDeleteStatus = async (moveTo: string | undefined) => {
+    if (!deletingStatus) return
+    await deleteStatus(settings, deletingStatus.id, moveTo)
+    // Its tasks were rehomed by the server; the list on screen still has them
+    // in a column that no longer exists.
+    await loadTasks(settings, true)
+  }
+
+  const confirmDeleteBoard = async () => {
+    if (!board) return
+    await deleteBoard(settings, board.id)
+    await loadTasks(settings, true)
+  }
+
+  const namingProps = namingDialogProps(naming)
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Toolbar: search + filters */}
+      {/* Toolbar: board switcher, search, filters */}
       <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
+        <div className="flex items-center gap-1">
+          <Select value={boardId} onValueChange={(v) => v && setBoardId(v)}>
+            <SelectTrigger className="h-9 min-w-40" aria-label="Board">
+              <SelectValue>
+                <span className="inline-flex items-center gap-2">
+                  {board?.color && (
+                    <span className={cn("size-2 rounded-full", COLOR_DOT[board.color])} />
+                  )}
+                  {board?.name ?? "Board"}
+                </span>
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {boards.map((option) => (
+                <SelectItem key={option.id} value={option.id}>
+                  <span className="inline-flex items-center gap-2">
+                    {option.color && (
+                      <span className={cn("size-2 rounded-full", COLOR_DOT[option.color])} />
+                    )}
+                    {option.name}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label="Board options"
+                  className="grid size-9 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <MoreHorizontal className="size-4" />
+                </button>
+              }
+            />
+            <DropdownMenuContent align="start" className="w-52">
+              <DropdownMenuItem onClick={() => setNaming({ kind: "new-board" })}>
+                <Plus className="size-4" /> New board…
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!board}
+                onClick={() => board && setNaming({ kind: "rename-board", board })}
+              >
+                <Pencil className="size-4" /> Rename board…
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                // The app's only view of a task is a board, so the last one
+                // stays — the server refuses it too.
+                disabled={!board || boards.length <= 1}
+                onClick={() => setDeletingBoard(true)}
+                className="text-destructive"
+              >
+                <Trash2 className="size-4" /> Delete board…
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
         <div className="relative min-w-0 flex-1 sm:max-w-xs">
           <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -106,13 +334,13 @@ export function TasksBoard({ settings }: { settings: ServerSettings }) {
           <FilterChip active={statusFilter === "all"} onClick={() => setStatusFilter("all")}>
             All statuses
           </FilterChip>
-          {TASK_STATUSES.map((status) => (
+          {statuses.map((status) => (
             <FilterChip
-              key={status}
-              active={statusFilter === status}
-              onClick={() => setStatusFilter(statusFilter === status ? "all" : status)}
+              key={status.id}
+              active={statusFilter === status.id}
+              onClick={() => setStatusFilter(statusFilter === status.id ? "all" : status.id)}
             >
-              {STATUS_LABEL[status]}
+              {status.name}
             </FilterChip>
           ))}
         </div>
@@ -126,7 +354,7 @@ export function TasksBoard({ settings }: { settings: ServerSettings }) {
               active={priorityFilter === priority}
               onClick={() => setPriorityFilter(priorityFilter === priority ? "all" : priority)}
             >
-              {priority}
+              {PRIORITY_LABEL[priority]}
             </FilterChip>
           ))}
         </div>
@@ -134,9 +362,14 @@ export function TasksBoard({ settings }: { settings: ServerSettings }) {
 
       <Board
         tasks={filtered}
+        statuses={statuses}
         onMove={handleMove}
         onNew={openNew}
         onTaskClick={(task) => setDialog({ open: true, task })}
+        onAddColumn={() => setNaming({ kind: "new-column" })}
+        onRenameColumn={(status) => setNaming({ kind: "rename-column", status })}
+        onDeleteColumn={setDeletingStatus}
+        onMoveColumn={moveColumn}
       />
 
       <TaskFormDialog
@@ -145,6 +378,8 @@ export function TasksBoard({ settings }: { settings: ServerSettings }) {
           if (!open) setDialog({ open: false, task: null })
         }}
         task={dialog.task}
+        statuses={statuses}
+        defaultStatusId={creatingStatus}
         onSave={handleSave}
         onDelete={
           dialog.task
@@ -155,8 +390,80 @@ export function TasksBoard({ settings }: { settings: ServerSettings }) {
             : undefined
         }
       />
+
+      <NameDialog
+        open={naming !== null}
+        onOpenChange={(open) => {
+          if (!open) setNaming(null)
+        }}
+        {...namingProps}
+        onSubmit={submitNaming}
+      />
+
+      <DeleteStatusDialog
+        open={deletingStatus !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeletingStatus(null)
+        }}
+        status={deletingStatus}
+        siblings={statuses.filter((s) => s.id !== deletingStatus?.id)}
+        taskCount={boardTasks.filter((t) => t.statusId === deletingStatus?.id).length}
+        onConfirm={confirmDeleteStatus}
+      />
+
+      <DeleteBoardDialog
+        open={deletingBoard}
+        onOpenChange={setDeletingBoard}
+        name={board?.name ?? ""}
+        taskCount={boardTasks.length}
+        onConfirm={confirmDeleteBoard}
+      />
     </div>
   )
+}
+
+/** Copy for the one shared name-and-colour dialog, per question it is asking. */
+function namingDialogProps(naming: NamingState): {
+  title: string
+  description: string
+  submitLabel: string
+  initialName: string
+  initialColor: BoardColor | null
+} {
+  switch (naming?.kind) {
+    case "rename-board":
+      return {
+        title: "Rename board",
+        description: "The board's name and colour in the switcher.",
+        submitLabel: "Save",
+        initialName: naming.board.name,
+        initialColor: naming.board.color,
+      }
+    case "new-column":
+      return {
+        title: "New column",
+        description: "A column is a status a task can be in. It is added at the end.",
+        submitLabel: "Add column",
+        initialName: "",
+        initialColor: null,
+      }
+    case "rename-column":
+      return {
+        title: "Rename column",
+        description: "Tasks in this column keep their place.",
+        submitLabel: "Save",
+        initialName: naming.status.name,
+        initialColor: naming.status.color,
+      }
+    default:
+      return {
+        title: "New board",
+        description: "A board is its own kanban, with its own columns and tasks.",
+        submitLabel: "Create board",
+        initialName: "",
+        initialColor: null,
+      }
+  }
 }
 
 function FilterChip({

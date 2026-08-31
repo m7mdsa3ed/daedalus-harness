@@ -20,9 +20,12 @@ import {
   sessionQueue as queueTable,
   sessions as sessionsTable,
   skills as skillsTable,
+  boards as boardsTable,
+  boardStatuses as boardStatusesTable,
   tasks as tasksTable,
 } from "../src/db/index.js";
 import { BundleSchema, exportBundle, importBundle, type Bundle } from "../src/backup.js";
+import { ensureDefaultBoard } from "../src/boards.js";
 
 let passed = 0;
 const failures: string[] = [];
@@ -36,7 +39,7 @@ function test(name: string, fn: () => void) {
 }
 
 function wipe() {
-  for (const table of [sessionsTable, profilesTable, projectsTable, mcpServersTable, skillsTable, commandsTable, agentsTable, tasksTable]) {
+  for (const table of [sessionsTable, profilesTable, projectsTable, mcpServersTable, skillsTable, commandsTable, agentsTable, tasksTable, boardStatusesTable, boardsTable]) {
     db.delete(table).run();
   }
 }
@@ -44,6 +47,9 @@ function wipe() {
 /** A small install: one of everything that links to something else. */
 function seed() {
   wipe();
+  // Every real install has a board — index.ts seeds one at boot, and a task
+  // with no column to point at is not a state the app can produce.
+  ensureDefaultBoard();
   const now = 1_700_000_000_000;
   db.insert(agentsTable).values({ id: "fake", name: "Fake", command: "node", args: ["a.mjs"], env: { K: "{apiKey}" }, seededVersion: 1 }).run();
   db.insert(mcpServersTable).values({ id: "m1", type: "http", name: "srv", url: "http://x", headers: [{ name: "Authorization", value: "Bearer s3cret" }] }).run();
@@ -97,6 +103,52 @@ test("replace restores an emptied install exactly", () => {
   const again = exportBundle({ includeSecrets: true, includeJournals: true });
   const strip = (b: Bundle) => ({ ...b, exportedAt: 0 });
   assert.deepEqual(strip(again), strip(bundle));
+});
+
+test("boards and their columns round-trip", () => {
+  seed();
+  const bundle = exportBundle({ includeSecrets: true, includeJournals: true });
+  assert.equal(bundle.boards.length, 1);
+  assert.equal(bundle.boardStatuses.length, 4);
+  assert.equal(bundle.tasks[0]!.boardId, "default");
+  assert.equal(bundle.tasks[0]!.statusId, "todo");
+});
+
+/* The pre-boards shape: a task row with `board`/`status` instead of ids. Those
+   values ARE the seeded ids, so an old bundle has to import unchanged. */
+test("a pre-boards bundle imports into the default board", () => {
+  seed();
+  const bundle = exportBundle({ includeSecrets: true, includeJournals: true });
+  const legacy = JSON.parse(JSON.stringify(bundle)) as Record<string, unknown>;
+  delete legacy.boards;
+  delete legacy.boardStatuses;
+  legacy.tasks = [
+    { id: "old1", board: "default", status: "in_progress", title: "Legacy", priority: "high", labels: [], order: 0, createdAt: 1, updatedAt: 1 },
+  ];
+  const parsed = BundleSchema.safeParse(legacy);
+  assert.ok(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues));
+  const summary = importBundle(parsed.data, "replace");
+  assert.equal(summary.tasks, 1);
+  // Re-seeded by the import, since the bundle carried no boards.
+  assert.equal(count(boardsTable), 1);
+  assert.equal(count(boardStatusesTable), 4);
+  const task = db.select().from(tasksTable).where(eq(tasksTable.id, "old1")).get()!;
+  assert.equal(task.boardId, "default");
+  assert.equal(task.statusId, "in_progress");
+  assert.equal(summary.orphaned, 0);
+});
+
+/* A bundle whose tasks name a column it did not bring: repaired to the board's
+   first column rather than left invisible. */
+test("a task pointing at a missing column is rehomed, not lost", () => {
+  seed();
+  const bundle = exportBundle({ includeSecrets: true, includeJournals: true });
+  const broken = BundleSchema.parse(JSON.parse(JSON.stringify(bundle)));
+  broken.boardStatuses = broken.boardStatuses.filter((s) => s.id !== "todo");
+  const summary = importBundle(broken, "replace");
+  assert.equal(summary.orphaned, 1);
+  const task = db.select().from(tasksTable).where(eq(tasksTable.id, "task1")).get()!;
+  assert.equal(task.statusId, "in_progress");
 });
 
 test("replace drops what the bundle does not name; merge keeps it", () => {

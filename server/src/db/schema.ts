@@ -44,6 +44,22 @@ export interface NameValue {
   value: string;
 }
 
+/**
+ * How to ask a runtime what is left of the subscription it is spending.
+ *
+ * `kind` picks one of the adapters in quota.ts — the wire protocol is code,
+ * because a CLI that prints prose and a JSON-RPC server are not the same
+ * conversation — while `command`/`args` are data the user can edit, exactly like
+ * the agent's own `command`/`args`. An agent with no subscription notion (an
+ * OpenAI-key runtime, OpenCode) simply has no probe, which the UI reports as
+ * "no quota to show" rather than as an empty dial.
+ */
+export interface QuotaProbe {
+  kind: "claude-cli" | "codex-app-server";
+  command: string;
+  args: string[];
+}
+
 export const agents = sqliteTable("agents", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -55,6 +71,17 @@ export const agents = sqliteTable("agents", {
       is applied live over `session/set_config_option` instead of respawning. */
   spawnCategories: text("spawn_categories", { mode: "json" })
     .$type<Record<string, "model" | "effort">>(),
+  /** How a model/effort/profile change reaches this agent *without* restarting
+      it, when it can at all. `"acp"` = its own selector will take the profile's
+      ids, because the harness writes them where the agent looks for its model
+      allowlist; `"gateway"` = it will not, so the shim rewrites the model on
+      the wire instead. Null = neither, and the change costs a respawn. */
+  liveConfig: text("live_config").$type<"acp" | "gateway">(),
+  /** How to ask this runtime what is left of its subscription quota, or null
+      when it has no such notion (see QuotaProbe in registry.ts). Declared with
+      the agent for the same reason `spawnCategories` is: the *how to talk* is
+      one of quota.ts's adapters, but the command to run is the user's. */
+  quotaProbe: text("quota_probe", { mode: "json" }).$type<QuotaProbe>(),
   /** Which release of DEFAULT_AGENTS seeded this row. A later release can add
       an agent to an install that already has rows without touching user edits —
       the old seed-if-the-file-is-empty rule could never do that. */
@@ -74,6 +101,44 @@ export interface ProfileAgentLink {
   /** Overrides the profile's shared baseUrl for this agent only. Empty/absent
       means "use the shared one". */
   baseUrl?: string;
+}
+
+/**
+ * Which provider answers "how much of the plan is left" for this profile.
+ *
+ * The agent-side `QuotaProbe` asks a *runtime's* CLI about the machine's own
+ * login, which is the right question for `claude`/`codex login` and the wrong
+ * one for everything else: a profile pointed at a provider's coding plan is a
+ * subscription the runtime knows nothing about, metered by that provider's own
+ * account API. `claude -p /usage` on a z.ai profile reports the Anthropic
+ * account it is not spending.
+ *
+ * So the provider is a property of the *profile*, not the agent, and it is
+ * declared the same way a probe is — a `kind` that picks an adapter plus the
+ * little that configures it — rather than matched on a base URL. `kind` is the
+ * whole contract: an adapter owns its endpoint, its auth shape and its response.
+ */
+export type ProfileUsageKind =
+  /** No plan to report. The agent's own probe answers, if it has one. */
+  | "none"
+  /** Z.AI / Zhipu GLM Coding Plan (`/api/monitor/usage/quota/limit`). */
+  | "zai";
+
+/** Every `kind` a profile may name, for the form's picker and for validating a
+    saved profile. Adding a provider is this array, the union above, and a branch
+    in `readProfileUsage` (usage-api.ts). */
+export const USAGE_KINDS = ["none", "zai"] as const satisfies readonly ProfileUsageKind[];
+
+export interface ProfileUsage {
+  kind: ProfileUsageKind;
+  /** Override the adapter's default host, or name the full endpoint outright.
+      Empty means the adapter decides (which for z.ai includes picking the CN
+      platform when the profile's own base URL is a bigmodel.cn one). */
+  baseUrl?: string;
+  /** Credential for the usage API when it is not the profile's own key.
+      Empty means "use `profiles.api_key`", which is the ordinary case: a
+      coding-plan key is what both the inference and the monitor route take. */
+  apiKey?: string;
 }
 
 export const profiles = sqliteTable("profiles", {
@@ -103,6 +168,11 @@ export const profiles = sqliteTable("profiles", {
       "no logo", which falls back to the agent's own mark in the client. */
   logoUrl: text("logo_url"),
   models: text("models", { mode: "json" }).$type<ModelDef[]>().notNull(),
+  /** How to read this provider's subscription usage (see ProfileUsage). Null on
+      rows from before the column existed, and on every profile whose provider
+      meters per token — which is most of them, and is why "no usage API" is the
+      default rather than something to configure. */
+  usage: text("usage", { mode: "json" }).$type<ProfileUsage>(),
   /* The web-search and knowledge opt-ins used to be columns here. They are
      library rows now (`mcp_servers.type = "builtin"`), linked like any other
      server — see BUILTIN_MCP in library.ts. */
@@ -124,14 +194,14 @@ export const projects = sqliteTable("projects", {
     row stores no command, env or credentials — those are synthesized at spawn
     (`sessions.ts`: config.json's search backend, the project's id) so a config
     edit is live and a token is never cached in a row. */
-export type BuiltinMcp = "web-search" | "knowledge";
+export type BuiltinMcp = "web-search" | "knowledge" | "workflow";
 
 export const mcpServers = sqliteTable("mcp_servers", {
   id: text("id").primaryKey(),
   type: text("type", { enum: ["http", "stdio", "builtin"] }).notNull(),
   name: text("name").notNull(),
   // builtin
-  builtin: text("builtin", { enum: ["web-search", "knowledge"] }).$type<BuiltinMcp>(),
+  builtin: text("builtin", { enum: ["web-search", "knowledge", "workflow"] }).$type<BuiltinMcp>(),
   // http
   url: text("url"),
   headers: text("headers", { mode: "json" }).$type<NameValue[]>(),
@@ -256,9 +326,73 @@ export const sessions = sqliteTable(
     /** Epoch ms this thread was deleted; null = live. Deleted threads keep
         their row (and their acpSessionId) so a delete stays undoable. */
     deletedAt: integer("deleted_at"),
+    /** The thread this one is a workflow step of (`workflows.ts`), else null.
+        Indexed, and NOT a foreign key like the three above — but for a different
+        reason: an SQL cascade would delete the children's rows underneath the
+        manager's in-memory map (their journals, FTS rows and processes are the
+        manager's to take down through `purge`), and a backup merge inserts
+        sessions in bundle order, where a child may precede its parent inside the
+        one transaction. `SessionManager.purge`/`softDelete`/`restore` cascade
+        to children by hand. */
+    parentSessionId: text("parent_session_id"),
   },
-  (t) => [index("sessions_live").on(t.deletedAt, t.createdAt)],
+  (t) => [
+    index("sessions_live").on(t.deletedAt, t.createdAt),
+    index("sessions_parent").on(t.parentSessionId),
+  ],
 );
+
+/**
+ * One run of a harness workflow (`workflows.ts`): the definition the agent
+ * handed `run_workflow`, its inputs, and where every step got to. Steps live in
+ * one JSON column rather than a table of their own: the only queries are "runs
+ * of this thread" and "what was running when the server last stopped", and a
+ * step's identity is its name inside the definition. Cascades with the parent
+ * row (the run is meaningless without the thread that asked for it), which only
+ * a purge deletes — and `purge` retires the children first, so nothing live
+ * points at a deleted run. Step threads themselves are ordinary `sessions`
+ * rows carrying `parent_session_id`.
+ */
+export const workflowRuns = sqliteTable(
+  "workflow_runs",
+  {
+    id: text("id").primaryKey(),
+    parentSessionId: text("parent_session_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    definition: text("definition", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    inputs: text("inputs", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    status: text("status", { enum: ["running", "completed", "failed", "cancelled"] })
+      .$type<WorkflowRunStatus>()
+      .notNull(),
+    error: text("error"),
+    steps: text("steps", { mode: "json" }).$type<WorkflowStepRecord[]>().notNull(),
+    createdAt: integer("created_at").notNull(),
+    endedAt: integer("ended_at"),
+  },
+  (t) => [index("workflow_runs_parent").on(t.parentSessionId, t.createdAt)],
+);
+
+export type WorkflowRunStatus = "running" | "completed" | "failed" | "cancelled";
+export type WorkflowStepStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "skipped";
+
+/** One step's progress inside `workflow_runs.steps`. */
+export interface WorkflowStepRecord {
+  name: string;
+  /** The phase the step was written under, when the definition had any. */
+  phase?: string | null;
+  status: WorkflowStepStatus;
+  /** The step's thread, once spawned. */
+  sessionId: string | null;
+  /** Prompts sent so far: 1 after the step's prompt, 2 after the JSON repair turn. */
+  attempt: number;
+  /** The child's final prose (text steps) or its parsed, validated JSON. */
+  output: unknown;
+  error: string | null;
+  startedAt: number | null;
+  endedAt: number | null;
+}
 
 /**
  * A thread's durable event log — the same events the live socket sends.
@@ -400,6 +534,27 @@ export const agentOptions = sqliteTable("agent_options", {
 });
 
 /**
+ * The last subscription-quota answer for a (profile, agent) pair — see quota.ts.
+ *
+ * Cached for the same reason `agent_options` is: asking means spawning a process
+ * and throwing it away, and several tabs plus the composer popover all want the
+ * same number. Unlike that one it *expires* (QUOTA_TTL_MS) rather than being
+ * keyed by everything that could change it — a quota moves on its own, with no
+ * local event to invalidate it. No cwd in the key: quota is account-level and
+ * the same in every directory.
+ *
+ * Derived state, so it is deliberately not in a backup (backup.ts says the same
+ * of the probe cache): a bundle restored onto another machine would be carrying
+ * a stale reading of an account it may not even be logged into.
+ */
+export const agentQuota = sqliteTable("agent_quota", {
+  /** `profileId:agentId`. */
+  key: text("key").primaryKey(),
+  snapshot: text("snapshot", { mode: "json" }).$type<unknown>().notNull(),
+  fetchedAt: integer("fetched_at").notNull(),
+});
+
+/**
  * A scheduled message: send `text` to `session_id`'s agent at `nextAt`, then
  * again every `every_ms` until cancelled. The server owns delivery — a browser
  * tab closing must not be what stops a scheduled turn — which is why it is a
@@ -484,34 +639,98 @@ export const projectPreviews = sqliteTable(
 );
 
 /**
+ * One-row bookkeeping for the boot-time backfill of the search index
+ * (`search.ts`), keyed so a future index rebuild can add its own marker. The
+ * FTS5 table it tracks is not here — drizzle cannot model a virtual table —
+ * and is created by `db/index.ts` at boot instead.
+ */
+export const searchMeta = sqliteTable("search_meta", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+});
+
+/**
+ * A board on the tasks board — one kanban, owning its own columns.
+ *
+ * Like `tasks` below, this holds no foreign keys: an SQL cascade would take a
+ * board's tasks with it silently, and deleting a column has to be a *decision*
+ * (where do its tasks go?) rather than a delete. `boards.ts` cascades by hand,
+ * in one transaction, so every one of those decisions is written down.
+ */
+export const boards = sqliteTable(
+  "boards",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    /** Palette token (`boards.ts: BOARD_COLORS`); null = neutral. */
+    color: text("color"),
+    /** Position in the board switcher. */
+    order: integer("order").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("boards_order").on(t.order)],
+);
+
+/**
+ * One column on one board: a *row*, not a union member.
+ *
+ * This is what makes a status addable. It used to be a four-value enum repeated
+ * in six places (this column, the zod schemas, the backup row, the client's
+ * copy, and twice more inside the kanban's drag handlers), so "add a status"
+ * meant editing every one of them and a schema push besides. A status is now a
+ * row with a name the user picks, and `tasks.status_id` points at it.
+ *
+ * The default board's four statuses are seeded with their *legacy slugs* as ids
+ * (`todo`, `in_progress`, `blocked`, `done`) — which is the whole migration:
+ * every task written before boards existed already holds one of those strings
+ * in `status`, so the column changes meaning without a single row being
+ * rewritten. Ids minted after that are UUIDs.
+ */
+export const boardStatuses = sqliteTable(
+  "board_statuses",
+  {
+    id: text("id").primaryKey(),
+    boardId: text("board_id").notNull(),
+    /** What the column header reads. */
+    name: text("name").notNull(),
+    /** Palette token (`boards.ts: STATUS_COLORS`); null = neutral. */
+    color: text("color"),
+    /** Left-to-right position on the board. */
+    order: integer("order").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("board_statuses_board_order").on(t.boardId, t.order)],
+);
+
+/**
  * A task on the tasks board.
  *
- * Standalone for now: a genuinely top-level resource, not scoped to a session,
- * project or agent. The board is user-managed; wiring tasks to agent turns (the
- * "no connection between the agents and the board, initially" promise) is a
- * later step, and the schema deliberately holds no foreign keys so nothing here
- * has to be rethought when that arrives.
+ * Standalone: a genuinely top-level resource, not scoped to a session, project
+ * or agent. The board is user-managed; wiring tasks to agent turns (the "no
+ * connection between the agents and the board, initially" promise) is a later
+ * step, and the schema deliberately holds no foreign keys so nothing here has
+ * to be rethought when that arrives.
  *
- * `status` and `board` are distinct: a status is what the task IS (todo /
- * in_progress / done / blocked), while the board is which column it sits in on
- * the kanban. For the default single-board app they collapse, but keeping them
- * apart means reorder/drag is a pure column+order operation that never has to
- * guess at a status, and a future multi-board read (filter by board, not by
- * migrating statuses) stays a simple column add.
+ * `boardId` and `statusId` are the two halves of a task's position: which
+ * kanban it is on, and which of *that board's* columns it sits in. Both are
+ * ids into the two tables above, and both keep their original column names
+ * (`board`, `status`) — the values already stored there are exactly the ids the
+ * seed mints, so widening the app from one board with four fixed statuses to
+ * many boards with any statuses is a pure additive push with no data rewrite.
  */
 export const tasks = sqliteTable(
   "tasks",
   {
     id: text("id").primaryKey(),
-    board: text("board").notNull().default("default"),
+    /** → `boards.id`. Column name predates the table. */
+    boardId: text("board").notNull().default("default"),
     title: text("title").notNull(),
     /** Markdown body; null = none. */
     description: text("description"),
-    status: text("status", {
-      enum: ["todo", "in_progress", "done", "blocked"],
-    })
-      .notNull()
-      .default("todo"),
+    /** → `board_statuses.id`, always one belonging to `boardId`. */
+    statusId: text("status").notNull().default("todo"),
     priority: text("priority", { enum: ["low", "medium", "high", "urgent"] })
       .notNull()
       .default("medium"),
@@ -528,5 +747,5 @@ export const tasks = sqliteTable(
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (t) => [index("tasks_board_order").on(t.board, t.status, t.order)],
+  (t) => [index("tasks_board_order").on(t.boardId, t.statusId, t.order)],
 );

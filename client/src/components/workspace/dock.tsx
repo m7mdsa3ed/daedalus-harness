@@ -1,6 +1,6 @@
 /* ── Workspace dock ──
    Dockview as a generic panel host. `chat` used to be the whole component map;
-   it is now one registered kind among seven (see `lib/workspace/panels.ts`),
+   it is now one registered kind among five (see `lib/workspace/panels.ts`),
    and everything the dock does — open, focus, split, close, restore, prune —
    speaks descriptors rather than session ids.
 
@@ -27,11 +27,9 @@ import "dockview-react/dist/styles/dockview.css"
 
 import { ChatPanel } from "@/components/workspace/chat-panel"
 import { EditorPanel } from "@/components/workspace/editor-panel"
-import { ExplorerPanel } from "@/components/workspace/explorer-panel"
-import { IdePanel } from "@/components/workspace/ide-panel"
 import { OutputPanel } from "@/components/workspace/output-panel"
+import { PanelContainer } from "@/components/workspace/panel-container"
 import { PanelTab } from "@/components/workspace/panel-tab"
-import { SourceControlPanel } from "@/components/workspace/source-control-panel"
 import { TerminalPanel } from "@/components/workspace/terminal-panel"
 import { WebPanel } from "@/components/workspace/web-panel"
 import { UnsupportedPanel } from "@/components/workspace/unsupported-panel"
@@ -309,28 +307,21 @@ export function useWorkspaceDock(): DockController {
         return
       }
 
-      /* IDE: navigation left, work centre, streams below. A kind with nothing
-         open contributes no group, so today — with only `chat` built — this is
-         one centre group, which is exactly right. */
-      const LEFT: PanelKind[] = ["explorer", "source-control"]
+      /* IDE: work centre, streams below. A kind with nothing open contributes
+         no group, so a dock holding only threads is one centre group, which is
+         exactly right. */
       const BOTTOM: PanelKind[] = ["terminal", "output"]
-      const bucket = (panel: IDockviewPanel) => {
-        const kind = panel.api.component as PanelKind
-        return LEFT.includes(kind) ? "left" : BOTTOM.includes(kind) ? "bottom" : "centre"
-      }
+      const bucket = (panel: IDockviewPanel) =>
+        BOTTOM.includes(panel.api.component as PanelKind) ? "bottom" : "centre"
       silently(() => {
         stackAll()
         const centre = api.activeGroup ?? api.groups[0]
         if (!centre) return
-        const groups: Partial<Record<"left" | "bottom", ReturnType<DockviewApi["addGroup"]>>> = {}
+        let bottom: ReturnType<DockviewApi["addGroup"]> | undefined
         for (const panel of [...api.panels]) {
-          const where = bucket(panel)
-          if (where === "centre") continue
-          groups[where] ??= api.addGroup({
-            referenceGroup: centre,
-            direction: where === "left" ? "left" : "below",
-          })
-          panel.api.moveTo({ group: groups[where]! })
+          if (bucket(panel) === "centre") continue
+          bottom ??= api.addGroup({ referenceGroup: centre, direction: "below" })
+          panel.api.moveTo({ group: bottom })
         }
       })
       active?.api.setActive()
@@ -563,20 +554,29 @@ export function WorkspaceDock({
   /* Every kind gets an entry, including the ones this build has not written
      yet: Dockview throws on an unknown component name, so a layout saved by a
      newer build would take the whole dock down instead of showing one panel it
-     cannot draw. */
+     cannot draw.
+
+     Every one of them is wrapped, in this one place, in `PanelContainer` — a
+     panel's contents are laid out against the panel, and the wrap is the only
+     thing that makes that true (see the file for which half of "mobile" it
+     answers and which half stays the window's). */
   const components = React.useMemo(() => {
     const map: Record<string, React.FC<IDockviewPanelProps>> = {}
-    for (const kind of PANEL_KINDS) map[kind] = UnsupportedPanel
-    map.chat = (props) => (
+    const contained =
+      (Panel: React.FC<IDockviewPanelProps>): React.FC<IDockviewPanelProps> =>
+      (props) => (
+        <PanelContainer>
+          <Panel {...props} />
+        </PanelContainer>
+      )
+    for (const kind of PANEL_KINDS) map[kind] = contained(UnsupportedPanel)
+    map.chat = contained((props) => (
       <ChatPanel {...(props as IDockviewPanelProps<{ sessionId: string }>)} actions={actions} />
-    )
-    map.explorer = ExplorerPanel as React.FC<IDockviewPanelProps>
-    map.editor = EditorPanel as React.FC<IDockviewPanelProps>
-    map.terminal = TerminalPanel as React.FC<IDockviewPanelProps>
-    map["source-control"] = SourceControlPanel as React.FC<IDockviewPanelProps>
-    map.web = WebPanel as React.FC<IDockviewPanelProps>
-    map.output = OutputPanel as React.FC<IDockviewPanelProps>
-    map.ide = IdePanel as React.FC<IDockviewPanelProps>
+    ))
+    map.editor = contained(EditorPanel as React.FC<IDockviewPanelProps>)
+    map.terminal = contained(TerminalPanel as React.FC<IDockviewPanelProps>)
+    map.web = contained(WebPanel as React.FC<IDockviewPanelProps>)
+    map.output = contained(OutputPanel as React.FC<IDockviewPanelProps>)
     return map
   }, [actions])
 

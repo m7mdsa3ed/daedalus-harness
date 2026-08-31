@@ -36,7 +36,7 @@ export function copyText(text: string) {
    already said. Only a failure claims that column now. Everything a step
    produced is collapsed behind the row until clicked. */
 
-function useElapsed(startedAt: number, active: boolean): number | null {
+export function useElapsed(startedAt: number, active: boolean): number | null {
   const [ms, setMs] = React.useState<number | null>(null)
   React.useEffect(() => {
     if (!active) {

@@ -1,1 +1,0 @@
-ALTER TABLE `session_events` ADD `at` integer DEFAULT 0 NOT NULL;

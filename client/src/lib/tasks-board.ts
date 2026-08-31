@@ -17,18 +17,24 @@ import { api, type ServerSettings } from "./settings"
    the server — the client never invents an ordering or a column.
 */
 
-export const TASK_STATUSES = ["todo", "in_progress", "done", "blocked"] as const
-export type TaskStatus = (typeof TASK_STATUSES)[number]
+/* A task's column is an id into `board_statuses` (see lib/boards.ts), not a
+   member of a union: the four statuses used to be hardcoded here, in the
+   server's schema and zod, in the backup row and twice more inside the kanban's
+   drag handlers, so adding one meant editing all six and pushing a schema.
+   `TaskStatus` stays as a name for what the id *means* at a call site. */
+export type TaskStatus = string
 
 export const TASK_PRIORITIES = ["low", "medium", "high", "urgent"] as const
 export type TaskPriority = (typeof TASK_PRIORITIES)[number]
 
 export interface Task {
   id: string
-  board: string
+  /** → `Board.id`. */
+  boardId: string
   title: string
   description: string | null
-  status: TaskStatus
+  /** → `BoardStatus.id`, always a column of `boardId`. */
+  statusId: TaskStatus
   priority: TaskPriority
   labels: string[]
   assignee: string | null
@@ -42,7 +48,8 @@ export interface Task {
 export interface TaskInput {
   title: string
   description?: string | null
-  status?: TaskStatus
+  boardId?: string
+  statusId?: TaskStatus
   priority?: TaskPriority
   labels?: string[]
   assignee?: string | null
@@ -52,19 +59,11 @@ export interface TaskInput {
 
 export interface ReorderEntry {
   id: string
-  status: TaskStatus
+  statusId: TaskStatus
+  /** Position *within its column*, 0-based. */
   order: number
+  boardId?: string
 }
-
-/** Human label for a status — the schema knows them as slugs. */
-export const STATUS_LABEL: Record<TaskStatus, string> = {
-  todo: "To do",
-  in_progress: "In progress",
-  done: "Done",
-  blocked: "Blocked",
-}
-
-export const STATUS_ORDER: TaskStatus[] = ["todo", "in_progress", "blocked", "done"]
 
 export const PRIORITY_LABEL: Record<TaskPriority, string> = {
   low: "Low",
@@ -90,10 +89,13 @@ function setAll(next: Task[]) {
   notify()
 }
 
+/* Replace a row in place, or append a new one. Deliberately does NOT re-sort:
+   the list's order is the server's (board, column, position), and re-sorting by
+   priority here made the list view jump into a different order after an edit
+   than it had after a reload. Consumers that want another order say so. */
 function upsert(row: Task) {
-  tasks = [...tasks.filter((t) => t.id !== row.id), row].sort(
-    (a, b) => priorityRank(b.priority) - priorityRank(a.priority),
-  )
+  const at = tasks.findIndex((t) => t.id === row.id)
+  tasks = at === -1 ? [...tasks, row] : tasks.map((t) => (t.id === row.id ? row : t))
   notify()
 }
 
@@ -121,8 +123,12 @@ export function useTasks(): Task[] {
 
 let inflight: Promise<void> | null = null
 
-/** Load the whole board. Deduped while a load is already in flight. */
-export function loadTasks(settings: ServerSettings): Promise<void> {
+/** Load every task, across every board — the page filters by board, so
+    switching boards costs nothing. Deduped while a load is already in flight;
+    `force` jumps that dedupe for a caller that has just written (deleting a
+    column rehomes its tasks) and must not be handed a pre-write response. */
+export function loadTasks(settings: ServerSettings, force = false): Promise<void> {
+  if (force) inflight = null
   if (inflight) return inflight
   inflight = api<Task[]>(settings, "/api/tasks")
     .then(setAll)
@@ -161,10 +167,15 @@ export function deleteTask(settings: ServerSettings, id: string): Promise<void> 
 }
 
 /** Atomically commit a reorder / status move on the server, and adopt the
-    authoritative list it returns. */
-export function reorderTasks(settings: ServerSettings, entries: ReorderEntry[]): Promise<void> {
+    authoritative list it returns. `board` scopes the entries that name no board
+    of their own; the response is always the whole task list. */
+export function reorderTasks(
+  settings: ServerSettings,
+  entries: ReorderEntry[],
+  board: string,
+): Promise<void> {
   return api<Task[]>(settings, "/api/tasks/reorder", {
     method: "POST",
-    body: JSON.stringify({ entries }),
+    body: JSON.stringify({ entries, board }),
   }).then(setAll)
 }

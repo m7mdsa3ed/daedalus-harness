@@ -65,7 +65,9 @@ function SidebarRows({ rows }: { rows: number }) {
 
 export function SidebarGroupsSkeleton() {
   return (
-    <div aria-busy="true">
+    // Hidden in the icon rail for the same reason the list itself is: a rail
+    // of blank placeholder rows says nothing 3rem wide.
+    <div aria-busy="true" className="group-data-[collapsible=icon]:hidden">
       <div className="px-2 pb-1 pt-4">
         <Skeleton className="ml-2 h-3 w-16" />
       </div>

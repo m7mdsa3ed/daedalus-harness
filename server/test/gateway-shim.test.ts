@@ -21,6 +21,8 @@ import {
   normalizeMessagesResponse,
   parseGatewayPath,
   proxyGatewayRequest,
+  setGatewaySessionResolver,
+  type GatewaySession,
 } from "../src/gateway-shim.js";
 
 let passed = 0;
@@ -225,14 +227,24 @@ await test("the SSE transform rewrites each event, survives a split inside one, 
 });
 
 await test("the path grammar", () => {
-  assert.deepEqual(parseGatewayPath("/gw/k/p1/claude-code/v1/messages"), {
+  assert.deepEqual(parseGatewayPath("/gw/k/p/p1/claude-code/v1/messages"), {
     key: "k",
-    profileId: "p1",
+    kind: "p",
+    id: "p1",
     agentId: "claude-code",
     rest: "/v1/messages",
   });
-  assert.deepEqual(parseGatewayPath("/gw/k/p%201/a"), { key: "k", profileId: "p 1", agentId: "a", rest: "" });
-  assert.equal(parseGatewayPath("/gw/k/p1"), null);
+  assert.deepEqual(parseGatewayPath("/gw/k/s/sess-1/codex"), {
+    key: "k",
+    kind: "s",
+    id: "sess-1",
+    agentId: "codex",
+    rest: "",
+  });
+  assert.deepEqual(parseGatewayPath("/gw/k/p/p%201/a"), { key: "k", kind: "p", id: "p 1", agentId: "a", rest: "" });
+  assert.equal(parseGatewayPath("/gw/k/p/p1"), null);
+  // The old two-segment shape is not a kind, so it is not ours any more.
+  assert.equal(parseGatewayPath("/gw/k/p1/claude-code"), null);
   assert.equal(parseGatewayPath("/api/sessions"), null);
 });
 
@@ -241,7 +253,11 @@ await test("no shim, or no gateway, hands out nothing", () => {
   configureGatewayShim({ port: 4321 });
   assert.equal(gatewayUrlFor("p1", "claude-code", ""), "");
   const url = gatewayUrlFor("p 1", "claude-code", "https://gw.example/v1");
-  assert.match(url, /^http:\/\/127\.0\.0\.1:4321\/gw\/[0-9a-f]{48}\/p%201\/claude-code$/);
+  assert.match(url, /^http:\/\/127\.0\.0\.1:4321\/gw\/[0-9a-f]{48}\/p\/p%201\/claude-code$/);
+  // A spawn on a thread's behalf names the thread, which is what lets the
+  // profile behind it change while the child keeps the same URL.
+  const scoped = gatewayUrlFor("p1", "codex", "https://gw.example/v1", "sess 1");
+  assert.match(scoped, /^http:\/\/127\.0\.0\.1:4321\/gw\/[0-9a-f]{48}\/s\/sess%201\/codex$/);
 });
 
 /* ── the proxy, end to end ── */
@@ -395,12 +411,71 @@ await test("an error keeps its status and body; other paths pass through", async
   assert.equal(seen.at(-1)!.path, "/v1/v1/models?limit=1");
 });
 
-await test("a wrong key or an unknown profile is a 404, never a relay", async () => {
-  const wrongKey = await fetch(`http://127.0.0.1:${shimPort}/gw/nope/gw-test/claude-code/v1/models`);
+await test("a wrong key, an unknown profile or an unknown thread is a 404, never a relay", async () => {
+  const wrongKey = await fetch(`http://127.0.0.1:${shimPort}/gw/nope/p/gw-test/claude-code/v1/models`);
   assert.equal(wrongKey.status, 404);
   const key = base.split("/gw/")[1]!.split("/")[0];
-  const noProfile = await fetch(`http://127.0.0.1:${shimPort}/gw/${key}/missing/claude-code/v1/models`);
+  const noProfile = await fetch(`http://127.0.0.1:${shimPort}/gw/${key}/p/missing/claude-code/v1/models`);
   assert.equal(noProfile.status, 404);
+  const noThread = await fetch(`http://127.0.0.1:${shimPort}/gw/${key}/s/missing/codex/v1/models`);
+  assert.equal(noThread.status, 404);
+});
+
+/* ── the session-scoped route: the thread's provider and model, per request ── */
+
+let thread: GatewaySession = {
+  profileId: "gw-test",
+  agentId: "codex",
+  model: "",
+  effort: "",
+  rewriteModel: false,
+};
+setGatewaySessionResolver((id) => (id === "sess-1" ? thread : undefined));
+const sessionBase = gatewayUrlFor("gw-test", "codex", "x", "sess-1");
+
+await test("a thread forwards untouched until its model has actually moved", async () => {
+  const body = JSON.stringify({ model: "spawned-model", input: [] });
+  await fetch(`${sessionBase}/v1/responses`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+  });
+  // Nothing to repair, so the body is the one the child wrote, byte for byte.
+  assert.equal(seen.at(-1)!.body, body);
+});
+
+await test("a moved thread's model and effort are replaced on the wire", async () => {
+  thread = { ...thread, model: "gateway/model-b", effort: "high", rewriteModel: true };
+  await fetch(`${sessionBase}/v1/responses`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "spawned-model", reasoning: { effort: "low", summary: "auto" }, input: [] }),
+  });
+  const sent = JSON.parse(seen.at(-1)!.body) as { model: string; reasoning: Record<string, string> };
+  assert.equal(sent.model, "gateway/model-b");
+  // The effort moves; everything else the child put beside it stays.
+  assert.deepEqual(sent.reasoning, { effort: "high", summary: "auto" });
+});
+
+await test("the credential travels as the thread's profile, not as the child's", async () => {
+  // The child was spawned on another profile and still sends that key; what
+  // reaches the gateway is the one the thread is on now.
+  await fetch(`${sessionBase}/v1/responses`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: "Bearer stale-key" },
+    body: JSON.stringify({ model: "spawned-model", input: [] }),
+  });
+  assert.equal(seen.at(-1)!.headers.authorization, "Bearer sk");
+  await fetch(`${sessionBase}/v1/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": "stale-key" },
+    body: JSON.stringify({ model: "spawned-model", messages: [] }),
+  });
+  assert.equal(seen.at(-1)!.headers["x-api-key"], "sk");
+  // A Messages body is read too once the thread has moved — that is where
+  // Claude Code's side-job and alias models, pinned into its env at spawn,
+  // would otherwise keep naming the previous provider's ids.
+  assert.equal((JSON.parse(seen.at(-1)!.body) as { model: string }).model, "gateway/model-b");
 });
 
 server.close();

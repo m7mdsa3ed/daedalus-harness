@@ -6,6 +6,11 @@ import { SEARCH_LIMIT, searchEvents } from "../search.js";
 import { KnowledgeInputSchema, addKnowledge, deleteKnowledge, listAllKnowledge, listKnowledge } from "../knowledge.js";
 import { BundleSchema, exportBundle, importBundle } from "../backup.js";
 import { proxyGatewayRequest } from "../gateway-shim.js";
+import { getProfileQuota, getQuota, quotaCwd } from "../quota.js";
+import { profileUsage } from "../usage-api.js";
+import { getAgent, listAgents } from "../registry.js";
+import { defaultProfileFor, getProfile, listProfiles, profileSupports } from "../profiles.js";
+import { getProject } from "../projects.js";
 import type { Push } from "../push.js";
 import type { SessionManager } from "../sessions.js";
 import { bearerToken, workspace } from "./helpers.js";
@@ -146,6 +151,71 @@ export function miscRoutes(
   app.get("/api/websearch/usage", (c) =>
     c.json(getWebSearchUsage(Number(c.req.query("limit")) || 50)),
   );
+
+  /*
+   * ---- subscription quota ----
+   *
+   * What is left of the plan an agent is spending: `/usage` in Claude Code,
+   * `/status` in Codex, normalized by quota.ts. Cached there with a short TTL,
+   * so these routes are cheap to call and `?refresh=1` is the way past it.
+   *
+   * Two routes because there are two questions. The list answers "how is this
+   * *machine* doing", which is every probe-capable agent on its virtual Default
+   * profile — the profile that carries no credentials, so the agent runs on its
+   * own `claude`/`codex login`, which is what a subscription is — *plus* every
+   * stored profile that names a usage provider of its own, which is the other
+   * kind of plan this machine is spending (a gateway's coding plan, read from
+   * that provider's account API; see usage-api.ts). Those come first, because
+   * they are the ones somebody configured. The single route answers "how is this
+   * *thread* doing", where the profile is whatever the thread runs on and the
+   * answer may well be "an API key, no plan".
+   *
+   * The probes run in the server's own cwd unless `?projectId=` names one: an
+   * account's usage is the same in every directory, and requiring a project
+   * would make the settings page depend on there being one.
+   */
+  const quotaProject = (id?: string) => (id && getProject(id)) || quotaCwd();
+
+  app.get("/api/quota", async (c) => {
+    const project = quotaProject(c.req.query("projectId"));
+    const refresh = c.req.query("refresh") === "1";
+    const probeable = listAgents().filter((agent) => agent.quotaProbe);
+    /* Stored profiles only — `listProfiles()` with no agents synthesizes no
+       virtual Defaults, and a Default never names a provider anyway. */
+    const providers = listProfiles().filter((profile) => profileUsage(profile));
+    const [plans, agents] = await Promise.all([
+      Promise.all(providers.map((profile) => getProfileQuota(profile, { refresh }))),
+      Promise.all(
+        probeable.map((agent) => getQuota(agent, defaultProfileFor(agent.id, agent.name), project, { refresh })),
+      ),
+    ]);
+    return c.json([...plans, ...agents]);
+  });
+
+  /* One profile's provider plan, with no agent in the question — the account is
+     the profile's, and every agent it serves shares the one reading. Registered
+     before the `:agentId` route because `profile` would otherwise be read as an
+     agent id. */
+  app.get("/api/quota/profile/:profileId", async (c) => {
+    const profile = getProfile(c.req.param("profileId"));
+    if (!profile) return c.json({ error: "unknown profile" }, 404);
+    if (!profileUsage(profile)) return c.json({ error: "profile names no usage provider" }, 400);
+    return c.json(await getProfileQuota(profile, { refresh: c.req.query("refresh") === "1" }));
+  });
+
+  app.get("/api/quota/:agentId", async (c) => {
+    const agent = getAgent(c.req.param("agentId"));
+    if (!agent) return c.json({ error: "unknown agent" }, 404);
+    /* No profileId means the Default one — the same machine-level reading the
+       list route gives, so a caller that only knows the agent has a route. */
+    const profileId = c.req.query("profileId");
+    const profile = profileId ? getProfile(profileId) : defaultProfileFor(agent.id, agent.name);
+    if (!profile) return c.json({ error: "unknown profile" }, 404);
+    if (!profileSupports(profile, agent.id)) return c.json({ error: "profile does not serve this agent" }, 400);
+    return c.json(
+      await getQuota(agent, profile, quotaProject(c.req.query("projectId")), { refresh: c.req.query("refresh") === "1" }),
+    );
+  });
 
   app.get("/api/push/config", (c) => c.json({ enabled: push.enabled, ...push.webConfig() }));
   app.post("/api/push/register", async (c) => {

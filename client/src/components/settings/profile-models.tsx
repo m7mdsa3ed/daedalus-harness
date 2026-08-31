@@ -627,6 +627,9 @@ function CandidatePicker({
       items={items}
       selected={selected}
       onToggle={onToggle}
+      searchable
+      searchPlaceholder="Search models…"
+      searchText={(c) => `${c.name} ${c.id} ${c.providerName ?? ""}`}
       subtitle={(c) => (
         <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           {c.providerName && <span className="font-sans text-muted-foreground/70">{c.providerName}</span>}

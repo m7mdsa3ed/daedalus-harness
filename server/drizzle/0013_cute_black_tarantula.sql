@@ -1,1 +1,0 @@
-ALTER TABLE `sessions` ADD `acp_session_provisional` integer DEFAULT false NOT NULL;

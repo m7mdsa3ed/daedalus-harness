@@ -28,7 +28,7 @@ import { useConfirm } from "@/components/confirm-dialog"
 import type { Actions } from "@/lib/actions"
 import { schedulePath, schedulesPath, threadPath } from "@/lib/router"
 import { scheduleSkipped, scheduleWhen } from "@/lib/schedule"
-import { type ScheduledMessage } from "@/lib/settings"
+import { isTopLevel, type ScheduledMessage } from "@/lib/settings"
 import { useStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { FoldableGroup } from "./groups"
@@ -47,7 +47,7 @@ export function ScheduledGroup({ actions }: { actions: Actions }) {
   const { isMobile, setOpenMobile } = useSidebar()
   const confirm = useConfirm()
 
-  const live = state.sessions.filter((s) => !s.draft && !s.deletedAt)
+  const live = state.sessions.filter((s) => isTopLevel(s) && !s.draft && !s.deletedAt)
 
   const cancel = async (id: string) => {
     if (

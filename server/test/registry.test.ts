@@ -255,9 +255,15 @@ test("{gatewayUrl} is the profile's endpoint until a shim is up, then the shim",
   // The Default profile has no gateway, so the key prunes away either way.
   assert.equal(resolveSpawn(agent, virtualProfile, project).env.ANTHROPIC_BASE_URL, undefined);
   configureGatewayShim({ port: 4321 });
+  // Profile-scoped with no thread named (a probe), session-scoped with one —
+  // which is what lets the thread's profile change under a running child.
   assert.match(
     resolveSpawn(agent, profileWith(), project).env.ANTHROPIC_BASE_URL ?? "",
-    /^http:\/\/127\.0\.0\.1:4321\/gw\/[0-9a-f]{48}\/p1\/claude-code$/,
+    /^http:\/\/127\.0\.0\.1:4321\/gw\/[0-9a-f]{48}\/p\/p1\/claude-code$/,
+  );
+  assert.match(
+    resolveSpawn(agent, profileWith(), project, undefined, undefined, "s1").env.ANTHROPIC_BASE_URL ?? "",
+    /^http:\/\/127\.0\.0\.1:4321\/gw\/[0-9a-f]{48}\/s\/s1\/claude-code$/,
   );
   assert.equal(resolveSpawn(agent, virtualProfile, project).env.ANTHROPIC_BASE_URL, undefined);
   // A per-agent override on the profile is still what the shim fronts — the

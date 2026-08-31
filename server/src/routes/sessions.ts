@@ -108,6 +108,46 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     });
   });
 
+  /**
+   * Change this thread's profile, model or effort — the *first* thing a client
+   * asks for all three, because it is the only side that can tell whether a
+   * restart is needed.
+   *
+   * A live change answers `{live: true}` and every socket stays exactly where
+   * it was; one that could not be made live falls through to the same respawn
+   * the route below performs and answers `{live: false}`, which is the caller's
+   * signal that the event log was cleared and it has to reattach. The decision
+   * itself is `SessionManager.applyConfig`, and it belongs there rather than
+   * here for the reason the respawn route already documents: split across two
+   * round trips, a tab closing in the middle leaves a half-moved thread.
+   */
+  app.post("/api/sessions/:id/config", async (c) => {
+    const session = sessions.get(c.req.param("id"));
+    if (!session) return c.json({ error: "not found" }, 404);
+    if (session.deletedAt !== null) return c.json({ error: "session deleted" }, 409);
+    const { profileId, agentId: askedAgent, model, effort } = await c.req.json();
+    const profile = getProfile(profileId ?? session.profileId);
+    if (!profile) return c.json({ error: "unknown profile" }, 404);
+    const agentId = askedAgent ?? session.agentId;
+    if (!profileSupports(profile, agentId) || !getAgent(agentId)) {
+      return c.json({ error: "unknown agent for this profile" }, 404);
+    }
+    const project = getProject(session.projectId);
+    if (!project) return c.json({ error: "unknown project" }, 404);
+    const { live } = await sessions.applyConfig(session.id, { profile, agentId, project, model, effort });
+    return c.json({
+      ok: true,
+      live,
+      // What the thread ended up on: a cleared model resolves to the profile's
+      // default here, not in the client.
+      profileId: session.profileId,
+      model: session.model,
+      effort: session.effort,
+      acpSessionId: session.liveAcpSessionId ?? session.acpSessionId,
+      ...(session.historyLost ? { historyLost: session.historyLost } : {}),
+    });
+  });
+
   // What the agent process has been printing. The client shows this when a thread
   // fails in a way ACP won't explain — the agent's own stack trace is the answer
   // and it never travels over the protocol.

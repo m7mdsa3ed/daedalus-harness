@@ -9,6 +9,7 @@ import {
   Cpu,
   DatabaseBackup,
   FolderIcon,
+  Gauge,
   KeyRound,
   Palette,
   Plug,
@@ -97,6 +98,14 @@ export const SETTINGS_SECTIONS = [
     description: "ACP runtimes registered on the server (data/agents.json).",
   },
   {
+    id: "usage",
+    label: "Usage",
+    icon: Gauge,
+    title: "Plan usage",
+    description:
+      "What is left of the subscription each runtime is spending — the numbers Claude Code's /usage and Codex's /status report, read on the server. A profile that runs on an API key has no plan limits, and says so.",
+  },
+  {
     id: "backup",
     label: "Backup",
     icon: DatabaseBackup,
@@ -126,6 +135,6 @@ export const SETTINGS_NAV_GROUPS: readonly {
 }[] = [
   { label: "Preferences", sections: ["general", "appearance", "notifications", "web-search"] },
   { label: "Workspace", sections: ["projects", "knowledge", "mcp", "skills", "commands"] },
-  { label: "Agents", sections: ["profiles", "agents"] },
+  { label: "Agents", sections: ["profiles", "agents", "usage"] },
   { label: "Server", sections: ["backup"] },
 ] as const

@@ -260,6 +260,23 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     out({ jsonrpc: "2.0", id: msg.id, result: { configOptions } });
   } else if (msg.method === "session/prompt") {
     const asked = (msg.params.prompt ?? []).map((b) => b.text ?? "").join(" ");
+    /* A prompt starting with "echo:" streams the remainder back as one message
+       chunk and ends the turn — a deterministic answer, which is what the
+       workflow test needs to check template rendering and JSON output. Checked
+       first so an echoed text may mention any of the keywords below. */
+    if (asked.startsWith("echo:")) {
+      const text = asked.slice("echo:".length);
+      out({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: "acp-123",
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+        },
+      });
+      out({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn", usage: { totalTokens: 5 } } });
+      return;
+    }
     // A prompt mentioning "permission" parks the turn on a permission request,
     // so both the UI and the multi-peer arbitration have something to exercise.
     if (asked.includes("permission")) {

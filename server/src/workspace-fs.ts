@@ -286,6 +286,140 @@ export function listDir(
   return { path: relativePath(root, dir), entries, truncated };
 }
 
+/* ── Search ────────────────────────────────────────────────────────────────── */
+
+/** Entries walked before a search gives up and says it was cut. A repository
+    the size of a monorepo is walked in a few tens of milliseconds at this
+    budget; past it the query is too broad to be worth the stat storm. */
+const SEARCH_VISIT_LIMIT = 20000;
+const SEARCH_DEFAULT_LIMIT = 30;
+const SEARCH_MAX_LIMIT = 100;
+
+export interface WorkspaceSearch {
+  entries: WorkspaceEntry[];
+  /** The walk hit its budget, or there were more matches than `limit`. */
+  truncated: boolean;
+}
+
+/**
+ * Fuzzy subsequence score for `query` against a project-relative path, or
+ * `null` when the query is not a subsequence of it at all.
+ *
+ * Greedy leftmost matching — not the optimal alignment, which costs a DP table
+ * per candidate and buys an ordering nobody can perceive. What it does buy is
+ * the three signals that make a file picker feel right: a run of adjacent
+ * characters beats a scattered one, a character right after a separator beats
+ * one mid-word, and a hit in the basename beats one in the directories, so
+ * `cfg` finds `vite.config.ts` before `src/config/rc/legacy.ts`.
+ */
+function fuzzyScore(query: string, path: string): number | null {
+  const q = query.toLowerCase();
+  const p = path.toLowerCase();
+  const baseStart = p.lastIndexOf("/") + 1;
+  let qi = 0;
+  let score = 0;
+  let prev = -2;
+  let run = 0;
+  for (let i = 0; i < p.length && qi < q.length; i++) {
+    if (p[i] !== q[qi]) continue;
+    run = prev === i - 1 ? run + 1 : 0;
+    score += 10 + run * 6;
+    if (i === 0 || "/-_. ".includes(p[i - 1])) score += 8;
+    if (i >= baseStart) score += 4;
+    prev = i;
+    qi++;
+  }
+  if (qi < q.length) return null;
+  // Shorter and shallower wins among equals: the file you meant is rarely the
+  // one buried deepest.
+  return score - p.length * 0.15 - (p.split("/").length - 1) * 0.5;
+}
+
+/**
+ * Every path in the project that fuzzy-matches `query`, best first.
+ *
+ * This is what the composer's `@` menu reads. It is deliberately a *walk* and
+ * not a shell out to `git ls-files` or `rg --files`: a project need not be a
+ * repository, and neither binary is something the harness may assume. The walk
+ * is breadth-first so a truncated one still returns the shallow paths — the
+ * ones a person is most likely to have meant — rather than whatever branch was
+ * deepest.
+ *
+ * An empty query answers with the project root's own listing, so opening the
+ * menu shows something to arrow through before a single character is typed.
+ * Ignored directories (`node_modules`, `.git`, …) are skipped outright and
+ * hidden ones only when the query asks for them by typing the dot, which is the
+ * same bargain `listDir` makes with its flags.
+ */
+export function searchEntries(
+  projectId: string,
+  rawQuery: string | undefined,
+  options: { limit?: number } = {},
+): WorkspaceSearch {
+  const root = projectRoot(projectId);
+  const query = (rawQuery ?? "").trim();
+  const limit = Math.min(Math.max(options.limit ?? SEARCH_DEFAULT_LIMIT, 1), SEARCH_MAX_LIMIT);
+
+  if (query === "") {
+    const listing = listDir(projectId, "", {});
+    return {
+      entries: listing.entries.slice(0, limit),
+      truncated: listing.truncated || listing.entries.length > limit,
+    };
+  }
+
+  const wantHidden = query.includes(".");
+  const scored: { entry: WorkspaceEntry; score: number }[] = [];
+  const queue: string[] = [root];
+  let visited = 0;
+  let truncated = false;
+
+  while (queue.length > 0 && !truncated) {
+    const dir = queue.shift() as string;
+    let dirents;
+    try {
+      dirents = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      // A directory that vanished or cannot be read is skipped, not fatal: a
+      // search is best-effort over a tree somebody else is editing.
+      continue;
+    }
+    for (const dirent of dirents) {
+      if (isIgnored(dirent.name, DEFAULT_IGNORES)) continue;
+      if (isHidden(dirent.name) && !wantHidden) continue;
+      if (++visited > SEARCH_VISIT_LIMIT) {
+        truncated = true;
+        break;
+      }
+      const absolute = join(dir, dirent.name);
+      /* A symlink is listed as a file and never descended: following one is how
+         a walk finds a cycle, and its target may be outside the project — which
+         the read routes would refuse anyway. */
+      const link = dirent.isSymbolicLink();
+      const type: "dir" | "file" = !link && dirent.isDirectory() ? "dir" : "file";
+      const path = relativePath(root, absolute);
+      const score = fuzzyScore(query, path);
+      if (score !== null)
+        scored.push({
+          entry: { name: dirent.name, path, type, ...(link ? { link: true } : {}) },
+          score,
+        });
+      if (type === "dir") queue.push(absolute);
+    }
+  }
+
+  scored.sort(
+    (a, b) =>
+      b.score - a.score ||
+      a.entry.path.length - b.entry.path.length ||
+      a.entry.path.localeCompare(b.entry.path),
+  );
+  return {
+    entries: scored.slice(0, limit).map((s) => s.entry),
+    truncated: truncated || scored.length > limit,
+  };
+}
+
 /** True when the first few KB contain a NUL. The same heuristic git uses, and
     it is the one that matters here: what it decides is whether the bytes can
     be handed to a text editor at all. */

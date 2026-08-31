@@ -55,7 +55,7 @@ export function ErrorFallback({
   onReset: () => void
 }) {
   return (
-    <div className="flex min-h-svh flex-1 items-center justify-center p-6">
+    <div className="flex min-h-[var(--panel-h,100svh)] flex-1 items-center justify-center p-6">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>Something broke{name ? ` in ${name}` : ""}</CardTitle>
