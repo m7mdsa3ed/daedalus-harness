@@ -44,6 +44,18 @@ export interface TextItem {
   at?: number
   /** Logical turn restore point, present on user messages. */
   turnId?: string
+  /** This device typed this message — set only on the optimistic bubble
+      `actions.send` draws, never on one rebuilt from the journal. What makes it
+      survive an attach that replaces the transcript, exactly as `ErrorItem.local`
+      does; and what tells it apart from the untagged bubbles a `session/load`
+      replay produces, which carry no `turnId` either (they arrive as
+      `user_message_chunk`s, and the harness's `turn_started` — the only thing
+      that mints a `turnId` — is not part of what an agent replays). Without it
+      every message of the conversation was read as one this device had just
+      sent and not had acknowledged, so the next non-resumed attach carried the
+      whole user side of the thread across the reset and put it back at the
+      bottom. */
+  local?: boolean
   /** The item this belongs to when it is a subagent's, not the thread's — see
       `SubagentItem`. */
   parentId?: string
@@ -864,8 +876,14 @@ function settleTools(items: ThreadItem[]): ThreadItem[] {
   })
 }
 
-export function pushUserMessage(items: ThreadItem[], text: string, at?: number, turnId?: string): ThreadItem[] {
-  return [...items, { kind: "user", id: mintItemId("user"), text, at, turnId }]
+export function pushUserMessage(
+  items: ThreadItem[],
+  text: string,
+  at?: number,
+  turnId?: string,
+  local?: boolean
+): ThreadItem[] {
+  return [...items, { kind: "user", id: mintItemId("user"), text, at, turnId, local }]
 }
 
 /** null only when neither side reported the field — keeps optional stats hidden. */
@@ -976,7 +994,9 @@ export type Action =
   /** `sessionId` names a subagent's session when the update is a child's —
       see the `update` event in protocol.ts. Absent = the thread's own. */
   | { type: "update"; id: string; update: SessionUpdate; allowUserChunks?: boolean; sessionId?: string }
-  | { type: "user-message"; id: string; text: string; turnId?: string }
+  /** `local` = this device typed it (see `TextItem.local`); the replay's own
+      user bubbles and the ones a `turn_started` mints are not. */
+  | { type: "user-message"; id: string; text: string; turnId?: string; local?: boolean }
   | { type: "tag-user-turn"; id: string; turnId: string }
   /** Take back an optimistic user bubble: the server queued the words instead
       of sending them, and the queue row is where they show now. */
@@ -1215,11 +1235,20 @@ export function reducer(state: State, action: Action): State {
       }
     case "user-message":
       return withThread(state, action.id, {
-        items: pushUserMessage(thread(state, action.id).items, action.text, Date.now(), action.turnId),
+        items: pushUserMessage(
+          thread(state, action.id).items,
+          action.text,
+          Date.now(),
+          action.turnId,
+          action.local
+        ),
       })
     case "tag-user-turn": {
       const items = thread(state, action.id).items
-      const index = items.findIndex((item) => item.kind === "user" && !item.turnId)
+      /* The bubble this device drew and is now being told the turn id of —
+         `local`, or a load replay's own untagged bubbles would be tagged
+         instead, oldest first, leaving the real one untagged forever. */
+      const index = items.findIndex((item) => item.kind === "user" && !item.turnId && item.local)
       if (index < 0) return state
       return withThread(state, action.id, {
         items: items.map((item, i) => i === index && item.kind === "user" ? { ...item, turnId: action.turnId } : item),
@@ -1232,7 +1261,7 @@ export function reducer(state: State, action: Action): State {
       let index = -1
       for (let i = items.length - 1; i >= 0; i--) {
         const item = items[i]
-        if (item.kind === "user" && !item.turnId) {
+        if (item.kind === "user" && !item.turnId && item.local) {
           index = i
           break
         }

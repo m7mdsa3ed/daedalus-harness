@@ -8,9 +8,10 @@ import type { ThreadItem } from "../store"
  * would draw twice. But two kinds of row are *this device's* and exist nowhere
  * on the server, so replacing the transcript deleted them outright:
  *
- * - **A user bubble with no `turnId`** is a prompt this device has drawn and the
- *   server has not yet acknowledged. This device is the one peer that never
- *   receives a `turn_started` for its own words (the origin-peer exclusion), so
+ * - **A user bubble marked `local` and with no `turnId`** is a prompt this device
+ *   has drawn and the server has not yet acknowledged. This device is the one
+ *   peer that never receives a `turn_started` for its own words (the
+ *   origin-peer exclusion), so
  *   there is nothing in the replay to redraw it from. On the first message of a
  *   new thread that is guaranteed: the attach happens *before* the prompt is
  *   dispatched, so the replay is empty and the message simply vanished. It was
@@ -26,11 +27,22 @@ import type { ThreadItem } from "../store"
  * A journaled error — the one a `turn_ended` carries — is deliberately *not*
  * carried: the replay brings it back on its own, and carrying it too would show
  * it twice.
+ *
+ * `local` is what makes the user half of that test correct, and it was not always
+ * there. A bubble rebuilt from a `session/load` replay has no `turnId` either —
+ * the agent replays the conversation as `user_message_chunk`s, and a `turnId` is
+ * minted by the harness's own `turn_started`, which is not part of a replay — so
+ * every message of a revived thread looked exactly like an unacknowledged prompt.
+ * Continuing an old thread therefore reset the transcript, re-folded it, and then
+ * appended the entire user side of the conversation to the bottom of it, as if
+ * all of it had just been sent. It looked right again after a reload only because
+ * a reload starts with an empty store and so has nothing to carry.
  */
 export function carryOf(items: ThreadItem[]): ThreadItem[] {
   return items.filter(
     (item) =>
-      (item.kind === "user" && !item.turnId) || (item.kind === "error" && item.local === true)
+      (item.kind === "user" && !item.turnId && item.local === true) ||
+      (item.kind === "error" && item.local === true)
   )
 }
 

@@ -51,6 +51,9 @@ export interface ViewOptions {
   wideTranscript: boolean
   /** Expand every tool call's input/output by default. */
   showToolDetails: boolean
+  /** The command, path or pattern under a tool row's description. Off, a step
+   *  row says what the call *did* and leaves what it typed to the body. */
+  showToolCommand: boolean
   /** Render file diffs side by side instead of unified. */
   splitDiffs: boolean
   /** Hairline rule above each user turn. */
@@ -78,6 +81,7 @@ export const VIEW_DEFAULTS: ViewOptions = {
   codeWrap: false,
   wideTranscript: false,
   showToolDetails: false,
+  showToolCommand: true,
   splitDiffs: false,
   stepDividers: false,
   turnRail: true,
@@ -100,6 +104,7 @@ export const VIEW_DEFAULTS: ViewOptions = {
 export const ANSWERS_ONLY_SUPPRESSES: readonly (keyof ViewOptions)[] = [
   "showThinking",
   "showToolDetails",
+  "showToolCommand",
   "groupTools",
   "codeWrap",
   "splitDiffs",

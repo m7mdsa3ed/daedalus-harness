@@ -35,15 +35,19 @@ import {
   RefreshCwIcon,
   Trash2,
   WorkflowIcon,
+  XIcon,
 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AgentIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
+import { useConfirm } from "@/components/confirm-dialog"
 import { ImportThreadsDialog } from "@/components/import-threads"
 import { useStartThreadIn } from "@/components/thread-sidebar"
 import type { Actions } from "@/lib/actions"
-import { describeError } from "@/lib/errors"
+import { describeError, reportError } from "@/lib/errors"
+import { toast } from "@/lib/toast"
 import { settingsFormPath, settingsPath, schedulesPath, threadPath } from "@/lib/router"
 import { scheduleWhen } from "@/lib/schedule"
 import { activityAt, isTopLevel, type Project, type ScheduledMessage, type SessionMeta } from "@/lib/settings"
@@ -199,6 +203,7 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
             threads={threads}
             trashed={trashed}
             liveThreads={liveThreads}
+            actions={actions}
             onOpen={(id) => void navigate(threadPath(id))}
             onNewThread={() => startIn(project)}
           />
@@ -462,26 +467,68 @@ function ThreadsCard({
   threads,
   trashed,
   liveThreads,
+  actions,
   onOpen,
   onNewThread,
 }: {
   threads: SessionMeta[]
   trashed: number
   liveThreads: Record<string, ThreadState>
+  actions: Actions
   onOpen: (id: string) => void
   onNewThread: () => void
 }) {
   const [all, setAll] = React.useState(false)
   const shown = all ? threads : threads.slice(0, THREAD_PAGE)
+  const {
+    selecting,
+    selected,
+    busy,
+    toggle,
+    start: startSelecting,
+    cancel,
+    selectAll,
+    deleteSelected,
+  } = useThreadSelection(threads, shown, actions)
 
   return (
     <CardShell
       title="Threads"
       count={threads.length}
       action={
-        <Button variant="ghost" size="sm" onClick={onNewThread}>
-          <Plus /> New
-        </Button>
+        selecting ? (
+          <div className="flex items-center gap-1">
+            <span className="mr-1 text-xs text-muted-foreground tabular-nums">
+              {selected.size} selected
+            </span>
+            <Button variant="ghost" size="sm" onClick={selectAll} disabled={busy}>
+              {selected.size === shown.length ? "Select none" : "Select all"}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void deleteSelected()}
+              disabled={busy || selected.size === 0}
+              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+            >
+              <Trash2 /> {busy ? "Deleting…" : "Delete"}
+            </Button>
+            <Button variant="ghost" size="icon-sm" onClick={cancel} disabled={busy} aria-label="Cancel selection">
+              <XIcon />
+            </Button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1">
+            {threads.length > 0 && (
+              <Button variant="ghost" size="sm" onClick={startSelecting}>
+                Select
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={onNewThread}>
+              <Plus /> New
+            </Button>
+          </div>
+        )
       }
     >
       {threads.length === 0 ? (
@@ -492,35 +539,52 @@ function ThreadsCard({
         <ul className="divide-y">
           {shown.map((session) => {
             const status = threadStatus(session, liveThreads[session.id])
+            const checked = selected.has(session.id)
             return (
               <li key={session.id}>
-                <button
-                  type="button"
-                  onClick={() => onOpen(session.id)}
-                  className="flex w-full items-center gap-3 px-4 py-2 text-left transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:bg-accent/40"
+                <div
+                  className={cn(
+                    "flex w-full items-center gap-3 px-4 transition-colors",
+                    selecting && checked && "bg-accent/30"
+                  )}
                 >
-                  <StatusDot status={status} />
-                  <span className="min-w-0 flex-1">
-                    <span
-                      className={cn(
-                        "block truncate text-sm",
-                        status === "running" && "harness-shimmer"
-                      )}
-                    >
-                      {session.title || "Untitled thread"}
-                    </span>
-                    <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                      <AgentIcon agentId={session.agentId} className="size-3" />
-                      <span className="truncate">{session.model || session.agentId}</span>
-                    </span>
-                  </span>
-                  <span
-                    className="shrink-0 text-[11px] text-muted-foreground tabular-nums"
-                    title={new Date(activityAt(session)).toLocaleString()}
+                  {selecting && (
+                    <Checkbox
+                      checked={checked}
+                      disabled={busy}
+                      onCheckedChange={() => toggle(session.id)}
+                      aria-label={`Select ${session.title || "untitled thread"}`}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => (selecting ? toggle(session.id) : onOpen(session.id))}
+                    disabled={busy}
+                    className="flex min-w-0 flex-1 items-center gap-3 py-2 text-left transition-colors hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:outline-none disabled:opacity-60"
                   >
-                    {shortAge(activityAt(session))}
-                  </span>
-                </button>
+                    {!selecting && <StatusDot status={status} />}
+                    <span className="min-w-0 flex-1">
+                      <span
+                        className={cn(
+                          "block truncate text-sm",
+                          status === "running" && !selecting && "harness-shimmer"
+                        )}
+                      >
+                        {session.title || "Untitled thread"}
+                      </span>
+                      <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <AgentIcon agentId={session.agentId} className="size-3" />
+                        <span className="truncate">{session.model || session.agentId}</span>
+                      </span>
+                    </span>
+                    <span
+                      className="shrink-0 text-[11px] text-muted-foreground tabular-nums"
+                      title={new Date(activityAt(session)).toLocaleString()}
+                    >
+                      {shortAge(activityAt(session))}
+                    </span>
+                  </button>
+                </div>
               </li>
             )
           })}
@@ -544,6 +608,93 @@ function ThreadsCard({
       )}
     </CardShell>
   )
+}
+
+/* ── Selecting several threads at once ──
+   Deleting a project's threads was a per-row operation reached from the
+   sidebar's context menu, which is fine for one and absurd for twenty — a
+   project that has been worked in for a month is exactly where the tidying
+   happens. Selection is a *mode* rather than a checkbox column that is always
+   there: the ordinary reading of this list is one click per row into a thread,
+   and a permanent column of checkboxes would put a target in front of that.
+
+   "Select all" means the rows that are *shown*, never the whole list behind a
+   "Show all" the reader has not pressed: a button that deletes rows nobody has
+   seen is the one thing a bulk action must not do. Deletion is the reversible
+   one (Trash, restorable) exactly as the single-row action is, so the undo is
+   the Trash tier rather than a promise this card makes. */
+function useThreadSelection(threads: SessionMeta[], shown: SessionMeta[], actions: Actions) {
+  const confirm = useConfirm()
+  const [selecting, setSelecting] = React.useState(false)
+  const [selected, setSelected] = React.useState<Set<string>>(new Set())
+  const [busy, setBusy] = React.useState(false)
+
+  /* A thread deleted elsewhere — or one that arrived while the mode was open —
+     must not stay selected: the ids are what the delete is dispatched from. */
+  const liveIds = React.useMemo(() => new Set(threads.map((s) => s.id)), [threads])
+  React.useEffect(() => {
+    setSelected((prev) => {
+      const next = new Set([...prev].filter((id) => liveIds.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [liveIds])
+
+  const cancel = React.useCallback(() => {
+    setSelecting(false)
+    setSelected(new Set())
+  }, [])
+
+  const toggle = React.useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
+  }, [])
+
+  const selectAll = React.useCallback(() => {
+    setSelected((prev) =>
+      prev.size === shown.length ? new Set() : new Set(shown.map((s) => s.id))
+    )
+  }, [shown])
+
+  const deleteSelected = React.useCallback(async () => {
+    const ids = [...selected]
+    if (ids.length === 0) return
+    if (
+      !(await confirm({
+        title: ids.length === 1 ? "Delete this thread?" : `Delete ${ids.length} threads?`,
+        description:
+          "Their agent processes are stopped and they move to Trash, where they can be restored.",
+        confirmLabel: "Delete",
+        destructive: true,
+      }))
+    )
+      return
+    setBusy(true)
+    try {
+      await actions.deleteThreads(ids)
+      toast("Moved to Trash", {
+        description: ids.length === 1 ? "1 thread" : `${ids.length} threads`,
+      })
+      cancel()
+    } catch (err) {
+      reportError(err, "Couldn't delete the threads")
+    } finally {
+      setBusy(false)
+    }
+  }, [selected, confirm, actions, cancel])
+
+  return {
+    selecting,
+    selected,
+    busy,
+    toggle,
+    start: () => setSelecting(true),
+    cancel,
+    selectAll,
+    deleteSelected,
+  }
 }
 
 /** One dot, four colours: working, needs you, something is wrong with the

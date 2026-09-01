@@ -2,6 +2,7 @@ import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
 import { BotIcon } from "lucide-react"
 import { AgentIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
+import { AvatarGroup } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -322,9 +323,14 @@ export function DraftConfigPopover({
             className="h-8 gap-1.5 border-0 bg-transparent px-2 text-xs shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent"
             title={[persona?.name, modelLabel, effortLabel].filter(Boolean).join(" · ")}
           >
-            {/* Same rule as SessionConfigPopover's trigger: the profile's own
-                logo when it has one, the agent's mark otherwise. */}
-            <ProfileIcon profile={profile} agentId={agent?.id ?? meta.agentId} className="size-4" />
+            {profile?.logoUrl ? (
+              <AvatarGroup className="-space-x-1">
+                <AgentIcon agentId={agent?.id ?? meta.agentId} className="size-4 ring-2 ring-composer" />
+                <ProfileIcon profile={profile} agentId={agent?.id ?? meta.agentId} className="size-4 ring-2 ring-composer" />
+              </AvatarGroup>
+            ) : (
+              <ProfileIcon profile={profile} agentId={agent?.id ?? meta.agentId} className="size-4" />
+            )}
             <span className="max-w-56 truncate">
               {persona && <span>{persona.name} · </span>}
               {modelLabel}

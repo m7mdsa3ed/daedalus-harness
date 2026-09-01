@@ -1,6 +1,7 @@
 /* ── Targets and headings ── the strings a step row prints about a call. */
 import type * as acp from "@agentclientprotocol/sdk"
 import type { ToolItem } from "../store"
+import { describeCommand } from "./describe"
 import { asRecord, str } from "./helpers"
 import { extractMcpCall } from "./mcp"
 import { NAME_RE, toolDisplayName, toolIdentity, toolKindOf } from "./naming"
@@ -269,6 +270,24 @@ export function toolHeading(
      description's own mention of the path is cut so the sentence doesn't repeat
      the badge ("Read src/index.ts" becomes "Read" + a `src/index.ts` chip). */
   const file = fileTargetOf(item)
+
+  /* A shell call is the one case where the sentence can be *derived*: the
+     command says what it does, in a vocabulary that is the same across
+     runtimes. `describeCommand` answers null for anything it does not
+     recognise, so this only ever replaces the command with something that
+     reads — and the command itself stays on the caption line either way.
+
+     It has to outrank `description`, not merely fill in for a missing one:
+     with no `description` in the input, ACP's `title` for a Bash call is the
+     command, which has spaces in it, so `toolDescription` reads it as prose
+     and answers with the very thing this is here to describe. So the test is
+     whether the sentence says anything the command does not — an echo of the
+     command is not a description of it, whichever field it arrived in. */
+  const command = str(asRecord(item.rawInput)?.command)
+  const derived = command ? describeCommand(command) : null
+  if (derived && (!description || firstLine(description) === firstLine(command!))) {
+    return { title: derived, detail: target, prose: true }
+  }
 
   if (!description) {
     /* The agent sent no prose, so the title is the thing it acted on. Prefix it

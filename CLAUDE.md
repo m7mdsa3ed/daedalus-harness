@@ -294,7 +294,11 @@ Generic ACP (Agent Client Protocol) harness. Four parts, one repo:
   apps: fixed nav rows on top (`SidebarNav`: New thread, Search, Tasks — menu rows,
   so they survive the icon rail), then Pinned, a flat Recents, **one folder per
   project** with its threads under it and a hover `+` that starts a thread *in*
-  that project, Scheduled, Trash. Pinned and Recents are **shortcuts, not
+  that project, Scheduled, Trash. **Recents puts every running thread at the
+  top**, whatever its age, and there is no Running tier of its own any more: a
+  tier above Recents drew the same threads twice, and by-activity order alone
+  buried the turn that is happening *now* under whatever was typed most
+  recently. Pinned and Recents are **shortcuts, not
   places**: a folder holds every one of its project's threads, the recent and
   the pinned included, because a folder that dropped whatever was recent was an
   incomplete index of its own project — with the newest thread, the one most
@@ -1726,6 +1730,13 @@ Generic ACP (Agent Client Protocol) harness. Four parts, one repo:
   while the fetch is out: a 0 that becomes 400 is a statement the page made and took back.
   `cwdExists` is the one health answer it can give — a project whose directory has moved
   spawns nothing, and that failure otherwise surfaces as an ENOENT inside a thread. The
+  Its Threads card carries the one **bulk action** in the app: Select turns the
+  rows into checkboxes and deletes the picked ones through `actions.deleteThreads`
+  (sequential DELETEs, one `refreshSessions` at the end) — reversible, into
+  Trash, exactly like the per-row delete. Selection is a mode rather than a
+  permanent checkbox column, because the ordinary reading of the list is one
+  click per row into a thread; and "Select all" means the rows **shown**, never
+  the ones behind a "Show all" nobody pressed. The
   page is reached from the folder's hover control in the sidebar, the project name in a
   thread's header, the palette's Projects group and the settings row — settings keeps the
   *form*, this is the workspace as a thing with a history.

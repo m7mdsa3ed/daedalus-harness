@@ -206,39 +206,60 @@ function EarlierSteps({ count, onClick }: { count: number; onClick: () => void }
 export const ToolRun = React.memo(function ToolRun({
   items,
   showTimestamps,
+  tail,
 }: {
   items: ToolItem[]
   showTimestamps?: boolean
+  /** This group is the transcript's last row and the turn is still open — the
+      agent has said nothing since, so the run is not finished being written
+      even in the gaps between its calls. */
+  tail?: boolean
 }) {
-  /* Open by default. A group is only ever a run of tool calls with NOTHING
-     between them — `groupToolRuns` breaks the run on the first non-tool item —
-     so the summary line is a heading for steps that belong together, not a
-     drawer to hide them in. Collapsing by default made the transcript go quiet
-     exactly where the agent was busiest; text between tool calls is what
-     separates one run from the next, and that already happens by splitting
-     them into two groups. The disclosure stays: a 40-step run is still worth
-     folding away by hand. */
-  const [open, setOpen] = React.useState(true)
   const failed = items.filter((item) => item.status === "failed").length
   const active = items.some((item) => item.status === "in_progress" || item.status === "pending")
   const summary = summarise(items)
+  /* Open while it runs, folded once it has. A group is only ever a run of tool
+     calls with NOTHING between them — `groupToolRuns` breaks the run on the
+     first non-tool item — so the summary line is a heading for steps that
+     belong together; while they are happening that heading is a number that
+     ticks, and the work belongs on screen. Finished, the counting line IS the
+     reading ("read 12 files"), and a scrolled-back transcript should be the
+     prose with its work folded beside it rather than every step the agent
+     ever took.
+
+     `active` alone is the wrong test for "still going", and that is what `tail`
+     is for. A step settles the instant its call returns, so between two calls
+     of one run there is a moment with nothing pending — on `active` alone the
+     group folded and re-opened around every gap, which is the transcript
+     rewriting itself while it is being read. The group at the *end* of an open
+     turn is still being written whatever its steps are doing at this instant,
+     and it stops being that the moment a different row lands after it: the
+     agent has moved on, so the run becomes the history the counting line
+     describes.
+
+     Derived rather than seeded, and this is the `useState` trap the view
+     options warn about: an initialiser reading these is read once, so a run
+     that mounted live would stay open forever and one replayed from the
+     journal would stay shut. `open` is the reader's answer when they have
+     given one and the run's own state otherwise, so a hand-opened group stays
+     open through the turn that follows it and a hand-closed one stays closed. */
+  const [choice, setChoice] = React.useState<boolean | null>(null)
+  const open = choice ?? (active || tail === true)
+  const setOpen = (value: boolean | ((previous: boolean) => boolean)) =>
+    setChoice(typeof value === "function" ? value(open) : value)
 
   const prose = summary
     .map(({ verb, noun, count }) => `${verb} ${count} ${pluralNoun(noun, count)}`)
     .join(", ")
 
-  /* While the run is still going, the tail of it stays visible without being
-     asked for. Collapsed-by-default is right for a finished run — it is
-     history, and "read 12 files" is the whole of what you need from it — but
-     the group the agent is working in right now is the one thing on screen
-     that is actually happening, and folding it into a single counting line
-     turns a live process into a number that ticks. Three: enough to see what
-     it just did and what it is doing, few enough that the transcript is not
-     re-expanding itself behind your back.
-
-     `active` is the whole test — only the run the agent is inside has a
-     pending or in_progress step — so this needs no notion of "the last
-     group". The peek closes on its own when the run finishes. */
+  /* A run the reader has closed by hand while it is *still running* keeps its
+     tail visible rather than going fully dark: the group the agent is inside
+     is the one thing on screen that is actually happening, and a live process
+     reduced to a number that ticks is not a reading of it. Three: enough to
+     see what it just did and what it is doing, few enough that the transcript
+     is not re-expanding itself behind your back. A finished run shows nothing,
+     which is what the counting line is for — so the peek closes on its own
+     when the run ends. */
   const showing = open ? items : active ? items.slice(-PEEK) : []
   const hidden = active && !open ? items.length - showing.length : 0
 
@@ -322,7 +343,8 @@ export const RowView = React.memo(function RowView({
       (see ThreadItemView); prose streams visibly on its own. */
   streaming?: boolean
 }) {
-  if (row.kind === "run") return <ToolRun items={row.items} showTimestamps={showTimestamps} />
+  if (row.kind === "run")
+    return <ToolRun items={row.items} showTimestamps={showTimestamps} tail={streaming} />
   if (row.kind === "subagent-group") return <SubagentStep group={row} showTimestamps={showTimestamps} />
   if (row.kind === "workflow-group")
     return <WorkflowRun group={row} showTimestamps={showTimestamps} stepBody={SubagentBody} />
@@ -748,7 +770,10 @@ const ToolStep = React.memo(function ToolStep({
       status={item.status}
       icon={KindIcon}
       target={heading.title}
-      caption={heading.detail}
+      /* "Show the command" off leaves the sentence alone on the row. What was
+         typed is still in the body, which is where it is read once the line
+         above it says what the call was for. */
+      caption={view.showToolCommand ? heading.detail : undefined}
       file={heading.file}
       filePath={heading.filePath}
       fileRange={fileRangeOf(item) ?? undefined}

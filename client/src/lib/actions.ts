@@ -674,7 +674,7 @@ export function useActions(settings: ServerSettings) {
              for the full server round-trip — the agent spawn, handshake and
              WebSocket replay can take seconds. On failure, clean up the
              optimistic state and record a Retry-able error. */
-          dispatch({ type: "user-message", id: sessionId, text })
+          dispatch({ type: "user-message", id: sessionId, text, local: true })
           dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
           dispatch({ type: "turn-active", id: sessionId, active: true })
           try {
@@ -744,7 +744,7 @@ export function useActions(settings: ServerSettings) {
         /* A draft already dispatched its optimistic bubble and turn-active
            above — only emit them for threads that were already live. */
         if (!draft) {
-          dispatch({ type: "user-message", id: sessionId, text })
+          dispatch({ type: "user-message", id: sessionId, text, local: true })
           dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
         }
         /* This device is the one peer that does not get a `turn_started` — it
@@ -978,6 +978,33 @@ export function useActions(settings: ServerSettings) {
         threads.destroy(sessionId)
         await api(settings, `/api/sessions/${sessionId}`, { method: "DELETE" })
         await refreshSessions()
+      },
+
+      /** The same, for several at once — a project's list, where deleting the
+          threads one row at a time is the operation nobody wants to perform
+          twenty times. Sequential, because each DELETE stops a process, and one
+          refresh at the end: the session list is the same read however many
+          rows moved, and a refresh per thread would have them racing. A failure
+          part way leaves the threads it already deleted deleted, which is what
+          the caller's error report has to say. */
+      async deleteThreads(sessionIds: string[]) {
+        const drafts = new Set(
+          getState()
+            .sessions.filter((s) => s.draft)
+            .map((s) => s.id)
+        )
+        try {
+          for (const id of sessionIds) {
+            if (drafts.has(id)) {
+              dispatch({ type: "drop-draft-session", id })
+              continue
+            }
+            threads.destroy(id)
+            await api(settings, `/api/sessions/${id}`, { method: "DELETE" })
+          }
+        } finally {
+          await refreshSessions()
+        }
       },
 
       /** Back out of Trash. The thread returns process-less; opening it revives. */

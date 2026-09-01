@@ -44,6 +44,7 @@ import {
   Rows3,
   SeparatorHorizontal,
   Sparkles,
+  Terminal as TerminalIcon,
   WrapText,
   Wrench,
 } from "lucide-react"
@@ -140,6 +141,13 @@ const GROUPS: Group[] = [
         icon: ListTree,
         title: "Expand tool output",
         description: "Open every tool call's input and output by default, not just edits and diffs.",
+      },
+      {
+        key: "showToolCommand",
+        icon: TerminalIcon,
+        title: "Show the command",
+        description:
+          "The command, path or pattern a step ran, under the sentence describing it. Off, a row is the description alone — the command is still in the step's own body.",
       },
       {
         key: "groupTools",

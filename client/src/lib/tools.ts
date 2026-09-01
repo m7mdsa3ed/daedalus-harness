@@ -35,6 +35,8 @@ export {
   toolPrimaryText,
 } from "./tools/heading"
 
+export { describeCommand } from "./tools/describe"
+
 export type { CommandSegment } from "./tools/shell"
 export { splitCommand, toolLanguage } from "./tools/shell"
 

@@ -5,8 +5,8 @@
      ┌ brand row
      │ New thread · Search · Tasks        fixed nav, icon + label, always there
       ├ Pinned                             the ones you said matter
-      │ Running                            threads in progress right now
-      │ Recents                            the newest few, flat — a shortcut
+      │ Recents                            the newest few, flat — a shortcut,
+      │                                    running turns first
      │ Projects                           one folder per project, ALL its
      │   ▸ harness              + ·       threads, by period; + starts one *in* it
      │   ▸ website
@@ -39,7 +39,6 @@
    for the scale). */
 import * as React from "react"
 import {
-  Activity,
   BellIcon,
   Clock,
   FolderIcon,
@@ -364,7 +363,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
      streamed token changes (statuses is identity-stable, see above), so a
      token costs this component a render but no re-sorting and — through the
      memoized rows — no row re-renders. */
-  const { live, trashed, pinned, recent, running, filed } = React.useMemo(() => {
+  const { live, trashed, pinned, recent, filed } = React.useMemo(() => {
     // Deleting is reversible, so a deleted thread leaves the tiers above but
     // not the sidebar: it drops into Trash until it is restored or purged.
     const live = sessions
@@ -398,9 +397,20 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
        most likely to be looked for — was the one missing from where it lives.
        By project: no Recents at all, which is the view for someone who thinks
        in projects rather than in time. */
-    const recent = view.sort === "recent" ? rest.slice(0, RECENT_COUNT) : []
-    const running = live.filter((session) => statuses.get(session.id) === "running")
-    return { live, trashed, pinned, recent, running, filed: newestFirst }
+    /* Running first, always. A turn in progress is the one thing in this list
+       that is happening *now*, and by-activity order buried it under whatever
+       was typed most recently — which is why there used to be a Running tier
+       of its own above Recents, saying the same threads twice. Every running
+       thread is in the list whatever its age (that is what the tier bought),
+       and the rest fill the remaining slots. */
+    const isRunning = (session: SessionMeta) => statuses.get(session.id) === "running"
+    const running = rest.filter(isRunning)
+    const idle = rest.filter((session) => !isRunning(session))
+    const recent =
+      view.sort === "recent"
+        ? [...running, ...idle.slice(0, Math.max(RECENT_COUNT - running.length, 0))]
+        : []
+    return { live, trashed, pinned, recent, filed: newestFirst }
   }, [sessions, statuses, pins, view.filter, view.sort])
 
   const { byProject, orphans } = React.useMemo(() => {
@@ -452,12 +462,6 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
       {pinned.length > 0 && (
         <FoldableGroup groupKey="__pinned" label="Pinned" icon={<Pin className="size-3 shrink-0" />}>
           <ThreadList sessions={pinned} {...listProps} />
-        </FoldableGroup>
-      )}
-
-      {running.length > 0 && (
-        <FoldableGroup groupKey="__running" label="Running" icon={<Activity className="size-3 shrink-0" />}>
-          <ThreadList sessions={running} {...listProps} />
         </FoldableGroup>
       )}
 
