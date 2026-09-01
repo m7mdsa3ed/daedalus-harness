@@ -27,7 +27,7 @@ import { SessionQueue } from "./session-queue.js";
 import type { AutonomyPolicy } from "./autonomy.js";
 import { WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
 import { deleteSearchIndex } from "./search.js";
-import { getQuota, invalidateQuota } from "./quota.js";
+import { getQuota, invalidateQuota, planReadable } from "./quota.js";
 import { profileUsage } from "./usage-api.js";
 import { SessionJournal } from "./session-journal.js";
 import { SessionSocket } from "./session-socket.js";
@@ -756,11 +756,14 @@ export class SessionManager {
   /**
    * Re-read this thread's subscription quota and tell its peers, after a turn.
    *
-   * Four things it refuses to do, each for its own reason. It skips a **profile
-   * with no plan of its own**: a thread on an API-key profile is billed per
-   * token, and the reading an agent probe would give back belongs to the
-   * machine's login, not to that profile — the composer draws no card for it,
-   * so no CLI is spawned after every turn. It does nothing for a **child
+   * Four things it refuses to do, each for its own reason. It skips a pair with
+   * **no plan to read** (`planReadable`): a stored profile with no usage
+   * provider is a gateway or an API key, billed per token, and the reading an
+   * agent probe would give back belongs to the machine's login rather than to
+   * that profile — the composer draws no card for it, so no CLI is spawned
+   * after every turn. A thread on the agent's **Default** profile is the other
+   * way round: it runs on the machine's login, so the probe's reading is
+   * exactly the plan this turn spent, and it is refreshed here. It does nothing for a **child
    * session**: a workflow's five steps are five settled turns on one account,
    * and probing per step would spawn five CLIs to learn the same number — the
    * parent's own turn covers the run. It does nothing with **no peer attached**:
@@ -778,12 +781,18 @@ export class SessionManager {
     const agent = getAgent(session.agentId);
     const profile = session.profile ?? getProfile(session.profileId);
     const project = session.project ?? getProject(session.projectId);
-    /* Only the profile's own plan is the turn's to report. A profile without
-       one spends no plan at all — its turn is billed to an API key, whatever
-       the machine's `claude`/`codex login` happens to report. The agent's probe
-       stays on Settings › Usage, where the machine reading is the answer. */
-    if (!agent || !profile || !project || !profileUsage(profile)) return;
-    invalidateQuota(profile, agent.id);
+    /* Only a plan the turn actually spent is the turn's to report: the
+       profile's own provider, or — on a Default profile, which carries no
+       credentials — the machine's `claude`/`codex login` the agent probe
+       reads. A stored profile with neither is billed per token and has
+       nothing here to say. */
+    if (!agent || !profile || !project || !planReadable(profile, agent)) return;
+    /* The provider reading is one HTTP call, so it is taken again for the turn
+       that just moved it. The agent probe is a *process* — ~2.3s of `claude -p
+       /usage` — and a turn is not worth spawning one for, so that side rides
+       the 5-minute TTL instead: fresh enough for a glance, and one spawn
+       however many turns land inside the window. */
+    if (profileUsage(profile)) invalidateQuota(profile, agent.id);
     void getQuota(agent, profile, project)
       .then((quota) => this.emit(session, { ev: "quota", quota }))
       .catch(() => {});

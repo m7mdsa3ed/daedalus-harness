@@ -248,6 +248,11 @@ export interface AgentDef {
       reads it for one thing only: whether a pick is worth warning about first.
       The server still decides what each change actually costs. */
   liveConfig?: "acp" | "gateway" | null
+  /** How this runtime is asked what is left of its plan (server/src/quota.ts),
+      or null/absent for one that cannot be asked. The client reads it for one
+      thing only: whether a thread on this agent's Default profile — the
+      machine's own login — has a plan reading to draw at all. */
+  quotaProbe?: { kind: string; command: string; args: string[] } | null
 }
 
 export interface McpServerStdio {

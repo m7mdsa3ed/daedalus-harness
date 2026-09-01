@@ -35,7 +35,7 @@ import {
   type CommandDef,
 } from "./settings"
 import * as rest from "./rest-actions"
-import { fetchQuota, profileHasUsage } from "./quota"
+import { fetchQuota, planReadable } from "./quota"
 import { emptyThread, useDispatch, useStoreHandle, type Action } from "./store"
 import { threadRegistry } from "./thread/registry"
 import type { ThreadConnection } from "./thread/connection"
@@ -400,10 +400,12 @@ export function useActions(settings: ServerSettings) {
        * has been worked in already has one; this is for the other case — a
        * thread just opened, or an archived one with no process at all, whose
        * stats popover someone expanded. It asks under the thread's *own*
-       * profile, and only when that profile names a plan of its own: a thread on
-       * an API-key profile has no plan windows by construction, and the reading
-       * an agent probe would give back is the machine's login, not that
-       * profile's — Settings › Usage is where that answer lives.
+       * profile, and only when that pair has a plan to read (`planReadable`):
+       * the profile's own provider, or the machine's own login on an agent's
+       * Default profile. A thread on a stored profile with neither has no plan
+       * windows by construction, and the reading an agent probe would give back
+       * is about a login that thread never spent — Settings › Usage is where
+       * that answer lives.
        *
        * Failures are swallowed. The number is ambient, nobody asked a question
        * by opening a popover, and a missing `claude` binary would otherwise
@@ -411,12 +413,12 @@ export function useActions(settings: ServerSettings) {
        * the failure is reported, because there it is the answer.
        */
       async loadQuota(meta: SessionMeta) {
-        /* The card is the profile's own plan. A profile without one has nothing
-           to read — and asking would spawn the agent's CLI probe for a card the
-           composer will not draw, so don't. Settings › Usage is where the
-           machine reading is asked for, on purpose. */
-        const profile = getState().profiles.find((p) => p.id === meta.profileId)
-        if (!profileHasUsage(profile)) return
+        /* Nothing to read means nothing to ask: asking anyway would spawn the
+           agent's CLI probe for a card the composer will not draw. */
+        const state = getState()
+        const profile = state.profiles.find((p) => p.id === meta.profileId)
+        const agent = state.agents.find((a) => a.id === meta.agentId)
+        if (!planReadable(profile, agent)) return
         try {
           const quota = await fetchQuota(settings, meta.agentId, { profileId: meta.profileId })
           dispatch({ type: "quota", id: meta.id, quota })

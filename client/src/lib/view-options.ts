@@ -33,6 +33,7 @@
 import { createContext, useContext, useSyncExternalStore } from "react"
 
 import { createLocalStore } from "./local-store"
+import { isStreamEffect, type StreamEffect } from "./stream-words"
 
 export interface ViewOptions {
   /** Wall-clock time beside each message and step. */
@@ -66,6 +67,10 @@ export interface ViewOptions {
   showTokens: boolean
   /** Drop the row entrance animation and the running-turn shimmer. */
   calmMotion: boolean
+  /** How a live turn's prose resolves as it is written (lib/stream-words). The
+   *  one option here that is not a switch — the choice is between shapes, not
+   *  between on and off, and "none" is one of the shapes. */
+  streamEffect: StreamEffect
   /** Hide the work and keep the conversation: your messages and the agent's
    *  answers, with thinking, tool steps, plans, subagents and compactions left
    *  out. Errors stay — a failure hidden reads as an answer that never came. */
@@ -89,6 +94,7 @@ export const VIEW_DEFAULTS: ViewOptions = {
   showTokens: false,
   calmMotion: false,
   answersOnly: false,
+  streamEffect: "sweep",
 }
 
 /* ── Options that answer a question `answersOnly` has already answered ──
@@ -101,6 +107,19 @@ export const VIEW_DEFAULTS: ViewOptions = {
    here and the rows read it. Deliberately not the whole Detail group:
    timestamps, sources and token figures are all still on screen and still say
    something about the turn that is left. */
+/* The same argument for calm motion: it is a statement about the transcript not
+   moving on its own, and a reveal is the transcript moving on its own. The
+   stored choice stays the reader's and comes back when calm motion goes off —
+   `resolveStreamEffect` is what makes it moot meanwhile, and the picker says so
+   rather than silently doing nothing. */
+export const CALM_MOTION_SUPPRESSES: readonly (keyof ViewOptions)[] = ["streamEffect"]
+
+/** What the transcript should actually draw, once calm motion has had its say.
+ *  Read this, never `options.streamEffect`, anywhere the reveal is rendered. */
+export function resolveStreamEffect(options: ViewOptions): StreamEffect {
+  return options.calmMotion ? "none" : options.streamEffect
+}
+
 export const ANSWERS_ONLY_SUPPRESSES: readonly (keyof ViewOptions)[] = [
   "showThinking",
   "showToolDetails",
@@ -122,15 +141,24 @@ const STORAGE_KEY = "ui.viewOptions"
 
 const KEYS = Object.keys(VIEW_DEFAULTS) as (keyof ViewOptions)[]
 
-/** Keep only known boolean fields: the stored blob is user-editable and outlives
- *  any one release, so an option this build has never heard of must not reach
- *  the resolved object. */
+/** Keep only known fields *of the right shape*: the stored blob is
+ *  user-editable and outlives any one release, so neither an option this build
+ *  has never heard of nor a value it cannot mean may reach the resolved object.
+ *  The default is what says which shape a key is, so a new switch needs nothing
+ *  here and a new choice needs only its own guard. */
 function pick(raw: unknown): Partial<ViewOptions> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
   const source = raw as Record<string, unknown>
-  const out: Partial<ViewOptions> = {}
-  for (const key of KEYS) if (typeof source[key] === "boolean") out[key] = source[key] as boolean
-  return out
+  const out: Record<string, unknown> = {}
+  for (const key of KEYS) {
+    const value = source[key]
+    if (typeof VIEW_DEFAULTS[key] === "boolean") {
+      if (typeof value === "boolean") out[key] = value
+    } else if (key === "streamEffect") {
+      if (isStreamEffect(value)) out[key] = value
+    }
+  }
+  return out as Partial<ViewOptions>
 }
 
 function parseStored(raw: unknown): Partial<ViewOptions> {

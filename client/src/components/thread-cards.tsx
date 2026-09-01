@@ -22,6 +22,8 @@ import { ContentBlockView, Prose, SmartBlock, SourceChip, Timestamp } from "@/co
 import { TodoList } from "@/components/tool-views"
 import { copyText, formatElapsed, StepRow, yieldToTextSelection } from "@/components/step-row"
 import { useStreamedText } from "@/hooks/use-streamed-text"
+import type { StreamEffect } from "@/lib/stream-words"
+import { resolveStreamEffect, useViewOptionsContext } from "@/lib/view-options"
 import { shortPath, type TaskNotification, type TodoEntry } from "@/lib/tools"
 import type { TurnSources } from "@/lib/sources"
 import { cn } from "@/lib/utils"
@@ -105,10 +107,49 @@ function AgentBlock({
  * the painted slice is paced.
  */
 export function StreamedAgentText({ text, streaming }: { text: string; streaming: boolean }) {
-  return <AgentText text={useStreamedText(text, streaming)} />
+  /* Read here rather than in `Prose`: the reveal is chosen once per row being
+     written, and `Prose` is drawn a thousand times in a long transcript —
+     subscribing every one of them to the option store would be a thousand
+     subscriptions for a value only the tail can use. */
+  const effect = useStreamEffect(streaming)
+  return <AgentText text={useStreamedText(text, streaming)} stream={effect} />
 }
 
-export function AgentText({ text }: { text: string }) {
+/** The effect this row should draw with, or nothing when it is not the row
+ *  being written. Calm motion has already been folded in. */
+function useStreamEffect(streaming: boolean): StreamEffect | undefined {
+  const options = useViewOptionsContext()
+  return streaming ? resolveStreamEffect(options) : undefined
+}
+
+/**
+ * Any other prose being written live — today, an open thought's detail.
+ *
+ * The same two halves `StreamedAgentText` puts together, without the block
+ * conventions: the pacer decides when each word lands, the per-word reveal
+ * decides what landing looks like. A component for the same reason that one is
+ * — `RowView`'s kind switch is a chain of returns, so a hook at the call site
+ * would be a conditional one.
+ *
+ * Reasoning arrives in the burstiest shape the wire has (a model goes quiet and
+ * then emits a paragraph at once), which is exactly what the pacer is for; and
+ * `StepRow` mounts the detail only while it is open, so a thought expanded
+ * halfway through starts from what is already there rather than replaying it.
+ */
+export function StreamedProse({
+  text,
+  streaming,
+  className,
+}: {
+  text: string
+  streaming: boolean
+  className?: string
+}) {
+  const effect = useStreamEffect(streaming)
+  return <Prose text={useStreamedText(text, streaming)} stream={effect} className={className} />
+}
+
+export function AgentText({ text, stream }: { text: string; stream?: StreamEffect }) {
   const blocks = AGENT_BLOCKS.flatMap(({ re, label, mark, accent }) =>
     [...text.matchAll(re)].map((m) => ({
       start: m.index,
@@ -119,7 +160,7 @@ export function AgentText({ text }: { text: string }) {
       accent,
     }))
   ).sort((a, b) => a.start - b.start)
-  if (blocks.length === 0) return <Prose text={text} />
+  if (blocks.length === 0) return <Prose text={text} stream={stream} />
 
   const parts: React.ReactNode[] = []
   let cut = 0
@@ -130,7 +171,10 @@ export function AgentText({ text }: { text: string }) {
     parts.push(<AgentBlock key={block.start} {...block} />)
     cut = block.end
   }
-  if (cut < text.length) parts.push(<Prose key={cut} text={text.slice(cut)} />)
+  /* The tail is the *message's* tail, so only the last run of prose asks for a
+     reveal — handing it to every part would give each one a ramp of its own and
+     soften text that was settled paragraphs ago. */
+  if (cut < text.length) parts.push(<Prose key={cut} text={text.slice(cut)} stream={stream} />)
 
   return <div className="space-y-3">{parts}</div>
 }

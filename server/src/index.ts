@@ -81,16 +81,21 @@ const sessions = new SessionManager(
   {
     onPermissionRequest: (s) => {
       addNotification("permission", s);
-      push.send("Permission needed", s.title, { sessionId: s.id }).catch(console.error);
+      push.send("Permission needed", s.title, { sessionId: s.id, event: "permissionNeeded" }).catch(console.error);
     },
     onElicitationRequest: (s) => {
       addNotification("question", s);
-      push.send("The agent has a question", s.title, { sessionId: s.id }).catch(console.error);
+      push.send("The agent has a question", s.title, { sessionId: s.id, event: "questionAsked" }).catch(console.error);
     },
     onTurnEnd: (s, error) => {
       addNotification(error ? "turn_failed" : "turn_finished", s, failureDetail(error));
       push
-        .send(error ? "Turn failed" : "Turn finished", pushBody(s.title, error), { sessionId: s.id })
+        .send(error ? "Turn failed" : "Turn finished", pushBody(s.title, error), {
+          sessionId: s.id,
+          // The client reads this to decide whether the notification is one the
+          // agent is BLOCKED on (lib/notification-shape).
+          event: error ? "turnFailed" : "turnFinished",
+        })
         .catch(console.error);
     },
     // A thread whose process went away cannot be waiting on a workflow answer,

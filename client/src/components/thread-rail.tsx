@@ -231,12 +231,21 @@ export function ThreadRail({ items, wide }: { items: ThreadItem[]; wide?: boolea
             cardHeight === 0 && "opacity-0"
           )}
         >
-          <p className="line-clamp-2 font-medium text-foreground">
+          {/* `dir="auto"` per paragraph, the same bargain the bubbles make
+              (thread-items): the card quotes what was typed, so an Arabic turn
+              has to read right-to-left here as it does in the transcript — and
+              the two halves are decided separately, since a question in one
+              script is routinely answered in the other. The ordinal is a
+              neutral run, so it does not vote on the direction the text picks,
+              and `me-1` carries it to whichever side that turns out to be. */}
+          <p dir="auto" className="line-clamp-2 font-medium text-foreground">
             <span className="me-1 text-muted-foreground/60">#{preview.n}</span>
             {preview.text.trim() || <span className="italic text-muted-foreground">no text</span>}
           </p>
           {preview.reply.trim() && (
-            <p className="mt-1 line-clamp-3 text-muted-foreground">{preview.reply}</p>
+            <p dir="auto" className="mt-1 line-clamp-3 text-muted-foreground">
+              {preview.reply}
+            </p>
           )}
         </div>
       )}

@@ -277,6 +277,10 @@ declare global {
       platform: string
       vibrancy: boolean
       setTitleBarTheme?: (resolved: "light" | "dark") => void
+      /** Raise an OS notification through the main process (lib/notifications). */
+      notify?: (payload: { title: string; body: string; sessionId?: string }) => Promise<boolean>
+      /** Subscribe to clicks on those notifications; returns an unsubscribe. */
+      onNotificationClick?: (handler: (sessionId: string) => void) => () => void
     }
   }
 }

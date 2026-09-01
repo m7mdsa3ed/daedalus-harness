@@ -17,6 +17,7 @@
    what interrupts you on this device is not the server's business. */
 import { toast } from "@/lib/toast"
 import { useSyncExternalStore } from "react"
+import { notificationOptions, type NotificationShape } from "./notification-shape"
 import { pushRegistration } from "./pwa"
 import { currentThreadId, navigateTo, threadPath } from "./router"
 import { loadSettings } from "./settings"
@@ -50,6 +51,10 @@ const EVENT_LABELS: Record<ThreadEvent, string> = {
   permissionNeeded: "Permission needed",
   questionAsked: "The agent has a question",
 }
+
+/** The events the agent is BLOCKED on — they get an "Open" affordance, and the
+    OS notification stays up until it is dealt with where the platform allows. */
+const ACTIONABLE = new Set<ThreadEvent>(["permissionNeeded", "questionAsked", "turnFailed"])
 
 const STORAGE_KEY = "ui.notifications"
 
@@ -97,6 +102,10 @@ export function useNotificationPrefs(): NotificationPrefs {
     from a click — the settings toggle — never unprompted: browsers downgrade
     prompts that don't come from a gesture. */
 export async function requestSystemNotifications(): Promise<boolean> {
+  // The desktop shell raises its notifications from the main process, which no
+  // web permission gates — so there is nothing to ask, and asking would let a
+  // browser-level "denied" turn off a channel that works regardless.
+  if (desktopNotify) return true
   if (!("Notification" in window)) return false
   if (Notification.permission === "granted") return true
   if (Notification.permission === "denied") return false
@@ -115,6 +124,9 @@ const OFFER_DISMISSED_KEY = "ui.notifications.offerDismissed"
 const OFFER_TOAST_ID = "enable-notifications-offer"
 
 function computeOffer(): boolean {
+  // The desktop shell needs no permission and has none to ask for — its
+  // notifications go through the main process (electron/main.cjs).
+  if (desktopNotify) return false
   if (!("Notification" in window)) return false
   if (Notification.permission !== "default") return false
   try {
@@ -197,6 +209,29 @@ export function resetNotificationOffer(): void {
   }
 }
 
+/* ── The desktop shell ──
+   Electron's renderer *can* be granted the web Notification permission (main.cjs
+   answers both permission handlers), and that is still not enough: Chromium
+   hands the notification to the OS, and Windows drops it unless the running
+   binary is attributable to an installed app, while Linux needs a notification
+   daemon Chromium can reach. Both failures are silent — the constructor
+   succeeds, `onshow` never fires and nothing is drawn. Electron's own
+   `Notification` is the surface those platforms accept, so in the shell the OS
+   layer is one IPC call and there is no permission gate on it at all.
+
+   Resolves false when the platform genuinely cannot show one (no daemon), which
+   falls back to the web API rather than swallowing the notice. */
+const desktopNotify = typeof window !== "undefined" ? window.desktop?.notify : undefined
+
+/** Route a click on a shell notification to its thread. Called once from
+    main.tsx; the handler lives here because this is what decides where a
+    notification points. */
+export function installDesktopNotifications(): void {
+  window.desktop?.onNotificationClick?.((sessionId) => {
+    if (sessionId) openThread(sessionId)
+  })
+}
+
 /* ── The resume window ──
    While the page is frozen the SERVER raises the notification (it is told the
    page cannot — see `setBackground` in thread-socket.ts). Everything that
@@ -254,7 +289,7 @@ export function notifyThreadEvent(
   /* In-app, a normal toast. The actionable events — the ones that are
      waiting on the user — carry an "Open" affordance (and, for a failure, an
      error tone); a turn that merely finished needs no button. */
-  const actionable = event === "permissionNeeded" || event === "questionAsked" || event === "turnFailed"
+  const actionable = ACTIONABLE.has(event)
   const toastOpts: Parameters<typeof toast>[1] = {
     description: body,
     ...(actionable
@@ -266,43 +301,67 @@ export function notifyThreadEvent(
 
   // The toast can't be seen from another window or a minimized app; an OS
   // notification can. `tag` collapses repeats for the same thread+event.
-  if (
-    (force || (cache.system && (document.visibilityState === "hidden" || !document.hasFocus()))) &&
-    (force || Date.now() >= systemQuietUntil) &&
-    "Notification" in window &&
-    Notification.permission === "granted"
-  ) {
-    const tag = `${sessionId}:${event}`
-    try {
-      // `renotify` with a `tag`, exactly as the worker path below does: a
-      // replacement that swaps the text in silence is, for a second permission
-      // ask on the same thread, the same as no notification at all.
-      const notification = new Notification(label, { body, tag, renotify: true })
-      notification.onclick = () => {
-        window.focus()
-        openThread(sessionId)
-        notification.close()
-      }
-    } catch {
-      /* Chrome on Android forbids the constructor outright ("Illegal
-         constructor. Use ServiceWorkerRegistration.showNotification()") — and
-         push does NOT cover this case, whatever it may look like: the server
-         only pushes while `peers.size === 0`, and this branch is the opposite,
-         a socket still attached from a window nobody is looking at. Left to
-         throw, the platform the PWA exists for is the one that gets silence.
-         The worker's `notificationclick` handler routes on `data.sessionId`,
-         so the click lands on the same thread this window would have opened. */
-      void pushRegistration().then((registration) =>
-        registration?.showNotification(label, {
-          body,
-          tag,
-          // Same tag, new event: without this the replacement is silent, which
-          // for "permission needed" means the second ask goes unnoticed.
-          renotify: true,
-          data: { sessionId },
-        })
-      )
+  const wanted = force || (cache.system && (document.visibilityState === "hidden" || !document.hasFocus()))
+  const quiet = !force && Date.now() < systemQuietUntil
+  if (wanted && !quiet) raiseSystemNotification(event, sessionId, label, body)
+}
+
+/** The OS layer: the desktop shell's native notification, else the web one.
+    Split out of `notifyThreadEvent` because it is three fallbacks deep and none
+    of them is about whether to interrupt — only about which surface can. */
+function raiseSystemNotification(
+  event: ThreadEvent,
+  sessionId: string,
+  label: string,
+  body: string
+): void {
+  const tag = `${sessionId}:${event}`
+  const actionable = ACTIONABLE.has(event)
+
+  /* The desktop shell first, and with no permission check: it has no web
+     permission worth consulting (main.cjs grants it) and the web API is the one
+     that silently draws nothing there. `false` means the platform cannot show
+     one at all, which falls through to the web attempt rather than swallowing
+     the notice. */
+  if (desktopNotify) {
+    void desktopNotify({ title: label, body, sessionId }).then(
+      (shown) => {
+        if (!shown) showWebNotification(label, { body, tag, sessionId, actionable }, sessionId)
+      },
+      () => showWebNotification(label, { body, tag, sessionId, actionable }, sessionId)
+    )
+    return
+  }
+  showWebNotification(label, { body, tag, sessionId, actionable }, sessionId)
+}
+
+function showWebNotification(
+  label: string,
+  shape: NotificationShape,
+  sessionId: string
+): void {
+  if (!("Notification" in window) || Notification.permission !== "granted") return
+  const options = notificationOptions(shape)
+  try {
+    // `renotify` with a `tag`, exactly as the worker path does: a replacement
+    // that swaps the text in silence is, for a second permission ask on the
+    // same thread, the same as no notification at all.
+    const notification = new Notification(label, options)
+    notification.onclick = () => {
+      window.focus()
+      openThread(sessionId)
+      notification.close()
     }
+  } catch {
+    /* Chrome on Android forbids the constructor outright ("Illegal
+       constructor. Use ServiceWorkerRegistration.showNotification()") — and
+       push does NOT cover this case, whatever it may look like: the server
+       only pushes while `peers.size === 0`, and this branch is the opposite,
+       a socket still attached from a window nobody is looking at. Left to
+       throw, the platform the PWA exists for is the one that gets silence.
+       The worker's `notificationclick` handler routes on `data.sessionId`,
+       so the click lands on the same thread this window would have opened. */
+    void pushRegistration().then((registration) => registration?.showNotification(label, options))
   }
 }
 

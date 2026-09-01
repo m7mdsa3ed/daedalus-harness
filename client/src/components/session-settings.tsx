@@ -57,10 +57,12 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
+import { StreamEffectPicker } from "@/components/stream-effect-picker"
 import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
 import {
   ANSWERS_ONLY_SUPPRESSES,
+  CALM_MOTION_SUPPRESSES,
   resetViewOptions,
   setViewOption,
   useViewOptions,
@@ -68,8 +70,15 @@ import {
   type ViewOptions,
 } from "@/lib/view-options"
 
+/** The switches, and only the switches. `ViewOptions` now holds one choice
+    that is not one, and a row that renders a Switch has no business being
+    typed wide enough to hold it. */
+type BooleanOption = {
+  [K in keyof ViewOptions]: ViewOptions[K] extends boolean ? K : never
+}[keyof ViewOptions]
+
 type Option = {
-  key: keyof ViewOptions
+  key: BooleanOption
   icon: typeof Clock
   title: string
   description: string
@@ -81,6 +90,11 @@ type Group = {
   icon: typeof Clock
   hint: string
   options: Option[]
+  /** A choice that is not a switch, drawn as the last row of the same card.
+      Only Motion has one; it is a field on the group rather than a section of
+      its own so the reveal reads as part of "what moves on its own" and not as
+      a fifth thing to weigh. */
+  picker?: "streamEffect"
 }
 
 const GROUPS: Group[] = [
@@ -217,9 +231,10 @@ const GROUPS: Group[] = [
         icon: Sparkles,
         title: "Calm motion",
         description:
-          "Drop the row entrance animation and the shimmer on a running turn. Colour still says what is live.",
+          "Drop the row entrance animation, the shimmer on a running turn and the streaming reveal. Colour still says what is live.",
       },
     ],
+    picker: "streamEffect",
   },
 ]
 
@@ -229,6 +244,7 @@ const ALL_OPTIONS = GROUPS.flatMap((group) => group.options)
     already settled it. One sentence, and it names the option responsible —
     a greyed switch with no reason is a bug report. */
 const MOOT_NOTE = "Nothing to apply it to while Answers only is on."
+const CALM_NOTE = "Calm motion is on, so a live answer arrives with nothing added."
 
 function OptionRow({
   option,
@@ -316,8 +332,16 @@ export function SessionSettingsDialog({
   onOpenChange: (open: boolean) => void
 }) {
   const options = useViewOptions()
+  /* Every key the dialog can move, not just the switches: the count in the
+     footer and the Reset beside it are about the whole surface, and a reveal
+     changed from the default is exactly as much a change as a switch is. */
   const changedKeys = React.useMemo(
-    () => new Set(ALL_OPTIONS.filter(({ key }) => options[key] !== VIEW_DEFAULTS[key]).map((o) => o.key)),
+    () =>
+      new Set(
+        ([...ALL_OPTIONS.map((o) => o.key), "streamEffect"] as (keyof ViewOptions)[]).filter(
+          (key) => options[key] !== VIEW_DEFAULTS[key]
+        )
+      ),
     [options]
   )
   /* "Answers only" takes the rows these describe off the screen, so the
@@ -325,8 +349,12 @@ export function SessionSettingsDialog({
      lib/view-options beside the option, not here: the dialog draws the
      consequence, it does not decide it. */
   const mootKeys = React.useMemo(
-    () => new Set(options.answersOnly ? ANSWERS_ONLY_SUPPRESSES : []),
-    [options.answersOnly]
+    () =>
+      new Set([
+        ...(options.answersOnly ? ANSWERS_ONLY_SUPPRESSES : []),
+        ...(options.calmMotion ? CALM_MOTION_SUPPRESSES : []),
+      ]),
+    [options.answersOnly, options.calmMotion]
   )
 
   return (
@@ -360,6 +388,13 @@ export function SessionSettingsDialog({
                     moot={mootKeys.has(option.key) ? MOOT_NOTE : undefined}
                   />
                 ))}
+                {group.picker === "streamEffect" && (
+                  <StreamEffectPicker
+                    value={options.streamEffect}
+                    onChange={(effect) => setViewOption("streamEffect", effect)}
+                    moot={mootKeys.has("streamEffect") ? CALM_NOTE : undefined}
+                  />
+                )}
               </div>
             </section>
           ))}

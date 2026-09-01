@@ -4,7 +4,7 @@ import { agentQuota as agentQuotaTable, db, type QuotaProbe } from "./db/index.j
 import { resolveSpawn, type AgentDef } from "./registry.js";
 import { profileUsage, readProfileUsage } from "./usage-api.js";
 import type { QuotaSnapshot, QuotaStatus, QuotaWindow } from "./protocol.js";
-import type { Profile } from "./profiles.js";
+import { isVirtualProfile, type Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 
 export type { QuotaSnapshot, QuotaStatus, QuotaWindow };
@@ -484,6 +484,25 @@ async function runProbe(agent: AgentDef, profile: Profile, project: Project): Pr
   } catch (err) {
     return failed(base, err);
   }
+}
+
+/**
+ * Whether this (profile, agent) pair has a plan a *thread* can be told about.
+ *
+ * Two readers, two ways of being true. A profile that names a usage provider
+ * has one whatever runtime spends it — that is the account the turn is billed
+ * to. And a thread on an agent's **virtual Default profile** has one too: a
+ * Default carries no credentials, so the runtime runs on the machine's own
+ * `claude`/`codex login`, and that login is exactly what the agent's probe
+ * reads. The reading is the plan the turn is spending, which is the whole test.
+ *
+ * What stays out is the case the surfaces were originally written around: a
+ * *stored* profile with no usage provider. That is a gateway or an API key,
+ * metered per token, and the machine's own subscription says nothing about it —
+ * so a thread on one still draws no plan card.
+ */
+export function planReadable(profile: Profile, agent: Pick<AgentDef, "quotaProbe">): boolean {
+  return Boolean(profileUsage(profile) || (isVirtualProfile(profile.id) && agent.quotaProbe));
 }
 
 /**

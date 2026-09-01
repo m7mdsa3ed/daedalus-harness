@@ -32,6 +32,7 @@ import {
   SubagentBrief,
   SubagentReport,
   ToolDetail,
+  ToolAnswers,
   ToolSources,
   toolHasDetail,
   toolOpensByDefault,
@@ -52,6 +53,7 @@ import {
   PlanStep,
   SourcesStrip,
   StreamedAgentText,
+  StreamedProse,
   TaskNotificationCard,
 } from "@/components/thread-cards"
 import {
@@ -705,8 +707,9 @@ export const ThreadItemView = React.memo(function ThreadItemView({
             )
           }
           detail={
-            <Prose
+            <StreamedProse
               text={reasoning}
+              streaming={streaming}
               className="text-xs leading-relaxed text-muted-foreground"
             />
           }
@@ -795,7 +798,15 @@ const ToolStep = React.memo(function ToolStep({
       }
       startedAt={item.startedAt}
       detail={hasBody || active ? <ToolDetail item={item} active={active} /> : undefined}
-      below={<ToolSources item={item} />}
+      /* Two strips can sit under a row and they answer different questions —
+         which sites a search saw, and what you told the agent when it asked.
+         Neither applies to the other's kind of call, so they never both draw. */
+      below={
+        <>
+          <ToolAnswers item={item} />
+          <ToolSources item={item} />
+        </>
+      }
       defaultOpen={view.showToolDetails || toolOpensByDefault(item)}
       openSetting={view.showToolDetails}
     />

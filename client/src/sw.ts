@@ -25,6 +25,7 @@ import {
   precacheAndRoute,
 } from "workbox-precaching"
 import { NavigationRoute, registerRoute } from "workbox-routing"
+import { notificationOptions } from "./lib/notification-shape"
 
 declare let self: ServiceWorkerGlobalScope
 
@@ -136,6 +137,9 @@ interface PushPayload {
   title: string
   body: string
   sessionId?: string
+  /** The ThreadEvent the server raised this for, when it said (see push.ts).
+      Only used to decide whether the agent is blocked on an answer. */
+  event?: string
 }
 
 function readPushPayload(data: PushMessageData | null): PushPayload {
@@ -158,29 +162,35 @@ function readPushPayload(data: PushMessageData | null): PushPayload {
     title: fields.title ?? envelope.notification?.title ?? fallback.title,
     body: fields.body ?? envelope.notification?.body ?? fallback.body,
     sessionId: fields.sessionId,
+    event: fields.event,
   }
 }
 
+/** The events the agent is blocked on — kept in step with ACTIONABLE in
+    lib/notifications.ts, which is the other half of the same vocabulary. */
+const BLOCKING_EVENTS = new Set(["permissionNeeded", "questionAsked", "turnFailed"])
+
 self.addEventListener("push", (event) => {
-  const { title, body, sessionId } = readPushPayload(event.data)
+  const { title, body, sessionId, event: kind } = readPushPayload(event.data)
   // A push that shows nothing is a "this site was updated in the background"
   // notice from the browser, so always show one — and `waitUntil` it, or the
   // worker can be killed before the notification is on screen.
+  //
+  // The options are lib/notification-shape's, shared with the in-page path:
+  // the vibration, the stated `silent: false` and the `renotify` are what
+  // decide whether Android peeks a banner over the lock screen or files the
+  // line away silently, which is not something two copies should disagree on.
   event.waitUntil(
-    self.registration.showNotification(title, {
-      body,
-      icon: "/icon-192.png",
-      // Monochrome white-on-transparent, or Android's status bar shows nothing
-      // (a colored icon is rejected and replaced with a blank/white square).
-      badge: "/icon-badge.png",
-      // Same thread, same kind of event: replace rather than stack, matching
-      // what lib/notifications.ts does for the in-app ones. `renotify` is what
-      // makes the replacement announce itself — silently swapping the text of a
-      // notification nobody is looking at is the same as not sending one.
-      tag: sessionId ? `${sessionId}:${title}` : title,
-      renotify: true,
-      data: { sessionId },
-    })
+    self.registration.showNotification(
+      title,
+      notificationOptions({
+        body,
+        // Same thread, same kind of event: replace rather than stack.
+        tag: sessionId ? `${sessionId}:${title}` : title,
+        sessionId,
+        actionable: kind ? BLOCKING_EVENTS.has(kind) : false,
+      })
+    )
   )
 })
 

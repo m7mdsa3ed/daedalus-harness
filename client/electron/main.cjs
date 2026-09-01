@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, nativeTheme, ipcMain } = require("electron")
+const { app, BrowserWindow, Notification, shell, nativeTheme, ipcMain } = require("electron")
 const path = require("node:path")
 const fs = require("node:fs")
 const http = require("node:http")
@@ -24,6 +24,40 @@ let win = null
 let server = null
 
 const symbolColorFor = (resolved) => (resolved === "dark" ? "#e5e5e5" : "#171717")
+
+/* ── Notifications ──
+   The renderer does NOT use the web Notification API here, and the permission
+   handlers below are not the whole story: Chromium's web notifications inside
+   Electron depend on the embedder being attributable to the OS (a Start Menu
+   shortcut carrying the AppUserModelID on Windows, a notification daemon on
+   Linux), and when that attribution is missing `new Notification(...)` resolves
+   perfectly happily and nothing is ever drawn. Electron's own `Notification`
+   goes through the main process, which is the surface those platforms actually
+   accept, and needs no permission at all — so the desktop app never has to ask
+   for one, and never has an "enable notifications" offer to show.
+
+   The click is routed the same way the service worker routes a push: focus the
+   window that exists and tell the renderer which thread the notice was about
+   (preload re-exposes it; lib/notifications.ts navigates). */
+ipcMain.handle("notify", (_event, payload) => {
+  if (!Notification.isSupported()) return false
+  const { title, body, sessionId } = payload ?? {}
+  const notification = new Notification({
+    title: String(title ?? "Daedalus"),
+    body: String(body ?? ""),
+    // Dev/unpackaged runs have no bundled resources; a missing file is ignored.
+    icon: path.join(__dirname, "..", "build", "icon.png"),
+  })
+  notification.on("click", () => {
+    if (!win || win.isDestroyed()) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+    if (sessionId) win.webContents.send("notification-click", String(sessionId))
+  })
+  notification.show()
+  return true
+})
 
 ipcMain.on("theme-changed", (_event, resolved) => {
   if (!win || win.isDestroyed() || process.platform === "darwin") return

@@ -12,6 +12,17 @@ contextBridge.exposeInMainWorld("desktop", {
   // Caption buttons (min/max/close) are drawn natively, colored via
   // titleBarOverlay; the app's theme is a user choice, so main must be told.
   setTitleBarTheme: (resolved) => ipcRenderer.send("theme-changed", resolved),
+  /* OS notifications are the main process's (see main.cjs): the web
+     Notification API inside Electron depends on an OS attribution the shell may
+     not have, and silently draws nothing when it is missing. Resolves false
+     when the platform cannot show one at all, so the caller can fall back. */
+  notify: (payload) => ipcRenderer.invoke("notify", payload),
+  /** The thread a clicked notification was about. Returns an unsubscribe. */
+  onNotificationClick: (handler) => {
+    const listener = (_event, sessionId) => handler(sessionId)
+    ipcRenderer.on("notification-click", listener)
+    return () => ipcRenderer.off("notification-click", listener)
+  },
 })
 
 // Set before first paint so CSS never flashes the browser look.

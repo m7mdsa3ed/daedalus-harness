@@ -1454,10 +1454,33 @@ Generic ACP (Agent Client Protocol) harness. Four parts, one repo:
   *only* while `peers.size === 0` — so the in-page path in `lib/notifications.ts`, which
   fires for a socket still attached from a window nobody is watching, is exactly the case
   push will never reach. It falls back to `registration.showNotification`, whose click the
-  worker already routes on `data.sessionId`. Both paths pass `renotify` (declared in
-  `vite-env.d.ts`; TS's DOM lib lacks it) — with a `tag` and without it, a replacement
-  swaps the text in silence, which for a second permission ask is the same as no
-  notification at all.
+  worker already routes on `data.sessionId`.
+  **Both paths build their options in one place** (`lib/notification-shape.ts`, imported
+  by `lib/notifications.ts` and by `sw.ts`), because on Android these are not cosmetic:
+  `renotify` with a `tag` is what makes a *replacement* alert rather than swap the text
+  in silence (a second permission ask otherwise goes unnoticed); `vibrate` plus a stated
+  `silent: false` is the only lever a web caller has on whether Chrome peeks a heads-up
+  banner over the lock screen or files the line away quietly; and `requireInteraction`
+  keeps the ones the agent is blocked on up (honoured on the desktop, a correct no-op on
+  Android). `renotify`, `vibrate` and `timestamp` are all declared in `vite-env.d.ts` —
+  spec'd, shipping, and absent from TS's DOM lib. Whether a notification is *blocking* is
+  the server's to say, so `push.send` carries the `ThreadEvent` in `data.event` and the
+  worker reads it. What none of it buys, because it is not ours: Android 13+ withholds
+  `POST_NOTIFICATIONS` from the installed PWA independently of the site permission, and a
+  channel the user has silenced stays silenced.
+  **In the desktop shell the OS layer is not the web API at all.** Electron answers both
+  permission handlers, and that is still not enough — Chromium hands the notification to
+  the OS, which drops it unless the binary is attributable to an installed app (Windows)
+  or a notification daemon is reachable (Linux), and both failures are silent: the
+  constructor succeeds and nothing is drawn. So `electron/main.cjs` raises Electron's own
+  `Notification` over an IPC handler, preload exposes it as `desktop.notify` /
+  `desktop.onNotificationClick` (the click focuses the window and tells the renderer
+  which thread, which `installDesktopNotifications` routes), and `raiseSystemNotification`
+  prefers it with **no permission check** — falling back to the web attempt only when the
+  platform answers that it cannot show one at all. Which is also why
+  `requestSystemNotifications` returns true there and the enable-notifications offer never
+  shows: there is nothing to ask, and a browser-level "denied" must not switch off a
+  channel that works regardless.
 - **A backgrounded page is not a detached one, and only the page can say which it
   is.** The push above is raised for a turn ending on a thread nobody is watching,
   and an attached socket used to be the whole of that test — which on Android

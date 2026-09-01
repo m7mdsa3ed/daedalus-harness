@@ -5,7 +5,7 @@ import { BrowserRouter } from 'react-router'
 import App from './App.tsx'
 import { ErrorBoundary } from './components/error-boundary.tsx'
 import { installGlobalErrorReporting } from './lib/errors.ts'
-import { installNotificationTestHelper } from './lib/notifications.ts'
+import { installDesktopNotifications, installNotificationTestHelper } from './lib/notifications.ts'
 import { registerPwa } from './lib/pwa'
 import { watchInstallability } from './lib/install.ts'
 
@@ -16,6 +16,9 @@ installGlobalErrorReporting()
 // `daedalus.notify()` in the console — the only way to look at a notification
 // without arranging for a turn to finish in a window you are not watching.
 installNotificationTestHelper()
+// The desktop shell's notifications are the main process's, so a click on one
+// arrives over IPC rather than on a Notification object (electron/main.cjs).
+installDesktopNotifications()
 // Service worker: the offline shell, the install, and the push notifications
 // that arrive when no tab is attached. Silent no-op off https or in a browser
 // without support.

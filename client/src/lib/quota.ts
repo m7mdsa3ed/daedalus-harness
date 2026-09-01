@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
 import type { QuotaSnapshot, QuotaWindow } from "@daedalus/protocol"
 
-import { api, type Profile, type ServerSettings } from "@/lib/settings"
+import { api, type AgentDef, type Profile, type ServerSettings } from "@/lib/settings"
 
 /** Whether a profile names a plan of its own — the client twin of the server's
     `profileUsage` (usage-api.ts). A profile without one spends no plan at all:
@@ -12,6 +12,30 @@ import { api, type Profile, type ServerSettings } from "@/lib/settings"
 export const profileHasUsage = (profile: Pick<Profile, "usage"> | null | undefined): boolean => {
   const usage = profile?.usage
   return Boolean(usage && usage.kind && usage.kind !== "none")
+}
+
+/**
+ * Whether this (profile, agent) pair has a plan a *thread* can be told about —
+ * the client twin of the server's `planReadable` (quota.ts), and the gate on
+ * every per-thread plan surface.
+ *
+ * True two ways. A profile that names a usage provider has a plan whatever
+ * runtime spends it: that is the account the turn is billed to. And a thread on
+ * an agent's **Default** profile has one too — a Default carries no
+ * credentials, so the runtime runs on the machine's own `claude`/`codex login`,
+ * which is exactly what the agent's own probe reads.
+ *
+ * False for the case these surfaces were first written around: a *stored*
+ * profile with no usage provider. That is a gateway or an API key, metered per
+ * token, and the machine's subscription says nothing about what it spent.
+ */
+export function planReadable(
+  profile: Pick<Profile, "id" | "usage"> | null | undefined,
+  agent: Pick<AgentDef, "quotaProbe"> | null | undefined
+): boolean {
+  if (!profile) return false
+  if (profileHasUsage(profile)) return true
+  return profile.id.startsWith("default:") && Boolean(agent?.quotaProbe)
 }
 
 /* ── Subscription quota, client side ──

@@ -1092,6 +1092,63 @@ function QuestionsDetail({ item }: { item: ToolItem }) {
   )
 }
 
+/**
+ * What was answered, on the row itself.
+ *
+ * A question is the one call in the transcript whose *outcome is the reader's
+ * own*, and folded away it was the one call you could not read back: the row
+ * said "Ask the user a question", and finding out which of four options you had
+ * picked a hundred turns ago meant opening the step. Everything else in a
+ * collapsed row is a fact about what the agent did; this is a fact about what
+ * you said, so it belongs where the sources strip is — in `StepRow`'s `below`
+ * slot, drawn open or closed.
+ *
+ * It is a summary and not a second copy of `QuestionsDetail`: the picks and the
+ * note, without the options that were not taken. The unanswered call renders
+ * nothing at all, which is what keeps a question that is still on screen as a
+ * form from being answered twice over.
+ */
+export function ToolAnswers({ item }: { item: ToolItem }) {
+  const questions = extractQuestions(item)
+  if (!questions) return null
+  const answered = questions.filter((question) => (question.answer?.length ?? 0) > 0 || question.notes)
+  if (answered.length === 0) return null
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      {answered.map((question, index) => (
+        <div key={index} className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
+          {/* The header, not the question: a question is a sentence and this is
+              a strip. With no header the chips stand alone — which reads fine,
+              because the row above them is the question. */}
+          {question.header && (
+            <span className="shrink-0 text-[10px] tracking-wide text-muted-foreground/60 uppercase">
+              {question.header}
+            </span>
+          )}
+          {(question.answer ?? []).map((picked, pickedIndex) => (
+            <span
+              key={pickedIndex}
+              title={picked}
+              className="flex min-w-0 items-center gap-1 rounded-pill bg-primary/10 px-1.5 py-0.5 text-[11px] leading-4 text-primary"
+            >
+              <CheckIcon className="size-2.5 shrink-0" />
+              <span className="min-w-0 max-w-[16rem] truncate">{picked}</span>
+            </span>
+          ))}
+          {question.notes && (
+            <span
+              title={question.notes}
+              className="min-w-0 max-w-[20rem] truncate text-[11px] leading-4 text-muted-foreground/70"
+            >
+              {question.notes}
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ─── Findings ────────────────────────────────────────────────────────────────
 
 /** A review's results. They are a table — file, line, what is wrong — and a

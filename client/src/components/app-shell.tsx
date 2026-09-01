@@ -472,7 +472,17 @@ export function AppShell({
                     </SidebarMenuButton>
                   }
                 />
-                <DropdownMenuContent align="start" side="top" sideOffset={8} className="w-64">
+                {/* Solid, not glass: this is the one menu in the app that
+                    opens over the sidebar rather than out across the main pane,
+                    and frosted glass over another glass surface has nothing to
+                    reveal — see the note in index.css. */}
+                <DropdownMenuContent
+                  align="start"
+                  side="top"
+                  sideOffset={8}
+                  className="w-64"
+                  data-surface="solid"
+                >
                   {/* The known servers, active one ticked at the top; switching
                       is a full reload (`location.assign`) because threads, the
                       sockets and the whole store belong to one server.

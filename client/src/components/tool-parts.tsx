@@ -10,6 +10,7 @@ import * as React from "react"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import rehypeHighlight from "rehype-highlight"
+import { needsTail, rehypeStreamWords, type StreamEffect } from "@/lib/stream-words"
 import type * as acp from "@agentclientprotocol/sdk"
 import {
   ArrowLeftRightIcon,
@@ -96,6 +97,17 @@ export const KIND_ICONS: Record<string, React.ComponentType<{ className?: string
 export const PANE_MAX_H = "max-h-[min(calc(var(--panel-h,100svh)*0.6),28rem)]"
 
 const REHYPE = [[rehypeHighlight, { detect: false, ignoreMissing: true }]] as never
+/* The same pass with the tail wrapper appended, for the one row being written.
+   Two arrays, because only the edge family needs each span stamped with its
+   distance from the edge; both are held as constants rather than built per render, since
+   a new array identity would make react-markdown rebuild its processor on every
+   revealed word — the opposite of what the pacing is for. */
+const REHYPE_HIGHLIGHT = [rehypeHighlight, { detect: false, ignoreMissing: true }]
+const REHYPE_STREAM = [REHYPE_HIGHLIGHT, [rehypeStreamWords, { tail: false }]] as never
+const REHYPE_STREAM_TAIL = [REHYPE_HIGHLIGHT, [rehypeStreamWords, { tail: true }]] as never
+
+const rehypeFor = (stream: StreamEffect | undefined) =>
+  needsTail(stream) ? REHYPE_STREAM_TAIL : stream && stream !== "none" ? REHYPE_STREAM : REHYPE
 const REMARK = [remarkGfm]
 
 /* The two elements markdown cannot style from CSS alone.
@@ -155,13 +167,26 @@ const INLINE_MARKDOWN_ELEMENTS = ["p", "strong", "em", "del", "code", "a"]
 export const Prose = React.memo(function Prose({
   text,
   className,
+  stream,
 }: {
   text: string;
   className?: string;
+  /** Set only on the row currently being written: the reveal to draw its tail
+      with (`lib/stream-words`). Absent — and `"none"` — is prose painted whole,
+      which is every settled row and every replayed one. The attribute is what
+      the CSS matches, so it has to be on the element the spans are inside. */
+  stream?: StreamEffect;
 }) {
   return (
-    <div className={cn("prose prose-sm max-w-none", className)}>
-      <Markdown remarkPlugins={REMARK} rehypePlugins={REHYPE} components={MARKDOWN_COMPONENTS}>
+    <div
+      className={cn("prose prose-sm max-w-none", className)}
+      data-stream={stream && stream !== "none" ? stream : undefined}
+    >
+      <Markdown
+        remarkPlugins={REMARK}
+        rehypePlugins={rehypeFor(stream)}
+        components={MARKDOWN_COMPONENTS}
+      >
         {text}
       </Markdown>
     </div>

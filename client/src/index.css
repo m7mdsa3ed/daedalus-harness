@@ -417,6 +417,37 @@
   }
 }
 
+/* ── Glass over glass is not glass ──
+   A frosted surface says "there is a layer here" by *revealing* what is behind
+   it: the transcript's text and code go soft and the panel reads as a sheet
+   over them. Both halves of that fail when the thing behind is another glass
+   surface. The sidebar is translucent and already blurred, and it is a flat
+   tint — blurring a flat colour returns the same flat colour, so the frost is
+   invisible, while 72% lets the tint straight through, so the menu has no edge
+   of its own either. What you get is a menu that reads as transparent and
+   unblurred, which is exactly what it is.
+
+   Almost nothing hits this, because every menu in the sidebar opens `side=
+   "right"`, out over the opaque main pane. The one exception is the server
+   switcher in the footer, which opens `side="top"` and therefore stays over the
+   sidebar — so it opts out here rather than the surface being weakened for the
+   menus where the glass is doing its job. `backdrop-filter` goes with it: with
+   an opaque background there is nothing for it to show, and it would still cost
+   a compositing layer. */
+[data-slot="popover-content"][data-surface="solid"],
+[data-slot="dropdown-menu-content"][data-surface="solid"],
+[data-slot="dropdown-menu-sub-content"][data-surface="solid"],
+[data-slot="select-content"][data-surface="solid"],
+[data-slot="context-menu-content"][data-surface="solid"],
+[data-slot="menubar-content"][data-surface="solid"] {
+  background-color: var(--popover);
+  /* Standard property only — the build adds the `-webkit-` prefix from its own
+     browser targets, and hand-writing both had it keep the prefixed one and
+     drop this, which left the blur live in every engine that uses the
+     unprefixed name. */
+  backdrop-filter: none;
+}
+
 /* On non-hover (touch) devices, sidebar becomes a sheet overlay. */
 @media (hover: none) and (pointer: coarse) {
   :root {
@@ -446,6 +477,38 @@
   animation: sheet-slide-out-left 200ms ease forwards !important;
 }
 
+/* The streaming reveal (see `.t-stream-w` below and `lib/stream-words`). Every
+   blur here is deliberately around a pixel: it has to be felt as softness at the
+   moment of arrival, not read as the text being out of focus. */
+:root {
+  --stream-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Per-word animations (`blur`, `rise`, `fade`, `pop`). */
+  --stream-fade: 350ms;
+  --stream-blur: 1px;
+  --stream-distance: 3px;
+  --stream-scale: 0.94;
+  /* Sweep. The ramp is the CSS half of `TAIL_WORDS` — the pass stamps `--tail`
+     in words, this is what divides it back into a 0…1 position — so the two
+     have to move together. The fade is shorter than the mount animations'
+     because it runs on every word of the ramp at once, each time the edge
+     advances; at 350ms the ramp would still be catching up a word later and the
+     softness would read as lag rather than as an edge. */
+  --stream-ramp: 8;
+  --stream-sweep-fade: 240ms;
+  --stream-sweep-blur: 1.4px;
+  /* Where the newest word starts. Not 0: it has already been *revealed*, and a
+     word that arrives invisible reads as the text running behind itself. */
+  --stream-sweep-floor: 0.18;
+  /* `trail` carries the whole arrival in light, so it starts lower than the
+     sweep, which has a blur doing half the work. `warm` starts higher still:
+     its arrival is mostly the colour, and dimming an accent reads as disabled
+     rather than as new. */
+  --stream-trail-floor: 0.1;
+  --stream-warm-floor: 0.45;
+  --stream-caret-width: 0.5em;
+  --stream-caret-blink: 1.1s;
+}
+
 /* Running-turn label: a pale band sweeps through the glyphs. */
 @keyframes harness-shimmer {
   to { background-position: 0 0; }
@@ -465,6 +528,125 @@
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   animation: harness-shimmer 1.8s linear infinite;
+}
+
+/* ── Streaming prose, a word at a time ──
+   `use-streamed-text` paces *when* a word lands; these are what landing looks
+   like, one block per `streamEffect`. The spans are the tail of the row being
+   written and nothing else (see `lib/stream-words` for why), and the effect is
+   named by `data-stream` on the prose wrapper — so a settled row, a replayed
+   one and `none` are all simply prose with no attribute and no rule matching.
+
+   `harness-word-in` / `harness-word-rise` are **mount** animations: a span
+   exists only once its word does, so each runs exactly once, on arrival, and
+   nothing tracks how far the reveal has got. `backwards` is what makes that
+   true on screen as well as in principle — the span is in the document for a
+   frame before the animation starts, and without it that frame paints the word
+   at full opacity, which is a flash of exactly the pop this replaces. */
+@keyframes harness-word-in {
+  from { opacity: 0; filter: blur(var(--stream-blur)); }
+  to { opacity: 1; filter: blur(0); }
+}
+@keyframes harness-word-rise {
+  from {
+    opacity: 0;
+    filter: blur(var(--stream-blur));
+    transform: translateY(var(--stream-distance));
+  }
+  to { opacity: 1; filter: blur(0); transform: none; }
+}
+[data-stream="blur"] .t-stream-w {
+  animation: harness-word-in var(--stream-fade) var(--stream-ease) backwards;
+}
+@keyframes harness-word-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes harness-word-pop {
+  from {
+    opacity: 0;
+    filter: blur(var(--stream-blur));
+    transform: scale(var(--stream-scale));
+  }
+  to { opacity: 1; filter: blur(0); transform: none; }
+}
+[data-stream="fade"] .t-stream-w {
+  animation: harness-word-fade var(--stream-fade) var(--stream-ease) backwards;
+}
+[data-stream="rise"] .t-stream-w,
+[data-stream="pop"] .t-stream-w {
+  /* Inline boxes cannot be transformed, and these two are the transforms. The
+     baseline is unchanged, so a word that is momentarily an inline block still
+     sits on the line it belongs to. */
+  display: inline-block;
+}
+[data-stream="rise"] .t-stream-w {
+  animation: harness-word-rise var(--stream-fade) var(--stream-ease) backwards;
+}
+[data-stream="pop"] .t-stream-w {
+  animation: harness-word-pop var(--stream-fade) var(--stream-ease) backwards;
+  /* From the baseline, so the word grows onto the line rather than out of its
+     own middle and through the one above. */
+  transform-origin: 50% 100%;
+}
+
+/* The sweep is not an animation at all — the softness is a function of *where*
+   a word is rather than of when it arrived, so there is nothing to play and
+   nothing to finish. Each span in the ramp carries its distance from the newest
+   word (`--tail`, 0 at the edge); the transition is what makes the whole ramp
+   glide by one word each time the edge advances, which is what turns a row of
+   discrete steps into an edge that travels.
+
+   Matched on `[data-tail]`, never on the class: the pass stamps the attribute
+   only inside the ramp, so the words behind it carry no `filter` — and a
+   `filter` on every word of a long answer is a compositing layer on every word
+   of a long answer, which is the whole reason the ramp is bounded. */
+[data-stream="sweep"] .t-stream-w[data-tail],
+[data-stream="trail"] .t-stream-w[data-tail],
+[data-stream="warm"] .t-stream-w[data-tail] {
+  --p: calc(var(--tail) / var(--stream-ramp));
+  transition:
+    opacity var(--stream-sweep-fade) var(--stream-ease),
+    color var(--stream-sweep-fade) var(--stream-ease),
+    filter var(--stream-sweep-fade) var(--stream-ease);
+}
+[data-stream="sweep"] .t-stream-w[data-tail] {
+  opacity: calc(var(--stream-sweep-floor) + (1 - var(--stream-sweep-floor)) * var(--p));
+  filter: blur(calc((1 - var(--p)) * var(--stream-sweep-blur)));
+}
+/* The sweep with the filter taken out, which is the entire point of it: no
+   compositing layer per word, so it is the one to run when the machine is
+   already busy. */
+[data-stream="trail"] .t-stream-w[data-tail] {
+  opacity: calc(var(--stream-trail-floor) + (1 - var(--stream-trail-floor)) * var(--p));
+}
+/* Arrival as temperature rather than as light. `currentColor` inside the
+   element's own `color` resolves to the *inherited* value, which is what makes
+   this a mix between the accent and whatever the prose around it is — a hard
+   foreground token would be wrong inside a muted thought or a subagent rail. */
+[data-stream="warm"] .t-stream-w[data-tail] {
+  opacity: calc(var(--stream-warm-floor) + (1 - var(--stream-warm-floor)) * var(--p));
+  color: color-mix(in oklab, var(--primary) calc((1 - var(--p)) * 100%), currentColor);
+}
+
+/* The caret marks the edge and changes nothing else — no ramp, no fade, so the
+   text is exactly as it will settle and only the cursor says more is coming.
+   It rides the one word at the edge, which is what the attribute's *value* is
+   for. */
+@keyframes harness-caret {
+  50% { opacity: 0; }
+}
+[data-stream="caret"] .t-stream-w[data-tail="0"]::after {
+  content: "";
+  display: inline-block;
+  width: var(--stream-caret-width);
+  height: 1em;
+  margin-left: 0.12em;
+  vertical-align: -0.12em;
+  border-radius: 1px;
+  background: currentColor;
+  opacity: 0.5;
+  animation: harness-caret var(--stream-caret-blink) steps(2, start) infinite;
 }
 
 /* ── The mark, working ──
@@ -818,7 +1000,22 @@ html[data-desktop="true"]:not([data-desktop-platform="darwin"]) [data-drag-regio
 
 @media (prefers-reduced-motion: reduce) {
   .harness-item-in,
-  .harness-fade-in {
+  .harness-fade-in,
+  .t-stream-w {
+    animation: none;
+  }
+  /* The edge family has no animation to cancel — its softness is a resting
+     state, so it has to be flattened rather than stopped, or reduced motion
+     would leave the newest words permanently dimmed and blurred. */
+  [data-stream] .t-stream-w[data-tail] {
+    opacity: 1;
+    color: inherit;
+    filter: none;
+    transition: none;
+  }
+  /* The caret stays: it is the one of these that is information rather than
+     decoration, and a still cursor still marks the edge. */
+  [data-stream="caret"] .t-stream-w[data-tail="0"]::after {
     animation: none;
   }
 }
@@ -831,6 +1028,20 @@ html[data-desktop="true"]:not([data-desktop-platform="darwin"]) [data-drag-regio
 [data-slot="message-scroller-content"][data-motion="calm"] .harness-item-in,
 [data-slot="message-scroller-content"][data-motion="calm"] .harness-fade-in {
   animation: none;
+}
+/* Belt and braces for the reveal: `resolveStreamEffect` already stops the
+   attribute being written while calm motion is on, so nothing below matches in
+   practice — but a row mounted on the frame the option is flipped would
+   otherwise keep whatever it was drawn with. */
+[data-slot="message-scroller-content"][data-motion="calm"] .t-stream-w {
+  animation: none;
+  opacity: 1;
+  color: inherit;
+  filter: none;
+  transition: none;
+}
+[data-slot="message-scroller-content"][data-motion="calm"] .t-stream-w::after {
+  content: none;
 }
 [data-slot="message-scroller-content"][data-motion="calm"] .harness-shimmer {
   background-image: none;
