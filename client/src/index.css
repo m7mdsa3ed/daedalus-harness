@@ -1255,6 +1255,26 @@ html .dv-tab {
   padding-bottom: 0.5rem;
 }
 
+/* Answers only: the steps are gone, so the space they stood in has to go with
+   them. Two stretches of the agent's prose separated by a tool call are one
+   answer once the call is not drawn, and the padding each bubble carried to sit
+   clear of a step reads as a hole in the middle of it. So an agent row that
+   directly follows another loses its top padding and the column's own gap —
+   adjacency is the whole test, and it is a fact about the *rendered* list, which
+   is why this is a CSS rule over `data-row-kind` rather than something the rows
+   are told about themselves. Nothing else moves: a row after your message, or
+   after a notice or an error, is a new thing being said and keeps its air. */
+/* The pull-up cancels the column's own `gap-0.5`; compact density has already
+   zeroed that gap, so there is nothing to take back there. */
+[data-answers="only"]:not([data-density="compact"])
+  [data-row-kind="agent"]
+  + [data-row-kind="agent"] {
+  margin-top: calc(var(--spacing) * -0.5);
+}
+[data-answers="only"] [data-row-kind="agent"] + [data-row-kind="agent"] [data-slot="message"] {
+  padding-top: 0;
+}
+
 /* Code wrap: soft-wrap fenced code and diffs instead of scrolling sideways.
    The unified diff <pre> carries min-w-max, which would force overflow; this
    outranks that class (attribute+element beats a single class) so wrapping wins. */

@@ -538,8 +538,8 @@ Generic ACP (Agent Client Protocol) harness. Four parts, one repo:
   is held here now and nothing else would ever settle it.
   The one thing the server still does not interpret is a `session/update` payload — it
   forwards them whole.
-- **A thread is opened over HTTP, and a socket follows only if there is something
-  live to connect to.** Opening a thread is a *read*, and it used to be paid for as a
+- **A thread is opened over HTTP, and no socket follows: one is opened by an outgoing
+  message and by nothing else.** Opening a thread is a *read*, and it used to be paid for as a
   connection: a WebSocket handshake, an attach, and a paced stream of replay frames
   before the first line of the transcript could be drawn. `GET /api/sessions/:id/replay`
   (`SessionSocket.snapshot`, exposed as `SessionManager.snapshot`) answers the **same
@@ -555,18 +555,39 @@ Generic ACP (Agent Client Protocol) harness. Four parts, one repo:
   design rather than a gap — `caughtUp.cursor` is the `to` the document was bounded at,
   and the socket `startThread` opens next **resumes from exactly there**, so the gap
   arrives as the delta it is, on the connection that can also carry what comes after it.
-  Two consequences. The socket that follows is a resume, which reports `earlier: 0` and a
+  Two consequences. The socket that follows a send is a resume, which reports `earlier: 0` and a
   `from` that is this device's own cursor — both true about a delta and both wrong about
   the window — so `handle`'s `attached` case keeps the window it already folded when
   `resumed && this.loaded`, or finishing an open took the "Load earlier steps" button off
-  every windowed thread. And **an archived thread opens no socket at all**: it has no
-  process, so nothing is coming, and the two things a reader still does to one are
+  every windowed thread. And **no open of any kind attaches a socket** — the archived
+  thread's rule generalized: a peer that never sends is a connection held open for the
+  duration of somebody's *reading*, on every thread the dock has mounted, against a server
+  that counts peers to decide what to retire and whether to push. `ConnectOpts.revive`
+  is what asks for one (a send, a revive, a reconnect the user pressed) and a view-open
+  never sets it, so `ThreadConnection.start(cursor, live)` stops at the document and
+  `reduceConn` lands on the new `{kind:"read"}` phase — read, up to date, deliberately
+  unattached, which `composerLock` and `bannerFor` both treat as ordinary, since sending
+  is what connects. `ready()` is the one door: `read`, `archived`, `idle` and `failed` all
+  reach a live socket through it, so the refusal a send used to hit is a step the client
+  takes instead. Two exceptions, both the server's to state rather than the client's to
+  guess. A read whose `caught_up` says `promptActive` **does** attach: a running turn's
+  answer arrives on a socket or nowhere, and a permission the agent is blocked on rides
+  the same wire. And a command that is not a prompt — a queue edit, a mode change, a
+  config pick — opens one lazily inside `ThreadSocket.request` (`ensureSocket`), which is
+  the archived thread's old queue path, now the general one; it still refuses to reopen a
+  socket that *died*, because that is a failure to report rather than a peer nobody asked
+  for. **A dropped socket is no longer answered by the reconnect ladder**: `onStatus` says
+  the close once, with the server's own reason and a Revive/Reconnect button, and the
+  ladder is only ever re-entered by an attempt the user asked for (`ready`'s `parked` /
+  `reconnecting` cases), which is what the health poll and the `online` listener still
+  un-park. Nothing reattaches — or respawns an idle-retired agent — behind the reader's
+  back. The two things a reader does to a socketless thread are still
   answered without it — paging back over `GET /api/sessions/:id/earlier`
   (`requestEarlier` picks the transport it already has), and editing a queue parked on it
-  through a socket `ensureSocket` opens lazily at that moment. `startThread` says
-  `connected` itself for that case, since the socket is normally what says it, and
-  `connectThread`'s short-circuit reads `isArchived` beside `connected` so navigating
-  back to the route does not re-fetch a transcript the store already holds. A failed read
+  through a socket `ensureSocket` opens lazily at that moment. `openNow`'s short-circuit reads
+  `isArchived` **and the `read` phase** beside `connected`, so navigating back to the
+  route — or a row flipping to `exited` under it — does not re-fetch a transcript the
+  store already holds. A failed read
   falls through to the socket rather than failing the open (an older server has no route),
   and the resume point is `max(asked, journalCursors)` — monotonic, so a read that failed
   *part way* continues after what it managed to fold rather than folding it twice.

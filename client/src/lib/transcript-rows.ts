@@ -12,15 +12,17 @@
    recursive: a subagent step draws its children through the same row views
    that draw the top level (thread-items), and thread-view already imports
    those — the types have to live somewhere both can reach without a cycle. */
-import type { SubagentItem, ThreadItem, ToolItem } from "./store"
+import type { SubagentItem, TextItem, ThreadItem, ToolItem } from "./store"
 import { extractSubagent, isSubagentLaunch, subagentItemId } from "./tools"
 import type { WorkflowPlanPhase } from "./tools"
 
-/** A run of consecutive tool steps, folded into one row (view-options). */
+/** A run of consecutive steps, folded into one row (view-options). The
+ *  thoughts woven between the calls ride inside it: the reasoning belongs to
+ *  the steps around it, so folding the run folds the thinking with it. */
 export interface ToolRunGroup {
   kind: "run"
   id: string
-  items: ToolItem[]
+  items: (ToolItem | TextItem)[]
 }
 
 /**
@@ -434,24 +436,29 @@ function groupCodexLifecycle(
 }
 
 /**
- * Consecutive tool steps become one `ToolRunGroup`; everything else passes
- * through untouched. Runs of one stay ungrouped — a lone step wrapped in a
- * "1 step" disclosure is strictly worse than the step. A subagent group
- * breaks a run like any other non-tool row: its rail inside a run's rail
- * would be two rails for one thing.
+ * Consecutive tool steps — and the thoughts woven between them — become one
+ * `ToolRunGroup`; everything else passes through untouched. A thought is the
+ * reasoning behind the steps around it, so it belongs inside the group:
+ * toggling the group shut hides the thinking too. A run still needs a tool —
+ * two thoughts alone are two standalone rows, not a "group" with nothing in
+ * it — and runs of one stay ungrouped, a lone step wrapped in a "1 step"
+ * disclosure is strictly worse than the step. A subagent group breaks a run
+ * like any other non-tool row: its rail inside a run's rail would be two
+ * rails for one thing.
  */
 export function groupToolRuns(rows: Row[]): Row[] {
   const out: Row[] = []
-  let run: ToolItem[] = []
+  let run: (ToolItem | TextItem)[] = []
 
   const flush = () => {
-    if (run.length > 1) out.push({ kind: "run", id: `tools-${run[0].id}`, items: run })
+    if (run.length > 1 && run.some((item) => item.kind === "tool"))
+      out.push({ kind: "run", id: `tools-${run[0].id}`, items: run })
     else out.push(...run)
     run = []
   }
 
   for (const row of rows) {
-    if (row.kind === "tool") run.push(row)
+    if (row.kind === "tool" || row.kind === "thought") run.push(row)
     else {
       flush()
       out.push(row)

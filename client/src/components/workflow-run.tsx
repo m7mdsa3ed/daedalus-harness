@@ -59,7 +59,10 @@ export function collectTools(rows: Row[]): ToolItem[] {
   const out: ToolItem[] = []
   for (const row of rows) {
     if (row.kind === "tool") out.push(row)
-    else if (row.kind === "run") out.push(...row.items)
+    /* A run can carry thoughts between its calls — they are the reasoning,
+       not a step the count line means. */
+    else if (row.kind === "run")
+      out.push(...row.items.filter((item): item is ToolItem => item.kind === "tool"))
     else if (row.kind === "subagent-group") {
       if (row.head.kind === "tool") out.push(row.head)
       out.push(...collectTools(row.children))

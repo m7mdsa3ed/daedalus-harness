@@ -274,11 +274,12 @@ export class ThreadSocket {
    * Whether this thread has been folded from the HTTP snapshot already, and
    * whether it was served with no agent behind it.
    *
-   * `archived` is what decides that no socket is opened: a thread with no
-   * process has nothing live to say, and the journal it is being read from is
-   * reachable over HTTP for the two things a reader still does to one — paging
-   * back, and editing a queue parked on it. A socket is opened lazily if
-   * something else asks for one (see `ensureSocket`).
+   * A socket is not opened by a read at all any more — `archived` merely says
+   * one can never be, since the thread has no process behind it. Either way the
+   * journal is reachable over HTTP for what a reader does (paging back), and a
+   * socket is opened lazily by the first thing that genuinely needs one: a
+   * command (see `ensureSocket`), or a prompt, which goes through
+   * `ThreadConnection.ready()`.
    */
   private loaded = false
   private archived = false
@@ -898,10 +899,16 @@ export class ThreadSocket {
   /**
    * Open the socket for a thread that was read without one.
    *
-   * Only ever for a thread `load()` deliberately left socketless — never for
-   * one whose socket died, where the reconnect ladder in `lib/actions.ts` owns
-   * the retry and a second opinion here would race it. `closeInfo.code` is the
-   * tell: a thread that has never had a socket has never had a close either.
+   * This is the ordinary way a socket comes up for anything that is not a
+   * prompt: a read leaves the thread socketless on purpose, and a queue edit, a
+   * mode change or a config pick is a user action that needs a peer.
+   *
+   * Never for a thread whose socket *died*, though — that is a connection that
+   * failed rather than one nobody has asked for, and reopening it from under a
+   * command would hide the failure instead of reporting it. `closeInfo.code` is
+   * the tell: a thread that has never had a socket has never had a close
+   * either. `ThreadConnection.ready()` is what brings one of those back, on a
+   * send.
    */
   private async ensureSocket(): Promise<void> {
     if (this.ws) return

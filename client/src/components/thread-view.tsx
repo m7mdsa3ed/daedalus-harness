@@ -421,6 +421,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
             <StepTokensProvider value={{ step: thread.stepUsage, turn: stepTurnAfter }}>
             <MessageScrollerContent
               ref={follow.contentRef}
+              data-answers={options.answersOnly ? "only" : undefined}
               data-density={options.compactDensity ? "compact" : undefined}
               data-wrap={options.codeWrap ? "on" : undefined}
               data-motion={options.calmMotion ? "calm" : undefined}
@@ -480,6 +481,13 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                 <MessageScrollerItem
                   key={row.id}
                   messageId={row.id}
+                  /* What kind of row this is, for the one thing CSS has to know
+                     about it: under `answersOnly` the steps between two stretches
+                     of prose are gone, and the padding they were separated by is
+                     a gap in the middle of what is now one answer. Collapsed in
+                     index.css against the *adjacency*, which is a fact only the
+                     rendered list has — see the [data-answers="only"] block. */
+                  data-row-kind={row.kind}
                   data-settled={!thread.turnActive ? "true" : undefined}
                 >
                   {divider && (

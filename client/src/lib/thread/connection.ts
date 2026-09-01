@@ -21,20 +21,17 @@ import {
 
 const RECONNECT_BASE_DELAY_MS = 500
 const RECONNECT_MAX_DELAY_MS = 8000
-/** Codes that mean the thread is not coming back on its own: killed, taken
-    over, unknown. Everything else — an agent that exited, a socket that went
-    quiet (4100), a bare 1006 — is worth a ladder. */
-const NON_RECONNECTABLE_CLOSE_CODES = new Set([4000, 4002, 4004])
-
 /** How many steps `ready` will take to make a thread sendable. Four covers the
     longest honest chain — open, find it archived, revive, attach — with one to
     spare; past that something is refusing rather than taking time, and the loop
     stops on no-progress before it ever gets here anyway. */
 const READY_ROUNDS = 4
 
-/** `revive: true` means "this thread needs a running agent" — spawn one rather
-    than serving its journal read-only. Opening a thread does not set it;
-    reconnecting, reviving and sending all do. */
+/** `revive: true` means "this thread needs a running agent, and a socket to it"
+    — spawn one rather than serving its journal read-only, and attach rather
+    than stopping at the document. Opening a thread does not set it;
+    reconnecting, reviving and sending all do. That is the whole of the rule
+    that a connection is opened by an outgoing message and by nothing else. */
 export interface ConnectOpts {
   revive?: boolean
 }
@@ -87,9 +84,11 @@ export interface ThreadDeps {
 export class ThreadConnection {
   readonly id: string
   private deps: ThreadDeps
-  /** The socket, once one exists. Null while the transcript is being read over
-      HTTP, on an archived thread (which deliberately opens none), and after a
-      close. */
+  /** The socket, once one exists. Null before anything has needed one — which
+      is every open that is only a read — and after a close. Note that an
+      archived (and now a `read`) thread still holds a `ThreadSocket` object
+      with no WebSocket under it: that is what answers `load_earlier` and the
+      queue edits over HTTP. */
   private socket: ThreadSocket | null = null
   /**
    * The last journal cursor this device has folded, so a reconnect to an alive
@@ -113,6 +112,15 @@ export class ThreadConnection {
    * settled world, which is the only state in which they can answer.
    */
   private chain: Promise<unknown> = Promise.resolve()
+  /**
+   * Whether the last read said a turn was running.
+   *
+   * The one thing that makes a view-open attach anyway: a turn's answer arrives
+   * on a socket or nowhere, so a thread read while it is working is a thread
+   * with something live to connect to. Written by the `caught_up` fold and read
+   * by `start` immediately after it, which is the whole of its life.
+   */
+  private promptActiveAtLoad = false
   private attempt = 0
   private timer: ReturnType<typeof setTimeout> | null = null
   /** Parked until the network (or the user, or the health poll) comes back: the
@@ -256,6 +264,12 @@ export class ThreadConnection {
           if (this.phase.recover === "none") throw new Error(this.phase.reason)
           await this.revive(this.probe)
           break
+        case "read":
+          /* The transcript was read over HTTP and nothing was connected,
+             because nothing needed to be. This is the moment that stops being
+             true: open again, asking for the socket this time. */
+          await this.openFromStore({ revive: true })
+          break
         case "archived":
           /* Reading it needed no process, and this is the moment that stops
              being true. Revive rather than refuse: the user typed into a thread
@@ -283,7 +297,14 @@ export class ThreadConnection {
           }
           break
         case "idle":
-          await this.openFromStore()
+          /* `revive: true` from here, always. A view-open deliberately brings
+             up no socket (and respawns nothing), which is the right reading of
+             "somebody is looking at this thread" and the wrong one of
+             "somebody is sending to it" — the caller of `ready` is the second.
+             Opening without it cost this loop a whole round per send on a
+             thread the device had not opened yet, to land in `read` and ask
+             again. */
+          await this.openFromStore({ revive: true })
           break
         default:
           /* Already on its way (`starting`, `reviving`, `loading`, `replaying`,
@@ -305,7 +326,7 @@ export class ThreadConnection {
              here makes the send's own hand-off deterministic rather than a race
              with React's commit. (`reviving` is deliberately not included: it is
              raised inside `openNow`, so the chain really does own it.) */
-          if (this.phase.kind === "starting") await this.openFromStore()
+          if (this.phase.kind === "starting") await this.openFromStore({ revive: true })
           break
       }
       /* Nothing moved: another pass would do exactly the same nothing. Not
@@ -424,12 +445,19 @@ export class ThreadConnection {
     // connect to until the first message brings it into existence.
     if (meta.draft) return
     if (this.socket?.connected) return
-    /* An archived thread is read over HTTP and holds no socket by design, so
-       `connected` cannot answer for it — and what is in the store is already
-       the whole of it. Navigating back to the route must not re-fetch the
-       transcript. A revive is the exception: it is asking for a process, which
-       is exactly what this thread does not have. */
-    if (!opts.revive && this.socket?.isArchived && !this.socket.isDisposed) return
+    /* A thread that has been read holds no socket by design, so `connected`
+       cannot answer for it — and what is in the store is already the whole of
+       it. Navigating back to the route, or a row that flipped to `exited` under
+       it, must not re-fetch the transcript. A revive is the exception: it is
+       asking for the process and the peer this thread deliberately does not
+       have. */
+    if (
+      !opts.revive &&
+      this.socket &&
+      !this.socket.isDisposed &&
+      (this.socket.isArchived || this.phase.kind === "read")
+    )
+      return
     // A thread whose project was deleted can never open. Saying nothing left it
     // stuck on the connecting skeleton forever.
     if (!this.deps.projects().some((p) => p.id === meta.projectId)) {
@@ -462,7 +490,7 @@ export class ThreadConnection {
        existed) there is nothing to read, so the revive happens here exactly as
        it always did. */
     if (meta.exited && meta.cursor > 0 && !opts.revive) {
-      await this.start(0)
+      await this.start(0, false)
       return
     }
     if (meta.exited) {
@@ -486,7 +514,20 @@ export class ThreadConnection {
       this.cursor = 0
     }
 
-    await this.start(this.resumeCursor(meta))
+    /* Already read, and the only thing missing is the peer. The document is on
+       screen and this device's cursor names its end, so the socket resumes from
+       there — re-reading a transcript to attach to it would make the first send
+       into a thread pay for the read a second time. */
+    if (
+      this.phase.kind === "read" &&
+      this.socket &&
+      !this.socket.isDisposed &&
+      !this.socket.connected
+    ) {
+      await this.socket.connect({ cursor: this.cursor })
+      return
+    }
+    await this.start(this.resumeCursor(meta), opts.revive ?? false)
   }
 
   /** Where a reattach picks up. 0 when this device has never folded this
@@ -498,8 +539,8 @@ export class ThreadConnection {
   }
 
   /**
-   * Read the thread over HTTP, then connect the socket if there is anything live
-   * to connect to.
+   * Read the thread over HTTP, and connect a socket only if this open asked for
+   * one.
    *
    * The read comes first because opening a thread *is* a read, and it used to be
    * paid for as a connection — a WebSocket handshake, an attach and a paced
@@ -510,18 +551,29 @@ export class ThreadConnection {
    * that follows resumes from where that document ended — a delta, usually an
    * empty one, rather than the whole thread again.
    *
-   * The archived case is why the socket is conditional: a thread with no agent
-   * process has nothing to say on one, and the two things a reader still does to
-   * it — paging back, and editing a parked queue — are answered over HTTP or by
-   * a socket opened lazily at that moment.
+   * `live` is the rest of it. Reading a thread is not attaching to it: a peer
+   * that never sends is a socket held open for the duration of somebody's
+   * reading, on every thread the dock has open, on a server that counts peers
+   * to decide what to retire. So a view-open stops at the document, and the
+   * socket is brought up by the first thing that actually needs one — a
+   * message, a queue edit, a reconnect the user asked for — through `ready()`.
+   * The archived case was always this shape (a thread with no agent process has
+   * nothing to say on a socket, and paging back and queue edits both have an
+   * HTTP answer); this makes it the rule rather than the exception.
+   *
+   * One exception, and it is the server's to state: a thread whose turn is
+   * running *is* something live to connect to, and its answer arrives on a
+   * socket or not at all. `caught_up` says so (`promptActive`), so a read that
+   * lands mid-turn attaches on the strength of it.
    */
-  private async start(cursor: number): Promise<void> {
+  private async start(cursor: number, live: boolean): Promise<void> {
     /* The HTTP read starts here. `open-begin` deliberately leaves a ladder's
        phase alone (see `reduceConn`): a reconnect attempt *is* an open, and
        while one runs the thread is still recovering rather than merely loading
        — which is what the banner says and what decides whether the composer
        holds the words already typed into it. */
     this.apply({ type: "open-begin" })
+    this.promptActiveAtLoad = false
     /* Whatever was on this thread before is not this socket, and two sockets on
        one session are two peers folding every event into the same store — which
        is what a duplicated transcript is. */
@@ -529,8 +581,10 @@ export class ThreadConnection {
     const socket = new ThreadSocket(this.id, this.deps.settings, this.callbacks(() => socket))
     this.socket = socket
     let archived = false
+    let read = false
     try {
       ;({ archived } = await socket.load({ cursor }))
+      read = true
     } catch (error) {
       /* The thread is genuinely unreadable this way (deleted, or no archive to
          read), or the server predates the route. Either way the socket is the
@@ -544,6 +598,20 @@ export class ThreadConnection {
        this object says once it is not the registered one — so connecting here
        would put a second peer on the same session. */
     if (this.socket !== socket) return
+    if (read && !live && !this.promptActiveAtLoad) {
+      /* Read, and nothing asked for a peer. `read` rather than a dressed-up
+         "connected": the composer takes words exactly as it does on an archived
+         thread, and sending is what opens the socket.
+
+         Only when the document actually landed. A read that *failed* is a
+         thread with nothing on screen, and calling that "read, up to date"
+         would be a lie the composer takes words against — so it falls through
+         to the socket, which is the fallback the catch above was written for
+         (an older server has no replay route) and the only thing left that can
+         either serve the thread or say why it cannot. */
+      if (!archived) this.apply({ type: "read" })
+      return
+    }
     if (archived) {
       /* Nothing to connect to, and nothing coming — `onCaughtUp` has already
          moved the phase to `archived`, which is a state of its own rather than
@@ -635,8 +703,15 @@ export class ThreadConnection {
     }
   }
 
-  /** Book the next rung, or park. Called by `onStatus` for a close that is
-      worth retrying, and re-entered by each failed attempt. */
+  /**
+   * Book the next rung, or park.
+   *
+   * No longer booked by a close: a socket that drops is left dropped, because a
+   * socket is what a *message* needs and nothing is sending. The ladder is the
+   * continuation of an attempt the user asked for — a send that had to bring the
+   * connection back and did not land, which `ready` re-books here so the thread
+   * is not left with nothing watching it — and each failed attempt re-enters it.
+   */
   scheduleReconnect(lastError: unknown, probe?: () => Promise<boolean>): void {
     if (this.timer || this.disposed) return
     /* Offline, every attempt is a guaranteed failure that burns the budget
@@ -873,54 +948,28 @@ export class ThreadConnection {
            status is about a connection nobody is using — letting it through
            marks the live thread dead and, worse, books a reconnect against it. */
         if (this.socket !== owner()) return
-        /* Whether this close is the end of the thread's story or an interruption
-           in ours. A reconnect always revives and re-folds the transcript, so
-           anything left in flight is about to be answered by the server's own
-           account of it. */
-        const willReconnect =
-          status === "closed" &&
-          !closeInfo?.clientInitiated &&
-          !NON_RECONNECTABLE_CLOSE_CODES.has(closeInfo?.code ?? 0)
+        /* A close is no longer answered by a ladder of its own. A socket exists
+           because a message needed one, and when it goes the honest state is
+           "not connected" — said once, with the reason and a button — rather
+           than a backoff running against a thread nobody is sending to. The
+           next send opens one (`ready`), and so does the button. */
         if (status === "connected") {
           this.clearRecovery()
           this.apply({ type: "socket-live" })
         } else if (status === "closed") {
-          /* The close first, then the ladder — and the close is a *no-op* on the
-             phase when a ladder is going to answer it (`reduceConn`'s
-             `socket-closed`). That ordering used to be the bug: `connecting` was
-             dispatched by the ladder and `closed` landed on top of it, so a
-             thread recovering perfectly well read as dead for the whole of it.
-             Here the two cannot argue — one of them has no transition. */
           this.apply({
             type: "socket-closed",
-            willReconnect,
+            willReconnect: false,
             clientInitiated: closeInfo?.clientInitiated,
             reason: closeInfo?.reason,
             code: closeInfo?.code,
           })
-          if (willReconnect) {
-            // The close frame's reason is the server's own account of what
-            // happened ("agent exited (1)") — carry it into the ladder's words.
-            this.scheduleReconnect(
-              closeInfo?.reason
-                ? new Error(`${closeInfo.reason}${closeInfo.code ? ` (${closeInfo.code})` : ""}`)
-                : undefined,
-              this.probe
-            )
-          }
-        }
-        /* A dead socket ends any turn it was carrying. The server does answer
-           the prompts an exiting agent never will — but if the close beats the
-           `turn_ended` to this tab, the working indicator would outlive the
-           process and only a reload would clear it.
-
-           The indicator is all it ends, though: `settle: false` while a
-           reconnect is coming, because the turn is the server's and it runs on
-           with nobody attached. Settling here is what made a backgrounded phone
-           come back to failed tools and disconnected workflow steps that the
-           very next attach contradicted. */
-        if (status === "closed") {
-          send({ type: "turn-active", id, active: false, settle: !willReconnect })
+          /* A dead socket ends any turn it was carrying, and settles it: the
+             turn is the server's and it runs on with nobody attached, but
+             nothing here is going to hear the end of it, so leaving the tools
+             in flight would leave a working indicator nothing could clear. The
+             next open re-folds the server's own account over the top. */
+          send({ type: "turn-active", id, active: false, settle: true })
         }
         /* Last, so the status and whatever history was already buffered commit
            together: a close during the replay is the one exit `caught_up` never
@@ -1066,6 +1115,7 @@ export class ThreadConnection {
       },
       onCaughtUp: (cursor, promptActive, queue) => {
         this.cursor = cursor
+        if (this.socket === owner()) this.promptActiveAtLoad = promptActive
         /* The document (or the socket) reached the end of what it had. An
            archived thread stops here for good — there is no socket coming — and
            everything else is now waiting on one. */

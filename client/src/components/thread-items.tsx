@@ -69,7 +69,7 @@ import type { Row, SubagentBatch, SubagentGroup, ToolRunGroup, WorkflowGroup } f
 import { StepTokens, TokenFigure, useStepTokens } from "@/components/token-usage"
 import { cn } from "@/lib/utils"
 import { useViewOptionsContext } from "@/lib/view-options"
-import type { ThreadItem, ToolItem } from "@/lib/store"
+import type { TextItem, ThreadItem, ToolItem } from "@/lib/store"
 import { threadPath } from "@/lib/router"
 import { Link } from "react-router"
 
@@ -167,9 +167,9 @@ const RAIL_CLASS = "mt-0.5 ml-[calc(0.75rem-1px)] space-y-0.5 border-l border-bo
    however many lines the row grows to, and the `-top-0.5` closes the 2px
    `space-y` gap over it so consecutive elbows read as one line. The left edge
    is `-left-[11px]`, which is where the container's border used to sit, so
-   nothing else moved. Tool steps only: every row in a run is a StepRow with
-   that geometry, where a subagent's rail also carries prose, which has no mark
-   to meet.
+   nothing else moved. Every row in a run is a StepRow with that geometry — a
+   thought rides the rail exactly as a tool does — where a subagent's rail
+   also carries prose, which has no mark to meet.
 
    The width is 13px and not 11px — two more than the distance to the row's
    content edge — because the mark it turns into is a 14px *box* with the glyph
@@ -210,21 +210,26 @@ export const ToolRun = React.memo(function ToolRun({
   showTimestamps,
   tail,
 }: {
-  items: ToolItem[]
+  items: Array<ToolItem | TextItem>
   showTimestamps?: boolean
   /** This group is the transcript's last row and the turn is still open — the
       agent has said nothing since, so the run is not finished being written
       even in the gaps between its calls. */
   tail?: boolean
 }) {
-  const failed = items.filter((item) => item.status === "failed").length
-  const active = items.some((item) => item.status === "in_progress" || item.status === "pending")
-  const summary = summarise(items)
-  /* Open while it runs, folded once it has. A group is only ever a run of tool
-     calls with NOTHING between them — `groupToolRuns` breaks the run on the
-     first non-tool item — so the summary line is a heading for steps that
-     belong together; while they are happening that heading is a number that
-     ticks, and the work belongs on screen. Finished, the counting line IS the
+  /* The run's own acting is its tool calls — the thoughts between them are
+     folded in so toggling the group hides the thinking too, but they are not
+     what the counting line is about. Failed and live are tool states; a
+     thought has no status of its own. */
+  const tools = items.filter((item): item is ToolItem => item.kind === "tool")
+  const failed = tools.filter((item) => item.status === "failed").length
+  const active = tools.some((item) => item.status === "in_progress" || item.status === "pending")
+  const summary = summarise(tools)
+  /* Open while it runs, folded once it has. A group is the tool calls of one
+     act with the thoughts woven between them — `groupToolRuns` breaks the run
+     on anything else — so the summary line is a heading for steps that belong
+     together; while they are happening that heading is a number that ticks,
+     and the work belongs on screen. Finished, the counting line IS the
      reading ("read 12 files"), and a scrolled-back transcript should be the
      prose with its work folded beside it rather than every step the agent
      ever took.
@@ -311,7 +316,21 @@ export const ToolRun = React.memo(function ToolRun({
                 index < showing.length - 1 && RAIL_TAIL
               )}
             >
-              <ToolStep item={item} showTimestamp={showTimestamps} />
+              {/* A thought rides the same rail as the steps around it — it is
+                  the reasoning that led to them. `ThreadItemView` draws it
+                  exactly as it would out in the open: its own StepRow, folded
+                  to the preview line or opened by "Show thinking". Only the
+                  run's tail can still be streaming, so that is the only item
+                  handed the flag. */}
+              {item.kind === "tool" ? (
+                <ToolStep item={item} showTimestamp={showTimestamps} />
+              ) : (
+                <ThreadItemView
+                  item={item}
+                  showTimestamps={showTimestamps}
+                  streaming={tail && index === showing.length - 1}
+                />
+              )}
             </div>
           ))}
         </div>

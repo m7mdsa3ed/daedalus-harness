@@ -50,6 +50,15 @@ export type ConnPhase =
   /** Read from the journal, with no agent process behind it. Not a failure —
       sending revives. */
   | { kind: "archived" }
+  /** The transcript is read and up to date, and this device holds no socket —
+      by design, not by failure. Opening a thread is a read (`GET …/replay`),
+      and a read needs no peer: the socket is what a *message* needs, so it is
+      opened by `ready()` at the moment one is sent. Everything a reader still
+      does to a thread in this state — paging back, editing a parked queue — is
+      answered over HTTP or by a socket opened lazily for it. Distinct from
+      `archived`, which says the agent is gone: here it may well be running,
+      we are simply not listening. */
+  | { kind: "read" }
   /** In the ladder. `attempt` of `max`; `nextAt` is when the next rung fires,
       so a surface can count down rather than spin. */
   | { kind: "reconnecting"; attempt: number; max: number; nextAt: number; reason?: string }
@@ -104,6 +113,8 @@ export type ConnEvent =
   /** The snapshot document ended: either there is no socket coming (archived)
       or one is opening behind it. */
   | { type: "caught-up"; archived: boolean }
+  /** The HTTP read finished and no socket is being opened for it. */
+  | { type: "read" }
   /** The socket said `caught_up`. */
   | { type: "socket-live" }
   | {
@@ -200,6 +211,14 @@ export function reduceConn(phase: ConnPhase, event: ConnEvent): ConnPhase {
          it there, because nothing else was ever going to say `connected` again. */
       return phase.kind === "replaying" || phase.kind === "loading"
         ? { kind: "attaching" }
+        : phase
+    case "read":
+      /* Only out of the read itself. A socket that has since attached (a send
+         landing while the document was still folding) outranks a statement
+         about the document, and every terminal state below is one this must not
+         reopen. */
+      return phase.kind === "attaching" || phase.kind === "loading" || phase.kind === "replaying"
+        ? { kind: "read" }
         : phase
     case "socket-live":
       return { kind: "live" }
@@ -498,6 +517,8 @@ export function describePhase(phase: ConnPhase): string {
       return "attached but without a usable connection"
     case "archived":
       return "reading from the archive with no agent running"
+    case "read":
+      return "read, with no socket open"
     case "reconnecting":
       return `reconnecting (attempt ${phase.attempt} of ${phase.max})`
     case "parked":

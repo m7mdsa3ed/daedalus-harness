@@ -168,7 +168,7 @@ const GROUPS: Group[] = [
         icon: Wrench,
         title: "Group tool steps",
         description:
-          "Fold a run of consecutive steps into one line you can open — the prose stays the thing you scroll.",
+          "Fold a run of consecutive steps, and the thinking between them, into one line you can open — the prose stays the thing you scroll.",
       },
       {
         key: "showSources",
