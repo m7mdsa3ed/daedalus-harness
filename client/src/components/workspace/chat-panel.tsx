@@ -21,6 +21,7 @@ import { useThreadLinksFor } from "@/lib/workspace/use-thread-links"
     be invisible everywhere outside the thread itself. */
 const TAB_MARKS: Record<ThreadActivity, string> = {
   waiting: "◆ ",
+  failed: "⚠ ",
   running: "◍ ",
   reconnecting: "◌ ",
   offline: "◌ ",
@@ -56,7 +57,12 @@ export function ChatPanel({
      on you" is the one worth interrupting for, which is why it outranks
      "running" rather than being merged into it. */
   const marker = TAB_MARKS[
-    markFor(thread.phase, thread.turnActive, !!(thread.permission || thread.elicitation))
+    markFor(
+      thread.phase,
+      thread.turnActive,
+      !!(thread.permission || thread.elicitation),
+      !!meta?.lastTurnError
+    )
   ]
 
   React.useEffect(() => {

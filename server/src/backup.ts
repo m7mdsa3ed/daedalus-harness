@@ -227,6 +227,10 @@ const SessionRow = z.object({
   /* Absent in a bundle written before threads were ordered by activity; 0 is
      what `reload` backfills from the imported journal. */
   lastActivityAt: int.default(0),
+  /* How the thread's last turn went. Absent in a bundle written before it was
+     recorded, which reads as "no failure" — the same thing every row said
+     before the column existed. */
+  lastTurnError: optStr,
   deletedAt: int.nullish(),
   parentSessionId: optStr,
   mcpServerIds: z.array(str).default([]),

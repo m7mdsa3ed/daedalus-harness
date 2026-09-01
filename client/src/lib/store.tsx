@@ -977,6 +977,12 @@ export type Action =
   | { type: "personas"; personas: Persona[] }
   | { type: "thread-reset"; id: string; thread: ThreadState }
   | { type: "turn-active"; id: string; active: boolean; settle?: boolean }
+  /** How the turn that just ended went, onto the *session* row rather than the
+      thread: it is what a list draws about a thread nothing is looking at, and
+      the server records the same verdict on its own row. `error` is the
+      failure's headline, or null for a turn that ended cleanly or was
+      cancelled — both of which clear whatever the turn before left. */
+  | { type: "turn-verdict"; id: string; error: string | null }
   /** Windowing/archive bookkeeping, all of it absolute — set from `attached`
       and from the end of a re-fold, never accumulated. */
   | {
@@ -1216,10 +1222,20 @@ export function reducer(state: State, action: Action): State {
       return {
         ...next,
         sessions: next.sessions.map((s) =>
-          s.id === action.id ? { ...s, lastActivityAt: Date.now() } : s
+          /* The turn beginning also clears the last one's failure, exactly as
+             the server does on `turn_started`: a thread being worked on again
+             must not still be drawn as the one that failed an hour ago. */
+          s.id === action.id ? { ...s, lastActivityAt: Date.now(), lastTurnError: null } : s
         ),
       }
     }
+    case "turn-verdict":
+      return {
+        ...state,
+        sessions: state.sessions.map((s) =>
+          s.id === action.id ? { ...s, lastTurnError: action.error } : s
+        ),
+      }
     case "update":
       return {
         ...state,

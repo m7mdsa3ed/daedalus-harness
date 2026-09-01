@@ -472,6 +472,13 @@ export interface SessionMeta {
       buried it. Absent from a server that predates it, which is what
       `activityAt` falls back for. */
   lastActivityAt?: number
+  /** How this thread's newest turn failed, or null/absent when it did not.
+      The server's, written on the same turn boundary that moves
+      `lastActivityAt` and cleared by the next turn — which is what lets a list
+      say "this one ended badly" about a thread no tab has open. The live
+      transcript records the same failure as a row of its own; this is the one
+      line a row can show. */
+  lastTurnError?: string | null
   /** Epoch ms this thread was deleted; null = live. Deleted threads still come
       down the wire — they live in Trash until they are purged or restored. */
   deletedAt: number | null
@@ -546,6 +553,7 @@ export function sameRow(a: SessionMeta, b: SessionMeta): boolean {
     a.acpSessionId === b.acpSessionId &&
     a.createdAt === b.createdAt &&
     a.lastActivityAt === b.lastActivityAt &&
+    a.lastTurnError === b.lastTurnError &&
     a.deletedAt === b.deletedAt &&
     a.attached === b.attached &&
     a.peerCount === b.peerCount &&

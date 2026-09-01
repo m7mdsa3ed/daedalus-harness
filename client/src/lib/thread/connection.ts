@@ -965,10 +965,24 @@ export class ThreadConnection {
             "The agent couldn't answer this message",
             { retryText: promptText }
           )
+          /* And on the row, so every list says it too — the transcript is the
+             only place a failure was ever visible before, and a thread whose
+             last turn failed is one of the two readings worth acting on. Sent
+             on a replayed turn as well: folding the log is how a thread this
+             device has just opened learns which of its turns was the last one.
+             A Stop is not a failure and clears the row like a clean turn. */
+          send({
+            type: "turn-verdict",
+            id,
+            error: info.kind === "cancelled" ? null : info.title,
+          })
           if (!catchingUp && info.kind !== "cancelled") {
             notifyThreadEvent("turnFailed", id, this.titleOf(), info.title)
           }
-        } else if (!catchingUp && !continued) {
+        } else {
+          send({ type: "turn-verdict", id, error: null })
+        }
+        if (!error && !catchingUp && !continued) {
           // Notifying on replay would re-announce every turn in the thread on
           // every reload — on a phone, as a push. And not for a turn the queue
           // is about to continue: "finished" would announce a pause that is not

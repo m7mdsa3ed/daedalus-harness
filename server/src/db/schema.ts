@@ -384,6 +384,17 @@ export const sessions = sqliteTable(
         on a row written before the column existed — `reload` backfills those
         from the journal's own `max(at)`, falling back to `created_at`. */
     lastActivityAt: integer("last_activity_at").notNull().default(0),
+    /** The failure the newest turn ended with, or null when it ended cleanly —
+        the message alone, capped, because what a list can say about a thread is
+        one line. Written on the same journaled `turn_ended` that bumps
+        `last_activity_at` and cleared by the next `turn_started`, so it is
+        always about the *last* turn and never about a turn two ago. A
+        cancelled turn is not a failure (it carries no error), and neither is a
+        thread nobody has run yet. Persisted for the reason the clock beside it
+        is: the sidebar draws rows for threads this client has never connected,
+        and a failure only the open transcript knew about was invisible in every
+        list. */
+    lastTurnError: text("last_turn_error"),
     /** Epoch ms this thread was deleted; null = live. Deleted threads keep
         their row (and their acpSessionId) so a delete stays undoable. */
     deletedAt: integer("deleted_at"),

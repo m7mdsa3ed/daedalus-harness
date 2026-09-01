@@ -407,6 +407,7 @@ export type ThreadActivity =
   | "idle"
   | "running"
   | "waiting"
+  | "failed"
   | "connecting"
   | "reconnecting"
   | "offline"
@@ -418,14 +419,27 @@ export type ThreadActivity =
  * everything, a thread that is gone beats a thread that is merely stopped, and a
  * turn that is running beats the transient phases — because a reconnect during a
  * turn is still, to the reader, a turn.
+ *
+ * `failed` is the last turn's verdict rather than a state of the connection, so
+ * it is read *after* every phase and after `turnActive`: a thread already
+ * working again is running, whatever the turn before it did, and a thread whose
+ * process has died says the louder of the two things wrong with it. It still
+ * outranks `connecting`, because opening a thread is not news about it and the
+ * failure is the reason someone is opening it.
  */
-export function markFor(phase: ConnPhase, turnActive: boolean, waiting: boolean): ThreadActivity {
+export function markFor(
+  phase: ConnPhase,
+  turnActive: boolean,
+  waiting: boolean,
+  failed = false
+): ThreadActivity {
   if (waiting) return "waiting"
   if (phase.kind === "deleted") return "gone"
   if (phase.kind === "failed") return "stopped"
   if (phase.kind === "parked") return "offline"
   if (phase.kind === "reconnecting") return "reconnecting"
   if (turnActive) return "running"
+  if (failed) return "failed"
   if (isOpening(phase)) return "connecting"
   if (phase.kind === "archived") return "stopped"
   return "idle"

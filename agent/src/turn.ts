@@ -29,6 +29,8 @@ export interface TurnDeps {
 const MAX_STEPS = 100;
 const OUTPUT_CONTENT_LIMIT = 30_000;
 const SUBAGENT_REPORT_LIMIT = 32_000;
+const MAX_STREAM_RETRIES = 2;
+const STREAM_RETRY_BASE_MS = 1_000;
 
 interface Parked {
   resolve: (r: acp.PromptResponse) => void;
@@ -93,67 +95,95 @@ export async function handlePrompt(
       messageId: randomUUID(),
     });
 
-    const rt: ToolRuntime = {
-      ctx,
-      session,
-      emit,
-      clientCaps: deps.clientCaps(),
-      runSubagent: (name, prompt) => runSubagent(deps, session, ctx, emit, name, prompt),
-    };
-    const { tools, meta } = buildTools(rt);
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= MAX_STREAM_RETRIES; attempt++) {
+      if (attempt > 0) {
+        process.stderr.write(`stream retry ${attempt}/${MAX_STREAM_RETRIES}\n`);
+        session.messages.length = session.messages.length - 1;
+        session.messages.push(userMessage);
+        await new Promise((r) => setTimeout(r, STREAM_RETRY_BASE_MS * 2 ** (attempt - 1)));
+      }
 
-    const result = streamText({
-      model: deps.makeModel(deps.env, session.modelId || failNoModel()),
-      system: systemPrompt(session, deps.env),
-      messages: session.messages,
-      tools,
-      abortSignal: abort.signal,
-      stopWhen: stepCountIs(MAX_STEPS),
-      reasoning: session.effort ?? undefined,
-      maxOutputTokens: deps.env.maxOutputTokens ?? undefined,
-      onError: () => {
-        /* Surfaced through the fullStream 'error' part below; without this
-           handler streamText also logs the error, which is fine on stderr. */
-      },
-      prepareStep: ({ messages }) => {
-        if (session.steerQueue.length === 0) return {};
-        const injected = session.steerQueue.flatMap((s) => s.messages);
-        session.steerQueue = [];
-        session.messages.push(...injected);
-        deps.store.appendMessages(session.id, injected);
-        for (const m of injected) {
-          emit.record({
-            sessionUpdate: "user_message_chunk",
-            content: { type: "text", text: contentText(m) },
-            messageId: randomUUID(),
-          });
+      const msgsBefore = session.messages.length;
+      const rt: ToolRuntime = {
+        ctx,
+        session,
+        emit,
+        clientCaps: deps.clientCaps(),
+        runSubagent: (name, prompt) => runSubagent(deps, session, ctx, emit, name, prompt),
+      };
+      const { tools, meta } = buildTools(rt);
+
+      const result = streamText({
+        model: deps.makeModel(deps.env, session.modelId || failNoModel()),
+        system: systemPrompt(session, deps.env),
+        messages: session.messages,
+        tools,
+        abortSignal: abort.signal,
+        stopWhen: stepCountIs(MAX_STEPS),
+        reasoning: session.effort ?? undefined,
+        maxOutputTokens: deps.env.maxOutputTokens ?? undefined,
+        onError: () => {
+          /* Surfaced through the fullStream 'error' part below; without this
+             handler streamText also logs the error, which is fine on stderr. */
+        },
+        prepareStep: ({ messages }) => {
+          if (session.steerQueue.length === 0) return {};
+          const injected = session.steerQueue.flatMap((s) => s.messages);
+          session.steerQueue = [];
+          session.messages.push(...injected);
+          deps.store.appendMessages(session.id, injected);
+          for (const m of injected) {
+            emit.record({
+              sessionUpdate: "user_message_chunk",
+              content: { type: "text", text: contentText(m) },
+              messageId: randomUUID(),
+            });
+          }
+          return { messages: [...messages, ...injected] };
+        },
+      });
+
+      try {
+        const outcome = await pumpStream(result, emit, meta, deps.env, session, undefined);
+
+        try {
+          const response = await result.response;
+          session.messages.push(...response.messages);
+          deps.store.appendMessages(session.id, response.messages);
+        } catch {
+          // An aborted or failed stream has no response messages to keep.
         }
-        return { messages: [...messages, ...injected] };
-      },
-    });
+        deps.store.touch(session.id);
 
-    const outcome = await pumpStream(result, emit, meta, deps.env, session, undefined);
+        if (outcome.error !== undefined) {
+          if (isRetriableStreamError(outcome.error) && attempt < MAX_STREAM_RETRIES && !abort.signal.aborted) {
+            lastError = outcome.error;
+            session.messages.length = msgsBefore;
+            continue;
+          }
+          throw outcome.error;
+        }
 
-    try {
-      const response = await result.response;
-      session.messages.push(...response.messages);
-      deps.store.appendMessages(session.id, response.messages);
-    } catch {
-      // An aborted or failed stream has no response messages to keep.
+        const stopReason: acp.StopReason = outcome.aborted
+          ? "cancelled"
+          : mapFinishReason(outcome.finishReason);
+        const promptResponse: acp.PromptResponse = {
+          stopReason,
+          usage: toAcpUsage(outcome.totalUsage),
+        };
+        settleParked(session, (p) => p.resolve(promptResponse));
+        return promptResponse;
+      } catch (err) {
+        if (isRetriableStreamError(err) && attempt < MAX_STREAM_RETRIES && !abort.signal.aborted) {
+          lastError = err;
+          session.messages.length = msgsBefore;
+          continue;
+        }
+        throw err;
+      }
     }
-    deps.store.touch(session.id);
-
-    if (outcome.error !== undefined) throw outcome.error;
-
-    const stopReason: acp.StopReason = outcome.aborted
-      ? "cancelled"
-      : mapFinishReason(outcome.finishReason);
-    const promptResponse: acp.PromptResponse = {
-      stopReason,
-      usage: toAcpUsage(outcome.totalUsage),
-    };
-    settleParked(session, (p) => p.resolve(promptResponse));
-    return promptResponse;
+    throw lastError;
   } catch (err) {
     process.stderr.write(`turn failed: ${(err as Error)?.stack ?? String(err)}\n`);
     settleParked(session, (p) => p.reject(err));
@@ -379,38 +409,62 @@ async function runSubagent(
   });
 
   try {
-    const result = streamText({
-      model: deps.makeModel(deps.env, session.modelId),
-      system: systemPrompt(session, deps.env, { subagent: true }),
-      messages: [{ role: "user", content: prompt }],
-      tools,
-      abortSignal: session.abort?.signal,
-      stopWhen: stepCountIs(MAX_STEPS),
-      reasoning: session.effort ?? undefined,
-      maxOutputTokens: deps.env.maxOutputTokens ?? undefined,
-      onError: () => {},
-    });
-    const outcome = await pumpStream(result, childEmit, meta, deps.env, session, undefined);
-    if (outcome.error !== undefined) throw outcome.error;
-    if (outcome.aborted) {
-      if (rfd) {
-        await parentEmit.update({
-          sessionUpdate: "subagent_state_update",
-          subagentSessionId: childId,
-          state: "cancelled",
-        });
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= MAX_STREAM_RETRIES; attempt++) {
+      if (attempt > 0) {
+        process.stderr.write(`subagent stream retry ${attempt}/${MAX_STREAM_RETRIES}\n`);
+        await new Promise((r) => setTimeout(r, STREAM_RETRY_BASE_MS * 2 ** (attempt - 1)));
       }
-      throw new Error("subagent cancelled");
-    }
-    if (rfd) {
-      await parentEmit.update({
-        sessionUpdate: "subagent_state_update",
-        subagentSessionId: childId,
-        state: "completed",
+
+      const result = streamText({
+        model: deps.makeModel(deps.env, session.modelId),
+        system: systemPrompt(session, deps.env, { subagent: true }),
+        messages: [{ role: "user", content: prompt }],
+        tools,
+        abortSignal: session.abort?.signal,
+        stopWhen: stepCountIs(MAX_STEPS),
+        reasoning: session.effort ?? undefined,
+        maxOutputTokens: deps.env.maxOutputTokens ?? undefined,
+        onError: () => {},
       });
+
+      try {
+        const outcome = await pumpStream(result, childEmit, meta, deps.env, session, undefined);
+        if (outcome.error !== undefined) {
+          if (isRetriableStreamError(outcome.error) && attempt < MAX_STREAM_RETRIES && !session.abort?.signal.aborted) {
+            lastError = outcome.error;
+            continue;
+          }
+          throw outcome.error;
+        }
+        if (outcome.aborted) {
+          if (rfd) {
+            await parentEmit.update({
+              sessionUpdate: "subagent_state_update",
+              subagentSessionId: childId,
+              state: "cancelled",
+            });
+          }
+          throw new Error("subagent cancelled");
+        }
+        if (rfd) {
+          await parentEmit.update({
+            sessionUpdate: "subagent_state_update",
+            subagentSessionId: childId,
+            state: "completed",
+          });
+        }
+        const report = outcome.text.trim() || "(the subagent produced no report)";
+        return report.length > SUBAGENT_REPORT_LIMIT ? `${report.slice(0, SUBAGENT_REPORT_LIMIT)}…` : report;
+      } catch (err) {
+        if (isRetriableStreamError(err) && attempt < MAX_STREAM_RETRIES && !session.abort?.signal.aborted) {
+          lastError = err;
+          continue;
+        }
+        throw err;
+      }
     }
-    const report = outcome.text.trim() || "(the subagent produced no report)";
-    return report.length > SUBAGENT_REPORT_LIMIT ? `${report.slice(0, SUBAGENT_REPORT_LIMIT)}…` : report;
+    throw lastError;
   } catch (err) {
     if (rfd) {
       await parentEmit.update({
@@ -563,4 +617,12 @@ function errorText(error: unknown): string {
 
 function isAbortError(err: unknown): boolean {
   return err instanceof Error && (err.name === "AbortError" || /abort/i.test(err.message));
+}
+
+function isRetriableStreamError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (err.name === "AI_InvalidResponseDataError") return true;
+  if (err.name === "AI_APICallError" && "isRetryable" in err && (err as { isRetryable: boolean }).isRetryable) return true;
+  if (/ECONNRESET|EPIPE|ETIMEDOUT|socket hang up|network/i.test(err.message)) return true;
+  return false;
 }

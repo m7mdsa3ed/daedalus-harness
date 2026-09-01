@@ -318,7 +318,13 @@ function useThreadStatuses(): Map<string, ThreadStatus> {
          `idle` is the honest reading for it — the server's `promptActive` is
          the only signal there is, and it says nothing about a connection that
          does not exist. */
-      next.set(session.id, markFor(thread?.phase ?? IDLE_PHASE, running, waiting))
+      /* The row's own record of how its last turn went — the server's, so it
+         is known for every thread in the list and not only for the ones this
+         device has open. */
+      next.set(
+        session.id,
+        markFor(thread?.phase ?? IDLE_PHASE, running, waiting, !!session.lastTurnError)
+      )
     }
     let same = next.size === prev.current.size
     if (same) {
@@ -371,7 +377,13 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
       .filter((session) => !session.deletedAt)
       .filter((session) => {
         if (view.filter === "running") return statuses.get(session.id) === "running"
-        if (view.filter === "waiting") return statuses.get(session.id) === "waiting"
+        /* "Needs you" is both readings that are addressed to the reader: a
+           question the agent is blocked on, and a turn that ended badly and
+           has been sitting there since. */
+        if (view.filter === "waiting") {
+          const status = statuses.get(session.id)
+          return status === "waiting" || status === "failed"
+        }
         return true
       })
     const trashed = sessions

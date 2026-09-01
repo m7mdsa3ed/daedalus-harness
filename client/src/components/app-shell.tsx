@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Check, ChevronDown, ChevronLeft, ServerIcon, Settings2 } from "lucide-react"
+import { Check, ChevronDown, ChevronLeft, Plus, ServerIcon, Settings2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -475,11 +475,16 @@ export function AppShell({
                 <DropdownMenuContent align="start" side="top" sideOffset={8} className="w-64">
                   {/* The known servers, active one ticked at the top; switching
                       is a full reload (`location.assign`) because threads, the
-                      sockets and the whole store belong to one server. */}
-                  <DropdownMenuLabel>
-                    <span className="block text-xs">Servers</span>
-                  </DropdownMenuLabel>
+                      sockets and the whole store belong to one server.
+
+                      Each label is Base UI's Menu.GroupLabel: it reads its
+                      group from context and throws outside one, so it sits
+                      inside the group it heads rather than loose in the
+                      content. */}
                   <DropdownMenuGroup>
+                    <DropdownMenuLabel>
+                      <span className="block text-xs">Servers</span>
+                    </DropdownMenuLabel>
                     {servers.map((server) => {
                       const isActive = server.id === settings.id
                       return (
@@ -505,18 +510,20 @@ export function AppShell({
                       )
                     })}
                   </DropdownMenuGroup>
-                  <DropdownMenuLabel>
-                    <span className="block text-[11px]">Manage</span>
-                  </DropdownMenuLabel>
-                  <DropdownMenuItem onClick={onAddServer}>
-                    <Settings2 className="size-4" />
-                    <span className="min-w-0 flex-1">Add server…</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => void navigate(settingsPath("general"))}>
-                    <Settings2 className="size-4" />
-                    <span className="min-w-0 flex-1">Manage servers</span>
-                    <span className="ml-auto text-xs text-muted-foreground">{settingsPath("general")}</span>
-                  </DropdownMenuItem>
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>
+                      <span className="block text-[11px]">Manage</span>
+                    </DropdownMenuLabel>
+                    <DropdownMenuItem onClick={onAddServer}>
+                      <Settings2 className="size-4" />
+                      <span className="min-w-0 flex-1">Add server…</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => void navigate(settingsPath("general"))}>
+                      <Settings2 className="size-4" />
+                      <span className="min-w-0 flex-1">Manage servers</span>
+                      <span className="ml-auto text-xs text-muted-foreground">{settingsPath("general")}</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
                 </DropdownMenuContent>
               </DropdownMenu>
             </SidebarMenuItem>

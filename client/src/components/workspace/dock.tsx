@@ -655,6 +655,17 @@ export function WorkspaceDock({
         api.onDidRemovePanel(sync),
         api.onDidAddGroup(sync),
         api.onDidRemoveGroup(sync),
+        /* Dragging a tab into another group has to be listened for separately,
+           and it is the case that gets this wrong in both directions. Dockview
+           runs a move under a lock that suppresses the panel add/remove events
+           — but it removes the emptied source group *outside* that lock, at the
+           one instant when the panel has left its old group and not yet joined
+           its new one. So the counts read one group and one panel, `single` is
+           true, and the surviving group's header is hidden; the re-add is back
+           under the lock, so nothing fires again to take it back. `onDidMovePanel`
+           is raised once the move has settled, which is the only point where the
+           counts describe the dock the user is actually looking at. */
+        api.onDidMovePanel(sync),
       ]
       queueMicrotask(sync)
       onReady(api)

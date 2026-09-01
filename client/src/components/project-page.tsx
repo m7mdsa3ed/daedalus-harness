@@ -261,7 +261,12 @@ function useProjectStats(projectId: string) {
     `promptActive` is the only signal for one this client has never connected. */
 function threadStatus(session: SessionMeta, thread: ThreadState | undefined): ThreadActivity {
   const waiting = !!thread && !!(thread.permission || thread.elicitation)
-  return markFor(thread?.phase ?? IDLE_PHASE, thread?.turnActive ?? session.promptActive, waiting)
+  return markFor(
+    thread?.phase ?? IDLE_PHASE,
+    thread?.turnActive ?? session.promptActive,
+    waiting,
+    !!session.lastTurnError
+  )
 }
 
 /* ── Pieces ── */
@@ -697,8 +702,8 @@ function useThreadSelection(threads: SessionMeta[], shown: SessionMeta[], action
   }
 }
 
-/** One dot, four colours: working, needs you, something is wrong with the
-    connection, and everything else. The connection tints are what a list could
+/** One dot, five colours: working, needs you, a turn that ended badly,
+    something is wrong with the connection, and everything else. The connection tints are what a list could
     not say at all before — a thread mid-reconnect drew the same grey dot as one
     sitting quietly, which is the reading this page exists to give. */
 function StatusDot({ status }: { status: ThreadActivity }) {
@@ -711,9 +716,11 @@ function StatusDot({ status }: { status: ThreadActivity }) {
           ? "bg-primary"
           : status === "waiting"
             ? "bg-amber-500"
-            : status === "reconnecting" || status === "offline" || status === "gone"
-              ? "bg-muted-foreground/70 animate-pulse"
-              : "bg-muted-foreground/30"
+            : status === "failed"
+              ? "bg-destructive"
+              : status === "reconnecting" || status === "offline" || status === "gone"
+                ? "bg-muted-foreground/70 animate-pulse"
+                : "bg-muted-foreground/30"
       )}
     >
       <span className="sr-only">{status}</span>

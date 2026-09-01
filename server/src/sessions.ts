@@ -46,6 +46,10 @@ const TITLE_SNIFF_MAX = 60;
     somebody chose is worth more room than one nobody did, and bounded at all
     only so the column cannot hold a whole prompt. */
 const TITLE_MAX = 200;
+/** What a turn's failure is cut to on the session row. It is a *reading* — one
+    line in a list, a status word in a card — and the failure itself is on the
+    journaled `turn_ended`, which is what the transcript draws in full. */
+const LAST_ERROR_MAX = 300;
 
 /** One attached client. Several may share a session; they are subscribers to
     one server-side ACP client, not ACP clients themselves — which is why a peer
@@ -154,6 +158,13 @@ export interface Session {
       `createdAt`. Persisted; backfilled from the journal for rows written
       before it existed. */
   lastActivityAt: number;
+  /** How the newest turn failed, or null when it did not — the message, capped
+      at `LAST_ERROR_MAX`. Set and cleared by `emit` on the same journaled turn
+      boundaries that move `lastActivityAt`, persisted with them, and reported
+      by `list()`, so a thread that ended badly says so in a sidebar that has
+      never opened it. A cancelled turn is a success on the wire and carries no
+      error, so a Stop leaves this null. */
+  lastTurnError: string | null;
   /** Events ever journaled for this session. `cursor` is an index into this,
       not into any array — the log itself is a table (see session-journal.ts),
       so nothing about a long thread is held in memory. */
@@ -597,6 +608,7 @@ export class SessionManager {
         acpSessionProvisional: s.acpSessionProvisional,
         createdAt: s.createdAt,
         lastActivityAt: s.lastActivityAt,
+        lastTurnError: s.lastTurnError,
         deletedAt: s.deletedAt,
         parentSessionId: s.parentSessionId,
       };
@@ -721,6 +733,16 @@ export class SessionManager {
        does not claim to be today's, because attaching journals nothing. */
     if (event.ev === "turn_started" || event.ev === "turn_ended") {
       session.lastActivityAt = Date.now();
+      /* And how that turn went, in the same write. A turn beginning clears the
+         last one's failure — the thread is being worked on again, and a row
+         that still said "failed" would be describing a turn two ago — and a
+         turn ending states its own verdict, which for a clean or cancelled one
+         is null. Only a top-level turn: a workflow step's `turn_ended` is
+         never mirrored onto its parent, so a failed step marks the step. */
+      session.lastTurnError =
+        event.ev === "turn_ended" && event.error
+          ? event.error.message.slice(0, LAST_ERROR_MAX)
+          : null;
       this.persist(session);
     }
     const out = JOURNALED.has(event.ev) ? this.log.append(session, event) : event;
@@ -1073,6 +1095,7 @@ export class SessionManager {
       historyLost: null,
       createdAt: opts.createdAt ?? now,
       lastActivityAt: opts.createdAt ?? now,
+      lastTurnError: null,
       eventCount: 0,
       stderr: [],
       stderrCount: 0,
@@ -1676,6 +1699,7 @@ export class SessionManager {
       acpSessionId: s.liveAcpSessionId ?? s.acpSessionId,
       createdAt: s.createdAt,
       lastActivityAt: s.lastActivityAt || s.createdAt,
+      lastTurnError: s.lastTurnError,
       deletedAt: s.deletedAt,
       attached: s.peers.size > 0,
       peerCount: s.peers.size,

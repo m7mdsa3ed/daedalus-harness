@@ -142,6 +142,14 @@ export const ThreadRow = React.memo(function ThreadRow({
       {state === "waiting" && (
         <span aria-hidden className="size-2 shrink-0 rounded-full bg-amber-500" />
       )}
+      {/* A turn that ended badly is the other still mark that means "for you",
+          and it is destructive rather than amber because the two are different
+          asks: one is a question waiting to be answered, the other is work that
+          stopped. It draws for a thread this device has never opened — the
+          verdict is on the session row, not in the transcript. */}
+      {state === "failed" && (
+        <span aria-hidden className="size-2 shrink-0 rounded-full bg-destructive" />
+      )}
       {(state === "reconnecting" || state === "offline") && (
         <span aria-hidden className="size-2 shrink-0 rounded-full bg-muted-foreground/60" />
       )}
@@ -272,7 +280,8 @@ function ThreadInfoCard({
     })
   /* One reading, in the order it matters. The connection states are new here:
      a thread that had lost its socket used to say "Idle" in this card, which is
-     the reading the card exists to prevent. */
+     the reading the card exists to prevent — and so is the failed turn, which
+     was only ever visible by opening the transcript and scrolling to the end. */
   const status = trash
     ? "In Trash"
     : state === "waiting"
@@ -283,15 +292,17 @@ function ThreadInfoCard({
           ? "Reconnecting"
           : state === "offline"
             ? "Waiting for the server"
-            : state === "connecting"
-              ? "Opening"
-              : state === "gone"
-                ? "Deleted"
-                : state === "stopped" || session.exited
-                  ? "Stopped"
-                  : session.draft
-                    ? "Not started"
-                    : "Idle"
+            : state === "failed"
+              ? "Last turn failed"
+              : state === "connecting"
+                ? "Opening"
+                : state === "gone"
+                  ? "Deleted"
+                  : state === "stopped" || session.exited
+                    ? "Stopped"
+                    : session.draft
+                      ? "Not started"
+                      : "Idle"
   const rows: [string, React.ReactNode][] = [
     ["Status", status],
     [
@@ -317,6 +328,17 @@ function ThreadInfoCard({
      it would otherwise print the same timestamp twice. */
   if (activityAt(session) - session.createdAt > 60_000)
     rows.push(["Last active", when(activityAt(session))])
+  /* Why it failed, in the card rather than on the row: the row has space for a
+     mark, and the card is where a reading is explained. One clipped line like
+     every other value here — the failure itself, with its detail and a Retry,
+     is a row in the transcript. */
+  if (!trash && session.lastTurnError)
+    rows.push([
+      "Failure",
+      <span key="failure" className="text-destructive" title={session.lastTurnError}>
+        {session.lastTurnError}
+      </span>,
+    ])
   if (session.parentSessionId) rows.push(["Step of", parentTitle ?? "a workflow"])
   if (trash && session.deletedAt) rows.push(["Deleted", when(session.deletedAt)])
   return (
