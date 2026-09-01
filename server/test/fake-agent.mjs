@@ -65,6 +65,11 @@ let configOptions = [
    rather than assumed, which is what makes the capability itself testable. */
 let clientCapabilities = {};
 
+/* A Codex-style fallback-metadata warning, gated on an env var so the bridge
+   test can prove a profile opting out of it never sees it. Real codex-acp
+   streams the same wording as an `agent_message_chunk`. */
+const FALLBACK_WARNING = process.env.FAKE_FALLBACK_WARNING || "";
+
 /** Permission request id -> the prompt id whose turn is waiting on it. */
 const parkedTurns = new Map();
 let permCounter = 0;
@@ -89,6 +94,11 @@ function promptUpdates() {
     ],
   });
   return [
+    // When configured, this is the very first thing a turn says — exactly when
+    // codex says it (the warning precedes the turn's work).
+    ...(FALLBACK_WARNING
+      ? [{ sessionUpdate: "agent_message_chunk", content: { type: "text", text: FALLBACK_WARNING } }]
+      : []),
     { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "The rail geometry is the risky part.\nMeasure it against the row's own line box." } },
     plan("in_progress", "pending"),
     tool("t1", "ls -la", "execute", "in_progress"),

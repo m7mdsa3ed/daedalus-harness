@@ -45,6 +45,7 @@ import {
   scheduleWhen,
 } from "@/lib/schedule"
 import { isTopLevel, type ScheduledMessage } from "@/lib/settings"
+import { useCancelSchedule, useScheduled, useUpdateSchedule } from "@/lib/queries/routines"
 import { useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
@@ -89,15 +90,16 @@ export function SchedulePage({ actions }: { actions: Actions }) {
   return location.pathname.endsWith("/new") ? (
     <NewSchedulePage actions={actions} />
   ) : (
-    <SchedulesListPage actions={actions} />
+    <SchedulesListPage />
   )
 }
 
 /* ── The list ── */
 
-function SchedulesListPage({ actions }: { actions: Actions }) {
+function SchedulesListPage() {
   const sessions = useStoreSelect((store) => store.sessions)
-  const scheduled = useStoreSelect((store) => store.scheduled)
+  const scheduled = useScheduled().data ?? []
+  const cancelSchedule = useCancelSchedule()
   const navigate = useNavigate()
   const confirm = useConfirm()
   const [editingId, setEditingId] = React.useState<string | null>(null)
@@ -116,7 +118,9 @@ function SchedulesListPage({ actions }: { actions: Actions }) {
       }))
     )
       return
-    actions.cancelSchedule(id).catch((err) => reportError(err, "Couldn't cancel the schedule"))
+    cancelSchedule.mutate(id, {
+      onError: (err) => reportError(err, "Couldn't cancel the schedule"),
+    })
   }
 
   const newSchedule = () => void navigate(schedulePath(), { state: { returnTo: schedulesPath() } })
@@ -153,7 +157,6 @@ function SchedulesListPage({ actions }: { actions: Actions }) {
                 key={item.id}
                 item={item}
                 threadTitle={titleOf(item.sessionId)}
-                actions={actions}
                 editing={editingId === item.id}
                 onEdit={() => setEditingId(editingId === item.id ? null : item.id)}
                 onDelete={() => void remove(item.id)}
@@ -169,14 +172,12 @@ function SchedulesListPage({ actions }: { actions: Actions }) {
 function ScheduleRow({
   item,
   threadTitle,
-  actions,
   editing,
   onEdit,
   onDelete,
 }: {
   item: ScheduledMessage
   threadTitle: string
-  actions: Actions
   editing: boolean
   onEdit: () => void
   onDelete: () => void
@@ -184,12 +185,16 @@ function ScheduleRow({
   const paused = item.enabled === 0
   const skipped = scheduleSkipped(item)
   const parked = scheduleParked(item)
+  const updateSchedule = useUpdateSchedule()
 
   const setEnabled = (enabled: boolean) => {
-    actions
-      .updateSchedule(item.id, { enabled })
-      .then(() => toast.success(enabled ? "Schedule resumed" : "Schedule paused"))
-      .catch((err) => reportError(err, "Couldn't update the schedule"))
+    updateSchedule.mutate(
+      { id: item.id, patch: { enabled } },
+      {
+        onSuccess: () => toast.success(enabled ? "Schedule resumed" : "Schedule paused"),
+        onError: (err) => reportError(err, "Couldn't update the schedule"),
+      }
+    )
   }
 
   return (
@@ -266,7 +271,7 @@ function ScheduleRow({
           </Button>
         </div>
       )}
-      {editing && <EditScheduleForm item={item} actions={actions} onDone={onEdit} />}
+      {editing && <EditScheduleForm item={item} onDone={onEdit} />}
     </div>
   )
 }
@@ -275,13 +280,12 @@ function ScheduleRow({
     editable (the server has no patch for it — cancel and reschedule instead). */
 function EditScheduleForm({
   item,
-  actions,
   onDone,
 }: {
   item: ScheduledMessage
-  actions: Actions
   onDone: () => void
 }) {
+  const updateSchedule = useUpdateSchedule()
   type EditRecurrence = Recurrence | "custom"
   const initialRecurrence: EditRecurrence =
     item.everyMs === null
@@ -312,10 +316,13 @@ function EditScheduleForm({
     setBusy(true)
     setError(null)
     try {
-      await actions.updateSchedule(item.id, {
-        text: text.trim(),
-        nextAt,
-        everyMs: recurrence === "custom" ? item.everyMs : (RECURRENCE_MS[recurrence] ?? null),
+      await updateSchedule.mutateAsync({
+        id: item.id,
+        patch: {
+          text: text.trim(),
+          nextAt,
+          everyMs: recurrence === "custom" ? item.everyMs : (RECURRENCE_MS[recurrence] ?? null),
+        },
       })
       toast.success("Schedule updated")
       onDone()

@@ -18,7 +18,7 @@ import { DropdownMenuContentPositioned } from "@/components/ui-ext/dropdown-menu
 import type { Actions } from "@/lib/actions"
 import { mcpSubtitle, type SessionMeta } from "@/lib/settings"
 import { saveThreadDefaults } from "@/lib/thread-defaults"
-import { useStoreSelect } from "@/lib/store"
+import { useCommands, useMcpServers, useProfiles, useSkills } from "@/lib/queries/catalog"
 import { cn } from "@/lib/utils"
 
 /** The three link kinds, in the order the menu prints them. */
@@ -70,12 +70,13 @@ export function ThreadToolsMenu({
       draft you are about to send (a routine's kit) — see DraftScopeRow. */
   remember?: boolean
 }) {
-  /* Four narrow reads, not the state: this menu is in the composer row of a
-     live transcript. Each library is replaced only by its own action. */
-  const profile = useStoreSelect((state) => state.profiles.find((p) => p.id === meta.profileId))
-  const mcpServers = useStoreSelect((state) => state.mcpServers)
-  const skills = useStoreSelect((state) => state.skills)
-  const commands = useStoreSelect((state) => state.commands)
+  /* Four catalog reads, each its own cache entry: this menu is in the
+     composer row of a live transcript, and nothing the transcript streams
+     touches any of them. */
+  const profile = useProfiles().find((p) => p.id === meta.profileId)
+  const mcpServers = useMcpServers()
+  const skills = useSkills()
+  const commands = useCommands()
   const inherited: Record<LinkKey, Set<string>> = {
     mcpServerIds: new Set(profile?.mcpServerIds ?? []),
     skillIds: new Set(profile?.skillIds ?? []),

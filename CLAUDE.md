@@ -43,8 +43,49 @@ Generic ACP (Agent Client Protocol) harness. Four parts, one repo:
   The browser does **not** speak ACP — the server does. `src/lib/thread-socket.ts` is a plain
   WebSocket that sends the commands in `server/src/protocol.ts` and dispatches its events;
   `@agentclientprotocol/sdk` is a **devDependency**, imported type-only (the payloads are
-  still ACP-shaped because the transcript renders them). State: one reducer in
-  `src/lib/store.tsx`; side effects in `src/lib/actions.ts`. **A theme is not a
+  still ACP-shaped because the transcript renders them). **State has two owners, split
+  by what moves it.** The reducer in `src/lib/store.tsx` holds what the *socket* writes —
+  the `sessions` list and every per-thread `ThreadState` (transcript, phase, usage, queue,
+  drafts) — because that is state a stream replaces token by token and a replay rebuilds.
+  Everything a *route* answers is TanStack Query (`src/lib/queries/`): the catalog
+  (profiles, agents, projects, MCP servers, skills, commands, personas), the automations
+  (scheduled, routines, their runs and triggers), and the read surfaces (project stats,
+  quota, knowledge, boards, tasks, the notification inbox). One owner per slice,
+  permanent, and nothing is mirrored between them — a slice held in both is two answers
+  that drift, and mirroring a query into the reducer would break the identity contract
+  `useStoreSelect` depends on. Reads are cached with a `staleTime` and refetched on
+  window focus, which is what retired the hand-rolled freshness this client had grown:
+  a `visibilitychange` catalog re-read throttled to a minute, a focus listener on the
+  inbox, `loaded` flags and in-flight dedupes on three module-level stores, and a Refresh
+  button that bumped a nonce to re-run an effect. Writes are mutations that **invalidate**
+  rather than re-read by hand — the rule `lib/rest-actions.ts` stated first and the reason
+  that file is gone: a mutation is not done when the server answers 200, it is done when
+  the cached list every screen reads has been invalidated. Keys are server-scoped
+  (`["srv", settings.id, …]` — `queries/keys.ts` builds every one, never a call site) and
+  the `QueryClient` is created per connection in `Connected`, so two servers can never
+  read each other's rows even though switching one hard-reloads today. **The cache
+  outlives the reload** (`queries/persist.ts`, `PersistQueryClientProvider`): it is
+  dumped to localStorage and read back on the next load, so an installed PWA opened
+  cold paints the app it had rather than a screen of skeletons while the same requests
+  run again. Children render immediately and it is the *fetching* that the restore
+  holds, so nothing is requested that the dump was about to answer. Four rules the dump
+  obeys, each for a way it could otherwise lie: the storage key is **per server**
+  (`daedalus.query-cache:<id>`, dropped by `removeServer` along with the layout, since
+  rows are no use without a token to refresh them); `buster` is the **build id**
+  (`__QUERY_CACHE_BUSTER__`, defined in `vite.config.ts`) because what a query's data
+  *is* changes with a release and rehydrating last week's shape is the failure with no
+  error message; only **successful** reads are kept, and the notification inbox is
+  excluded by key, because a badge saying "3 unread" from yesterday before dropping to
+  0 is a wrong answer given confidently, where the rest of the cache is a right answer
+  given early; and `removeOldestQuery` sheds least-recently-used entries when
+  localStorage refuses the write, since a knowledge base or a task list is not a
+  bounded size and one oversized entry must not cost the whole dump. Nothing older
+  than a day is restored at all. The three
+  non-React readers of catalog rows — `createSession`, `loadQuota`, and the connection's
+  deleted-project guard — read the cache through `useCatalogReader()` inside callbacks,
+  exactly as they read `getState()`: last-committed, no subscription. Side effects that
+  are not one of those two things — the whole thread lifecycle — stay in
+  `src/lib/actions.ts`. **A theme is not a
   palette any more** — it is colour *plus* corner radius, three font roles,
   a depth and a tracking, because twelve recolourings of one layout were never
   twelve themes. Themes live in `src/styles/themes.css`, not in `index.css`, and
@@ -547,9 +588,9 @@ Generic ACP (Agent Client Protocol) harness. Four parts, one repo:
   a *windowed* attach starts wherever the server chose, because the thread was longer than
   `REPLAY_WINDOW_STEPS` **or heavier than `REPLAY_WINDOW_BYTES`** — two budgets, whichever
   binds first (`SessionJournal.windowStart`), because a step is a turn and a turn is not a
-  size: one is a sentence, the next is a build log streamed through
-  `_meta.terminal_output_delta`, so sixty of them is a screenful on one thread and megabytes
-  on the next, and it was the second that left someone watching a spinner. Bytes is the
+    size: one is a sentence, the next is a build log streamed through
+    `_meta.terminal_output_delta`, so a handful of them is a screenful on one thread and megabytes
+    on the next, and it was the second that left someone watching a spinner. Bytes is the
   budget `REPLAY_CHUNK_BYTES` already runs the *frame* cut on, for the same reason and on
   the same payloads; the window simply never had one. Steps are applied first, so the byte
   pass never measures more than the step window would have sent anyway, and it reads
@@ -672,7 +713,15 @@ Generic ACP (Agent Client Protocol) harness. Four parts, one repo:
   `CODEX_CONFIG.model` names (a slug invented for the test comes back the same way), that
   entry carries no reasoning levels, and `set_config_option` answers `Invalid params` for
   every catalog model but the spawned one. Which is why codex's live model change is the
-  shim's and not the agent's. **A model a profile does not
+  shim's and not the agent's. **Only the catalog itself silences the warning** —
+  nothing in one file can stop codex emitting it — so a profile that has already
+  given its models their numbers (and has had enough of the nag) can suppress the
+  *notice* instead: `suppressModelMetadataWarning` is a profile column that the
+  bridge honors by dropping the matching `agent_message_chunk` before it is
+  journaled (`isFallbackModelMetadataWarning` in `server/src/acp-bridge.ts`). It
+  hides exactly and only codex's fallback-metadata wording; anything else the
+  agent warns about, or a codex build that cannot take a catalog at all, still
+  surfaces. **A model a profile does not
   name is a model the gateway picks**, and the quietest one is the *second* model Claude
   Code runs its cheap side-jobs on — the Bash permission classifier among them, which is
   what `auto` mode's verdict is. Unnamed, the endpoint maps the built-in Haiku id onto
@@ -1195,11 +1244,13 @@ Generic ACP (Agent Client Protocol) harness. Four parts, one repo:
   entries** (`dropAgentOptions`, from the profile form) — the credentials, endpoint and
   catalog are what decide the answer, `learnAgentOptions` refuses to re-ask a pair it has
   a set for, and the server evicts its own probe cache on that same PUT.
-  `refreshProfiles` re-reads the **agent registry along with the profiles**, since every
-  agent's virtual Default is synthesized from it, and returning to a hidden tab re-reads
-  both (throttled to a minute): the client is a PWA that stays open for days, and a
-  profile added on another device — or an agent a server upgrade started offering — was
-  otherwise invisible until a reload.
+  A profile write invalidates the **agent registry along with the profiles**
+  (`useInvalidateProfileCatalog`), since every agent's virtual Default is synthesized from
+  it — an agent the client last read at boot leaves a Default profile in the list that no
+  registry entry answers for. Returning to a hidden tab re-reads both on the query's own
+  focus refetch, per slice and only for the slices something is drawing: the client is a
+  PWA that stays open for days, and a profile added on another device — or an agent a
+  server upgrade started offering — was otherwise invisible until a reload.
 - **The client mints session ids and threads start as drafts.** "New thread" is a route
   change, not a round trip: `actions.newDraftThread` mints a UUID, puts a `draft: true`
   `SessionMeta` in the store and navigates. `POST /api/sessions` (which accepts that id,

@@ -75,9 +75,11 @@ import {
   loadSettings,
   setActiveServer,
 } from "@/lib/settings"
+import { useAgents, usePersonas, useProfiles, useProjects } from "@/lib/queries/catalog"
 import { recordPaletteCommand, usePaletteRecents } from "@/lib/palette-recents"
 import { togglePin, usePins } from "@/lib/pins"
 import { loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
+import { useRoutines } from "@/lib/queries/routines"
 import { useLiveTurnActive, useStoreSelect } from "@/lib/store"
 import { toast } from "@/lib/toast"
 import { FONT_SIZE_DEFAULT, useFontSize, useTheme } from "@/lib/theme"
@@ -105,11 +107,11 @@ const NOT_A_COMMAND = "Recent threads"
 export function RootPage() {
   const palette = usePalette()
   const sessions = useStoreSelect((store) => store.sessions)
-  const projects = useStoreSelect((store) => store.projects)
-  const profiles = useStoreSelect((store) => store.profiles)
-  const agents = useStoreSelect((store) => store.agents)
-  const personas = useStoreSelect((store) => store.personas)
-  const routines = useStoreSelect((store) => store.routines)
+  const projects = useProjects()
+  const profiles = useProfiles()
+  const agents = useAgents()
+  const personas = usePersonas()
+  const routines = useRoutines().data ?? []
   /* See search-page: a running mark per row, without subscribing to the
      stream that produces it. */
   const liveTurnActive = useLiveTurnActive()

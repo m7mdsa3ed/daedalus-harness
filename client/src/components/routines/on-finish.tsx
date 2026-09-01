@@ -26,8 +26,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { loadBoards, statusesOf, useBoards } from "@/lib/boards"
-import type { OnFinishAction, Routine, ServerSettings } from "@/lib/settings"
+import { statusesOf } from "@/lib/boards"
+import { useBoardsEnabled } from "@/lib/queries/boards"
+import type { OnFinishAction, Routine } from "@/lib/settings"
 
 const KIND_META: Record<OnFinishAction["kind"], { label: string; icon: typeof BellIcon; blurb: string }> = {
   push: {
@@ -53,7 +54,6 @@ const SERVER_DEFAULT = "__default__"
 export function OnFinishEditor({
   value,
   onChange,
-  settings,
   /** Every other routine, for the chaining action. This routine is excluded by
       the caller: a routine that fires itself is an obvious loop, and the server
       would be the only thing left to stop it. */
@@ -61,17 +61,12 @@ export function OnFinishEditor({
 }: {
   value: OnFinishAction[]
   onChange: (next: OnFinishAction[]) => void
-  settings: ServerSettings
   routines: Routine[]
 }) {
-  const boards = useBoards()
-
-  /* Only when a task action is actually on screen: a board list is a request,
-     and most routines never add one. */
+  /* Only when a task action is actually on screen does the query run: a board
+     list is a request, and most routines never add one. */
   const wantsBoards = value.some((a) => a.kind === "task")
-  React.useEffect(() => {
-    if (wantsBoards && !boards.loaded) void loadBoards(settings).catch(() => {})
-  }, [wantsBoards, boards.loaded, settings])
+  const boards = useBoardsEnabled(wantsBoards)
 
   const patch = (index: number, next: OnFinishAction) =>
     onChange(value.map((action, i) => (i === index ? next : action)))

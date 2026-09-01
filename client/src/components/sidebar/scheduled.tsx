@@ -25,10 +25,10 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { useConfirm } from "@/components/confirm-dialog"
-import type { Actions } from "@/lib/actions"
 import { schedulePath, schedulesPath, threadPath } from "@/lib/router"
 import { scheduleSkipped, scheduleWhen } from "@/lib/schedule"
 import { isTopLevel, type ScheduledMessage } from "@/lib/settings"
+import { useCancelSchedule, useScheduled, useUpdateSchedule } from "@/lib/queries/routines"
 import { useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { FoldableGroup, HEADER_BUTTON } from "./groups"
@@ -42,9 +42,11 @@ import { ACTION, MENU } from "./scale"
     empty, because a section that hides itself is also the one place nobody can
     find to create the first item; the + on the label reuses the schedule page
     and its picker, which is why it needs a live thread to exist at all. */
-export function ScheduledGroup({ actions }: { actions: Actions }) {
+export function ScheduledGroup() {
   const sessions = useStoreSelect((store) => store.sessions)
-  const scheduled = useStoreSelect((store) => store.scheduled)
+  const scheduled = useScheduled().data ?? []
+  const cancelSchedule = useCancelSchedule()
+  const updateSchedule = useUpdateSchedule()
   const navigate = useNavigate()
   const location = useLocation()
   const { isMobile, setOpenMobile } = useSidebar()
@@ -63,7 +65,9 @@ export function ScheduledGroup({ actions }: { actions: Actions }) {
       }))
     )
       return
-    actions.cancelSchedule(id).catch((err) => reportError(err, "Couldn't cancel the schedule"))
+    cancelSchedule.mutate(id, {
+      onError: (err) => reportError(err, "Couldn't cancel the schedule"),
+    })
   }
 
   const open = (sessionId: string) => {
@@ -81,9 +85,10 @@ export function ScheduledGroup({ actions }: { actions: Actions }) {
 
   const toggle = (item: ScheduledMessage) => {
     const enable = item.enabled === 0 || scheduleSkipped(item)
-    actions
-      .updateSchedule(item.id, { enabled: enable })
-      .catch((err) => reportError(err, "Couldn't update the schedule"))
+    updateSchedule.mutate(
+      { id: item.id, patch: { enabled: enable } },
+      { onError: (err) => reportError(err, "Couldn't update the schedule") }
+    )
   }
 
   return (

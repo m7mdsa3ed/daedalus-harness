@@ -37,23 +37,23 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { AgentIcon, ProfileIcon } from "@/components/entity-icon"
-import { useAsyncAction } from "@/hooks/use-async-action"
 import { profileAgentIds, type Profile } from "@/lib/settings"
+import { useAgents, useProfiles } from "@/lib/queries/catalog"
 import {
-  fetchProfileQuota,
-  fetchQuota,
   formatReset,
   quotaStatusText,
   quotaTone,
   type QuotaSnapshot,
   type QuotaWindow,
 } from "@/lib/quota"
-import { useAllQuota } from "@/lib/quota"
-import { useStoreSelect } from "@/lib/store"
+import {
+  useAgentQuota,
+  useAllQuotaQuery,
+  useProfileQuota,
+} from "@/lib/queries/surfaces"
 import { cn } from "@/lib/utils"
 import { EmptyCard, Group, PageHeader } from "./primitives"
 import { sectionMeta } from "./sections"
-import { useSettingsPage } from "./layout"
 
 /** The id of an agent's virtual Default profile — the server mints the same
     string (`DEFAULT_PROFILE_PREFIX + agentId`), and it is what a card asks for
@@ -199,18 +199,12 @@ function QuotaBody({ quota, rawLabel }: { quota: QuotaSnapshot; rawLabel: string
     API. No agent selector: the account is the profile's, and every runtime it
     serves spends the same windows. */
 function ProfileQuotaCard({ profile, initial }: { profile: Profile; initial: QuotaSnapshot }) {
-  const { settings } = useSettingsPage()
-  const [quota, setQuota] = React.useState(initial)
-  const { busy, run } = useAsyncAction({ toast: true })
-
-  React.useEffect(() => {
-    setQuota(initial)
-  }, [initial])
-
-  const refresh = () =>
-    run(`Couldn't read ${profile.name}'s plan usage`, async () => {
-      setQuota(await fetchProfileQuota(settings, profile.id, true))
-    })
+  /* The list route already read this profile's plan; the query is seeded with
+     it and Refresh alone goes back to the provider (the `?refresh=1` bypass),
+     rewriting both this card's cache entry and the list's. */
+  const { quota: reading, busy, refresh } = useProfileQuota(profile.id, initial)
+  // The seed is the list route's own reading, so the card always has one.
+  const quota = reading ?? initial
 
   return (
     <Group label={profile.name}>
@@ -225,7 +219,7 @@ function ProfileQuotaCard({ profile, initial }: { profile: Profile; initial: Quo
               : `${profileAgentIds(profile).length} agents`
           }`}
           busy={busy}
-          onRefresh={() => void refresh()}
+          onRefresh={() => refresh()}
           refreshLabel={`Refresh ${profile.name}'s plan usage`}
         />
         <QuotaBody quota={quota} rawLabel="What the provider reported" />
@@ -246,29 +240,15 @@ function AgentQuotaCard({
   /** The profiles that can spawn this agent, Default first. */
   profiles: { id: string; name: string }[]
 }) {
-  const { settings } = useSettingsPage()
+  /* The list route already read the Default profile, so that one seeds the
+     query; picking another profile is a different cache entry and takes its
+     own reading. While it loads, the default's reading stays on screen — the
+     same behaviour the local state had, without the state. */
   const [profileId, setProfileId] = React.useState(defaultProfileId(agentId))
-  const [quota, setQuota] = React.useState(initial)
-  const { busy, run } = useAsyncAction({ toast: true })
-
-  /* The list route already read the Default profile, so that one is in hand;
-     any other profile is a reading nobody has taken yet. */
-  React.useEffect(() => {
-    setQuota(initial)
-  }, [initial])
-
-  const load = React.useCallback(
-    (id: string, refresh: boolean) =>
-      run(`Couldn't read ${agentName}'s usage`, async () => {
-        setQuota(await fetchQuota(settings, agentId, { profileId: id, refresh }))
-      }),
-    [run, settings, agentId, agentName]
-  )
-
-  const pick = (id: string) => {
-    setProfileId(id)
-    void load(id, false)
-  }
+  const { quota: reading, busy, refresh } = useAgentQuota(agentId, profileId, initial)
+  // The default-profile seed is the list route's own reading, so the card
+  // always has one to draw while another profile's is on its way.
+  const quota = reading ?? initial
 
   const profileName = profiles.find((p) => p.id === profileId)?.name ?? profileId
   const fetched = new Date(quota.fetchedAt)
@@ -283,7 +263,10 @@ function AgentQuotaCard({
           meta={`Read ${fetched.toLocaleTimeString()} · ${profileName}`}
           control={
             profiles.length > 1 ? (
-              <Select value={profileId} onValueChange={(id) => pick(id ?? defaultProfileId(agentId))}>
+              <Select
+                value={profileId}
+                onValueChange={(id) => setProfileId(id ?? defaultProfileId(agentId))}
+              >
                 <SelectTrigger className="w-full max-sm:h-9 sm:w-44">
                   <SelectValue>{profileName}</SelectValue>
                 </SelectTrigger>
@@ -298,7 +281,7 @@ function AgentQuotaCard({
             ) : undefined
           }
           busy={busy}
-          onRefresh={() => void load(profileId, true)}
+          onRefresh={() => refresh()}
           refreshLabel={`Refresh ${agentName}'s usage`}
         />
 
@@ -309,11 +292,10 @@ function AgentQuotaCard({
 }
 
 export function QuotaPage() {
-  const { settings } = useSettingsPage()
-  const profiles = useStoreSelect((store) => store.profiles)
-  const agents = useStoreSelect((store) => store.agents)
+  const profiles = useProfiles()
+  const agents = useAgents()
   const meta = sectionMeta("usage")
-  const { quotas, busy, reload } = useAllQuota(settings)
+  const { quotas, busy, reload } = useAllQuotaQuery()
 
   /* Default first, then the real profiles that name this agent — the same order
      the thread config menus use, and for the same reason: the agent as it ships
@@ -335,7 +317,7 @@ export function QuotaPage() {
       <PageHeader
         meta={meta}
         action={
-          <Button variant="outline" disabled={busy} onClick={() => void reload(true)}>
+          <Button variant="outline" disabled={busy} onClick={() => reload(true)}>
             <RefreshCwIcon className={cn("size-4", busy && "animate-spin")} />
             Refresh all
           </Button>

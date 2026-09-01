@@ -131,6 +131,27 @@ const isSubagentUpdate = (message: acp.AnyMessage): boolean => {
   return typeof tag === "string" && SUBAGENT_UPDATE_KINDS.has(tag);
 };
 
+/**
+ * Codex's "Model metadata for `…` not found. Defaulting to fallback metadata"
+ * notice, in the shape codex-acp streams it: a text chunk whose content begins
+ * "Warning: Model metadata for ". Matched on the wording, not on the
+ * particular `sessionUpdate`, because that is what is stable across codex-acp
+ * builds and what is meaningful to a human — anything else a gateway agent
+ * warns about still gets through, and a chunk that is not a warning is left
+ * alone.
+ */
+function isFallbackModelMetadataWarning(update: { sessionUpdate?: unknown; content?: unknown; text?: unknown }): boolean {
+  if (update.sessionUpdate !== "agent_message_chunk") return false;
+  let text = "";
+  if (update.content && typeof update.content === "object") {
+    const content = update.content as Record<string, unknown>;
+    if (typeof content.text === "string") text = content.text;
+  } else if (typeof update.text === "string") {
+    text = update.text;
+  }
+  return text.includes("not found. Defaulting to fallback metadata");
+}
+
 /** The ndJSON stream over a spawned agent's stdio. From here on the SDK owns
     stdout — a stray 'data' listener anywhere else silently steals its bytes.
     Inbound frames pass through one rewrite: a `session/update` carrying an RFD
@@ -264,6 +285,12 @@ export interface BridgeOptions {
       no persona; an `"env"` agent's persona was placed by `resolveSpawn`
       before this process existed. */
   persona?: PersonaSpawn;
+  /** The profile opted out of Codex's fallback-metadata notice. True means the
+      bridge drops the matching warning from the stream before it can be
+      journaled or rendered — the profile has already pinned the model's
+      numbers, and the nag (which only appears when the written catalog did not
+      reach the running codex build) is noise the user chose not to see. */
+  suppressModelMetadataWarning?: boolean;
 }
 
 export class AcpBridge {
@@ -300,10 +327,12 @@ export class AcpBridge {
   private currentTurnPrompt: string | null = null;
   /** Callers of `whenIdle()` waiting for `inflight` to reach zero. */
   private idleWaiters: (() => void)[] = [];
+  private readonly suppressModelMetadataWarning: boolean;
 
   constructor(host: BridgeHost, proc: ChildProcessWithoutNullStreams, opts: BridgeOptions) {
     this.host = host;
     this.cwd = opts.cwd;
+    this.suppressModelMetadataWarning = opts.suppressModelMetadataWarning === true;
     const stream = agentStream(proc);
     this.connection = acp
       .client({ name: "daedalus" })
@@ -707,6 +736,13 @@ export class AcpBridge {
   // ---- agent -> us ----
 
   private onUpdate(notification: SessionNotification): void {
+    /* A profile that opted out of the nag never sees it: the model's numbers
+       were already given in the profile, so what codex is warning about is
+       something the harness could not put back (the catalog file not reaching
+       this codex build — see model-catalog.ts), which no user action fixes. */
+    if (this.suppressModelMetadataWarning && isFallbackModelMetadataWarning(notification.update)) {
+      return;
+    }
     /* A subagent's session (RFD) is any id that is not this process's own.
        The id is forwarded, not resolved: which child it is, and under which
        step, is the transcript's business. Strictly "not ours" rather than "one

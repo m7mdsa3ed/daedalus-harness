@@ -60,6 +60,7 @@ import {
   setActiveServer,
   type ServerSettings,
 } from "@/lib/settings"
+import { useCatalogLoaded, useProfiles, useProjects } from "@/lib/queries/catalog"
 import { useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { ProjectFormPage, ProjectsPage } from "@/components/settings/projects"
@@ -130,7 +131,7 @@ const sectionOf = (value: string): SettingsSectionId =>
 export function AppShell({
   settings,
   actions,
-  loading,
+  loading: bootLoading,
   onAddServer,
 }: {
   settings: ServerSettings
@@ -143,8 +144,14 @@ export function AppShell({
      streamed token of every open thread. None of the three is touched by an
      `update`; `sessions` moves once per turn, at most. */
   const sessions = useStoreSelect((state) => state.sessions)
-  const projects = useStoreSelect((state) => state.projects)
-  const profiles = useStoreSelect((state) => state.profiles)
+  const projects = useProjects()
+  const profiles = useProfiles()
+  /* `bootstrap` answers for the session list alone now — each catalog is its
+     own query — so the shell's loading gate is the two together. Without it
+     an empty catalog mid-read draws the "Finish the setup" screen at every
+     boot. */
+  const catalogLoaded = useCatalogLoaded()
+  const loading = bootLoading || !catalogLoaded
   const location = useLocation()
   const navigate = useNavigate()
   /* The servers this device knows. Unlike everything else this comes from
@@ -746,7 +753,7 @@ export function AppShell({
                       settingsMaxWidth(location.pathname)
                     )}
                   >
-                    <RoutinesPage actions={actions} settings={settings} />
+                    <RoutinesPage actions={actions} />
                   </div>
                 </div>
               }
@@ -858,8 +865,8 @@ function EmptyState({
   onNewThread: () => void
   onOpenSettings: (section?: SettingsSectionId) => void
 }) {
-  const projects = useStoreSelect((state) => state.projects)
-  const profiles = useStoreSelect((state) => state.profiles)
+  const projects = useProjects()
+  const profiles = useProfiles()
   const steps = [
     {
       id: "projects" as const,

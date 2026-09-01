@@ -10,9 +10,11 @@ import { useSyncExternalStore } from "react"
 
    Two layers, because two of the stores' backings differ:
 
-   - `createStore(initial)` is the bare reactive cell — for state whose source
-     is the server (boards, tasks, the notification inbox), where a `storage`
-     event can never arrive because nothing is in localStorage.
+   - `createStore(initial)` is the bare reactive cell, with no `storage`
+     listener because nothing of it is in localStorage. It is the base
+     `createLocalStore` is built on; the server-sourced stores that used to sit
+     on it directly (boards, tasks, the notification inbox) are query caches
+     now — a server list wants a fetch policy, not just a cell.
    - `createLocalStore(key, parse, fallback)` persists the cell to one
      localStorage key and rebuilds it on cross-tab writes. `parse` receives the
      JSON-parsed raw and must validate it — the blob is user-editable and

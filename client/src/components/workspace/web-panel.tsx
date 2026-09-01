@@ -47,7 +47,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { PanelEmptyState, PanelNotice, PanelToolbar } from "@/components/workspace/primitives"
 import { reportError } from "@/lib/errors"
-import { useStoreSelect } from "@/lib/store"
+import { useProjects } from "@/lib/queries/catalog"
 import { cn } from "@/lib/utils"
 import {
   createPreview,
@@ -79,11 +79,10 @@ export function WebPanel({
   params,
 }: IDockviewPanelProps<{ trust: "project" | "external"; viewId: string; projectId?: string; url?: string }>) {
   const { trust, projectId, url: initialUrl } = params
-  /* One project row, not the whole state: a panel beside a live transcript
-     must not re-render on that transcript's stream. */
-  const project = useStoreSelect((state) =>
-    state.projects.find((candidate) => candidate.id === projectId)
-  )
+  /* The catalog lives in the query cache now, so a streamed token never
+     reaches this panel; only a projects refresh (rare, and its own clock)
+     re-renders it. */
+  const project = useProjects().find((candidate) => candidate.id === projectId)
 
   const [url, setUrl] = React.useState(initialUrl ?? "")
   const [typed, setTyped] = React.useState(initialUrl ?? "")

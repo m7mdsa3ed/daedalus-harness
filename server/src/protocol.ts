@@ -344,18 +344,19 @@ export const REPLAY_CHUNK_BYTES = 256 * 1024;
  *
  * The step budget the client names (`REPLAY_WINDOW_STEPS`) bounds the replay in
  * *turns*, which is the unit the transcript is cut in but not the unit the wait
- * is paid in: a turn is anything from one sentence to a build log, so sixty of
+ * is paid in: a turn is anything from one sentence to a build log, so ten of
  * them is unbounded in size and one thread's window is another's whole archive.
  * This is the same budget `REPLAY_CHUNK_BYTES` applies to a single frame, one
  * level up — that one decides how the payload is sliced, and only this one
  * decides how much of it there is.
  *
- * Deliberately generous next to the frame budget: the point is to catch the
- * thread whose window is megabytes, not to trim an ordinary one. What is
- * withheld is not lost — `earlier` counts it and `load_earlier` pages it back
- * exactly as it does for a step-capped window.
+ * The window is whichever of the two binds first — ten turns, or this many
+ * bytes — so an ordinary thread's tail arrives whole while a build-log turn is
+ * withheld rather than streamed. What is withheld is not lost — `earlier`
+ * counts it and `load_earlier` pages it back exactly as it does for a
+ * step-capped window.
  */
-export const REPLAY_WINDOW_BYTES = 2 * 1024 * 1024;
+export const REPLAY_WINDOW_BYTES = 50 * 1024;
 
 /** How many journaled steps one `load_earlier` page returns. A **step** is a
     turn — the log is cut only at `turn_started` boundaries, so a page is always

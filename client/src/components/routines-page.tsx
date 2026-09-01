@@ -42,25 +42,34 @@ import { runStatus } from "@/components/routines/status"
 import type { Actions } from "@/lib/actions"
 import { captureError, reportError, type InlineError } from "@/lib/errors"
 import { newRoutinePath, routinePath, routinesPath } from "@/lib/router"
-import { profileSupports, type Routine, type ServerSettings } from "@/lib/settings"
-import { useStoreSelect } from "@/lib/store"
+import { profileSupports, type Routine } from "@/lib/settings"
+import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
+import {
+  useCancelRoutineRun,
+  useCreateRoutine,
+  useDeleteRoutine,
+  useRoutineRuns,
+  useRoutines,
+  useRunRoutine,
+  useUpdateRoutine,
+} from "@/lib/queries/routines"
 import { shortAge } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 
-export function RoutinesPage({ actions, settings }: { actions: Actions; settings: ServerSettings }) {
+export function RoutinesPage({ actions }: { actions: Actions }) {
   const location = useLocation()
   const params = useParams()
-  if (location.pathname.endsWith("/new")) return <NewRoutinePage actions={actions} settings={settings} />
+  if (location.pathname.endsWith("/new")) return <NewRoutinePage actions={actions} />
   if (params.routineId)
-    return <RoutineDetailPage routineId={params.routineId} actions={actions} settings={settings} />
-  return <RoutinesListPage actions={actions} />
+    return <RoutineDetailPage routineId={params.routineId} actions={actions} />
+  return <RoutinesListPage />
 }
 
 /* ── The list ── */
 
-function RoutinesListPage({ actions }: { actions: Actions }) {
-  const routines = useStoreSelect((store) => store.routines)
+function RoutinesListPage() {
+  const routines = useRoutines().data ?? []
   const navigate = useNavigate()
 
   return (
@@ -91,7 +100,7 @@ function RoutinesListPage({ actions }: { actions: Actions }) {
           </div>
           <Group>
             {routines.map((routine) => (
-              <RoutineRow key={routine.id} routine={routine} actions={actions} />
+              <RoutineRow key={routine.id} routine={routine} />
             ))}
           </Group>
         </>
@@ -100,13 +109,16 @@ function RoutinesListPage({ actions }: { actions: Actions }) {
   )
 }
 
-function RoutineRow({ routine, actions }: { routine: Routine; actions: Actions }) {
-  const projects = useStoreSelect((store) => store.projects)
-  const routineRuns = useStoreSelect((store) => store.routineRuns)
+function RoutineRow({ routine }: { routine: Routine }) {
+  const projects = useProjects()
   const navigate = useNavigate()
   const project = projects.find((p) => p.id === routine.projectId)
-  const runs = routineRuns[routine.id]
+  /* Subscribed to the cache but never fetching: the runs list is read per
+     routine, on demand, on its own page — the row says the last run only when
+     a visit to that page happens to have left one behind. */
+  const runs = useRoutineRuns(routine.id, undefined, { enabled: false }).data
   const last = runs?.[0]
+  const updateRoutine = useUpdateRoutine()
 
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 sm:flex-nowrap">
@@ -136,10 +148,13 @@ function RoutineRow({ routine, actions }: { routine: Routine; actions: Actions }
         <Switch
           checked={routine.enabled}
           onCheckedChange={(enabled) =>
-            actions
-              .updateRoutine(routine.id, { enabled })
-              .then(() => toast.success(enabled ? "Routine enabled" : "Routine disabled"))
-              .catch((err) => reportError(err, "Couldn't update the routine"))
+            updateRoutine.mutate(
+              { id: routine.id, patch: { enabled } },
+              {
+                onSuccess: () => toast.success(enabled ? "Routine enabled" : "Routine disabled"),
+                onError: (err) => reportError(err, "Couldn't update the routine"),
+              }
+            )
           }
           aria-label={routine.enabled ? "Disable routine" : "Enable routine"}
         />
@@ -180,10 +195,11 @@ function AutonomyMark({ routine }: { routine: Routine }) {
 
 /* ── Creation ── */
 
-function NewRoutinePage({ actions, settings }: { actions: Actions; settings: ServerSettings }) {
-  const profiles = useStoreSelect((store) => store.profiles)
-  const projects = useStoreSelect((store) => store.projects)
-  const agents = useStoreSelect((store) => store.agents)
+function NewRoutinePage({ actions }: { actions: Actions }) {
+  const createRoutine = useCreateRoutine()
+  const profiles = useProfiles()
+  const projects = useProjects()
+  const agents = useAgents()
   const navigate = useNavigate()
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<InlineError | null>(null)
@@ -216,7 +232,7 @@ function NewRoutinePage({ actions, settings }: { actions: Actions; settings: Ser
     setBusy(true)
     setError(null)
     try {
-      const routine = await actions.createRoutine(parsed.input)
+      const routine = await createRoutine.mutateAsync(parsed.input)
       toast.success("Routine created")
       // Straight to its own page: triggers live there, and a routine with no
       // trigger is one that only ever fires by hand.
@@ -250,7 +266,6 @@ function NewRoutinePage({ actions, settings }: { actions: Actions; settings: Ser
         draft={draft}
         onChange={setDraft}
         actions={actions}
-        settings={settings}
         onSubmit={submit}
         onCancel={back}
         busy={busy}
@@ -266,23 +281,29 @@ function NewRoutinePage({ actions, settings }: { actions: Actions; settings: Ser
 function RoutineDetailPage({
   routineId,
   actions,
-  settings,
 }: {
   routineId: string
   actions: Actions
-  settings: ServerSettings
 }) {
-  const routines = useStoreSelect((store) => store.routines)
-  const routineRuns = useStoreSelect((store) => store.routineRuns)
+  const routines = useRoutines().data
   const navigate = useNavigate()
   const confirm = useConfirm()
-  const routine = routines.find((r) => r.id === routineId)
-  const runs = routineRuns[routineId]
+  const routine = routines?.find((r) => r.id === routineId)
+  /* The runs read lives in the cache; the query fetches on mount and the
+     mutations (run, cancel) invalidate it, which is the refresh. A failed
+     read leaves `data` undefined — skeletons, not "has never run" — and the
+     error note below says the request failed. */
+  const runsQuery = useRoutineRuns(routineId)
+  const runs = runsQuery.data
+  const runsError = runsQuery.error ? captureError(runsQuery.error, "Couldn't read this routine's runs") : null
+  const cancelRoutineRun = useCancelRoutineRun()
+  const updateRoutine = useUpdateRoutine()
+  const runRoutine = useRunRoutine()
+  const deleteRoutine = useDeleteRoutine()
 
   const [draft, setDraft] = React.useState<RoutineDraft | null>(null)
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<InlineError | null>(null)
-  const [runsError, setRunsError] = React.useState<InlineError | null>(null)
   const [firing, setFiring] = React.useState(false)
 
   /* Reset the form when the routine arrives or is replaced by a save. The
@@ -292,19 +313,6 @@ function RoutineDetailPage({
   React.useEffect(() => {
     if (routine) setDraft(draftOf(routine))
   }, [routine])
-
-  const loadRuns = React.useCallback(async () => {
-    setRunsError(null)
-    try {
-      await actions.refreshRoutineRuns(routineId)
-    } catch (err) {
-      setRunsError(captureError(err, "Couldn't read this routine's runs"))
-    }
-  }, [actions, routineId])
-
-  React.useEffect(() => {
-    void loadRuns()
-  }, [loadRuns])
 
   const back = () => void navigate(routinesPath())
 
@@ -327,7 +335,7 @@ function RoutineDetailPage({
     setBusy(true)
     setError(null)
     try {
-      await actions.updateRoutine(routine.id, parsed.input)
+      await updateRoutine.mutateAsync({ id: routine.id, patch: parsed.input })
       toast.success("Routine saved")
     } catch (err) {
       setError(captureError(err, "Couldn't save the routine"))
@@ -343,7 +351,7 @@ function RoutineDetailPage({
     if (firing) return
     setFiring(true)
     try {
-      const started = await actions.runRoutine(routine.id, { dryRun })
+      const started = await runRoutine.mutateAsync({ id: routine.id, dryRun })
       toast.success(dryRun ? "Dry run started — it will ask you for everything" : "Run started", {
         description: started.status === "skipped" ? (started.error ?? "Skipped") : undefined,
       })
@@ -366,7 +374,7 @@ function RoutineDetailPage({
     )
       return
     try {
-      await actions.deleteRoutine(routine.id)
+      await deleteRoutine.mutateAsync(routine.id)
       back()
     } catch (err) {
       reportError(err, "Couldn't delete the routine")
@@ -415,11 +423,11 @@ function RoutineDetailPage({
 
       <div className="space-y-8">
         <FormSection label="Triggers">
-          <TriggersPanel routineId={routine.id} actions={actions} settings={settings} />
+          <TriggersPanel routineId={routine.id} />
         </FormSection>
 
         <FormSection label="Runs">
-          <ErrorNote error={runsError} onRetry={() => void loadRuns()} />
+          <ErrorNote error={runsError} onRetry={() => void runsQuery.refetch()} />
           {/* A failed read leaves the store's entry undefined, which draws
               skeletons rather than "has never run" — the note above is what
               says the request failed. The two are not the same screen. */}
@@ -427,7 +435,7 @@ function RoutineDetailPage({
             <RunList
               runs={runs}
               hasOutputSchema={routine.output !== null}
-              onCancel={(runId) => actions.cancelRoutineRun(routine.id, runId)}
+              onCancel={async (runId) => cancelRoutineRun.mutate({ routineId: routine.id, runId })}
             />
           )}
         </FormSection>
@@ -437,7 +445,6 @@ function RoutineDetailPage({
             draft={draft}
             onChange={setDraft}
             actions={actions}
-            settings={settings}
             routine={routine}
             onSubmit={submit}
             onCancel={back}

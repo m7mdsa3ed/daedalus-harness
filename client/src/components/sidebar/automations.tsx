@@ -13,8 +13,7 @@
    what it does to a thread — because "routine" and "scheduled message" are not
    words that tell themselves apart. */
 import { Sparkles } from "lucide-react"
-import type { Actions } from "@/lib/actions"
-import { useStoreSelect } from "@/lib/store"
+import { useRoutines, useScheduled } from "@/lib/queries/routines"
 import { FoldableGroup } from "./groups"
 import { RoutinesGroup } from "./routines"
 import { ScheduledGroup } from "./scheduled"
@@ -23,9 +22,9 @@ import { ScheduledGroup } from "./scheduled"
     spawns an agent and may answer for you), so it leads, and the count on the
     outer label is both halves — the number you are asking about here is "how
     much is armed", not "how many of which kind". */
-export function AutomationsGroup({ actions }: { actions: Actions }) {
-  const scheduled = useStoreSelect((store) => store.scheduled)
-  const routines = useStoreSelect((store) => store.routines)
+export function AutomationsGroup() {
+  const scheduled = useScheduled().data ?? []
+  const routines = useRoutines().data ?? []
   const armed = routines.length + scheduled.length
 
   return (
@@ -35,8 +34,8 @@ export function AutomationsGroup({ actions }: { actions: Actions }) {
       icon={<Sparkles className="size-3 shrink-0" />}
       count={armed > 0 ? armed : undefined}
     >
-      <RoutinesGroup actions={actions} />
-      <ScheduledGroup actions={actions} />
+      <RoutinesGroup />
+      <ScheduledGroup />
     </FoldableGroup>
   )
 }

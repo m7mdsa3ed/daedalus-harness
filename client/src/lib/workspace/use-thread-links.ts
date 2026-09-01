@@ -1,3 +1,4 @@
+import { useProjects } from "@/lib/queries/catalog"
 /* The transcript's links, built once and shared.
    `ChatPanel` is no longer the only thing that renders a transcript — the
    agents panel draws the same subagent rails, with the same file chips and the
@@ -26,9 +27,8 @@ export function useThreadLinksFor(sessionId: string): ThreadLinks | null {
   /* The cwd string itself, not the project row: a string is compared by value,
      so this is quiet even across a `projects` refresh that rebuilt the rows
      without changing any directory. */
-  const cwd = useStoreSelect((state) =>
-    state.projects.find((project) => project.id === projectId)?.cwd
-  )
+  const projects = useProjects()
+  const cwd = projects.find((project) => project.id === projectId)?.cwd
 
   return React.useMemo<ThreadLinks | null>(() => {
     if (!projectId) return null

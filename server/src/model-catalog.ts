@@ -26,6 +26,13 @@ import type { ModelDef } from "./db/schema.js";
  * gets its catalog written out here and pointed at, and the profile becomes the
  * whole catalog — which is what a profile with a `models[]` already means.
  *
+ * The notice itself can additionally be *hidden* where the catalog cannot reach
+ * codex (a build with no `debug models`: the warning then means "the file the
+ * profile would describe could not be written", which no user action fixes):
+ * a profile's `suppressModelMetadataWarning` flag asks the bridge to drop the
+ * matching update before it is journaled (acp-bridge.ts). That is a cosmetic
+ * on/off for humans, not metadata — the lookup and the fallback still happen.
+ *
  * An entry has to carry far more than metadata (`base_instructions` is
  * mandatory, and it is Codex's entire system prompt), so we do not invent one:
  * `codex debug models` prints the built-in catalog, and each entry is that

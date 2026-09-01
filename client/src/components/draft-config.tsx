@@ -24,7 +24,7 @@ import { optionKey, optionsForModel, useAgentOptions, withChoices } from "@/lib/
 import { partitionSessionOptions } from "@/lib/session-options"
 import { profileSupports, type SessionMeta } from "@/lib/settings"
 import { saveThreadDefaults } from "@/lib/thread-defaults"
-import { useStoreSelect } from "@/lib/store"
+import { useAgents, usePersonas, useProfiles, useProjects } from "@/lib/queries/catalog"
 
 const DEFAULT_CHOICE = "__default__"
 /** Sentinel for "no persona", which is not itself a persona id. */
@@ -36,10 +36,10 @@ function useDraft(meta: SessionMeta, actions: Actions, remember = true) {
   /* The four catalogs this menu lists, each on its own subscription rather
      than the whole state: these controls sit on the composer strip of a live
      pane, and a catalog is replaced only by its own action. */
-  const projects = useStoreSelect((state) => state.projects)
-  const profiles = useStoreSelect((state) => state.profiles)
-  const agents = useStoreSelect((state) => state.agents)
-  const personas = useStoreSelect((state) => state.personas)
+  const projects = useProjects()
+  const profiles = useProfiles()
+  const agents = useAgents()
+  const personas = usePersonas()
   const project = projects.find((p) => p.id === meta.projectId)
   const profile = profiles.find((p) => p.id === meta.profileId)
   // The draft's own agent, not the profile's: a profile may serve several.

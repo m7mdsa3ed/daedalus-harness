@@ -39,7 +39,7 @@ import { useShortcut } from "@/hooks/use-hotkey"
 import { describeError, reportError } from "@/lib/errors"
 import { useChord } from "@/lib/keybindings"
 import { formatChord } from "@/lib/shortcuts"
-import { useStoreSelect } from "@/lib/store"
+import { useProjects } from "@/lib/queries/catalog"
 import { cn } from "@/lib/utils"
 import { clearBuffer, loadBuffer, saveBuffer } from "@/lib/workspace/buffers"
 import {
@@ -80,11 +80,10 @@ export function EditorPanel({
   const { projectId, path, comparison } = params
   const dock = useDock()
   const confirm = useConfirm()
-  /* One project row, not the whole state: a panel beside a live transcript
-     must not re-render on that transcript's stream. */
-  const project = useStoreSelect((state) =>
-    state.projects.find((candidate) => candidate.id === projectId)
-  )
+  /* The catalog lives in the query cache now, so a streamed token never
+     reaches this panel; only a projects refresh (rare, and its own clock)
+     re-renders it. */
+  const project = useProjects().find((candidate) => candidate.id === projectId)
 
   const saveChord = useChord("save") ?? ""
 

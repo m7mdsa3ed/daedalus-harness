@@ -181,6 +181,16 @@ export const profiles = sqliteTable("profiles", {
       meters per token — which is most of them, and is why "no usage API" is the
       default rather than something to configure. */
   usage: text("usage", { mode: "json" }).$type<ProfileUsage>(),
+  /** Opt out of Codex's "Model metadata for `…` not found. Defaulting to
+      fallback metadata" notice when this profile's models run on it (see
+      model-catalog.ts). Exactly one thing it means: the profile has already
+      given the model its numbers, and the nag is dropped at the bridge before
+      it can be journaled. False on rows from before the column existed. */
+  suppressModelMetadataWarning: integer("suppress_model_metadata_warning", {
+    mode: "boolean",
+  })
+    .notNull()
+    .default(false),
   /* The web-search and knowledge opt-ins used to be columns here. They are
      library rows now (`mcp_servers.type = "builtin"`), linked like any other
      server — see BUILTIN_MCP in library.ts. */

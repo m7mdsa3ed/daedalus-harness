@@ -8,7 +8,7 @@
    to trust. The constants mirror SNIPPET_START/SNIPPET_END in
    server/src/search.ts (protocol.ts is imported type-only, so runtime values
    cannot live there). */
-import { api, loadSettings } from "@/lib/settings"
+import { api, type ServerSettings } from "@/lib/settings"
 
 const SNIPPET_START = "\u{E000}"
 const SNIPPET_END = "\u{E001}"
@@ -25,12 +25,13 @@ export interface SearchResult {
   at: number
 }
 
-/** Search every thread's transcript on the active server. Empty when no
-    server is configured; throws ApiError like every other call (an abort
-    surfaces as status 0). */
-export async function searchThreads(query: string, signal?: AbortSignal): Promise<SearchResult[]> {
-  const settings = loadSettings()
-  if (!settings) return []
+/** Search every thread's transcript on the given server. Throws ApiError like
+    every other call; an abort rethrows as the caller's own AbortError. */
+export async function searchThreads(
+  settings: ServerSettings,
+  query: string,
+  signal?: AbortSignal
+): Promise<SearchResult[]> {
   const { results } = await api<{ results: SearchResult[] }>(
     settings,
     `/api/search?q=${encodeURIComponent(query)}&limit=30`,

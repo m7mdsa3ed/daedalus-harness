@@ -28,8 +28,12 @@ import { RUN_STATUS } from "@/components/routines/status"
 import { useSidebar } from "@/components/ui/sidebar"
 import { reportError } from "@/lib/errors"
 import { routinePath, routinesPath, threadPath } from "@/lib/router"
-import type { Routine, RoutineRun } from "@/lib/settings"
-import { useStoreSelect } from "@/lib/store"
+import { useRunRoutine, useRoutines } from "@/lib/queries/routines"
+import { routineRunsKey } from "@/lib/queries/keys"
+import { useQueryClient } from "@tanstack/react-query"
+import { useServer } from "@/lib/server-context"
+import { api, type Routine, type RoutineRun } from "@/lib/settings"
+import { useProjects } from "@/lib/queries/catalog"
 import { shortAge } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -70,8 +74,9 @@ function fire(routine: Routine, run: (id: string, opts: { dryRun?: boolean }) =>
 /** Every routine as something to fire now. */
 export function RunRoutinePage() {
   const palette = usePalette()
-  const projects = useStoreSelect((store) => store.projects)
-  const allRoutines = useStoreSelect((store) => store.routines)
+  const projects = useProjects()
+  const allRoutines = useRoutines().data ?? []
+  const runRoutine = useRunRoutine()
   const navigate = useNavigate()
 
   const projectName = (id: string) =>
@@ -94,7 +99,10 @@ export function RunRoutinePage() {
         <span className="truncate">{projectName(routine.projectId)}</span>
       </span>
     ),
-    onSelect: () => palette.run(() => fire(routine, palette.actions.runRoutine)),
+    onSelect: () =>
+      palette.run(() =>
+        fire(routine, (id, opts) => runRoutine.mutateAsync({ id, ...opts }))
+      ),
   }))
 
   items.push({
@@ -121,8 +129,7 @@ export function RunRoutinePage() {
  */
 export function RoutineActivityPage() {
   const palette = usePalette()
-  const allRoutines = useStoreSelect((store) => store.routines)
-  const routineRuns = useStoreSelect((store) => store.routineRuns)
+  const allRoutines = useRoutines().data ?? []
   const navigate = useNavigate()
   const { setOpenMobile } = useSidebar()
   const query = palette.query.trim().toLowerCase()
@@ -134,20 +141,41 @@ export function RoutineActivityPage() {
   const [seenAt] = React.useState(() => Number(localStorage.getItem(SEEN_KEY) ?? 0) || 0)
 
   const routines = allRoutines
-  const refresh = palette.actions.refreshRoutineRuns
+  const settings = useServer()
+  const qc = useQueryClient()
+  const [fetched, setFetched] = React.useState<RoutineRun[]>([])
 
   React.useEffect(() => {
     if (routines.length === 0) return
     let live = true
     setLoading(true)
     setFailed(false)
-    Promise.allSettled(routines.map((routine) => refresh(routine.id, RUNS_PER_ROUTINE)))
+    /* `fetchQuery` serves the cache first and refetches behind it when stale —
+       the same bargain the store slice gave (reopening redraws from memory),
+       now per routine and on the shared clock. */
+    Promise.allSettled(
+      routines.map((routine) =>
+        qc.fetchQuery({
+          queryKey: routineRunsKey(settings, routine.id, RUNS_PER_ROUTINE),
+          queryFn: ({ signal }) =>
+            api<RoutineRun[]>(
+              settings,
+              `/api/routines/${encodeURIComponent(routine.id)}/runs?limit=${RUNS_PER_ROUTINE}`,
+              { signal }
+            ),
+          staleTime: 15_000,
+        })
+      )
+    )
       .then((results) => {
         if (!live) return
         // One routine's read failing is not the same as the page failing, but
         // it *is* a hole in a list whose whole job is completeness — so any
         // rejection says so rather than letting the digest read as thorough.
         setFailed(results.some((result) => result.status === "rejected"))
+        setFetched(
+          results.flatMap((result) => (result.status === "fulfilled" ? result.value : []))
+        )
         setLoading(false)
       })
     try {
@@ -158,13 +186,12 @@ export function RoutineActivityPage() {
     return () => {
       live = false
     }
-  }, [routines, refresh])
+  }, [routines, qc, settings])
 
   const nameOf = (routineId: string) =>
     routines.find((routine) => routine.id === routineId)?.name ?? "Deleted routine"
 
-  const runs: RoutineRun[] = routines
-    .flatMap((routine) => routineRuns[routine.id] ?? [])
+  const runs: RoutineRun[] = fetched
     .filter((run) => !query || nameOf(run.routineId).toLowerCase().includes(query))
     .sort((a, b) => b.startedAt - a.startedAt)
     .slice(0, DIGEST_LIMIT)
@@ -172,9 +199,9 @@ export function RoutineActivityPage() {
   /* The runs a person has to do something about, counted over everything read
      rather than over the visible slice: "3 need you" under a list capped at 30
      must mean three, not three of the first thirty. */
-  const needsYou = routines
-    .flatMap((routine) => routineRuns[routine.id] ?? [])
-    .filter((run) => run.status === "blocked" || run.status === "failed").length
+  const needsYou = fetched.filter(
+    (run) => run.status === "blocked" || run.status === "failed"
+  ).length
 
   const open = (run: RoutineRun) =>
     palette.run(() => {

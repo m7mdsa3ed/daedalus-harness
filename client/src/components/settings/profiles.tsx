@@ -26,7 +26,14 @@ import {
   type ProfileUsageKind,
   type ServerSettings,
 } from "@/lib/settings"
-import { useStoreSelect } from "@/lib/store"
+import {
+  useAgents,
+  useCommands,
+  useInvalidateProfileCatalog,
+  useMcpServers,
+  useProfiles,
+  useSkills,
+} from "@/lib/queries/catalog"
 import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions, FormSection, Picker } from "./primitives"
 import {
   ModelsSection,
@@ -60,10 +67,11 @@ const USAGE_PROVIDERS: { kind: ProfileUsageKind; label: string; hint: string; ho
 ]
 
 export function ProfilesPage() {
-  const { settings, actions } = useSettingsPage()
+  const { settings } = useSettingsPage()
+  const invalidate = useInvalidateProfileCatalog()
   const meta = sectionMeta("profiles")
-  const profiles = useStoreSelect((store) => store.profiles)
-  const agents = useStoreSelect((store) => store.agents)
+  const profiles = useProfiles()
+  const agents = useAgents()
   const confirm = useConfirm()
   const navigate = useNavigate()
 
@@ -80,7 +88,7 @@ export function ProfilesPage() {
       return
     try {
       await api(settings, `/api/profiles/${profile.id}`, { method: "DELETE" })
-      await actions.refreshProfiles()
+      await invalidate()
     } catch (err) {
       reportError(err, "Couldn't delete the profile")
     }
@@ -161,9 +169,10 @@ export function ProfilesPage() {
 export function ProfileFormPage() {
   const { entryId } = useParams()
   const navigate = useNavigate()
-  const { settings, actions } = useSettingsPage()
-  const profiles = useStoreSelect((store) => store.profiles)
-  const agents = useStoreSelect((store) => store.agents)
+  const { settings } = useSettingsPage()
+  const invalidateProfile = useInvalidateProfileCatalog()
+  const profiles = useProfiles()
+  const agents = useAgents()
   const profile = entryId === "new" ? null : profiles.find((item) => item.id === entryId)
   if (entryId !== "new" && !profile) return <Navigate to={settingsPath("profiles")} replace />
   return (
@@ -178,7 +187,7 @@ export function ProfileFormPage() {
            on the same PUT; this is the device-local half, and it is also what
            lets the pair be asked again before the page is reloaded. */
         if (saved && profile) dropAgentOptions(profile.id)
-        if (saved) await actions.refreshProfiles()
+        if (saved) await invalidateProfile()
         void navigate(settingsPath("profiles"))
       }}
     />
@@ -201,9 +210,9 @@ function ProfileForm({
   onDone: (saved: boolean) => void
 }) {
   // The library the pickers below draw from.
-  const mcpServers = useStoreSelect((store) => store.mcpServers)
-  const skills = useStoreSelect((store) => store.skills)
-  const commands = useStoreSelect((store) => store.commands)
+  const mcpServers = useMcpServers()
+  const skills = useSkills()
+  const commands = useCommands()
   const [form, setForm] = React.useState(() => ({
     name: profile?.name ?? "",
     baseUrl: profile?.baseUrl ?? "",
@@ -219,6 +228,10 @@ function ProfileForm({
     usageKind: (profile?.usage?.kind ?? "none") as ProfileUsageKind,
     usageBaseUrl: profile?.usage?.baseUrl ?? "",
     usageApiKey: "",
+    /* Codex's fallback-metadata notice is per profile: the profile is what
+       carries the custom models the notice would be nagging about. Absent on
+       older servers (and the virtual Default), which is the same as off. */
+    suppressModelMetadataWarning: profile?.suppressModelMetadataWarning ?? false,
   }))
   /* Which agents this profile serves, and each one's optional base-URL
      override. A new profile starts on the first registered agent, so the form
@@ -305,6 +318,7 @@ function ProfileForm({
           form.usageKind === "none"
             ? null
             : { kind: form.usageKind, baseUrl: form.usageBaseUrl.trim(), apiKey: form.usageApiKey },
+        suppressModelMetadataWarning: form.suppressModelMetadataWarning,
         mcpServerIds: form.mcpServerIds,
         skillIds: form.skillIds,
         commandIds: form.commandIds,
@@ -467,6 +481,18 @@ function ProfileForm({
         onAdd={() => setRows((r) => [...r, blankModelRow()])}
         onImport={importModels}
       />
+      <Field
+        label="Quiet Codex's model-metadata notice"
+        hint="Codex warns when a custom model id has no built-in metadata and falls back to a made-up context window. On, this profile drops that notice before it reaches the transcript: the profile already carries the model's numbers, and the warning only appears when the written catalog did not reach the running codex build."
+      >
+        <label className="flex items-center gap-2 text-sm">
+          <Switch
+            checked={form.suppressModelMetadataWarning}
+            onCheckedChange={(on) => set({ suppressModelMetadataWarning: on })}
+          />
+          <span>Hide "Model metadata … not found. Defaulting to fallback metadata"</span>
+        </label>
+      </Field>
       {/* The same three a project links. A project's say what the workspace
           brings; a profile's say what the provider setup brings, to every
           thread started on it whichever project it is in. The thread adds its

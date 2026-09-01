@@ -16,17 +16,15 @@ import { api, wsUrl, type ServerSettings } from "./settings"
 /**
  * How much of a thread's tail to ask for on a fresh attach, in **steps** (turns).
  *
- * Generous on purpose: the point is not to make every thread lazy, it is to
- * stop a months-old archive from costing its whole history to open at the end.
- * Below this the transcript arrives whole and `earlier` is 0, so nothing about
- * the ordinary thread changes — no button, no paging, no retained raw events.
- *
- * Steps are only half the budget, and the half the *server* keeps: it also cuts
- * on `REPLAY_WINDOW_BYTES`, whichever binds first, because a step is a turn and
- * a turn is not a size. This number can afford to be generous precisely because
- * that one is not.
+ * The window is the *minimum* of two budgets, whichever binds first: this many
+ * turns, or `REPLAY_WINDOW_BYTES` payload bytes — the half the *server* keeps,
+ * because a step is a turn and a turn is not a size (one is a sentence, the
+ * next is a build log). Below the window the transcript arrives whole and
+ * `earlier` is 0, so nothing about short threads changes — no button, no
+ * paging, no retained raw events. Long threads open with only their tail, and
+ * the rest is paged back on demand (`load_earlier`).
  */
-export const REPLAY_WINDOW_STEPS = 60
+export const REPLAY_WINDOW_STEPS = 10
 
 /**
  * How often a connected socket asks the server whether it is still there.

@@ -9,6 +9,7 @@ import { useSidebar } from "@/components/ui/sidebar"
 import { reportError } from "@/lib/errors"
 import { projectPath, settingsPath } from "@/lib/router"
 import { activityAt, isTopLevel } from "@/lib/settings"
+import { usePersonas, useProjects } from "@/lib/queries/catalog"
 import { useStoreSelect } from "@/lib/store"
 import { customThemeValue } from "@/lib/custom-themes"
 import { BUILTIN_THEMES, useCustomThemes, useTheme } from "@/lib/theme"
@@ -132,7 +133,7 @@ export function ModePage() {
  */
 export function PersonaPage() {
   const palette = usePalette()
-  const personas = useStoreSelect((store) => store.personas)
+  const personas = usePersonas()
   const { meta } = useThreadTarget()
   if (!meta || meta.draft) return null
 
@@ -175,7 +176,7 @@ export function PersonaPage() {
     its numbers — not the settings form. */
 export function ProjectsPage() {
   const palette = usePalette()
-  const projects = useStoreSelect((store) => store.projects)
+  const projects = useProjects()
   const navigate = useNavigate()
   const { setOpenMobile } = useSidebar()
 
@@ -208,7 +209,7 @@ export function ProjectsPage() {
     genuinely get wrong. */
 export function StartPage() {
   const palette = usePalette()
-  const projects = useStoreSelect((store) => store.projects)
+  const projects = useProjects()
   const sessions = useStoreSelect((store) => store.sessions)
 
   /* Where a bare "New thread" would have landed — called out below, because it

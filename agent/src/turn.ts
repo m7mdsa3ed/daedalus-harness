@@ -488,9 +488,6 @@ export function systemPrompt(
       ? "You are Daedalus Agent, running as a subagent on a delegated task. Complete the task and end with a concise report of what you did and found — your final message is all the caller sees."
       : "You are Daedalus Agent, an interactive coding agent. You help the user with software engineering tasks using the tools available to you. Be direct and keep working until the task is done; use tools rather than guessing about the state of the system.",
   );
-  parts.push(
-    `Working directory: ${session.cwd}\nPlatform: ${platform()} (${hostname()})\nDate: ${new Date().toDateString()}`,
-  );
   if (session.mode === "plan") {
     parts.push(
       "You are in PLAN MODE: everything that writes is disabled. Explore with the read-only tools, then present a concrete implementation plan and ask the user to approve it before any change is made.",
@@ -530,6 +527,16 @@ export function systemPrompt(
   if (failures.length) {
     parts.push(`These MCP servers failed to start and their tools are unavailable:\n${failures.join("\n")}`);
   }
+  /* Last, and deliberately so. Prompt caching keys on an exact byte-for-byte
+     prefix: a single changed byte near the front of the prompt invalidates
+     the whole cached prefix — system, tools, and every instruction block ahead
+     of it. So the one part of the system prompt that is genuinely fresh every
+     turn (hostname and today's date, plus a cwd that differs from repo to
+     repo) is pinned to the very end, keeping the identity, persona, skills and
+     instructions that precede it byte-identical and therefore cacheable. */
+  parts.push(
+    `WorkDir: ${session.cwd} | Platform: ${platform()} (${hostname()}) | Date: ${new Date().toDateString()}`,
+  );
   return parts.join("\n\n");
 }
 

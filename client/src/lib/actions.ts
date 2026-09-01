@@ -1,5 +1,6 @@
 import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
+import { useQueryClient } from "@tanstack/react-query"
 import { reportError } from "./errors"
 import { uuid } from "./uuid"
 import {
@@ -7,7 +8,6 @@ import {
   loadAgentOptions,
   markAsked,
   optionKey,
-  pruneAgentOptions,
   saveProbedOptions,
   type AgentOptionSet,
 } from "./agent-options"
@@ -22,30 +22,28 @@ import {
   type Persona,
   type Profile,
   type Project,
-  type Routine,
-  type RoutineInput,
-  type RoutinePatch,
-  type RoutineTriggerInput,
-  type RoutineTriggerPatch,
   type ScheduledMessage,
-  type ScheduledPatch,
   type ServerSettings,
   type SessionMeta,
   type SkillDef,
   type CommandDef,
 } from "./settings"
-import * as rest from "./rest-actions"
+import { scheduledKey } from "./queries/keys"
+import { useCatalogReader } from "./queries/catalog"
+import type { ScheduleInput } from "./queries/routines"
 import { fetchQuota, planReadable } from "./quota"
 import { emptyThread, useDispatch, useStoreHandle, type Action } from "./store"
 import { threadRegistry } from "./thread/registry"
 import type { ThreadConnection } from "./thread/connection"
 import { recordThreadError } from "./thread/record-error"
 import {
-  markCatalogRead,
   serverReachable,
   startHealthPoll,
   watchNetwork,
 } from "./thread/network-watch"
+
+const postJson = <T,>(settings: ServerSettings, path: string, body: unknown): Promise<T> =>
+  api<T>(settings, path, { method: "POST", body: JSON.stringify(body) })
 
 /** Side-effectful operations: REST calls + ACP thread lifecycle. */
 export function useActions(settings: ServerSettings) {
@@ -56,6 +54,10 @@ export function useActions(settings: ServerSettings) {
      moved. `getState` reads the same last-committed state the ref used to. */
   const dispatch = useDispatch()
   const { getState } = useStoreHandle()
+  /* The query cache is read (not subscribed) inside callbacks, exactly like
+     getState — a caller wants the last-committed rows, not a re-render. */
+  const queryClient = useQueryClient()
+  const catalog = useCatalogReader()
 
   return React.useMemo(() => {
 
@@ -78,6 +80,7 @@ export function useActions(settings: ServerSettings) {
         settings,
         dispatch,
         getState,
+        projects: () => catalog.projects(),
         refreshSessions: async () => {
           await refreshSessions()
         },
@@ -192,8 +195,10 @@ export function useActions(settings: ServerSettings) {
         and handshakes), adopt its row, then attach. The id travelled from the
         client, so the route the user is already looking at needs no correction. */
     const createSession = async (meta: SessionMeta) => {
-      const project = getState().projects.find((p) => p.id === meta.projectId)
-      const profile = getState().profiles.find((p) => p.id === meta.profileId)
+      /* The catalog is the query cache's now, read the same way `getState`
+         is read here: inside the callback, last-committed, no subscription. */
+      const project = catalog.projects().find((p) => p.id === meta.projectId)
+      const profile = catalog.profiles().find((p) => p.id === meta.profileId)
       if (!project) throw new Error("Choose a project for this thread before sending.")
       if (!profile) throw new Error("Choose a profile for this thread before sending.")
       /* Spawning the agent and handshaking takes a second or two, and this is
@@ -262,45 +267,13 @@ export function useActions(settings: ServerSettings) {
       await threads.for(meta.id).open(created)
     }
 
-    /* Profiles + the agent registry, together — see `refreshProfiles` below for
-       why they are one call. Hoisted rather than left a method on the returned
-       object because the visibility watcher calls it, and there is no `this` in
-       scope here. */
-    const refreshCatalog = async () => {
-      const [profiles, agents, personas] = await Promise.all([
-        api<Profile[]>(settings, "/api/profiles"),
-        api<AgentDef[]>(settings, "/api/agents"),
-        /* Read here too, and for the same reason the registry is: a persona
-           added or edited on another device is otherwise invisible until a
-           reload, and this client is a PWA that stays open for days. */
-        api<Persona[]>(settings, "/api/personas"),
-      ])
-      // A deleted profile's remembered option set is dead weight, and its id
-      // will never be asked for again.
-      pruneAgentOptions(profiles.map((profile) => profile.id))
-      dispatch({ type: "profiles", profiles })
-      dispatch({ type: "agents", agents })
-      dispatch({ type: "personas", personas })
-    }
-
     /* Point the window-level watchers — `online`, `visibilitychange`, the
        shared health probe and the park poll — at this connection's registry.
        They outlive React and there is one of each per page, so the module
        installs them once and this only re-aims them; the last connection bound
        is the live one, which is the rule the module-level bound callbacks
-       followed before.
-
-       The catalog refresh is ambient: nobody asked a question by looking at the
-       tab, so a failure costs the refresh and nothing else. */
-    watchNetwork({
-      settings,
-      registry: threads,
-      refreshCatalog: () => {
-        void refreshCatalog().catch((error) => {
-          console.warn("Couldn't re-read profiles and agents", error)
-        })
-      },
-    })
+       followed before. */
+    watchNetwork({ settings, registry: threads })
 
     const refreshSessions = async () => {
       const sessions = await api<SessionMeta[]>(settings, "/api/sessions?deleted=1")
@@ -351,46 +324,16 @@ export function useActions(settings: ServerSettings) {
     return {
       refreshSessions,
 
+      /**
+       * The sessions list, and only that: every catalog the boot used to read
+       * alongside it is the query cache's now, fetched by the components that
+       * draw it. Kept as an action because the session list is the reducer's
+       * and because `Connected` needs one promise to gate the shell on.
+       */
       async bootstrap() {
-        const [
-          profiles,
-          projects,
-          mcpServers,
-          skills,
-          commands,
-          personas,
-          agents,
-          sessions,
-          scheduled,
-          routines,
-        ] = await Promise.all([
-            api<Profile[]>(settings, "/api/profiles"),
-            api<Project[]>(settings, "/api/projects"),
-            api<McpServerDef[]>(settings, "/api/mcp-servers"),
-            api<SkillDef[]>(settings, "/api/skills"),
-            api<CommandDef[]>(settings, "/api/commands"),
-            api<Persona[]>(settings, "/api/personas"),
-            api<AgentDef[]>(settings, "/api/agents"),
-            api<SessionMeta[]>(settings, "/api/sessions?deleted=1"),
-            api<ScheduledMessage[]>(settings, "/api/scheduled"),
-            api<Routine[]>(settings, "/api/routines"),
-          ])
-        // Boot is a catalog read; the visibility throttle starts from here.
-        markCatalogRead()
-        dispatch({
-          type: "bootstrap",
-          profiles,
-          projects,
-          mcpServers,
-          skills,
-          commands,
-          personas,
-          agents,
-          sessions,
-          scheduled,
-          routines,
-        })
-        return { profiles, projects, agents, sessions }
+        const sessions = await api<SessionMeta[]>(settings, "/api/sessions?deleted=1")
+        dispatch({ type: "bootstrap", sessions })
+        return { sessions }
       },
 
       /**
@@ -415,9 +358,8 @@ export function useActions(settings: ServerSettings) {
       async loadQuota(meta: SessionMeta) {
         /* Nothing to read means nothing to ask: asking anyway would spawn the
            agent's CLI probe for a card the composer will not draw. */
-        const state = getState()
-        const profile = state.profiles.find((p) => p.id === meta.profileId)
-        const agent = state.agents.find((a) => a.id === meta.agentId)
+        const profile = catalog.profiles().find((p) => p.id === meta.profileId)
+        const agent = catalog.agents().find((a) => a.id === meta.agentId)
         if (!planReadable(profile, agent)) return
         try {
           const quota = await fetchQuota(settings, meta.agentId, { profileId: meta.profileId })
@@ -428,35 +370,14 @@ export function useActions(settings: ServerSettings) {
       },
 
       /**
-       * Re-read the profile list — and the agent registry with it.
-       *
-       * The two cannot be refreshed apart: every agent has a virtual "Default"
-       * profile synthesized server-side (`defaultProfileFor`), so a registry
-       * this client last read at boot means an agent added since — a seeded
-       * one after a server upgrade, one added through the API — has a profile
-       * in the list that no `state.agents` entry answers for. Both halves are
-       * small and both are cheap.
-       */
-      refreshProfiles: refreshCatalog,
-
-      /* Everything from here to the trigger tokens is pure REST — no socket,
-         no closure state — and lives in `lib/rest-actions.ts` now, where it is
-         unit-testable. Delegated here rather than removed so call sites keep
-         reading `actions.<name>(…)`. */
-      refreshProjects: () => rest.refreshProjects(settings, dispatch),
-      refreshMcpServers: () => rest.refreshMcpServers(settings, dispatch),
-      refreshSkills: () => rest.refreshSkills(settings, dispatch),
-      refreshCommands: () => rest.refreshCommands(settings, dispatch),
-      refreshPersonas: () => rest.refreshPersonas(settings, dispatch),
-
-      refreshScheduled: () => rest.refreshScheduled(settings, dispatch),
-
-      /**
        * For a draft thread, the draft is materialized first (the server only
        * schedules threads it knows), mirroring `send` — which is why this one
-       * is more than a delegation.
+       * still lives here when every other schedule write moved to the query
+       * hooks (lib/queries/routines.ts): it needs the reducer's draft, and
+       * the reducer is the one slice that did not move. The invalidation is
+       * the refresh.
        */
-      async createSchedule(input: rest.ScheduleInput) {
+      async createSchedule(input: ScheduleInput) {
         // A draft has no server row to schedule against — bring it into being
         // the way sending its first message would, then schedule the real one.
         const draft = getState().sessions.find(
@@ -465,47 +386,9 @@ export function useActions(settings: ServerSettings) {
         if (draft) {
           await createSession(draft)
         }
-        await rest.createSchedule(settings, dispatch, input)
+        await postJson(settings, "/api/scheduled", input)
+        await queryClient.invalidateQueries({ queryKey: scheduledKey(settings) })
       },
-
-      updateSchedule: (id: string, patch: ScheduledPatch) =>
-        rest.updateSchedule(settings, dispatch, id, patch),
-
-      cancelSchedule: (id: string) => rest.cancelSchedule(settings, dispatch, id),
-
-      // ---- routines ----
-
-      refreshRoutines: () => rest.refreshRoutines(settings, dispatch),
-
-      refreshRoutineRuns: (routineId: string, limit?: number) =>
-        rest.refreshRoutineRuns(settings, dispatch, routineId, limit),
-
-      createRoutine: (input: RoutineInput) => rest.createRoutine(settings, dispatch, input),
-
-      updateRoutine: (id: string, patch: RoutinePatch) =>
-        rest.updateRoutine(settings, dispatch, id, patch),
-
-      deleteRoutine: (id: string) => rest.deleteRoutine(settings, dispatch, id),
-
-      runRoutine: (id: string, opts: { text?: string; dryRun?: boolean } = {}) =>
-        rest.runRoutine(settings, dispatch, id, opts),
-
-      cancelRoutineRun: (routineId: string, runId: string) =>
-        rest.cancelRoutineRun(settings, dispatch, routineId, runId),
-
-      listRoutineTriggers: (routineId: string) => rest.listRoutineTriggers(settings, routineId),
-
-      createRoutineTrigger: (routineId: string, input: RoutineTriggerInput) =>
-        rest.createRoutineTrigger(settings, routineId, input),
-
-      updateRoutineTrigger: (id: string, patch: RoutineTriggerPatch) =>
-        rest.updateRoutineTrigger(settings, id, patch),
-
-      deleteRoutineTrigger: (id: string) => rest.deleteRoutineTrigger(settings, id),
-
-      mintRoutineTriggerToken: (id: string) => rest.mintRoutineTriggerToken(settings, id),
-
-      revokeRoutineTriggerToken: (id: string) => rest.revokeRoutineTriggerToken(settings, id),
 
       /**
        * Open a new thread without creating one. The id is minted here so the

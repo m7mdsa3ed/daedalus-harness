@@ -2,6 +2,7 @@ import * as React from "react"
 import { Navigate, useNavigate, useParams } from "react-router"
 import { Input } from "@/components/ui/input"
 import { type ServerSettings, type SkillDef } from "@/lib/settings"
+import { useInvalidateCatalog, useSkills } from "@/lib/queries/catalog"
 import { useStoreSelect } from "@/lib/store"
 import { FormPageHeader, PageForm, Field, FormActions } from "./primitives"
 import { sectionMeta } from "./sections"
@@ -11,9 +12,10 @@ import { captureError, type InlineError } from "@/lib/errors"
 import { settingsPath } from "@/lib/router"
 
 export function SkillsPage() {
-  const { settings, actions } = useSettingsPage()
+  const { settings } = useSettingsPage()
+  const invalidate = useInvalidateCatalog()
   const meta = sectionMeta("skills")
-  const skills = useStoreSelect((store) => store.skills)
+  const skills = useSkills()
   return (
     <LibrarySection
       meta={meta}
@@ -22,25 +24,26 @@ export function SkillsPage() {
       noun="skill"
       subtitle={(s) => s.path}
       settings={settings}
-      refresh={actions.refreshSkills}
+      refresh={() => invalidate("skills")}
     />
   )
 }
 
 export function SkillImportPage() {
-  const { actions } = useSettingsPage()
-  return <LibraryImportPage meta={sectionMeta("skills")} kind="skills" endpoint="/api/skills" noun="skill" refresh={actions.refreshSkills} />
+  const invalidate = useInvalidateCatalog()
+  return <LibraryImportPage meta={sectionMeta("skills")} kind="skills" endpoint="/api/skills" noun="skill" refresh={() => invalidate("skills")} />
 }
 
 export function SkillFormPage() {
   const { entryId } = useParams()
   const navigate = useNavigate()
-  const { settings, actions } = useSettingsPage()
-  const skills = useStoreSelect((store) => store.skills)
+  const { settings } = useSettingsPage()
+  const invalidate = useInvalidateCatalog()
+  const skills = useSkills()
   const skill = entryId === "new" ? null : skills.find((item) => item.id === entryId)
   if (entryId !== "new" && !skill) return <Navigate to={settingsPath("skills")} replace />
   return <SkillForm skill={skill ?? null} settings={settings} onDone={async (saved) => {
-    if (saved) await actions.refreshSkills()
+    if (saved) await invalidate("skills")
     void navigate(settingsPath("skills"))
   }} />
 }

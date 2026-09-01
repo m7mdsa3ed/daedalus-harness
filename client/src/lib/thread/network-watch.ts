@@ -16,9 +16,6 @@ const HEALTH_POLL_MS = 20_000
     thread the dock has open, and each of them would otherwise ask separately,
     in the same tick, on every rung of its own ladder. */
 const HEALTH_PROBE_TTL_MS = 1_000
-/** Returning to the tab is not a question anybody asked, so it must not become
-    two catalog requests per glance. */
-const CATALOG_REFRESH_MIN_MS = 60_000
 
 /**
  * The window-level half of staying connected: the `online` and
@@ -33,11 +30,9 @@ let listenersInstalled = false
 let current: {
   settings: ServerSettings
   registry: ThreadRegistry
-  refreshCatalog: () => void
 } | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let probeCache: { at: number; promise: Promise<boolean> } | null = null
-let catalogRefreshedAt = 0
 
 /** Whether anything is listening on the other end. Unauthenticated on purpose:
     `/api/health` exempts itself from the token check, so this answers on a
@@ -86,17 +81,6 @@ function retryWaiting(): void {
   for (const conn of current?.registry.recovering() ?? []) conn.retryNow(serverReachable)
 }
 
-function refreshCatalogIfStale(): void {
-  if (Date.now() - catalogRefreshedAt < CATALOG_REFRESH_MIN_MS) return
-  catalogRefreshedAt = Date.now()
-  current?.refreshCatalog()
-}
-
-/** Boot is a catalog read; the visibility throttle starts from there. */
-export function markCatalogRead(): void {
-  catalogRefreshedAt = Date.now()
-}
-
 /**
  * Point the watchers at this connection's registry.
  *
@@ -108,20 +92,19 @@ export function markCatalogRead(): void {
 export function watchNetwork(next: {
   settings: ServerSettings
   registry: ThreadRegistry
-  refreshCatalog: () => void
 }): void {
   current = next
   if (listenersInstalled || typeof window === "undefined") return
   listenersInstalled = true
   window.addEventListener("online", () => retryWaiting())
+  /* The catalog half of coming back is not here any more: every catalog read
+     is a query with a staleTime and `refetchOnWindowFocus`, so a profile added
+     on the laptop — or an agent the server started offering after an upgrade —
+     arrives on the phone the moment its tab is looked at, per slice and only
+     for the slices something is drawing. This is left with the half that is
+     genuinely the network's: the parked threads. */
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "visible") return
     retryWaiting()
-    /* The catalog half of coming back: this client is a PWA that stays open for
-       days, and profiles and agents are read once at boot and on a mutation
-       *this device* made — so a profile added on the laptop, or an agent the
-       server started offering after an upgrade, was invisible on the phone
-       until it was reloaded. */
-    refreshCatalogIfStale()
   })
 }

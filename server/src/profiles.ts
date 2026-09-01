@@ -62,6 +62,11 @@ export const ProfileInputSchema = z.object({
       apiKey: z.string().optional(),
     })
     .nullish(),
+  /** Drop Codex's "Model metadata for `…` not found. Defaulting to fallback
+      metadata" notice for threads spawned on this profile. The profile already
+      carries the model's numbers, so the nag is noise the user has chosen to
+      not see (see acp-bridge.ts — the bridge is where it is dropped). */
+  suppressModelMetadataWarning: z.boolean().default(false),
   /** Logo shown next to the profile in pickers — a URL (models.dev serves
       provider marks at https://models.dev/logos/<provider>.svg). Empty means
       "no logo of its own", and the client falls back to the agent's mark. */
@@ -75,10 +80,14 @@ export const ProfileInputSchema = z.object({
 });
 
 export type ProfileInput = z.infer<typeof ProfileInputSchema>;
-export type Profile = Omit<ProfileInput, "smallModel"> & {
+export type Profile = Omit<ProfileInput, "smallModel" | "suppressModelMetadataWarning"> & {
   /** Null on rows predating the column; `resolveSpawn` reads it as empty, which
       falls back to the session model. */
   smallModel: string | null;
+  /** Optional on purpose, like `smallModel`: hand-built profile literals
+      (tests, the virtual Default's twin) predate it, and every reader treats
+      absence as false. Stored rows always carry it once `pnpm db:push` has run. */
+  suppressModelMetadataWarning?: boolean;
   id: string;
   /** Not stored: synthesized for an agent so it can always be run as it ships.
       See `defaultProfileFor`. Nothing may edit or delete one. */
@@ -118,6 +127,7 @@ export function defaultProfileFor(agentId: string, _agentName?: string): Profile
     // credentials, so there is no provider account to ask about. The agent's
     // own probe is exactly the right reader here.
     usage: null,
+    suppressModelMetadataWarning: false,
     ...emptyLinks(),
     virtual: true,
   };
@@ -169,6 +179,7 @@ function toProfile(row: Record<string, unknown>, links = linksOf(PROFILE_LINKS, 
     smallModel: (row.smallModel as string | null | undefined) ?? "",
     logoUrl: (row.logoUrl as string | null | undefined) ?? "",
     usage: (row.usage as ProfileUsage | null | undefined) ?? null,
+    suppressModelMetadataWarning: row.suppressModelMetadataWarning === true,
   };
 }
 

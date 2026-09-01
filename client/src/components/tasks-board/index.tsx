@@ -21,16 +21,7 @@ import { reportError } from "@/lib/errors"
 import type { ServerSettings } from "@/lib/settings"
 import {
   COLOR_DOT,
-  createBoard,
-  createStatus,
-  deleteBoard,
-  deleteStatus,
-  loadBoards,
-  reorderStatuses,
   statusesOf,
-  updateBoard,
-  updateStatus,
-  useBoards,
   type Board as BoardRow,
   type BoardColor,
   type BoardStatus,
@@ -38,18 +29,27 @@ import {
 import {
   PRIORITY_LABEL,
   TASK_PRIORITIES,
-  createTask,
-  deleteTask,
-  loadTasks,
-  reorderTasks,
-  updateTask,
-  useTasks,
   type ReorderEntry,
   type Task,
   type TaskInput,
   type TaskPriority,
   type TaskStatus,
 } from "@/lib/tasks-board"
+import {
+  useBoards,
+  useCreateBoard,
+  useCreateStatus,
+  useCreateTask,
+  useDeleteBoard,
+  useDeleteStatus,
+  useDeleteTask,
+  useReorderStatuses,
+  useReorderTasks,
+  useTasksQuery,
+  useUpdateBoard,
+  useUpdateStatus,
+  useUpdateTask,
+} from "@/lib/queries/boards"
 import { Board } from "./task-board"
 import { TaskFormDialog } from "./task-form"
 import { DeleteBoardDialog, DeleteStatusDialog, NameDialog } from "./board-dialogs"
@@ -102,9 +102,24 @@ function weaveHidden(fullOrder: Task[], visibleNewOrder: string[], moved: Set<st
   return out
 }
 
-export function TasksBoard({ settings }: { settings: ServerSettings }) {
-  const tasks = useTasks()
+export function TasksBoard({ settings: _settings }: { settings: ServerSettings }) {
+  /* Reads come from the cache (refreshed on focus, invalidated by the
+     mutations below); every write applies the server's answer back into it,
+     so there is no `loadTasks(settings, true)` to remember after each one. */
+  const tasksQuery = useTasksQuery()
+  const tasks = tasksQuery.data ?? []
   const { boards, statuses: allStatuses, loaded } = useBoards()
+  const createTaskMut = useCreateTask()
+  const updateTaskMut = useUpdateTask()
+  const deleteTaskMut = useDeleteTask()
+  const reorderTasksMut = useReorderTasks()
+  const createBoardMut = useCreateBoard()
+  const updateBoardMut = useUpdateBoard()
+  const deleteBoardMut = useDeleteBoard()
+  const createStatusMut = useCreateStatus()
+  const updateStatusMut = useUpdateStatus()
+  const deleteStatusMut = useDeleteStatus()
+  const reorderStatusesMut = useReorderStatuses()
   const [dialog, setDialog] = React.useState<DialogState>({ open: false, task: null })
   const [creatingStatus, setCreatingStatus] = React.useState<TaskStatus>("")
   const [query, setQuery] = React.useState("")
@@ -116,11 +131,6 @@ export function TasksBoard({ settings }: { settings: ServerSettings }) {
   const [boardId, setBoardId] = React.useState<string>(
     () => localStorage.getItem(BOARD_STORAGE_KEY) ?? "",
   )
-
-  React.useEffect(() => {
-    loadBoards(settings).catch((err) => reportError(err, "Couldn't load the boards"))
-    loadTasks(settings).catch((err) => reportError(err, "Couldn't load the tasks board"))
-  }, [settings])
 
   /* Settle on a board once the list arrives: the remembered one if it still
      exists, else the first. Deleting the selected board therefore falls back
@@ -172,9 +182,11 @@ export function TasksBoard({ settings }: { settings: ServerSettings }) {
 
   const handleSave = async (input: TaskInput): Promise<void> => {
     if (dialog.task) {
-      await updateTask(settings, dialog.task.id, input)
+      await updateTaskMut.mutateAsync({ id: dialog.task.id, input })
     } else {
-      await createTask(settings, { ...input, boardId, statusId: input.statusId || creatingStatus })
+      await createTaskMut.mutateAsync({
+        input: { ...input, boardId, statusId: input.statusId || creatingStatus },
+      })
     }
   }
 
@@ -197,12 +209,12 @@ export function TasksBoard({ settings }: { settings: ServerSettings }) {
           : inColumn.filter((task) => !movedIds.has(task.id)).map((task) => task.id)
         ids.forEach((id, order) => entries.push({ id, statusId: status.id, order, boardId }))
       }
-      await reorderTasks(settings, entries, boardId)
+      await reorderTasksMut.mutateAsync({ entries, board: boardId })
     } catch (err) {
       reportError(err, "Couldn't move the task")
       // The board rendered the move optimistically; re-read so it stops showing
       // a position the server never accepted.
-      loadTasks(settings, true).catch(() => {})
+      tasksQuery.refetch()
     }
   }
 
@@ -212,17 +224,17 @@ export function TasksBoard({ settings }: { settings: ServerSettings }) {
     if (!naming) return
     switch (naming.kind) {
       case "new-board": {
-        const created = await createBoard(settings, { name, color })
+        const created = await createBoardMut.mutateAsync({ name, color })
         setBoardId(created.id)
         return
       }
       case "rename-board":
-        return updateBoard(settings, naming.board.id, { name, color })
+        return updateBoardMut.mutateAsync({ id: naming.board.id, input: { name, color } })
       case "new-column":
         if (!board) return
-        return void (await createStatus(settings, board.id, { name, color }))
+        return void (await createStatusMut.mutateAsync({ boardId: board.id, input: { name, color } }))
       case "rename-column":
-        return updateStatus(settings, naming.status.id, { name, color })
+        return updateStatusMut.mutateAsync({ id: naming.status.id, input: { name, color } })
     }
   }
 
@@ -234,7 +246,7 @@ export function TasksBoard({ settings }: { settings: ServerSettings }) {
     if (from === -1 || to < 0 || to >= ids.length) return
     ids.splice(to, 0, ...ids.splice(from, 1))
     try {
-      await reorderStatuses(settings, board.id, ids)
+      await reorderStatusesMut.mutateAsync({ boardId: board.id, ids })
     } catch (err) {
       reportError(err, "Couldn't move the column")
     }
@@ -242,16 +254,14 @@ export function TasksBoard({ settings }: { settings: ServerSettings }) {
 
   const confirmDeleteStatus = async (moveTo: string | undefined) => {
     if (!deletingStatus) return
-    await deleteStatus(settings, deletingStatus.id, moveTo)
-    // Its tasks were rehomed by the server; the list on screen still has them
-    // in a column that no longer exists.
-    await loadTasks(settings, true)
+    await deleteStatusMut.mutateAsync({ id: deletingStatus.id, moveTo })
+    // Its tasks were rehomed by the server; the invalidation that followed the
+    // write re-reads them, so nothing on screen keeps a column that is gone.
   }
 
   const confirmDeleteBoard = async () => {
     if (!board) return
-    await deleteBoard(settings, board.id)
-    await loadTasks(settings, true)
+    await deleteBoardMut.mutateAsync(board.id)
   }
 
   const namingProps = namingDialogProps(naming)
@@ -384,7 +394,7 @@ export function TasksBoard({ settings }: { settings: ServerSettings }) {
         onDelete={
           dialog.task
             ? async () => {
-                await deleteTask(settings, dialog.task!.id)
+                await deleteTaskMut.mutateAsync(dialog.task!.id)
                 setDialog({ open: false, task: null })
               }
             : undefined

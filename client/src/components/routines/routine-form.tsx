@@ -51,7 +51,8 @@ import {
   type ServerSettings,
   type SessionMeta,
 } from "@/lib/settings"
-import { useStoreSelect } from "@/lib/store"
+import { useProjects } from "@/lib/queries/catalog"
+import { useRoutines } from "@/lib/queries/routines"
 import { AutonomyControl } from "./autonomy-control"
 import { OnFinishEditor } from "./on-finish"
 
@@ -218,7 +219,6 @@ export function RoutineForm({
   draft,
   onChange,
   actions,
-  settings,
   /** The routine being edited, for the two things a draft cannot know: whether
       a run has completed (the blanket-grant gate) and which routines exist to
       chain to. Absent while creating. */
@@ -232,7 +232,6 @@ export function RoutineForm({
   draft: RoutineDraft
   onChange: (next: RoutineDraft) => void
   actions: Actions
-  settings: ServerSettings
   routine?: Routine
   onSubmit: (event: React.FormEvent) => void
   onCancel: () => void
@@ -240,8 +239,8 @@ export function RoutineForm({
   error: InlineError | null
   submitLabel: string
 }) {
-  const projects = useStoreSelect((store) => store.projects)
-  const routines = useStoreSelect((store) => store.routines)
+  const projects = useProjects()
+  const routines = useRoutines().data ?? []
   const patch = React.useCallback(
     (next: Partial<RoutineDraft>) => onChange({ ...draft, ...next }),
     [draft, onChange]
@@ -433,7 +432,6 @@ export function RoutineForm({
         <OnFinishEditor
           value={draft.onFinish}
           onChange={(onFinish) => patch({ onFinish })}
-          settings={settings}
           routines={routines.filter((r) => r.id !== routine?.id)}
         />
       </FormSection>

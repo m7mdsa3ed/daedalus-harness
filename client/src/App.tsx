@@ -1,4 +1,5 @@
 import * as React from "react"
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client"
 import { AppShell } from "@/components/app-shell"
 import { AppToaster } from "@/components/app-toaster"
 import { ConfirmProvider } from "@/components/confirm-dialog"
@@ -8,6 +9,11 @@ import { useActions } from "@/lib/actions"
 import { refreshNotificationOffer } from "@/lib/notifications"
 import { setupPush } from "@/lib/push"
 import { loadSettings, type ServerSettings } from "@/lib/settings"
+import { pruneAgentOptions } from "@/lib/agent-options"
+import { makeQueryClient } from "@/lib/queries/client"
+import { persistOptionsFor } from "@/lib/queries/persist"
+import { useProfiles } from "@/lib/queries/catalog"
+import { ServerProvider } from "@/lib/server-context"
 import { StoreProvider } from "@/lib/store"
 import { ThemeProvider } from "@/lib/theme"
 import { reportError } from "@/lib/errors"
@@ -59,6 +65,40 @@ function Connected({
   settings: ServerSettings
   onAddServer: () => void
 }) {
+  // One cache per connection: `Connected` is keyed by settings.id, so a new
+  // server starts cold here, and keys.ts scopes every entry by server anyway.
+  const [queryClient] = React.useState(() => makeQueryClient())
+  const [persistOptions] = React.useState(() => persistOptionsFor(settings))
+
+  /* The provider has to sit ABOVE anything that reads the cache, and
+     `useActions` does (it holds a `useQueryClient` for the callback-time reads
+     described in lib/actions) — so the shell below it is a component of its
+     own rather than the rest of this one's body.
+
+     The *persisting* provider: the cache is written to localStorage and read
+     back on the next load, so a reload paints the app it had instead of a
+     screen of skeletons while the same requests run again (lib/queries/persist
+     for what is kept and for how long). Children render straight away; what
+     the restore holds is the *fetching* — every query stays parked until the
+     dump has been read, so a request is never fired for something the cache
+     was about to answer. The read itself is synchronous localStorage, resolved
+     in this provider's own mount effect, so the parked window is a tick. */
+  return (
+    <ServerProvider settings={settings}>
+      <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
+        <ConnectedShell settings={settings} onAddServer={onAddServer} />
+      </PersistQueryClientProvider>
+    </ServerProvider>
+  )
+}
+
+function ConnectedShell({
+  settings,
+  onAddServer,
+}: {
+  settings: ServerSettings
+  onAddServer: () => void
+}) {
   const actions = useActions(settings)
   const booted = React.useRef(false)
   const [loaded, setLoaded] = React.useState(false)
@@ -80,8 +120,23 @@ function Connected({
   }, [actions, settings])
 
   return (
-    <AppShell loading={!loaded} settings={settings} actions={actions} onAddServer={onAddServer} />
+    <>
+      <PruneAgentOptions />
+      <AppShell loading={!loaded} settings={settings} actions={actions} onAddServer={onAddServer} />
+    </>
   )
+}
+
+/** A deleted profile's remembered option set is dead weight, and its id will
+    never be asked for again. It hangs off the profile list rather than off a
+    refresh call, because the list is a query now and its refetches are the
+    cache's own (stale, focus) — there is no single place a re-read happens. */
+function PruneAgentOptions() {
+  const profiles = useProfiles()
+  React.useEffect(() => {
+    if (profiles.length > 0) pruneAgentOptions(profiles.map((profile) => profile.id))
+  }, [profiles])
+  return null
 }
 
 export default App

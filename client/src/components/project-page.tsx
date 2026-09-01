@@ -46,20 +46,19 @@ import { useConfirm } from "@/components/confirm-dialog"
 import { ImportThreadsDialog } from "@/components/import-threads"
 import { useStartThreadIn } from "@/components/thread-sidebar"
 import type { Actions } from "@/lib/actions"
-import { describeError, reportError } from "@/lib/errors"
+import { reportError } from "@/lib/errors"
 import { toast } from "@/lib/toast"
 import { settingsFormPath, settingsPath, schedulesPath, threadPath } from "@/lib/router"
 import { scheduleWhen } from "@/lib/schedule"
 import { activityAt, isTopLevel, type Project, type ScheduledMessage, type SessionMeta } from "@/lib/settings"
+import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
 import { useStoreSelect, type ThreadState } from "@/lib/store"
 import { IDLE_PHASE, markFor, type ThreadActivity } from "@/lib/thread/phase"
 import { shortAge } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import {
-  activityDays,
-  fetchProjectStats,
-  type ProjectStats,
-} from "@/lib/workspace/project-stats"
+import { activityDays, type ProjectStats } from "@/lib/workspace/project-stats"
+import { useProjectStats } from "@/lib/queries/surfaces"
+import { useScheduled } from "@/lib/queries/routines"
 
 /** Matches the server's `ACTIVITY_DAYS`. The strip is drawn as a fixed run of
     days whatever came back, so a shorter answer simply leaves empty bars. */
@@ -71,7 +70,7 @@ const THREAD_PAGE = 12
 
 export function ProjectPage({ actions }: { actions: Actions }) {
   const { projectId = "" } = useParams()
-  const project = useStoreSelect((store) => store.projects.find((entry) => entry.id === projectId))
+  const project = useProjects().find((entry) => entry.id === projectId)
   /* A project id that is not in the store is a deleted project or a stale
      bookmark. There is nothing to show and nothing to fetch — the list is the
      honest destination. */
@@ -85,7 +84,7 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
      (the running/waiting dots), so it is subscribed to — but on its own, so a
      `scheduled` or `sessions` refresh no longer drags the rest in with it. */
   const sessions = useStoreSelect((store) => store.sessions)
-  const allScheduled = useStoreSelect((store) => store.scheduled)
+  const allScheduled = useScheduled().data ?? []
   const liveThreads = useStoreSelect((store) => store.threads)
   const navigate = useNavigate()
   const startIn = useStartThreadIn(actions)
@@ -220,39 +219,6 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
       </div>
     </div>
   )
-}
-
-/* ── Data ── */
-
-function useProjectStats(projectId: string) {
-  const [stats, setStats] = React.useState<ProjectStats | null>(null)
-  const [error, setError] = React.useState<string | null>(null)
-  const [loading, setLoading] = React.useState(true)
-  /* Bumped by Refresh. A counter rather than a callback that fetches, so the
-     one effect owns the abort and a click landing mid-flight cancels the
-     request it is replacing instead of racing it. */
-  const [nonce, setNonce] = React.useState(0)
-
-  React.useEffect(() => {
-    const controller = new AbortController()
-    setLoading(true)
-    fetchProjectStats(projectId, controller.signal)
-      .then((next) => {
-        setStats(next)
-        setError(null)
-      })
-      .catch((err: unknown) => {
-        if (controller.signal.aborted) return
-        const { title, detail } = describeError(err)
-        setError(detail ? `${title} — ${detail}` : title)
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false)
-      })
-    return () => controller.abort()
-  }, [projectId, nonce])
-
-  return { stats, error, loading, refresh: () => setNonce((n) => n + 1) }
 }
 
 /** The same reading the sidebar and the dock tabs take — literally the same
@@ -731,8 +697,8 @@ function StatusDot({ status }: { status: ThreadActivity }) {
 /** What this project is actually worked on with — threads per agent and per
     profile. Ids come down from the server; the names are in the store. */
 function RuntimesCard({ stats }: { stats: ProjectStats | null }) {
-  const agents = useStoreSelect((store) => store.agents)
-  const profiles = useStoreSelect((store) => store.profiles)
+  const agents = useAgents()
+  const profiles = useProfiles()
   if (!stats) return <CardShell title="Worked on with"><CardSkeleton rows={2} /></CardShell>
   if (stats.byAgent.length === 0 && stats.byProfile.length === 0) return null
 

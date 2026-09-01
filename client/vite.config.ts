@@ -4,6 +4,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
 import path from "path";
 import { BOOT_COLORS } from "./src/lib/boot-colors";
+import pkg from "./package.json" with { type: "json" };
 
 // `pnpm dev:tunnel` sets this. Behind a Cloudflare quick tunnel the page is
 // https on port 443, but Vite's HMR client derives its socket from the dev
@@ -38,7 +39,16 @@ const GRAMMAR_PACKAGES =
 const isGrammarChunk = (moduleIds: readonly string[]): boolean =>
   moduleIds.length > 0 && moduleIds.every((id) => GRAMMAR_PACKAGES.test(id));
 
+/* The persisted query cache's buster (see src/lib/queries/persist.ts): a
+   dumped cache is only safe to rehydrate into the build that wrote it, since
+   what a query's data *is* can change with a release. One value per build, so
+   a deploy drops every device's dump exactly once. */
+const buildId = `${pkg.version}-${Date.now().toString(36)}`;
+
 export default defineConfig({
+  define: {
+    __QUERY_CACHE_BUSTER__: JSON.stringify(buildId),
+  },
   build: {
     rollupOptions: {
       output: {

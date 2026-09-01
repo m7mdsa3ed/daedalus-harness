@@ -2,9 +2,10 @@
 
    The agent reaches the same table through the `knowledge` MCP server; this is
    the REST half so the user can see and edit entries in Settings › Projects.
-   Mirrors git-api.ts: each function wraps `api()` with the active connection,
-   so the panel never has to know where the server is. */
-import { api, loadSettings, ApiError, type ServerSettings } from "@/lib/settings"
+   Each function takes the connection to talk to — the query hooks in
+   lib/queries supply it from the active server — so nothing here reaches for
+   a module-level active connection. */
+import { api, type ServerSettings } from "@/lib/settings"
 
 export interface KnowledgeEntry {
   id: string
@@ -15,12 +16,6 @@ export interface KnowledgeEntry {
   updatedAt: number
 }
 
-function server(): ServerSettings {
-  const settings = loadSettings()
-  if (!settings) throw new ApiError({ status: 0, path: "/api", serverMessage: "not connected" })
-  return settings
-}
-
 const base = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}/knowledge`
 
 /** An entry as the cross-project list reports it: with its project named. */
@@ -28,21 +23,38 @@ export type KnowledgeEntryAcross = KnowledgeEntry & { projectId: string; project
 
 /** Every entry across every project, newest-updated first — Settings ›
     Knowledge base reads the whole store, not one workspace's slice. */
-export function listAllKnowledge(signal?: AbortSignal): Promise<KnowledgeEntryAcross[]> {
-  return api<KnowledgeEntryAcross[]>(server(), "/api/knowledge", { signal })
+export function listAllKnowledge(
+  settings: ServerSettings,
+  signal?: AbortSignal
+): Promise<KnowledgeEntryAcross[]> {
+  return api<KnowledgeEntryAcross[]>(settings, "/api/knowledge", { signal })
 }
 
-export function listKnowledge(projectId: string, signal?: AbortSignal): Promise<KnowledgeEntry[]> {
-  return api<KnowledgeEntry[]>(server(), base(projectId), { signal })
+export function listKnowledge(
+  settings: ServerSettings,
+  projectId: string,
+  signal?: AbortSignal
+): Promise<KnowledgeEntry[]> {
+  return api<KnowledgeEntry[]>(settings, base(projectId), { signal })
 }
 
 export function addKnowledge(
+  settings: ServerSettings,
   projectId: string,
   body: { title: string; content: string; tags?: string[] },
 ): Promise<KnowledgeEntry> {
-  return api<KnowledgeEntry>(server(), base(projectId), { method: "POST", body: JSON.stringify(body) })
+  return api<KnowledgeEntry>(settings, base(projectId), {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
 }
 
-export function deleteKnowledge(projectId: string, id: string): Promise<{ ok: boolean }> {
-  return api<{ ok: boolean }>(server(), `${base(projectId)}/${encodeURIComponent(id)}`, { method: "DELETE" })
+export function deleteKnowledge(
+  settings: ServerSettings,
+  projectId: string,
+  id: string
+): Promise<{ ok: boolean }> {
+  return api<{ ok: boolean }>(settings, `${base(projectId)}/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  })
 }

@@ -37,7 +37,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import type { Actions } from "@/lib/actions"
 import { ErrorNote } from "@/components/error-note"
 import { captureError, type InlineError } from "@/lib/errors"
 import {
@@ -50,7 +49,8 @@ import {
 } from "@/lib/import-sessions"
 import { threadPath } from "@/lib/router"
 import { profileSupports, type Project } from "@/lib/settings"
-import { useStoreSelect } from "@/lib/store"
+import type { Actions } from "@/lib/actions"
+import { useAgents, useInvalidateCatalog, useProfiles, useProjects } from "@/lib/queries/catalog"
 import { defaultToolPicks, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import { shortAge } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -74,11 +74,12 @@ export function ImportThreadsDialog({
   actions: Actions
   projectId?: string
 }) {
+  const invalidate = useInvalidateCatalog()
   /* Three catalogs, each on its own subscription. Named `all*` because the
      dialog narrows both down to the pairs that can actually be scanned. */
-  const allProfiles = useStoreSelect((store) => store.profiles)
-  const projects = useStoreSelect((store) => store.projects)
-  const allAgents = useStoreSelect((store) => store.agents)
+  const allProfiles = useProfiles()
+  const projects = useProjects()
+  const allAgents = useAgents()
   const navigate = useNavigate()
 
   const [agentId, setAgentId] = React.useState("")
@@ -223,7 +224,7 @@ export function ImportThreadsDialog({
     setScanError(null)
     try {
       await createProjectAt(cwd, baseName(cwd))
-      await actions.refreshProjects()
+      await invalidate("projects")
     } catch (err) {
       // Shares the list's slot: it is the list's own button that failed, and
       // the rows it would have unlocked are what the user is looking at.

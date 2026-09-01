@@ -21,6 +21,20 @@ writeJson(join(process.env.DAEDALUS_DATA_DIR!, "agents.json"), [
     args: [join(dirname(fileURLToPath(import.meta.url)), "fake-agent.mjs")],
     env: { FAKE_KEY: "{apiKey}", FAKE_EMPTY: "{baseUrl}" },
   },
+  {
+    /* The same script, but configured to open every turn with Codex's
+       fallback-metadata notice — what the normal fake cannot emit, because
+       the env template is the agent's and every profile shares it. */
+    id: "fake-warn",
+    name: "Fake (fallback warning)",
+    command: "node",
+    args: [join(dirname(fileURLToPath(import.meta.url)), "fake-agent.mjs")],
+    env: {
+      FAKE_KEY: "{apiKey}",
+      FAKE_FALLBACK_WARNING:
+        "Warning: Model metadata for `cmc/deepseek/deepseek-v4-flash-fast` not found. Defaulting to fallback metadata; this can degrade performance and cause issues.",
+    },
+  },
 ]);
 
 const { SessionManager } = await import("../src/sessions.js");
@@ -815,35 +829,55 @@ assert.deepEqual(snapshot("no-such-thread"), { refused: "no such thread on this 
 // offer it back either. A crash and revive lost the conversation on screen
 // while every event of it sat in the table. Only cut when a turn is actually
 // being withheld.
-// This log's first `turn_started` is at seq 1, so it stands in for that shape:
-// 25 turns against a window of 60 withholds nothing, and the replay has to be
-// the whole log — head included — rather than starting at that first turn.
-assert.ok(turnStarts[0] > 0, "this log has events before its first turn");
-const whole = new MockWs();
-assert.equal(await manager.attach(logged.id, whole as never, 0, true, { window: 60 }), null);
-assert.equal(whole.of("attached")[0].from, 0, "a log inside the window replays from its head");
-assert.equal(whole.of("attached")[0].earlier, 0, "…and withholds nothing");
-assert.equal(
-  whole.of("replay").flatMap((r) => r.events).length,
-  archivedCursor,
-  "…which is every event, including the ones before the first turn",
-);
+  // The 25-turn log above is now heavier than the byte budget, so this shape
+  // needs a thread of its own: the point is the *shape* (a head followed by
+  // turns), not the size. Its first `turn_started` is at seq 1, so it stands in
+  // for that: a few turns against a window of 60 withholds nothing, and the
+  // replay has to be the whole log — head included — rather than starting at
+  // that first turn.
+  const small = manager.create(profile, "fake", project);
+  await small.bridge!.ready;
+  const smallBulk = new MockWs();
+  assert.equal(await manager.attach(small.id, smallBulk as never, 0), null, "attach should succeed");
+  for (let i = 0; i < 3; i += 1) {
+    send(smallBulk, { id: 500 + i, cmd: "prompt", text: `turn ${i}` });
+    await waitFor(() => smallBulk.of("turn_ended").length === i + 1, `small turn ${i}`);
+  }
+  const smallStarts = manager
+    .journal(small.id)!
+    .events.filter((e) => e.ev === "turn_started")
+    .map((e) => (e as { seq: number }).seq);
+  assert.ok(smallStarts.length >= 2, "the small log has turns");
+  assert.ok(smallStarts[0] > 0, "this log has events before its first turn");
+  const whole = new MockWs();
+  assert.equal(await manager.attach(small.id, whole as never, 0, true, { window: 60 }), null);
+  assert.equal(whole.of("attached")[0].from, 0, "a log inside the window replays from its head");
+  assert.equal(whole.of("attached")[0].earlier, 0, "…and withholds nothing");
+  assert.equal(
+    whole.of("replay").flatMap((r) => r.events).length,
+    manager.journal(small.id)!.cursor,
+    "…which is every event, including the ones before the first turn",
+  );
+  // The small thread's rows would trip the cascade assertion at the end of the
+  // file, so it is purged here — its only job was the shape check above.
+  assert.ok(manager.purge(small.id));
 
-// --- the window is capped in bytes too, because a step is not a size ---
+  // --- the window is capped in bytes too, because a step is not a size ---
 
-// Steps bound the replay in turns, which is the unit the transcript is cut in
-// and not the unit the wait is paid in: a turn is anything from one sentence to
-// a build log streamed through `_meta.terminal_output_delta`, so sixty of them
-// is a screenful on one thread and megabytes on the next. The bytes are what
-// someone actually waits for, and `REPLAY_WINDOW_BYTES` is the second budget —
-// whichever binds first. Six fat turns are appended to a log of 25 thin ones so
-// the step budget below (60) cannot be what cuts it.
-const { SessionJournal } = await import("../src/session-journal.js");
-const { REPLAY_WINDOW_BYTES } = await import("../src/protocol.js");
-const { db: fatDb } = await import("../src/db/index.js");
-const fat = new SessionJournal(fatDb);
-const fatSession = manager.get(logged.id)!;
-const FAT = "x".repeat(400 * 1024);
+  // Steps bound the replay in turns, which is the unit the transcript is cut in
+  // and not the unit the wait is paid in: a turn is anything from one sentence to
+  // a build log streamed through `_meta.terminal_output_delta`, so a handful of
+  // them is a screenful on one thread and megabytes on the next. The bytes are
+  // what someone actually waits for, and `REPLAY_WINDOW_BYTES` is the second
+  // budget — whichever binds first. Six fat turns are appended to a log of 25
+  // thin ones so the step budget below (60) cannot be what cuts it; each fat
+  // turn is a fifth of the byte budget, so four fit the window and five do not.
+  const { SessionJournal } = await import("../src/session-journal.js");
+  const { REPLAY_WINDOW_BYTES } = await import("../src/protocol.js");
+  const { db: fatDb } = await import("../src/db/index.js");
+  const fat = new SessionJournal(fatDb);
+  const fatSession = manager.get(logged.id)!;
+  const FAT = "x".repeat(REPLAY_WINDOW_BYTES / 5);
 for (let i = 0; i < 6; i += 1) {
   fat.append(fatSession, { ev: "turn_started", text: `fat ${i}`, turnId: `fat-${i}` } as never);
   fat.append(fatSession, {
@@ -1094,6 +1128,7 @@ const profileInput = {
   defaultModel: "",
   smallModel: "",
   logoUrl: "",
+  suppressModelMetadataWarning: false,
   mcpServerIds: [server1.id],
   skillIds: [],
   commandIds: [],
@@ -1105,6 +1140,42 @@ assert.deepEqual(getProfile(linkedProfile.id)!.mcpServerIds, [], "the link went 
 // A stale id in a request links nothing rather than failing the whole write.
 const staleProfile = createProfile({ ...profileInput, name: "stale", mcpServerIds: ["gone"] });
 assert.deepEqual(getProfile(staleProfile.id)!.mcpServerIds, []);
+
+// The Codex fallback-metadata opt-out is one of the stored columns: a profile
+// created with it reads it back, an update can turn it off, and a profile that
+// predates it (or omits it) reads as off.
+const quietProfile = createProfile({ ...profileInput, name: "quiet", suppressModelMetadataWarning: true });
+assert.equal(getProfile(quietProfile.id)!.suppressModelMetadataWarning, true);
+const { updateProfile } = await import("../src/profiles.js");
+updateProfile(quietProfile.id, { ...profileInput, name: "quiet" });
+assert.equal(getProfile(quietProfile.id)!.suppressModelMetadataWarning, false, "absent means off");
+
+// A profile that opted out of Codex's fallback-metadata notice never sees it,
+// and one that did not still does: the bridge drops the update before it is
+// forwarded or journaled, so the quiet thread's transcript is clean.
+const fakeWarnAgent = "fake-warn";
+const quietwarn = manager.create(
+  { ...profile, id: "p-quietwarn", name: "quiet-warn", agents: { fake: {}, "fake-warn": {} }, suppressModelMetadataWarning: true },
+  fakeWarnAgent,
+  project,
+);
+const loudwarn = manager.create(
+  { ...profile, id: "p-loudwarn", name: "loud-warn", agents: { fake: {}, "fake-warn": {} }, suppressModelMetadataWarning: false },
+  fakeWarnAgent,
+  project,
+);
+const quietWarnWs = new MockWs();
+const loudWarnWs = new MockWs();
+await manager.attach(quietwarn.id, quietWarnWs as never);
+await manager.attach(loudwarn.id, loudWarnWs as never);
+send(quietWarnWs, { id: 91, cmd: "prompt", text: "quiet warning turn" });
+send(loudWarnWs, { id: 92, cmd: "prompt", text: "loud warning turn" });
+await waitFor(() => quietWarnWs.of("turn_ended").length === 1, "the quiet warning turn ends");
+await waitFor(() => loudWarnWs.of("turn_ended").length === 1, "the loud warning turn ends");
+const mentionsFallback = (ws: MockWs) =>
+  ws.of("update").some((e) => JSON.stringify(e.update).includes("Defaulting to fallback metadata"));
+assert.equal(mentionsFallback(quietWarnWs), false, "the quiet profile dropped the notice");
+assert.equal(mentionsFallback(loudWarnWs), true, "a profile that did not opt out still shows it");
 
 // --- a persona reaches the agent through session/new AND session/load ---
 // The two together are the whole reason a persona change is affordable: `_meta`

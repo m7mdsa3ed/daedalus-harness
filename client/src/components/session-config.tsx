@@ -19,6 +19,7 @@ import { optionKey, optionsForModel, useAgentOptions } from "@/lib/agent-options
 import { reportError } from "@/lib/errors"
 import { currentChoiceLabel, partitionSessionOptions } from "@/lib/session-options"
 import { profileSupports } from "@/lib/settings"
+import { useAgents, usePersonas, useProfiles } from "@/lib/queries/catalog"
 import { useSessionMeta, useStoreSelect, type ThreadState } from "@/lib/store"
 
 /** Sentinel for "whatever the profile says", which is not itself a model id. */
@@ -64,9 +65,9 @@ export function SessionConfigPopover({
      state, which would redraw the menu on every token of every thread. Each
      catalog is replaced only by its own action. */
   const meta = useSessionMeta(sessionId)
-  const profiles = useStoreSelect((state) => state.profiles)
-  const agents = useStoreSelect((state) => state.agents)
-  const personas = useStoreSelect((state) => state.personas)
+  const profiles = useProfiles()
+  const agents = useAgents()
+  const personas = usePersonas()
   const profile = profiles.find((p) => p.id === meta?.profileId)
   // The thread's agent, not the profile's: a profile may serve several.
   const agentId = meta?.agentId ?? ""

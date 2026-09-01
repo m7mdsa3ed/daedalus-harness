@@ -32,7 +32,7 @@ import { ErrorNote } from "@/components/error-note"
 import { useAsyncAction } from "@/hooks/use-async-action"
 import { dropAgentOptionsFor } from "@/lib/agent-options"
 import { api, profileSupports, type AgentDef } from "@/lib/settings"
-import { useStoreSelect } from "@/lib/store"
+import { useInvalidateProfileCatalog, useAgents, useProfiles } from "@/lib/queries/catalog"
 import { toast } from "@/lib/toast"
 import { PageHeader, Group, Row, EmptyCard, Field, lines } from "./primitives"
 import { sectionMeta } from "./sections"
@@ -80,8 +80,8 @@ const envRecord = (text: string): Record<string, string> => {
 
 export function AgentsPage() {
   const meta = sectionMeta("agents")
-  const profiles = useStoreSelect((store) => store.profiles)
-  const agents = useStoreSelect((store) => store.agents)
+  const profiles = useProfiles()
+  const agents = useAgents()
   const [editing, setEditing] = React.useState<AgentDef | null>(null)
 
   return (
@@ -122,7 +122,8 @@ export function AgentsPage() {
 }
 
 function AgentDialog({ agent, onClose }: { agent: AgentDef; onClose: () => void }) {
-  const { settings, actions } = useSettingsPage()
+  const { settings } = useSettingsPage()
+  const invalidateProfile = useInvalidateProfileCatalog()
   const [form, setForm] = React.useState({
     name: agent.name,
     command: agent.command ?? "",
@@ -138,7 +139,7 @@ function AgentDialog({ agent, onClose }: { agent: AgentDef; onClose: () => void 
      in it were a function of the env that just changed. */
   const applied = async (updated: AgentDef, message: string) => {
     dropAgentOptionsFor(agent.id)
-    await actions.refreshProfiles()
+    await invalidateProfile()
     toast.success(message, { description: updated.name })
     onClose()
   }

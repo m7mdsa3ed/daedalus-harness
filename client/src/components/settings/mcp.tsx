@@ -18,6 +18,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { useInvalidateCatalog, useMcpServers } from "@/lib/queries/catalog"
 import { useStoreSelect } from "@/lib/store"
 import { FormPageHeader, PageForm, Field, FormActions, lines, pairs } from "./primitives"
 import { sectionMeta } from "./sections"
@@ -36,9 +37,10 @@ const BUILTINS: { kind: BuiltinKind; label: string; hint: string; icon: typeof G
 ]
 
 export function McpPage() {
-  const { settings, actions } = useSettingsPage()
+  const { settings } = useSettingsPage()
+  const invalidate = useInvalidateCatalog()
   const meta = sectionMeta("mcp")
-  const mcpServers = useStoreSelect((store) => store.mcpServers)
+  const mcpServers = useMcpServers()
 
   /* The harness's own servers, added from one menu rather than typed in:
      there is nothing to type — the row is a handle, and the command, env and
@@ -50,7 +52,7 @@ export function McpPage() {
   const inject = async (kind: BuiltinKind) => {
     try {
       await api(settings, `/api/mcp-servers/builtin/${kind}`, { method: "POST" })
-      await actions.refreshMcpServers()
+      await invalidate("mcp-servers")
     } catch (err) {
       reportError(err, `Couldn't add the ${kind} server`)
     }
@@ -84,7 +86,7 @@ export function McpPage() {
       noun="MCP server"
       subtitle={mcpSubtitle}
       settings={settings}
-      refresh={actions.refreshMcpServers}
+      refresh={() => invalidate("mcp-servers")}
       extraActions={builtins}
       // A built-in has nothing to edit — it is resolved at spawn, not stored.
       editable={(s) => s.type !== "builtin"}
@@ -93,15 +95,16 @@ export function McpPage() {
 }
 
 export function McpImportPage() {
-  const { actions } = useSettingsPage()
-  return <LibraryImportPage meta={sectionMeta("mcp")} kind="mcpServers" endpoint="/api/mcp-servers" noun="MCP server" refresh={actions.refreshMcpServers} />
+  const invalidate = useInvalidateCatalog()
+  return <LibraryImportPage meta={sectionMeta("mcp")} kind="mcpServers" endpoint="/api/mcp-servers" noun="MCP server" refresh={() => invalidate("mcp-servers")} />
 }
 
 export function McpFormPage() {
   const { entryId } = useParams()
   const navigate = useNavigate()
-  const { settings, actions } = useSettingsPage()
-  const mcpServers = useStoreSelect((store) => store.mcpServers)
+  const { settings } = useSettingsPage()
+  const invalidate = useInvalidateCatalog()
+  const mcpServers = useMcpServers()
   const server = entryId === "new" ? null : mcpServers.find((item) => item.id === entryId)
   // A built-in is not editable (see McpPage); a stale link lands on the list.
   if ((entryId !== "new" && !server) || server?.type === "builtin") {
@@ -112,7 +115,7 @@ export function McpFormPage() {
       server={server ?? null}
       settings={settings}
       onDone={async (saved) => {
-        if (saved) await actions.refreshMcpServers()
+        if (saved) await invalidate("mcp-servers")
         void navigate(settingsPath("mcp"))
       }}
     />

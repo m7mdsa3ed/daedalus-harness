@@ -3,6 +3,7 @@ import { Navigate, useNavigate, useParams } from "react-router"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { type CommandDef, type ServerSettings } from "@/lib/settings"
+import { useCommands, useInvalidateCatalog } from "@/lib/queries/catalog"
 import { useStoreSelect } from "@/lib/store"
 import { FormPageHeader, PageForm, Field, FormActions } from "./primitives"
 import { sectionMeta } from "./sections"
@@ -12,9 +13,10 @@ import { captureError, type InlineError } from "@/lib/errors"
 import { settingsPath } from "@/lib/router"
 
 export function CommandsPage() {
-  const { settings, actions } = useSettingsPage()
+  const { settings } = useSettingsPage()
+  const invalidate = useInvalidateCatalog()
   const meta = sectionMeta("commands")
-  const commands = useStoreSelect((store) => store.commands)
+  const commands = useCommands()
   return (
     <LibrarySection
       meta={meta}
@@ -23,25 +25,26 @@ export function CommandsPage() {
       noun="command"
       subtitle={(c) => `/${c.name}${c.argumentHint ? ` ${c.argumentHint}` : ""}`}
       settings={settings}
-      refresh={actions.refreshCommands}
+      refresh={() => invalidate("commands")}
     />
   )
 }
 
 export function CommandImportPage() {
-  const { actions } = useSettingsPage()
-  return <LibraryImportPage meta={sectionMeta("commands")} kind="commands" endpoint="/api/commands" noun="command" refresh={actions.refreshCommands} />
+  const invalidate = useInvalidateCatalog()
+  return <LibraryImportPage meta={sectionMeta("commands")} kind="commands" endpoint="/api/commands" noun="command" refresh={() => invalidate("commands")} />
 }
 
 export function CommandFormPage() {
   const { entryId } = useParams()
   const navigate = useNavigate()
-  const { settings, actions } = useSettingsPage()
-  const commands = useStoreSelect((store) => store.commands)
+  const { settings } = useSettingsPage()
+  const invalidate = useInvalidateCatalog()
+  const commands = useCommands()
   const command = entryId === "new" ? null : commands.find((item) => item.id === entryId)
   if (entryId !== "new" && !command) return <Navigate to={settingsPath("commands")} replace />
   return <CommandForm command={command ?? null} settings={settings} onDone={async (saved) => {
-    if (saved) await actions.refreshCommands()
+    if (saved) await invalidate("commands")
     void navigate(settingsPath("commands"))
   }} />
 }

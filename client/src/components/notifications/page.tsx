@@ -16,26 +16,28 @@ import { NotificationRow } from "@/components/notifications/items"
 import { EmptyCard, FormPageHeader, Group } from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
 import {
-  clearNotificationsInbox,
-  markNotificationRead,
-  refreshNotifications,
-  useNotifications,
-} from "@/lib/notifications-inbox"
+  useClearInbox,
+  useInbox,
+  useMarkNotificationsRead,
+} from "@/lib/queries/surfaces"
 import { settingsPath } from "@/lib/router"
 
 export function NotificationsInboxPage() {
-  const inbox = useNotifications()
+  /* Landing on the page is the one moment the list has to be current — the
+     cache otherwise refreshes only on return to the window. */
+  const { inbox, refetch } = useInbox()
+  const markRead = useMarkNotificationsRead()
+  const clearInbox = useClearInbox()
   const navigate = useNavigate()
   const confirm = useConfirm()
   const [clearing, setClearing] = React.useState(false)
 
-  // Landing on the page is the one moment the list has to be current — the
-  // store otherwise refreshes only on return to the window.
   React.useEffect(() => {
-    refreshNotifications()
-  }, [])
+    refetch()
+  }, [refetch])
 
-  const unread = inbox.unread
+  const items = inbox?.items ?? []
+  const unread = inbox?.unread ?? 0
 
   return (
     <>
@@ -46,18 +48,18 @@ export function NotificationsInboxPage() {
       />
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <span className="text-xs text-muted-foreground tabular-nums">
-          {inbox.items.length === 0
-            ? inbox.loaded
+          {items.length === 0
+            ? inbox
               ? "Nothing recorded"
               : "Loading…"
-            : `${inbox.items.length} notice${inbox.items.length === 1 ? "" : "s"}${unread > 0 ? ` · ${unread} unread` : ""}`}
+            : `${items.length} notice${items.length === 1 ? "" : "s"}${unread > 0 ? ` · ${unread} unread` : ""}`}
         </span>
         <div className="ml-auto flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
             disabled={unread === 0}
-            onClick={() => void markNotificationRead()}
+            onClick={() => markRead.mutate(undefined)}
           >
             <CheckIcon data-icon="inline-start" />
             Mark all read
@@ -65,7 +67,7 @@ export function NotificationsInboxPage() {
           <Button
             variant="outline"
             size="sm"
-            disabled={clearing || inbox.items.length === 0}
+            disabled={clearing || items.length === 0}
             onClick={async () => {
               if (
                 !(await confirm({
@@ -78,7 +80,7 @@ export function NotificationsInboxPage() {
               )
                 return
               setClearing(true)
-              void clearNotificationsInbox().finally(() => setClearing(false))
+              clearInbox.mutate(undefined, { onSettled: () => setClearing(false) })
             }}
           >
             <Trash2Icon data-icon="inline-start" />
@@ -86,7 +88,7 @@ export function NotificationsInboxPage() {
           </Button>
         </div>
       </div>
-      {inbox.items.length === 0 ? (
+      {items.length === 0 ? (
         <EmptyCard
           icon={BellIcon}
           text="Nothing here yet. A notice is recorded when a turn ends, fails, or stops to ask you something — turn the ones you want delivered to this device on in Settings."
@@ -103,7 +105,7 @@ export function NotificationsInboxPage() {
       ) : (
         <Group>
           <ul className="divide-y">
-            {inbox.items.map((n) => (
+            {items.map((n) => (
               <li key={n.id}>
                 <NotificationRow notification={n} detailed />
               </li>

@@ -4,6 +4,7 @@
 // sidebar), and the active one is what every request in the app talks to.
 
 import { uuid } from "./uuid"
+import { clearPersistedCache } from "./queries/persist"
 import { clearLayout } from "./workspace/layout"
 
 export interface ServerSettings {
@@ -105,13 +106,17 @@ export function renameServer(id: string, name: string): void {
 }
 
 /** Forgets one connection; the next one in the list becomes active.
-    Its saved workspace layout goes with it — the key is per server, and a
-    layout nothing can reach again is a key that never gets collected. */
+    Its saved workspace layout and its persisted query cache go with it — both
+    keys are per server, and state nothing can reach again is a key that never
+    gets collected. */
 export function removeServer(id: string): void {
   const store = read()
   const servers = store.servers.filter((s) => s.id !== id)
   write({ servers, activeId: store.activeId === id ? (servers[0]?.id ?? null) : store.activeId })
   clearLayout(id)
+  // Its cached description goes with its credentials: the rows are no use
+  // without a token to refresh them. See lib/queries/persist.
+  clearPersistedCache(id)
 }
 
 /** Disconnect: forget the active connection. */
@@ -170,6 +175,10 @@ export async function api<T>(
       },
     })
   } catch (cause) {
+    // A cancelled request (the caller's own AbortController) is not a network
+    // failure — rethrow it so a query library sees its own cancellation and
+    // does not count it as retryable.
+    if (cause instanceof DOMException && cause.name === "AbortError") throw cause
     // Offline, wrong host, TLS refusal, CORS — fetch rejects the same way for
     // all of them, and none of them ever reached a status.
     throw new ApiError({
@@ -400,6 +409,10 @@ export interface Profile {
       exposes an API for it. Null/absent means there is none, and the agent's
       own probe (the machine's `claude`/`codex login`) answers instead. */
   usage?: ProfileUsage | null
+  /** Opt out of Codex's "Model metadata … not found. Defaulting to fallback
+      metadata" notice for threads on this profile. Absent = false (servers
+      from before the flag existed, and the virtual Default). */
+  suppressModelMetadataWarning?: boolean
   /** Library entries every thread on this profile gets, on top of its
       project's. The same three a project and a thread carry; the agent sees
       the union. */

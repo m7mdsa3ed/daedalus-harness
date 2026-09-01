@@ -43,9 +43,17 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { Skeleton } from "@/components/ui/skeleton"
-import type { Actions } from "@/lib/actions"
 import { captureError, type InlineError } from "@/lib/errors"
-import type { RoutineTrigger, RoutineTriggerKind, RoutineTriggerPatch, ServerSettings } from "@/lib/settings"
+import type { RoutineTrigger, RoutineTriggerKind, RoutineTriggerPatch } from "@/lib/settings"
+import {
+  useCreateRoutineTrigger,
+  useDeleteRoutineTrigger,
+  useMintRoutineTriggerToken,
+  useRevokeRoutineTriggerToken,
+  useRoutineTriggers,
+  useUpdateRoutineTrigger,
+} from "@/lib/queries/routines"
+import { useServer } from "@/lib/server-context"
 
 const KIND_META: Record<RoutineTriggerKind, { label: string; icon: typeof CalendarClockIcon; blurb: string }> = {
   schedule: { label: "On a schedule", icon: CalendarClockIcon, blurb: "A clock the server keeps, browser or no browser." },
@@ -90,17 +98,22 @@ function readPreset(cron: string | null): { preset: Preset; hour: number } {
   return { preset, hour }
 }
 
-export function TriggersPanel({
-  routineId,
-  actions,
-  settings,
-}: {
-  routineId: string
-  actions: Actions
-  settings: ServerSettings
-}) {
+export function TriggersPanel({ routineId }: { routineId: string }) {
   const confirm = useConfirm()
-  const [triggers, setTriggers] = React.useState<RoutineTrigger[] | null>(null)
+  /* The query cache owns the read; the mutations invalidate it, which is the
+     re-read. The optimistic part stays here and stays local: these are
+     switches and a cron field being typed into, and a full re-read per
+     keystroke would fight the caret. */
+  const { data: cached, refetch } = useRoutineTriggers(routineId)
+  const addTrigger = useCreateRoutineTrigger(routineId)
+  const patchTrigger = useUpdateRoutineTrigger(routineId)
+  const removeTrigger = useDeleteRoutineTrigger(routineId)
+  const mintToken = useMintRoutineTriggerToken(routineId)
+  const revokeToken = useRevokeRoutineTriggerToken(routineId)
+  /** The optimistic overlay, on top of the cache — a patch shows locally the
+      moment it is typed and the server's answer replaces the row, so a
+      rejected patch snaps back with the note below. */
+  const [overlay, setOverlay] = React.useState<Record<string, Partial<RoutineTrigger>>>({})
   const [error, setError] = React.useState<InlineError | null>(null)
   /** The token from the most recent mint, keyed by trigger. It is in that one
       response and nowhere else, so it lives in a ref-like state here until the
@@ -108,18 +121,9 @@ export function TriggersPanel({
       in a state dump long after the dialog that showed it. */
   const [minted, setMinted] = React.useState<Record<string, string>>({})
 
-  const load = React.useCallback(async () => {
-    setError(null)
-    try {
-      setTriggers(await actions.listRoutineTriggers(routineId))
-    } catch (err) {
-      setError(captureError(err, "Couldn't read this routine's triggers"))
-    }
-  }, [actions, routineId])
-
-  React.useEffect(() => {
-    void load()
-  }, [load])
+  const triggers: RoutineTrigger[] | null = cached
+    ? cached.map((t) => (overlay[t.id] ? ({ ...t, ...overlay[t.id] } as RoutineTrigger) : t))
+    : null
 
   const add = async (kind: RoutineTriggerKind) => {
     setError(null)
@@ -127,11 +131,10 @@ export function TriggersPanel({
       /* A new schedule arrives with a null clock on purpose — the sweep arms
          `nextFireAt`. So the cron is written on creation and the row comes back
          inert for a few seconds rather than never firing. */
-      await actions.createRoutineTrigger(routineId, {
+      await addTrigger.mutateAsync({
         kind,
         ...(kind === "schedule" ? { cron: cronFor("daily", 9), tz: localZone() } : {}),
       })
-      await load()
     } catch (err) {
       setError(captureError(err, "Couldn't add the trigger"))
     }
@@ -139,16 +142,22 @@ export function TriggersPanel({
 
   const patch = async (id: string, next: RoutineTriggerPatch) => {
     setError(null)
-    /* Optimistic, because these are switches and a cron field being typed into:
-       a full re-read per keystroke would fight the caret. The server's answer
-       replaces the row, so a rejected patch snaps back with the note below. */
-    setTriggers((prev) => prev?.map((t) => (t.id === id ? { ...t, ...next } as RoutineTrigger : t)) ?? prev)
+    setOverlay((prev) => ({ ...prev, [id]: { ...prev[id], ...next } }))
     try {
-      const updated = await actions.updateRoutineTrigger(id, next)
-      setTriggers((prev) => prev?.map((t) => (t.id === id ? updated : t)) ?? prev)
+      await patchTrigger.mutateAsync({ id, patch: next })
+      setOverlay((prev) => {
+        const nextOverlay = { ...prev }
+        delete nextOverlay[id]
+        return nextOverlay
+      })
     } catch (err) {
       setError(captureError(err, "Couldn't save the trigger"))
-      await load()
+      setOverlay((prev) => {
+        const nextOverlay = { ...prev }
+        delete nextOverlay[id]
+        return nextOverlay
+      })
+      void refetch()
     }
   }
 
@@ -167,8 +176,7 @@ export function TriggersPanel({
       return
     setError(null)
     try {
-      await actions.deleteRoutineTrigger(trigger.id)
-      await load()
+      await removeTrigger.mutateAsync(trigger.id)
     } catch (err) {
       setError(captureError(err, "Couldn't remove the trigger"))
     }
@@ -188,9 +196,8 @@ export function TriggersPanel({
       return
     setError(null)
     try {
-      const token = await actions.mintRoutineTriggerToken(trigger.id)
+      const token = await mintToken.mutateAsync(trigger.id)
       setMinted((prev) => ({ ...prev, [trigger.id]: token }))
-      await load()
     } catch (err) {
       setError(captureError(err, "Couldn't mint the token"))
     }
@@ -199,13 +206,12 @@ export function TriggersPanel({
   const revoke = async (trigger: RoutineTrigger) => {
     setError(null)
     try {
-      await actions.revokeRoutineTriggerToken(trigger.id)
+      await revokeToken.mutateAsync(trigger.id)
       setMinted((prev) => {
         const next = { ...prev }
         delete next[trigger.id]
         return next
       })
-      await load()
     } catch (err) {
       setError(captureError(err, "Couldn't revoke the token"))
     }
@@ -240,7 +246,7 @@ export function TriggersPanel({
 
   return (
     <div className="space-y-3">
-      <ErrorNote error={error} onRetry={() => void load()} />
+      <ErrorNote error={error} onRetry={() => void refetch()} />
       {/* Null is "not read yet", which is not the same screen as "none" — see
           the header comment. A failed read leaves it null and the note above
           is what the user sees, rather than a confident empty state. */}
@@ -260,7 +266,6 @@ export function TriggersPanel({
             key={trigger.id}
             trigger={trigger}
             token={minted[trigger.id]}
-            settings={settings}
             onPatch={(next) => void patch(trigger.id, next)}
             onRemove={() => void remove(trigger)}
             onMint={() => void mint(trigger)}
@@ -276,7 +281,6 @@ export function TriggersPanel({
 function TriggerCard({
   trigger,
   token,
-  settings,
   onPatch,
   onRemove,
   onMint,
@@ -284,7 +288,6 @@ function TriggerCard({
 }: {
   trigger: RoutineTrigger
   token?: string
-  settings: ServerSettings
   onPatch: (next: RoutineTriggerPatch) => void
   onRemove: () => void
   onMint: () => void
@@ -334,7 +337,7 @@ function TriggerCard({
       <div className="mt-3">
         {trigger.kind === "schedule" && <ScheduleFields trigger={trigger} onPatch={onPatch} />}
         {trigger.kind === "api" && (
-          <ApiFields trigger={trigger} token={token} settings={settings} onMint={onMint} onRevoke={onRevoke} />
+          <ApiFields trigger={trigger} token={token} onMint={onMint} onRevoke={onRevoke} />
         )}
         {trigger.kind === "git" && <GitFields trigger={trigger} onPatch={onPatch} />}
       </div>
@@ -436,13 +439,11 @@ function ScheduleFields({
 function ApiFields({
   trigger,
   token,
-  settings,
   onMint,
   onRevoke,
 }: {
   trigger: RoutineTrigger
   token?: string
-  settings: ServerSettings
   onMint: () => void
   onRevoke: () => void
 }) {
@@ -454,6 +455,7 @@ function ApiFields({
      not printed here: the path segment is required either way, so offering the
      header as an alternative would be offering to put the same secret in two
      places instead of one. */
+  const settings = useServer()
   const url = `${settings.url.replace(/\/$/, "")}/rt/${token ?? "<token>"}/${trigger.routineId}/fire`
 
   return (

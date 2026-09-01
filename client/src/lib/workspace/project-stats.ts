@@ -3,7 +3,7 @@
    state (its threads, and which of them are running, are in `state.sessions`),
    so this is only what the database can answer — turns taken, when the last
    one was, what the workspace has accumulated. */
-import { api, loadSettings, ApiError, type ServerSettings } from "@/lib/settings"
+import { api, type ServerSettings } from "@/lib/settings"
 
 export interface ProjectStats {
   projectId: string
@@ -33,14 +33,12 @@ export interface ProjectStats {
   workflows: { total: number; running: number; failed: number }
 }
 
-function server(): ServerSettings {
-  const settings = loadSettings()
-  if (!settings) throw new ApiError({ status: 0, path: "/api", serverMessage: "not connected" })
-  return settings
-}
-
-export function fetchProjectStats(projectId: string, signal?: AbortSignal): Promise<ProjectStats> {
-  return api<ProjectStats>(server(), `/api/projects/${encodeURIComponent(projectId)}/stats`, {
+export function fetchProjectStats(
+  settings: ServerSettings,
+  projectId: string,
+  signal?: AbortSignal
+): Promise<ProjectStats> {
+  return api<ProjectStats>(settings, `/api/projects/${encodeURIComponent(projectId)}/stats`, {
     signal,
   })
 }

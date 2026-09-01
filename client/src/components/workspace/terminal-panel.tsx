@@ -27,7 +27,7 @@ import { PanelNotice, PanelToolbar } from "@/components/workspace/primitives"
 import { TerminalKeyRow } from "@/components/workspace/terminal-keys"
 import { describeError, reportError } from "@/lib/errors"
 import { loadSettings, serverName } from "@/lib/settings"
-import { useStoreSelect } from "@/lib/store"
+import { useProjects } from "@/lib/queries/catalog"
 import { cn } from "@/lib/utils"
 import { createTerminal, killTerminal, terminalSocketUrl } from "@/lib/workspace/terminals"
 import { panelId } from "@/lib/workspace/panels"
@@ -56,11 +56,10 @@ export function TerminalPanel({
   const { projectId, terminalId } = params
   const dock = useDock()
   const confirm = useConfirm()
-  /* One project row, not the whole state: a panel beside a live transcript
-     must not re-render on that transcript's stream. */
-  const project = useStoreSelect((state) =>
-    state.projects.find((candidate) => candidate.id === projectId)
-  )
+  /* The catalog lives in the query cache now, so a streamed token never
+     reaches this panel; only a projects refresh (rare, and its own clock)
+     re-renders it. */
+  const project = useProjects().find((candidate) => candidate.id === projectId)
 
   const host = React.useRef<HTMLDivElement | null>(null)
   const term = React.useRef<Terminal | null>(null)

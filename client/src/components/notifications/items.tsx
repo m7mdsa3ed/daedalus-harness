@@ -10,11 +10,8 @@
    this, and there is nothing to go and look at". */
 import { CheckIcon } from "lucide-react"
 
-import {
-  markNotificationRead,
-  openNotification,
-  type AppNotification,
-} from "@/lib/notifications-inbox"
+import type { AppNotification } from "@/lib/notifications-inbox"
+import { useMarkNotificationsRead, useOpenNotification } from "@/lib/queries/surfaces"
 import { shortAge } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
@@ -53,11 +50,13 @@ export function NotificationRow({
   notification: AppNotification
   detailed?: boolean
 }) {
+  const open = useOpenNotification()
+  const markRead = useMarkNotificationsRead()
   const meta = KIND_META[n.kind]
   return (
     <button
       type="button"
-      onClick={() => openNotification(n)}
+      onClick={() => open(n)}
       className={cn(
         "flex w-full items-start gap-2.5 px-3 text-left transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
         detailed ? "py-3 sm:px-4" : "py-2.5",
@@ -99,7 +98,7 @@ export function NotificationRow({
           aria-label="Mark read"
           onClick={(e) => {
             e.stopPropagation()
-            void markNotificationRead(n.id)
+            markRead.mutate(n.id)
           }}
           className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >

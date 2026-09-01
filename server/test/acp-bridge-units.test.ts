@@ -5,6 +5,8 @@
 //     frames are parsed with — throws the SDK's own invalid-params shape
 //   - isModeTwin: the dedup that keeps the permission mode from appearing twice
 //     when an agent advertises it both as `modes` and as a select option
+//   - isFallbackModelMetadataWarning: the exact Codex fallback-metadata notice
+//     a profile opting out of has the bridge drop before it is journaled
 //
 // `parseSessionNotification` and `isModeTwin` are module-private on purpose, so
 // they are extracted from the source verbatim into a throwaway module and
@@ -39,19 +41,22 @@ writeFileSync(
     "type SessionNotification = { sessionId: string; update: { sessionUpdate: string }; _meta?: Record<string, unknown> | null };",
     extract("parseSessionNotification"),
     extract("isModeTwin"),
-    "export { parseSessionNotification, isModeTwin };",
+    extract("isFallbackModelMetadataWarning"),
+    "export { parseSessionNotification, isModeTwin, isFallbackModelMetadataWarning };",
   ].join("\n"),
 );
 
 let parseSessionNotification: (params: unknown) => { sessionId: string; update: { sessionUpdate: string } };
 let isModeTwin: (option: acp.SessionConfigOption, modeIds: ReadonlySet<string>) => boolean;
+let isFallbackModelMetadataWarning: (update: Record<string, unknown>) => boolean;
 let toWireError: typeof import("../src/acp-bridge.js").toWireError;
 try {
   // Imported through a variable so the type checker does not look for a file
   // that only exists while this test runs.
-  ({ parseSessionNotification, isModeTwin } = (await import(scratch)) as {
+  ({ parseSessionNotification, isModeTwin, isFallbackModelMetadataWarning } = (await import(scratch)) as {
     parseSessionNotification: typeof parseSessionNotification;
     isModeTwin: typeof isModeTwin;
+    isFallbackModelMetadataWarning: typeof isFallbackModelMetadataWarning;
   });
   ({ toWireError } = await import("../src/acp-bridge.js"));
 } finally {
@@ -133,6 +138,59 @@ test("null and non-object params are refused, not dereferenced", () => {
   for (const bad of [null, undefined, "str", 5]) {
     assert.throws(() => parseSessionNotification(bad), acp.RequestError);
   }
+});
+
+// ---- isFallbackModelMetadataWarning ----
+
+const FALLBACK_WARNING =
+  "Warning: Model metadata for `cmc/deepseek/deepseek-v4-flash-fast` not found. " +
+  "Defaulting to fallback metadata; this can degrade performance and cause issues.\n\n";
+
+test("codex's fallback-metadata notice is recognized in a text chunk", () => {
+  assert.equal(
+    isFallbackModelMetadataWarning({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: FALLBACK_WARNING },
+    }),
+    true,
+  );
+});
+
+test("the same wording in a thought chunk is left alone", () => {
+  assert.equal(
+    isFallbackModelMetadataWarning({
+      sessionUpdate: "agent_thought_chunk",
+      content: { type: "text", text: FALLBACK_WARNING },
+    }),
+    false,
+  );
+});
+
+test("an ordinary assistant chunk passes through unmolested", () => {
+  assert.equal(
+    isFallbackModelMetadataWarning({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: "Let me look at that file.\n" },
+    }),
+    false,
+  );
+});
+
+test("a tool-call update (content is an array) is not mistaken for the notice", () => {
+  assert.equal(
+    isFallbackModelMetadataWarning({
+      sessionUpdate: "tool_call",
+      content: [{ type: "text", text: FALLBACK_WARNING }],
+    }),
+    false,
+  );
+});
+
+test("a chunk carrying the notice in a flat text field (older adapter) is caught too", () => {
+  assert.equal(
+    isFallbackModelMetadataWarning({ sessionUpdate: "agent_message_chunk", text: FALLBACK_WARNING }),
+    true,
+  );
 });
 
 // ---- isModeTwin ----

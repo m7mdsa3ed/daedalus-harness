@@ -1,3 +1,4 @@
+import { useProjects } from "@/lib/queries/catalog"
 import * as React from "react"
 import { BookOpen, Plus, RefreshCwIcon, Trash2 } from "lucide-react"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -22,13 +23,8 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { ErrorNote } from "@/components/error-note"
 import { captureError, reportError, type InlineError } from "@/lib/errors"
-import { useStoreSelect } from "@/lib/store"
-import {
-  addKnowledge,
-  deleteKnowledge,
-  listAllKnowledge,
-  type KnowledgeEntryAcross,
-} from "@/lib/workspace/knowledge-api"
+import { useAddKnowledge, useAllKnowledge, useDeleteKnowledge } from "@/lib/queries/surfaces"
+import type { KnowledgeEntryAcross } from "@/lib/workspace/knowledge-api"
 import { EmptyCard, Field, Group, PageHeader, Row } from "./primitives"
 import { sectionMeta } from "./sections"
 
@@ -43,25 +39,16 @@ const ALL = "__all__"
    grouped by project on screen, with a filter to narrow to one. */
 export function KnowledgePage() {
   const meta = sectionMeta("knowledge")
-  const projects = useStoreSelect((store) => store.projects)
+  const projects = useProjects()
   const confirm = useConfirm()
-  const [entries, setEntries] = React.useState<KnowledgeEntryAcross[] | null>(null)
+  /* The cache owns the read; the delete's invalidation is the refresh, and
+     `busy` only covers the await so a double click cannot fire twice. */
+  const { data: entries, refetch } = useAllKnowledge()
+  const addEntry = useAddKnowledge()
+  const deleteEntry = useDeleteKnowledge()
   const [projectId, setProjectId] = React.useState(ALL)
   const [adding, setAdding] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
-
-  const refresh = React.useCallback(async () => {
-    try {
-      setEntries(await listAllKnowledge())
-    } catch (err) {
-      reportError(err, "Couldn't load the knowledge base")
-      setEntries((current) => current ?? [])
-    }
-  }, [])
-
-  React.useEffect(() => {
-    void refresh()
-  }, [refresh])
 
   const remove = async (entry: KnowledgeEntryAcross) => {
     if (
@@ -76,8 +63,7 @@ export function KnowledgePage() {
       return
     setBusy(true)
     try {
-      await deleteKnowledge(entry.projectId, entry.id)
-      await refresh()
+      await deleteEntry.mutateAsync({ projectId: entry.projectId, id: entry.id })
     } catch (err) {
       reportError(err, "Couldn't delete the knowledge entry")
     } finally {
@@ -113,7 +99,7 @@ export function KnowledgePage() {
           ))}
         </SelectContent>
       </Select>
-      <Button variant="ghost" size="icon-lg" title="Refresh" disabled={busy} onClick={() => void refresh()}>
+      <Button variant="ghost" size="icon-lg" title="Refresh" disabled={busy} onClick={() => void refetch()}>
         <RefreshCwIcon />
       </Button>
       <Button onClick={() => setAdding(true)} disabled={projects.length === 0}>
@@ -125,7 +111,7 @@ export function KnowledgePage() {
   return (
     <>
       <PageHeader meta={meta} action={actions} />
-      {entries === null ? (
+      {entries === undefined ? (
         <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
           Loading…
         </p>
@@ -168,9 +154,9 @@ export function KnowledgePage() {
           projects={projects}
           initialProjectId={projectId === ALL ? (projects[0]?.id ?? "") : projectId}
           onClose={() => setAdding(false)}
-          onAdded={async () => {
+          onAdded={async (input) => {
             setAdding(false)
-            await refresh()
+            await addEntry.mutateAsync(input)
           }}
         />
       )}
@@ -225,7 +211,7 @@ function AddEntryDialog({
   projects: { id: string; name: string }[]
   initialProjectId: string
   onClose: () => void
-  onAdded: () => Promise<void>
+  onAdded: (input: { projectId: string; body: { title: string; content: string; tags?: string[] } }) => Promise<void>
 }) {
   const [projectId, setProjectId] = React.useState(initialProjectId)
   const [title, setTitle] = React.useState("")
@@ -240,12 +226,14 @@ function AddEntryDialog({
     setSaving(true)
     setError(null)
     try {
-      await addKnowledge(projectId, {
-        title: title.trim(),
-        content: content.trim(),
-        tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+      await onAdded({
+        projectId,
+        body: {
+          title: title.trim(),
+          content: content.trim(),
+          tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+        },
       })
-      await onAdded()
     } catch (err) {
       setError(captureError(err, "Couldn't add the knowledge entry"))
       setSaving(false)

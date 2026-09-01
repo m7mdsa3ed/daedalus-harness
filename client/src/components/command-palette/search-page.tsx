@@ -25,7 +25,9 @@ import { CommandGroup, CommandSeparator } from "@/components/ui/command"
 import { useSidebar } from "@/components/ui/sidebar"
 import { KEYS } from "@/lib/shortcuts"
 import { searchThreads, type SearchResult } from "@/lib/search"
+import { useServer } from "@/lib/server-context"
 import { activityAt, isTopLevel } from "@/lib/settings"
+import { useProjects } from "@/lib/queries/catalog"
 import { threadPath } from "@/lib/router"
 import { useLiveTurnActive, useStoreSelect } from "@/lib/store"
 import { usePalette } from "./context"
@@ -42,8 +44,9 @@ const RECENT_LIMIT = 8
 
 export function SearchPage() {
   const palette = usePalette()
+  const settings = useServer()
   const sessions = useStoreSelect((store) => store.sessions)
-  const projects = useStoreSelect((store) => store.projects)
+  const projects = useProjects()
   /* One boolean per row, off a map whose identity only moves when a turn
      starts or stops — subscribing to `threads` here redrew the palette on
      every token of every thread. */
@@ -66,7 +69,7 @@ export function SearchPage() {
     setLoading(true)
     const controller = new AbortController()
     const timer = window.setTimeout(() => {
-      searchThreads(query, controller.signal)
+      searchThreads(settings, query, controller.signal)
         .then((results) => {
           if (controller.signal.aborted) return
           setHits(results)
@@ -86,7 +89,7 @@ export function SearchPage() {
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [query])
+  }, [query, settings])
 
   const open = (sessionId: string) =>
     palette.run(() => {

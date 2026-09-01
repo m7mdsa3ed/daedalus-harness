@@ -1,4 +1,3 @@
-import { useCallback, useEffect, useState } from "react"
 import type { QuotaSnapshot, QuotaWindow } from "@daedalus/protocol"
 
 import { api, type AgentDef, type Profile, type ServerSettings } from "@/lib/settings"
@@ -54,8 +53,8 @@ export type { QuotaSnapshot, QuotaWindow }
     `claude`/`codex login`, which is what a subscription is — plus every profile
     that names a usage provider of its own, which is the other kind of plan this
     machine spends. `quota.source` says which a given entry is. */
-export const fetchAllQuota = (settings: ServerSettings, refresh = false) =>
-  api<QuotaSnapshot[]>(settings, `/api/quota${refresh ? "?refresh=1" : ""}`)
+export const fetchAllQuota = (settings: ServerSettings, refresh = false, signal?: AbortSignal) =>
+  api<QuotaSnapshot[]>(settings, `/api/quota${refresh ? "?refresh=1" : ""}`, { signal })
 
 /** One agent, optionally under a named profile's credentials rather than the
     machine's. A thread asks this way: its profile is what it actually spawns on,
@@ -63,21 +62,27 @@ export const fetchAllQuota = (settings: ServerSettings, refresh = false) =>
 export function fetchQuota(
   settings: ServerSettings,
   agentId: string,
-  { profileId, refresh }: { profileId?: string; refresh?: boolean } = {}
+  { profileId, refresh, signal }: { profileId?: string; refresh?: boolean; signal?: AbortSignal } = {}
 ) {
   const query = new URLSearchParams()
   if (profileId) query.set("profileId", profileId)
   if (refresh) query.set("refresh", "1")
   const suffix = query.toString()
-  return api<QuotaSnapshot>(settings, `/api/quota/${encodeURIComponent(agentId)}${suffix ? `?${suffix}` : ""}`)
+  return api<QuotaSnapshot>(settings, `/api/quota/${encodeURIComponent(agentId)}${suffix ? `?${suffix}` : ""}`, { signal })
 }
 
 /** One profile's provider plan, with no agent in the question — the account is
     the profile's, and every agent it serves shares the reading. */
-export const fetchProfileQuota = (settings: ServerSettings, profileId: string, refresh = false) =>
+export const fetchProfileQuota = (
+  settings: ServerSettings,
+  profileId: string,
+  refresh = false,
+  signal?: AbortSignal
+) =>
   api<QuotaSnapshot>(
     settings,
-    `/api/quota/profile/${encodeURIComponent(profileId)}${refresh ? "?refresh=1" : ""}`
+    `/api/quota/profile/${encodeURIComponent(profileId)}${refresh ? "?refresh=1" : ""}`,
+    { signal }
   )
 
 /** Whether this snapshot has anything to draw a bar for. */
@@ -145,37 +150,3 @@ export function quotaStatusText(quota: QuotaSnapshot): string {
   }
 }
 
-/**
- * A snapshot per agent for the settings page, refetched on demand.
- *
- * Plain state rather than one of the device-local reactive stores (`pins.ts`,
- * `view-options.ts`): this is server data with a server-side cache in front of
- * it, so there is nothing to persist here and nothing a second tab could
- * disagree about.
- */
-export function useAllQuota(settings: ServerSettings) {
-  const [quotas, setQuotas] = useState<QuotaSnapshot[] | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<unknown>(null)
-
-  const load = useCallback(
-    async (refresh = false) => {
-      setBusy(true)
-      try {
-        setQuotas(await fetchAllQuota(settings, refresh))
-        setError(null)
-      } catch (err) {
-        setError(err)
-      } finally {
-        setBusy(false)
-      }
-    },
-    [settings]
-  )
-
-  useEffect(() => {
-    void load()
-  }, [load])
-
-  return { quotas, busy, error, reload: load }
-}

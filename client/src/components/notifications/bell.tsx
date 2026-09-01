@@ -16,31 +16,28 @@ import { NotificationRow, UnreadCount } from "@/components/notifications/items"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
-  markNotificationRead,
-  refreshNotifications,
-  useNotifications,
-} from "@/lib/notifications-inbox"
+  useInbox,
+  useMarkNotificationsRead,
+} from "@/lib/queries/surfaces"
 import { notificationsPath } from "@/lib/router"
 
 export function NotificationBell() {
-  const inbox = useNotifications()
+  /* The query cache owns the read: the badge fetches on mount, opening
+     re-fetches, and returning to the window re-fetches via focus — the three
+     moments the old module store asked for by hand. */
+  const { inbox, refetch } = useInbox()
+  const markRead = useMarkNotificationsRead()
   const navigate = useNavigate()
   const [open, setOpen] = React.useState(false)
 
-  // The badge is fetched lazily on mount; opening re-reads, so the list the
-  // user actually reads is never stale.
-  React.useEffect(() => {
-    if (!inbox.loaded) refreshNotifications()
-  }, [inbox.loaded])
-
-  const unread = inbox.unread
+  const unread = inbox?.unread ?? 0
 
   return (
     <Popover
       open={open}
       onOpenChange={(next) => {
         setOpen(next)
-        if (next) refreshNotifications()
+        if (next) refetch()
       }}
     >
       <PopoverTrigger
@@ -69,13 +66,13 @@ export function NotificationBell() {
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {inbox.items.length === 0 ? (
+            {(inbox?.items.length ?? 0) === 0 ? (
               <div className="grid min-h-28 place-items-center px-4 py-6 text-center text-xs text-muted-foreground">
-                {inbox.loaded ? "Nothing here yet." : "Loading…"}
+                {inbox ? "Nothing here yet." : "Loading…"}
               </div>
             ) : (
               <ul className="divide-y">
-                {inbox.items.map((n) => (
+                {inbox!.items.map((n) => (
                   <li key={n.id}>
                     <NotificationRow notification={n} />
                   </li>
@@ -93,7 +90,7 @@ export function NotificationBell() {
               size="sm"
               className="h-7 gap-1 text-xs text-muted-foreground"
               disabled={unread === 0}
-              onClick={() => void markNotificationRead()}
+              onClick={() => markRead.mutate(undefined)}
             >
               <CheckIcon className="size-3.5" /> Mark all read
             </Button>

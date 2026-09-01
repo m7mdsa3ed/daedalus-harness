@@ -9,7 +9,7 @@ import {
   Trash2,
 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
-import { captureError, reportError, type InlineError, describeError } from "@/lib/errors"
+import { captureError, reportError, type InlineError, errorText } from "@/lib/errors"
 import { Button } from "@/components/ui/button"
 import { ProjectIcon } from "@/components/entity-icon"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -17,17 +17,18 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { PathInput } from "@/components/ui/suggesting-input"
 import { api, type Project, type ServerSettings } from "@/lib/settings"
-import { useStoreSelect } from "@/lib/store"
-import { addKnowledge, deleteKnowledge, listKnowledge, type KnowledgeEntry } from "@/lib/workspace/knowledge-api"
+import { useInvalidateCatalog, useProjects } from "@/lib/queries/catalog"
+import { useAddKnowledge, useDeleteKnowledge, useProjectKnowledge } from "@/lib/queries/surfaces"
 import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions, FormSection } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { projectPath, settingsFormPath, settingsPath } from "@/lib/router"
 
 export function ProjectsPage() {
-  const { settings, actions } = useSettingsPage()
+  const { settings } = useSettingsPage()
+  const invalidate = useInvalidateCatalog()
   const meta = sectionMeta("projects")
-  const projects = useStoreSelect((store) => store.projects)
+  const projects = useProjects()
   const confirm = useConfirm()
   const navigate = useNavigate()
 
@@ -44,7 +45,7 @@ export function ProjectsPage() {
       return
     try {
       await api(settings, `/api/projects/${project.id}`, { method: "DELETE" })
-      await actions.refreshProjects()
+      await invalidate("projects")
     } catch (err) {
       reportError(err, "Couldn't delete the project")
     }
@@ -103,8 +104,9 @@ export function ProjectsPage() {
 export function ProjectFormPage() {
   const { entryId } = useParams()
   const navigate = useNavigate()
-  const { settings, actions } = useSettingsPage()
-  const projects = useStoreSelect((store) => store.projects)
+  const { settings } = useSettingsPage()
+  const invalidate = useInvalidateCatalog()
+  const projects = useProjects()
   const project = entryId === "new" ? null : projects.find((item) => item.id === entryId)
   if (entryId !== "new" && !project) return <Navigate to={settingsPath("projects")} replace />
   return (
@@ -112,7 +114,7 @@ export function ProjectFormPage() {
       project={project ?? null}
       settings={settings}
       onDone={async (saved) => {
-        if (saved) await actions.refreshProjects()
+        if (saved) await invalidate("projects")
         void navigate(settingsPath("projects"))
       }}
     />
@@ -223,47 +225,36 @@ export function ProjectForm({
  * would have nowhere to attach.
  */
 function KnowledgeSection({ project }: { project: Project | null }) {
-  const [entries, setEntries] = React.useState<KnowledgeEntry[]>([])
-  const [error, setError] = React.useState<string | null>(null)
+  /* The cache owns the read (per project, keyed); add/delete invalidate it,
+     which is the refresh. */
+  const projectId = project?.id ?? null
+  const { data: entries, error: queryError, refetch } = useProjectKnowledge(projectId)
+  const rows = entries ?? []
+  const addEntry = useAddKnowledge()
+  const deleteKnowledgeRow = useDeleteKnowledge()
   const [busy, setBusy] = React.useState(false)
   const [saving, setSaving] = React.useState(false)
   const [title, setTitle] = React.useState("")
   const [content, setContent] = React.useState("")
   const [tags, setTags] = React.useState("")
-
-  const projectId = project?.id ?? null
-
-  const refresh = React.useCallback(async () => {
-    if (!projectId) return
-    try {
-      setEntries(await listKnowledge(projectId))
-      setError(null)
-    } catch (err) {
-      const { title, detail } = describeError(err)
-      setError(detail ? `${title} — ${detail}` : title)
-    }
-  }, [projectId])
-
-  React.useEffect(() => {
-    setEntries([])
-    setError(null)
-    if (projectId) void refresh()
-  }, [projectId, refresh])
+  const error = queryError ? errorText(queryError) : null
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!projectId || saving) return
     setSaving(true)
     try {
-      await addKnowledge(projectId, {
-        title: title.trim(),
-        content: content.trim(),
-        tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+      await addEntry.mutateAsync({
+        projectId,
+        body: {
+          title: title.trim(),
+          content: content.trim(),
+          tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+        },
       })
       setTitle("")
       setContent("")
       setTags("")
-      await refresh()
     } catch (err) {
       reportError(err, "Couldn't add the knowledge entry")
     } finally {
@@ -275,8 +266,7 @@ function KnowledgeSection({ project }: { project: Project | null }) {
     if (!projectId || busy) return
     setBusy(true)
     try {
-      await deleteKnowledge(projectId, id)
-      await refresh()
+      await deleteKnowledgeRow.mutateAsync({ projectId, id })
     } catch (err) {
       reportError(err, "Couldn't delete the knowledge entry")
     } finally {
@@ -292,27 +282,27 @@ function KnowledgeSection({ project }: { project: Project | null }) {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <Field label="Entries">
-              <span className="text-xs text-muted-foreground">{entries.length} saved</span>
+              <span className="text-xs text-muted-foreground">{rows.length} saved</span>
             </Field>
-            <Button type="button" variant="ghost" size="sm" onClick={() => void refresh()} disabled={busy}>
+            <Button type="button" variant="ghost" size="sm" onClick={() => void refetch()} disabled={busy}>
               <RefreshCwIcon /> Refresh
             </Button>
           </div>
           {error && (
             <p className="rounded-lg border border-destructive/30 px-3 py-2 text-xs text-destructive">
               {error}{" "}
-              <button type="button" className="underline" onClick={() => void refresh()}>
+              <button type="button" className="underline" onClick={() => void refetch()}>
                 Try again
               </button>
             </p>
           )}
-          {entries.length === 0 ? (
+          {rows.length === 0 ? (
             <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
               No knowledge entries yet — add the first one below.
             </p>
           ) : (
             <ul className="max-h-64 divide-y overflow-y-auto rounded-lg border">
-              {entries.map((entry) => (
+              {rows.map((entry) => (
                 <li key={entry.id} className="flex items-start gap-3 px-3 py-2">
                   <BookOpenIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                   <div className="min-w-0 flex-1">

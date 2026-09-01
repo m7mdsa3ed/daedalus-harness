@@ -24,6 +24,7 @@ import type { Actions } from "@/lib/actions"
 import type { SessionMeta } from "@/lib/settings"
 import { extractSubagent, extractTodos, toolHeading, toolViewOf } from "@/lib/tools"
 import { activeSubagents, buildRows } from "@/lib/transcript-rows"
+import { useAgents, useProfiles } from "@/lib/queries/catalog"
 import { useStoreSelect, type ThreadState, type ToolItem } from "@/lib/store"
 import { formatTokens } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
@@ -93,12 +94,8 @@ function Stat({ label, value, valueClass }: { label: string; value: string; valu
 function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: SessionMeta; actions: Actions }) {
   const profileId = meta?.profileId
   const agentId = meta?.agentId
-  const profile = useStoreSelect((state) =>
-    profileId ? (state.profiles.find((p) => p.id === profileId) ?? null) : null
-  )
-  const agent = useStoreSelect((state) =>
-    agentId ? (state.agents.find((a) => a.id === agentId) ?? null) : null
-  )
+  const profile = useProfiles().find((p) => p.id === profileId) ?? null
+  const agent = useAgents().find((a) => a.id === agentId) ?? null
   const readable = planReadable(profile, agent)
   const { quota } = thread
   const asked = React.useRef(false)

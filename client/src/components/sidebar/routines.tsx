@@ -1,3 +1,4 @@
+import { useProjects } from "@/lib/queries/catalog"
 /* ── Routines ── the saved thread-starts that fire on their own.
    The upper half of the Automations tier. Its whole job is to be *distinct*
    from the lower half: a routine starts a NEW thread from nothing, a scheduled
@@ -22,10 +23,9 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { useConfirm } from "@/components/confirm-dialog"
-import type { Actions } from "@/lib/actions"
 import { newRoutinePath, routinePath, routinesPath } from "@/lib/router"
 import type { Routine } from "@/lib/settings"
-import { useStoreSelect } from "@/lib/store"
+import { useDeleteRoutine, useRoutines, useRunRoutine, useUpdateRoutine } from "@/lib/queries/routines"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 import { FoldableGroup, HEADER_BUTTON } from "./groups"
@@ -40,9 +40,12 @@ import { ACTION, MENU } from "./scale"
     old Usage row was removed for. Which is also why a row cannot say when it
     next fires: triggers are a separate read, owned by the routine's own page,
     and half a schedule printed here would be a guess. */
-export function RoutinesGroup({ actions }: { actions: Actions }) {
-  const projects = useStoreSelect((store) => store.projects)
-  const routines = useStoreSelect((store) => store.routines)
+export function RoutinesGroup() {
+  const projects = useProjects()
+  const routines = useRoutines().data ?? []
+  const updateRoutine = useUpdateRoutine()
+  const runRoutine = useRunRoutine()
+  const deleteRoutine = useDeleteRoutine()
   const navigate = useNavigate()
   const { isMobile, setOpenMobile } = useSidebar()
   const confirm = useConfirm()
@@ -56,9 +59,10 @@ export function RoutinesGroup({ actions }: { actions: Actions }) {
     projects.find((project) => project.id === id)?.name ?? "a project that no longer exists"
 
   const toggle = (routine: Routine) => {
-    actions
-      .updateRoutine(routine.id, { enabled: !routine.enabled })
-      .catch((err) => reportError(err, "Couldn't update the routine"))
+    updateRoutine.mutate(
+      { id: routine.id, patch: { enabled: !routine.enabled } },
+      { onError: (err) => reportError(err, "Couldn't update the routine") }
+    )
   }
 
   /* Deliberately the plain run and not the dry run: the forced-to-ask one is
@@ -66,10 +70,13 @@ export function RoutinesGroup({ actions }: { actions: Actions }) {
      the sentence explaining what it is for. From here, "Run now" means the
      routine as configured — including whatever it has been granted. */
   const run = (routine: Routine) => {
-    actions
-      .runRoutine(routine.id, {})
-      .then(() => toast.success(`${routine.name} started`))
-      .catch((err) => reportError(err, "Couldn't run the routine"))
+    runRoutine.mutate(
+      { id: routine.id },
+      {
+        onSuccess: () => toast.success(`${routine.name} started`),
+        onError: (err) => reportError(err, "Couldn't run the routine"),
+      }
+    )
   }
 
   const remove = async (routine: Routine) => {
@@ -83,7 +90,9 @@ export function RoutinesGroup({ actions }: { actions: Actions }) {
       }))
     )
       return
-    actions.deleteRoutine(routine.id).catch((err) => reportError(err, "Couldn't delete the routine"))
+    deleteRoutine.mutate(routine.id, {
+      onError: (err) => reportError(err, "Couldn't delete the routine"),
+    })
   }
 
   return (

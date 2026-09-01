@@ -1,6 +1,6 @@
 import * as React from "react"
 import { AgentError, ThreadSocket, type ThreadCallbacks } from "../thread-socket"
-import { api, ApiError, type ServerSettings, type SessionMeta } from "../settings"
+import { api, ApiError, type Project, type ServerSettings, type SessionMeta } from "../settings"
 import { optionKey, saveAgentOptions } from "../agent-options"
 import { appendTaskEvent } from "../task-events"
 import { notifyThreadEvent } from "../notifications"
@@ -57,6 +57,11 @@ export interface ThreadDeps {
   settings: ServerSettings
   dispatch: (action: Action) => void
   getState: () => State
+  /** The project catalog, read out of the query cache the same way
+      `getState` reads the reducer: inside a callback, last-committed. It
+      lives there rather than in the store, so a connection that needs to know
+      whether its project still exists has to be handed a reader. */
+  projects: () => Project[]
   refreshSessions: () => Promise<void>
   /** Told when this thread stops being reachable at all, so the registry can
       forget it. The connection cannot remove itself from a map it does not
@@ -427,7 +432,7 @@ export class ThreadConnection {
     if (!opts.revive && this.socket?.isArchived && !this.socket.isDisposed) return
     // A thread whose project was deleted can never open. Saying nothing left it
     // stuck on the connecting skeleton forever.
-    if (!this.deps.getState().projects.some((p) => p.id === meta.projectId)) {
+    if (!this.deps.projects().some((p) => p.id === meta.projectId)) {
       throw new Error(
         "This thread's project no longer exists, so there is no working directory to run the agent in."
       )

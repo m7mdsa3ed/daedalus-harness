@@ -3,7 +3,7 @@ import { Navigate, useNavigate, useParams } from "react-router"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { type Persona, type ServerSettings } from "@/lib/settings"
-import { useStoreSelect } from "@/lib/store"
+import { useInvalidateCatalog, usePersonas } from "@/lib/queries/catalog"
 import { FormPageHeader, PageForm, Field, FormActions } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
@@ -24,9 +24,10 @@ import { settingsPath } from "@/lib/router"
  * back the ones you cleaned out — the same contract the agent registry has.
  */
 export function PersonasPage() {
-  const { settings, actions } = useSettingsPage()
+  const { settings } = useSettingsPage()
   const meta = sectionMeta("personas")
-  const personas = useStoreSelect((store) => store.personas)
+  const personas = usePersonas()
+  const invalidate = useInvalidateCatalog()
   return (
     <LibrarySection
       meta={meta}
@@ -39,7 +40,7 @@ export function PersonasPage() {
          what it actually does. */
       subtitle={(p) => p.description || p.prompt.split("\n")[0]}
       settings={settings}
-      refresh={actions.refreshPersonas}
+      refresh={() => invalidate("personas")}
     />
   )
 }
@@ -47,8 +48,9 @@ export function PersonasPage() {
 export function PersonaFormPage() {
   const { entryId } = useParams()
   const navigate = useNavigate()
-  const { settings, actions } = useSettingsPage()
-  const personas = useStoreSelect((store) => store.personas)
+  const { settings } = useSettingsPage()
+  const personas = usePersonas()
+  const invalidate = useInvalidateCatalog()
   const persona = entryId === "new" ? null : personas.find((item) => item.id === entryId)
   if (entryId !== "new" && !persona) return <Navigate to={settingsPath("personas")} replace />
   return (
@@ -56,7 +58,7 @@ export function PersonaFormPage() {
       persona={persona ?? null}
       settings={settings}
       onDone={async (saved) => {
-        if (saved) await actions.refreshPersonas()
+        if (saved) await invalidate("personas")
         void navigate(settingsPath("personas"))
       }}
     />

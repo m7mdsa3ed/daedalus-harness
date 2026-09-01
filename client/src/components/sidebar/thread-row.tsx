@@ -19,6 +19,7 @@ import { AgentIcon, ProjectIcon } from "@/components/entity-icon"
 import { flattenMenuItems, ItemContextMenu, renderMenuItems } from "@/components/item-context-menu"
 import { threadMenuItems, trashMenuItems } from "@/components/thread-menu"
 import { activityAt, type SessionMeta } from "@/lib/settings"
+import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
 import { useStoreSelect } from "@/lib/store"
 import type { ThreadActivity } from "@/lib/thread/phase"
 import { cn } from "@/lib/utils"
@@ -257,13 +258,12 @@ function ThreadInfoCard({
   state: ThreadStatus
   trash: boolean
 }) {
-  /* Three catalog reads, each subscribed on its own. This card is rendered per
-     row of the sidebar; on the wide hook every one of them re-rendered on
-     every streamed token of every open thread. */
-  const project = useStoreSelect((s) => s.projects.find((p) => p.id === session.projectId))
-  const profile = useStoreSelect((s) => s.profiles.find((p) => p.id === session.profileId)?.name)
-  const agent =
-    useStoreSelect((s) => s.agents.find((a) => a.id === session.agentId)?.name) ?? session.agentId
+  /* Three catalog reads. This card is rendered per row of the sidebar; the
+     catalog lives in the query cache, so only a refresh of one of these three
+     re-renders it — never a token from some other open thread. */
+  const project = useProjects().find((p) => p.id === session.projectId)
+  const profile = useProfiles().find((p) => p.id === session.profileId)?.name
+  const agent = useAgents().find((a) => a.id === session.agentId)?.name ?? session.agentId
   /* The parent's title, not the row: a string compares by value, so this stays
      quiet through the parent thread's own stream. */
   const parentTitle = useStoreSelect((s) =>

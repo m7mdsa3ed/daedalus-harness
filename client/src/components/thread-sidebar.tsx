@@ -86,7 +86,8 @@ import {
   threadPath,
 } from "@/lib/router"
 import { usePins } from "@/lib/pins"
-import { useNotifications } from "@/lib/notifications-inbox"
+import { useProfiles, useProjects } from "@/lib/queries/catalog"
+import { useInbox } from "@/lib/queries/surfaces"
 import { useChord } from "@/lib/keybindings"
 import { formatChord, type ShortcutId } from "@/lib/shortcuts"
 import { Shortcut } from "@/components/shortcut"
@@ -126,7 +127,7 @@ export function SidebarNav({
   const navigate = useNavigate()
   const inBoard = location.pathname.startsWith("/board")
   const inNotifications = location.pathname.startsWith("/notifications")
-  const unread = useNotifications().unread
+  const unread = useInbox().inbox?.unread ?? 0
   // Whatever these two are bound to on this device — the tooltip has to say the
   // key that actually works, not the one the release shipped.
   const newThreadChord = useChord("newThread") ?? ""
@@ -264,7 +265,7 @@ function useSidebarView(): SidebarView {
     the project is the caller's. With no usable profile there is nothing to
     start, so it lands on the projects settings page like the empty state does. */
 export function useStartThreadIn(actions: Actions) {
-  const profiles = useStoreSelect((state) => state.profiles)
+  const profiles = useProfiles()
   const navigate = useNavigate()
   const { isMobile, setOpenMobile } = useSidebar()
   return React.useCallback(
@@ -342,10 +343,11 @@ function useThreadStatuses(): Map<string, ThreadStatus> {
 
 /* ── The list ── */
 export function ThreadSidebar({ actions }: { actions: Actions }) {
-  /* Two catalog slices and the status map — never `state.threads` itself,
-     which is replaced on every streamed token of every thread. */
+  /* The session list and the project catalog — never `state.threads` itself,
+     which is replaced on every streamed token of every thread. Projects come
+     from the query cache, so only a projects refresh reaches this. */
   const sessions = useStoreSelect((state) => state.sessions)
-  const projects = useStoreSelect((state) => state.projects)
+  const projects = useProjects()
   const pins = usePins()
   const view = useSidebarView()
   const navigate = useNavigate()
@@ -520,7 +522,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
         </SidebarGroup>
       )}
 
-      <AutomationsGroup actions={actions} />
+      <AutomationsGroup />
 
       {/* Trash folds, and folds shut by default: it is where things go, not
           where anyone works. */}

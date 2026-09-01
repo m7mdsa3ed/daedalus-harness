@@ -354,26 +354,7 @@ export interface ThreadState {
 }
 
 export interface State {
-  profiles: Profile[]
-  projects: Project[]
-  mcpServers: McpServerDef[]
-  skills: SkillDef[]
-  commands: CommandDef[]
-  /** The persona library. Read with the profiles and the agent registry, for
-      the same reason they are read together: one added on another device is
-      otherwise invisible until a reload. */
-  personas: Persona[]
-  agents: AgentDef[]
   sessions: SessionMeta[]
-  /** Scheduled prompts on the server, one row per future/recurring delivery. */
-  scheduled: ScheduledMessage[]
-  /** Saved thread-starts that fire on their own, read with the catalog. */
-  routines: Routine[]
-  /** A routine's runs, newest first, keyed by routine id — read on demand and
-      not at boot: the list is per routine, unbounded, and only the routine's
-      own page has ever asked for one. Absent means "not read yet", which is a
-      different screen from an empty array, and the page draws it as such. */
-  routineRuns: Record<string, RoutineRun[]>
   // Which thread is open and which screen is showing live in the URL — see lib/router.
   threads: Record<string, ThreadState>
 }
@@ -916,23 +897,8 @@ export function addUsage(prev: acp.Usage | null, next: acp.Usage): acp.Usage {
 // ---- reducer ----
 
 export type Action =
-  | {
-      type: "bootstrap"
-      profiles: Profile[]
-      projects: Project[]
-      mcpServers: McpServerDef[]
-      skills: SkillDef[]
-      commands: CommandDef[]
-      personas?: Persona[]
-      agents: AgentDef[]
-      sessions: SessionMeta[]
-      scheduled?: ScheduledMessage[]
-      routines?: Routine[]
-    }
+  | { type: "bootstrap"; sessions: SessionMeta[] }
   | { type: "sessions"; sessions: SessionMeta[] }
-  | { type: "scheduled"; scheduled: ScheduledMessage[] }
-  | { type: "routines"; routines: Routine[] }
-  | { type: "routine-runs"; routineId: string; runs: RoutineRun[] }
   | { type: "draft-session"; session: SessionMeta }
   | { type: "drop-draft-session"; id: string }
   | {
@@ -965,16 +931,6 @@ export type Action =
       effort: string
       personaId?: string
     }
-  | { type: "profiles"; profiles: Profile[] }
-  /** The registry, re-read. Virtual "Default" profiles are derived from it
-      server-side, so an agent the client has never heard of would otherwise
-      leave its own profile in the list pointing at nothing. */
-  | { type: "agents"; agents: AgentDef[] }
-  | { type: "projects"; projects: Project[] }
-  | { type: "mcp-servers"; mcpServers: McpServerDef[] }
-  | { type: "skills"; skills: SkillDef[] }
-  | { type: "commands"; commands: CommandDef[] }
-  | { type: "personas"; personas: Persona[] }
   | { type: "thread-reset"; id: string; thread: ThreadState }
   | { type: "turn-active"; id: string; active: boolean; settle?: boolean }
   /** How the turn that just ended went, onto the *session* row rather than the
@@ -1063,27 +1019,7 @@ export function reducer(state: State, action: Action): State {
     case "batch":
       return action.actions.reduce(reducer, state)
     case "bootstrap":
-      return {
-        ...state,
-        profiles: action.profiles,
-        projects: action.projects,
-        mcpServers: action.mcpServers,
-        skills: action.skills,
-        commands: action.commands,
-        personas: action.personas ?? state.personas,
-        agents: action.agents,
-        sessions: action.sessions,
-        scheduled: action.scheduled ?? state.scheduled,
-        routines: action.routines ?? state.routines,
-      }
-    case "scheduled":
-      return { ...state, scheduled: action.scheduled }
-    case "routines":
-      return { ...state, routines: action.routines }
-    case "routine-runs":
-      /* Keyed rather than replaced wholesale: two routines' pages can be open
-         in two dock panels, and a refresh of one must not blank the other. */
-      return { ...state, routineRuns: { ...state.routineRuns, [action.routineId]: action.runs } }
+      return { ...state, sessions: action.sessions }
     case "sessions": {
       /* The server's list is authoritative for every thread it knows about —
          but a draft is precisely one it has not been told about yet, so this
@@ -1166,20 +1102,6 @@ export function reducer(state: State, action: Action): State {
             : s
         ),
       }
-    case "profiles":
-      return { ...state, profiles: action.profiles }
-    case "agents":
-      return { ...state, agents: action.agents }
-    case "projects":
-      return { ...state, projects: action.projects }
-    case "mcp-servers":
-      return { ...state, mcpServers: action.mcpServers }
-    case "skills":
-      return { ...state, skills: action.skills }
-    case "commands":
-      return { ...state, commands: action.commands }
-    case "personas":
-      return { ...state, personas: action.personas }
     case "thread-reset":
       return { ...state, threads: { ...state.threads, [action.id]: action.thread } }
     case "thread-window":
@@ -1390,17 +1312,7 @@ export function reducer(state: State, action: Action): State {
 }
 
 export const initialState: State = {
-  profiles: [],
-  projects: [],
-  mcpServers: [],
-  skills: [],
-  commands: [],
-  personas: [],
-  agents: [],
   sessions: [],
-  scheduled: [],
-  routines: [],
-  routineRuns: {},
   threads: {},
 }
 

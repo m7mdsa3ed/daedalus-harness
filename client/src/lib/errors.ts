@@ -213,6 +213,17 @@ export function errorText(err: unknown, context?: string): string {
   return [context, info.title, info.detail].filter(Boolean).join("\n")
 }
 
+/** A query's error, prepared for the surface that is drawing the empty state.
+    Same normalization as `captureError`, minus the console line and the
+    reported-mark: a query retries on its own schedule, so each failed attempt
+    is not a new event worth logging, and nothing here is unhandled. Returns
+    null while the last failure was a cancel (the caller's own refetch). */
+export function inlineFromQuery(err: unknown, context?: string): InlineError | null {
+  const info = describeError(err)
+  if (info.kind === "cancelled") return null
+  return { ...info, context, text: errorText(err, context) }
+}
+
 function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text
 }

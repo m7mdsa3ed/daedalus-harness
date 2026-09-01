@@ -1238,6 +1238,10 @@ export class SessionManager {
       websearchViaMcp,
       workflowViaMcp,
       persona: agent?.personaVia === "acp-meta" ? persona : undefined,
+      /* The profile may opt out of Codex's fallback-metadata notice; the
+         bridge is where it is dropped, so this is where the flag lands (see
+         acp-bridge.ts). */
+      suppressModelMetadataWarning: profile.suppressModelMetadataWarning === true,
     });
     session.proc = proc;
     session.bridge = bridge; // flips the generation guard
