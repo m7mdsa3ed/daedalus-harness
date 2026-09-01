@@ -1,3 +1,5 @@
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { desc, eq, like } from "drizzle-orm";
 import { agentOptions, agents as agentsTable, db, type QuotaProbe } from "./db/index.js";
 import { gatewayUrlFor } from "./gateway-shim.js";
@@ -401,6 +403,16 @@ function withCodexGatewayUrl(env: Record<string, string>): Record<string, string
   return template.includes(seeded) ? { ...env, CODEX_CONFIG: template.replace(seeded, '"base_url":"{gatewayUrl}"') } : env;
 }
 
+/* The in-repo first-party agent (agent/, built to agent/dist). Resolved the
+   same from server/src (tsx dev) and server/dist (built), because both sit one
+   level under server/; DAEDALUS_AGENT_ENTRY is the escape hatch for pointing a
+   deploy somewhere else. A path that does not exist fails the spawn with the
+   ENOENT the thread already knows how to show — same contract as a missing
+   global binary. */
+const DAEDALUS_AGENT_ENTRY =
+  process.env.DAEDALUS_AGENT_ENTRY ??
+  join(dirname(fileURLToPath(import.meta.url)), "..", "..", "agent", "dist", "index.js");
+
 /** Model and effort are env at spawn for all three agents we ship. */
 const SPAWN_CATEGORIES: Record<string, "model" | "effort"> = {
   model: "model",
@@ -541,6 +553,39 @@ const DEFAULT_AGENTS: SeedAgent[] = [
       DAEDALUS_OPENCODE_MODEL: "{model}",
       OPENCODE_CONFIG_CONTENT:
         '{"permission":"allow","instructions":["{personaFile}"],"model":"{env:DAEDALUS_OPENCODE_MODEL}","provider":{"opencode":{"npm":"@ai-sdk/openai-compatible","name":"OpenCode","options":{"baseURL":"{env:DAEDALUS_OPENCODE_BASE_URL}","apiKey":"{env:DAEDALUS_OPENCODE_API_KEY}"}}}}',
+    },
+  },
+  {
+    // The harness's own agent: agent/ in this repo, an ACP agent on the Vercel
+    // AI SDK speaking OpenAI-compatible chat completions to whatever endpoint
+    // the profile names. Spawned as `node <repo>/agent/dist/index.js` — build
+    // it with `pnpm --dir agent build`; a missing dist fails the spawn with an
+    // ENOENT that surfaces in the thread. `liveConfig: "acp"` because it takes
+    // model and effort over session/set_config_option and reads the
+    // materialized allowlist in <cwd>/.claude/settings.local.json as its model
+    // catalog; `personaVia: "env"` through {personaFile}, which is also what
+    // makes `usesPersonaFile` write the prompt to disk. No quota probe: it has
+    // no login of its own, only the profile's key. `{gatewayUrl}` keeps the
+    // endpoint retargetable per request when the shim is up, and falls back to
+    // the raw base URL (or prunes away entirely on the Default profile).
+    since: 14,
+    introduced: 14,
+    id: "daedalus",
+    name: "Daedalus Agent",
+    command: "node",
+    args: ["{daedalusAgentEntry}"],
+    spawnCategories: SPAWN_CATEGORIES,
+    liveConfig: "acp",
+    personaVia: "env",
+    env: {
+      DAEDALUS_AGENT_API_KEY: "{apiKey}",
+      DAEDALUS_AGENT_BASE_URL: "{gatewayUrl}",
+      DAEDALUS_AGENT_MODEL: "{model}",
+      DAEDALUS_AGENT_SMALL_MODEL: "{smallModel}",
+      DAEDALUS_AGENT_EFFORT: "{effort}",
+      DAEDALUS_AGENT_CONTEXT_WINDOW: "{contextWindow}",
+      DAEDALUS_AGENT_MAX_OUTPUT_TOKENS: "{maxOutputTokens}",
+      DAEDALUS_AGENT_PERSONA_FILE: "{personaFile}",
     },
   },
 ];
@@ -800,6 +845,7 @@ export function resolveSpawn(
     contextWindow: modelMeta?.contextWindow ? String(modelMeta.contextWindow) : "null",
     maxOutputTokens: modelMeta?.maxOutputTokens ? String(modelMeta.maxOutputTokens) : "null",
     cwd: project.cwd,
+    daedalusAgentEntry: DAEDALUS_AGENT_ENTRY,
     /* JSON-escaped, and only ever correct inside a JSON string literal — which
        is the only place a template names it. A persona is multi-line prose with
        quotes and apostrophes in it; substituted raw, it closed the string it

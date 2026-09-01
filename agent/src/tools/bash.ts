@@ -1,0 +1,129 @@
+import { spawn } from "node:child_process";
+import { tool } from "ai";
+import { z } from "zod";
+import type { ToolMeta, ToolRuntime } from "./context.js";
+import { inputOf } from "./context.js";
+import { checkPermission } from "../permissions.js";
+
+const DEFAULT_TIMEOUT_MS = 120_000;
+const MAX_TIMEOUT_MS = 600_000;
+const OUTPUT_LIMIT = 64_000;
+const DELTA_THROTTLE_MS = 100;
+
+export const bashMeta: ToolMeta = {
+  kind: "execute",
+  title: (input) => {
+    const command = String(inputOf(input).command ?? "");
+    return command.length > 80 ? `${command.slice(0, 80)}…` : command || "Run command";
+  },
+};
+
+export function makeBashTool(rt: ToolRuntime) {
+  return tool({
+    description:
+      "Execute a shell command in the working directory. stdout and stderr stream back combined; the command is killed at the timeout.",
+    inputSchema: z.object({
+      command: z.string().describe("The shell command to run"),
+      timeout_ms: z
+        .number()
+        .int()
+        .min(1000)
+        .max(MAX_TIMEOUT_MS)
+        .optional()
+        .describe(`Timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}, max ${MAX_TIMEOUT_MS})`),
+    }),
+    execute: async ({ command, timeout_ms }, options) => {
+      await checkPermission(rt.ctx, rt.session, "execute", {
+        toolCallId: options.toolCallId,
+        toolName: "bash",
+        title: bashMeta.title({ command }),
+        kind: "execute",
+        rawInput: { command },
+      });
+      return runCommand(rt, command, timeout_ms ?? DEFAULT_TIMEOUT_MS, options.toolCallId, options.abortSignal);
+    },
+  });
+}
+
+function runCommand(
+  rt: ToolRuntime,
+  command: string,
+  timeoutMs: number,
+  toolCallId: string,
+  abortSignal: AbortSignal | undefined,
+): Promise<string> {
+  return new Promise((resolvePromise) => {
+    const child = spawn("bash", ["-c", command], {
+      cwd: rt.session.cwd,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let output = "";
+    let truncated = false;
+    let pendingDelta = "";
+    let deltaTimer: NodeJS.Timeout | null = null;
+
+    /* Codex-style live output: the content block is the tool result, the
+       stream is `_meta.terminal_output_delta` on interim updates, which the
+       client accumulates. Transient — a load replay gets the final text. */
+    const flushDelta = () => {
+      deltaTimer = null;
+      if (!pendingDelta) return;
+      const data = pendingDelta;
+      pendingDelta = "";
+      void rt.emit.transient({
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        status: "in_progress",
+        _meta: { terminal_output_delta: { data } },
+      });
+    };
+    const onChunk = (chunk: Buffer) => {
+      const text = chunk.toString("utf8");
+      if (output.length < OUTPUT_LIMIT) {
+        output += text;
+        if (output.length > OUTPUT_LIMIT) {
+          output = output.slice(0, OUTPUT_LIMIT);
+          truncated = true;
+        }
+      } else truncated = true;
+      pendingDelta += text;
+      deltaTimer ??= setTimeout(flushDelta, DELTA_THROTTLE_MS);
+    };
+    child.stdout.on("data", onChunk);
+    child.stderr.on("data", onChunk);
+
+    const killTimer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
+    let timedOut = false;
+    killTimer.unref();
+    const timeoutMark = setTimeout(() => {
+      timedOut = true;
+    }, timeoutMs);
+    timeoutMark.unref();
+    const onAbort = () => child.kill("SIGKILL");
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
+
+    child.on("error", (err) => {
+      cleanup();
+      resolvePromise(`Failed to start command: ${err.message}`);
+    });
+    child.on("close", (code, signal) => {
+      cleanup();
+      let result = output;
+      if (truncated) result += "\n[output truncated]";
+      if (timedOut) result += `\n[command timed out after ${timeoutMs}ms]`;
+      else if (signal) result += `\n[killed by ${signal}]`;
+      else if (code !== 0) result += `\n[exit code ${code}]`;
+      resolvePromise(result || "[no output]");
+    });
+
+    function cleanup() {
+      clearTimeout(killTimer);
+      clearTimeout(timeoutMark);
+      if (deltaTimer) clearTimeout(deltaTimer);
+      flushDelta();
+      abortSignal?.removeEventListener("abort", onAbort);
+    }
+  });
+}

@@ -1,6 +1,6 @@
 # Daedalus Harness
 
-Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
+Generic ACP (Agent Client Protocol) harness. Four parts, one repo:
 
 - `server/` — Node 22 + Hono + ws. **The ACP client lives here.** It spawns an agent
   process per thread (agent registry, `{apiKey}`/`{baseUrl}`/`{model}`/`{cwd}` placeholders
@@ -333,6 +333,31 @@ Generic ACP (Agent Client Protocol) harness. Three parts, one repo:
   Theme/layout ported from
   `/var/www/mawared-off/social-live-agent/ai-agent-web` (glass surfaces, Inter, step-row
   transcript). Electron shell lives in `client/electron/` (frameless, vibrancy/acrylic).
+- `agent/` — **the harness's own ACP agent runtime** ("Daedalus Agent", registry id
+  `daedalus`, seed 14), an independent package like the other two: an agent loop on the
+  Vercel AI SDK (`streamText` + tools), OpenAI-compatible chat completions only, spawned
+  as `node agent/dist/index.js` (`{daedalusAgentEntry}` in `registry.ts`;
+  `DAEDALUS_AGENT_ENTRY` overrides, and the server's `pm2:start` runs `build:agent`).
+  Configured entirely through `DAEDALUS_AGENT_*` env filled from the profile — the
+  literal string `"null"` means unset, matching the unquoted-JSON placeholders. It
+  implements the full surface the bridge negotiates: session/load replay and
+  session/list from its own store (`~/.daedalus-agent/`, JSONL per session + index —
+  which is what makes it importable), steering, four permission modes incl. `plan`,
+  request_permission with sticky always-answers, form elicitation (`ask_user`, offered
+  only when the client claims it), ACP plans (`write_todos`), model/effort/boolean
+  config options (`liveConfig: "acp"` — the model select is read back from the
+  allowlist the server materializes into `<cwd>/.claude/settings.local.json`), codex-
+  style `_meta.terminal_output_delta` streaming from `bash`, MCP servers via
+  `@modelcontextprotocol/sdk` wrapped in `dynamicTool` (`mcp__<server>__<tool>`),
+  materialized commands/skills, persona via `{personaFile}`, compaction past ~80% of
+  the window, and the subagent RFD (`task` tool) with a journal-only fallback. Two SDK
+  sharp edges are load-bearing: **inbound zod strips capability keys it does not
+  know**, so `initialize` is registered with an identity parser or the harness's
+  `subagents` claim silently vanishes; and outbound `notify()` is unvalidated, which
+  is what lets the RFD updates travel (`Emitter` in `src/updates.ts` — the tests'
+  `connectPair` re-addresses them exactly as the server's `agentStream` does).
+  Tests are in-process ACP clients over scripted `MockLanguageModelV4`s
+  (`test/helpers/scripted.ts`); `cd agent && pnpm test`.
 - No build-time client config: server URL + token are entered at runtime (localStorage).
 
 ## Commands

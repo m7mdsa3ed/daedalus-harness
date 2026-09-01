@@ -415,6 +415,44 @@ test("a genuinely new agent still reaches an install that has rows", () => {
   assert.ok(getAgent("codex"));
 });
 
+test("seed 14 brings the first-party Daedalus agent to fresh and seeded installs alike", () => {
+  resetAgents([]);
+  seedAgents();
+  const daedalus = getAgent("daedalus");
+  assert.ok(daedalus, "fresh install gets it");
+  assert.equal(daedalus?.command, "node");
+  assert.equal(daedalus?.liveConfig, "acp");
+  assert.equal(daedalus?.personaVia, "env");
+
+  // An install seeded to 13 has never been offered it, so it arrives.
+  resetAgents([{ id: "opencode", seededVersion: 13, env: {} }]);
+  seedAgents();
+  assert.ok(getAgent("daedalus"));
+
+  // Deleted on purpose stays deleted: this install is past seed 14.
+  resetAgents([{ id: "opencode", seededVersion: 14, env: {} }]);
+  seedAgents();
+  assert.equal(getAgent("daedalus"), undefined);
+});
+
+test("the Daedalus agent's spawn resolves the entry path and prunes like the rest", () => {
+  resetAgents([]);
+  seedAgents();
+  const daedalus = getAgent("daedalus");
+  assert.ok(daedalus);
+  const spawn = resolveSpawn(daedalus, profileWith(), project, "gw-model", "high");
+  // The args placeholder resolves to a real path ending in the built entry.
+  assert.match(spawn.args[0] ?? "", /agent[/\\]dist[/\\]index\.js$/);
+  assert.equal(spawn.env.DAEDALUS_AGENT_MODEL, "gw-model");
+  assert.equal(spawn.env.DAEDALUS_AGENT_EFFORT, "high");
+  assert.equal(spawn.env.DAEDALUS_AGENT_API_KEY, "sk-test");
+  // The Default profile resolves the endpoint and key empty — both prune away,
+  // and the agent falls back to its own defaults.
+  const bare = resolveSpawn(daedalus, virtualProfile, project);
+  assert.equal(bare.env.DAEDALUS_AGENT_BASE_URL, undefined);
+  assert.equal(bare.env.DAEDALUS_AGENT_API_KEY, undefined);
+});
+
 test("seeding twice changes nothing", () => {
   resetAgents([]);
   seedAgents();

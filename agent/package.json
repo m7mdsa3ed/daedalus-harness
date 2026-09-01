@@ -1,0 +1,32 @@
+{
+  "name": "daedalus-agent",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "daedalus-agent": "dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "pnpm test:handshake && pnpm test:turn && pnpm test:tools && pnpm test:persistence && pnpm test:subagents",
+    "test:handshake": "tsx test/handshake.test.ts",
+    "test:turn": "tsx test/turn.test.ts",
+    "test:tools": "tsx test/tools.test.ts",
+    "test:persistence": "tsx test/persistence.test.ts",
+    "test:subagents": "tsx test/subagents.test.ts"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^1.4.0",
+    "@ai-sdk/openai-compatible": "^2.0.0",
+    "@ai-sdk/provider": "^4.0.9",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "ai": "^7.0.82",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.0"
+  }
+}

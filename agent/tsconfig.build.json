@@ -1,0 +1,13 @@
+/* `pnpm build` — the only place the agent is *emitted*. tsconfig.json stays
+   noEmit (editor + `tsc --noEmit` typecheck, tests included); this one narrows
+   to src and writes JS to dist/, one level under agent/ exactly like src/. */
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "sourceMap": true
+  },
+  "include": ["src"]
+}
