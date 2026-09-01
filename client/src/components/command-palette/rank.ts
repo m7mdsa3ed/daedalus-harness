@@ -62,13 +62,51 @@ const PIN = 1e6
    weakest command on the list (see the note in `root-page.tsx`). */
 const NAMED = 85
 
+/** The heading recently used commands are lifted under, before anything else.
+    They are *moved* rather than copied: a row drawn twice is two rows with one
+    id, which is cmdk's selection value, and a list that repeats itself is one
+    you have to read twice to be sure. */
+export const RECENT_GROUP = "Recently used"
+
+/** How many of the remembered ids are offered. The list is a shortcut past the
+    first screenful, not a history — past about this many, scanning it costs
+    more than typing the name. */
+const RECENT_SHOWN = 5
+
+/* A recency nudge, applied *after* `named` has been decided so it can never
+   promote a scattered-letters match into a row the query is treated as naming.
+   Small on purpose: it settles ties and lifts a habit past an equal match, and
+   loses outright to a better one — a palette that answers the last thing you
+   did rather than the thing you typed is worse than one that never learned. */
+const RECENCY_BONUS = 6
+
 /** Score, drop the misses, then order rows within a group and groups against
     each other. Both sorts are stable, so a tie is the order things were
     declared in. */
-export function rankItems(items: PaletteItem[], query: string): { name: string; items: PaletteItem[] }[] {
+export function rankItems(
+  items: PaletteItem[],
+  query: string,
+  /** Command ids this device used, newest first — see `lib/palette-recents`. */
+  recents: string[] = []
+): { name: string; items: PaletteItem[] }[] {
   const q = query.trim()
+  /* Rank by recency, resolved against the rows that are actually on offer: a
+     remembered id whose command does not apply right now matches nothing here
+     and simply does not appear. `always`/pinned rows are left out — those are
+     about the query or placed by hand, and neither is a habit. */
+  const byId = new Map(items.map((item) => [item.id, item]))
+  const recent = recents
+    .map((id) => byId.get(id))
+    .filter((item): item is PaletteItem => !!item && !item.always && !item.rank)
+  const order = new Map(recent.map((item, index) => [item.id, index]))
+  const lifted = q ? new Set<string>() : new Set(recent.slice(0, RECENT_SHOWN).map((i) => i.id))
+
+  const groupOf = (item: PaletteItem) => (lifted.has(item.id) ? RECENT_GROUP : item.group)
+
   const groups = new Map<string, Ranked[]>()
-  // Declared order, kept even for a group whose rows all scored out.
+  // Recents first, then declared order — kept even for a group whose rows all
+  // scored out.
+  if (lifted.size > 0) groups.set(RECENT_GROUP, [])
   for (const item of items) if (!groups.has(item.group)) groups.set(item.group, [])
 
   const scored: Ranked[] = []
@@ -86,7 +124,9 @@ export function rankItems(items: PaletteItem[], query: string): { name: string; 
        moves because what the box holds stopped being a command. */
     const floating = item.always && item.rank === "bottom" && !named
     const bias = item.rank === "top" || floating ? PIN : item.rank === "bottom" ? -PIN : 0
-    groups.get(item.group)!.push({ item, score: row.score + bias })
+    const rank = order.get(item.id)
+    const recency = rank === undefined ? 0 : RECENCY_BONUS - rank / recent.length
+    groups.get(groupOf(item))!.push({ item, score: row.score + bias + recency })
   }
 
   const out = [...groups]
@@ -100,6 +140,12 @@ export function rankItems(items: PaletteItem[], query: string): { name: string; 
   if (q) {
     out.sort((a, b) => b.score - a.score)
     for (const group of out) group.rows.sort((a, b) => b.score - a.score)
+  } else {
+    /* Nothing is typed, so every row scored 1 and only the recency nudge tells
+       them apart — which is exactly the order the lifted group wants, and no
+       order at all for the rest, whose declared sequence must survive. */
+    const recentGroup = out.find((group) => group.name === RECENT_GROUP)
+    recentGroup?.rows.sort((a, b) => b.score - a.score)
   }
   return out.map((group) => ({ name: group.name, items: group.rows.map((row) => row.item) }))
 }

@@ -24,6 +24,10 @@ import type { Project } from "./projects.js";
 /** Pages are followed inside the one spawned process; these bound how far. */
 const MAX_LIST_PAGES = 10;
 const MAX_LIST_SESSIONS = 500;
+/** The counts bound rows, not size — nothing in the protocol bounds a title,
+    so a broken or hostile agent could answer 500 sessions of megabytes each.
+    Approximate on purpose: the cut lands after the page that crossed it. */
+const MAX_LIST_BYTES = 4 * 1024 * 1024;
 
 export interface ImportableSession {
   acpSessionId: string;
@@ -85,6 +89,7 @@ async function runListing(
       const found: acp.SessionInfo[] = [];
       let cursor: string | null = null;
       let truncated = false;
+      let bytes = 0;
       for (let page = 0; page < MAX_LIST_PAGES; page++) {
         /* No `cwd` filter: the dialog lists everything on the machine and
            groups it by directory, so a conversation from a project the harness
@@ -94,9 +99,10 @@ async function runListing(
           { cursor },
         );
         found.push(...response.sessions);
+        bytes += JSON.stringify(response.sessions).length;
         cursor = response.nextCursor ?? null;
         if (!cursor) break;
-        if (found.length >= MAX_LIST_SESSIONS || page === MAX_LIST_PAGES - 1) {
+        if (found.length >= MAX_LIST_SESSIONS || bytes >= MAX_LIST_BYTES || page === MAX_LIST_PAGES - 1) {
           truncated = true;
           break;
         }

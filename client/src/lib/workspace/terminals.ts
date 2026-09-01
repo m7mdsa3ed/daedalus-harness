@@ -25,13 +25,6 @@ function server(): ServerSettings {
   return settings
 }
 
-export function listTerminals(projectId: string): Promise<TerminalInfo[]> {
-  return api<TerminalInfo[]>(
-    server(),
-    `/api/projects/${encodeURIComponent(projectId)}/terminals`
-  )
-}
-
 export function createTerminal(
   projectId: string,
   options: { title?: string; cols?: number; rows?: number } = {}

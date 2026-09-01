@@ -18,12 +18,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import { FormPageHeader, PageForm, Field, FormActions, lines, pairs } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { LibraryImportPage, LibrarySection, saveLibraryEntry } from "./library"
-import { captureError, reportError, type InlineError } from "@/lib/errors"
+import { reportError } from "@/lib/errors"
+import { useAsyncAction } from "@/hooks/use-async-action"
 import { settingsPath } from "@/lib/router"
 
 type BuiltinKind = "web-search" | "knowledge" | "workflow"
@@ -37,7 +38,7 @@ const BUILTINS: { kind: BuiltinKind; label: string; hint: string; icon: typeof G
 export function McpPage() {
   const { settings, actions } = useSettingsPage()
   const meta = sectionMeta("mcp")
-  const { state } = useStore()
+  const mcpServers = useStoreSelect((store) => store.mcpServers)
 
   /* The harness's own servers, added from one menu rather than typed in:
      there is nothing to type — the row is a handle, and the command, env and
@@ -45,7 +46,7 @@ export function McpPage() {
      and an entry is hidden once present, since a second copy is the same row;
      the menu itself goes once all of them are. */
   const has = (kind: BuiltinKind) =>
-    state.mcpServers.some((s) => s.type === "builtin" && s.builtin === kind)
+    mcpServers.some((s) => s.type === "builtin" && s.builtin === kind)
   const inject = async (kind: BuiltinKind) => {
     try {
       await api(settings, `/api/mcp-servers/builtin/${kind}`, { method: "POST" })
@@ -78,7 +79,7 @@ export function McpPage() {
   return (
     <LibrarySection
       meta={meta}
-      items={state.mcpServers}
+      items={mcpServers}
       endpoint="/api/mcp-servers"
       noun="MCP server"
       subtitle={mcpSubtitle}
@@ -100,8 +101,8 @@ export function McpFormPage() {
   const { entryId } = useParams()
   const navigate = useNavigate()
   const { settings, actions } = useSettingsPage()
-  const { state } = useStore()
-  const server = entryId === "new" ? null : state.mcpServers.find((item) => item.id === entryId)
+  const mcpServers = useStoreSelect((store) => store.mcpServers)
+  const server = entryId === "new" ? null : mcpServers.find((item) => item.id === entryId)
   // A built-in is not editable (see McpPage); a stale link lands on the list.
   if ((entryId !== "new" && !server) || server?.type === "builtin") {
     return <Navigate to={settingsPath("mcp")} replace />
@@ -136,15 +137,12 @@ function McpForm({
     url: server?.type === "http" ? server.url : "",
     headers: server?.type === "http" ? server.headers.map((h) => `${h.name}: ${h.value}`).join("\n") : "",
   }))
-  const [busy, setBusy] = React.useState(false)
-  const [saveError, setSaveError] = React.useState<InlineError | null>(null)
+  const { busy, error: saveError, run } = useAsyncAction()
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
 
-  const save = async (e: React.FormEvent) => {
+  const save = (e: React.FormEvent) => {
     e.preventDefault()
-    setBusy(true)
-    setSaveError(null)
-    try {
+    void run("Couldn't save the MCP server", async () => {
       const payload =
         form.type === "http"
           ? { type: "http", name: form.name, url: form.url, headers: pairs(form.headers, ":") }
@@ -157,10 +155,7 @@ function McpForm({
             }
       await saveLibraryEntry(settings, "/api/mcp-servers", server?.id, payload)
       onDone(true)
-    } catch (err) {
-      setSaveError(captureError(err, "Couldn't save the MCP server"))
-      setBusy(false)
-    }
+    })
   }
 
   return (

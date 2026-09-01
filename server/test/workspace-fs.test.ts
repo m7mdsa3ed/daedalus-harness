@@ -110,7 +110,7 @@ await test("a path that does not exist yet is checked against its parent", async
   assert.equal(await status(() => fs.resolveInProject(root, "escape/new-file.ts")), 403);
 });
 
-await test("a project rooted at a symlink is not its own escape", () => {
+await test("a project rooted at a symlink is not its own escape", async () => {
   const linked = join(tmpdir(), `daedalus-link-${process.pid}`);
   rmSync(linked, { force: true });
   symlinkSync(root, linked, "dir");
@@ -119,15 +119,15 @@ await test("a project rooted at a symlink is not its own escape", () => {
     cwd: linked,
     description: null,
   });
-  const listing = fs.listDir(viaLink.id, "src");
+  const listing = await fs.listDir(viaLink.id, "src");
   assert.ok(listing.entries.some((entry) => entry.name === "index.ts"));
   deleteProject(viaLink.id);
   rmSync(linked, { force: true });
 });
 
 // ── Listing ──────────────────────────────────────────────────────────────────
-await test("listing hides ignored and hidden entries by default", () => {
-  const listing = fs.listDir(project.id, "");
+await test("listing hides ignored and hidden entries by default", async () => {
+  const listing = await fs.listDir(project.id, "");
   const names = listing.entries.map((entry) => entry.name);
   assert.ok(names.includes("src"));
   assert.ok(names.includes("README.md"));
@@ -139,31 +139,31 @@ await test("listing hides ignored and hidden entries by default", () => {
   assert.deepEqual([...types].sort((a, b) => (a === b ? 0 : a === "dir" ? -1 : 1)), types);
 });
 
-await test("hidden and ignored can be revealed", () => {
-  const names = fs
-    .listDir(project.id, "", { hidden: true, ignored: true })
-    .entries.map((entry) => entry.name);
+await test("hidden and ignored can be revealed", async () => {
+  const names = (
+    await fs.listDir(project.id, "", { hidden: true, ignored: true })
+  ).entries.map((entry) => entry.name);
   assert.ok(names.includes(".env"));
   assert.ok(names.includes("node_modules"));
-  const env = fs
-    .listDir(project.id, "", { hidden: true })
-    .entries.find((entry) => entry.name === ".env");
+  const env = (
+    await fs.listDir(project.id, "", { hidden: true })
+  ).entries.find((entry) => entry.name === ".env");
   assert.equal(env?.hidden, true);
 });
 
-await test("paths in a listing are relative, never absolute", () => {
-  for (const entry of fs.listDir(project.id, "src").entries) {
+await test("paths in a listing are relative, never absolute", async () => {
+  for (const entry of (await fs.listDir(project.id, "src")).entries) {
     assert.ok(!entry.path.startsWith("/"), `${entry.path} is absolute`);
     assert.ok(!entry.path.includes(root), `${entry.path} leaks the server path`);
   }
-  assert.equal(fs.listDir(project.id, "src").entries[0]?.path, "src/index.ts");
+  assert.equal((await fs.listDir(project.id, "src")).entries[0]?.path, "src/index.ts");
 });
 
-await test("a listing is bounded and says when it was cut", () => {
+await test("a listing is bounded and says when it was cut", async () => {
   const many = join(root, "many");
   mkdirSync(many);
   for (let i = 0; i < 1100; i += 1) writeFileSync(join(many, `f${i}.txt`), "x");
-  const listing = fs.listDir(project.id, "many");
+  const listing = await fs.listDir(project.id, "many");
   assert.equal(listing.truncated, true);
   assert.equal(listing.entries.length, 1000);
   rmSync(many, { recursive: true });

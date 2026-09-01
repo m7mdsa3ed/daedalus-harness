@@ -11,9 +11,6 @@ import {
   sessionMcpServers,
   sessionSkills,
   skills as skillsTable,
-  templateCommands,
-  templateMcpServers,
-  templateSkills,
 } from "./index.js";
 
 /**
@@ -25,9 +22,10 @@ import {
  * it, and the readers filtered the corpses out at spawn time. They are join
  * tables with `ON DELETE CASCADE` now, so a dangling id is not a thing that
  * can exist — which is why nothing downstream filters any more. Both owners
- * share one shape and one reader/writer here, and the third — a project
- * template's kit — is a descriptor rather than a third copy of the queries. (Projects were the third once;
- * a project is a directory now and links nothing.)
+ * share one shape and one reader/writer here. (Projects were a third owner
+ * once; a project is a directory now and links nothing. Routines carry MCP
+ * links too, but only the one kind, so theirs live beside the routines code
+ * as `ROUTINE_LINKS`, built on these same helpers.)
  */
 export interface LinkSet {
   mcpServerIds: string[];
@@ -63,16 +61,6 @@ export const SESSION_LINKS: LinkTables = {
   mcp: { table: sessionMcpServers, owner: sessionMcpServers.sessionId, target: sessionMcpServers.mcpServerId, ownerKey: "sessionId", targetKey: "mcpServerId" },
   skill: { table: sessionSkills, owner: sessionSkills.sessionId, target: sessionSkills.skillId, ownerKey: "sessionId", targetKey: "skillId" },
   command: { table: sessionCommands, owner: sessionCommands.sessionId, target: sessionCommands.commandId, ownerKey: "sessionId", targetKey: "commandId" },
-};
-
-/* The third owner, and the one the descriptor was written for: a project
-   template's kit. A template is not spawned — its links are copied onto the
-   thread the Studio opens — but it stores and cascades them exactly as the
-   other two do, so there is still one reader and one writer. */
-export const TEMPLATE_LINKS: LinkTables = {
-  mcp: { table: templateMcpServers, owner: templateMcpServers.templateId, target: templateMcpServers.mcpServerId, ownerKey: "templateId", targetKey: "mcpServerId" },
-  skill: { table: templateSkills, owner: templateSkills.templateId, target: templateSkills.skillId, ownerKey: "templateId", targetKey: "skillId" },
-  command: { table: templateCommands, owner: templateCommands.templateId, target: templateCommands.commandId, ownerKey: "templateId", targetKey: "commandId" },
 };
 
 /** The database handle inside `db.transaction` — the same query surface, minus

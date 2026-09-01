@@ -14,6 +14,9 @@ import {
   type TerminalState,
   type WorkflowStepInfo,
 } from "./tools"
+import { sameRow } from "./settings"
+import { unclaimed } from "./thread/carry"
+import { IDLE_PHASE, isOpening, type ConnPhase } from "./thread/phase"
 import type {
   AgentDef,
   CommandDef,
@@ -175,6 +178,11 @@ export interface ErrorItem {
   detail?: string
   /** The prompt this failure killed. Present => the row offers Retry. */
   retryText?: string
+  /** This client wrote this row; no journal will ever produce it. What makes it
+      survive an attach that replaces the transcript — see lib/thread/carry.ts.
+      Absent on the error a `turn_ended` carries, which the replay brings back
+      on its own and which must therefore NOT be carried, or it shows twice. */
+  local?: boolean
   at?: number
   /** Never set today — errors are the thread's — but every item carries the
       field so the row builder can read it without narrowing per kind. */
@@ -269,10 +277,17 @@ export interface PendingElicitation {
 
 export interface ThreadState {
   items: ThreadItem[]
-  status: "idle" | "connecting" | "connected" | "closed"
-  /** WebSocket close code/reason of the last close — drives the closed-state banner. */
-  closeCode?: number
-  closeReason?: string
+  /**
+   * What this device's connection to the thread is doing — see
+   * `lib/thread/phase.ts` for the vocabulary and for what it replaces.
+   *
+   * Written by exactly one function (`ThreadConnection.setPhase`) through the
+   * one `thread-phase` action. That is the point: the four-value `status` it
+   * replaces had two writers racing for it, which is how a thread in the
+   * reconnect ladder came to read `closed` — composer locked, dead-thread
+   * banner up — for the whole of a recovery that was going fine.
+   */
+  phase: ConnPhase
   turnActive: boolean
   permission: PendingPermission | null
   elicitation: PendingElicitation | null
@@ -324,14 +339,6 @@ export interface ThreadState {
   earlier: number
   /** A `load_earlier` is in flight — the button says so and does not stack. */
   loadingEarlier: boolean
-  /** How much of the replay has arrived, while one is running: `done`/`total`
-      in events, against the window the server named in `attached`. Null before
-      `attached` and again at `caught_up`, and null for the whole of a replay a
-      server too old to state its length sent — which is the distinction the
-      line above the composer is drawn from, since "waiting for the server" and
-      "folding a long conversation" are different waits and only the second one
-      is about the thread's size. */
-  replay: { done: number; total: number } | null
 }
 
 export interface State {
@@ -361,9 +368,7 @@ export interface State {
 
 export const emptyThread: ThreadState = {
   items: [],
-  status: "idle",
-  closeCode: undefined,
-  closeReason: undefined,
+  phase: IDLE_PHASE,
   turnActive: false,
   permission: null,
   elicitation: null,
@@ -381,7 +386,6 @@ export const emptyThread: ThreadState = {
   archived: false,
   earlier: 0,
   loadingEarlier: false,
-  replay: null,
 }
 
 /**
@@ -393,21 +397,21 @@ export const emptyThread: ThreadState = {
  * empty on sight: it has no connection to be waiting on, and nothing is ever
  * going to arrive until someone types.
  *
- * `connecting` outranks `draft`, and that ordering is the whole point of the
- * first message: `actions.send` flips the status before it POSTs, so the wash
- * goes and the composer docks the instant the message is sent rather than two
- * seconds later when the agent has finished spawning and the first item lands.
- * The transcript is not empty at that moment in any sense the user cares about
- * — the send happened — and leaving the hero up through the spawn read as the
- * message having gone nowhere.
+ * A thread that is *opening* outranks `draft`, and that ordering is the whole
+ * point of the first message: the connection moves to `starting` before the
+ * create POSTs, so the wash goes and the composer docks the instant the message
+ * is sent rather than two seconds later when the agent has finished spawning and
+ * the first item lands. The transcript is not empty at that moment in any sense
+ * the user cares about — the send happened — and leaving the hero up through the
+ * spawn read as the message having gone nowhere.
  */
 export function threadIsEmpty(thread: ThreadState, draft?: boolean): boolean {
   if (thread.items.length > 0) return false
   // Already on its way to a transcript, draft or not: that reads as loading.
-  if (thread.status === "connecting") return false
+  if (isOpening(thread.phase)) return false
   if (draft) return true
   // Not yet started at all.
-  return thread.status !== "idle"
+  return thread.phase.kind !== "idle"
 }
 
 // ---- update application (shared by live updates and journal rebuild) ----
@@ -954,13 +958,6 @@ export type Action =
   | { type: "commands"; commands: CommandDef[] }
   | { type: "personas"; personas: Persona[] }
   | { type: "thread-reset"; id: string; thread: ThreadState }
-  | {
-      type: "thread-status"
-      id: string
-      status: ThreadState["status"]
-      closeCode?: number
-      closeReason?: string
-    }
   | { type: "turn-active"; id: string; active: boolean; settle?: boolean }
   /** Windowing/archive bookkeeping, all of it absolute — set from `attached`
       and from the end of a re-fold, never accumulated. */
@@ -971,8 +968,11 @@ export type Action =
       earlier?: number
       loadingEarlier?: boolean
     }
-  /** Replay progress, or null when one is not running. */
-  | { type: "thread-replay"; id: string; replay: { done: number; total: number } | null }
+  /** The connection moved. One writer, one action — see `ThreadState.phase`. */
+  | { type: "thread-phase"; id: string; phase: ConnPhase }
+  /** Put back the rows a replaced transcript took with it — this device's own
+      unacknowledged message and its own error rows. See lib/thread/carry.ts. */
+  | { type: "thread-carry"; id: string; items: ThreadItem[] }
   /** `sessionId` names a subagent's session when the update is a child's —
       see the `update` event in protocol.ts. Absent = the thread's own. */
   | { type: "update"; id: string; update: SessionUpdate; allowUserChunks?: boolean; sessionId?: string }
@@ -992,6 +992,9 @@ export type Action =
       detail?: string
       retryText?: string
       settle?: boolean
+      /** Written by this client rather than replayed from a journal — see
+          `ErrorItem.local`. */
+      local?: boolean
     }
   | { type: "dismiss-error"; id: string; itemId: string }
   | { type: "permission"; id: string; permission: PendingPermission | null }
@@ -1064,7 +1067,28 @@ export function reducer(state: State, action: Action): State {
          draft marker goes with it. */
       const known = new Set(action.sessions.map((session) => session.id))
       const drafts = state.sessions.filter((session) => session.draft && !known.has(session.id))
-      return { ...state, sessions: [...drafts, ...action.sessions] }
+      /* Keep the object a row already had when the server's account of it has
+         not moved (`sameRow`). Every consumer of a row is a subscription, and
+         the most consequential of them is the chat panel, whose reaction to a
+         new row object is to *open the thread* — so replacing the list wholesale
+         turned every list refresh into an open, and an open landing inside
+         another open is two peers on one session. Identity is the cheap half of
+         fixing that; the other half is that opening stops keying on the row at
+         all (see lib/thread/). */
+      const previous = new Map(state.sessions.map((session) => [session.id, session]))
+      const sessions = action.sessions.map((next) => {
+        const old = previous.get(next.id)
+        return old && sameRow(old, next) ? old : next
+      })
+      const merged = [...drafts, ...sessions]
+      /* And when nothing moved at all, hand back the same *state* object, so
+         the store's subscribers are not woken to be told so. Conservative on
+         purpose: a false negative here costs one array allocation and the
+         renders this used to cost unconditionally. */
+      const unchanged =
+        merged.length === state.sessions.length &&
+        merged.every((session, i) => session === state.sessions[i])
+      return unchanged ? state : { ...state, sessions: merged }
     }
     case "spawn-config":
       return {
@@ -1138,21 +1162,18 @@ export function reducer(state: State, action: Action): State {
         ...(action.earlier !== undefined ? { earlier: action.earlier } : {}),
         ...(action.loadingEarlier !== undefined ? { loadingEarlier: action.loadingEarlier } : {}),
       })
-    case "thread-replay":
-      return withThread(state, action.id, { replay: action.replay })
-    case "thread-status":
-      // Only a close carries a code; clear it otherwise so a stale reason can't
-      // leak into the banner of the next connection.
-      return withThread(state, action.id, {
-        status: action.status,
-        closeCode: action.status === "closed" ? action.closeCode : undefined,
-        closeReason: action.status === "closed" ? action.closeReason : undefined,
-        /* A replay only ever runs while connecting, so every other status is an
-           exit from one — `caught_up` clears it too, but a socket that died
-           mid-replay never reaches that and must not leave a half-filled bar
-           on a thread that has stopped loading. */
-        ...(action.status === "connecting" ? {} : { replay: null }),
-      })
+    case "thread-phase":
+      return withThread(state, action.id, { phase: action.phase })
+    case "thread-carry": {
+      const items = thread(state, action.id).items
+      /* Appended, and last, which is where they were: an unacknowledged bubble
+         is always the newest thing in the thread, and a failure this client
+         recorded is newer than everything the journal holds. */
+      const missing = unclaimed(action.items, items)
+      return missing.length === 0
+        ? state
+        : withThread(state, action.id, { items: [...items, ...missing] })
+    }
     case "turn-active": {
       const next = withThread(state, action.id, {
         turnActive: action.active,
@@ -1252,6 +1273,7 @@ export function reducer(state: State, action: Action): State {
           reason: action.reason,
           detail: action.detail,
           retryText: action.retryText,
+          local: action.local,
           at: Date.now(),
         },
       ]
@@ -1339,45 +1361,147 @@ export const initialState: State = {
 
 // ---- context ----
 
-/* Two contexts, not one. A single `{ state, dispatch }` provider allocated a
-   fresh object per dispatch, so every `useStore()` consumer re-rendered on
-   every streamed token — including the settings pages that only ever read
-   `dispatch`. `dispatch` from useReducer is referentially stable for the life
-   of the reducer, so a consumer that subscribes to it alone never re-renders
-   on state. `useStore()` stays for the wide callers; new code should reach for
-   the narrower `useStoreState()` / `useDispatch()`. */
-export const StateContext = React.createContext<State>(initialState)
+/**
+ * The store is an external store now, not a state context, and **the reducer
+ * lives in here** rather than in `App`.
+ *
+ * Both halves of that are load-bearing, and neither works without the other.
+ *
+ * *Why not a state context.* A context consumer is re-rendered on every
+ * provider commit whatever it went on to read, so `StateContext` could never
+ * say "only this thread" — and the dock keeps every opened transcript
+ * mounted, so one streamed token in a background thread re-rendered every
+ * open transcript and re-ran each one's derivations. `useSyncExternalStore`
+ * moves the comparison to the value the consumer actually named:
+ * `useStoreSelect` publishes a snapshot and React's own `Object.is` decides
+ * whether that consumer renders. The reducer already keeps the identities
+ * that makes true — `withThread` replaces exactly one thread's object, and
+ * every case that edits `sessions` maps untouched rows through — so a token
+ * in thread A leaves thread B's snapshot referentially equal, and B does not
+ * render at all.
+ *
+ * *Why the reducer moved.* It was `useReducer` in `App`, which meant every
+ * dispatch re-rendered `App` and so recreated the element for the entire
+ * tree — subscriptions cannot help a subtree React has already decided to
+ * re-render. Owning the reducer here makes `children` a prop this component
+ * does not touch, so on a dispatch React sees the same element reference and
+ * bails out of the subtree; only `DispatchContext` consumers (a stable value,
+ * so never) and the selectors that actually changed are woken.
+ *
+ * The ref is written in a layout effect and never during render: a render
+ * pass can be thrown away, and a snapshot published from one would let a
+ * subscriber read state that never committed. Layout rather than passive so
+ * subscribers render before paint.
+ */
 export const DispatchContext = React.createContext<React.Dispatch<Action>>(() => {})
 
-export function StoreProvider({
-  state,
-  dispatch,
-  children,
-}: {
-  state: State
-  dispatch: React.Dispatch<Action>
-  children: React.ReactNode
-}) {
+export interface StoreHandle {
+  getState: () => State
+  subscribe: (listener: () => void) => () => void
+}
+
+const StoreHandleContext = React.createContext<StoreHandle | null>(null)
+
+export function StoreProvider({ children }: { children: React.ReactNode }) {
+  const [state, dispatch] = React.useReducer(reducer, initialState)
+  const stateRef = React.useRef(state)
+  const listeners = React.useRef(new Set<() => void>())
+  const handle = React.useMemo<StoreHandle>(
+    () => ({
+      getState: () => stateRef.current,
+      subscribe: (listener) => {
+        listeners.current.add(listener)
+        return () => listeners.current.delete(listener)
+      },
+    }),
+    []
+  )
+  React.useLayoutEffect(() => {
+    stateRef.current = state
+    /* Copied before the walk: a listener that unsubscribes as it runs (a
+       consumer unmounting on the state it was just told about) would
+       otherwise mutate the set being iterated. */
+    for (const listener of [...listeners.current]) listener()
+  }, [state])
   return (
     <DispatchContext.Provider value={dispatch}>
-      <StateContext.Provider value={state}>{children}</StateContext.Provider>
+      <StoreHandleContext.Provider value={handle}>{children}</StoreHandleContext.Provider>
     </DispatchContext.Provider>
   )
 }
 
-export function useStoreState(): State {
-  return React.useContext(StateContext)
+/** The handle itself, for a consumer that reads state without watching it —
+    `useActions` is the one: every read there is out of an event handler, long
+    after the render that would have subscribed. */
+export function useStoreHandle(): StoreHandle {
+  const handle = React.useContext(StoreHandleContext)
+  if (!handle) throw new Error("useStoreHandle outside StoreProvider")
+  return handle
 }
 
+/**
+ * Subscribe to one reading of the state. The selector MUST return something
+ * the state itself holds (a slice, a thread, a row) — a selector that builds
+ * a fresh object returns a new identity per notify and re-renders on every
+ * dispatch, which is exactly the wide hook this exists to replace.
+ */
+export function useStoreSelect<T>(selector: (state: State) => T): T {
+  const handle = useStoreHandle()
+  const ref = React.useRef(selector)
+  ref.current = selector
+  const getSnapshot = React.useCallback(() => ref.current(handle.getState()), [handle])
+  return React.useSyncExternalStore(handle.subscribe, getSnapshot)
+}
+
+/** This thread's state and nothing else: re-renders exactly when the reducer
+    replaces this thread's object. The one hook every transcript-path consumer
+    should be on — the dock keeps every opened transcript mounted, and this is
+    what keeps a streamed token in thread A from re-rendering thread B. */
+export function useThread(sessionId: string): ThreadState {
+  return useStoreSelect((state) => state.threads[sessionId] ?? emptyThread)
+}
+
+/** One session's row. Stable across other sessions' changes: every reducer
+    case that edits the list maps `s.id === id ? {…s} : s`, so an untouched
+    row keeps its identity and only a full list refresh replaces them all. */
+export function useSessionMeta(sessionId: string): SessionMeta | undefined {
+  return useStoreSelect((state) => state.sessions.find((s) => s.id === sessionId))
+}
+
+/**
+ * Which threads are mid-turn, for a list that draws a running mark per row.
+ *
+ * `threads` is replaced on every streamed token, so a list that reads it to
+ * answer one boolean per row re-rendered thousands of times a turn to draw
+ * the same marks. The derivation runs on each notify (one pass, no parsing)
+ * and the map is *reused by identity* while its contents are unchanged, so
+ * the store's own `Object.is` stops the render at the subscription.
+ *
+ * A missing entry means this client has never connected the thread, which is
+ * not the same as a connected thread sitting idle: the caller falls back to
+ * the server's `promptActive` for the first and must not for the second.
+ */
+export function useLiveTurnActive(): Map<string, boolean> {
+  const prev = React.useRef<Map<string, boolean>>(new Map())
+  return useStoreSelect((state) => {
+    const next = new Map<string, boolean>()
+    for (const [id, thread] of Object.entries(state.threads)) next.set(id, thread.turnActive)
+    let same = next.size === prev.current.size
+    if (same) {
+      for (const [id, value] of next) {
+        if (prev.current.get(id) !== value) {
+          same = false
+          break
+        }
+      }
+    }
+    if (!same) prev.current = next
+    return prev.current
+  })
+}
+
+/** Stable for the life of the reducer, so a consumer that reads only this
+    never re-renders on state. */
 export function useDispatch(): React.Dispatch<Action> {
   return React.useContext(DispatchContext)
-}
-
-export function useStore(): { state: State; dispatch: React.Dispatch<Action> } {
-  const state = useStoreState()
-  const dispatch = useDispatch()
-  /* Memoized on `state` identity so existing `useStore()` consumers get the
-     exact per-commit object they always did — no worse, and one context split
-     away from better once they migrate to the pieces above. */
-  return React.useMemo(() => ({ state, dispatch }), [state, dispatch])
 }

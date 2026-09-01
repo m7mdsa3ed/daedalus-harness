@@ -416,7 +416,9 @@ export function renamespaceSse(namespaces: string[]): TransformStream<Uint8Array
   });
 }
 
-/** Logged once per namespace set, not once per request — a turn is many. */
+/** Logged once per namespace set, not once per request — a turn is many. Keyed
+    by agent, not by session: a session id would grow the set with every thread
+    ever proxied, and the line is about the agent's tools, not the thread. */
 const loggedNamespaces = new Set<string>();
 
 /* ── The model the child asked for, replaced by the one the thread is on ──
@@ -452,6 +454,13 @@ function applySessionModel(body: Json, model: string, effort: string): boolean {
 }
 
 /* ── The proxy ── */
+
+/** How long the upstream gets to *answer* — headers, not the body. A total
+    deadline would be wrong (a streaming turn is open for minutes by design),
+    but with no deadline at all a gateway that never answers pins this request,
+    and the body it buffered, forever. Generous because a non-streaming
+    Messages call generates its whole reply before the headers go out. */
+const UPSTREAM_HEADERS_TIMEOUT_MS = 120_000;
 
 const notFound = (error: string) =>
   new Response(JSON.stringify({ error }), { status: 404, headers: { "content-type": "application/json" } });
@@ -513,8 +522,11 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
       if (flat) {
         namespaces = flat.namespaces;
         edited = true;
-        const tag = `${parsed.id}/${agentId}:${namespaces.join(",")}`;
+        const tag = `${agentId}:${namespaces.join(",")}`;
         if (!loggedNamespaces.has(tag)) {
+          // The sets come from request bodies, so traffic could still grow
+          // this; a cleared set costs one repeated line.
+          if (loggedNamespaces.size > 200) loggedNamespaces.clear();
           loggedNamespaces.add(tag);
           console.log(`[gateway-shim] flattening tool namespace(s) ${namespaces.join(", ")} for ${agentId} towards ${baseUrl}`);
         }
@@ -527,11 +539,19 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
   }
 
   let upstream: Response;
+  /* The deadline is disarmed the moment fetch resolves — once headers are in,
+     the body is the model streaming and takes as long as it takes. */
+  const connect = new AbortController();
+  const connectTimer = setTimeout(
+    () => connect.abort(new Error(`gateway sent no response headers within ${UPSTREAM_HEADERS_TIMEOUT_MS}ms`)),
+    UPSTREAM_HEADERS_TIMEOUT_MS,
+  );
   try {
     upstream = await fetch(`${baseUrl.replace(/\/+$/, "")}${parsed.rest}${url.search}`, {
       method: req.method,
       headers,
       body,
+      signal: connect.signal,
       // Node's fetch refuses a ReadableStream body without this.
       ...(body && typeof body !== "string" ? { duplex: "half" } : {}),
       redirect: "manual",
@@ -541,6 +561,8 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
       JSON.stringify({ type: "error", error: { type: "api_error", message: error instanceof Error ? error.message : String(error) } }),
       { status: 502, headers: { "content-type": "application/json" } },
     );
+  } finally {
+    clearTimeout(connectTimer);
   }
 
   const out = new Headers();

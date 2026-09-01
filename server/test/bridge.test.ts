@@ -756,6 +756,55 @@ assert.equal(tailPage.events[0].seq, 0);
 assert.equal(tailPage.events.length, turnStarts[20]);
 assert.equal(tailPage.earlier, 0);
 
+// --- the same bracket over HTTP ---
+
+/* A thread is opened by reading it (`GET /api/sessions/:id/replay`) and only
+   then connecting a socket, so the document that read serves has to be the
+   socket's own attach, word for word: same window, same frames, same
+   `caught_up`. If the two ever drift the client folds one of them through a
+   dispatch written for the other. */
+const snapshot = (id: string, cursor = 0, opts: { window?: number } = {}) => {
+  const result = manager.snapshot(id, cursor, opts);
+  if ("refused" in result) return result;
+  return JSON.parse([...result.body].join("")) as {
+    attached: Extract<ThreadEvent, { ev: "attached" }>;
+    frames: Extract<ThreadEvent, { ev: "replay" }>[];
+    caughtUp: Extract<ThreadEvent, { ev: "caught_up" }>;
+  };
+};
+const doc = snapshot(logged.id, 0, { window: 5 });
+assert.ok(!("refused" in doc));
+assert.deepEqual(doc.attached, windowAttach, "the HTTP bracket is the socket's attach");
+assert.deepEqual(
+  doc.frames.flatMap((f) => f.events),
+  windowed.of("replay").flatMap((r) => r.events),
+  "…carrying the same events, in the same order",
+);
+assert.equal(doc.caughtUp.cursor, doc.attached.to, "…and ending where it said it would");
+assert.equal(
+  doc.caughtUp.cursor,
+  windowed.of("caught_up")[0].cursor,
+  "…which is where the socket ended too",
+);
+
+// A resume asks for the delta and gets no window — same rule as the socket's,
+// which is why the client keeps the window it already folded.
+const delta = snapshot(logged.id, doc.attached.to);
+assert.ok(!("refused" in delta));
+assert.equal(delta.attached.resumed, true, "a cursor is a resume");
+assert.equal(delta.attached.from, doc.attached.to);
+assert.equal(delta.frames.flatMap((f) => f.events).length, 0, "…of nothing, here");
+
+// Paging back needs no socket either: the archive is where it mostly happens.
+assert.deepEqual(
+  manager.earlierPage(logged.id, windowAttach.from),
+  tailPage,
+  "the HTTP page is the socket's page",
+);
+
+// The three refusals are the socket's, so the client reads them the same way.
+assert.deepEqual(snapshot("no-such-thread"), { refused: "no such thread on this server" });
+
 // --- a log that does not begin with a turn is not windowed away ---
 
 // A revive clears the journal and refills it from the `session/load` replay:
@@ -1143,6 +1192,46 @@ await manager.applyConfig(styled.id, { profile, agentId: "fake", project, person
 assert.equal(styled.personaId, "", "the row records that the thread has no persona now");
 const droppedMeta = metaLog().slice(dropped).find((e) => e.meta);
 assert.equal(droppedMeta?.meta?.systemPrompt, undefined, "and the agent is told nothing about one");
+
+/* --- a frozen peer is not a watching peer ---
+   The server pushes a "Turn finished" notification only for a thread nobody is
+   watching, and an attached socket used to be the whole of that test. It is
+   not: a backgrounded PWA holds its socket open with its page frozen, and the
+   browser answers the server's WebSocket pings from its network stack, so the
+   thread looks watched while nothing on it can draw anything. The `background`
+   command is how the page says so on the way into the freeze. */
+const pushed: string[] = [];
+const notifying = new SessionManager(
+  { onTurnEnd: (s) => pushed.push(s.id) },
+  1,
+);
+const frozen = notifying.create(profile, "fake", project);
+await frozen.bridge!.ready;
+const phone = new MockWs();
+assert.equal(await notifying.attach(frozen.id, phone as never), null);
+
+send(phone, { id: 1, cmd: "prompt", text: "watched" });
+await waitFor(() => phone.of("turn_ended").length === 1, "the watched turn ends");
+assert.deepEqual(pushed, [], "a turn ending in front of someone raises no push");
+
+send(phone, { cmd: "background", background: true });
+send(phone, { id: 2, cmd: "prompt", text: "backgrounded" });
+await waitFor(() => phone.of("turn_ended").length === 2, "the backgrounded turn ends");
+await waitFor(() => pushed.length === 1, "a frozen peer is pushed to");
+/* The socket is still a peer in every other sense — the events go out to it as
+   they always did (the browser hands them over when the page thaws), which is
+   why nothing about the fan-out, the idle sweep or the journal reads this flag.
+   `turn_ended` is the one the origin peer gets: `turn_started` fans out to
+   everyone *except* whoever asked for it. */
+assert.ok(phone.of("update").length > 0, "…and still receives the events");
+
+send(phone, { cmd: "background", background: false });
+send(phone, { id: 3, cmd: "prompt", text: "back again" });
+await waitFor(() => phone.of("turn_ended").length === 3, "the resumed turn ends");
+await new Promise((r) => setTimeout(r, 200));
+assert.equal(pushed.length, 1, "resuming stops the push again");
+notifying.retire(notifying.get(frozen.id)!);
+assert.ok(notifying.purge(frozen.id));
 
 console.log("bridge.test.ts OK");
 process.exit(0);

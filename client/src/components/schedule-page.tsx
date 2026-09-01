@@ -45,7 +45,7 @@ import {
   scheduleWhen,
 } from "@/lib/schedule"
 import { isTopLevel, type ScheduledMessage } from "@/lib/settings"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
 function minNextAt(): number {
@@ -96,13 +96,14 @@ export function SchedulePage({ actions }: { actions: Actions }) {
 /* ── The list ── */
 
 function SchedulesListPage({ actions }: { actions: Actions }) {
-  const { state } = useStore()
+  const sessions = useStoreSelect((store) => store.sessions)
+  const scheduled = useStoreSelect((store) => store.scheduled)
   const navigate = useNavigate()
   const confirm = useConfirm()
   const [editingId, setEditingId] = React.useState<string | null>(null)
 
   const titleOf = (sessionId: string) =>
-    state.sessions.find((s) => s.id === sessionId)?.title || "Unknown thread"
+    sessions.find((s) => s.id === sessionId)?.title || "Unknown thread"
 
   const remove = async (id: string) => {
     if (
@@ -127,7 +128,7 @@ function SchedulesListPage({ actions }: { actions: Actions }) {
         description="Prompts the server delivers to a thread's agent at a set time — with or without a browser open. Pause a schedule to keep it without it firing."
         onBack={() => void navigate("/")}
       />
-      {state.scheduled.length === 0 ? (
+      {scheduled.length === 0 ? (
         <EmptyCard
           icon={CalendarClock}
           text="Nothing scheduled yet."
@@ -147,7 +148,7 @@ function SchedulesListPage({ actions }: { actions: Actions }) {
             </Button>
           </div>
           <Group>
-            {state.scheduled.map((item) => (
+            {scheduled.map((item) => (
               <ScheduleRow
                 key={item.id}
                 item={item}
@@ -370,12 +371,12 @@ function EditScheduleForm({
 /* ── Creation (/schedules/new) — unchanged flow ── */
 
 function NewSchedulePage({ actions }: { actions: Actions }) {
-  const { state } = useStore()
+  const allSessions = useStoreSelect((store) => store.sessions)
   const navigate = useNavigate()
   const location = useLocation()
   const [params] = useSearchParams()
   const routeState = (location.state ?? {}) as ScheduleLocationState
-  const sessions = state.sessions.filter((session) => isTopLevel(session) && !session.draft && !session.deletedAt)
+  const sessions = allSessions.filter((session) => isTopLevel(session) && !session.draft && !session.deletedAt)
   const requested = params.get("session")
   const initialTarget = sessions.some((session) => session.id === requested)
     ? (requested ?? "")

@@ -4,8 +4,9 @@
 
      ┌ brand row
      │ New thread · Search · Tasks        fixed nav, icon + label, always there
-     ├ Pinned                             the ones you said matter
-     │ Recents                            the newest few, flat — a shortcut
+      ├ Pinned                             the ones you said matter
+      │ Running                            threads in progress right now
+      │ Recents                            the newest few, flat — a shortcut
      │ Projects                           one folder per project, ALL its
      │   ▸ harness              + ·       threads, by period; + starts one *in* it
      │   ▸ website
@@ -38,13 +39,13 @@
    for the scale). */
 import * as React from "react"
 import {
+  Activity,
   BellIcon,
   Clock,
   FolderIcon,
   ListFilter,
   Pin,
   SearchIcon,
-  Sparkles,
   SquareKanban,
   SquarePen,
   Trash2,
@@ -76,13 +77,13 @@ import { AutomationsGroup } from "@/components/sidebar/automations"
 import { ThreadList } from "@/components/sidebar/thread-list"
 import { UnreadCount } from "@/components/notifications/items"
 import type { ThreadStatus } from "@/components/sidebar/thread-row"
+import { IDLE_PHASE, markFor } from "@/lib/thread/phase"
 import type { Actions } from "@/lib/actions"
 import {
   boardPath,
   notificationsPath,
   projectPath,
   settingsPath,
-  studioPath,
   threadPath,
 } from "@/lib/router"
 import { usePins } from "@/lib/pins"
@@ -92,7 +93,7 @@ import { formatChord, type ShortcutId } from "@/lib/shortcuts"
 import { Shortcut } from "@/components/shortcut"
 import { activityAt, isTopLevel, type Project, type SessionMeta } from "@/lib/settings"
 import { defaultsForProfile, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
-import { useStore, type ThreadState as LiveThreadState } from "@/lib/store"
+import { useStoreSelect, type ThreadState as LiveThreadState } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
 /* The scale keeps its historical import path: everything outside the sidebar
@@ -125,7 +126,6 @@ export function SidebarNav({
   const location = useLocation()
   const navigate = useNavigate()
   const inBoard = location.pathname.startsWith("/board")
-  const inStudio = location.pathname.startsWith("/studio")
   const inNotifications = location.pathname.startsWith("/notifications")
   const unread = useNotifications().unread
   // Whatever these two are bound to on this device — the tooltip has to say the
@@ -158,21 +158,6 @@ export function SidebarNav({
               <SearchIcon />
               <span>Search</span>
               <Kbd id="palette" />
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          {/* Sits with New thread and Search because it is the third way to
-              start one — from a template, in a directory that does not exist
-              yet. The editing half is Settings › Templates. */}
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              size="sm"
-              tooltip="Studio — start a project from a template"
-              isActive={inStudio}
-              onClick={() => void navigate(studioPath())}
-              className={ROW}
-            >
-              <Sparkles />
-              <span>Studio</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
@@ -280,13 +265,13 @@ function useSidebarView(): SidebarView {
     the project is the caller's. With no usable profile there is nothing to
     start, so it lands on the projects settings page like the empty state does. */
 export function useStartThreadIn(actions: Actions) {
-  const { state } = useStore()
+  const profiles = useStoreSelect((state) => state.profiles)
   const navigate = useNavigate()
   const { isMobile, setOpenMobile } = useSidebar()
   return React.useCallback(
     (project: Project) => {
       const defaults = loadThreadDefaults()
-      const start = resolveThreadStart(defaults, state.profiles)
+      const start = resolveThreadStart(defaults, profiles)
       if (!start) return void navigate(settingsPath("projects"))
       const id = actions.newDraftThread({
         project,
@@ -296,17 +281,24 @@ export function useStartThreadIn(actions: Actions) {
       if (isMobile) setOpenMobile(false)
       void navigate(threadPath(id))
     },
-    [actions, state.profiles, navigate, isMobile, setOpenMobile]
+    [actions, profiles, navigate, isMobile, setOpenMobile]
   )
 }
 
 /* ── Per-thread status, with a stable identity ──
-   The sidebar re-renders on every streamed token (`state.threads` changes),
-   but the statuses it derives its sorting/filtering/grouping from almost
-   never change with it. So the map is rebuilt per render (cheap — one pass,
-   no parsing) and *reused by identity* when its contents are unchanged, which
-   is what lets every derived-list memo and every memoized row below actually
-   skip.
+   The statuses the sidebar sorts, filters and groups by almost never change
+   with the stream that produces them, so the map is rebuilt on each notify
+   (cheap — one pass, no parsing) and *reused by identity* when its contents
+   are unchanged.
+
+   That identity is now the subscription itself: the derivation lives inside
+   the selector, so the store's own `Object.is` on the returned map is what
+   decides whether the sidebar renders at all. It used to sit in the render
+   body under `useStore()`, which meant the whole sidebar re-rendered on every
+   streamed token of every thread and merely skipped the memos below it. The
+   selector must be idempotent for this to be safe, and it is: the same state
+   yields the same map and the ref is replaced only when a status word
+   actually differs.
 
    The live thread is the truth about a running turn: SessionMeta.promptActive
    is a server snapshot refetched only on bootstrap and on mutations, so on
@@ -315,34 +307,40 @@ export function useStartThreadIn(actions: Actions) {
    Waiting on you: the agent raised a question (elicitation) or an approval
    (permission) that is still open. Only known for threads this client has
    connected, so best-effort — and correct whenever a tab has it open. */
-function useThreadStatuses(
-  sessions: SessionMeta[],
-  threads: Record<string, LiveThreadState>
-): Map<string, ThreadStatus> {
+function useThreadStatuses(): Map<string, ThreadStatus> {
   const prev = React.useRef<Map<string, ThreadStatus>>(new Map())
-  const next = new Map<string, ThreadStatus>()
-  for (const session of sessions) {
-    const thread = threads[session.id] as LiveThreadState | undefined
-    const waiting = !!thread && (!!thread.permission || !!thread.elicitation)
-    const running = thread?.turnActive ?? session.promptActive
-    next.set(session.id, waiting ? "waiting" : running ? "running" : "idle")
-  }
-  let same = next.size === prev.current.size
-  if (same) {
-    for (const [id, value] of next) {
-      if (prev.current.get(id) !== value) {
-        same = false
-        break
+  return useStoreSelect((state) => {
+    const next = new Map<string, ThreadStatus>()
+    for (const session of state.sessions) {
+      const thread = state.threads[session.id] as LiveThreadState | undefined
+      const waiting = !!thread && (!!thread.permission || !!thread.elicitation)
+      const running = thread?.turnActive ?? session.promptActive
+      /* A thread this client has never connected has no phase of its own, and
+         `idle` is the honest reading for it — the server's `promptActive` is
+         the only signal there is, and it says nothing about a connection that
+         does not exist. */
+      next.set(session.id, markFor(thread?.phase ?? IDLE_PHASE, running, waiting))
+    }
+    let same = next.size === prev.current.size
+    if (same) {
+      for (const [id, value] of next) {
+        if (prev.current.get(id) !== value) {
+          same = false
+          break
+        }
       }
     }
-  }
-  if (!same) prev.current = next
-  return prev.current
+    if (!same) prev.current = next
+    return prev.current
+  })
 }
 
 /* ── The list ── */
 export function ThreadSidebar({ actions }: { actions: Actions }) {
-  const { state } = useStore()
+  /* Two catalog slices and the status map — never `state.threads` itself,
+     which is replaced on every streamed token of every thread. */
+  const sessions = useStoreSelect((state) => state.sessions)
+  const projects = useStoreSelect((state) => state.projects)
   const pins = usePins()
   const view = useSidebarView()
   const navigate = useNavigate()
@@ -356,7 +354,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
   const { state: sidebarState, isMobile } = useSidebar()
   const railed = sidebarState === "collapsed" && !isMobile
 
-  const statuses = useThreadStatuses(state.sessions, state.threads)
+  const statuses = useThreadStatuses()
   const status = React.useCallback(
     (session: SessionMeta): ThreadStatus => statuses.get(session.id) ?? "idle",
     [statuses]
@@ -366,10 +364,10 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
      streamed token changes (statuses is identity-stable, see above), so a
      token costs this component a render but no re-sorting and — through the
      memoized rows — no row re-renders. */
-  const { live, trashed, pinned, recent, filed } = React.useMemo(() => {
+  const { live, trashed, pinned, recent, running, filed } = React.useMemo(() => {
     // Deleting is reversible, so a deleted thread leaves the tiers above but
     // not the sidebar: it drops into Trash until it is restored or purged.
-    const live = state.sessions
+    const live = sessions
       .filter(isTopLevel)
       .filter((session) => !session.deletedAt)
       .filter((session) => {
@@ -377,7 +375,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
         if (view.filter === "waiting") return statuses.get(session.id) === "waiting"
         return true
       })
-    const trashed = state.sessions
+    const trashed = sessions
       .filter(isTopLevel)
       .filter((session) => !!session.deletedAt)
       .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0))
@@ -401,8 +399,9 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
        By project: no Recents at all, which is the view for someone who thinks
        in projects rather than in time. */
     const recent = view.sort === "recent" ? rest.slice(0, RECENT_COUNT) : []
-    return { live, trashed, pinned, recent, filed: newestFirst }
-  }, [state.sessions, statuses, pins, view.filter, view.sort])
+    const running = live.filter((session) => statuses.get(session.id) === "running")
+    return { live, trashed, pinned, recent, running, filed: newestFirst }
+  }, [sessions, statuses, pins, view.filter, view.sort])
 
   const { byProject, orphans } = React.useMemo(() => {
     const byProject = new Map<string, SessionMeta[]>()
@@ -415,10 +414,10 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
        its + — which is how a project you have not started on yet gets its first
        thread from here. Threads whose project is gone fall into "Other". */
     const orphans = [...byProject.keys()].filter(
-      (id) => !state.projects.some((project) => project.id === id)
+      (id) => !projects.some((project) => project.id === id)
     )
     return { byProject, orphans }
-  }, [filed, state.projects])
+  }, [filed, projects])
 
   const listProps = { actions, status }
   const filtered = view.filter !== "all"
@@ -443,7 +442,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
               ? view.filter === "running"
                 ? "Nothing is running right now."
                 : "Nothing is waiting on you."
-              : state.projects.length > 0
+              : projects.length > 0
                 ? "No threads yet — start one from a project below."
                 : "No threads yet."}
           </p>
@@ -456,6 +455,12 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
         </FoldableGroup>
       )}
 
+      {running.length > 0 && (
+        <FoldableGroup groupKey="__running" label="Running" icon={<Activity className="size-3 shrink-0" />}>
+          <ThreadList sessions={running} {...listProps} />
+        </FoldableGroup>
+      )}
+
       {recent.length > 0 && (
         <FoldableGroup groupKey="__recent" label="Recents" icon={<Clock className="size-3 shrink-0" />}>
           <ThreadList sessions={recent} {...listProps} />
@@ -465,7 +470,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
       {/* Projects: one folder each. Not a foldable tier itself — the folders
           are the folds — but it hides under a status filter that matched
           nothing, where a column of empty folders would be noise. */}
-      {state.projects.length > 0 && !(filtered && nothingLive) && (
+      {projects.length > 0 && !(filtered && nothingLive) && (
         <SidebarGroup className={cn(TIER, GROUP)}>
           <SidebarGroupLabel className={GROUP_LABEL}>
             <FolderIcon className="size-3 shrink-0" />
@@ -473,7 +478,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu className={MENU}>
-              {state.projects.map((project) => (
+              {projects.map((project) => (
                 <ProjectFolder
                   key={project.id}
                   id={project.id}

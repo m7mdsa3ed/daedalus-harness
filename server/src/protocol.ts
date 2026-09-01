@@ -294,7 +294,21 @@ export type ThreadCommand =
       never surfaces to JS; this is the other direction, and the one the client
       can actually observe: a reply proves the socket is still a path to a
       server that is awake, which no amount of silence on an idle thread does. */
-  | { id: number; cmd: "ping" };
+  | { id: number; cmd: "ping" }
+  /** This peer can no longer draw a notification itself.
+      Sent when the page is FROZEN (the Page Lifecycle `freeze` event) and
+      cleared on `resume` — not merely when it is hidden. A hidden page still
+      runs the handler that raises its own notification, and a client that
+      claimed to be in the background there would be told twice: once by itself
+      and once by the push the server would then send. Frozen is the case where
+      nobody is left to say anything, which on Android is every backgrounded
+      PWA — and the server cannot infer it, because the browser answers the
+      WebSocket ping from its network stack whether or not the page is running,
+      so `peers.size` says "someone is watching" for a page that is not.
+      Answerless like the two `answer_*` commands: nothing waits on it, and a
+      server that predates it ignores an unknown `cmd` exactly as it always
+      has. */
+  | { cmd: "background"; background: boolean };
 
 // ---- server -> client ----
 

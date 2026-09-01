@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { desc, eq, like } from "drizzle-orm";
+import { z } from "zod";
 import { agentOptions, agents as agentsTable, db, type QuotaProbe } from "./db/index.js";
 import { gatewayUrlFor } from "./gateway-shim.js";
 import { writeCodexModelCatalog } from "./model-catalog.js";
@@ -568,8 +569,16 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // no login of its own, only the profile's key. `{gatewayUrl}` keeps the
     // endpoint retargetable per request when the shim is up, and falls back to
     // the raw base URL (or prunes away entirely on the Default profile).
-    since: 14,
+    // Seed 15 adds DAEDALUS_AGENT_PROJECT_INSTRUCTIONS — the documented off
+    // switch for the agent's AGENTS.md/CLAUDE.md walk (agent/src/env.ts). It is
+    // a literal, not a placeholder: nothing on a profile decides it, it exists
+    // in the template so Settings › Agents has a key to flip to "0". The
+    // backfill merges it only where absent, so an edited row keeps its value.
+    since: 15,
     introduced: 14,
+    backfill: (existing) => ({
+      env: { DAEDALUS_AGENT_PROJECT_INSTRUCTIONS: "1", ...existing.env },
+    }),
     id: "daedalus",
     name: "Daedalus Agent",
     command: "node",
@@ -586,6 +595,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
       DAEDALUS_AGENT_CONTEXT_WINDOW: "{contextWindow}",
       DAEDALUS_AGENT_MAX_OUTPUT_TOKENS: "{maxOutputTokens}",
       DAEDALUS_AGENT_PERSONA_FILE: "{personaFile}",
+      DAEDALUS_AGENT_PROJECT_INSTRUCTIONS: "1",
     },
   },
 ];
@@ -662,6 +672,85 @@ export function seedAgents(): void {
 
 export function listAgents(): AgentDef[] {
   return db.select().from(agentsTable).all();
+}
+
+/**
+ * The editable half of an agent row.
+ *
+ * Exactly the four fields the seed rules already treat as the user's — a
+ * backfill adds keys a release introduces and never replaces `name`, `command`,
+ * `args` or `env` — so an edit made here survives every future release for the
+ * same reason a hand-edited `agents.json` always did. The declarative fields
+ * beside them (`spawnCategories`, `liveConfig`, `personaVia`, `quotaProbe`) are
+ * statements about what the protocol on the other end can do, not preferences:
+ * telling the harness an agent takes a live model change does not make it take
+ * one, so they stay the seed's and are not offered.
+ */
+export const AgentInputSchema = z.object({
+  name: z.string().min(1),
+  command: z.string().min(1),
+  args: z.array(z.string()).default([]),
+  env: z.record(z.string().min(1), z.string()).default({}),
+});
+export type AgentInput = z.infer<typeof AgentInputSchema>;
+
+/* The probe cache is keyed `profileId:agentId:cwd` and its answer is a function
+   of the env this agent is spawned with — the same reason `seedAgents` evicts
+   after a backfill and `updateProfile` evicts on save. Without this an edited
+   command keeps answering the draft menu from the old binary until someone
+   finds `?refresh=1`. */
+function evictProbeCache(id: string): void {
+  db.delete(agentOptions).where(like(agentOptions.key, `%:${id}:%`)).run();
+}
+
+/** Write the user's half of an agent row. A live thread keeps the process it
+    already has — the edit reaches it at its next spawn, like every other change
+    to how an agent is launched. */
+export function updateAgent(id: string, input: AgentInput): AgentDef | undefined {
+  const existing = db.select().from(agentsTable).where(eq(agentsTable.id, id)).get();
+  if (!existing) return undefined;
+  db.update(agentsTable).set(input).where(eq(agentsTable.id, id)).run();
+  evictProbeCache(id);
+  return getAgent(id);
+}
+
+/** Put a built-in back the way it ships, for the edit that turned out to be
+    wrong. Only a built-in has a default to return to; an agent this release
+    does not define answers undefined, which the route reads as a 404.
+
+    Every nullable column is named explicitly, `?? null` and all. Drizzle drops
+    an `undefined` from a `.set()`, so spreading a seed that simply omits
+    `quotaProbe` or `liveConfig` would *keep* whatever the row holds — and a
+    reset that leaves a field behind is the one thing this function must not
+    do. `seededVersion` is deliberately not among them: it is how far the seed
+    has carried this install, not part of the agent's definition, and rewinding
+    it would make the next boot replay backfills the row has already had. */
+export function resetAgent(id: string): AgentDef | undefined {
+  const seed = DEFAULT_AGENTS.find((a) => a.id === id);
+  if (!seed) return undefined;
+  const existing = db.select().from(agentsTable).where(eq(agentsTable.id, id)).get();
+  if (!existing) return undefined;
+  db.update(agentsTable)
+    .set({
+      name: seed.name,
+      command: seed.command,
+      args: seed.args,
+      env: seed.env,
+      spawnCategories: seed.spawnCategories ?? null,
+      liveConfig: seed.liveConfig ?? null,
+      quotaProbe: seed.quotaProbe ?? null,
+      personaVia: seed.personaVia ?? null,
+    })
+    .where(eq(agentsTable.id, id))
+    .run();
+  evictProbeCache(id);
+  return getAgent(id);
+}
+
+/** Whether this id is one this release ships a default for — what tells the UI
+    a Reset is on offer. */
+export function isBuiltInAgent(id: string): boolean {
+  return DEFAULT_AGENTS.some((a) => a.id === id);
 }
 
 export function getAgent(id: string): AgentDef | undefined {

@@ -39,6 +39,15 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
   };
 
   const openSession = async (sessionId: string, cwd: string, mcpServers: acp.McpServer[]) => {
+    /* A re-load of a live id replaces the session: the old handle's MCP
+       children must die before fresh ones connect, or every reload leaks a
+       process per server. */
+    const prior = sessions.get(sessionId);
+    if (prior) {
+      sessions.delete(sessionId);
+      prior.cancel();
+      await prior.mcp?.close();
+    }
     const session = new Session(sessionId, cwd, env);
     session.commands = scanCommands(cwd);
     session.skills = scanSkills(cwd);

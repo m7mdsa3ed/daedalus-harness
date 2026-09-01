@@ -398,6 +398,3 @@ export function schemePalette(anchors: SchemeAnchors): ThemeTokens {
   })
   return tokens
 }
-
-export const schemeById = (id: string): ColorScheme | undefined =>
-  COLOR_SCHEMES.find((scheme) => scheme.id === id)

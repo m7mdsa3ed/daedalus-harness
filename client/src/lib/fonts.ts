@@ -142,7 +142,6 @@ export function fontLabel(id: string | undefined): string {
   return BY_ID.get(id)?.label ?? `Unknown (${id})`
 }
 
-export const fontDef = (id: string): FontDef | undefined => BY_ID.get(id)
 
 // ---- runtime loading for Google families ----
 

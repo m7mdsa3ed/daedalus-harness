@@ -12,8 +12,18 @@ import { type PaletteItem, rankItems } from "./rank"
 export type { PaletteItem }
 export { rankItems }
 
-export function ItemList({ items, query }: { items: PaletteItem[]; query: string }) {
-  const groups = React.useMemo(() => rankItems(items, query), [items, query])
+export function ItemList({
+  items,
+  query,
+  recents,
+}: {
+  items: PaletteItem[]
+  query: string
+  /** Command ids this device used, newest first. Only the root page has a
+      stable command vocabulary to remember, so only it passes them. */
+  recents?: string[]
+}) {
+  const groups = React.useMemo(() => rankItems(items, query, recents), [items, query, recents])
   return (
     <>
       {groups.map((group) => (

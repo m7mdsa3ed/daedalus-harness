@@ -1,5 +1,7 @@
 import type { Tool, ToolSet } from "ai";
 import type { ToolMeta, ToolRuntime } from "./context.js";
+import { inputOf } from "./context.js";
+import { checkPermission } from "../permissions.js";
 import { makeReadTool, makeWriteTool, makeEditTool, readMeta, writeMeta, editMeta } from "./fs-tools.js";
 import { makeBashTool, bashMeta } from "./bash.js";
 import { makeGlobTool, makeGrepTool, globMeta, grepMeta } from "./search.js";
@@ -61,7 +63,9 @@ export function buildTools(rt: ToolRuntime, opts: BuildToolsOptions = {}): Built
     tools.write_file = makeWriteTool(rt);
     tools.edit_file = makeEditTool(rt);
     tools.bash = makeBashTool(rt);
-    Object.assign(tools, rt.session.mcp?.tools ?? {});
+    for (const [name, t] of Object.entries(rt.session.mcp?.tools ?? {})) {
+      tools[name] = withMcpGate(rt, name, t);
+    }
   }
   /* A client that never claimed elicitation.form cannot answer the question,
      so the tool is not offered at all — same bargain claude-agent-acp makes. */
@@ -72,4 +76,25 @@ export function buildTools(rt: ToolRuntime, opts: BuildToolsOptions = {}): Built
     tools.task = makeTaskTool(rt);
   }
   return { tools, meta };
+}
+
+/* MCP tools are built at connect time, before any turn or context exists —
+   the permission gate has to wrap here, where both are in hand. Same gate as
+   the built-ins, under the "mcp" group, so sticky always-answers and the
+   permission modes apply; plan mode is handled above by not offering them. */
+function withMcpGate(rt: ToolRuntime, name: string, t: Tool): Tool {
+  const m = metaFor({}, name);
+  return {
+    ...t,
+    execute: async (input, options) => {
+      await checkPermission(rt.ctx, rt.session, "mcp", {
+        toolCallId: options.toolCallId,
+        toolName: name,
+        title: m.title(input),
+        kind: m.kind,
+        rawInput: inputOf(input),
+      });
+      return t.execute!(input, options);
+    },
+  };
 }

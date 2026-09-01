@@ -195,8 +195,24 @@ Generic ACP (Agent Client Protocol) harness. Four parts, one repo:
   word-boundary hit in a title or keywords, `NAMED` in `rank.ts`) — which is
   what makes ↵ on prose reach Search rather than whichever command happened to
   contain the same letters in order, while ⌘↵ still starts a thread with it.
-  With no query the declared order is kept exactly; a palette that reshuffles
-  itself before you have typed is one you have to read.
+  With no query the declared order is kept exactly — with one exception the
+  same rule pays for: the **Recently used** group (`lib/palette-recents.ts`, a
+  device-local MRU of command *ids* like pins and view options; `RECENT_GROUP`
+  in `rank.ts`). The five most recent commands are **lifted** into a group above
+  everything with no query — moved, never copied, since a row drawn twice is two
+  rows sharing one id, which is cmdk's selection value — and with a query they
+  stay where they are and take only a small nudge (`RECENCY_BONUS`), applied
+  *after* `named` is decided so a habit can never promote a scattered-letters
+  match into a row the query counts as naming. Ids are resolved against the rows
+  actually on offer, so a remembered command that no longer applies (Stop the
+  turn, on a finished thread) simply is not there. Only `root-page.tsx` records,
+  by wrapping its own `onSelect`s: it is the one page whose ids are a
+  vocabulary — a choice page's rows are this agent's models, the search page's
+  are somebody's messages — and it skips the two kinds of row that are not
+  commands, the landing list's threads (a destination the sidebar's own Recents
+  already answers for) and the `always` rows that are about the query.
+  Otherwise a palette that reshuffles itself before you have typed is one you
+  have to read.
   Reading a tool call — inferring its kind, target, language and diff out of
   ACP's opaque `rawInput`/`rawOutput` — is quarantined in `lib/tools.ts`, and
   **drawing** one is `components/tool-views.tsx` on top of the primitives in
@@ -350,7 +366,31 @@ Generic ACP (Agent Client Protocol) harness. Four parts, one repo:
   style `_meta.terminal_output_delta` streaming from `bash`, MCP servers via
   `@modelcontextprotocol/sdk` wrapped in `dynamicTool` (`mcp__<server>__<tool>`),
   materialized commands/skills, persona via `{personaFile}`, compaction past ~80% of
-  the window, and the subagent RFD (`task` tool) with a journal-only fallback. Two SDK
+  the window, and the subagent RFD (`task` tool) with a journal-only fallback.
+  It also reads the instruction files a repo already has — `AGENTS.md`,
+  `CLAUDE.md`, `CLAUDE.local.md` from the cwd up to the **git root** (above a
+  checkout is somebody's home directory) plus `~/.claude/CLAUDE.md` first and
+  weakest — deduped by real path *and* by content, since `AGENTS.md ->
+  CLAUDE.md` is a symlink half the repos in the wild ship; each block is
+  labelled with its path so a rule can be traced to the file that set it. **The
+  whole walk runs every turn, not once at `session/new`** — it is ~70
+  `statSync` calls against a turn about to spend seconds in a model, and
+  resolving it once meant a `CLAUDE.md` that did not exist when the thread
+  opened stayed invisible until a respawn, which is exactly the file an agent
+  asked to write down how the repo works has just created. They sit *before*
+  the persona, which is the choice made for this thread on top of them. `agent/docs/` is the standalone,
+  prompting and management guide.
+  **The agent row is editable now** (`PUT /api/agents/:id`, `POST
+  /api/agents/:id/reset`, Settings › Agents): exactly the four fields the seed
+  rules already promise never to overwrite — name, command, args, env — so an
+  edit survives every release, while `spawnCategories`/`liveConfig`/
+  `personaVia`/`quotaProbe` stay the seed's because they are statements about
+  what the other end can do rather than preferences. A write evicts the
+  `agent_options` probe cache for that agent on both sides (server `like
+  '%:<id>:%'`, device-local `dropAgentOptionsFor`) — the probe's answer is a
+  function of the env — and touches no running thread: the edit reaches one at
+  its next spawn. The listing reports a computed `builtIn`, which is only ever
+  "is there something to reset to". Two SDK
   sharp edges are load-bearing: **inbound zod strips capability keys it does not
   know**, so `initialize` is registered with an identity parser or the harness's
   `subagents` claim silently vanishes; and outbound `notify()` is unvalidated, which
@@ -453,6 +493,38 @@ Generic ACP (Agent Client Protocol) harness. Four parts, one repo:
   is held here now and nothing else would ever settle it.
   The one thing the server still does not interpret is a `session/update` payload — it
   forwards them whole.
+- **A thread is opened over HTTP, and a socket follows only if there is something
+  live to connect to.** Opening a thread is a *read*, and it used to be paid for as a
+  connection: a WebSocket handshake, an attach, and a paced stream of replay frames
+  before the first line of the transcript could be drawn. `GET /api/sessions/:id/replay`
+  (`SessionSocket.snapshot`, exposed as `SessionManager.snapshot`) answers the **same
+  bracket as one document** — `{attached, frames, caughtUp}`, where the three fields are
+  literally the socket's own `attached` / `replay` / `caught_up` events — and
+  `ThreadSocket.load` folds it through the very same `handle` switch, so the rule above
+  still holds: one replay, one parser, one set of callbacks, and a field added to
+  `attached` reaches both transports at once. The body is a generator of pre-serialized
+  frames spliced straight in, so a replay is still never parsed and re-emitted on the
+  server and a long thread is never held whole there — the same budget `sendFrame` pays
+  on the socket. What the read does *not* have is a peer: nothing is registered on the
+  session and a turn journaled while the body streams is simply not in it. That is the
+  design rather than a gap — `caughtUp.cursor` is the `to` the document was bounded at,
+  and the socket `startThread` opens next **resumes from exactly there**, so the gap
+  arrives as the delta it is, on the connection that can also carry what comes after it.
+  Two consequences. The socket that follows is a resume, which reports `earlier: 0` and a
+  `from` that is this device's own cursor — both true about a delta and both wrong about
+  the window — so `handle`'s `attached` case keeps the window it already folded when
+  `resumed && this.loaded`, or finishing an open took the "Load earlier steps" button off
+  every windowed thread. And **an archived thread opens no socket at all**: it has no
+  process, so nothing is coming, and the two things a reader still does to one are
+  answered without it — paging back over `GET /api/sessions/:id/earlier`
+  (`requestEarlier` picks the transport it already has), and editing a queue parked on it
+  through a socket `ensureSocket` opens lazily at that moment. `startThread` says
+  `connected` itself for that case, since the socket is normally what says it, and
+  `connectThread`'s short-circuit reads `isArchived` beside `connected` so navigating
+  back to the route does not re-fetch a transcript the store already holds. A failed read
+  falls through to the socket rather than failing the open (an older server has no route),
+  and the resume point is `max(asked, journalCursors)` — monotonic, so a read that failed
+  *part way* continues after what it managed to fold rather than folding it twice.
 - **Live and replay are one code path.** `attached` and `caught_up` bracket the replay, and
   everything between them is the same event the live socket sends, so the client has no
   second parser. The bracket is
@@ -904,74 +976,69 @@ Generic ACP (Agent Client Protocol) harness. Four parts, one repo:
   wrong room to read one in (the table fought the panel for width, and a step's events
   ended up in a pane inside a card inside a transcript). The card answers the passing
   reader's questions and nothing else: a header (an icon chip in the run's state tint,
-  the run's name, its **fact line**, the state as a word in `WorkflowPill`), the
-  **pipeline strip**, and a foot line that live says the step being written plus
-  `currentActivity` (the newest call still open — `summarise`'s counts describe what a
-  working step did a minute ago) and settled-failed names the step that failed. The whole
-  card is one button (children are spans — a button holds phrasing content), with a
-  standing `Maximize2Icon` hint: hover is not the only way in, just the first one
-  discovered. **The strip is one chip per phase with a chevron between them**
-  (`PipelineStrip`), each chip carrying its stage's name, its `done/total` and a pip per
-  step tinted with that step's own state; chips share the row in proportion to their step
-  counts, so a phase of six does not read the length of a phase of one, and they wrap
-  rather than scroll, since a card inside a transcript column cannot own a horizontal
-  scroller. It replaced a 1px rule of segments that was honest and unreadable — a mark
-  small enough to be taken for a border, with the stage names captioned under it — and a
-  chip is the smallest thing that can hold a stage's name, its count and its steps at
-  once. **The fact line is `RunFact[]`, derived once and drawn twice** (`RunFactsInline`
-  on the card — spans, one truncating row, because the card is a button; `RunFactsBlock`
-  in the dialog header, where there is room to label each figure): the figure leads and
-  the noun follows it, where four dot-joined phrases of equal weight were a sentence to
-  read rather than a reading to take. A failure **count** is one of them, because a run
-  that has moved on from a failure still has to admit to it where the foot line no longer
-  can. Every state colour anywhere — pips, chips, column headers, marks, cards — comes
-  from one table (`WF_TONE`/`wfTone`, which carries a `text`, a `fill`, a `chip` and a
-  `border`), because four surfaces each picking their own let a failed step read
-  destructive in one and merely muted in another. **The dialog is the run, and it is a
-  board, not a list**: it restates the card's header (it covers the transcript, so it must
-  say which run it is showing) over columns that run left to right — a phase is a column
-  (`WorkflowPhaseColumn`: a state dot, the stage's name, its duration and a `done/total`
-  pill, its cards scrolling under it), a step is a card in it (`WorkflowStepCard`), and a
-  chevron sits between columns. The sidebar it replaces spent its width on one narrow
-  column of every step in the run, banded by phase, so the thing a definition is *about* —
-  these three run together, and only then does that one start — was left to be inferred
-  from a heading; columns say it in the layout. Everything is a size larger than it was,
-  too: a step is a whole thread of work, and at 11px in a 16rem column a run read as a
-  table of file names. The board is a Base UI `Tabs.List`: each started step is a
-  `Tabs.Tab` (state mark in its tinted square, the definition's step name over two lines
-  if it needs them, a live line of `currentActivity` while it runs, duration and tokens
-  along the foot), a column header is not a tab — nor is a pending card — so ↑/↓ walk the
-  steps in the order they run, Enter picks, Home/End reach the ends. Selection is
-  **manual** (`activateOnFocus` off: a panel is a whole transcript) and only the selected
-  panel mounts (`keepMounted` off, so nine steps cost one transcript). The selected step's
-  `SubagentBody` — the very same brief/thread-link/rail/report a step draws on its own,
-  which is what `SubagentStep` was split around — is its `Tabs.Panel`
-  (`WorkflowStepPanel`), and the panel is an **overlay that slides over the board from
-  the right** (full width on a phone), scrolling in its own pane so a long rail never
-  grows the dialog: a step's transcript wants every pixel it can get, the board behind it
-  is still worth seeing at the edge, and picking another card is one click past the pane.
-  Which is why **opening the dialog lands on the board and never on a step** — the old
-  two-pane dialog had a permanently empty pane to fill and so auto-selected the running
-  step, where an overlay doing the same would cover the run with one of its steps at the
-  moment the reader asked to see the run; the step worth opening is already the loud card
-  in the tinted column, and a pick made last time is still kept. A running card is tinted
-  `bg-primary/5` and a failed one `bg-destructive/5` (the two anyone is looking for), a
-  pending card is a dashed ghost trailing `waiting` rather than a blank, and every card
-  carries its state as `sr-only` text, since the mark that states it is an icon. At phone
-  width the columns stack (`max-md:flex-col`) — the run then reads top to bottom, which is
-  the same order. **The shape is drawn before it happens**: the same stamp carries `plan`,
+  the run's name, its **fact line**, the state as a word in `WorkflowPill`), **one
+  progress bar** (`RunProgress`), and a foot line that live says the stage and step being
+  written plus `currentActivity` (the newest call still open — `summarise`'s counts
+  describe what a working step did a minute ago) and settled-failed names the step that
+  failed. The whole card is one button (children are spans — a button holds phrasing
+  content), with a standing `Maximize2Icon` hint: hover is not the only way in, just the
+  first one discovered. Its `aria-label` carries the state and the count, because the bar
+  is presentational inside a button and the fact line is spans. **The bar is one bar.**
+  It replaced a segmented track with a slot per stage sized by weighted flex and a
+  "frontier pill" floating over the live slot to name the stage — three mechanisms to say
+  *2 of 9, one failing*, which is what the fact line beside it already says in words; the
+  card is read in passing at the width of a transcript column, and which stage the run is
+  on is said on the foot line, where there is room for it. **The fact line is `RunFact[]`,
+  derived once and drawn twice** (`RunFactsInline` on the card — spans, one truncating
+  row, because the card is a button; `RunFactsBlock` in the dialog header, where there is
+  room to label each figure): the figure leads and the noun follows it, where four
+  dot-joined phrases of equal weight were a sentence to read rather than a reading to
+  take. A failure **count** is one of them, because a run that has moved on from a failure
+  still has to admit to it where the foot line no longer can. Every state colour anywhere
+  comes from one table (`WF_TONE`/`wfTone`, a `chip` and a `bar`), because surfaces each
+  picking their own let a failed step read destructive in one and merely muted in another;
+  it carried a `text`, a `fill` and a `border` too until nothing painted them any more,
+  and a colour nothing paints is a colour that drifts.
+  **The dialog is one scrolling list, top to bottom, and nothing else.** It restates the
+  card's header (it covers the transcript, so it must say which run it is showing) over a
+  single column: a stage is a heading (`WorkflowPhaseHeading` — the name, a rule filling
+  the rest of the line, the elapsed time and its `done/total`), a step is a row
+  (`WorkflowStepRow` — state mark in a tinted square, the definition's step name, a live
+  `currentActivity`, duration and tokens, a chevron), and a pending step is the same row
+  greyed (`WorkflowPendingRow`, trailing `waiting` rather than a blank, since a column of
+  blanks reads as missing data rather than as work not yet done). **Opening a step expands
+  its transcript underneath its own row** — the very same `SubagentBody` a step draws on
+  its own, which is what `SubagentStep` was split around — one at a time, so a run of nine
+  steps still costs one mounted transcript. This is the third shape and the reason the
+  other two went: a board of columns with an overlay pane came first, then a timeline of
+  nodes on a rail with a grid of cards, and both spent the dialog's geometry on *drawing*
+  a sequence that a list states for free, and then needed a second surface (a pane, a Back
+  button) to show a step, because the first surface had been spent on shape. The list has
+  one scroll, one column at every width, one reading order — the order the steps run in,
+  where a responsive grid of cards reordered itself as the dialog was resized — and one
+  way in and out of a step. Progressive disclosure in place, no layout that reflows under
+  the cursor, and a shape that grows as steps arrive are what a CI run view is judged on,
+  and they fall out of the list rather than being fought for on top of it. The dialog is
+  sized to the run now (`md:h-auto` between a floor and the screen, and 52rem rather than
+  72rem): a board had to fill a fixed box or its columns had nothing to stand in, and a
+  run of four steps in a box built for twenty reads as a dialog that failed to load.
+  **Opening the dialog lands on the list and never on a step** — auto-expanding answers a
+  question the reader has not asked and pushes the run off the screen at the moment they
+  asked to see it — though a step opened last time stays open. Every row states its state
+  as `sr-only` text, since the mark that states it is an icon.
+  **The shape is drawn before it happens**: the same stamp carries `plan`,
   the whole outline (phases and the step names in them), repeated on *every* spawn — so
-  the strip and the board show every step of the definition from the first spawn, the ones
-  the runner has not reached yet drawn as `WorkflowPendingCard`s, and `phasesOf` is what
-  joins the outline to the steps that have started. Repeating it is what keeps it
-  journaled and replayed for free: an outline sent once would have to be an event kind of
-  its own, and a view built only from spawns can only ever say what has already happened.
-  A flat definition's outline — and every ad-hoc batch — is one phase named `null`: chips
-  with no name on the card, and a responsive **grid** of step cards rather than columns in
-  the dialog, since there are no stages to put side by side and one tall column down the
-  left of an empty dialog is the shape a board is there to avoid. That is also what a
-  journal written before phases existed replays as, since `phasesOf` falls back to the
-  arrived steps when there is no plan.
+  the bar's denominator and the dialog's list show every step of the definition from the
+  first spawn, the ones the runner has not reached yet drawn as `WorkflowPendingRow`s, and
+  `phasesOf` is what joins the outline to the steps that have started. Repeating it is
+  what keeps it journaled and replayed for free: an outline sent once would have to be an
+  event kind of its own, and a view built only from spawns can only ever say what has
+  already happened. A flat definition's outline — and every ad-hoc batch — is one phase
+  named `null`, and gets **no heading at all**, as does a definition that turned out to
+  have exactly one stage: a heading over the whole list is a level with one child, and the
+  run's own name is already above it. That is also what a journal written before phases
+  existed replays as, since `phasesOf` falls back to the arrived steps when there is no
+  plan.
   A settled step's duration is start-to-last-activity (`lastActivityAt`): nothing records
   when a step *ended*, and the reducer never marks one done. Only `update`s are mirrored: a child's
   `turn_started`/`turn_ended` on the parent's log would cut the parent's replay windows at
@@ -1387,6 +1454,38 @@ Generic ACP (Agent Client Protocol) harness. Four parts, one repo:
   `vite-env.d.ts`; TS's DOM lib lacks it) — with a `tag` and without it, a replacement
   swaps the text in silence, which for a second permission ask is the same as no
   notification at all.
+- **A backgrounded page is not a detached one, and only the page can say which it
+  is.** The push above is raised for a turn ending on a thread nobody is watching,
+  and an attached socket used to be the whole of that test — which on Android
+  means the notification the PWA exists for is the one that never arrives. A
+  backgrounded PWA keeps its socket open while its page is frozen, and the
+  server's 30s heartbeat cannot tell: the browser answers a ping frame from its
+  network stack whether or not the page is running (`index.ts` says so itself),
+  so `peers.size` reports a watcher for a page that has stopped. Meanwhile the
+  in-page `registration.showNotification` fallback above — the one written for
+  exactly this platform — is code in a frozen page and does not run. Neither end
+  can see the gap, so the page states it on the way into it: the answerless
+  `background` command sets `Peer.background`, and the turn-end gate reads
+  `watchers(session)` (peers not in the background) where it read `peers.size`.
+  **Only that gate.** The fan-out, the idle sweep, the quota refresh and
+  `attached`/`peerCount` all still count sockets, because a frozen peer is still
+  sent everything — the browser hands it over when the page thaws — and a phone
+  in a pocket must not have its thread retired under it. It is `freeze`/`resume`
+  (Page Lifecycle) and deliberately **not** `visibilitychange`: a merely hidden
+  page still runs the handler that raises its own notification, so claiming the
+  background there would earn the user two of them, one from each end. The
+  handler lives at module scope in `thread-socket.ts` and walks every live
+  socket, since a freeze is a property of the page and not of a thread; a
+  reconnect landing mid-freeze re-asserts it at `caught_up`. `resume` is the
+  other half of the duplicate problem: everything journaled during the freeze is
+  delivered in one go the moment the page comes back, the already-pushed
+  `turn_ended` included, so `suppressSystemNotifications()` mutes the OS layer
+  for five seconds while leaving the in-app toast — which is the right amount of
+  saying "while you were away" to somebody now holding the phone. What this does
+  not fix, because it is not ours: Android 13+ withholds `POST_NOTIFICATIONS`
+  from the installed PWA independently of the site permission, and aggressive
+  battery optimisation drops FCM delivery outright — both look identical to a
+  bug from inside the app.
 - **A slash command is either the agent's or the harness's, and the composer draws one
   list.** Agent commands come from `available_commands_update` and are ordinary prompts —
   `/name args` is sent, the agent resolves it, the send path is untouched. The harness's own

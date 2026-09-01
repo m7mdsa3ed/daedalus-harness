@@ -12,7 +12,7 @@ import type * as acp from "@agentclientprotocol/sdk"
 import { reportError } from "@/lib/errors"
 import { flattenSelectOptions, partitionSessionOptions } from "@/lib/session-options"
 import { currentThreadId } from "@/lib/router"
-import { useStore, type ThreadState } from "@/lib/store"
+import { useSessionMeta, useStoreSelect, type ThreadState } from "@/lib/store"
 import type { SessionMeta } from "@/lib/settings"
 import type { Actions } from "@/lib/actions"
 
@@ -27,11 +27,14 @@ export interface ThreadTarget {
 }
 
 export function useThreadTarget(): ThreadTarget {
-  const { state } = useStore()
   const location = useLocation()
   const sessionId = currentThreadId(location.pathname, location.search)
-  const meta = state.sessions.find((session) => session.id === sessionId) ?? null
-  const thread: ThreadState | undefined = sessionId ? state.threads[sessionId] : undefined
+  /* The routed thread and its row, nothing else. `undefined` is kept rather
+     than folded into `emptyThread`: callers read it as "no live thread". */
+  const meta = useSessionMeta(sessionId ?? "") ?? null
+  const thread = useStoreSelect((store) =>
+    sessionId ? store.threads[sessionId] : undefined
+  ) as ThreadState | undefined
   const modes = thread?.modes && thread.modes.availableModes.length > 1 ? thread.modes : null
   const options = partitionSessionOptions(
     thread?.configOptions ?? [],

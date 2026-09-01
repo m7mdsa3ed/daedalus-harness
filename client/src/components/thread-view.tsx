@@ -28,10 +28,17 @@ import { useVoice } from "@/hooks/use-voice"
 import type { Actions } from "@/lib/actions"
 import { clearDraft, loadDraft, saveDraft } from "@/lib/drafts"
 import { reportError } from "@/lib/errors"
+import {
+  bannerFor,
+  composerLock,
+  slowLine,
+  startingLine,
+  type ConnPhase,
+} from "@/lib/thread/phase"
 import { currentThreadId, schedulePath } from "@/lib/router"
 import type { SessionMeta } from "@/lib/settings"
 import { KEYS, formatChord, isInteractiveTarget, isTypingTarget, matchesChord, overlayOpen } from "@/lib/shortcuts"
-import { useStore, emptyThread, threadIsEmpty, type ThreadItem, type ThreadState } from "@/lib/store"
+import { useDispatch, useSessionMeta, useThread, threadIsEmpty, type ThreadItem, type ThreadState } from "@/lib/store"
 import { useLocation, useNavigate } from "react-router"
 import { useViewOptions, ViewOptionsContext } from "@/lib/view-options"
 import { useFollowStream } from "@/hooks/use-follow-stream"
@@ -266,8 +273,12 @@ function useThreadKeys({
 const OPTION_DIGITS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
 
 export function ThreadView({ sessionId, actions }: { sessionId: string; actions: Actions }) {
-  const { state, dispatch } = useStore()
-  const thread = state.threads[sessionId] ?? emptyThread
+  /* Narrow subscriptions, not the wide hook: the dock keeps every opened
+     transcript mounted, and on `useStore()` a streamed token in ANY thread
+     re-rendered every one of them and re-ran the derivations below. These two
+     re-render exactly when this thread's own objects are replaced. */
+  const dispatch = useDispatch()
+  const thread = useThread(sessionId)
   /* An interrupt is resumable only while it is the last thing that happened:
      the turn is over, the agent is still there, and nothing has been said
      since. Anything older is history, and history does not get a button. */
@@ -360,7 +371,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
      answer: the working line above the composer is what says a turn is live. */
   const last = thread.items[thread.items.length - 1]
   const resumable =
-    last?.kind === "notice" && !thread.turnActive && thread.status !== "closed"
+    last?.kind === "notice" && !thread.turnActive && thread.phase.kind !== "failed"
       ? last.id
       : null
   /* actions.send records its own failure in the transcript (with the text, so
@@ -369,7 +380,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
   const resume = () => void actions.send(sessionId, "Continue.").catch(() => {})
   const retry = (text: string) => void actions.send(sessionId, text).catch(() => {})
 
-  const meta = state.sessions.find((s) => s.id === sessionId)
+  const meta = useSessionMeta(sessionId)
   /* Which transcript the keys belong to. The dock keeps every opened thread
      mounted and navigates the URL as tabs are activated (see workspace/dock), so
      the route is the app's own answer to "which one is in front". */
@@ -474,9 +485,9 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   {divider && (
                     <div aria-hidden className="my-1.5 h-px bg-border/50 first:hidden" />
                   )}
-                  {/* The slide wrapper (index.css) takes one child, so the
+                  {/* The entrance wrapper (index.css): one per row, so the
                       divider and the Sources strip sit beside it — each mounts
-                      at its own moment and slides in on its own. */}
+                      at its own moment and rises in on its own. */}
                   <div className="harness-item-in">
                     <RowView
                       row={row}
@@ -515,17 +526,16 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   still landing under it, and then vanished from off-screen.
                   Here it is where the next thing to happen will happen, in the
                   same slot the working line takes once the thread is live. */}
-              {thread.status === "connecting" && (
+              {startingLine(thread.phase) && (
                 <MessageScrollerItem messageId="starting">
-                  <StartingLine draft={meta?.draft} replay={thread.replay} />
+                  <StartingLine phase={thread.phase} />
                 </MessageScrollerItem>
               )}
-              {/* Suppressed while `connecting`: the StartingLine just above
-                  already owns the wait, and two animated lines over one message
-                  read as "we don't know what is happening" rather than as
-                  progress. `caught_up` flips the status and hands the wait back
-                  here. */}
-              {thread.turnActive && thread.status !== "connecting" && (
+              {/* Suppressed while the thread is opening: the StartingLine just
+                  above already owns the wait, and two animated lines over one
+                  message read as "we don't know what is happening" rather than
+                  as progress. Reaching `live` hands the wait back here. */}
+              {thread.turnActive && !startingLine(thread.phase) && (
                 <MessageScrollerItem messageId="working">
                   <div className="harness-item-in">
                     <div className="py-0.5">
@@ -640,87 +650,40 @@ const SLOW_MS = 6_000
     but not worth drawing. */
 const LONG_REPLAY_EVENTS = 400
 
-function StartingLine({
-  draft,
-  replay,
-}: {
-  draft?: boolean
-  replay?: ThreadState["replay"]
-}) {
+function StartingLine({ phase }: { phase: ConnPhase }) {
   const [slow, setSlow] = React.useState(false)
   React.useEffect(() => {
     const timer = setTimeout(() => setSlow(true), SLOW_MS)
     return () => clearTimeout(timer)
   }, [])
-  const long = replay !== null && replay !== undefined && replay.total >= LONG_REPLAY_EVENTS
+  const line = startingLine(phase)
+  if (!line) return null
+  /* A bar only when there is a number behind the wait AND the wait is long
+     enough to be felt. Below the threshold the fold is imperceptible and a bar
+     that appears and vanishes is noise about work nobody waited for. */
+  const bar = line.bar && line.bar.total >= LONG_REPLAY_EVENTS ? line.bar : null
+  const slowText = slow ? slowLine(phase) : null
   return (
     <div className="py-2">
-      <div className="harness-shimmer text-xs text-primary">
-        {draft ? "Spawning the agent…" : long ? "Loading this conversation…" : "Connecting…"}
-      </div>
-      {long ? (
+      <div className="harness-shimmer text-xs text-primary">{line.text}</div>
+      {bar ? (
         <div className="flex max-w-xs items-center gap-2 pt-1.5">
           <Progress
-            value={replay.done}
-            max={replay.total}
+            value={bar.done}
+            max={bar.total}
             className="flex-1 [&_[data-slot=progress-track]]:h-1"
           />
           <span className="text-xs text-muted-foreground tabular-nums">
-            {Math.min(99, Math.floor((replay.done / replay.total) * 100))}%
+            {Math.min(99, Math.floor((bar.done / bar.total) * 100))}%
           </span>
         </div>
       ) : (
-        slow && (
-          <div className="pt-1 text-xs text-muted-foreground">
-            {draft
-              ? "Still starting — the first launch of an agent can take a while."
-              : "Still connecting — the server hasn't sent this thread's history yet."}
-          </div>
-        )
+        slowText && <div className="pt-1 text-xs text-muted-foreground">{slowText}</div>
       )}
     </div>
   )
 }
 
-/** Close codes the server attaches to the socket (see server/src/sessions.ts):
-    4000 killed, 4001 agent exited, 4002 replaced by another connection, 4004 unknown.
-    Anything else — `undefined`, or a bare 1006 — is a socket that closed with
-    no word from the server at all: the server process went away (a restart, a
-    crash loop), or the network did. That case used to be filed under "the
-    agent process exited", which named a cause the client had no evidence for
-    and sent people looking at the agent when the server had just rebooted.
-    The recovery is the same either way (`reconnectThread` revives only when
-    the process is actually gone), so only the words differ. */
-function closedState(code: number | undefined) {
-  if (code === 4002)
-    return {
-      takeover: true,
-      message: "This connection was replaced by another device — reconnect to reattach.",
-      label: "Reconnect",
-      busyLabel: "Reconnecting…",
-    }
-  if (code === 4000 || code === 4004)
-    return {
-      takeover: false,
-      message: "This thread is no longer running on the server — the conversation is restored on revive.",
-      label: "Revive",
-      busyLabel: "Reviving…",
-    }
-  if (code === 4001)
-    return {
-      takeover: false,
-      message: "The agent process exited — the conversation is restored on revive.",
-      label: "Revive",
-      busyLabel: "Reviving…",
-    }
-  return {
-    takeover: false,
-    message:
-      "Lost the connection to the server — it may have restarted. Reconnecting picks the thread back up.",
-    label: "Reconnect",
-    busyLabel: "Reconnecting…",
-  }
-}
 
 /* ── Prompt history ──
    Up recalls what you have already sent in this thread, the way a shell recalls
@@ -844,24 +807,32 @@ function Composer({
   // Rebindable in Settings › Keyboard, so it is read rather than named here.
   const steerChords = useChords("steer")
   const voice = useVoice((transcript) => setText((t) => (t ? t + " " : "") + transcript))
-  // A draft has no socket, so "closed" never applies to it — it is waiting to be
-  // typed into, which is the one state where the composer must stay live.
+  /* A draft has no connection, so none of the connection states apply to it —
+     it is waiting to be typed into, which is the one case where the composer
+     must stay live whatever else is true. Everything else comes from the phase:
+     `typable` is almost always true (refusing words the user has already written
+     is the bug, not the safety) and `submittable` is what goes false while a
+     thread is opening — which is what stops a second Enter on a draft from
+     POSTing the same session id twice. */
   const draft = meta?.draft === true
-  const disabled = !draft && thread.status === "closed"
-  const closed = closedState(thread.closeCode)
+  const lock = composerLock(thread.phase, draft)
+  const disabled = !lock.typable
+  const banner = bannerFor(thread.phase)
 
-  /* Two shapes of dead socket, one recovery path (openThread respawns only when
-     the session is actually gone). 4002 only comes from a pre-multiplexing
-     server that keeps one socket per thread — the process there is alive, so
-     reattaching is enough; the other codes mean the process is gone and ACP
-     session/load restores it. */
+  /* One recovery path with three names. Which one a phase offers is decided in
+     `failureFor`, beside the close codes it reads: a takeover only needs a
+     reattach (the process is alive), the other codes mean the process is gone
+     and `session/load` restores the conversation, and a trashed thread needs a
+     restore before either. */
   const recover = () => {
+    if (!banner?.action) return
     setReviving(true)
-    const run = closed.takeover ? actions.reconnectThread : actions.reviveThread
-    // openThread already writes the failure into the thread; the toast is for
-    // the case where the user is looking at the button, not the transcript.
+    const run =
+      banner.action.kind === "restore" ? actions.restoreThread : actions.reconnectThread
+    // The connection already writes the failure into the thread; the toast is
+    // for the case where the user is looking at the button, not the transcript.
     run(sessionId)
-      .catch((err) => reportError(err, closed.busyLabel.replace("…", " failed")))
+      .catch((err) => reportError(err, banner.action!.busyLabel.replace("…", " failed")))
       .finally(() => setReviving(false))
   }
 
@@ -877,6 +848,13 @@ function Composer({
   const send = (opts: { steer?: boolean } = {}) => {
     const value = text.trim()
     if (!value) return
+    /* The thread is on its way to existing (a create or a respawn POST is in
+       flight, or the transcript is still being read). The words stay in the box
+       rather than being taken and dropped: Enter used to re-enter `actions.send`
+       here, find the row still flagged as a draft, and POST the same session id
+       a second time — which the server answers with a 409 and the user sees as
+       a failure to send the message that was already sending. */
+    if (!lock.submittable) return
     const command = draft ? null : harnessCommandFor(value, thread.availableCommands)
     if (command?.name === "schedule") {
       void navigate(schedulePath(sessionId), {
@@ -944,13 +922,27 @@ function Composer({
 
   return (
     <div className="px-4 pt-1 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-      {disabled && (
-        <div className="mx-auto mb-1.5 flex w-full max-w-[var(--harness-composer-width)] flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-lg border border-dashed px-3 py-1.5 text-center text-xs text-muted-foreground">
-          <span>{closed.message}</span>
-          <Button size="lg" variant="outline" onClick={recover} disabled={reviving}>
-            <RotateCw className={cn("size-4", reviving && "animate-spin")} />
-            {reviving ? closed.busyLabel : closed.label}
-          </Button>
+      {/* What this device's connection is doing, when it is doing something
+          worth interrupting for. A *state*, not a transcript row: the ladder
+          used to append an error when it gave up, and giving up is exactly the
+          condition that ends on its own — so the row stayed in the middle of
+          the conversation, one per outage, describing something that was over. */}
+      {banner && (
+        <div
+          className={cn(
+            "mx-auto mb-1.5 flex w-full max-w-[var(--harness-composer-width)] flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-lg border border-dashed px-3 py-1.5 text-center text-xs",
+            banner.tone === "error" ? "text-destructive" : "text-muted-foreground"
+          )}
+        >
+          <span>
+            <span className="font-medium">{banner.title}</span> {banner.message}
+          </span>
+          {banner.action && (
+            <Button size="lg" variant="outline" onClick={recover} disabled={reviving}>
+              <RotateCw className={cn("size-4", reviving && "animate-spin")} />
+              {reviving ? banner.action.busyLabel : banner.action.label}
+            </Button>
+          )}
         </div>
       )}
       <ComposerStrip>
@@ -1049,11 +1041,10 @@ function Composer({
           }}
           aria-label="Message the agent"
           placeholder={
-            disabled
-              ? "Session ended"
-              : thread.turnActive
-                ? "Queue a message for when the agent finishes…"
-                : "Message the agent…"
+            lock.note ??
+            (thread.turnActive
+              ? "Queue a message for when the agent finishes…"
+              : "Message the agent…")
           }
           disabled={disabled}
           rows={1}
@@ -1128,7 +1119,7 @@ function Composer({
             size="icon-sm"
             className="shrink-0 rounded-lg text-primary hover:text-primary disabled:text-muted-foreground"
             onClick={() => send()}
-            disabled={disabled || !text.trim()}
+            disabled={disabled || !lock.submittable || !text.trim()}
             title={
               thread.turnActive
                 ? `Queue (${formatChord(steerChords[0] ?? "")} steers the running turn instead)`

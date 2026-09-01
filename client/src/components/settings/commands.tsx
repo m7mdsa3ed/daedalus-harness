@@ -3,7 +3,7 @@ import { Navigate, useNavigate, useParams } from "react-router"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { type CommandDef, type ServerSettings } from "@/lib/settings"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import { FormPageHeader, PageForm, Field, FormActions } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
@@ -14,11 +14,11 @@ import { settingsPath } from "@/lib/router"
 export function CommandsPage() {
   const { settings, actions } = useSettingsPage()
   const meta = sectionMeta("commands")
-  const { state } = useStore()
+  const commands = useStoreSelect((store) => store.commands)
   return (
     <LibrarySection
       meta={meta}
-      items={state.commands}
+      items={commands}
       endpoint="/api/commands"
       noun="command"
       subtitle={(c) => `/${c.name}${c.argumentHint ? ` ${c.argumentHint}` : ""}`}
@@ -37,8 +37,8 @@ export function CommandFormPage() {
   const { entryId } = useParams()
   const navigate = useNavigate()
   const { settings, actions } = useSettingsPage()
-  const { state } = useStore()
-  const command = entryId === "new" ? null : state.commands.find((item) => item.id === entryId)
+  const commands = useStoreSelect((store) => store.commands)
+  const command = entryId === "new" ? null : commands.find((item) => item.id === entryId)
   if (entryId !== "new" && !command) return <Navigate to={settingsPath("commands")} replace />
   return <CommandForm command={command ?? null} settings={settings} onDone={async (saved) => {
     if (saved) await actions.refreshCommands()

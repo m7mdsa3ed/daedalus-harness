@@ -24,7 +24,7 @@ import type { Actions } from "@/lib/actions"
 import type { SessionMeta } from "@/lib/settings"
 import { extractSubagent, extractTodos, toolHeading, toolViewOf } from "@/lib/tools"
 import { activeSubagents, buildRows } from "@/lib/transcript-rows"
-import { useStore, type ThreadState, type ToolItem } from "@/lib/store"
+import { useStoreSelect, type ThreadState, type ToolItem } from "@/lib/store"
 import { formatTokens } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 
@@ -88,8 +88,10 @@ function Stat({ label, value, valueClass }: { label: string; value: string; valu
  * every settled turn — so this asks once and then only listens.
  */
 function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: SessionMeta; actions: Actions }) {
-  const { state } = useStore()
-  const profile = meta ? state.profiles.find((p) => p.id === meta.profileId) : null
+  const profileId = meta?.profileId
+  const profile = useStoreSelect((state) =>
+    profileId ? (state.profiles.find((p) => p.id === profileId) ?? null) : null
+  )
   const { quota } = thread
   const asked = React.useRef(false)
   React.useEffect(() => {

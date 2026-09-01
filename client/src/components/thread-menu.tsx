@@ -1,17 +1,18 @@
 /* ── A thread's actions ── one vocabulary, three surfaces.
 
-   The sidebar row (hover ⋯ and right-click) and the app header's ⋯ menu are
-   the same thread seen from two places, so the items are built here rather
-   than beside either one: a thread that can be pinned from the sidebar and not
-   from the header is a list that disagrees with itself. The Trash row's two
-   items live here too, for the same reason.
+   The sidebar row (hover ⋯, right-click, and the long-press card on a phone)
+   is where a thread's own actions live — rename, pin, open in a new tab, copy
+   its link, delete — and it is the surface that has *every* thread, not just
+   the routed one. So the header's ⋯ holds none of them: two menus offering the
+   same five rows is one menu the reader has to check twice, and the header is
+   the smaller, more crowded of the two.
 
-   The header's menu is the longer one: it is the only surface that has the
-   *open* thread, so it is the only one that can talk about its connection or
-   stop its turn — and it is now the header's only menu, holding what three
-   separate icon buttons used to (the +, the eye, and Refresh). Related rows go
-   in submenus rather than in one column: they are one subject each, and a
-   dozen flat rows is a list nobody reads to the end of. */
+   What is left in the header is what only it can say, because it is the only
+   surface that has the **open** thread and its process: Refresh, the
+   Connection submenu, its id, the project it runs in — beside the workspace
+   rows and View settings, which were never a thread's actions at all. The
+   items are still built here, next to the row's, so the split stays visible in
+   one file rather than being inferred from two. */
 import * as React from "react"
 import {
   Copy,
@@ -53,10 +54,10 @@ import type { PanelKind } from "@/lib/workspace/panels"
 import { usePrompt } from "@/components/prompt-dialog"
 import type { Actions } from "@/lib/actions"
 import { reportError } from "@/lib/errors"
-import { togglePin, usePins } from "@/lib/pins"
+import { togglePin } from "@/lib/pins"
 import { projectPath, threadPath } from "@/lib/router"
 import { type SessionMeta } from "@/lib/settings"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 
@@ -288,25 +289,23 @@ export function ThreadHeaderMenu({
   session,
   onNewTab,
   onOpenPanel,
-  onOpenInNewTab,
 }: {
   actions: Actions
   session?: SessionMeta
   onNewTab: () => void
   onOpenPanel: (kind: PanelKind) => void
-  onOpenInNewTab: () => void
 }) {
-  const { state } = useStore()
   const navigate = useNavigate()
-  const pins = usePins()
   const [viewSettings, setViewSettings] = React.useState(false)
   const [refreshing, setRefreshing] = React.useState(false)
-  const { rename, remove } = useThreadRowActions(actions, {
-    activeThreadId: session?.id,
-    onLeave: () => void navigate("/"),
-  })
-
   const sessionId = session?.id
+  /* One boolean off one thread. This menu is drawn beside a live transcript,
+     so reading the whole state here re-opened the question on every streamed
+     token of every thread. Undefined = no live thread, which is what the
+     fallback to the server's `promptActive` below is for. */
+  const liveTurnActive = useStoreSelect((state) =>
+    sessionId ? state.threads[sessionId]?.turnActive : undefined
+  )
   const refresh = React.useCallback(() => {
     if (!sessionId || refreshing) return
     setRefreshing(true)
@@ -319,8 +318,7 @@ export function ThreadHeaderMenu({
   const items = session ? threadItems(session) : []
 
   function threadItems(thread: SessionMeta): MenuItemSpec[] {
-    const live = state.threads[thread.id]
-    const turnActive = live?.turnActive ?? thread.promptActive
+    const turnActive = liveTurnActive ?? thread.promptActive
     const draft = thread.draft === true
     return [
       {
@@ -331,9 +329,6 @@ export function ThreadHeaderMenu({
         disabled: draft || refreshing,
         onClick: refresh,
       },
-      renameItem(thread, rename),
-      { label: "Open in new tab", icon: <ExternalLink />, onClick: onOpenInNewTab },
-      pinItem(thread, pins.includes(thread.id)),
       {
         type: "sub",
         label: "Connection",
@@ -377,34 +372,20 @@ export function ThreadHeaderMenu({
         ],
       },
       {
-        type: "sub",
-        label: "Copy",
+        label: "Copy thread ID",
         icon: <Copy />,
-        items: [
-          {
-            label: "Link to this thread",
-            icon: <LinkIcon />,
-            onClick: () => copyThreadLink(thread),
-          },
-          {
-            label: "Thread ID",
-            icon: <Copy />,
-            onClick: () => {
-              navigator.clipboard
-                .writeText(thread.id)
-                .then(() => toast.success("Thread ID copied"))
-                .catch((err) => reportError(err, "Couldn't copy the id"))
-            },
-          },
-        ],
+        onClick: () => {
+          navigator.clipboard
+            .writeText(thread.id)
+            .then(() => toast.success("Thread ID copied"))
+            .catch((err) => reportError(err, "Couldn't copy the id"))
+        },
       },
       {
         label: "Open the project",
         icon: <FolderOpen />,
         onClick: () => void navigate(projectPath(thread.projectId)),
       },
-      { type: "separator" },
-      deleteItem(thread, remove),
     ]
   }
 

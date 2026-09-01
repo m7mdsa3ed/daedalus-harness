@@ -44,11 +44,27 @@ What it implements, end to end:
   `<cwd>/.claude/skills/*/SKILL.md` listed in the system prompt. The persona
   file (`DAEDALUS_AGENT_PERSONA_FILE`, written by the server) is appended to
   the system prompt.
+- **Project instructions**: `AGENTS.md` / `CLAUDE.md` / `CLAUDE.local.md` from
+  the cwd up to the repo root, plus `~/.claude/CLAUDE.md`, deduped, labelled
+  with their paths and re-read every turn — so a repo that already instructs
+  other runtimes instructs this one. Off with
+  `DAEDALUS_AGENT_PROJECT_INSTRUCTIONS=0`.
+
+## Docs
+
+- [docs/standalone.md](docs/standalone.md) — running it outside the harness
+  (Zed or any ACP client, the env contract, what the harness normally supplies).
+- [docs/prompting.md](docs/prompting.md) — how the system prompt is assembled
+  and every lever for changing it.
+- [docs/managing.md](docs/managing.md) — what the harness UI can and cannot
+  change about this agent.
 
 Env contract (all filled by the server from the profile; empty keys are pruned
 and the literal `"null"` means unset): `DAEDALUS_AGENT_API_KEY`, `_BASE_URL`
 (the gateway shim URL when one is up), `_MODEL`, `_SMALL_MODEL`, `_EFFORT`,
-`_CONTEXT_WINDOW`, `_MAX_OUTPUT_TOKENS`, `_PERSONA_FILE`, `_HOME`.
+`_CONTEXT_WINDOW`, `_MAX_OUTPUT_TOKENS`, `_PERSONA_FILE`,
+`_PROJECT_INSTRUCTIONS`, `_HOME`. All of them are editable from
+**Settings › Agents** without touching this repo.
 
 Dev: `pnpm dev` (tsx watch, for hand-driving over stdio), `pnpm build`,
 `pnpm test` (in-process ACP client + scripted mock models; one test spawns the

@@ -5,9 +5,9 @@
    accidentally start sending one.
 
    Failures throw `ApiError` like every other call in the app, which is what
-   `lib/errors` already knows how to describe. The two statuses worth naming are
-   409 (the file changed under an editor) and 403 (the path escaped the
-   project) — callers branch on them rather than on message text. */
+   `lib/errors` already knows how to describe. The status worth naming is 409
+   (the file changed under an editor) — callers branch on it rather than on
+   message text. */
 import { api, loadSettings, ApiError } from "@/lib/settings"
 
 export interface WorkspaceEntry {
@@ -19,13 +19,6 @@ export interface WorkspaceEntry {
   link?: boolean
   ignored?: boolean
   hidden?: boolean
-}
-
-export interface WorkspaceListing {
-  path: string
-  entries: WorkspaceEntry[]
-  /** The directory had more entries than the server will send at once. */
-  truncated: boolean
 }
 
 export interface WorkspaceStat {
@@ -43,18 +36,9 @@ export interface WorkspaceFile extends WorkspaceStat {
   content?: string
 }
 
-export interface ListOptions {
-  hidden?: boolean
-  ignored?: boolean
-  signal?: AbortSignal
-}
-
 /** True when a write was refused because the file moved on underneath it. */
 export const isConflict = (err: unknown): boolean =>
   err instanceof ApiError && err.status === 409
-
-/** True when the server refused a path as outside the project. */
-export const isEscape = (err: unknown): boolean => err instanceof ApiError && err.status === 403
 
 function server() {
   const settings = loadSettings()
@@ -67,22 +51,6 @@ const q = (params: Record<string, string | undefined>) => {
   for (const [key, value] of Object.entries(params)) if (value !== undefined) search.set(key, value)
   const text = search.toString()
   return text ? `?${text}` : ""
-}
-
-export function listDir(
-  projectId: string,
-  path: string,
-  options: ListOptions = {}
-): Promise<WorkspaceListing> {
-  return api<WorkspaceListing>(
-    server(),
-    `/api/projects/${encodeURIComponent(projectId)}/tree${q({
-      path,
-      hidden: options.hidden ? "1" : undefined,
-      ignored: options.ignored ? "1" : undefined,
-    })}`,
-    { signal: options.signal }
-  )
 }
 
 export interface WorkspaceSearch {
@@ -120,18 +88,6 @@ export function readFile(
   )
 }
 
-export function statFile(
-  projectId: string,
-  path: string,
-  signal?: AbortSignal
-): Promise<WorkspaceStat> {
-  return api<WorkspaceStat>(
-    server(),
-    `/api/projects/${encodeURIComponent(projectId)}/file-stat${q({ path })}`,
-    { signal }
-  )
-}
-
 export function writeFile(
   projectId: string,
   path: string,
@@ -143,35 +99,6 @@ export function writeFile(
     `/api/projects/${encodeURIComponent(projectId)}/file${q({ path })}`,
     { method: "PUT", body: JSON.stringify({ content, ...options }) }
   )
-}
-
-export function createEntry(
-  projectId: string,
-  path: string,
-  type: "dir" | "file"
-): Promise<WorkspaceEntry> {
-  return api<WorkspaceEntry>(server(), `/api/projects/${encodeURIComponent(projectId)}/files`, {
-    method: "POST",
-    body: JSON.stringify({ path, type }),
-  })
-}
-
-export function renameEntry(
-  projectId: string,
-  from: string,
-  to: string
-): Promise<WorkspaceEntry> {
-  return api<WorkspaceEntry>(server(), `/api/projects/${encodeURIComponent(projectId)}/files`, {
-    method: "PATCH",
-    body: JSON.stringify({ from, to }),
-  })
-}
-
-export function deleteEntry(projectId: string, path: string): Promise<{ path: string }> {
-  return api<{ path: string }>(server(), `/api/projects/${encodeURIComponent(projectId)}/files`, {
-    method: "DELETE",
-    body: JSON.stringify({ path }),
-  })
 }
 
 /**
@@ -214,13 +141,3 @@ export async function readFileObjectUrl(
 /* ── Path helpers ──────────────────────────────────────────────────────────── */
 
 export const basename = (path: string): string => path.split("/").pop() ?? path
-export const dirname = (path: string): string => {
-  const cut = path.lastIndexOf("/")
-  return cut <= 0 ? "" : path.slice(0, cut)
-}
-export const joinPath = (dir: string, name: string): string => (dir ? `${dir}/${name}` : name)
-
-/** True when `path` is `dir` or inside it. Used to decide which cached
-    listings a watch event invalidates. */
-export const isUnder = (dir: string, path: string): boolean =>
-  dir === "" || path === dir || path.startsWith(`${dir}/`)

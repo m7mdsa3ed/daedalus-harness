@@ -27,7 +27,7 @@ import { KEYS } from "@/lib/shortcuts"
 import { searchThreads, type SearchResult } from "@/lib/search"
 import { activityAt, isTopLevel } from "@/lib/settings"
 import { threadPath } from "@/lib/router"
-import { useStore } from "@/lib/store"
+import { useLiveTurnActive, useStoreSelect } from "@/lib/store"
 import { usePalette } from "./context"
 import { Row, type PaletteItem } from "./list"
 import { messageItem, threadItem } from "./rows"
@@ -42,7 +42,12 @@ const RECENT_LIMIT = 8
 
 export function SearchPage() {
   const palette = usePalette()
-  const { state } = useStore()
+  const sessions = useStoreSelect((store) => store.sessions)
+  const projects = useStoreSelect((store) => store.projects)
+  /* One boolean per row, off a map whose identity only moves when a turn
+     starts or stops — subscribing to `threads` here redrew the palette on
+     every token of every thread. */
+  const liveTurnActive = useLiveTurnActive()
   const navigate = useNavigate()
   const { setOpenMobile } = useSidebar()
   const query = palette.query.trim()
@@ -90,12 +95,12 @@ export function SearchPage() {
     })
 
   const projectName = (projectId: string) =>
-    state.projects.find((project) => project.id === projectId)?.name ?? "Other"
+    projects.find((project) => project.id === projectId)?.name ?? "Other"
 
   /* Deleted threads live in the sidebar's Trash, not here — searching is for
      going somewhere, and a deleted thread is nowhere to go. */
   const threads = React.useMemo(() => {
-    const live = state.sessions.filter(isTopLevel).filter((session) => !session.deletedAt)
+    const live = sessions.filter(isTopLevel).filter((session) => !session.deletedAt)
     if (!query) {
       return [...live].sort((a, b) => activityAt(b) - activityAt(a)).slice(0, RECENT_LIMIT)
     }
@@ -109,14 +114,14 @@ export function SearchPage() {
       .slice(0, THREAD_LIMIT)
       .map((row) => row.session)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.sessions, state.projects, query])
+  }, [sessions, projects, query])
 
   const threadRows: PaletteItem[] = threads.map((session) =>
     threadItem({
       session,
       group: "Threads",
       project: projectName(session.projectId),
-      running: state.threads[session.id]?.turnActive ?? session.promptActive,
+      running: liveTurnActive.get(session.id) ?? session.promptActive,
       onSelect: () => open(session.id),
       always: true,
     })

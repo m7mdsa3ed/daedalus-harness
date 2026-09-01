@@ -42,6 +42,10 @@ async function call(path: string, init: RequestInit = {}): Promise<unknown> {
   const res = await fetch(`${url}${path}`, {
     ...init,
     headers: { "content-type": "application/json", ...(init.headers ?? {}) },
+    /* The engine answers within the wait budget; a loopback that hangs past it
+       (the server dying mid-poll) must fail the tool call rather than sit until
+       the runtime's own MCP timeout does it less politely. */
+    signal: AbortSignal.timeout((MAX_WAIT_SEC + 5) * 1000),
   });
   const body = (await res.json().catch(() => ({ error: `${res.status} ${res.statusText}` }))) as Record<string, unknown>;
   if (!res.ok) {

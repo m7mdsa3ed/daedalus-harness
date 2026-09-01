@@ -14,7 +14,7 @@
    words that tell themselves apart. */
 import { Sparkles } from "lucide-react"
 import type { Actions } from "@/lib/actions"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import { FoldableGroup } from "./groups"
 import { RoutinesGroup } from "./routines"
 import { ScheduledGroup } from "./scheduled"
@@ -24,8 +24,9 @@ import { ScheduledGroup } from "./scheduled"
     outer label is both halves — the number you are asking about here is "how
     much is armed", not "how many of which kind". */
 export function AutomationsGroup({ actions }: { actions: Actions }) {
-  const { state } = useStore()
-  const armed = state.routines.length + state.scheduled.length
+  const scheduled = useStoreSelect((store) => store.scheduled)
+  const routines = useStoreSelect((store) => store.routines)
+  const armed = routines.length + scheduled.length
 
   return (
     <FoldableGroup

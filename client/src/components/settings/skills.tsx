@@ -2,7 +2,7 @@ import * as React from "react"
 import { Navigate, useNavigate, useParams } from "react-router"
 import { Input } from "@/components/ui/input"
 import { type ServerSettings, type SkillDef } from "@/lib/settings"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import { FormPageHeader, PageForm, Field, FormActions } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
@@ -13,11 +13,11 @@ import { settingsPath } from "@/lib/router"
 export function SkillsPage() {
   const { settings, actions } = useSettingsPage()
   const meta = sectionMeta("skills")
-  const { state } = useStore()
+  const skills = useStoreSelect((store) => store.skills)
   return (
     <LibrarySection
       meta={meta}
-      items={state.skills}
+      items={skills}
       endpoint="/api/skills"
       noun="skill"
       subtitle={(s) => s.path}
@@ -36,8 +36,8 @@ export function SkillFormPage() {
   const { entryId } = useParams()
   const navigate = useNavigate()
   const { settings, actions } = useSettingsPage()
-  const { state } = useStore()
-  const skill = entryId === "new" ? null : state.skills.find((item) => item.id === entryId)
+  const skills = useStoreSelect((store) => store.skills)
+  const skill = entryId === "new" ? null : skills.find((item) => item.id === entryId)
   if (entryId !== "new" && !skill) return <Navigate to={settingsPath("skills")} replace />
   return <SkillForm skill={skill ?? null} settings={settings} onDone={async (saved) => {
     if (saved) await actions.refreshSkills()

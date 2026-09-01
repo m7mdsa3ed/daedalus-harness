@@ -20,6 +20,7 @@
      discovered by pressing it. */
 import { useCallback, useSyncExternalStore } from "react"
 
+import { createLocalStore } from "@/lib/local-store"
 import { defaultChords, reservedChord, SHORTCUTS, type ShortcutId } from "@/lib/shortcuts"
 
 export interface Binding {
@@ -59,14 +60,6 @@ function pick(raw: unknown): Record<string, StoredBinding> {
   return out
 }
 
-function read(): Record<string, StoredBinding> {
-  try {
-    return pick(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}"))
-  } catch {
-    return {}
-  }
-}
-
 function resolveAll(stored: Record<string, StoredBinding>): Record<ShortcutId, Binding> {
   const out = {} as Record<ShortcutId, Binding>
   for (const entry of SHORTCUTS) {
@@ -79,28 +72,26 @@ function resolveAll(stored: Record<string, StoredBinding>): Record<ShortcutId, B
   return out
 }
 
-const listeners = new Set<() => void>()
+const store = createLocalStore<Record<string, StoredBinding>>(STORAGE_KEY, pick, {})
 
 /* Memoised for the same reason view-options' is: a fresh object per snapshot
    read is an infinite render loop in useSyncExternalStore, not an
    inefficiency. */
-let stored = read()
-let resolved = resolveAll(stored)
+let lastStored = store.get()
+let resolved = resolveAll(lastStored)
 
-function commit(next: Record<string, StoredBinding>) {
-  stored = next
-  resolved = resolveAll(next)
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
-  } catch {
-    // A forgotten preference is not worth throwing out of a click handler.
+function resolvedNow(): Record<ShortcutId, Binding> {
+  const stored = store.get()
+  if (stored !== lastStored) {
+    lastStored = stored
+    resolved = resolveAll(stored)
   }
-  for (const listener of listeners) listener()
+  return resolved
 }
 
 function edit(id: ShortcutId, patch: StoredBinding) {
-  const next = { ...stored, [id]: { ...stored[id], ...patch } }
-  commit(next)
+  const stored = store.get()
+  store.set({ ...stored, [id]: { ...stored[id], ...patch } })
 }
 
 export function setShortcutChords(id: ShortcutId, chords: string[]): void {
@@ -114,39 +105,31 @@ export function setShortcutOverride(id: ShortcutId, override: boolean): void {
 /** Back to what the release ships — which is not the same as writing today's
     defaults down, so a later release that moves the chord still moves it. */
 export function resetShortcut(id: ShortcutId): void {
-  const next = { ...stored }
+  const next = { ...store.get() }
   delete next[id]
-  commit(next)
+  store.set(next)
 }
 
 export function resetAllShortcuts(): void {
-  commit({})
+  store.set({})
 }
 
 export function isCustomized(id: ShortcutId): boolean {
-  return !!stored[id]
+  return !!store.get()[id]
 }
 
 /** Non-reactive read, for the places a chord is needed outside a render. */
 export function bindingFor(id: ShortcutId): Binding {
-  return resolved[id] ?? { chords: defaultChords(id), override: true }
-}
-
-function subscribe(listener: () => void) {
-  listeners.add(listener)
-  return () => {
-    listeners.delete(listener)
-  }
+  return resolvedNow()[id] ?? { chords: defaultChords(id), override: true }
 }
 
 export function useKeybindings(): Record<ShortcutId, Binding> {
-  const snapshot = () => resolved
-  return useSyncExternalStore(subscribe, snapshot, snapshot)
+  return useSyncExternalStore(store.subscribe, resolvedNow, resolvedNow)
 }
 
 export function useBinding(id: ShortcutId): Binding {
   const snapshot = useCallback(() => bindingFor(id), [id])
-  return useSyncExternalStore(subscribe, snapshot, snapshot)
+  return useSyncExternalStore(store.subscribe, snapshot, snapshot)
 }
 
 /** The chords bound to a shortcut right now. */

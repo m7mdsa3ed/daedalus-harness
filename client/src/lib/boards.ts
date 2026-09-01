@@ -1,4 +1,4 @@
-import * as React from "react"
+import { createStore } from "./local-store"
 import { api, type ServerSettings } from "./settings"
 
 /* ── Boards and their columns ──
@@ -71,28 +71,17 @@ export interface BoardsState {
 
 // ---- reactive state ----
 
-let state: BoardsState = { boards: [], statuses: [], loaded: false }
-const listeners = new Set<() => void>()
+const store = createStore<BoardsState>({ boards: [], statuses: [], loaded: false })
 
 function set(next: Partial<BoardsState>) {
-  state = { ...state, ...next }
-  for (const listener of listeners) listener()
+  store.set({ ...store.get(), ...next })
 }
 
-export function boardsSnapshot(): BoardsState {
-  return state
-}
+export const boardsSnapshot = store.get
 
-export function subscribeBoards(listener: () => void): () => void {
-  listeners.add(listener)
-  return () => {
-    listeners.delete(listener)
-  }
-}
+export const subscribeBoards = store.subscribe
 
-export function useBoards(): BoardsState {
-  return React.useSyncExternalStore(subscribeBoards, boardsSnapshot, boardsSnapshot)
-}
+export const useBoards = store.use
 
 /** One board's columns, left to right. */
 export function statusesOf(all: BoardStatus[], boardId: string): BoardStatus[] {

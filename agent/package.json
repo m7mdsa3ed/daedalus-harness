@@ -9,7 +9,9 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.build.json",
-    "test": "pnpm test:handshake && pnpm test:turn && pnpm test:tools && pnpm test:persistence && pnpm test:subagents",
+    "test": "pnpm test:instructions && pnpm test:handshake && pnpm test:turn && pnpm test:tools && pnpm test:persistence && pnpm test:subagents && pnpm test:fixes",
+    "test:fixes": "tsx test/fixes.test.ts",
+    "test:instructions": "tsx test/instructions.test.ts",
     "test:handshake": "tsx test/handshake.test.ts",
     "test:turn": "tsx test/turn.test.ts",
     "test:tools": "tsx test/tools.test.ts",

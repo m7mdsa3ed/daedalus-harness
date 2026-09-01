@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react"
+import { createStore } from "./local-store"
 import { api, loadSettings, type ServerSettings } from "./settings"
 import { navigateTo, threadPath } from "./router"
 
@@ -35,27 +35,14 @@ interface InboxState {
   loaded: boolean
 }
 
-let state: InboxState = { items: [], unread: 0, loaded: false }
-const listeners = new Set<() => void>()
+const store = createStore<InboxState>({ items: [], unread: 0, loaded: false })
 
-function publish(next: InboxState) {
-  state = next
-  for (const listener of listeners) listener()
-}
+const publish = store.set
 
-export const inboxSnapshot = (): InboxState => state
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener)
-  return () => {
-    listeners.delete(listener)
-  }
-}
+export const inboxSnapshot = store.get
 
 /** The inbox, live — the pill's badge and list read the same store. */
-export function useNotifications(): InboxState {
-  return useSyncExternalStore(subscribe, inboxSnapshot, inboxSnapshot)
-}
+export const useNotifications = store.use
 
 const parse = (data: { items: AppNotification[]; unread: number }): InboxState => ({
   items: data.items,
@@ -102,6 +89,7 @@ export async function markNotificationRead(id?: string): Promise<void> {
       method: "POST",
       body: JSON.stringify(id ? { ids: [id] } : {}),
     })
+    const state = store.get()
     publish({
       ...state,
       unread: result.unread,

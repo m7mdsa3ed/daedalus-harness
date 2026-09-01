@@ -47,7 +47,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { PanelEmptyState, PanelNotice, PanelToolbar } from "@/components/workspace/primitives"
 import { reportError } from "@/lib/errors"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import {
   createPreview,
@@ -79,8 +79,11 @@ export function WebPanel({
   params,
 }: IDockviewPanelProps<{ trust: "project" | "external"; viewId: string; projectId?: string; url?: string }>) {
   const { trust, projectId, url: initialUrl } = params
-  const { state } = useStore()
-  const project = state.projects.find((candidate) => candidate.id === projectId)
+  /* One project row, not the whole state: a panel beside a live transcript
+     must not re-render on that transcript's stream. */
+  const project = useStoreSelect((state) =>
+    state.projects.find((candidate) => candidate.id === projectId)
+  )
 
   const [url, setUrl] = React.useState(initialUrl ?? "")
   const [typed, setTyped] = React.useState(initialUrl ?? "")

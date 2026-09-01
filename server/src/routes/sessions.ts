@@ -263,6 +263,57 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     });
   });
 
+  /* The transcript, read over HTTP.
+
+     Opening a thread is a read, and a read does not need a socket: this is the
+     same `attached` / `replay` frames / `caught_up` bracket the WebSocket
+     attach sends, as one document, so the client folds it through the very same
+     dispatch and there is still one parser (see `SessionSocket.snapshot`). The
+     socket that follows resumes from `caughtUp.cursor` — a delta — and an
+     archived thread opens no socket at all.
+
+     Streamed rather than assembled: the frames come out of the journal
+     pre-serialized and are spliced straight into the body, so a long thread is
+     never held whole in this process. A refusal is decided before the first
+     chunk, which is what lets it still be a status code. */
+  app.get("/api/sessions/:id/replay", (c) => {
+    const cursor = Number(c.req.query("cursor") ?? 0);
+    const window = Number(c.req.query("window") ?? 0);
+    const result = sessions.snapshot(c.req.param("id"), Number.isFinite(cursor) ? cursor : 0, {
+      window: Number.isFinite(window) ? window : 0,
+    });
+    if ("refused" in result) {
+      // "no such thread" is the only one of the three that is a missing row;
+      // the other two are a thread that exists and cannot be read this way.
+      const missing = result.refused.startsWith("no such thread");
+      return c.json({ error: result.refused }, missing ? 404 : 409);
+    }
+    const body = result.body;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const next = body.next();
+        if (next.done) controller.close();
+        else controller.enqueue(new TextEncoder().encode(next.value));
+      },
+      cancel() {
+        // The reader went away mid-body; stop paging SQLite for it.
+        body.return(undefined as never);
+      },
+    });
+    return c.body(stream, 200, { "content-type": "application/json; charset=utf-8" });
+  });
+
+  /* One page of history before `before`, the HTTP half of the socket's
+     `load_earlier`. Paging back is a read of the journal — an archived thread
+     is where it mostly happens — so it must not cost a socket any more than it
+     costs a spawn. */
+  app.get("/api/sessions/:id/earlier", (c) => {
+    const before = Number(c.req.query("before") ?? 0);
+    if (!Number.isFinite(before)) return c.json({ error: "before must be a number" }, 400);
+    const page = sessions.earlierPage(c.req.param("id"), before);
+    return page ? c.json(page) : c.json({ error: "not found" }, 404);
+  });
+
   // What the agent process has been printing. The client shows this when a thread
   // fails in a way ACP won't explain — the agent's own stack trace is the answer
   // and it never travels over the protocol.

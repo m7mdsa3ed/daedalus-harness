@@ -11,6 +11,7 @@ const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".next", "__
 const MAX_RESULTS = 200;
 const MAX_VISITS = 20_000;
 const MAX_FILE_BYTES = 1_000_000;
+const SEARCH_TIMEOUT_MS = 10_000;
 
 export const globMeta: ToolMeta = {
   kind: "search",
@@ -132,7 +133,7 @@ export function makeGrepTool(rt: ToolRuntime) {
       const root = resolvePath(rt.session.cwd, path ?? ".");
       const viaRg = await tryRipgrep(pattern, root, glob, ignore_case, options.abortSignal);
       if (viaRg !== null) return viaRg;
-      return grepFallback(pattern, root, glob, ignore_case);
+      return grepFallback(pattern, root, glob, ignore_case, options.abortSignal);
     },
   });
 }
@@ -151,16 +152,36 @@ function tryRipgrep(
     args.push("--", pattern, root);
     const child = spawn("rg", args, { stdio: ["ignore", "pipe", "ignore"] });
     let out = "";
+    /* A timed-out, aborted or over-budget rg answers with what it found —
+       never null, or the sync fallback would rescan what rg already covered. */
+    let cutOff: string | null = null;
     child.stdout.on("data", (chunk: Buffer) => {
       out += chunk.toString("utf8");
-      if (out.length > 200_000) child.kill("SIGKILL");
+      if (out.length > 200_000) {
+        cutOff ??= "[more matches not shown]";
+        child.kill("SIGKILL");
+      }
     });
-    const onAbort = () => child.kill("SIGKILL");
+    const killTimer = setTimeout(() => {
+      cutOff = `[search timed out after ${SEARCH_TIMEOUT_MS}ms; results may be incomplete]`;
+      child.kill("SIGKILL");
+    }, SEARCH_TIMEOUT_MS);
+    killTimer.unref();
+    const onAbort = () => {
+      cutOff = "[search cancelled]";
+      child.kill("SIGKILL");
+    };
     abortSignal?.addEventListener("abort", onAbort, { once: true });
-    child.on("error", () => resolvePromise(null)); // no rg on PATH → fallback
+    child.on("error", () => {
+      clearTimeout(killTimer);
+      resolvePromise(null); // no rg on PATH → fallback
+    });
     child.on("close", (code) => {
+      clearTimeout(killTimer);
       abortSignal?.removeEventListener("abort", onAbort);
-      if (code === 0) resolvePromise(clampLines(out) || "No matches.");
+      const partial = clampLines(out);
+      if (cutOff) resolvePromise(partial ? `${partial}\n${cutOff}` : cutOff);
+      else if (code === 0) resolvePromise(partial || "No matches.");
       else if (code === 1) resolvePromise("No matches.");
       else resolvePromise(null);
     });
@@ -172,6 +193,7 @@ function grepFallback(
   root: string,
   glob: string | undefined,
   ignoreCase: boolean | undefined,
+  abortSignal: AbortSignal | undefined,
 ): string {
   let re: RegExp;
   try {
@@ -188,7 +210,16 @@ function grepFallback(
     return `No such path: ${root}`;
   }
   const files = isFile ? [root] : walk(root);
+  /* Synchronous scan on the main thread: a catastrophically backtracking
+     pattern would freeze the whole process, so a wall-clock budget is checked
+     between files and the scan bails with what it has. */
+  const deadline = Date.now() + SEARCH_TIMEOUT_MS;
   for (const file of files) {
+    if (Date.now() > deadline || abortSignal?.aborted) {
+      const note =
+        abortSignal?.aborted ? "[search cancelled]" : `[search timed out after ${SEARCH_TIMEOUT_MS}ms; results may be incomplete]`;
+      return lines.length ? `${lines.join("\n")}\n${note}` : note;
+    }
     if (fileRe && !fileRe.test(relative(root, file))) continue;
     let text: string;
     try {

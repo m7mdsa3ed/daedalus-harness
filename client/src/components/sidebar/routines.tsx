@@ -25,7 +25,7 @@ import { useConfirm } from "@/components/confirm-dialog"
 import type { Actions } from "@/lib/actions"
 import { newRoutinePath, routinePath, routinesPath } from "@/lib/router"
 import type { Routine } from "@/lib/settings"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 import { FoldableGroup, HEADER_BUTTON } from "./groups"
@@ -35,13 +35,14 @@ import { ACTION, MENU } from "./scale"
 
     Shown even when empty for the reason the Scheduled half is: a section that
     hides itself is the one place nobody can find in order to create the first
-    item. It never fetches — `state.routines` is loaded by `bootstrap()`, and
+    item. It never fetches — `routines` is loaded by `bootstrap()`, and
     the sidebar asking the server a question nobody posed is exactly what the
     old Usage row was removed for. Which is also why a row cannot say when it
     next fires: triggers are a separate read, owned by the routine's own page,
     and half a schedule printed here would be a guess. */
 export function RoutinesGroup({ actions }: { actions: Actions }) {
-  const { state } = useStore()
+  const projects = useStoreSelect((store) => store.projects)
+  const routines = useStoreSelect((store) => store.routines)
   const navigate = useNavigate()
   const { isMobile, setOpenMobile } = useSidebar()
   const confirm = useConfirm()
@@ -52,7 +53,7 @@ export function RoutinesGroup({ actions }: { actions: Actions }) {
   }
 
   const projectName = (id: string) =>
-    state.projects.find((project) => project.id === id)?.name ?? "a project that no longer exists"
+    projects.find((project) => project.id === id)?.name ?? "a project that no longer exists"
 
   const toggle = (routine: Routine) => {
     actions
@@ -91,10 +92,10 @@ export function RoutinesGroup({ actions }: { actions: Actions }) {
       groupKey="__routines"
       label="Routines"
       icon={<Zap className="size-3 shrink-0" />}
-      count={state.routines.length > 0 ? state.routines.length : undefined}
+      count={routines.length > 0 ? routines.length : undefined}
       action={
         <>
-          {state.routines.length > 0 && (
+          {routines.length > 0 && (
             <button
               type="button"
               title="Manage routines"
@@ -117,13 +118,13 @@ export function RoutinesGroup({ actions }: { actions: Actions }) {
         </>
       }
     >
-      {state.routines.length === 0 ? (
+      {routines.length === 0 ? (
         <p className="px-2 py-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
           No routines. + saves a thread-start that fires on its own.
         </p>
       ) : (
         <SidebarMenu className={MENU}>
-          {state.routines.map((routine) => (
+          {routines.map((routine) => (
             <SidebarMenuItem key={routine.id}>
               <SidebarMenuButton
                 tooltip={`${routine.name} — starts a new thread in ${projectName(routine.projectId)}${routine.enabled ? "" : " (disabled)"}`}

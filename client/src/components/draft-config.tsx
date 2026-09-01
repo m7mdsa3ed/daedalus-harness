@@ -23,7 +23,7 @@ import { optionKey, optionsForModel, useAgentOptions, withChoices } from "@/lib/
 import { partitionSessionOptions } from "@/lib/session-options"
 import { profileSupports, type SessionMeta } from "@/lib/settings"
 import { saveThreadDefaults } from "@/lib/thread-defaults"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 
 const DEFAULT_CHOICE = "__default__"
 /** Sentinel for "no persona", which is not itself a persona id. */
@@ -32,15 +32,21 @@ const NO_PERSONA = "__none__"
 /** The shared read of a draft's current configuration — both controls below
     need the same lookups, and they must not disagree about what is selected. */
 function useDraft(meta: SessionMeta, actions: Actions, remember = true) {
-  const { state } = useStore()
-  const project = state.projects.find((p) => p.id === meta.projectId)
-  const profile = state.profiles.find((p) => p.id === meta.profileId)
+  /* The four catalogs this menu lists, each on its own subscription rather
+     than the whole state: these controls sit on the composer strip of a live
+     pane, and a catalog is replaced only by its own action. */
+  const projects = useStoreSelect((state) => state.projects)
+  const profiles = useStoreSelect((state) => state.profiles)
+  const agents = useStoreSelect((state) => state.agents)
+  const personas = useStoreSelect((state) => state.personas)
+  const project = projects.find((p) => p.id === meta.projectId)
+  const profile = profiles.find((p) => p.id === meta.profileId)
   // The draft's own agent, not the profile's: a profile may serve several.
-  const agent = state.agents.find((a) => a.id === meta.agentId)
+  const agent = agents.find((a) => a.id === meta.agentId)
   /* The profiles this thread could run on — every one configured for its
      agent. The profile only overrides model and effort; the agent is what the
      rest of the menu belongs to, so switching profile keeps it. */
-  const agentProfiles = state.profiles.filter((p) => profileSupports(p, meta.agentId))
+  const agentProfiles = profiles.filter((p) => profileSupports(p, meta.agentId))
 
   const configure = (next: Parameters<Actions["configureDraft"]>[1]) => {
     actions.configureDraft(meta.id, next)
@@ -62,7 +68,7 @@ function useDraft(meta: SessionMeta, actions: Actions, remember = true) {
     })
   }
 
-  return { state, project, profile, agent, agentProfiles, configure }
+  return { projects, profiles, agents, personas, project, profile, agent, agentProfiles, configure }
 }
 
 /**
@@ -89,7 +95,7 @@ export function DraftScopeRow({
       the draft you are about to send — see `useDraft`. */
   remember?: boolean
 }) {
-  const { state, project, profile, agent, configure } = useDraft(meta, actions, remember)
+  const { projects, agents, profiles, project, profile, agent, configure } = useDraft(meta, actions, remember)
 
   /* On the strip's collapsed line this row is its two answers: which agent will
      take the thread, and which project it will run in. That is the whole point
@@ -110,7 +116,7 @@ export function DraftScopeRow({
     const next =
       profile && profileSupports(profile, agentId)
         ? profile
-        : state.profiles.find((p) => profileSupports(p, agentId))
+        : profiles.find((p) => profileSupports(p, agentId))
     if (!next) return
     configure({ agentId, profileId: next.id, model: "", effort: "" })
   }
@@ -130,7 +136,7 @@ export function DraftScopeRow({
         label={agent?.name ?? "No agent"}
         title="Agent"
         value={agent?.id ?? ""}
-        options={state.agents.map((a) => ({
+        options={agents.map((a) => ({
           value: a.id,
           name: a.name,
           icon: <AgentIcon agentId={a.id} className="size-4" />,
@@ -143,7 +149,7 @@ export function DraftScopeRow({
         label={project?.name ?? "No project"}
         title="Project"
         value={project?.id ?? ""}
-        options={state.projects.map((p) => ({
+        options={projects.map((p) => ({
           value: p.id,
           name: p.name,
           hint: p.cwd,
@@ -238,7 +244,7 @@ export function DraftConfigPopover({
   /** See `DraftScopeRow`. */
   remember?: boolean
 }) {
-  const { state, profile, agent, agentProfiles, configure } = useDraft(meta, actions, remember)
+  const { personas, profile, agent, agentProfiles, configure } = useDraft(meta, actions, remember)
   const models = profile?.models ?? []
   const resolvedModel = models.find((m) => m.id === (meta.model || profile?.defaultModel))
 
@@ -287,7 +293,7 @@ export function DraftConfigPopover({
   const optionValue = (option?: acp.SessionConfigOption) =>
     option?.type === "select" ? option.currentValue : ""
 
-  const persona = state.personas.find((p) => p.id === meta.personaId)
+  const persona = personas.find((p) => p.id === meta.personaId)
   const modelLabel = overridden
     ? (resolvedModel?.label ?? (meta.model || "Profile default"))
     : agentOptions.model
@@ -335,16 +341,16 @@ export function DraftConfigPopover({
               is a set of placeholders and nothing has been spawned yet. A
               persona that names an effort applies it on the spot; the row
               below still shows it, and still overrides it. */}
-          {state.personas.length > 0 && (
+          {personas.length > 0 && (
             <MenuRow
               label="Persona"
               value={meta.personaId || NO_PERSONA}
               choices={[
                 { value: NO_PERSONA, name: "None" },
-                ...state.personas.map((p) => ({ value: p.id, name: p.name })),
+                ...personas.map((p) => ({ value: p.id, name: p.name })),
               ]}
               onSelect={(value) => {
-                const picked = value === NO_PERSONA ? null : state.personas.find((p) => p.id === value)
+                const picked = value === NO_PERSONA ? null : personas.find((p) => p.id === value)
                 configure({
                   personaId: picked?.id ?? "",
                   /* Only when the persona has an opinion: dropping to "" here

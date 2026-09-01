@@ -13,6 +13,10 @@ export interface McpHandle {
 }
 
 const CONNECT_TIMEOUT_MS = 15_000;
+/* Generous on purpose — an MCP tool can legitimately run for minutes — but a
+   bound has to exist: a server that never answers would otherwise hold the
+   turn open forever. */
+const CALL_TIMEOUT_MS = 600_000;
 
 /* Best-effort by contract: a server that fails to connect is reported in
    `failures` (folded into the system prompt) and never fatal — an agent that
@@ -24,24 +28,33 @@ export async function connectMcpServers(servers: acp.McpServer[]): Promise<McpHa
 
   for (const server of servers) {
     const name = server.name;
+    const client = new Client({ name: "daedalus-agent", version: "0.1.0" });
     try {
-      const client = new Client({ name: "daedalus-agent", version: "0.1.0" });
       const transport = transportFor(server);
-      await withTimeout(client.connect(transport), CONNECT_TIMEOUT_MS, `connect to MCP server ${name}`);
+      /* Pushed before connect: a timed-out connect has already spawned the
+         stdio child, and close() is the only thing that reaps it. */
       clients.push(client);
+      await withTimeout(client.connect(transport), CONNECT_TIMEOUT_MS, `connect to MCP server ${name}`);
       const listed = await withTimeout(client.listTools(), CONNECT_TIMEOUT_MS, `list tools of ${name}`);
       for (const t of listed.tools) {
         tools[`mcp__${name}__${t.name}`] = dynamicTool({
           description: t.description ?? `${t.name} (MCP tool from ${name})`,
           inputSchema: jsonSchema((t.inputSchema ?? { type: "object" }) as never),
           execute: async (input) => {
-            const result = await client.callTool({ name: t.name, arguments: (input ?? {}) as Record<string, unknown> });
+            const result = await withTimeout(
+              client.callTool({ name: t.name, arguments: (input ?? {}) as Record<string, unknown> }),
+              CALL_TIMEOUT_MS,
+              `call ${t.name} on ${name}`,
+            );
             return mcpResultText(result as { content?: unknown; isError?: boolean });
           },
         });
       }
     } catch (err) {
       failures.push(`${name}: ${(err as Error).message}`);
+      const at = clients.indexOf(client);
+      if (at >= 0) clients.splice(at, 1);
+      void client.close().catch(() => {});
     }
   }
 

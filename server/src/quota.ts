@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { eq, like } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { agentQuota as agentQuotaTable, db, type QuotaProbe } from "./db/index.js";
 import { resolveSpawn, type AgentDef } from "./registry.js";
 import { profileUsage, readProfileUsage } from "./usage-api.js";
@@ -49,6 +49,11 @@ export type { QuotaSnapshot, QuotaStatus, QuotaWindow };
 /** Long enough for a cold CLI to boot and answer, short enough that a wedged one
     does not hold a settings page open. `claude -p /usage` measures ~2.3s. */
 const PROBE_TIMEOUT_MS = 30_000;
+
+/** Cap on collected output, per stream — git.ts's MAX_BUFFER. A usage report is
+    a screenful, so a child past this is looping, and the timeout alone would
+    let it write unbounded strings into this process for the full 30s. */
+const MAX_BUFFER = 8 * 1024 * 1024;
 
 /** How long a reading stays fresh. A quota moves on its own — there is no local
     event that invalidates it — so unlike the option probe this cache expires
@@ -146,6 +151,12 @@ function run(
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
       stdout += chunk;
+      if (stdout.length > MAX_BUFFER) {
+        stdout = stdout.slice(0, MAX_BUFFER);
+        child.kill("SIGKILL");
+        finish(null);
+        return;
+      }
       /* Killed, not asked politely: the answers are in hand, and `close` will
          still fire and settle this with everything collected. */
       if (until?.(stdout)) {
@@ -155,6 +166,11 @@ function run(
     });
     child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
+      if (stderr.length > MAX_BUFFER) {
+        stderr = stderr.slice(0, MAX_BUFFER);
+        child.kill("SIGKILL");
+        finish(null);
+      }
     });
     /* ENOENT for a binary that is not installed lands here, not on the exit
        path: it is the ordinary answer for "this runtime is not on this box". */
@@ -550,11 +566,4 @@ function cached(key: string, refresh: boolean, read: () => Promise<QuotaSnapshot
  */
 export function invalidateQuota(profile: Profile, agentId: string): void {
   db.delete(agentQuotaTable).where(eq(agentQuotaTable.key, keyFor(profile, agentId))).run();
-}
-
-/** Drop every reading taken under this profile. For an edit to the profile
-    itself: a new key, a new provider or a switched-off one all make the cached
-    number an answer about something else. */
-export function invalidateProfileQuota(profileId: string): void {
-  db.delete(agentQuotaTable).where(like(agentQuotaTable.key, `${profileId}:%`)).run();
 }

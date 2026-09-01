@@ -1,6 +1,7 @@
 import { watch, type FSWatcher } from "node:fs";
 import { open, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
+import { HttpError } from "./http-error.js";
 
 /**
  * Tailing background-task journals.
@@ -36,11 +37,10 @@ const PENDING_POLL_MS = 2_000;
 const MAX_READ_BYTES = 4 * 1024 * 1024;
 
 /** A refusal with the HTTP status it deserves — the route maps it straight. */
-export class TaskDirError extends Error {
-  status: 400 | 403 | 404;
+export class TaskDirError extends HttpError {
+  declare status: 400 | 403 | 404;
   constructor(message: string, status: 400 | 403 | 404) {
-    super(message);
-    this.status = status;
+    super(message, status);
   }
 }
 

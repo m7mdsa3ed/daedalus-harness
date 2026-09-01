@@ -6,7 +6,6 @@ import {
   Pencil,
   Plus,
   RefreshCwIcon,
-  Sparkles,
   Trash2,
 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
@@ -18,17 +17,17 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { PathInput } from "@/components/ui/suggesting-input"
 import { api, type Project, type ServerSettings } from "@/lib/settings"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import { addKnowledge, deleteKnowledge, listKnowledge, type KnowledgeEntry } from "@/lib/workspace/knowledge-api"
 import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions, FormSection } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
-import { projectPath, settingsFormPath, settingsPath, studioPath } from "@/lib/router"
+import { projectPath, settingsFormPath, settingsPath } from "@/lib/router"
 
 export function ProjectsPage() {
   const { settings, actions } = useSettingsPage()
   const meta = sectionMeta("projects")
-  const { state } = useStore()
+  const projects = useStoreSelect((store) => store.projects)
   const confirm = useConfirm()
   const navigate = useNavigate()
 
@@ -60,26 +59,15 @@ export function ProjectsPage() {
   return (
     <>
       <PageHeader meta={meta} action={newButton} />
-      {state.projects.length === 0 ? (
-        /* The one screen where the Studio is the better answer: a person with
-           no projects has no directory to name yet, and "New project" asks for
-           one. Offered beside it rather than instead of it — pointing at code
-           that already exists is still the ordinary case. */
+      {projects.length === 0 ? (
         <EmptyCard
           icon={FolderIcon}
           text="No projects yet — a thread needs one to know where to run."
-          action={
-            <div className="flex flex-wrap items-center justify-center gap-2">
-              {newButton}
-              <Button variant="outline" onClick={() => void navigate(studioPath())}>
-                <Sparkles className="size-4" /> Start from a template
-              </Button>
-            </div>
-          }
+          action={newButton}
         />
       ) : (
         <Group>
-          {state.projects.map((project) => (
+          {projects.map((project) => (
             <Row
               key={project.id}
               icon={<ProjectIcon project={project} className="size-4 shrink-0" />}
@@ -116,8 +104,8 @@ export function ProjectFormPage() {
   const { entryId } = useParams()
   const navigate = useNavigate()
   const { settings, actions } = useSettingsPage()
-  const { state } = useStore()
-  const project = entryId === "new" ? null : state.projects.find((item) => item.id === entryId)
+  const projects = useStoreSelect((store) => store.projects)
+  const project = entryId === "new" ? null : projects.find((item) => item.id === entryId)
   if (entryId !== "new" && !project) return <Navigate to={settingsPath("projects")} replace />
   return (
     <ProjectForm

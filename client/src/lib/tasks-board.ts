@@ -1,4 +1,4 @@
-import * as React from "react"
+import { createStore } from "./local-store"
 import { api, type ServerSettings } from "./settings"
 
 /* ── Tasks board ──
@@ -72,52 +72,32 @@ export const PRIORITY_LABEL: Record<TaskPriority, string> = {
   urgent: "Urgent",
 }
 
-const PRIORITY_RANK: Record<TaskPriority, number> = { low: 0, medium: 1, high: 2, urgent: 3 }
-export const priorityRank = (p: TaskPriority): number => PRIORITY_RANK[p]
 
 // ---- reactive list ----
 
-let tasks: Task[] = []
-const listeners = new Set<() => void>()
+const store = createStore<Task[]>([])
 
-function notify() {
-  for (const listener of listeners) listener()
-}
-
-function setAll(next: Task[]) {
-  tasks = next
-  notify()
-}
+const setAll = store.set
 
 /* Replace a row in place, or append a new one. Deliberately does NOT re-sort:
    the list's order is the server's (board, column, position), and re-sorting by
    priority here made the list view jump into a different order after an edit
    than it had after a reload. Consumers that want another order say so. */
 function upsert(row: Task) {
+  const tasks = store.get()
   const at = tasks.findIndex((t) => t.id === row.id)
-  tasks = at === -1 ? [...tasks, row] : tasks.map((t) => (t.id === row.id ? row : t))
-  notify()
+  store.set(at === -1 ? [...tasks, row] : tasks.map((t) => (t.id === row.id ? row : t)))
 }
 
 function remove(id: string) {
-  tasks = tasks.filter((t) => t.id !== id)
-  notify()
+  store.set(store.get().filter((t) => t.id !== id))
 }
 
-export function tasksSnapshot(): Task[] {
-  return tasks
-}
+export const tasksSnapshot = store.get
 
-export function subscribeTasks(listener: () => void): () => void {
-  listeners.add(listener)
-  return () => {
-    listeners.delete(listener)
-  }
-}
+export const subscribeTasks = store.subscribe
 
-export function useTasks(): Task[] {
-  return React.useSyncExternalStore(subscribeTasks, tasksSnapshot, tasksSnapshot)
-}
+export const useTasks = store.use
 
 // ---- verbs ----
 

@@ -2,7 +2,8 @@ import * as React from "react"
 import { KeyRound, Pencil, Plus, Trash2 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
 import { dropAgentOptions } from "@/lib/agent-options"
-import { captureError, reportError, type InlineError } from "@/lib/errors"
+import { reportError } from "@/lib/errors"
+import { useAsyncAction } from "@/hooks/use-async-action"
 import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Badge } from "@/components/ui/badge"
@@ -25,7 +26,7 @@ import {
   type ProfileUsageKind,
   type ServerSettings,
 } from "@/lib/settings"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions, FormSection, Picker } from "./primitives"
 import {
   ModelsSection,
@@ -61,7 +62,8 @@ const USAGE_PROVIDERS: { kind: ProfileUsageKind; label: string; hint: string; ho
 export function ProfilesPage() {
   const { settings, actions } = useSettingsPage()
   const meta = sectionMeta("profiles")
-  const { state } = useStore()
+  const profiles = useStoreSelect((store) => store.profiles)
+  const agents = useStoreSelect((store) => store.agents)
   const confirm = useConfirm()
   const navigate = useNavigate()
 
@@ -97,8 +99,8 @@ export function ProfilesPage() {
      neither editable nor deletable, so here they would be one identical
      "Default" row per agent with nothing to do on it. They still show up
      wherever a thread picks a profile, which is the only place they matter. */
-  const stored = state.profiles.filter((p) => !p.virtual)
-  const agentName = (id: string) => state.agents.find((a) => a.id === id)?.name
+  const stored = profiles.filter((p) => !p.virtual)
+  const agentName = (id: string) => agents.find((a) => a.id === id)?.name
 
   return (
     <>
@@ -160,13 +162,14 @@ export function ProfileFormPage() {
   const { entryId } = useParams()
   const navigate = useNavigate()
   const { settings, actions } = useSettingsPage()
-  const { state } = useStore()
-  const profile = entryId === "new" ? null : state.profiles.find((item) => item.id === entryId)
+  const profiles = useStoreSelect((store) => store.profiles)
+  const agents = useStoreSelect((store) => store.agents)
+  const profile = entryId === "new" ? null : profiles.find((item) => item.id === entryId)
   if (entryId !== "new" && !profile) return <Navigate to={settingsPath("profiles")} replace />
   return (
     <ProfileForm
       profile={profile ?? null}
-      agents={state.agents}
+      agents={agents}
       settings={settings}
       onDone={async (saved) => {
         /* The saved profile's credentials, endpoint and catalog are what decide
@@ -198,7 +201,9 @@ function ProfileForm({
   onDone: (saved: boolean) => void
 }) {
   // The library the pickers below draw from.
-  const { state } = useStore()
+  const mcpServers = useStoreSelect((store) => store.mcpServers)
+  const skills = useStoreSelect((store) => store.skills)
+  const commands = useStoreSelect((store) => store.commands)
   const [form, setForm] = React.useState(() => ({
     name: profile?.name ?? "",
     baseUrl: profile?.baseUrl ?? "",
@@ -243,8 +248,7 @@ function ProfileForm({
       .map((id) => ({ id, name: id, unregistered: true })),
   ]
   const [rows, setRows] = React.useState<ModelRow[]>(() => toModelRows(profile?.models ?? []))
-  const [busy, setBusy] = React.useState(false)
-  const [saveError, setSaveError] = React.useState<InlineError | null>(null)
+  const { busy, error: saveError, run } = useAsyncAction()
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
   const patchRow = (uid: string, patch: Partial<ModelRow>) =>
     setRows((r) => r.map((row) => (row.uid === uid ? { ...row, ...patch } : row)))
@@ -273,11 +277,9 @@ function ProfileForm({
       return [...r, ...imported.filter((row) => row.id.trim() && !have.has(row.id.trim()))]
     })
 
-  const save = async (e: React.FormEvent) => {
+  const save = (e: React.FormEvent) => {
     e.preventDefault()
-    setBusy(true)
-    setSaveError(null)
-    try {
+    void run("Couldn't save the profile", async () => {
       const models = rowsToModels(rows)
       if (Object.keys(links).length === 0) {
         throw new Error("Pick at least one agent this profile can run.")
@@ -313,10 +315,7 @@ function ProfileForm({
         await api<Profile>(settings, "/api/profiles", { method: "POST", body: JSON.stringify(payload) })
       }
       onDone(true)
-    } catch (err) {
-      setSaveError(captureError(err, "Couldn't save the profile"))
-      setBusy(false)
-    }
+    })
   }
 
   return (
@@ -476,7 +475,7 @@ function ProfileForm({
       <FormSection label="Capabilities">
         <Field label="MCP servers" hint="Manage the definitions in Settings › MCP servers.">
           <Picker
-            items={state.mcpServers}
+            items={mcpServers}
             selected={form.mcpServerIds}
             onToggle={(mcpServerIds) => set({ mcpServerIds })}
             subtitle={mcpSubtitle}
@@ -485,7 +484,7 @@ function ProfileForm({
         </Field>
         <Field label="Skills" hint="Manage the paths in Settings › Skills.">
           <Picker
-            items={state.skills}
+            items={skills}
             selected={form.skillIds}
             onToggle={(skillIds) => set({ skillIds })}
             subtitle={(s) => s.path}
@@ -494,7 +493,7 @@ function ProfileForm({
         </Field>
         <Field label="Slash commands" hint="Manage the prompts in Settings › Commands.">
           <Picker
-            items={state.commands}
+            items={commands}
             selected={form.commandIds}
             onToggle={(commandIds) => set({ commandIds })}
             subtitle={(c) => `/${c.name}`}

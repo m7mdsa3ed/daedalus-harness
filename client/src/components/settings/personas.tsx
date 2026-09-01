@@ -3,12 +3,12 @@ import { Navigate, useNavigate, useParams } from "react-router"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { type Persona, type ServerSettings } from "@/lib/settings"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import { FormPageHeader, PageForm, Field, FormActions } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { LibrarySection, saveLibraryEntry } from "./library"
-import { captureError, type InlineError } from "@/lib/errors"
+import { useAsyncAction } from "@/hooks/use-async-action"
 import { settingsPath } from "@/lib/router"
 
 /**
@@ -26,11 +26,11 @@ import { settingsPath } from "@/lib/router"
 export function PersonasPage() {
   const { settings, actions } = useSettingsPage()
   const meta = sectionMeta("personas")
-  const { state } = useStore()
+  const personas = useStoreSelect((store) => store.personas)
   return (
     <LibrarySection
       meta={meta}
-      items={state.personas}
+      items={personas}
       endpoint="/api/personas"
       noun="persona"
       importable={false}
@@ -48,8 +48,8 @@ export function PersonaFormPage() {
   const { entryId } = useParams()
   const navigate = useNavigate()
   const { settings, actions } = useSettingsPage()
-  const { state } = useStore()
-  const persona = entryId === "new" ? null : state.personas.find((item) => item.id === entryId)
+  const personas = useStoreSelect((store) => store.personas)
+  const persona = entryId === "new" ? null : personas.find((item) => item.id === entryId)
   if (entryId !== "new" && !persona) return <Navigate to={settingsPath("personas")} replace />
   return (
     <PersonaForm
@@ -86,15 +86,12 @@ function PersonaForm({
     effort: persona?.effort ?? "",
     sortOrder: String(persona?.sortOrder ?? 0),
   }))
-  const [busy, setBusy] = React.useState(false)
-  const [saveError, setSaveError] = React.useState<InlineError | null>(null)
+  const { busy, error: saveError, run } = useAsyncAction()
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
 
-  const save = async (e: React.FormEvent) => {
+  const save = (e: React.FormEvent) => {
     e.preventDefault()
-    setBusy(true)
-    setSaveError(null)
-    try {
+    void run("Couldn't save the persona", async () => {
       await saveLibraryEntry(settings, "/api/personas", persona?.id, {
         name: form.name,
         description: form.description,
@@ -104,10 +101,7 @@ function PersonaForm({
         sortOrder: Number(form.sortOrder) || 0,
       })
       onDone(true)
-    } catch (err) {
-      setSaveError(captureError(err, "Couldn't save the persona"))
-      setBusy(false)
-    }
+    })
   }
 
   return (

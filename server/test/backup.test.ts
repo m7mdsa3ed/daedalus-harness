@@ -16,7 +16,6 @@ import {
   mcpServers as mcpServersTable,
   profileMcpServers,
   profiles as profilesTable,
-  projectTemplates as templatesTable,
   projects as projectsTable,
   routineMcpServers,
   routineRuns as routineRunsTable,
@@ -26,9 +25,6 @@ import {
   sessionQueue as queueTable,
   sessions as sessionsTable,
   skills as skillsTable,
-  templateCommands,
-  templateMcpServers,
-  templateSkills,
   boards as boardsTable,
   boardStatuses as boardStatusesTable,
   tasks as tasksTable,
@@ -48,7 +44,7 @@ function test(name: string, fn: () => void) {
 }
 
 function wipe() {
-  for (const table of [sessionsTable, profilesTable, projectsTable, mcpServersTable, skillsTable, commandsTable, personasTable, templatesTable, routinesTable, agentsTable, tasksTable, boardStatusesTable, boardsTable]) {
+  for (const table of [sessionsTable, profilesTable, projectsTable, mcpServersTable, skillsTable, commandsTable, personasTable, routinesTable, agentsTable, tasksTable, boardStatusesTable, boardsTable]) {
     db.delete(table).run();
   }
 }
@@ -70,26 +66,6 @@ function seed() {
   db.insert(personasTable).values({ id: "builtin:terse", name: "Terse", description: "d", prompt: "One line.", thinking: 0, effort: "low", seededVersion: 1, sortOrder: 10 }).run();
   db.insert(profilesTable).values({ id: "p1", name: "gw", agents: { fake: {} }, baseUrl: "http://gw", apiKey: "sk-live", defaultModel: "m", smallModel: "", logoUrl: "", models: [{ id: "m", label: "M", reasoningEfforts: [] }] }).run();
   db.insert(profileMcpServers).values({ profileId: "p1", mcpServerId: "m1" }).run();
-  /* A built-in template with all three kinds of link — the kit is the half a
-     bundle that only carried the row would silently drop. */
-  db.insert(templatesTable).values({
-    id: "builtin:ts-service",
-    name: "TypeScript service",
-    description: "Hono starter",
-    logoUrl: "",
-    repoUrl: "https://github.com/honojs/starter",
-    repoRef: null,
-    repoSubdir: "templates/nodejs",
-    runtime: "node",
-    tags: ["typescript", "server"],
-    setup: "pnpm install",
-    prompt: "Set up {{name}} in {{cwd}}.",
-    seededVersion: 1,
-    createdAt: now,
-  }).run();
-  db.insert(templateMcpServers).values({ templateId: "builtin:ts-service", mcpServerId: "m1" }).run();
-  db.insert(templateSkills).values({ templateId: "builtin:ts-service", skillId: "s1" }).run();
-  db.insert(templateCommands).values({ templateId: "builtin:ts-service", commandId: "c1" }).run();
   db.insert(projectsTable).values({ id: "w1", name: "ws", cwd: "/tmp/ws", logoUrl: "" }).run();
   db.insert(knowledgeTable).values({ id: "k1", projectId: "w1", title: "t", content: "c", createdAt: now, updatedAt: now }).run();
   db.insert(sessionsTable).values({ id: "t1", profileId: "p1", projectId: "w1", agentId: "fake", model: "m", effort: "", personaId: "builtin:terse", title: "Thread", acpSessionId: "acp-1", createdAt: now }).run();
@@ -193,47 +169,6 @@ test("a routine round-trips with its triggers, runs and links", () => {
   assert.equal(routine.dryRunCompleted, true);
   assert.equal(db.select().from(routineTriggersTable).all()[0]!.tz, "America/New_York");
   assert.equal(db.select().from(routineRunsTable).all()[0]!.output, "nothing changed");
-});
-
-test("a project template round-trips with its kit", () => {
-  seed();
-  const bundle = exportBundle({ includeSecrets: true, includeJournals: true });
-  assert.equal(bundle.templates.length, 1);
-  assert.deepEqual(bundle.templates[0]!.mcpServerIds, ["m1"]);
-  assert.deepEqual(bundle.templates[0]!.skillIds, ["s1"]);
-  assert.deepEqual(bundle.templates[0]!.commandIds, ["c1"]);
-  assert.equal(bundle.templates[0]!.seededVersion, 1, "a restored built-in is never re-seeded");
-  wipe();
-  const summary = importBundle(BundleSchema.parse(JSON.parse(JSON.stringify(bundle))), "replace");
-  assert.equal(summary.templates, 1);
-  const template = db.select().from(templatesTable).where(eq(templatesTable.id, "builtin:ts-service")).get()!;
-  assert.equal(template.repoUrl, "https://github.com/honojs/starter");
-  assert.equal(template.repoSubdir, "templates/nodejs");
-  assert.equal(template.repoRef, null);
-  assert.deepEqual(template.tags, ["typescript", "server"]);
-  assert.equal(template.prompt, "Set up {{name}} in {{cwd}}.");
-  assert.equal(count(templateMcpServers), 1);
-  assert.equal(count(templateSkills), 1);
-  assert.equal(count(templateCommands), 1);
-});
-
-/* The upsert must not cascade: an `INSERT OR REPLACE` here would delete the
-   template row and take its three join tables with it. */
-test("merging a renamed template keeps its kit, and replace drops what the bundle omits", () => {
-  seed();
-  const bundle = exportBundle({ includeSecrets: true, includeJournals: true });
-  bundle.templates[0]!.name = "renamed";
-  importBundle(bundle, "merge");
-  assert.equal(db.select().from(templatesTable).where(eq(templatesTable.id, "builtin:ts-service")).get()?.name, "renamed");
-  assert.equal(count(templateMcpServers), 1);
-  assert.equal(count(templateSkills), 1);
-  assert.equal(count(templateCommands), 1);
-
-  db.insert(templatesTable).values({ id: "mine", name: "Mine", repoUrl: "https://example.com/x", createdAt: 1 }).run();
-  importBundle(bundle, "merge");
-  assert.equal(count(templatesTable), 2, "merge keeps what the bundle does not name");
-  importBundle(bundle, "replace");
-  assert.equal(count(templatesTable), 1);
 });
 
 test("a trigger deleted after the export does not come back on a merge", () => {
@@ -396,6 +331,63 @@ test("a bundle in the wrong format is refused", () => {
   assert.equal(BundleSchema.safeParse({ format: "something-else", version: 1 }).success, false);
   assert.equal(BundleSchema.safeParse({ format: "daedalus-backup", version: 99 }).success, false);
 });
+
+/* ---- the route's own auth rule (routes/misc.ts) ----
+   GET /api/backup accepts the bearer token ONLY in the Authorization header.
+   The general middleware also takes `?token=`, but a full-secret export URL is
+   exactly the thing that ends up in browser history and proxy logs — so the
+   route re-checks, and a query token is refused even when its value is right.
+   Pinned here because no diff shows it: the route looks like a duplicate of
+   the middleware and "simplifying" it to `bearerToken(header, query)` would
+   pass every other test. */
+async function routeTest(name: string, fn: () => Promise<void>) {
+  try {
+    await fn();
+    passed += 1;
+  } catch (err) {
+    failures.push(`${name}\n    ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+  }
+}
+
+{
+  const { Hono } = await import("hono");
+  const { miscRoutes } = await import("../src/routes/misc.js");
+  type MiscDeps = Parameters<typeof miscRoutes>[1];
+  const app = new Hono();
+  // Only `config.token` is read on this route; the rest of the deps are for
+  // handlers these requests never reach.
+  miscRoutes(app, { config: { token: "s3cret-tok" }, sessions: {}, push: {} } as MiscDeps);
+  seed();
+
+  await routeTest("a correct token in the query string is refused", async () => {
+    const res = await app.request("/api/backup?token=s3cret-tok&secrets=1");
+    assert.equal(res.status, 401);
+    const body = (await res.json()) as { error?: string };
+    assert.match(body.error ?? "", /Authorization header/, "the refusal says how to ask properly");
+  });
+
+  await routeTest("a query token does not rescue a missing header", async () => {
+    const res = await app.request("/api/backup?token=s3cret-tok", {
+      headers: { authorization: "Bearer wrong" },
+    });
+    assert.equal(res.status, 401);
+  });
+
+  await routeTest("a non-Bearer authorization scheme is refused", async () => {
+    const res = await app.request("/api/backup", { headers: { authorization: "Basic s3cret-tok" } });
+    assert.equal(res.status, 401);
+  });
+
+  await routeTest("the header token is accepted and answers the bundle as an attachment", async () => {
+    const res = await app.request("/api/backup", { headers: { authorization: "Bearer s3cret-tok" } });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-disposition") ?? "", /^attachment; filename="daedalus-backup-/);
+    const parsed = BundleSchema.safeParse(await res.json());
+    assert.ok(parsed.success, "what it serves is a real bundle");
+    // And without `secrets=1` the download is the redacted one.
+    assert.equal("apiKey" in parsed.data.profiles[0]!, false, "secrets stay opt-in");
+  });
+}
 
 wipe();
 console.log(`backup: ${passed} passed, ${failures.length} failed`);

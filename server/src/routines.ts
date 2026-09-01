@@ -79,6 +79,7 @@ import { LIMITS, OutputError, extractJsonOutput, validateOutput } from "./workfl
 import type { Session, SessionManager } from "./sessions.js";
 import type { ThreadEvent } from "./protocol.js";
 import { runFinishActions, type ActionDeps } from "./routine-actions.js";
+import { HttpError } from "./http-error.js";
 
 /**
  * The third owner of the three library links, beside `PROFILE_LINKS` and
@@ -135,11 +136,10 @@ const PAYLOAD_MAX = 32 * 1024;
     bound so a wait can never outlive the thing it is waiting for. */
 const WORKFLOW_WAIT_CAP_MS = 3 * 60 * 60_000;
 
-export class RoutineError extends Error {
-  status: 400 | 404 | 409;
+export class RoutineError extends HttpError {
+  declare status: 400 | 404 | 409;
   constructor(message: string, status: 400 | 404 | 409 = 400) {
-    super(message);
-    this.status = status;
+    super(message, status);
   }
 }
 
@@ -394,7 +394,9 @@ export function updateRoutine(id: string, patch: RoutinePatch): Routine {
     work it did. Live runs are cancelled first, because their sessions would
     otherwise write into a routine row that no longer exists. */
 export function deleteRoutine(id: string): boolean {
-  return db.delete(routinesTable).where(eq(routinesTable.id, id)).run().changes > 0;
+  const deleted = db.delete(routinesTable).where(eq(routinesTable.id, id)).run().changes > 0;
+  if (deleted) active?.forgetFires(id);
+  return deleted;
 }
 
 export function listTriggers(routineId: string): RoutineTrigger[] {
@@ -799,6 +801,12 @@ export class RoutineEngine {
     recent.push(now);
     this.fires.set(routineId, recent);
     return true;
+  }
+
+  /** Called when the routine is deleted: the window above prunes timestamps but
+      never rows, so the map would keep an entry per routine that ever fired. */
+  forgetFires(routineId: string): void {
+    this.fires.delete(routineId);
   }
 
   // ---- firing ----

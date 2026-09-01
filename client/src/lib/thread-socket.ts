@@ -11,7 +11,7 @@ import type {
   ThreadEvent,
   WireError,
 } from "@daedalus/protocol"
-import { wsUrl, type ServerSettings } from "./settings"
+import { api, wsUrl, type ServerSettings } from "./settings"
 
 /**
  * How much of a thread's tail to ask for on a fresh attach, in **steps** (turns).
@@ -43,7 +43,7 @@ const LIVENESS_PING_MS = 30_000
 const LIVENESS_SILENCE_MS = LIVENESS_PING_MS * 2 + 15_000
 /** The close code a socket the watchdog gave up on reports. Deliberately
     outside `NON_RECONNECTABLE_CLOSE_CODES` (a dead path is the case that most
-    wants a reconnect) and unknown to `closedState`, whose default — "lost the
+    wants a reconnect) and unknown to `failureFor`, whose default — "lost the
     connection to the server, it may have restarted" — is exactly right. */
 const SILENT_CLOSE_CODE = 4100
 
@@ -69,6 +69,21 @@ export class AgentError extends Error {
     this.code = error.code
     this.data = error.data
   }
+}
+
+/**
+ * The attach bracket as one HTTP document — what `GET /api/sessions/:id/replay`
+ * answers, and what `ThreadSocket.load` folds.
+ *
+ * Deliberately the socket's own three events rather than a shape of its own:
+ * they go straight back through `handle`, so nothing here is a second wire
+ * format and a server that grows a field on `attached` grows it in both
+ * transports at once.
+ */
+interface ReplayDocument {
+  attached: Extract<ThreadEvent, { ev: "attached" }>
+  frames: Extract<ThreadEvent, { ev: "replay" }>[]
+  caughtUp: Extract<ThreadEvent, { ev: "caught_up" }>
 }
 
 export interface ThreadCloseInfo {
@@ -257,6 +272,18 @@ export class ThreadSocket {
       enforcing the deadline against one would reconnect a healthy socket every
       75 seconds forever. */
   private livenessProven = false
+  /**
+   * Whether this thread has been folded from the HTTP snapshot already, and
+   * whether it was served with no agent behind it.
+   *
+   * `archived` is what decides that no socket is opened: a thread with no
+   * process has nothing live to say, and the journal it is being read from is
+   * reachable over HTTP for the two things a reader still does to one — paging
+   * back, and editing a queue parked on it. A socket is opened lazily if
+   * something else asks for one (see `ensureSocket`).
+   */
+  private loaded = false
+  private archived = false
 
   constructor(serverSessionId: string, settings: ServerSettings, callbacks: ThreadCallbacks) {
     this.serverSessionId = serverSessionId
@@ -272,6 +299,65 @@ export class ThreadSocket {
       this socket holds. 0 means the transcript on screen is the whole thread. */
   get earlierAvailable(): number {
     return this.earlier
+  }
+
+  /** True once `load()` has folded a snapshot, so a caller can tell "nothing on
+      screen yet" from "read, and deliberately without a socket". */
+  get isLoaded(): boolean {
+    return this.loaded
+  }
+
+  /** Served from the journal with no agent process behind it. */
+  get isArchived(): boolean {
+    return this.archived
+  }
+
+  /** `close()` was called on this object — it is a husk, whatever else it
+      holds, and a caller must build a new one rather than reuse it. */
+  get isDisposed(): boolean {
+    return this.clientInitiatedClose
+  }
+
+  /**
+   * Read the thread over HTTP and fold it, before any socket exists.
+   *
+   * This is how a thread is opened now. The document is the same
+   * `attached` / `replay` frames / `caught_up` bracket the socket sends
+   * (`GET /api/sessions/:id/replay`), so it goes through the same `handle`
+   * switch, drives the same callbacks and there is still exactly one parser —
+   * the transport is the only thing that changed. What that buys is the whole
+   * of the opening wait: a read used to cost a WebSocket handshake, an attach
+   * and a paced stream of frames before its first line could be drawn, where
+   * this is one request on a connection the browser already holds, compressed
+   * whole, parsed once.
+   *
+   * The socket that follows is then a *resume* from `caught_up.cursor` — a
+   * delta, and usually an empty one — rather than the thing the wait was made
+   * of. And when the thread came back archived there is no socket at all:
+   * nothing is going to be said on it, and `loadEarlier` and the queue edits
+   * both have an HTTP answer of their own.
+   *
+   * Status is left alone here beyond "connecting": what "connected" means is
+   * still the socket, and `startThread` says it for the archived case where
+   * there will never be one.
+   */
+  async load(opts: { cursor?: number } = {}): Promise<{ archived: boolean }> {
+    this.callbacks.onStatus("connecting")
+    const cursor = opts.cursor ?? 0
+    const params = new URLSearchParams({ cursor: String(cursor) })
+    /* Same rule as `connect`: a resume asks for a delta whose size it already
+       knows, and windowing that would hide events this device is missing. */
+    if (cursor === 0) params.set("window", String(REPLAY_WINDOW_STEPS))
+    const doc = await api<ReplayDocument>(
+      this.settings,
+      `/api/sessions/${this.serverSessionId}/replay?${params}`
+    )
+    this.handle(doc.attached)
+    for (const frame of doc.frames) this.handle(frame)
+    this.handle(doc.caughtUp)
+    this.loaded = true
+    this.archived = doc.attached.archived ?? false
+    return { archived: this.archived }
   }
 
   /** Resolves once the replay is done and the thread is live. */
@@ -319,6 +405,11 @@ export class ThreadSocket {
         if (parsed.ev === "caught_up") {
           this.callbacks.onStatus("connected")
           this.startWatchdog()
+          /* A socket opened while the page is frozen is not a peer that can
+             draw anything either. Rare (a frozen page starts no connection),
+             but a reconnect that lands during a freeze would otherwise silence
+             the push for a thread nobody is watching. */
+          if (pageFrozen) this.setBackground(true)
           done()
         }
         this.handle(parsed)
@@ -330,6 +421,16 @@ export class ThreadSocket {
           code: event.code,
           reason: event.reason,
         }
+        /* This promise is about THIS socket, so it settles whatever else has
+           happened since — including `close()` being called on us mid-connect
+           (a respawn, or a second open replacing this one), which nulls
+           `this.ws` and would otherwise leave the caller awaiting a connection
+           that can never arrive. A close we asked for is not a failure to
+           report, so it resolves; a close that happened to us keeps the
+           server's own account as the rejection. `done` is idempotent, so a
+           socket that had already caught up is unaffected either way. */
+        if (this.closeInfo.clientInitiated) done()
+        else done(new Error(explain(this.closeInfo)))
         // A later connect() owns the status now; reporting this one's close
         // would mark a live connection dead and book a phantom reconnect.
         if (this.ws !== ws) return
@@ -337,9 +438,6 @@ export class ThreadSocket {
         this.stopWatchdog()
         this.failInflight(new Error(this.closeInfo.reason || "the connection to the thread closed"))
         this.callbacks.onStatus("closed", this.closeInfo)
-        // A handshake that never finished: the close reason is the server's own
-        // account (unknown thread, no running agent) and is the real answer.
-        done(new Error(explain(this.closeInfo)))
       })
 
       ws.addEventListener("error", () => {
@@ -361,9 +459,20 @@ export class ThreadSocket {
            used to — it never windows, so a non-zero `from` can only be this
            device's own cursor. */
         const resumed = event.resumed ?? event.from > 0
+        /* A resume reports `earlier: 0` and a `from` that is this device's own
+           cursor — both true statements about the delta, and both wrong about
+           the window. This socket now routinely follows an HTTP read of the
+           same thread (`load`), so the window it holds was established by that
+           document and the resume must not overwrite it: doing so moved
+           `windowFrom` to the end of the log and zeroed `earlier`, which took
+           the "Load earlier steps" button off a windowed thread the moment it
+           finished opening. Kept only when this object is the one that read it;
+           a socket attaching with nothing behind it still learns both here. */
         const earlier = event.earlier ?? 0
-        this.windowFrom = event.from
-        this.earlier = earlier
+        if (!(resumed && this.loaded)) {
+          this.windowFrom = event.from
+          this.earlier = earlier
+        }
         /* The replay starts here, so this is what has been folded before any of
            it arrives — a resume's own cursor, or the start of the window the
            server chose. */
@@ -382,7 +491,7 @@ export class ThreadSocket {
             from: event.from,
             to: event.to ?? event.from,
             resumed,
-            earlier,
+            earlier: this.earlier,
             archived: event.archived ?? false,
           },
           event.historyLost
@@ -604,7 +713,17 @@ export class ThreadSocket {
       })
   }
 
+  /** A page of history, from whichever transport is already there. Paging back
+      is a read of the journal — the socket answers it without a bridge, and
+      HTTP answers it without a socket, which is the case an archived thread is
+      in for the whole of its life. */
   private async requestEarlier(before: number): Promise<EarlierPage> {
+    if (!this.ws) {
+      return await api<EarlierPage>(
+        this.settings,
+        `/api/sessions/${this.serverSessionId}/earlier?before=${before}`
+      )
+    }
     return (await this.request((id) => ({ id, cmd: "load_earlier", before }))) as EarlierPage
   }
 
@@ -646,6 +765,22 @@ export class ThreadSocket {
 
   answerElicitation(requestId: string, response: acp.CreateElicitationResponse): void {
     this.post({ cmd: "answer_elicitation", requestId, response })
+  }
+
+  /**
+   * Tell the server whether this peer can still raise a notification itself.
+   *
+   * Best-effort by design: it is sent from a `freeze` handler, which is the
+   * last code the page runs, and a socket that is not open at that moment has
+   * nothing to correct — a reconnect re-sends it (`connect`), and a client that
+   * never comes back stops being a peer at all, which is the same answer.
+   */
+  setBackground(background: boolean): void {
+    try {
+      this.post({ cmd: "background", background })
+    } catch {
+      /* Not connected: there is no peer to be in the background. */
+    }
   }
 
   close(): void {
@@ -727,11 +862,63 @@ export class ThreadSocket {
   // ---- plumbing ----
 
   private post(command: ThreadCommand): void {
-    if (!this.ws) throw new Error(notConnected(this.closeInfo))
+    /* A socket exists from the moment `connect()` builds it, but it cannot be
+       written to until the browser has finished the handshake — sending into a
+       CONNECTING socket throws a DOMException the caller reads as a failure of
+       the command rather than of the timing. Everything that can wait goes
+       through `whenWritable` first; this is the floor under the few sends that
+       cannot (an answer, the background flag). */
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN)
+      throw new Error(notConnected(this.closeInfo))
     this.ws.send(JSON.stringify(command))
   }
 
-  private request(build: (id: number) => ThreadCommand): Promise<unknown> {
+  /**
+   * Wait out a handshake that is still in flight.
+   *
+   * `this.ws` is assigned synchronously in `connect()`, so a caller can hold a
+   * socket object several hundred milliseconds before it is writable — which
+   * is the ordinary case for a thread whose route opened one while
+   * `createSession` was opening another. Resolves on `open` (writable) and on
+   * `close` (never will be; the caller's own null/readyState check then gives
+   * the real message).
+   */
+  private whenWritable(): Promise<void> {
+    const ws = this.ws
+    if (!ws || ws.readyState !== WebSocket.CONNECTING) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      const settle = () => {
+        ws.removeEventListener("open", settle)
+        ws.removeEventListener("close", settle)
+        resolve()
+      }
+      ws.addEventListener("open", settle)
+      ws.addEventListener("close", settle)
+    })
+  }
+
+  /**
+   * Open the socket for a thread that was read without one.
+   *
+   * Only ever for a thread `load()` deliberately left socketless — never for
+   * one whose socket died, where the reconnect ladder in `lib/actions.ts` owns
+   * the retry and a second opinion here would race it. `closeInfo.code` is the
+   * tell: a thread that has never had a socket has never had a close either.
+   */
+  private async ensureSocket(): Promise<void> {
+    if (this.ws) return
+    if (!this.loaded || this.closeInfo.code !== undefined || this.clientInitiatedClose) return
+    await this.connect({ cursor: this.cursor })
+  }
+
+  private async request(build: (id: number) => ThreadCommand): Promise<unknown> {
+    // A queue parked on an archived thread is still the user's words, and
+    // editing one is the one thing a reader does that needs a command.
+    await this.ensureSocket().catch(() => {})
+    // The socket may be one another path opened a moment ago and is still
+    // shaking hands — a command is worth the wait, unlike the two fire-and-
+    // forget posts above.
+    await this.whenWritable()
     if (!this.ws) return Promise.reject(new Error(notConnected(this.closeInfo)))
     const id = this.nextId++
     return new Promise((resolve, reject) => {
@@ -763,5 +950,59 @@ function explain(info: ThreadCloseInfo): string {
   return `${info.reason}${info.code ? ` (${info.code})` : ""}`
 }
 
-/** Live threads keyed by server session id — outlives React renders. */
-export const liveThreads = new Map<string, ThreadSocket>()
+/* ── Frozen pages ──
+   A backgrounded PWA on Android is not a disconnected one: the page stops
+   running while its socket stays open, and the browser answers the server's
+   WebSocket pings from its network stack, so the server sees a peer attached
+   and suppresses the push — while the page that was meant to raise the
+   notification instead is frozen and raises nothing. Neither end can see the
+   gap on its own, so the page says so on the way into it.
+
+   `freeze`/`resume` and not `visibilitychange`: a merely hidden page still runs
+   its handlers and still shows its own notification (lib/notifications.ts), and
+   claiming the background there would earn a second one from the server. These
+   two fire exactly when the page stops and starts being able to act.
+
+   The handler is registered once, at module scope, and *broadcasts*: a freeze
+   is a property of the page, not of a thread, and what holds the live sockets
+   is the connection registry (lib/thread/registry.ts), which subscribes here.
+   It used to walk a `liveThreads` map exported from this file — a second
+   registry of the same objects, which is exactly the parallel bookkeeping the
+   registry exists to end. */
+let pageFrozen = false
+const frozenListeners = new Set<(frozen: boolean) => void>()
+
+/** Told whenever the page freezes or resumes, and told the current answer at
+    once — a subscriber that mounts inside a freeze must not miss it. */
+export function subscribePageFrozen(fn: (frozen: boolean) => void): () => void {
+  frozenListeners.add(fn)
+  if (pageFrozen) fn(true)
+  return () => frozenListeners.delete(fn)
+}
+
+/** Whether the page is frozen right now — for a socket opening mid-freeze,
+    which has no event of its own to learn from. */
+export function isPageFrozen(): boolean {
+  return pageFrozen
+}
+
+function setPageFrozen(frozen: boolean): void {
+  pageFrozen = frozen
+  for (const fn of frozenListeners) fn(frozen)
+}
+
+if (typeof document !== "undefined") {
+  // Not in TS's DocumentEventMap, hence the plain-string overload.
+  document.addEventListener("freeze", () => setPageFrozen(true))
+  document.addEventListener("resume", () => {
+    setPageFrozen(false)
+    /* Everything that arrived while the page was frozen is delivered now, in
+       one go — including the `turn_ended` the server has already pushed a
+       notification for. Announcing it again, on a device the user is by
+       definition looking at, is the duplicate this window exists to prevent;
+       the in-app toast still shows, which is the right amount of saying it. */
+    void import("./notifications").then(({ suppressSystemNotifications }) =>
+      suppressSystemNotifications()
+    )
+  })
+}

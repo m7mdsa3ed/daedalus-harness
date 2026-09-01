@@ -9,7 +9,7 @@ import { useSidebar } from "@/components/ui/sidebar"
 import { reportError } from "@/lib/errors"
 import { projectPath, settingsPath } from "@/lib/router"
 import { activityAt, isTopLevel } from "@/lib/settings"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import { customThemeValue } from "@/lib/custom-themes"
 import { BUILTIN_THEMES, useCustomThemes, useTheme } from "@/lib/theme"
 import { loadThreadDefaults } from "@/lib/thread-defaults"
@@ -132,12 +132,12 @@ export function ModePage() {
  */
 export function PersonaPage() {
   const palette = usePalette()
-  const { state } = useStore()
+  const personas = useStoreSelect((store) => store.personas)
   const { meta } = useThreadTarget()
   if (!meta || meta.draft) return null
 
   const current = meta.personaId ?? ""
-  const items: PaletteItem[] = state.personas.map((persona) => ({
+  const items: PaletteItem[] = personas.map((persona) => ({
     id: `persona:${persona.id}`,
     group: "Persona",
     title: persona.name,
@@ -175,11 +175,11 @@ export function PersonaPage() {
     its numbers — not the settings form. */
 export function ProjectsPage() {
   const palette = usePalette()
-  const { state } = useStore()
+  const projects = useStoreSelect((store) => store.projects)
   const navigate = useNavigate()
   const { setOpenMobile } = useSidebar()
 
-  const items: PaletteItem[] = state.projects.map((project) =>
+  const items: PaletteItem[] = projects.map((project) =>
     projectItem({
       project,
       group: "Projects",
@@ -208,23 +208,24 @@ export function ProjectsPage() {
     genuinely get wrong. */
 export function StartPage() {
   const palette = usePalette()
-  const { state } = useStore()
+  const projects = useStoreSelect((store) => store.projects)
+  const sessions = useStoreSelect((store) => store.sessions)
 
   /* Where a bare "New thread" would have landed — called out below, because it
      is what ⌘N and the row above this page would have chosen. */
   const defaults = loadThreadDefaults()
   const preferred =
-    state.projects.find((project) => project.id === defaults.projectId) ?? state.projects[0] ?? null
+    projects.find((project) => project.id === defaults.projectId) ?? projects[0] ?? null
 
   /* Newest turn per project — the one worked in last is the one most likely to
      be wanted next, and a fresh project with no threads sorts last, not first. */
   const latest = new Map<string, number>()
-  for (const session of state.sessions.filter(isTopLevel)) {
+  for (const session of sessions.filter(isTopLevel)) {
     const at = activityAt(session)
     if (at > (latest.get(session.projectId) ?? 0)) latest.set(session.projectId, at)
   }
 
-  const ordered = [...state.projects].sort((a, b) => {
+  const ordered = [...projects].sort((a, b) => {
     if (a.id === preferred?.id) return -1
     if (b.id === preferred?.id) return 1
     return (latest.get(b.id) ?? 0) - (latest.get(a.id) ?? 0)

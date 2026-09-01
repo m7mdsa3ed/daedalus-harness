@@ -78,10 +78,10 @@ export function ComposerQueue({
   )
   if (count === 0) return null
 
-  /* A closed socket can act on nothing; an archived thread has no process to
-     send through, but its queue is rows and stays editable — the server
+  /* A failed connection can act on nothing; an archived thread has no process
+     to send through, but its queue is rows and stays editable — the server
      answers those three without an agent. */
-  const closed = thread.status === "closed"
+  const closed = thread.phase.kind === "failed" || thread.phase.kind === "deleted"
   const canSend = !closed && !thread.archived
   const canEdit = !closed
   const running = thread.turnActive

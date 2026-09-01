@@ -72,21 +72,6 @@ export function panelId(panel: PanelDescriptor): string {
   }
 }
 
-/** The project a panel belongs to, or null when it belongs to none. A chat's
-    project lives on its session, not on the panel, so it is resolved by the
-    caller that has the session list — the dock does not carry a copy that could
-    go stale when a thread is moved. */
-export function panelProject(panel: PanelDescriptor): string | null {
-  switch (panel.kind) {
-    case "chat":
-      return null
-    case "web":
-      return panel.trust === "project" ? (panel.projectId ?? null) : null
-    default:
-      return panel.projectId
-  }
-}
-
 const str = (value: unknown): string | undefined =>
   typeof value === "string" && value.length > 0 ? value : undefined
 

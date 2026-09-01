@@ -50,7 +50,7 @@ import {
 } from "@/lib/import-sessions"
 import { threadPath } from "@/lib/router"
 import { profileSupports, type Project } from "@/lib/settings"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import { defaultToolPicks, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import { shortAge } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -74,7 +74,11 @@ export function ImportThreadsDialog({
   actions: Actions
   projectId?: string
 }) {
-  const { state } = useStore()
+  /* Three catalogs, each on its own subscription. Named `all*` because the
+     dialog narrows both down to the pairs that can actually be scanned. */
+  const allProfiles = useStoreSelect((store) => store.profiles)
+  const projects = useStoreSelect((store) => store.projects)
+  const allAgents = useStoreSelect((store) => store.agents)
   const navigate = useNavigate()
 
   const [agentId, setAgentId] = React.useState("")
@@ -99,12 +103,12 @@ export function ImportThreadsDialog({
      in particular filters its thread list by the spawned profile's model
      provider, so a gateway profile can answer with none of the CLI's work. */
   const profilesFor = React.useCallback(
-    (id: string) => state.profiles.filter((p) => profileSupports(p, id)),
-    [state.profiles]
+    (id: string) => allProfiles.filter((p) => profileSupports(p, id)),
+    [allProfiles]
   )
   React.useEffect(() => {
     if (!open) return
-    const start = resolveThreadStart(loadThreadDefaults(), state.profiles)
+    const start = resolveThreadStart(loadThreadDefaults(), allProfiles)
     if (!start) return
     setAgentId((current) => current || start.agentId)
     setProfileId((current) => {
@@ -112,7 +116,7 @@ export function ImportThreadsDialog({
       const serving = profilesFor(start.agentId)
       return (serving.find((p) => p.virtual) ?? serving[0])?.id ?? start.profile.id
     })
-  }, [open, state.profiles, profilesFor])
+  }, [open, allProfiles, profilesFor])
 
   /* Everything is about one (profile, agent) pair, so changing either throws
      the answer away rather than leaving last runtime's list on screen. */
@@ -135,7 +139,7 @@ export function ImportThreadsDialog({
      and every row carries its own cwd. The project the dialog was opened from,
      else the first one — a harness with no projects has nothing to import into
      anyway. */
-  const scanProject = state.projects.find((p) => p.id === projectId) ?? state.projects[0] ?? null
+  const scanProject = projects.find((p) => p.id === projectId) ?? projects[0] ?? null
 
   const scan = async () => {
     if (!profileId || !agentId || !scanProject) return
@@ -155,9 +159,9 @@ export function ImportThreadsDialog({
 
   const projectByCwd = React.useMemo(() => {
     const map = new Map<string, Project>()
-    for (const project of state.projects) map.set(normalizeCwd(project.cwd), project)
+    for (const project of projects) map.set(normalizeCwd(project.cwd), project)
     return map
-  }, [state.projects])
+  }, [projects])
 
   const groups = React.useMemo<CwdGroup[]>(() => {
     if (!sessions) return []
@@ -270,9 +274,9 @@ export function ImportThreadsDialog({
     }
   }
 
-  const agents = state.agents.filter((agent) => profilesFor(agent.id).length > 0)
+  const agents = allAgents.filter((agent) => profilesFor(agent.id).length > 0)
   const profiles = profilesFor(agentId)
-  const agentName = (id: string) => state.agents.find((a) => a.id === id)?.name ?? id
+  const agentName = (id: string) => agents.find((a) => a.id === id)?.name ?? id
   const profileName = (id: string) => profiles.find((p) => p.id === id)?.name ?? "Profile"
   const total = sessions?.length ?? 0
 

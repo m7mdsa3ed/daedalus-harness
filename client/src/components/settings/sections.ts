@@ -12,7 +12,6 @@ import {
   Gauge,
   Keyboard,
   KeyRound,
-  LayoutTemplate,
   Palette,
   Plug,
   Search,
@@ -61,14 +60,6 @@ export const SETTINGS_SECTIONS = [
     title: "Projects",
     description:
       "A project is the workspace a thread runs in: a directory on the server and a name. What a thread brings into it comes from its profile and its own picks.",
-  },
-  {
-    id: "templates",
-    label: "Templates",
-    icon: LayoutTemplate,
-    title: "Project templates",
-    description:
-      "A starting point for a new project: a repo to clone, a kit of MCP servers, skills and commands to bring, and the instruction the agent carries out in the thread's first turn. The Studio creates the directory and records the project; the harness runs none of the setup itself.",
   },
   {
     id: "knowledge",
@@ -184,7 +175,7 @@ export const SETTINGS_NAV_GROUPS: readonly {
   sections: readonly SettingsSectionId[]
 }[] = [
   { label: "Preferences", sections: ["general", "appearance", "keyboard", "notifications", "web-search"] },
-  { label: "Workspace", sections: ["projects", "templates", "knowledge", "mcp", "skills", "commands", "personas"] },
+  { label: "Workspace", sections: ["projects", "knowledge", "mcp", "skills", "commands", "personas"] },
   { label: "Agents", sections: ["profiles", "agents", "usage"] },
   { label: "Server", sections: ["backup"] },
 ] as const

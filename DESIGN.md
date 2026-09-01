@@ -262,7 +262,7 @@ The same vocabulary applies across every route family: the connection screen, th
 - **Do** optimize for sustained work, scanning, comparison, and repeated action.
 - **Do** use semantic tokens so every built-in and user-created palette remains coherent.
 - **Do** keep the transcript, active editor, terminal, or approval request visually dominant.
-- **Do** use restrained motion, generally 100-200ms for overlays and feedback. The empty-thread background may fade over roughly 320ms.
+- **Do** use restrained motion, generally 100-200ms for overlays and feedback. The empty-thread background may fade over roughly 320ms; transcript items entering during a stream may rise in over roughly 360-480ms (opacity and transform only, never layout).
 - **Do** reserve layout animation for content whose size is the interaction itself, such as an expanding plan or disclosure; all other feedback should use opacity, color, or transform.
 - **Do** preserve visible focus, accessible names, keyboard navigation, and WCAG AA text contrast.
 - **Do** keep icon buttons square and dimensionally stable so changing labels or loading states do not move nearby controls.

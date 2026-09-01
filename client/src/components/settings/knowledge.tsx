@@ -22,7 +22,7 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { ErrorNote } from "@/components/error-note"
 import { captureError, reportError, type InlineError } from "@/lib/errors"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import {
   addKnowledge,
   deleteKnowledge,
@@ -43,7 +43,7 @@ const ALL = "__all__"
    grouped by project on screen, with a filter to narrow to one. */
 export function KnowledgePage() {
   const meta = sectionMeta("knowledge")
-  const { state } = useStore()
+  const projects = useStoreSelect((store) => store.projects)
   const confirm = useConfirm()
   const [entries, setEntries] = React.useState<KnowledgeEntryAcross[] | null>(null)
   const [projectId, setProjectId] = React.useState(ALL)
@@ -88,13 +88,13 @@ export function KnowledgePage() {
   const shown = (entries ?? []).filter((e) => projectId === ALL || e.projectId === projectId)
   /* Grouped in the order projects are listed, so the page reads like the
      projects page; entries within a group keep the server's newest-first. */
-  const groups = state.projects
+  const groups = projects
     .map((project) => ({ project, entries: shown.filter((e) => e.projectId === project.id) }))
     .filter((g) => g.entries.length > 0)
   // Entries whose project is not in the store (a race with a deletion) still show.
-  const orphaned = shown.filter((e) => !state.projects.some((p) => p.id === e.projectId))
+  const orphaned = shown.filter((e) => !projects.some((p) => p.id === e.projectId))
 
-  const projectName = (id: string) => state.projects.find((p) => p.id === id)?.name
+  const projectName = (id: string) => projects.find((p) => p.id === id)?.name
 
   const actions = (
     <div className="flex flex-wrap items-center justify-end gap-2">
@@ -106,7 +106,7 @@ export function KnowledgePage() {
         </SelectTrigger>
         <SelectContent>
           <SelectItem value={ALL}>All projects</SelectItem>
-          {state.projects.map((p) => (
+          {projects.map((p) => (
             <SelectItem key={p.id} value={p.id}>
               {p.name}
             </SelectItem>
@@ -116,7 +116,7 @@ export function KnowledgePage() {
       <Button variant="ghost" size="icon-lg" title="Refresh" disabled={busy} onClick={() => void refresh()}>
         <RefreshCwIcon />
       </Button>
-      <Button onClick={() => setAdding(true)} disabled={state.projects.length === 0}>
+      <Button onClick={() => setAdding(true)} disabled={projects.length === 0}>
         <Plus className="size-4" /> Add entry
       </Button>
     </div>
@@ -138,7 +138,7 @@ export function KnowledgePage() {
               : "Nothing recorded for this project yet."
           }
           action={
-            state.projects.length > 0 ? (
+            projects.length > 0 ? (
               <Button onClick={() => setAdding(true)}>
                 <Plus className="size-4" /> Add entry
               </Button>
@@ -165,8 +165,8 @@ export function KnowledgePage() {
       )}
       {adding && (
         <AddEntryDialog
-          projects={state.projects}
-          initialProjectId={projectId === ALL ? (state.projects[0]?.id ?? "") : projectId}
+          projects={projects}
+          initialProjectId={projectId === ALL ? (projects[0]?.id ?? "") : projectId}
           onClose={() => setAdding(false)}
           onAdded={async () => {
             setAdding(false)

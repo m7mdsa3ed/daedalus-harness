@@ -48,6 +48,7 @@ import {
   type WorkflowDefinition,
   type WorkflowStep,
 } from "./workflow-schema.js";
+import { HttpError } from "./http-error.js";
 
 /** Step threads alive at once, across every run. */
 const MAX_LIVE_CHILDREN = 8;
@@ -55,11 +56,10 @@ const MAX_LIVE_CHILDREN = 8;
     twice by mistake gets told, not a second fleet. */
 const MAX_RUNS_PER_PARENT = 2;
 
-export class WorkflowError extends Error {
-  status: 400 | 404 | 409;
+export class WorkflowError extends HttpError {
+  declare status: 400 | 404 | 409;
   constructor(message: string, status: 400 | 404 | 409 = 400) {
-    super(message);
-    this.status = status;
+    super(message, status);
   }
 }
 

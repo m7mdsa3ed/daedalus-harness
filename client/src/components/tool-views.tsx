@@ -70,6 +70,7 @@ import {
   toolPrimaryText,
   toolTarget,
   toolViewOf,
+  type ToolView,
   type BackgroundTask,
   type TodoEntry,
   type WebResult,
@@ -1184,91 +1185,96 @@ function SkillDetail({ item }: { item: ToolItem }) {
 
 // ─── Dispatch ────────────────────────────────────────────────────────────────
 
+/** Everything without a view of its own, an unrecognised MCP tool included:
+    what went in, what came back. */
+function GenericDetail({ item, active }: { item: ToolItem; active: boolean }) {
+  const failed = item.status === "failed"
+  const { text, truncated } = toolOutputText(item)
+  const hasInput = JSON.stringify(item.rawInput ?? null) !== "null"
+  const task = extractBackgroundTask(item)
+  return (
+    <>
+      {task && (
+        <DetailSection label={task.workflowName ? `Task · ${task.workflowName}` : "Background task"}>
+          <TaskProgress task={task} />
+        </DetailSection>
+      )}
+      {hasInput && (
+        <DetailSection label="Input">
+          <ToolInput item={item} />
+        </DetailSection>
+      )}
+      {item.locations.length > 0 && (
+        <DetailSection label={item.locations.length === 1 ? "File" : "Files"}>
+          <ToolLocations item={item} />
+        </DetailSection>
+      )}
+      {(text.trim() || item.content.length > 0) && (
+        <DetailSection label={failed ? "Error" : active ? "Output so far" : "Output"}>
+          <ToolContentBlocks item={item} />
+          {item.content.length === 0 && (
+            <SmartBlock
+              text={truncated ? `${text}\n\n… output truncated` : text}
+              tone={failed ? "error" : undefined}
+              language={toolLanguage(item)}
+            />
+          )}
+        </DetailSection>
+      )}
+      {!text.trim() && item.content.length === 0 && active && (
+        <ToolCallSkeleton className="py-1" />
+      )}
+    </>
+  )
+}
+
+/** Everything a view decides about the step that draws it. One row per member
+    of `ToolView`, so the three readers below cannot drift apart and a new view
+    is one entry here — the `Record` is what makes forgetting one a type error
+    rather than a wrong-shaped pane. */
+type ToolViewSpec = {
+  /** The body of an expanded step. A component that ignores `active` may say so
+      in its own props — width subtyping covers it. */
+  Detail: React.ComponentType<{ item: ToolItem; active: boolean }>
+  /** Open without being asked. A diff is the point of an edit and a checklist
+      is the point of a todo write — collapsed, the only thing worth reading is
+      the thing that is hidden. Everything else stays folded: a read or a
+      search is a fact. */
+  opensByDefault: boolean
+  /** Override for "would the expansion have anything in it", when the generic
+      input/locations/output answer is wrong for this view. */
+  hasDetail?: (item: ToolItem) => boolean
+}
+
+const TOOL_VIEWS: Record<ToolView, ToolViewSpec> = {
+  edit: { Detail: EditDetail, opensByDefault: true },
+  todos: { Detail: TodosDetail, opensByDefault: true },
+  terminal: { Detail: TerminalDetail, opensByDefault: false },
+  mcp: { Detail: McpDetail, opensByDefault: false },
+  subagent: { Detail: SubagentDetail, opensByDefault: false },
+  websearch: { Detail: WebSearchDetail, opensByDefault: false },
+  webfetch: { Detail: WebFetchDetail, opensByDefault: false },
+  questions: { Detail: QuestionsDetail, opensByDefault: false },
+  findings: { Detail: FindingsDetail, opensByDefault: false },
+  plan: { Detail: PlanProposalDetail, opensByDefault: true },
+  skill: { Detail: SkillDetail, opensByDefault: false },
+  execute: { Detail: RunDetail, opensByDefault: false },
+  read: { Detail: ReadDetail, opensByDefault: false },
+  search: { Detail: SearchDetail, opensByDefault: false },
+  fetch: { Detail: FetchDetail, opensByDefault: false },
+  generic: { Detail: GenericDetail, opensByDefault: false },
+}
+
 /**
  * The body of an expanded step.
  *
  * `toolViewOf` decides which layout applies — including the priority between
  * them, which is a judgement (a checklist beats its `think` kind; a terminal
- * beats `execute`) and belongs next to the readers that make it, not spread
- * through the branches of this switch. What is left here is one case per view
- * and a default that is the old generic pane: input, files, output.
+ * beats `execute`) and belongs next to the readers that make it, not here.
  */
 export function ToolDetail({ item, active }: { item: ToolItem; active: boolean }) {
-  const failed = item.status === "failed"
-
-  switch (toolViewOf(item)) {
-    case "edit":
-      return <EditDetail item={item} active={active} />
-    case "todos":
-      return <TodosDetail item={item} />
-    case "terminal":
-      return <TerminalDetail item={item} active={active} />
-    case "mcp":
-      return <McpDetail item={item} active={active} />
-    case "subagent":
-      return <SubagentDetail item={item} active={active} />
-    case "websearch":
-      return <WebSearchDetail item={item} active={active} />
-    case "webfetch":
-      return <WebFetchDetail item={item} active={active} />
-    case "questions":
-      return <QuestionsDetail item={item} />
-    case "findings":
-      return <FindingsDetail item={item} />
-    case "plan":
-      return <PlanProposalDetail item={item} />
-    case "skill":
-      return <SkillDetail item={item} />
-    case "execute":
-      return <RunDetail item={item} active={active} />
-    case "read":
-      return <ReadDetail item={item} />
-    case "search":
-      return <SearchDetail item={item} />
-    case "fetch":
-      return <FetchDetail item={item} />
-    default: {
-      // Everything else, an unrecognised MCP tool included: what went in, what
-      // came back.
-      const { text, truncated } = toolOutputText(item)
-      const hasInput = JSON.stringify(item.rawInput ?? null) !== "null"
-      const task = extractBackgroundTask(item)
-      return (
-        <>
-          {task && (
-            <DetailSection label={task.workflowName ? `Task · ${task.workflowName}` : "Background task"}>
-              <TaskProgress task={task} />
-            </DetailSection>
-          )}
-          {hasInput && (
-            <DetailSection label="Input">
-              <ToolInput item={item} />
-            </DetailSection>
-          )}
-          {item.locations.length > 0 && (
-            <DetailSection label={item.locations.length === 1 ? "File" : "Files"}>
-              <ToolLocations item={item} />
-            </DetailSection>
-          )}
-          {(text.trim() || item.content.length > 0) && (
-            <DetailSection label={failed ? "Error" : active ? "Output so far" : "Output"}>
-              <ToolContentBlocks item={item} />
-              {item.content.length === 0 && (
-                <SmartBlock
-                  text={truncated ? `${text}\n\n… output truncated` : text}
-                  tone={failed ? "error" : undefined}
-                  language={toolLanguage(item)}
-                />
-              )}
-            </DetailSection>
-          )}
-          {!text.trim() && item.content.length === 0 && active && (
-            <ToolCallSkeleton className="py-1" />
-          )}
-        </>
-      )
-    }
-  }
+  const { Detail } = TOOL_VIEWS[toolViewOf(item)]
+  return <Detail item={item} active={active} />
 }
 
 /**
@@ -1276,10 +1282,13 @@ export function ToolDetail({ item, active }: { item: ToolItem; active: boolean }
  * affordance is drawn from this, so it has to agree with `ToolDetail` — a
  * chevron that opens an empty box is worse than no chevron.
  *
- * The views that read a call's *input* are why this is not just "is there
- * output": a checklist, a question and a plan all return nothing at all.
+ * The views that read a call's *input* are why the shared answer is not just
+ * "is there output": a checklist, a question and a plan all return nothing at
+ * all.
  */
 export function toolHasDetail(item: ToolItem): boolean {
+  const { hasDetail } = TOOL_VIEWS[toolViewOf(item)]
+  if (hasDetail) return hasDetail(item)
   return (
     item.content.length > 0 ||
     item.locations.length > 0 ||
@@ -1288,12 +1297,9 @@ export function toolHasDetail(item: ToolItem): boolean {
   )
 }
 
-/** Steps that open by themselves. A diff is the point of an edit and a
-    checklist is the point of a todo write — collapsed, the only thing worth
-    reading is the thing that is hidden. A background task is still producing
-    after its turn ends, so folded it would be the one live thing on screen and
-    invisible. Everything else stays folded: a read or a search is a fact. */
+/** Steps that open by themselves — the view's own call, plus one cross-view
+    rule: a background task is still producing after its turn ends, so folded
+    it would be the one live thing on screen and invisible. */
 export function toolOpensByDefault(item: ToolItem): boolean {
-  const view = toolViewOf(item)
-  return view === "edit" || view === "todos" || view === "plan" || extractBackgroundTask(item) !== null
+  return TOOL_VIEWS[toolViewOf(item)].opensByDefault || extractBackgroundTask(item) !== null
 }

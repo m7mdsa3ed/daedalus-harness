@@ -51,7 +51,7 @@ import {
   type ServerSettings,
   type SessionMeta,
 } from "@/lib/settings"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import { AutonomyControl } from "./autonomy-control"
 import { OnFinishEditor } from "./on-finish"
 
@@ -240,13 +240,14 @@ export function RoutineForm({
   error: InlineError | null
   submitLabel: string
 }) {
-  const { state } = useStore()
+  const projects = useStoreSelect((store) => store.projects)
+  const routines = useStoreSelect((store) => store.routines)
   const patch = React.useCallback(
     (next: Partial<RoutineDraft>) => onChange({ ...draft, ...next }),
     [draft, onChange]
   )
 
-  const project = state.projects.find((p) => p.id === draft.projectId)
+  const project = projects.find((p) => p.id === draft.projectId)
 
   /* The facade the composer's own pickers are driven through — see the header
      comment. `meta.id` is the routine's (or "new"): it is never dispatched, so
@@ -433,7 +434,7 @@ export function RoutineForm({
           value={draft.onFinish}
           onChange={(onFinish) => patch({ onFinish })}
           settings={settings}
-          routines={state.routines.filter((r) => r.id !== routine?.id)}
+          routines={routines.filter((r) => r.id !== routine?.id)}
         />
       </FormSection>
 

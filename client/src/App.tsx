@@ -8,7 +8,7 @@ import { useActions } from "@/lib/actions"
 import { refreshNotificationOffer } from "@/lib/notifications"
 import { setupPush } from "@/lib/push"
 import { loadSettings, type ServerSettings } from "@/lib/settings"
-import { initialState, reducer, StoreProvider } from "@/lib/store"
+import { StoreProvider } from "@/lib/store"
 import { ThemeProvider } from "@/lib/theme"
 import { reportError } from "@/lib/errors"
 
@@ -17,13 +17,17 @@ function App() {
   // "Add server" reuses the connect screen over the shell; connecting activates
   // the new server, and the reload below is what re-bootstraps against it.
   const [adding, setAdding] = React.useState(false)
-  const [state, dispatch] = React.useReducer(reducer, initialState)
+  /* The reducer is the provider's, not this component's, and that is what
+     makes every narrow subscription below it count: holding it here re-ran
+     App on every dispatch, which recreated the element for the whole tree, so
+     a background thread's streamed token re-rendered every open transcript
+     whatever it had subscribed to. See lib/store. */
 
   return (
     <ThemeProvider>
       <ConfirmProvider>
         <PromptProvider>
-          <StoreProvider state={state} dispatch={dispatch}>
+          <StoreProvider>
             {settings && !adding ? (
               <Connected key={settings.id} settings={settings} onAddServer={() => setAdding(true)} />
             ) : (

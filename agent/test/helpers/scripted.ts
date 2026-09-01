@@ -18,6 +18,11 @@ export function testEnv(overrides: Partial<AgentEnv> = {}): AgentEnv {
     contextWindow: null,
     maxOutputTokens: null,
     personaFile: null,
+    /* Off by default in tests: the scan walks to the filesystem root and reads
+       the *real* ~/.claude/CLAUDE.md, so leaving it on would make every prompt
+       assertion depend on the machine. instructions.test.ts turns it on
+       against a home and a tree it controls. */
+    projectInstructions: false,
     home: mkdtempSync(join(tmpdir(), "daedalus-agent-test-")),
     ...overrides,
   };

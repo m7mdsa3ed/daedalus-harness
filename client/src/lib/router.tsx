@@ -11,7 +11,6 @@
    /                     home (no thread open)
    /t/<sessionId>        one thread
    /projects/<id>        one project: overview, threads, metrics
-   /studio               the template gallery: start a project from one
    /settings/<section>   settings, one page per section (components/settings/)
    /notifications        the inbox: every notice the server recorded
    /routines             every routine; /routines/new and /routines/<id> its form */
@@ -26,11 +25,6 @@ export const settingsFormPath = (section: string, id: string = "new") =>
     keeps the *form* (`settingsFormPath("projects", id)`); this is the workspace
     seen as a thing that has a history, which is not a settings screen. */
 export const projectPath = (projectId: string) => `/projects/${encodeURIComponent(projectId)}`
-/* The Studio: the gallery of project templates, and the front door for a
-   project that does not exist yet. A place like /projects/<id> rather than a
-   settings section — Settings › Templates is where a template is *edited*,
-   which is a different question from "start something from one". */
-export const studioPath = () => `/studio`
 export const schedulesPath = () => `/schedules`
 export const schedulePath = (sessionId?: string) =>
   `/schedules/new${sessionId ? `?session=${encodeURIComponent(sessionId)}` : ""}`

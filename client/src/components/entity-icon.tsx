@@ -7,8 +7,9 @@
    the URL is broken. The three exports wrap it with each entity's rule for
    where the picture comes from and what stands in:
 
-     AgentIcon    the built-in brand marks below; a neutral bot for an id
-                  the client does not know.
+     AgentIcon    the built-in brand marks below; the app's own mark for
+                  the harness's own agent; a neutral bot for an id the client
+                  does not know.
      ProfileIcon  the profile's own `logoUrl`; its agent's mark otherwise —
                   the virtual Default profile *is* the agent as it ships.
      ProjectIcon  the project's `logoUrl`; its initial otherwise, in a tinted
@@ -18,6 +19,7 @@
    plain black SVGs, invisible on a dark theme without it. */
 import * as React from "react"
 import { BotIcon } from "lucide-react"
+import { Logo } from "@/components/ui/logo"
 import { cn } from "@/lib/utils"
 
 /* Real brand marks for the built-in agents, supplied by the user. PNG data
@@ -31,6 +33,10 @@ const CODEX_SRC =
 
 const OPENCODE_SRC =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAcBAMAAACAI8KnAAAAMFBMVEUTEBAAAADi4uLZ2Nj////r6+ucm5uioaELBgazsrJCQEBOTExRT09aWFju7u7f39/EmS9sAAAAUklEQVR4AWOgEDAKgoEAlCtkDAaKUK6ICxg44uIGGxubInETBQXFkLiFDAziyNyODmTurN27VyJx59y9e5ISLm6T3////w/IJewjhPfRA4cyAAABqjJorC1X4QAAAABJRU5ErkJggg=="
+
+/** The harness's own agent (registry.ts, seed 14) — drawn from the app mark
+    below rather than from a PNG, so it is named here and not in the table. */
+const DAEDALUS_AGENT_ID = "daedalus"
 
 const AGENT_ICONS: Record<string, { src: string; label: string }> = {
   "claude-code": { src: CLAUDE_CODE_SRC, label: "Claude Code" },
@@ -73,7 +79,13 @@ export function EntityIcon({
 }
 
 /** Real brand marks for built-in agents, with a neutral glyph for any
-    server-defined agent the client does not know yet. */
+    server-defined agent the client does not know yet.
+
+    The harness's own agent is the one exception to the PNG table: its mark is
+    the app's, so it draws the real `Logo` in currentColor and themes with
+    everything else rather than pinning a fourth piece of flat art. The neutral
+    bot stays the answer for an agent we did not write — wearing our mark is a
+    claim, not a placeholder. */
 export function AgentIcon({ agentId, className }: { agentId?: string; className?: string }) {
   const entry = agentId ? AGENT_ICONS[agentId] : undefined
   return (
@@ -81,7 +93,13 @@ export function AgentIcon({ agentId, className }: { agentId?: string; className?
       src={entry?.src}
       disc={false}
       className={className}
-      fallback={<BotIcon aria-hidden="true" className={cn("shrink-0 text-muted-foreground", className)} />}
+      fallback={
+        agentId === DAEDALUS_AGENT_ID ? (
+          <Logo className={cn("shrink-0 text-primary", className)} />
+        ) : (
+          <BotIcon aria-hidden="true" className={cn("shrink-0 text-muted-foreground", className)} />
+        )
+      }
     />
   )
 }

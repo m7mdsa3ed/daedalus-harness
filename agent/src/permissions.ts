@@ -42,17 +42,26 @@ export async function checkPermission(
   if (session.alwaysAllow.has(ask.toolName)) return;
   if (session.alwaysReject.has(ask.toolName)) throw new PermissionRejected(ask.title);
 
-  const response = await ctx.request("session/request_permission", {
-    sessionId: session.id,
-    toolCall: {
-      toolCallId: ask.toolCallId,
-      title: ask.title,
-      kind: ask.kind,
-      status: "pending",
-      rawInput: ask.rawInput,
-    },
-    options: OPTIONS,
-  });
+  /* Raced against the turn's abort: session.cancel() has to unblock a pending
+     ask, because once the turn is being torn down the client's answer may
+     never arrive. */
+  const signal = session.abort?.signal;
+  if (signal?.aborted) throw new PermissionRejected(ask.title);
+  const response = await abortable(
+    ctx.request("session/request_permission", {
+      sessionId: session.id,
+      toolCall: {
+        toolCallId: ask.toolCallId,
+        title: ask.title,
+        kind: ask.kind,
+        status: "pending",
+        rawInput: ask.rawInput,
+      },
+      options: OPTIONS,
+    }),
+    signal,
+    () => new PermissionRejected(ask.title),
+  );
   const outcome = response.outcome;
   if (outcome.outcome === "cancelled") {
     session.cancel();
@@ -70,4 +79,22 @@ export async function checkPermission(
     default:
       throw new PermissionRejected(ask.title);
   }
+}
+
+function abortable<T>(promise: Promise<T>, signal: AbortSignal | undefined, onAbort: () => Error): Promise<T> {
+  if (!signal) return promise;
+  return new Promise<T>((resolvePromise, reject) => {
+    const abort = () => reject(onAbort());
+    signal.addEventListener("abort", abort, { once: true });
+    promise.then(
+      (v) => {
+        signal.removeEventListener("abort", abort);
+        resolvePromise(v);
+      },
+      (err) => {
+        signal.removeEventListener("abort", abort);
+        reject(err as Error);
+      },
+    );
+  });
 }

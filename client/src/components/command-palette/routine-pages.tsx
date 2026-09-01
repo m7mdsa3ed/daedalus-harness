@@ -29,7 +29,7 @@ import { useSidebar } from "@/components/ui/sidebar"
 import { reportError } from "@/lib/errors"
 import { routinePath, routinesPath, threadPath } from "@/lib/router"
 import type { Routine, RoutineRun } from "@/lib/settings"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import { shortAge } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -70,13 +70,14 @@ function fire(routine: Routine, run: (id: string, opts: { dryRun?: boolean }) =>
 /** Every routine as something to fire now. */
 export function RunRoutinePage() {
   const palette = usePalette()
-  const { state } = useStore()
+  const projects = useStoreSelect((store) => store.projects)
+  const allRoutines = useStoreSelect((store) => store.routines)
   const navigate = useNavigate()
 
   const projectName = (id: string) =>
-    state.projects.find((project) => project.id === id)?.name ?? "no project"
+    projects.find((project) => project.id === id)?.name ?? "no project"
 
-  const items: PaletteItem[] = state.routines.map((routine) => ({
+  const items: PaletteItem[] = allRoutines.map((routine) => ({
     id: `routine:${routine.id}`,
     group: "Run now",
     title: routine.name,
@@ -120,7 +121,8 @@ export function RunRoutinePage() {
  */
 export function RoutineActivityPage() {
   const palette = usePalette()
-  const { state } = useStore()
+  const allRoutines = useStoreSelect((store) => store.routines)
+  const routineRuns = useStoreSelect((store) => store.routineRuns)
   const navigate = useNavigate()
   const { setOpenMobile } = useSidebar()
   const query = palette.query.trim().toLowerCase()
@@ -131,7 +133,7 @@ export function RoutineActivityPage() {
      would clear itself in the same frame it was drawn. */
   const [seenAt] = React.useState(() => Number(localStorage.getItem(SEEN_KEY) ?? 0) || 0)
 
-  const routines = state.routines
+  const routines = allRoutines
   const refresh = palette.actions.refreshRoutineRuns
 
   React.useEffect(() => {
@@ -162,7 +164,7 @@ export function RoutineActivityPage() {
     routines.find((routine) => routine.id === routineId)?.name ?? "Deleted routine"
 
   const runs: RoutineRun[] = routines
-    .flatMap((routine) => state.routineRuns[routine.id] ?? [])
+    .flatMap((routine) => routineRuns[routine.id] ?? [])
     .filter((run) => !query || nameOf(run.routineId).toLowerCase().includes(query))
     .sort((a, b) => b.startedAt - a.startedAt)
     .slice(0, DIGEST_LIMIT)
@@ -171,7 +173,7 @@ export function RoutineActivityPage() {
      rather than over the visible slice: "3 need you" under a list capped at 30
      must mean three, not three of the first thirty. */
   const needsYou = routines
-    .flatMap((routine) => state.routineRuns[routine.id] ?? [])
+    .flatMap((routine) => routineRuns[routine.id] ?? [])
     .filter((run) => run.status === "blocked" || run.status === "failed").length
 
   const open = (run: RoutineRun) =>

@@ -1,11 +1,12 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { WebSocketServer, type WebSocket } from "ws";
 import { loadConfig } from "./config.js";
+import { HttpError } from "./http-error.js";
 import { seedPersonas } from "./personas.js";
 import { seedAgents } from "./registry.js";
-import { seedTemplates } from "./templates.js";
 import { ensureDefaultBoard } from "./boards.js";
 import { SessionManager } from "./sessions.js";
 import { startScheduler, stopScheduler } from "./scheduler.js";
@@ -50,10 +51,6 @@ seedAgents();
 // Same rules, same reasons: only the personas this install has never been
 // offered, and never over a row the user has edited. See personas.seedPersonas.
 seedPersonas();
-// And the Studio's starting points, on the same rule: a template added in a
-// later release reaches installs that already exist, one the user deleted stays
-// deleted. See templates.seedTemplates.
-seedTemplates();
 /* The tasks board's first board and its four columns, seeded only into an
    install that has none. This is also the boards migration: the seeded column
    ids are the exact strings pre-boards tasks hold in `tasks.status`, so those
@@ -159,8 +156,12 @@ app.use("*", cors());
 app.onError((err, c) => {
   console.error(`[${c.req.method} ${c.req.path}]`, err);
   const message = err instanceof Error ? err.message : String(err);
-  // A body that isn't JSON is the client's fault, not ours.
-  const status = /JSON|Unexpected token|Unexpected end of/i.test(message) ? 400 : 500;
+  /* An HttpError named its own status when it was thrown (every domain module's
+     refusal class extends it — see http-error.ts); a JSON body that would not
+     parse is a SyntaxError and the client's fault. Everything else really is a
+     500. */
+  const status =
+    err instanceof HttpError ? (err.status as ContentfulStatusCode) : err instanceof SyntaxError ? 400 : 500;
   return c.json({ error: message || "internal error" }, status);
 });
 

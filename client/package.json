@@ -16,7 +16,8 @@
     "electron:dist": "pnpm build && electron-builder",
     "electron:dist:win": "pnpm build && electron-builder --win",
     "icons": "node scripts/render-icons.mjs",
-    "themes": "node scripts/gen-themes.mjs"
+    "themes": "node scripts/gen-themes.mjs",
+    "test": "tsc -b"
   },
   "build": {
     "appId": "com.daedalus.harness",

@@ -197,6 +197,25 @@ export function resetNotificationOffer(): void {
   }
 }
 
+/* ── The resume window ──
+   While the page is frozen the SERVER raises the notification (it is told the
+   page cannot — see `setBackground` in thread-socket.ts). Everything that
+   happened during the freeze is then delivered to the page in one go the
+   moment it resumes, so without this the same finished turn would be announced
+   a second time, by the OS, on a device the user has just picked up and is
+   looking at. The in-app toast still goes out: it is the one that says "while
+   you were away" without interrupting anything.
+
+   A window rather than a per-event mark because the events carry nothing to
+   match a push against, and the only thing the two have in common is that they
+   are about the same handful of seconds. */
+const RESUME_QUIET_MS = 5_000
+let systemQuietUntil = 0
+
+export function suppressSystemNotifications(ms: number = RESUME_QUIET_MS): void {
+  systemQuietUntil = Date.now() + ms
+}
+
 /** The user is looking at this thread right now — telling them is noise. */
 function isViewing(sessionId: string): boolean {
   return (
@@ -249,6 +268,7 @@ export function notifyThreadEvent(
   // notification can. `tag` collapses repeats for the same thread+event.
   if (
     (force || (cache.system && (document.visibilityState === "hidden" || !document.hasFocus()))) &&
+    (force || Date.now() >= systemQuietUntil) &&
     "Notification" in window &&
     Notification.permission === "granted"
   ) {

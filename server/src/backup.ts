@@ -13,7 +13,6 @@ import {
   personas as personasTable,
   profiles as profilesTable,
   projectPreviews as previewsTable,
-  projectTemplates as templatesTable,
   projects as projectsTable,
   pushTokens as pushTokensTable,
   routineRuns as routineRunsTable,
@@ -33,7 +32,7 @@ import {
   type RoutineBody,
 } from "./db/index.js";
 import type { AutonomyPolicy } from "./autonomy.js";
-import { PROFILE_LINKS, SESSION_LINKS, TEMPLATE_LINKS, emptyLinks, readLinks, writeLinks, type LinkSet, type Tx } from "./db/links.js";
+import { PROFILE_LINKS, SESSION_LINKS, emptyLinks, readLinks, writeLinks, type LinkSet, type Tx } from "./db/links.js";
 /* The routine link descriptor lives with the engine rather than in db/links.ts
    — see the note there. It is imported for its links exactly as PROFILE_LINKS
    and SESSION_LINKS are used above. */
@@ -183,30 +182,6 @@ const PersonaRow = z.object({
   effort: optStr,
   seededVersion: int.default(0),
   sortOrder: int.default(0),
-});
-
-/* A project template (templates.ts). The user's own travel, and so do the
-   built-ins for the `seededVersion` reason a persona's do: a restored built-in
-   keeps its version and is never re-seeded, so a row that came back without its
-   repo URL and setup prose would be a gallery entry that creates nothing.
-   Its kit is the same three link arrays a profile and a session carry. */
-const TemplateRow = z.object({
-  id: str.min(1),
-  name: str,
-  description: str.default(""),
-  logoUrl: str.default(""),
-  repoUrl: str,
-  repoRef: optStr,
-  repoSubdir: optStr,
-  runtime: str.default(""),
-  tags: z.array(str).default([]),
-  setup: str.default(""),
-  prompt: str.default(""),
-  seededVersion: int.default(0),
-  createdAt: int,
-  mcpServerIds: z.array(str).default([]),
-  skillIds: z.array(str).default([]),
-  commandIds: z.array(str).default([]),
 });
 
 const ProjectRow = z.object({
@@ -505,7 +480,6 @@ export const BundleSchema = z.object({
   skills: z.array(SkillRow).default([]),
   commands: z.array(CommandRow).default([]),
   personas: z.array(PersonaRow).default([]),
-  templates: z.array(TemplateRow).default([]),
   projects: z.array(ProjectRow).default([]),
   knowledge: z.array(KnowledgeRow).default([]),
   previews: z.array(PreviewRow).default([]),
@@ -545,7 +519,6 @@ export function exportBundle(opts: ExportOptions): Bundle {
   const profiles = db.select().from(profilesTable).all();
   const sessions = db.select().from(sessionsTable).all();
   const mcpServers = db.select().from(mcpServersTable).all();
-  const templates = db.select().from(templatesTable).all();
   const routines = db.select().from(routinesTable).all();
   const triggers = db.select().from(routineTriggersTable).all();
   const webSearch = readWebSearch();
@@ -570,7 +543,6 @@ export function exportBundle(opts: ExportOptions): Bundle {
     skills: db.select().from(skillsTable).all(),
     commands: db.select().from(commandsTable).all(),
     personas: db.select().from(personasTable).all(),
-    templates: withLinks(templates, readLinks(TEMPLATE_LINKS, templates.map((t) => t.id))),
     projects: db.select().from(projectsTable).all(),
     knowledge: db.select().from(knowledgeTable).all(),
     previews: db.select().from(previewsTable).all(),
@@ -608,7 +580,7 @@ export function exportBundle(opts: ExportOptions): Bundle {
 export type ImportMode = "merge" | "replace";
 
 export type ImportSummary = Record<
-  | "agents" | "profiles" | "mcpServers" | "skills" | "commands" | "personas" | "templates" | "projects" | "knowledge" | "previews"
+  | "agents" | "profiles" | "mcpServers" | "skills" | "commands" | "personas" | "projects" | "knowledge" | "previews"
   | "sessions" | "queue" | "scheduled" | "workflowRuns" | "events" | "boards" | "boardStatuses" | "tasks"
   | "routines" | "routineTriggers" | "routineRuns"
   | "webSearchUsage" | "pushTokens" | "notifications",
@@ -694,7 +666,7 @@ function keepPairs(incoming: NameValue[] | null | undefined, existing: NameValue
  */
 export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
   const summary: ImportSummary = {
-    agents: 0, profiles: 0, mcpServers: 0, skills: 0, commands: 0, personas: 0, templates: 0, projects: 0, knowledge: 0, previews: 0,
+    agents: 0, profiles: 0, mcpServers: 0, skills: 0, commands: 0, personas: 0, projects: 0, knowledge: 0, previews: 0,
     sessions: 0, queue: 0, scheduled: 0, workflowRuns: 0, events: 0, boards: 0, boardStatuses: 0, tasks: 0,
     routines: 0, routineTriggers: 0, routineRuns: 0,
     webSearchUsage: 0, pushTokens: 0, notifications: 0,
@@ -714,7 +686,7 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
       // its parent, and the ones that do not (usage, tokens, tasks) stand alone.
       for (const table of [
         sessionsTable, profilesTable, projectsTable, mcpServersTable, skillsTable, commandsTable,
-        personasTable, templatesTable,
+        personasTable,
         // A root of its own: its triggers, runs and links all cascade from it.
         routinesTable,
         agentsTable, tasksTable, boardStatusesTable, boardsTable, usageTable, pushTokensTable,
@@ -770,19 +742,6 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
       bundle.personas.map((p) => ({ ...p, thinking: p.thinking ?? null, effort: p.effort ?? null })),
     );
     summary.personas = bundle.personas.length;
-    /* A template is a root like a persona: nothing points at it, and the only
-       ids it holds are its kit's, whose join tables cascade off the library
-       rows written just above. */
-    upsertChunked(
-      tx,
-      templatesTable,
-      "id",
-      bundle.templates.map((t) => {
-        const { mcpServerIds: _m, skillIds: _s, commandIds: _c, ...columns } = t;
-        return { ...columns, repoRef: columns.repoRef ?? null, repoSubdir: columns.repoSubdir ?? null };
-      }),
-    );
-    summary.templates = bundle.templates.length;
     upsertChunked(
       tx,
       projectsTable,
@@ -795,7 +754,6 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
        owner's rows and re-adds only ids the library actually holds, so a
        bundle naming a server this install never had links nothing. */
     for (const p of bundle.profiles) writeLinks(tx, PROFILE_LINKS, p.id, p);
-    for (const t of bundle.templates) writeLinks(tx, TEMPLATE_LINKS, t.id, t);
 
     // Children of projects. A row whose project exists nowhere is dropped, not
     // fatal — the foreign key would refuse it and take the whole import down.

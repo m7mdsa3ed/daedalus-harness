@@ -39,7 +39,7 @@ import type { Row, SubagentBatch, SubagentGroup, WorkflowGroup } from "@/lib/tra
 import { formatTokens, sumUsage } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 import { useViewOptionsContext } from "@/lib/view-options"
-import { useStore, type ToolItem } from "@/lib/store"
+import { useStoreSelect, type ToolItem } from "@/lib/store"
 
 /** What thread-items' `SubagentBody` receives — the whole of what a step did,
     drawn under its row when it is opened. A component prop because the body
@@ -72,10 +72,15 @@ export function collectTools(rows: Row[]): ToolItem[] {
    is then a session in the store, and the rail is a mirror of a transcript
    that can be opened whole. A Codex child's id never is. */
 export function useStepThread(group: SubagentGroup): string | null {
-  const { state } = useStore()
   const head = group.head
-  if (head.kind !== "subagent") return null
-  return state.sessions.some((s) => s.id === head.sessionId) ? head.sessionId : null
+  const candidate = head.kind === "subagent" ? head.sessionId : null
+  /* A boolean, not the row and not the list: this is asked once per subagent
+     group inside a live transcript, and `sessions` is replaced by every list
+     refresh — the answer to "is this id ours" is not. */
+  const known = useStoreSelect((state) =>
+    candidate === null ? false : state.sessions.some((s) => s.id === candidate)
+  )
+  return known ? candidate : null
 }
 
 /** Whether the step's body (`SubagentBody` in thread-items) would draw

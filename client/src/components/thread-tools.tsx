@@ -18,7 +18,7 @@ import { DropdownMenuContentPositioned } from "@/components/ui-ext/dropdown-menu
 import type { Actions } from "@/lib/actions"
 import { mcpSubtitle, type SessionMeta } from "@/lib/settings"
 import { saveThreadDefaults } from "@/lib/thread-defaults"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
 /** The three link kinds, in the order the menu prints them. */
@@ -70,8 +70,12 @@ export function ThreadToolsMenu({
       draft you are about to send (a routine's kit) — see DraftScopeRow. */
   remember?: boolean
 }) {
-  const { state } = useStore()
-  const profile = state.profiles.find((p) => p.id === meta.profileId)
+  /* Four narrow reads, not the state: this menu is in the composer row of a
+     live transcript. Each library is replaced only by its own action. */
+  const profile = useStoreSelect((state) => state.profiles.find((p) => p.id === meta.profileId))
+  const mcpServers = useStoreSelect((state) => state.mcpServers)
+  const skills = useStoreSelect((state) => state.skills)
+  const commands = useStoreSelect((state) => state.commands)
   const inherited: Record<LinkKey, Set<string>> = {
     mcpServerIds: new Set(profile?.mcpServerIds ?? []),
     skillIds: new Set(profile?.skillIds ?? []),
@@ -160,13 +164,13 @@ export function ThreadToolsMenu({
 
   const iconClass = "size-4 text-muted-foreground"
   const sections = [
-    section("MCP servers", <ServerIcon className={iconClass} />, "mcpServerIds", state.mcpServers, mcpSubtitle),
-    section("Skills", <BlocksIcon className={iconClass} />, "skillIds", state.skills, (s) => s.path),
+    section("MCP servers", <ServerIcon className={iconClass} />, "mcpServerIds", mcpServers, mcpSubtitle),
+    section("Skills", <BlocksIcon className={iconClass} />, "skillIds", skills, (s) => s.path),
     section(
       "Slash commands",
       <SlashSquareIcon className={iconClass} />,
       "commandIds",
-      state.commands,
+      commands,
       (c) => `/${c.name}`
     ),
   ].filter(Boolean)

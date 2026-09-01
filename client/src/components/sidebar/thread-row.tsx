@@ -19,11 +19,19 @@ import { AgentIcon, ProjectIcon } from "@/components/entity-icon"
 import { flattenMenuItems, ItemContextMenu, renderMenuItems } from "@/components/item-context-menu"
 import { threadMenuItems, trashMenuItems } from "@/components/thread-menu"
 import { activityAt, type SessionMeta } from "@/lib/settings"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
+import type { ThreadActivity } from "@/lib/thread/phase"
 import { cn } from "@/lib/utils"
 import { FLOAT_ACTION, FLOAT_ROW, ROW } from "./scale"
 
-export type ThreadStatus = "idle" | "running" | "waiting"
+/* The reading a row shows comes from `lib/thread/phase.ts` and is shared with
+   the dock tabs and the project page. It used to be declared here as
+   `"idle" | "running" | "waiting"`, derived from `turnActive` alone and unable
+   to see the connection at all — so a thread whose socket had died thirty
+   seconds ago, and was working through its reconnect ladder, read "Idle" in
+   every list on screen. It also collided by name with the connection status in
+   the store, which made both hard to grep for. */
+export type ThreadStatus = ThreadActivity
 
 /** How long a finger has to rest on a row before it is a press, not a tap. */
 const LONG_PRESS_MS = 450
@@ -120,13 +128,22 @@ export const ThreadRow = React.memo(function ThreadRow({
           "min-w-0 flex-1 truncate",
           (session.exited || trash) && "text-muted-foreground",
           trash && "line-through",
-          state === "running" && "harness-shimmer"
+          state === "running" && "harness-shimmer",
+          /* A different animation from `running` on purpose: the shimmer means
+             the agent is writing, and a reconnect is the opposite of that —
+             something is happening *to* the thread, not in it. Before this the
+             two were indistinguishable, because a row could not see the
+             connection at all and a reconnecting thread simply read as idle. */
+          (state === "reconnecting" || state === "offline") && "animate-pulse"
         )}
       >
         {session.title}
       </span>
       {state === "waiting" && (
         <span aria-hidden className="size-2 shrink-0 rounded-full bg-amber-500" />
+      )}
+      {(state === "reconnecting" || state === "offline") && (
+        <span aria-hidden className="size-2 shrink-0 rounded-full bg-muted-foreground/60" />
       )}
     </>
   )
@@ -232,10 +249,20 @@ function ThreadInfoCard({
   state: ThreadStatus
   trash: boolean
 }) {
-  const { state: store } = useStore()
-  const project = store.projects.find((p) => p.id === session.projectId)
-  const profile = store.profiles.find((p) => p.id === session.profileId)?.name
-  const agent = store.agents.find((a) => a.id === session.agentId)?.name ?? session.agentId
+  /* Three catalog reads, each subscribed on its own. This card is rendered per
+     row of the sidebar; on the wide hook every one of them re-rendered on
+     every streamed token of every open thread. */
+  const project = useStoreSelect((s) => s.projects.find((p) => p.id === session.projectId))
+  const profile = useStoreSelect((s) => s.profiles.find((p) => p.id === session.profileId)?.name)
+  const agent =
+    useStoreSelect((s) => s.agents.find((a) => a.id === session.agentId)?.name) ?? session.agentId
+  /* The parent's title, not the row: a string compares by value, so this stays
+     quiet through the parent thread's own stream. */
+  const parentTitle = useStoreSelect((s) =>
+    session.parentSessionId
+      ? s.sessions.find((row) => row.id === session.parentSessionId)?.title
+      : undefined
+  )
   const when = (ts: number) =>
     new Date(ts).toLocaleString(undefined, {
       month: "short",
@@ -243,17 +270,28 @@ function ThreadInfoCard({
       hour: "2-digit",
       minute: "2-digit",
     })
+  /* One reading, in the order it matters. The connection states are new here:
+     a thread that had lost its socket used to say "Idle" in this card, which is
+     the reading the card exists to prevent. */
   const status = trash
     ? "In Trash"
     : state === "waiting"
       ? "Needs you"
       : state === "running"
         ? "Running"
-        : session.exited
-          ? "Stopped"
-          : session.draft
-            ? "Not started"
-            : "Idle"
+        : state === "reconnecting"
+          ? "Reconnecting"
+          : state === "offline"
+            ? "Waiting for the server"
+            : state === "connecting"
+              ? "Opening"
+              : state === "gone"
+                ? "Deleted"
+                : state === "stopped" || session.exited
+                  ? "Stopped"
+                  : session.draft
+                    ? "Not started"
+                    : "Idle"
   const rows: [string, React.ReactNode][] = [
     ["Status", status],
     [
@@ -279,10 +317,7 @@ function ThreadInfoCard({
      it would otherwise print the same timestamp twice. */
   if (activityAt(session) - session.createdAt > 60_000)
     rows.push(["Last active", when(activityAt(session))])
-  if (session.parentSessionId) {
-    const parent = store.sessions.find((s) => s.id === session.parentSessionId)
-    rows.push(["Step of", parent?.title ?? "a workflow"])
-  }
+  if (session.parentSessionId) rows.push(["Step of", parentTitle ?? "a workflow"])
   if (trash && session.deletedAt) rows.push(["Deleted", when(session.deletedAt)])
   return (
     <div className="flex flex-col gap-2 text-left text-xs">

@@ -13,6 +13,8 @@ export interface AgentEnv {
   contextWindow: number | null;
   maxOutputTokens: number | null;
   personaFile: string | null;
+  /** Read AGENTS.md / CLAUDE.md from the workspace. Off with `0`/`false`. */
+  projectInstructions: boolean;
   home: string;
 }
 
@@ -43,6 +45,9 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env): AgentEnv {
     contextWindow: num(env.DAEDALUS_AGENT_CONTEXT_WINDOW),
     maxOutputTokens: num(env.DAEDALUS_AGENT_MAX_OUTPUT_TOKENS),
     personaFile: str(env.DAEDALUS_AGENT_PERSONA_FILE),
+    projectInstructions: !["0", "false", "off"].includes(
+      (str(env.DAEDALUS_AGENT_PROJECT_INSTRUCTIONS) ?? "").toLowerCase(),
+    ),
     home: str(env.DAEDALUS_AGENT_HOME) ?? join(homedir(), ".daedalus-agent"),
   };
 }

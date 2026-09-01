@@ -1,6 +1,7 @@
 import { readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { HttpError } from "./http-error.js";
 
 // Directory listing for the client's path autocomplete. The cwd a project
 // names lives on THIS machine, so the only way a browser can suggest one is to
@@ -25,7 +26,7 @@ export interface FsListing {
 
 const MAX_ENTRIES = 500;
 
-const fail = (status: number, message: string) => Object.assign(new Error(message), { status });
+const fail = (status: number, message: string) => new HttpError(message, status);
 
 /** List one directory, dirs first. "" lists the home directory. */
 export function listDirectory(rawPath: string): FsListing {

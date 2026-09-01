@@ -4,7 +4,7 @@ import { listQueue } from "./queue.js";
 import type { SessionJournal } from "./session-journal.js";
 import type { Peer, Session } from "./sessions.js";
 import { REPLAY_WINDOW_BYTES } from "./protocol.js";
-import type { PromptReply, ThreadCommand, ThreadEvent, WireError } from "./protocol.js";
+import type { EarlierPage, PromptReply, ThreadCommand, ThreadEvent, WireError } from "./protocol.js";
 
 /**
  * What the socket router needs from the SessionManager — a port, so this
@@ -208,6 +208,97 @@ export class SessionSocket {
     return null;
   }
 
+  /**
+   * The same attach bracket, as one HTTP document.
+   *
+   * The bracket, the window, the frames and the `caught_up` line are the
+   * socket's — this reuses every one of them, so there is still exactly one
+   * replay and one parser. What it does not have is a peer: nothing is
+   * registered on the session, nothing is buffered, and a turn journaled while
+   * the body streams is simply not in it. That is the point rather than a gap.
+   * `caughtUp.cursor` is the `to` this document was bounded at, and the socket
+   * the client opens next resumes from exactly there — so the events this read
+   * missed arrive as the delta they are, on the connection that can also carry
+   * what comes after them.
+   *
+   * Why a transcript is read over HTTP at all: opening a thread is a read, and
+   * a read had to wait for a WebSocket handshake, an attach and a paced stream
+   * of frames before the first line of it could be drawn. Over HTTP the browser
+   * asks for it on a connection it already holds, the reply compresses in the
+   * one place a stream of small frames could not, and the socket that follows
+   * is a cheap resume instead of the thing the whole wait was made of. An
+   * archived thread needs no socket at all — see `ThreadSocket.load`.
+   *
+   * The frames come out pre-serialized (`replayFrames`) and are spliced
+   * straight into the body, so a replay is still never parsed and re-emitted
+   * on this side; and the body is a generator so a long thread streams rather
+   * than being held whole here, which is the same budget the socket pays with
+   * `sendFrame`.
+   */
+  snapshot(
+    id: string,
+    cursor = 0,
+    opts: { window?: number } = {},
+  ): { refused: string } | { body: Generator<string> } {
+    const session = this.host.getSession(id);
+    // The three refusals the socket makes, verbatim — the client reads them
+    // the same way (a thread with no archive revives instead).
+    if (!session) return { refused: "no such thread on this server" };
+    if (session.deletedAt !== null) return { refused: "this thread is in the trash" };
+    if (session.exited && session.eventCount === 0) {
+      return { refused: "this thread has no running agent — revive it first" };
+    }
+    return { body: this.snapshotBody(session, cursor, opts) };
+  }
+
+  private *snapshotBody(
+    session: Session,
+    cursor: number,
+    opts: { window?: number },
+  ): Generator<string> {
+    const to = session.eventCount;
+    // Same clamp as `attach`: a cursor past the end of the log means the log
+    // shrank under the client, and `from: 0` is its cue to rebuild.
+    if (cursor > to) cursor = 0;
+    const resumed = cursor > 0;
+    const journal = this.host.journal;
+    const window = opts.window && opts.window > 0 ? opts.window : 0;
+    const from = resumed ? cursor : journal.windowStart(session.id, window, REPLAY_WINDOW_BYTES);
+
+    const attached: ThreadEvent = {
+      ev: "attached",
+      from,
+      to,
+      resumed,
+      earlier: resumed ? 0 : journal.countTurnsBefore(session.id, from),
+      archived: session.bridge === null,
+      acpSessionId: session.liveAcpSessionId ?? session.acpSessionId ?? null,
+      ...(session.historyLost ? { historyLost: session.historyLost } : {}),
+    };
+    yield `{"attached":${JSON.stringify(attached)},"frames":[`;
+    let first = true;
+    for (const frame of journal.replayFrames(session.id, from, true, to)) {
+      yield first ? frame : `,${frame}`;
+      first = false;
+    }
+    const caughtUp: ThreadEvent = {
+      ev: "caught_up",
+      cursor: to,
+      promptActive: session.bridge?.promptActive ?? false,
+      queue: listQueue(session.id),
+    };
+    yield `],"caughtUp":${JSON.stringify(caughtUp)}}`;
+  }
+
+  /** One page of history, answered without a socket — the HTTP half of
+      `load_earlier`, so a thread being read from its archive can page back
+      without opening (or reviving) anything. */
+  earlierPage(id: string, before: number): EarlierPage | null {
+    const session = this.host.getSession(id);
+    if (!session || session.deletedAt !== null) return null;
+    return this.host.journal.earlierPage(session.id, before);
+  }
+
   private onCommand(session: Session, peer: Peer, line: string): void {
     let command: ThreadCommand;
     try {
@@ -225,6 +316,13 @@ export class SessionSocket {
        say it is there — the client reads silence as a dead path and reconnects,
        which for an archived thread would mean spawning an agent to prove a
        WebSocket is open. */
+    /* Answered by doing nothing else: it is a statement about the peer, not a
+       request of the agent, so — like `ping` — a thread whose process is gone
+       must still accept it. No reply, because nothing waits on one. */
+    if (command.cmd === "background") {
+      peer.background = command.background;
+      return;
+    }
     if (command.cmd === "ping") {
       this.send(peer, { ev: "reply", id: command.id, result: {} });
       return;

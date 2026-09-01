@@ -113,11 +113,6 @@ export function darkRamp({ hue: h, brand: C, tint: t }: RampSpec): Ramp {
   return ramp
 }
 
-export const rampFor = (spec: RampSpec): { light: Ramp; dark: Ramp } => ({
-  light: lightRamp(spec),
-  dark: darkRamp(spec),
-})
-
 // ---- colour maths, shared with the contrast gate ----
 
 /** oklch(L C H) → sRGB 0–1. Björn Ottosson's matrices. */

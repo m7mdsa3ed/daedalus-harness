@@ -37,7 +37,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { AgentIcon, ProfileIcon } from "@/components/entity-icon"
-import { reportError } from "@/lib/errors"
+import { useAsyncAction } from "@/hooks/use-async-action"
 import { profileAgentIds, type Profile } from "@/lib/settings"
 import {
   fetchProfileQuota,
@@ -49,7 +49,7 @@ import {
   type QuotaWindow,
 } from "@/lib/quota"
 import { useAllQuota } from "@/lib/quota"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { EmptyCard, Group, PageHeader } from "./primitives"
 import { sectionMeta } from "./sections"
@@ -201,22 +201,16 @@ function QuotaBody({ quota, rawLabel }: { quota: QuotaSnapshot; rawLabel: string
 function ProfileQuotaCard({ profile, initial }: { profile: Profile; initial: QuotaSnapshot }) {
   const { settings } = useSettingsPage()
   const [quota, setQuota] = React.useState(initial)
-  const [busy, setBusy] = React.useState(false)
+  const { busy, run } = useAsyncAction({ toast: true })
 
   React.useEffect(() => {
     setQuota(initial)
   }, [initial])
 
-  const refresh = async () => {
-    setBusy(true)
-    try {
+  const refresh = () =>
+    run(`Couldn't read ${profile.name}'s plan usage`, async () => {
       setQuota(await fetchProfileQuota(settings, profile.id, true))
-    } catch (err) {
-      reportError(err, `Couldn't read ${profile.name}'s plan usage`)
-    } finally {
-      setBusy(false)
-    }
-  }
+    })
 
   return (
     <Group label={profile.name}>
@@ -255,7 +249,7 @@ function AgentQuotaCard({
   const { settings } = useSettingsPage()
   const [profileId, setProfileId] = React.useState(defaultProfileId(agentId))
   const [quota, setQuota] = React.useState(initial)
-  const [busy, setBusy] = React.useState(false)
+  const { busy, run } = useAsyncAction({ toast: true })
 
   /* The list route already read the Default profile, so that one is in hand;
      any other profile is a reading nobody has taken yet. */
@@ -264,17 +258,11 @@ function AgentQuotaCard({
   }, [initial])
 
   const load = React.useCallback(
-    async (id: string, refresh: boolean) => {
-      setBusy(true)
-      try {
+    (id: string, refresh: boolean) =>
+      run(`Couldn't read ${agentName}'s usage`, async () => {
         setQuota(await fetchQuota(settings, agentId, { profileId: id, refresh }))
-      } catch (err) {
-        reportError(err, `Couldn't read ${agentName}'s usage`)
-      } finally {
-        setBusy(false)
-      }
-    },
-    [settings, agentId, agentName]
+      }),
+    [run, settings, agentId, agentName]
   )
 
   const pick = (id: string) => {
@@ -322,7 +310,8 @@ function AgentQuotaCard({
 
 export function QuotaPage() {
   const { settings } = useSettingsPage()
-  const { state } = useStore()
+  const profiles = useStoreSelect((store) => store.profiles)
+  const agents = useStoreSelect((store) => store.agents)
   const meta = sectionMeta("usage")
   const { quotas, busy, reload } = useAllQuota(settings)
 
@@ -332,14 +321,14 @@ export function QuotaPage() {
   const profilesFor = React.useCallback(
     (agentId: string) => [
       { id: defaultProfileId(agentId), name: "Default" },
-      ...state.profiles
+      ...profiles
         .filter((profile) => !profile.id.startsWith("default:") && profile.agents?.[agentId])
         .map((profile) => ({ id: profile.id, name: profile.name })),
     ],
-    [state.profiles]
+    [profiles]
   )
 
-  const agentName = (id: string) => state.agents.find((agent) => agent.id === id)?.name ?? id
+  const agentName = (id: string) => agents.find((agent) => agent.id === id)?.name ?? id
 
   return (
     <>
@@ -375,7 +364,7 @@ export function QuotaPage() {
               />
             )
           }
-          const profile = state.profiles.find((p) => p.id === quota.profileId)
+          const profile = profiles.find((p) => p.id === quota.profileId)
           /* A profile the store has not caught up with yet — the list route
              reads the database directly. Skipped rather than drawn nameless. */
           if (!profile) return null

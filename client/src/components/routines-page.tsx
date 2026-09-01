@@ -43,7 +43,7 @@ import type { Actions } from "@/lib/actions"
 import { captureError, reportError, type InlineError } from "@/lib/errors"
 import { newRoutinePath, routinePath, routinesPath } from "@/lib/router"
 import { profileSupports, type Routine, type ServerSettings } from "@/lib/settings"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import { shortAge } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -60,7 +60,7 @@ export function RoutinesPage({ actions, settings }: { actions: Actions; settings
 /* ── The list ── */
 
 function RoutinesListPage({ actions }: { actions: Actions }) {
-  const { state } = useStore()
+  const routines = useStoreSelect((store) => store.routines)
   const navigate = useNavigate()
 
   return (
@@ -70,7 +70,7 @@ function RoutinesListPage({ actions }: { actions: Actions }) {
         description="Saved thread-starts that fire on their own — on a clock, a webhook or a commit. Each run is a real thread with its own transcript, and each routine decides in advance which of the agent's questions it answers for you."
         onBack={() => void navigate("/")}
       />
-      {state.routines.length === 0 ? (
+      {routines.length === 0 ? (
         <EmptyCard
           icon={ZapIcon}
           text="No routines yet. A routine starts a thread the way you would, then answers for you while it runs."
@@ -90,7 +90,7 @@ function RoutinesListPage({ actions }: { actions: Actions }) {
             </Button>
           </div>
           <Group>
-            {state.routines.map((routine) => (
+            {routines.map((routine) => (
               <RoutineRow key={routine.id} routine={routine} actions={actions} />
             ))}
           </Group>
@@ -101,10 +101,11 @@ function RoutinesListPage({ actions }: { actions: Actions }) {
 }
 
 function RoutineRow({ routine, actions }: { routine: Routine; actions: Actions }) {
-  const { state } = useStore()
+  const projects = useStoreSelect((store) => store.projects)
+  const routineRuns = useStoreSelect((store) => store.routineRuns)
   const navigate = useNavigate()
-  const project = state.projects.find((p) => p.id === routine.projectId)
-  const runs = state.routineRuns[routine.id]
+  const project = projects.find((p) => p.id === routine.projectId)
+  const runs = routineRuns[routine.id]
   const last = runs?.[0]
 
   return (
@@ -180,7 +181,9 @@ function AutonomyMark({ routine }: { routine: Routine }) {
 /* ── Creation ── */
 
 function NewRoutinePage({ actions, settings }: { actions: Actions; settings: ServerSettings }) {
-  const { state } = useStore()
+  const profiles = useStoreSelect((store) => store.profiles)
+  const projects = useStoreSelect((store) => store.projects)
+  const agents = useStoreSelect((store) => store.agents)
   const navigate = useNavigate()
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<InlineError | null>(null)
@@ -190,9 +193,9 @@ function NewRoutinePage({ actions, settings }: { actions: Actions; settings: Ser
      right there, where a thread's defaults exist because opening a new thread
      should cost no decisions. */
   const [draft, setDraft] = React.useState<RoutineDraft>(() => {
-    const project = state.projects[0]
-    const agent = state.agents[0]
-    const profile = agent ? state.profiles.find((p) => profileSupports(p, agent.id)) : undefined
+    const project = projects[0]
+    const agent = agents[0]
+    const profile = agent ? profiles.find((p) => profileSupports(p, agent.id)) : undefined
     return blankDraft({
       projectId: project?.id ?? "",
       agentId: agent?.id ?? "",
@@ -224,7 +227,7 @@ function NewRoutinePage({ actions, settings }: { actions: Actions; settings: Ser
     }
   }
 
-  if (state.projects.length === 0 || state.agents.length === 0) {
+  if (projects.length === 0 || agents.length === 0) {
     return (
       <>
         <FormPageHeader title="New routine" description="" onBack={back} />
@@ -269,11 +272,12 @@ function RoutineDetailPage({
   actions: Actions
   settings: ServerSettings
 }) {
-  const { state } = useStore()
+  const routines = useStoreSelect((store) => store.routines)
+  const routineRuns = useStoreSelect((store) => store.routineRuns)
   const navigate = useNavigate()
   const confirm = useConfirm()
-  const routine = state.routines.find((r) => r.id === routineId)
-  const runs = state.routineRuns[routineId]
+  const routine = routines.find((r) => r.id === routineId)
+  const runs = routineRuns[routineId]
 
   const [draft, setDraft] = React.useState<RoutineDraft | null>(null)
   const [busy, setBusy] = React.useState(false)

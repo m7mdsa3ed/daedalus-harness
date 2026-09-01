@@ -26,7 +26,6 @@ import { stopWatching, watchProject, type WatchBatch } from "../workspace-watch.
 import * as git from "../git.js";
 import { createPreview, deletePreview, listPreviews } from "../previews.js";
 import { createTerminal, killProjectTerminals, killTerminal, listTerminals } from "../terminals.js";
-import { CreateFromTemplateSchema, createFromTemplate } from "../templates.js";
 import { crud, flag, workspace } from "./helpers.js";
 
 /** Projects and everything scoped to a project's directory: the workspace
@@ -46,31 +45,6 @@ export function workspaceRoutes(app: Hono): void {
     stopWatching(id);
     killProjectTerminals(id);
     return c.json({ ok: true });
-  });
-
-  /* Start a project from a template: make the directory, record the row,
-     render the prompt. It is a project route rather than a template one
-     because what it creates is a project — the template is an argument.
-
-     Thin on purpose. Every rule about the one write outside a project root
-     lives in `createFromTemplate` (which is also where the directory is
-     removed again if the row fails to record), and its refusals are
-     `WorkspaceError`s, mapped here to the 400/403/404/409 the client's
-     ApiError path already reads — by hand rather than through `workspace()`,
-     which answers 200 where this is a create and answers 201.
-
-     Nothing is spawned and no thread is created: the answer's `prompt` goes
-     into a *draft*'s composer and `links` rides the draft's own picks into
-     `POST /api/sessions` when the user sends it. */
-  app.post("/api/projects/from-template", async (c) => {
-    const parsed = CreateFromTemplateSchema.safeParse(await c.req.json().catch(() => ({})));
-    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-    try {
-      return c.json(createFromTemplate(parsed.data), 201);
-    } catch (err) {
-      if (err instanceof WorkspaceError) return c.json({ error: err.message }, err.status);
-      throw err;
-    }
   });
 
   /* The project overview's numbers — the half the browser cannot derive from

@@ -4,42 +4,60 @@ import type { IDockviewPanelProps } from "dockview-react"
 import { ErrorBoundary } from "@/components/error-boundary"
 import { ThreadView } from "@/components/thread-view"
 import type { Actions } from "@/lib/actions"
-import { useStore } from "@/lib/store"
+import { useSessionMeta, useThread } from "@/lib/store"
+import { markFor, type ThreadActivity } from "@/lib/thread/phase"
+import { useThreadConnection } from "@/lib/thread/use-thread-connection"
 import { ThreadLinksProvider } from "@/lib/workspace/thread-links"
 import { useThreadLinksFor } from "@/lib/workspace/use-thread-links"
 
-/** A thread, and the one panel kind that owns an ACP connection. Every other
-    panel observes the store; this is where `openThread` is called, which is why
-    two panels for one session must never exist (see `panelId`). */
+/** A thread, and the one panel kind that holds an ACP connection open. Every
+    other panel observes the store; this is where `useThreadConnection` is
+    called, which is why two panels for one session must never exist (see
+    `panelId`). */
+/** A tab strip has room for one glyph, so only the readings worth interrupting
+    for get one. `connecting` deliberately has none: opening a thread is not news
+    about it, and a mark that appears on every reattach is a mark nobody reads.
+    `reconnecting` and `offline` do, because they are the two states that used to
+    be invisible everywhere outside the thread itself. */
+const TAB_MARKS: Record<ThreadActivity, string> = {
+  waiting: "◆ ",
+  running: "◍ ",
+  reconnecting: "◌ ",
+  offline: "◌ ",
+  stopped: "⚠ ",
+  gone: "⚠ ",
+  connecting: "",
+  idle: "",
+}
+
 export function ChatPanel({
   actions,
   api,
   params,
 }: IDockviewPanelProps<{ sessionId: string }> & { actions: Actions }) {
-  const { state } = useStore()
-  const meta = state.sessions.find((session) => session.id === params.sessionId)
-  const thread = state.threads[params.sessionId]
+  /* This panel is mounted for every opened thread at once, so it reads its own
+     session and its own thread and nothing wider — the tab marker below must
+     not be recomputed because some other panel's turn streamed a token. An
+     absent thread reads as `emptyThread`, which the marker already spells as
+     no marker. */
+  const meta = useSessionMeta(params.sessionId)
+  const thread = useThread(params.sessionId)
 
-  React.useEffect(() => {
-    if (!meta) return
-    // openThread writes the failure into the thread itself, which is the panel
-    // the user is already staring at — nothing more to do here.
-    actions.openThread(meta).catch(() => {})
-  }, [actions, meta])
+  /* Hold the thread open for as long as this panel is mounted. Keyed on the id
+     and on what can actually change the open decision — never on the row object,
+     which `refreshSessions` replaces on every poll: that made a list refresh
+     re-fire an open for every mounted transcript, and an open landing inside
+     another open is two peers on one session. The connection records its own
+     failures in the thread, which is the panel the user is already staring at. */
+  useThreadConnection(params.sessionId)
 
   /* Tab status. A dock keeps every transcript mounted, so the tab strip is the
      only place a thread you are not looking at can say anything — and "waiting
      on you" is the one worth interrupting for, which is why it outranks
      "running" rather than being merged into it. */
-  const marker = !thread
-    ? ""
-    : thread.permission || thread.elicitation
-      ? "◆ "
-      : thread.turnActive
-        ? "◍ "
-        : thread.status === "closed"
-          ? "⚠ "
-          : ""
+  const marker = TAB_MARKS[
+    markFor(thread.phase, thread.turnActive, !!(thread.permission || thread.elicitation))
+  ]
 
   React.useEffect(() => {
     api.setTitle(`${marker}${meta?.title || "Thread"}`)

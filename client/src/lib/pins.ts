@@ -19,7 +19,6 @@ export const pinnedSnapshot = store.get
 
 export const subscribePins = store.subscribe
 
-export const isPinned = (sessionId: string): boolean => store.get().includes(sessionId)
 
 export function togglePin(sessionId: string): void {
   const pins = store.get()

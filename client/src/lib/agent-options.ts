@@ -1,5 +1,6 @@
-import { useSyncExternalStore } from "react"
 import type * as acp from "@agentclientprotocol/sdk"
+
+import { createLocalStore } from "./local-store"
 
 /* ── What an agent can be configured with ──
    ACP config options come from a *running* agent, and a thread that has not
@@ -40,8 +41,6 @@ export interface AgentOptionSet {
   byModel: Record<string, acp.SessionConfigOption[]>
 }
 
-type Store = Record<string, AgentOptionSet>
-
 const EMPTY: AgentOptionSet = { base: [], byModel: {} }
 
 const isSet = (value: unknown): value is AgentOptionSet =>
@@ -53,43 +52,24 @@ function selectedModel(options: acp.SessionConfigOption[]): string | undefined {
   return model?.type === "select" ? model.currentValue : undefined
 }
 
-function read(): Store {
-  try {
-    const raw: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}")
-    return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Store) : {}
-  } catch {
-    return {}
-  }
-}
+const store = createLocalStore<Record<string, AgentOptionSet>>(
+  STORAGE_KEY,
+  (raw) =>
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, AgentOptionSet>)
+      : {},
+  {}
+)
 
-let cache = read()
-const listeners = new Set<() => void>()
 /** Profiles already asked this page-load, so a re-render cannot start a second
     spawn while the first is still in flight — or retry a hopeless one forever. */
 const asked = new Set<string>()
 
-function write(next: Store) {
-  cache = next
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
-  } catch {
-    // A full or blocked storage costs the head start, never the thread.
-  }
-  for (const listener of listeners) listener()
-}
-
-const snapshot = (): Store => cache
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener)
-  return () => {
-    listeners.delete(listener)
-  }
-}
-
 /** `key` is always an `optionKey(profileId, agentId)`. */
-export const loadAgentOptions = (key: string): AgentOptionSet =>
-  isSet(cache[key]) ? cache[key] : EMPTY
+export const loadAgentOptions = (key: string): AgentOptionSet => {
+  const entry = store.get()[key]
+  return isSet(entry) ? entry : EMPTY
+}
 
 /** Learned from a live session: authoritative for the model it is sitting on. */
 export function saveAgentOptions(key: string, options: acp.SessionConfigOption[]): void {
@@ -181,9 +161,22 @@ export function dropAgentOptions(profileId: string): void {
   const prefix = `${profileId}:`
   for (const key of asked) if (key.startsWith(prefix)) asked.delete(key)
   const kept = Object.fromEntries(
-    Object.entries(cache).filter(([key]) => !key.startsWith(prefix))
+    Object.entries(store.get()).filter(([key]) => !key.startsWith(prefix))
   )
-  if (Object.keys(kept).length !== Object.keys(cache).length) write(kept)
+  if (Object.keys(kept).length !== Object.keys(store.get()).length) store.set(kept)
+}
+
+/** The same argument, the other way round: an agent whose command or env was
+    edited answers differently on *every* profile, so its entries are dropped
+    across all of them. Keys are `<profileId>:<agentId>`, and an agent id may
+    not contain a colon, so the suffix identifies it. */
+export function dropAgentOptionsFor(agentId: string): void {
+  const suffix = `:${agentId}`
+  for (const key of asked) if (key.endsWith(suffix)) asked.delete(key)
+  const kept = Object.fromEntries(
+    Object.entries(store.get()).filter(([key]) => !key.endsWith(suffix))
+  )
+  if (Object.keys(kept).length !== Object.keys(store.get()).length) store.set(kept)
 }
 
 /** Drop the cache for profiles that no longer exist. Keys are
@@ -191,7 +184,7 @@ export function dropAgentOptions(profileId: string): void {
 export function pruneAgentOptions(profileIds: Iterable<string>): void {
   const live = new Set(profileIds)
   const kept = Object.fromEntries(
-    Object.entries(cache).filter(([key]) => live.has(key.slice(0, key.lastIndexOf(":"))))
+    Object.entries(store.get()).filter(([key]) => live.has(key.slice(0, key.lastIndexOf(":"))))
   )
-  if (Object.keys(kept).length !== Object.keys(cache).length) write(kept)
+  if (Object.keys(kept).length !== Object.keys(store.get()).length) store.set(kept)
 }

@@ -31,7 +31,7 @@ export interface AppNotification {
 }
 
 /** How many notices the newest-first listing returns for `GET /api/notifications`. */
-export const NOTIFICATIONS_LIMIT = 200;
+const NOTIFICATIONS_LIMIT = 200;
 
 const row = (r: typeof notificationsTable.$inferSelect): AppNotification => ({
   id: r.id,

@@ -8,6 +8,9 @@ import type { Emitter } from "./updates.js";
 
 const FALLBACK_WINDOW = 200_000;
 const THRESHOLD = 0.8;
+/* A summary is a page, not a transcript — and an uncapped summarizer pointed
+   at a near-full window can run away on the very request meant to shrink it. */
+const MAX_SUMMARY_TOKENS = 8_192;
 
 const SUMMARY_PROMPT =
   "Summarize this conversation so it can continue in a fresh context. Keep: the user's goal and constraints, decisions made, files touched and how, current state of the work, and what remains. Be specific about paths and names. Write the summary and nothing else.";
@@ -43,6 +46,7 @@ export async function compact(
       system: "You summarize agent coding sessions faithfully and concisely.",
       messages: [...session.messages, { role: "user", content: SUMMARY_PROMPT }],
       abortSignal: signal,
+      maxOutputTokens: MAX_SUMMARY_TOKENS,
     });
     let summary = "";
     for await (const text of result.textStream) {
@@ -53,6 +57,9 @@ export async function compact(
         content: { type: "text", text },
       });
     }
+    /* An empty summary is a failed compaction, not a licence to wipe the
+       history — replacing the messages with it would lose the session. */
+    if (!summary.trim()) throw new Error("summarizer returned an empty summary");
     const replacement: ModelMessage = {
       role: "user",
       content: `Summary of the conversation so far (earlier messages were compacted):\n\n${summary}`,
@@ -68,6 +75,8 @@ export async function compact(
       status: "failed",
       error: (err as Error).message,
     });
+    /* Rethrown for the caller to triage: the turn proceeds uncompacted unless
+       the failure was its own abort. */
     throw err;
   }
 }

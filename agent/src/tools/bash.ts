@@ -57,12 +57,25 @@ function runCommand(
       cwd: rt.session.cwd,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: true, // own process group, so the kill below reaches backgrounded grandchildren
     });
 
     let output = "";
     let truncated = false;
     let pendingDelta = "";
+    let deltaTruncated = false;
     let deltaTimer: NodeJS.Timeout | null = null;
+
+    /* Killing `child` alone reaps only `bash -c`; anything it backgrounded
+       survives. Signal the whole group, guarding the race where it exited. */
+    const killTree = () => {
+      if (!child.pid) return;
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        // group already gone
+      }
+    };
 
     /* Codex-style live output: the content block is the tool result, the
        stream is `_meta.terminal_output_delta` on interim updates, which the
@@ -89,19 +102,26 @@ function runCommand(
         }
       } else truncated = true;
       pendingDelta += text;
+      if (pendingDelta.length > OUTPUT_LIMIT) {
+        // keep the tail — the newest bytes are the ones a live view is watching
+        pendingDelta = pendingDelta.slice(-OUTPUT_LIMIT);
+        if (!deltaTruncated) {
+          deltaTruncated = true;
+          pendingDelta = `[stream truncated]\n${pendingDelta}`;
+        }
+      }
       deltaTimer ??= setTimeout(flushDelta, DELTA_THROTTLE_MS);
     };
     child.stdout.on("data", onChunk);
     child.stderr.on("data", onChunk);
 
-    const killTimer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
     let timedOut = false;
-    killTimer.unref();
-    const timeoutMark = setTimeout(() => {
+    const killTimer = setTimeout(() => {
       timedOut = true;
+      killTree();
     }, timeoutMs);
-    timeoutMark.unref();
-    const onAbort = () => child.kill("SIGKILL");
+    killTimer.unref();
+    const onAbort = () => killTree();
     abortSignal?.addEventListener("abort", onAbort, { once: true });
 
     child.on("error", (err) => {
@@ -120,7 +140,6 @@ function runCommand(
 
     function cleanup() {
       clearTimeout(killTimer);
-      clearTimeout(timeoutMark);
       if (deltaTimer) clearTimeout(deltaTimer);
       flushDelta();
       abortSignal?.removeEventListener("abort", onAbort);

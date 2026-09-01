@@ -88,12 +88,3 @@ function prune(store: Store): Store {
   }
   return store
 }
-
-/** Every path with unsaved work, for the current server. Used to warn before
-    the tab closes. */
-export function dirtyPaths(): string[] {
-  const prefix = `${loadSettings()?.id ?? "none"}:`
-  return Object.keys(read())
-    .filter((key) => key.startsWith(prefix))
-    .map((key) => key.slice(prefix.length))
-}

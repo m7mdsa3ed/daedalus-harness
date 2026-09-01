@@ -18,7 +18,7 @@ import { optionKey, optionsForModel, useAgentOptions } from "@/lib/agent-options
 import { reportError } from "@/lib/errors"
 import { currentChoiceLabel, partitionSessionOptions } from "@/lib/session-options"
 import { profileSupports } from "@/lib/settings"
-import { useStore, type ThreadState } from "@/lib/store"
+import { useSessionMeta, useStoreSelect, type ThreadState } from "@/lib/store"
 
 /** Sentinel for "whatever the profile says", which is not itself a model id. */
 const DEFAULT_CHOICE = "__default__"
@@ -57,16 +57,22 @@ export function SessionConfigPopover({
   actions: Actions
   thread: ThreadState
 }) {
-  const { state } = useStore()
   const confirm = useConfirm()
-  const meta = state.sessions.find((s) => s.id === sessionId)
-  const profile = state.profiles.find((p) => p.id === meta?.profileId)
+  /* This popover lives in the composer row of a live transcript, so it reads
+     its own session row and the three catalogs it lists — never the whole
+     state, which would redraw the menu on every token of every thread. Each
+     catalog is replaced only by its own action. */
+  const meta = useSessionMeta(sessionId)
+  const profiles = useStoreSelect((state) => state.profiles)
+  const agents = useStoreSelect((state) => state.agents)
+  const personas = useStoreSelect((state) => state.personas)
+  const profile = profiles.find((p) => p.id === meta?.profileId)
   // The thread's agent, not the profile's: a profile may serve several.
   const agentId = meta?.agentId ?? ""
-  const agent = state.agents.find((a) => a.id === agentId)
+  const agent = agents.find((a) => a.id === agentId)
   /* The profiles this thread could move to: every one configured for its
      agent. Changing profile is new credentials, never a new runtime. */
-  const agentProfiles = state.profiles.filter((p) => profileSupports(p, agentId))
+  const agentProfiles = profiles.filter((p) => profileSupports(p, agentId))
   // Called before the early return below: hooks cannot be conditional.
   // Sibling profiles serving the same agent stand in while this one has no
   // remembered set — the profile owns only model and effort, so the rest of
@@ -133,7 +139,7 @@ export function SessionConfigPopover({
       ? currentChoiceLabel(liveEffort)
       : null
 
-  const persona = state.personas.find((p) => p.id === meta.personaId)
+  const persona = personas.find((p) => p.id === meta.personaId)
 
   /* The same settings as one string, for the collapsed trigger's tooltip and
      its accessible name. */
@@ -178,7 +184,7 @@ export function SessionConfigPopover({
      different credential and a different catalog, and the model you are on does
      not carry over to it. That is worth confirming whatever it costs. */
   const changeProfile = async (profileId: string) => {
-    const next = state.profiles.find((p) => p.id === profileId)
+    const next = profiles.find((p) => p.id === profileId)
     const restarts = !liveReconfig || !profile.baseUrl
     if (
       !(await confirm({
@@ -203,7 +209,7 @@ export function SessionConfigPopover({
      What the confirmation is really for is the turn — the conversation comes
      back, the turn in flight does not. */
   const changePersona = async (personaId: string) => {
-    const next = state.personas.find((p) => p.id === personaId)
+    const next = personas.find((p) => p.id === personaId)
     if (
       !(await confirm({
         title: next ? `Work this thread as "${next.name}"?` : "Drop this thread's persona?",
@@ -257,13 +263,13 @@ export function SessionConfigPopover({
           {/* First, because it is the one row here that is about the work
               rather than about the machinery — and because it is the only one
               whose choices do not depend on the profile below it. */}
-          {state.personas.length > 0 && (
+          {personas.length > 0 && (
             <MenuRow
               label="Persona"
               value={meta.personaId || NO_PERSONA}
               choices={[
                 { value: NO_PERSONA, name: "None" },
-                ...state.personas.map((p) => ({ value: p.id, name: p.name })),
+                ...personas.map((p) => ({ value: p.id, name: p.name })),
               ]}
               onSelect={(value) => void changePersona(value === NO_PERSONA ? "" : value)}
             />

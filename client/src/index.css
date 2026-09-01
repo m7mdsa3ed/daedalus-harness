@@ -775,53 +775,45 @@ html[data-desktop="true"]:not([data-desktop-platform="darwin"]) [data-drag-regio
 }
 
 /* A transcript item entering the list — a new row, a streamed tool step, a
-   workflow step starting. It *slides* in: the wrapper is a one-row grid whose
-   track animates 0fr → 1fr, so everything below moves down smoothly instead of
-   jumping a row-height in one frame, with a fade riding on top. Grid tracks
-   rather than `height`, because the content's height is never known up front
-   and `0fr → 1fr` interpolates without measuring. Run once per DOM mount
-   (items are keyed by id, so a content update reuses the node and this does
-   not replay on every token).
-   Fill-mode is `backwards`, not `both`: when the animation ends every keyframe
-   property — the collapsed track, and the `overflow: hidden` that makes it
-   actually hide its content — reverts to the stylesheet, so a settled item
-   clips nothing (step rows hang hover washes past the wrapper's edge) and the
-   grid costs nothing. One child per wrapper: a second would land in an
-   implicit row the animated track cannot reach. */
+   workflow step starting. It *rises* in: a fade with a small upward translate,
+   transform and opacity and nothing else. That restraint is the point
+   (DESIGN.md: no layout animation while streaming): the row occupies its final
+   space from the first frame, so `scrollHeight` — the thing the autoscroll pin
+   chases (hooks/use-follow-stream) — is exact the moment the row mounts rather
+   than a moving target for the length of the entrance, and a row inserted
+   mid-list (a step joining a run's rail) does not spend its entrance easing
+   the rows under it into a shift they took in one frame anyway. The accepted
+   cost of not animating the height: what sits below a mid-list insertion moves
+   by one row-height in a single frame — invisible in practice, because rows
+   stream in at the tail, where the only thing below a new row is the working
+   line. Run once per DOM mount (items are keyed by id, so a content update
+   reuses the node and this does not replay on every token).
+   Fill-mode is `backwards`: the from-state applies before the animation
+   starts, and when it ends every keyframe property reverts to the stylesheet
+   — no lingering transform, so a settled item clips nothing (step rows hang
+   hover washes past the wrapper's edge) and costs nothing. The wrapper is a
+   plain div: an earlier version was a grid that animated its row track, and
+   the grid kept deciding the *width* of rows too (an implicit column sizes to
+   min-content, which un-truncated long commands) — block layout cannot. */
 @keyframes harness-item-in {
-  from { grid-template-rows: 0fr; opacity: 0; overflow: hidden; }
-  to { grid-template-rows: 1fr; opacity: 1; overflow: hidden; }
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 .harness-item-in {
-  display: grid;
-  /* The column is declared for the same reason `> * { min-height: 0 }` is
-     below, in the other axis — and it is the one that was missing. An
-     *implicit* grid column is `auto`, whose minimum is the item's min-content:
-     a step row holding a command with no breakable point in it (a long
-     one-liner, a base64 payload, a path) sized this track to the whole
-     command, so the row's `w-[calc(100%+0.75rem)]` resolved against a track
-     wider than the transcript and the `truncate` on its title had nothing left
-     to clip against. The collapsed header then printed the entire command and
-     the thread ran off the side of the panel — a wrapper that exists only to
-     animate a height was deciding the width of every row in the transcript.
-     minmax(0,1fr) pins it to the column the transcript is laid out in and
-     hands the overflow back to the row, which already truncates it. */
-  grid-template-columns: minmax(0, 1fr);
-  animation: harness-item-in 300ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
-}
-.harness-item-in > * {
-  min-height: 0;
+  animation: harness-item-in 480ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 
 /* The entrance for content whose *space* already exists — a workflow step
-   coming alive in the slot its pending row held. Sliding there would collapse
-   and regrow a table that never changed height, so it only fades. */
+   coming alive in the slot its pending row held. Rising there would move a
+   table that never changed height, so it only fades, a touch quicker than
+   the rise it shares the curve with: with no distance to travel the fade
+   finishes reading at the same moment. */
 @keyframes harness-fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 .harness-fade-in {
-  animation: harness-fade-in 260ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation: harness-fade-in 360ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 
 @media (prefers-reduced-motion: reduce) {

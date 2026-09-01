@@ -12,6 +12,7 @@ import {
 import { expandCommand } from "./commands.js";
 import { compact, needsCompaction, windowSize } from "./compaction.js";
 import type { AgentEnv } from "./env.js";
+import { findInstructionFiles, readInstructions } from "./instructions.js";
 import type { SessionStore } from "./persistence.js";
 import type { ModelFactory } from "./provider.js";
 import type { Session } from "./session.js";
@@ -65,22 +66,32 @@ export async function handlePrompt(
   if (!session.title) session.title = firstLine(text);
   deps.store.touch(session.id, session.title ?? undefined);
 
-  const userMessage: ModelMessage = { role: "user", content: expanded };
-  session.messages.push(userMessage);
-  deps.store.appendMessages(session.id, [userMessage]);
-  /* Journal the user's words for load replay; live, the harness draws the
-     user side itself, so this is persist-only. */
-  emit.record({
-    sessionUpdate: "user_message_chunk",
-    content: { type: "text", text },
-    messageId: randomUUID(),
-  });
-
   try {
+    /* Compact before the prompt that tripped the threshold joins the history:
+       the summarizer must not eat the message the user just typed, and the
+       JSONL compact barrier has to land before it so a load replay keeps it. */
     if (needsCompaction(session, deps.env)) {
       const announce = Boolean(deps.clientCaps()?.session?.compaction);
-      await compact(session, deps.env, deps.makeModel, emit, announce, abort.signal);
+      try {
+        await compact(session, deps.env, deps.makeModel, emit, announce, abort.signal);
+      } catch (err) {
+        /* A failed summarizer degrades to running the turn uncompacted — the
+           'failed' compaction_update already said so. A user abort is not a
+           summarizer failure and still ends the turn. */
+        if (abort.signal.aborted) throw err;
+      }
     }
+
+    const userMessage: ModelMessage = { role: "user", content: expanded };
+    session.messages.push(userMessage);
+    deps.store.appendMessages(session.id, [userMessage]);
+    /* Journal the user's words for load replay; live, the harness draws the
+       user side itself, so this is persist-only. */
+    emit.record({
+      sessionUpdate: "user_message_chunk",
+      content: { type: "text", text },
+      messageId: randomUUID(),
+    });
 
     const rt: ToolRuntime = {
       ctx,
@@ -429,6 +440,27 @@ export function systemPrompt(
   if (session.mode === "plan") {
     parts.push(
       "You are in PLAN MODE: everything that writes is disabled. Explore with the read-only tools, then present a concrete implementation plan and ask the user to approve it before any change is made.",
+    );
+  }
+  /* Before the persona, because a persona is the choice made for *this*
+     thread and the repo's rules are the ground it is made on — later text is
+     what a model treats as more specific.
+
+     The walk runs every turn, not once at `session/new`. It is ~70 `statSync`
+     calls against a turn that is about to spend seconds in a model, and
+     resolving it once meant a `CLAUDE.md` that did not exist when the thread
+     opened was invisible until a respawn — which is precisely the file an
+     agent asked to "write down how this repo works" has just created, and
+     precisely the moment it should start applying. */
+  const instructions = session.projectInstructions
+    ? readInstructions(findInstructionFiles(session.cwd, session.instructionsHome))
+    : [];
+  if (instructions.length) {
+    parts.push(
+      [
+        "Standing instructions for this workspace, from the files below. Follow them as though the user had written them here; anything the user says directly in this conversation wins over them.",
+        ...instructions,
+      ].join("\n\n"),
     );
   }
   if (session.personaText) parts.push(session.personaText.trim());

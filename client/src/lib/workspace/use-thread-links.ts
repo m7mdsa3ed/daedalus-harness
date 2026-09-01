@@ -11,7 +11,7 @@
 import * as React from "react"
 
 import { useDock } from "@/components/workspace/dock"
-import { useStore } from "@/lib/store"
+import { useSessionMeta, useStoreSelect } from "@/lib/store"
 import { markReveal } from "@/lib/workspace/reveal"
 import { toRelative, type ThreadLinks } from "@/lib/workspace/thread-links"
 
@@ -20,11 +20,15 @@ import { toRelative, type ThreadLinks } from "@/lib/workspace/thread-links"
 const SOURCES_VIEW_ID = "sources"
 
 export function useThreadLinksFor(sessionId: string): ThreadLinks | null {
-  const { state } = useStore()
   const dock = useDock()
-  const meta = state.sessions.find((session) => session.id === sessionId)
+  const meta = useSessionMeta(sessionId)
   const projectId = meta?.projectId
-  const cwd = state.projects.find((project) => project.id === projectId)?.cwd
+  /* The cwd string itself, not the project row: a string is compared by value,
+     so this is quiet even across a `projects` refresh that rebuilt the rows
+     without changing any directory. */
+  const cwd = useStoreSelect((state) =>
+    state.projects.find((project) => project.id === projectId)?.cwd
+  )
 
   return React.useMemo<ThreadLinks | null>(() => {
     if (!projectId) return null

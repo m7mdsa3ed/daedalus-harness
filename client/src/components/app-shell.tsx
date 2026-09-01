@@ -48,11 +48,10 @@ import { useShortcut } from "@/hooks/use-hotkey"
 import { KEYS } from "@/lib/shortcuts"
 import { defaultsForProfile, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import { type ServerSettings } from "@/lib/settings"
-import { useStore } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { ProjectFormPage, ProjectsPage } from "@/components/settings/projects"
 import { ProjectPage } from "@/components/project-page"
-import { StudioPage } from "@/components/studio-page"
 import {
   SETTINGS_NAV_GROUPS,
   SETTINGS_SECTIONS,
@@ -72,7 +71,6 @@ import { PersonaFormPage, PersonasPage } from "@/components/settings/personas"
 import { ProfileFormPage, ProfilesPage } from "@/components/settings/profiles"
 import { AgentsPage } from "@/components/settings/agents"
 import { QuotaPage } from "@/components/settings/quota"
-import { TemplateFormPage, TemplatesPage } from "@/components/settings/templates"
 import { WebSearchPage } from "@/components/settings/web-search"
 import { BackupPage } from "@/components/settings/backup"
 import { ThemeEditorPage } from "@/components/theme-builder"
@@ -128,7 +126,13 @@ export function AppShell({
   loading: boolean
   onAddServer: () => void
 }) {
-  const { state } = useStore()
+  /* Three slices, not the state: this shell wraps every panel, so on the wide
+     hook it re-rendered — and re-ran the layout effects below — on every
+     streamed token of every open thread. None of the three is touched by an
+     `update`; `sessions` moves once per turn, at most. */
+  const sessions = useStoreSelect((state) => state.sessions)
+  const projects = useStoreSelect((state) => state.projects)
+  const profiles = useStoreSelect((state) => state.profiles)
   const location = useLocation()
   const navigate = useNavigate()
   // Sidebar width overrides the shadcn default via the same CSS var it reads.
@@ -152,8 +156,8 @@ export function AppShell({
   // Leaving settings returns to the thread it was opened from.
   const lastThread = React.useRef<string | null>(null)
   if (sessionId) lastThread.current = sessionId
-  const active = state.sessions.find((s) => s.id === sessionId)
-  const ready = !loading && state.projects.length > 0 && state.profiles.length > 0
+  const active = sessions.find((s) => s.id === sessionId)
+  const ready = !loading && projects.length > 0 && profiles.length > 0
   const dock = useWorkspaceDock()
   const routeSessionRef = React.useRef(sessionId)
   routeSessionRef.current = sessionId
@@ -166,7 +170,7 @@ export function AppShell({
   React.useEffect(() => {
     if (!sessionId) return
     if (location.search) void navigate(threadPath(sessionId), { replace: true }) // legacy ?session=
-    const meta = state.sessions.find((s) => s.id === sessionId)
+    const meta = sessions.find((s) => s.id === sessionId)
     if (meta) {
       dock.openChat(sessionId, { newTab: consumeNewTab() })
       return
@@ -175,11 +179,11 @@ export function AppShell({
        (they only ever lived in the tab that made them) or one since purged.
        Either way an empty thread on that id beats a dead end — and if it is
        sent, the id in the URL bar is the id the server gets. Gated on `ready`
-       so this cannot fire before bootstrap has filled state.sessions in. */
+       so this cannot fire before bootstrap has filled sessions in. */
     if (!ready) return
     const defaults = loadThreadDefaults()
-    const project = state.projects.find((p) => p.id === defaults.projectId) ?? state.projects[0]
-    const start = resolveThreadStart(defaults, state.profiles)
+    const project = projects.find((p) => p.id === defaults.projectId) ?? projects[0]
+    const start = resolveThreadStart(defaults, profiles)
     if (!project || !start) return
     actions.newDraftThread({
       project,
@@ -187,15 +191,15 @@ export function AppShell({
       ...defaultsForProfile(defaults, start.profile.id),
       id: sessionId,
     })
-  }, [sessionId, state.sessions, state.projects, state.profiles, ready, actions, dock])
+  }, [sessionId, sessions, projects, profiles, ready, actions, dock])
 
   React.useEffect(() => {
     if (loading) return
     dock.prunePanels({
-      sessions: state.sessions.map((session) => session.id),
-      projects: state.projects.map((project) => project.id),
+      sessions: sessions.map((session) => session.id),
+      projects: projects.map((project) => project.id),
     })
-  }, [loading, state.sessions, state.projects, dock])
+  }, [loading, sessions, projects, dock])
 
   const handleDockReady = React.useCallback(
     (api: DockviewApi) => {
@@ -230,10 +234,10 @@ export function AppShell({
     if (!ready) return openSettings("projects")
     const defaults = loadThreadDefaults()
     const project =
-      (opts.projectId ? state.projects.find((p) => p.id === opts.projectId) : undefined) ??
-      state.projects.find((p) => p.id === defaults.projectId) ??
-      state.projects[0]
-    const start = resolveThreadStart(defaults, state.profiles)
+      (opts.projectId ? projects.find((p) => p.id === opts.projectId) : undefined) ??
+      projects.find((p) => p.id === defaults.projectId) ??
+      projects[0]
+    const start = resolveThreadStart(defaults, profiles)
     if (!project || !start) return openSettings("projects")
     const id = actions.newDraftThread({
       project,
@@ -514,7 +518,7 @@ export function AppShell({
                         : inNotifications
                           ? "Notifications"
                         : inProject
-                          ? (state.projects.find(
+                          ? (projects.find(
                               (p) => p.id === location.pathname.split("/")[2]
                             )?.name ?? "Project")
                           : (active?.title ?? "Daedalus")}
@@ -541,10 +545,10 @@ export function AppShell({
                       className="rounded-sm underline-offset-2 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       onClick={() => void navigate(projectPath(active.projectId))}
                     >
-                      {state.projects.find((p) => p.id === active.projectId)?.name}
+                      {projects.find((p) => p.id === active.projectId)?.name}
                     </button>
                     {" · "}
-                    {state.profiles.find((p) => p.id === active.profileId)?.name}
+                    {profiles.find((p) => p.id === active.profileId)?.name}
                   </span>
                 )
               )}
@@ -573,9 +577,6 @@ export function AppShell({
                   session={active}
                   onNewTab={newThreadInTab}
                   onOpenPanel={openWorkspacePanel}
-                  onOpenInNewTab={() => {
-                    if (active) dock.openChat(active.id, { newTab: true })
-                  }}
                 />
               )}
             </div>
@@ -602,10 +603,6 @@ export function AppShell({
             <Route path="notifications" element={<NotificationsPage />} />
             <Route path="projects" element={<ProjectsPage />} />
             <Route path="projects/:entryId" element={<ProjectFormPage />} />
-            {/* No import route, like personas: nothing in the agents' own
-                configs is a project template to import. */}
-            <Route path="templates" element={<TemplatesPage />} />
-            <Route path="templates/:entryId" element={<TemplateFormPage />} />
             <Route path="mcp" element={<McpPage />} />
             <Route path="mcp/import" element={<McpImportPage />} />
             <Route path="mcp/:entryId" element={<McpFormPage />} />
@@ -682,11 +679,6 @@ export function AppShell({
               Outside /settings on purpose — settings holds the *form*, and a
               workspace with a history is not a settings screen. */}
           <Route path="/projects/:projectId" element={<ProjectPage actions={actions} />} />
-          {/* The Studio: the gallery, and the dialog that turns a template into
-              a directory, a project row and a prefilled draft. Beside the
-              project page for the same reason — it is a place, not a form, and
-              Settings › Templates keeps the editing half. */}
-          <Route path="/studio" element={<StudioPage actions={actions} />} />
           <Route
             path="/board"
             element={
@@ -778,19 +770,20 @@ function EmptyState({
   onNewThread: () => void
   onOpenSettings: (section?: SettingsSectionId) => void
 }) {
-  const { state } = useStore()
+  const projects = useStoreSelect((state) => state.projects)
+  const profiles = useStoreSelect((state) => state.profiles)
   const steps = [
     {
       id: "projects" as const,
       title: "Projects",
       description: "Where a thread runs: directory, MCPs, skills.",
-      count: state.projects.length,
+      count: projects.length,
     },
     {
       id: "profiles" as const,
       title: "Profiles",
       description: "What a thread runs: agent runtime, credentials, models.",
-      count: state.profiles.length,
+      count: profiles.length,
     },
   ]
 

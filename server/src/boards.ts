@@ -17,6 +17,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { boardStatuses, boards, db, tasks as tasksTable } from "./db/index.js";
+import { HttpError } from "./http-error.js";
 
 export type Board = typeof boards.$inferSelect;
 export type BoardStatus = typeof boardStatuses.$inferSelect;
@@ -81,12 +82,10 @@ export type UpdateStatusInput = z.infer<typeof UpdateStatusSchema>;
 
 /** Raised for the cases a caller can fix by asking differently — the routes
     turn these into a 400/404 rather than a 500. */
-export class BoardError extends Error {
-  status: number;
+export class BoardError extends HttpError {
   constructor(message: string, status = 400) {
-    super(message);
+    super(message, status);
     this.name = "BoardError";
-    this.status = status;
   }
 }
 

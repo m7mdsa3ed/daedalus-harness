@@ -10,11 +10,11 @@
 // Run: pnpm test:registry
 import assert from "node:assert/strict";
 import { eq } from "drizzle-orm";
-import { agents as agentsTable, db } from "../src/db/index.js";
+import { agentOptions as agentOptionsTable, agents as agentsTable, db } from "../src/db/index.js";
 import type { Profile } from "../src/profiles.js";
 import type { Project } from "../src/projects.js";
 import { configureGatewayShim } from "../src/gateway-shim.js";
-import { getAgent, resolveSpawn, seedAgents } from "../src/registry.js";
+import { getAgent, isBuiltInAgent, resetAgent, resolveSpawn, seedAgents, updateAgent } from "../src/registry.js";
 import type { PersonaSpawn } from "../src/personas.js";
 
 let passed = 0;
@@ -451,6 +451,73 @@ test("the Daedalus agent's spawn resolves the entry path and prunes like the res
   const bare = resolveSpawn(daedalus, virtualProfile, project);
   assert.equal(bare.env.DAEDALUS_AGENT_BASE_URL, undefined);
   assert.equal(bare.env.DAEDALUS_AGENT_API_KEY, undefined);
+});
+
+test("an agent's user half is editable, and the probe cache goes with it", () => {
+  resetAgents([]);
+  seedAgents();
+  db.insert(agentOptionsTable)
+    .values([
+      { key: "p1:daedalus:/tmp/x", options: {}, probedAt: 1 },
+      { key: "p1:codex:/tmp/x", options: {}, probedAt: 1 },
+    ])
+    .run();
+
+  const updated = updateAgent("daedalus", {
+    name: "My Agent",
+    command: "node",
+    args: ["/opt/agent/index.js"],
+    env: { DAEDALUS_AGENT_MODEL: "{model}", MY_OWN: "keep" },
+  });
+  assert.equal(updated?.name, "My Agent");
+  assert.deepEqual(updated?.args, ["/opt/agent/index.js"]);
+  assert.equal(updated?.env.MY_OWN, "keep");
+  // The declarative half is the seed's and survives an edit untouched.
+  assert.equal(updated?.liveConfig, "acp");
+  assert.equal(updated?.personaVia, "env");
+
+  // Its own probe answers are gone; another agent's are not.
+  const keys = db.select().from(agentOptionsTable).all().map((r) => r.key);
+  assert.deepEqual(keys, ["p1:codex:/tmp/x"]);
+
+  assert.equal(updateAgent("no-such-agent", { name: "x", command: "x", args: [], env: {} }), undefined);
+});
+
+test("a seed release never takes an edited agent back", () => {
+  resetAgents([]);
+  seedAgents();
+  updateAgent("daedalus", { name: "Mine", command: "bun", args: ["x.js"], env: { A: "1" } });
+  seedAgents();
+  const after = getAgent("daedalus");
+  assert.equal(after?.name, "Mine");
+  assert.equal(after?.command, "bun");
+  assert.deepEqual(after?.env, { A: "1" });
+});
+
+test("reset puts a built-in back, and only a built-in has one", () => {
+  resetAgents([]);
+  seedAgents();
+  const original = getAgent("daedalus");
+  updateAgent("daedalus", { name: "Mine", command: "bun", args: ["x.js"], env: { A: "1" } });
+  const restored = resetAgent("daedalus");
+  assert.equal(restored?.name, original?.name);
+  assert.equal(restored?.command, "node");
+  assert.deepEqual(restored?.args, original?.args);
+  assert.deepEqual(restored?.env, original?.env);
+  assert.equal(restored?.liveConfig, "acp");
+  /* Every nullable declarative column is named in the write, not spread from a
+     seed that may omit it — drizzle drops an `undefined` from a `.set()`, so a
+     spread would leave whatever the row held. */
+  assert.deepEqual(restored?.spawnCategories, original?.spawnCategories ?? null);
+  assert.deepEqual(restored?.quotaProbe, original?.quotaProbe ?? null);
+  assert.equal(restored?.personaVia, original?.personaVia ?? null);
+
+  assert.ok(isBuiltInAgent("daedalus"));
+  assert.ok(!isBuiltInAgent("something-someone-added"));
+  // Nothing to reset to, and nothing to reset.
+  assert.equal(resetAgent("something-someone-added"), undefined);
+  resetAgents([]);
+  assert.equal(resetAgent("daedalus"), undefined);
 });
 
 test("seeding twice changes nothing", () => {

@@ -26,26 +26,30 @@ import {
   createReadStream,
   existsSync,
   mkdirSync,
-  readdirSync,
   realpathSync,
   renameSync,
   rmSync,
   statSync,
   writeFileSync,
+  type Dirent,
   type Stats,
 } from "node:fs";
-import { readFile as readFileAsync } from "node:fs/promises";
-import { readFile as readFileBufferAsync } from "node:fs/promises";
+import {
+  readFile as readFileAsync,
+  readFile as readFileBufferAsync,
+  readdir as readdirAsync,
+  stat as statAsync,
+} from "node:fs/promises";
 import { dirname, join, normalize, relative, resolve, sep } from "node:path";
 
 import { getProject } from "./projects.js";
+import { HttpError } from "./http-error.js";
 
 /** A refusal with the HTTP status it deserves — the route maps it straight. */
-export class WorkspaceError extends Error {
-  status: 400 | 403 | 404 | 409 | 413;
+export class WorkspaceError extends HttpError {
+  declare status: 400 | 403 | 404 | 409 | 413;
   constructor(message: string, status: 400 | 403 | 404 | 409 | 413) {
-    super(message);
-    this.status = status;
+    super(message, status);
   }
 }
 
@@ -182,6 +186,38 @@ function statOf(path: string): Stats {
   }
 }
 
+async function statOfAsync(path: string): Promise<Stats> {
+  try {
+    return await statAsync(path);
+  } catch {
+    throw fail(404, "no such file or directory");
+  }
+}
+
+/** How many filesystem calls a listing or a walk keeps in flight. Enough to
+    hide latency, few enough that one broad search does not monopolise the
+    thread pool the rest of the process reads files on. */
+const FS_CONCURRENCY = 16;
+
+/** `fn` over `items`, at most `limit` in flight, results in item order. */
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) {
+        const i = next++;
+        results[i] = await fn(items[i]);
+      }
+    }),
+  );
+  return results;
+}
+
 /**
  * `mtimeNs-size`. Changes on every write that matters, which is what it is for
  * — catching "somebody else changed this while you were editing". Not a hash:
@@ -215,22 +251,22 @@ export interface ListOptions {
   ignores?: string[];
 }
 
-export function listDir(
+export async function listDir(
   projectId: string,
   path: string | undefined,
   options: ListOptions = {},
-): WorkspaceListing {
+): Promise<WorkspaceListing> {
   const root = projectRoot(projectId);
   const dir = resolveInProject(root, path);
-  const stat = statOf(dir);
+  const stat = await statOfAsync(dir);
   if (!stat.isDirectory()) throw fail(400, "not a directory");
 
   const ignores = options.ignores ?? DEFAULT_IGNORES;
-  const entries: WorkspaceEntry[] = [];
+  const kept: { dirent: Dirent; hidden: boolean; ignored: boolean }[] = [];
   let seen = 0;
   let truncated = false;
 
-  for (const dirent of readdirSync(dir, { withFileTypes: true })) {
+  for (const dirent of await readdirAsync(dir, { withFileTypes: true })) {
     const hidden = isHidden(dirent.name);
     const ignored = isIgnored(dirent.name, ignores);
     if (hidden && !options.hidden) continue;
@@ -241,7 +277,10 @@ export function listDir(
       truncated = true;
       continue;
     }
+    kept.push({ dirent, hidden, ignored });
+  }
 
+  const entries = await mapLimit(kept, FS_CONCURRENCY, async ({ dirent, hidden, ignored }) => {
     const absolute = join(dir, dirent.name);
     const link = dirent.isSymbolicLink();
     let type: "dir" | "file";
@@ -252,7 +291,7 @@ export function listDir(
          hidden. It cannot be opened; that refusal belongs to the read, where
          the reason can be given. */
       try {
-        const resolved = statSync(absolute);
+        const resolved = await statAsync(absolute);
         type = resolved.isDirectory() ? "dir" : "file";
         size = resolved.isFile() ? resolved.size : undefined;
       } catch {
@@ -262,14 +301,14 @@ export function listDir(
       type = dirent.isDirectory() ? "dir" : "file";
       if (dirent.isFile()) {
         try {
-          size = statSync(absolute).size;
+          size = (await statAsync(absolute)).size;
         } catch {
           /* vanished between readdir and stat — report it without a size */
         }
       }
     }
 
-    entries.push({
+    return {
       name: dirent.name,
       path: relativePath(root, absolute),
       type,
@@ -277,8 +316,8 @@ export function listDir(
       ...(link ? { link: true } : {}),
       ...(ignored ? { ignored: true } : {}),
       ...(hidden ? { hidden: true } : {}),
-    });
-  }
+    } satisfies WorkspaceEntry;
+  });
 
   entries.sort((a, b) =>
     a.type === b.type ? a.name.localeCompare(b.name) : a.type === "dir" ? -1 : 1,
@@ -351,17 +390,17 @@ function fuzzyScore(query: string, path: string): number | null {
  * hidden ones only when the query asks for them by typing the dot, which is the
  * same bargain `listDir` makes with its flags.
  */
-export function searchEntries(
+export async function searchEntries(
   projectId: string,
   rawQuery: string | undefined,
   options: { limit?: number } = {},
-): WorkspaceSearch {
+): Promise<WorkspaceSearch> {
   const root = projectRoot(projectId);
   const query = (rawQuery ?? "").trim();
   const limit = Math.min(Math.max(options.limit ?? SEARCH_DEFAULT_LIMIT, 1), SEARCH_MAX_LIMIT);
 
   if (query === "") {
-    const listing = listDir(projectId, "", {});
+    const listing = await listDir(projectId, "", {});
     return {
       entries: listing.entries.slice(0, limit),
       truncated: listing.truncated || listing.entries.length > limit,
@@ -375,36 +414,48 @@ export function searchEntries(
   let truncated = false;
 
   while (queue.length > 0 && !truncated) {
-    const dir = queue.shift() as string;
-    let dirents;
-    try {
-      dirents = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      // A directory that vanished or cannot be read is skipped, not fatal: a
-      // search is best-effort over a tree somebody else is editing.
-      continue;
-    }
-    for (const dirent of dirents) {
-      if (isIgnored(dirent.name, DEFAULT_IGNORES)) continue;
-      if (isHidden(dirent.name) && !wantHidden) continue;
-      if (++visited > SEARCH_VISIT_LIMIT) {
-        truncated = true;
-        break;
+    /* One wave: readdir the front of the queue concurrently, then fold the
+       answers back in queue order — that keeps the walk breadth-first and the
+       visit budget deterministic, so a truncated search still keeps exactly
+       the shallow paths the sequential walk kept. */
+    const wave = queue.splice(0, FS_CONCURRENCY);
+    const listings = await Promise.all(
+      wave.map(async (dir) => {
+        try {
+          return await readdirAsync(dir, { withFileTypes: true });
+        } catch {
+          // A directory that vanished or cannot be read is skipped, not fatal:
+          // a search is best-effort over a tree somebody else is editing.
+          return null;
+        }
+      }),
+    );
+    for (let w = 0; w < wave.length && !truncated; w++) {
+      const dirents = listings[w];
+      if (dirents === null) continue;
+      const dir = wave[w];
+      for (const dirent of dirents) {
+        if (isIgnored(dirent.name, DEFAULT_IGNORES)) continue;
+        if (isHidden(dirent.name) && !wantHidden) continue;
+        if (++visited > SEARCH_VISIT_LIMIT) {
+          truncated = true;
+          break;
+        }
+        const absolute = join(dir, dirent.name);
+        /* A symlink is listed as a file and never descended: following one is
+           how a walk finds a cycle, and its target may be outside the project —
+           which the read routes would refuse anyway. */
+        const link = dirent.isSymbolicLink();
+        const type: "dir" | "file" = !link && dirent.isDirectory() ? "dir" : "file";
+        const path = relativePath(root, absolute);
+        const score = fuzzyScore(query, path);
+        if (score !== null)
+          scored.push({
+            entry: { name: dirent.name, path, type, ...(link ? { link: true } : {}) },
+            score,
+          });
+        if (type === "dir") queue.push(absolute);
       }
-      const absolute = join(dir, dirent.name);
-      /* A symlink is listed as a file and never descended: following one is how
-         a walk finds a cycle, and its target may be outside the project — which
-         the read routes would refuse anyway. */
-      const link = dirent.isSymbolicLink();
-      const type: "dir" | "file" = !link && dirent.isDirectory() ? "dir" : "file";
-      const path = relativePath(root, absolute);
-      const score = fuzzyScore(query, path);
-      if (score !== null)
-        scored.push({
-          entry: { name: dirent.name, path, type, ...(link ? { link: true } : {}) },
-          score,
-        });
-      if (type === "dir") queue.push(absolute);
     }
   }
 
@@ -439,7 +490,7 @@ async function looksBinary(path: string, size: number): Promise<boolean> {
 export async function statFile(projectId: string, path: string): Promise<WorkspaceStat> {
   const root = projectRoot(projectId);
   const absolute = resolveInProject(root, path);
-  const stat = statOf(absolute);
+  const stat = await statOfAsync(absolute);
   const type = stat.isDirectory() ? "dir" : "file";
   return {
     path: relativePath(root, absolute),
@@ -461,7 +512,7 @@ export async function statFile(projectId: string, path: string): Promise<Workspa
 export async function readFile(projectId: string, path: string): Promise<WorkspaceFile> {
   const root = projectRoot(projectId);
   const absolute = resolveInProject(root, path);
-  const stat = statOf(absolute);
+  const stat = await statOfAsync(absolute);
   if (stat.isDirectory()) throw fail(400, "not a file");
 
   const info: WorkspaceStat = {
@@ -502,7 +553,7 @@ export async function readFileBytes(
 ): Promise<{ bytes: Buffer; contentType: string; path: string }> {
   const root = projectRoot(projectId);
   const absolute = resolveInProject(root, path);
-  const stat = statOf(absolute);
+  const stat = await statOfAsync(absolute);
   if (stat.isDirectory()) throw fail(400, "not a file");
   if (stat.size > MAX_READ_BYTES) throw fail(413, "file is too large to read");
 

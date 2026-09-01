@@ -32,6 +32,8 @@
     MessageScrollerContent) and write the rule in index.css. */
 import { createContext, useContext, useSyncExternalStore } from "react"
 
+import { createLocalStore } from "./local-store"
+
 export interface ViewOptions {
   /** Wall-clock time beside each message and step. */
   showTimestamps: boolean
@@ -126,63 +128,46 @@ function pick(raw: unknown): Partial<ViewOptions> {
   return out
 }
 
-function read(): Partial<ViewOptions> {
-  try {
-    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as unknown
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
-    const entries = Object.values(raw as Record<string, unknown>)
-    /* Pre-global shape: `{ [sessionId]: Partial<ViewOptions> }`. Fold every
-       thread's picks into the one set rather than dropping them — later keys
-       win — so upgrading keeps the switches the reader had chosen instead of
-       silently resetting them. Written back on the first commit. */
-    if (entries.some((value) => value && typeof value === "object"))
-      return entries.reduce<Partial<ViewOptions>>(
-        (acc, value) => ({ ...acc, ...pick(value) }),
-        {}
-      )
-    return pick(raw)
-  } catch {
-    return {}
-  }
+function parseStored(raw: unknown): Partial<ViewOptions> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
+  const entries = Object.values(raw as Record<string, unknown>)
+  /* Pre-global shape: `{ [sessionId]: Partial<ViewOptions> }`. Fold every
+     thread's picks into the one set rather than dropping them — later keys
+     win — so upgrading keeps the switches the reader had chosen instead of
+     silently resetting them. Written back on the first commit. */
+  if (entries.some((value) => value && typeof value === "object"))
+    return entries.reduce<Partial<ViewOptions>>(
+      (acc, value) => ({ ...acc, ...pick(value) }),
+      {}
+    )
+  return pick(raw)
 }
 
-const listeners = new Set<() => void>()
+const store = createLocalStore<Partial<ViewOptions>>(STORAGE_KEY, parseStored, {})
 
-/* The resolved object is memoised so useSyncExternalStore's snapshot is
-   referentially stable — returning a fresh object each call is an infinite
-   render loop, not a subtle inefficiency. */
-let stored = read()
-let resolved: ViewOptions = { ...VIEW_DEFAULTS, ...stored }
+/* The resolved object is memoised against the stored reference so
+   useSyncExternalStore's snapshot is referentially stable — returning a fresh
+   object each call is an infinite render loop, not a subtle inefficiency. */
+let lastStored = store.get()
+let resolved: ViewOptions = { ...VIEW_DEFAULTS, ...lastStored }
 
-function commit(next: Partial<ViewOptions>) {
-  stored = next
-  resolved = { ...VIEW_DEFAULTS, ...next }
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
-  } catch {
-    // A forgotten preference is not worth throwing out of a click handler.
+function resolvedNow(): ViewOptions {
+  const stored = store.get()
+  if (stored !== lastStored) {
+    lastStored = stored
+    resolved = { ...VIEW_DEFAULTS, ...stored }
   }
-  for (const listener of listeners) listener()
+  return resolved
 }
 
 export function setViewOption<K extends keyof ViewOptions>(key: K, value: ViewOptions[K]): void {
-  commit({ ...stored, [key]: value })
+  store.set({ ...store.get(), [key]: value })
 }
 
 export function resetViewOptions(): void {
-  commit({})
+  store.set({})
 }
 
 export function useViewOptions(): ViewOptions {
-  const snapshot = () => resolved
-  return useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener)
-      return () => {
-        listeners.delete(listener)
-      }
-    },
-    snapshot,
-    snapshot
-  )
+  return useSyncExternalStore(store.subscribe, resolvedNow, resolvedNow)
 }

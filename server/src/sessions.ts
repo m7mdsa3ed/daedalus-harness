@@ -21,6 +21,9 @@ import { WEB_SEARCH_SERVER_NAME, toMcpServerEnv } from "./websearch.js";
 import { pruneWebSearchUsage, recordWebSearchUsage } from "./websearch-usage.js";
 import { KNOWLEDGE_SERVER_NAME, toKnowledgeServerEnv } from "./knowledge-db.js";
 import { AcpBridge, spawnAgent, type BridgeHost } from "./acp-bridge.js";
+import { makeBridgeHost } from "./bridge-host.js";
+import { enrichError, pushStderr, resetStderr } from "./stderr-ring.js";
+import { SessionQueue } from "./session-queue.js";
 import type { AutonomyPolicy } from "./autonomy.js";
 import { WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
 import { deleteSearchIndex } from "./search.js";
@@ -35,15 +38,7 @@ import {
   type ThreadEvent,
   type WireError,
 } from "./protocol.js";
-import {
-  clearQueue,
-  combineQueued,
-  enqueue,
-  listQueue,
-  removeQueued,
-  removeQueuedMany,
-  updateQueued,
-} from "./queue.js";
+import { enqueue } from "./queue.js";
 
 /** What the first prompt's opening words are cut to when they become a title. */
 const TITLE_SNIFF_MAX = 60;
@@ -76,6 +71,28 @@ export interface Peer {
    * the replay, which is bounded by the window.
    */
   pending: string[] | null;
+  /**
+   * This peer's page is frozen, so it cannot raise a notification of its own.
+   *
+   * Set by the `background` command and cleared when the page resumes. It is
+   * deliberately narrower than "hidden": see the command's own note in
+   * protocol.ts. Nothing about the event stream changes — a frozen peer is
+   * still sent everything, and the browser hands it over when the page comes
+   * back — it changes only who is counted as *watching* (`watchers`), which is
+   * what decides whether the server pushes.
+   */
+  background?: boolean;
+}
+
+/** Peers that could still tell the user something themselves. The push in
+    `index.ts` is for a thread with none, and `peers.size` is not that number:
+    a phone in a pocket holds its socket open with its page frozen. Every other
+    reader of `peers.size` — the fan-out, the idle sweep, the quota refresh —
+    wants the socket count and keeps it. */
+export function watchers(session: Session): number {
+  let count = 0;
+  for (const peer of session.peers) if (!peer.background) count += 1;
+  return count;
 }
 
 /** Fan one already-serialized event out to a peer, respecting its replay
@@ -226,10 +243,6 @@ export interface Session {
       reset with it. */
   websearchCalls: Set<string>;
 }
-
-/** How much of the agent's stderr to keep. Enough for a stack trace, bounded so
-    a chatty agent can't grow a session without limit. */
-const STDERR_TAIL_LINES = 200;
 
 /** How long to wait after 'exit' for the agent's stdio to close before telling
     the peers anyway — a grandchild holding a pipe must not strand them. */
@@ -832,39 +845,8 @@ export class SessionManager {
 
   // ---- stderr ----
 
-  private pushStderr(session: Session, text: string): void {
-    const lines = text.split("\n");
-    session.stderr.push(...lines);
-    session.stderrCount += lines.length;
-    if (session.stderr.length > STDERR_TAIL_LINES) {
-      session.stderr.splice(0, session.stderr.length - STDERR_TAIL_LINES);
-    }
-  }
-
-  /** What the agent printed since the running turn began — the part of stderr
-      that can honestly be blamed on this failure, bounded by what we still hold. */
-  private stderrSinceMark(session: Session): string {
-    const since = Math.min(session.stderrCount - session.stderrMark, session.stderr.length);
-    return since > 0 ? session.stderr.slice(-since).join("\n").trim() : "";
-  }
-
-  /**
-   * Attach the agent's own output to an error before it reaches the client.
-   * "Internal error" is a code, not an explanation; the explanation was on
-   * stderr, and this is the only place that has both.
-   */
-  private enrichError(session: Session, error: WireError): WireError {
-    const stderr = this.stderrSinceMark(session);
-    if (!stderr) return error;
-    const { data } = error;
-    const merged =
-      data && typeof data === "object" && !Array.isArray(data)
-        ? { ...(data as Record<string, unknown>), stderr }
-        : data === undefined
-          ? { stderr }
-          : { details: data, stderr };
-    return { ...error, data: merged };
-  }
+  /* The ring itself — push, mark, enrich, reset — lives in stderr-ring.ts,
+     operating on the session's own `stderr`/`stderrCount`/`stderrMark`. */
 
   /** The agent's recent stderr, for a client that wants to see why a thread is
       misbehaving. Read-only; the server's console gets it either way. */
@@ -874,114 +856,17 @@ export class SessionManager {
 
   // ---- process lifecycle ----
 
-  /** What the bridge calls back into. One per session, reused across respawns —
-      the `session` closure is stable, the bridge inside it is not. */
+  /** The bridge-callback adapter lives in bridge-host.ts, beside the bridge it
+      serves, behind a port of exactly the manager methods it needs. */
   private hostFor(session: Session): BridgeHost {
-    return {
-      emit: (event, except) => this.emit(session, event, except),
-      peerCount: () => session.peers.size,
-      markTurnStderr: () => {
-        session.stderrMark = session.stderrCount;
-      },
-      enrichError: (error) => this.enrichError(session, error),
-      /* A workflow step never pushes: its question and its turn end belong to
-         the run, and a phone told "turn finished" per step would be told it
-         five times for one workflow. */
-      onPermissionRequest: () => {
-        if (!session.parentSessionId) this.events.onPermissionRequest?.(session);
-      },
-      onElicitationRequest: () => {
-        if (!session.parentSessionId) this.events.onElicitationRequest?.(session);
-      },
-      autonomy: () => session.autonomy,
-      onAutonomyBlocked: () => {
-        session.autonomyBlocked += 1;
-      },
-      hasQueued: () => !session.queueChain && listQueue(session.id).length > 0,
-      /* The drain runs here, synchronously after `turn_ended` was journaled,
-         so the log reads turn_ended(continued) → turn_started(combined). The
-         push says "turn finished" only for a turn nothing follows. */
-      onTurnSettled: ({ error, interrupted, continued, turnId }) => {
-        this.settleWaiters(session, turnId, { error, interrupted });
-        /* A turn is what spends the plan, so it is also what dates the reading.
-           Before the `continued` return: a queue draining into the next turn is
-           still a turn that just ended, and skipping it would leave a long drain
-           showing the number from before any of it. */
-        this.refreshQuota(session);
-        if (continued) {
-          this.drainQueue(session);
-          return;
-        }
-        if (session.peers.size === 0 && !session.parentSessionId) this.events.onTurnEnd?.(session, error);
-      },
-      /* Two callbacks where there was one, and the gap between them is the
-         point — but the gap is about *precedence*, not about whether to write
-         anything down. A session the agent has just created exists in its
-         memory and nowhere else, so its id is unproven until a turn commits to
-         it; withholding it entirely, though, is how a thread killed inside that
-         window (a restart, a crash, `tsx watch`) ended up pointing at nothing
-         while the agent's rollout sat on disk with the whole conversation in
-         it, reachable by no one. So an unproven id IS persisted — flagged
-         provisional, which makes it the one id the next `session/new` is
-         allowed to replace. A proven id (a load that answered, or a turn that
-         committed) is never replaced on the strength of a `session/new`. */
-      onAcpSessionId: (acpSessionId, proven) => {
-        session.liveAcpSessionId = acpSessionId;
-        if (proven) {
-          // The agent found this session and read it back: nothing outranks it.
-          if (session.acpSessionId === acpSessionId && !session.acpSessionProvisional) return;
-          session.acpSessionId = acpSessionId;
-          session.acpSessionProvisional = false;
-        } else {
-          // Fresh session. Take the slot only when what is in it is unproven.
-          if (session.acpSessionId && !session.acpSessionProvisional) return;
-          session.acpSessionId = acpSessionId;
-          session.acpSessionProvisional = true;
-        }
-        this.persist(session);
-      },
-      onSessionDurable: () => {
-        const live = session.liveAcpSessionId;
-        if (!live) return;
-        if (live === session.acpSessionId && !session.acpSessionProvisional) {
-          if (session.historyLost) {
-            session.historyLost = null;
-            this.persist(session);
-          }
-          return;
-        }
-        session.acpSessionId = live;
-        session.acpSessionProvisional = false;
-        session.historyLost = null; // superseded: this session is the thread now
-        this.persist(session);
-      },
-      /* Recorded, not broadcast. A load only ever runs inside a spawn, and a
-         spawn is either a revive (no peers yet) or a respawn (whose
-         `clearEvents` forces every peer to reconnect anyway) — so the peers
-         that need to hear it are the ones about to attach, and `attached` is
-         where they hear it. Re-sending `attached` to a live peer would reset a
-         transcript and then never close the replay it opened. */
-      onHistoryLost: (lost) => {
-        /* A provisional id never had a turn behind it, so a refusal to load it
-           is the agent saying "I never wrote that down" — which is the truth
-           about an empty thread, not the loss of a conversation. Reporting it
-           would put an error row at the top of every thread that was killed
-           before its first turn ever finished. */
-        if (session.acpSessionProvisional) return;
-        session.historyLost = lost;
-      },
-      onSpawnStateChange: (next) => {
-        /* The agent reports the id it was given, which for Claude Code carries
-           the 1M suffix the env template appends. What the row holds is the
-           catalog's own id — the one every menu matches against and the one a
-           revive resolves the suffix from again. */
-        if (next.model !== undefined) {
-          session.model = session.profile ? bareModelId(session.profile, next.model) : next.model;
-        }
-        if (next.effort !== undefined) session.effort = next.effort;
-        this.persist(session);
-      },
-    };
+    return makeBridgeHost(session, {
+      emit: (s, event, except) => this.emit(s, event, except),
+      settleWaiters: (s, turnId, outcome) => this.settleWaiters(s, turnId, outcome),
+      refreshQuota: (s) => this.refreshQuota(s),
+      drainQueue: (s) => this.queue.drain(s),
+      persist: (s) => this.persist(s),
+      events: this.events,
+    });
   }
 
   /**
@@ -997,7 +882,7 @@ export class SessionManager {
       const text = chunk.toString().trimEnd();
       console.error(`[${session.id.slice(0, 8)}:${profileName}]`, text);
       if (session.bridge !== bridge) return;
-      this.pushStderr(session, text);
+      pushStderr(session, text);
     });
     // spawn() reports a missing binary, a bad cwd or a permissions problem
     // asynchronously — and an unhandled 'error' on a ChildProcess takes the
@@ -1007,7 +892,7 @@ export class SessionManager {
       if (session.bridge !== bridge) return;
       const reason = `agent failed to start: ${error.code ?? error.name} — ${error.message}`;
       console.error(`[${session.id.slice(0, 8)}:${profileName}]`, reason);
-      this.pushStderr(session, reason);
+      pushStderr(session, reason);
       this.collapse(session, bridge, reason);
     });
     // 'exit' fires the moment the process is gone, but stderr written just
@@ -1613,7 +1498,7 @@ export class SessionManager {
     // The load replays the entire conversation as fresh updates, so everything
     // already journaled is about to be said again.
     this.log.clear(session);
-    this.resetStderr(session);
+    resetStderr(session);
     const bridge = this.start(session, profile, project, model, effort, {
       load: session.acpSessionId ? { acpSessionId: session.acpSessionId } : undefined,
       restore,
@@ -1674,7 +1559,7 @@ export class SessionManager {
     const bridge = await this.whenSpawnable(session);
     if (bridge.promptActive && !opts.steer) {
       const item = enqueue(session.id, text);
-      this.emitQueue(session);
+      this.queue.emitQueue(session);
       return { queued: true, itemId: item.id };
     }
     return this.startTurn(session, bridge, text, peer);
@@ -1702,127 +1587,43 @@ export class SessionManager {
 
   // ---- the queue ----
 
-  /** The whole queue to every peer, the origin included: ids are minted here,
-      so no peer's own picture of the list is the one to keep. */
-  private emitQueue(session: Session): void {
-    this.emit(session, { ev: "queue", items: listQueue(session.id) });
-  }
+  /** The queue block — the drain, the edits, steer and "send now" — lives in
+      session-queue.ts, behind a port of exactly the two prompt-path steps it
+      drives. The public methods below keep the manager's surface identical. */
+  private queue = new SessionQueue({
+    emit: (session, event) => this.emit(session, event),
+    whenSpawnable: (session) => this.whenSpawnable(session),
+    startTurn: (session, bridge, text, peer) => this.startTurn(session, bridge, text, peer),
+  });
 
-  /**
-   * Combine everything queued into ONE prompt and start a turn on it. Only on
-   * an idle bridge with no "send now" mid-flight — that path is about to send
-   * some of these rows itself and must not find them gone. Rows are deleted
-   * after the prompt is dispatched, so nothing here can lose a message.
-   */
-  private drainQueue(session: Session): { turnId: string } | null {
-    const bridge = session.bridge;
-    if (!bridge || bridge.promptActive || session.queueChain) return null;
-    const items = listQueue(session.id);
-    if (items.length === 0) return null;
-    const result = this.startTurn(session, bridge, combineQueued(items), undefined);
-    removeQueuedMany(session.id, items.map((item) => item.id));
-    this.emitQueue(session);
-    return result;
-  }
-
-  /** `prompt` from a client that already knows the thread is busy. On an idle
-      thread it drains straight away — one path, so a client whose picture of
-      the turn was stale still gets its words sent. */
   queueAdd(id: string, text: string): PromptReply {
-    const session = this.requireSession(id);
-    const item = enqueue(session.id, text);
-    this.emitQueue(session);
-    return this.drainQueue(session) ?? { queued: true, itemId: item.id };
+    return this.queue.add(this.requireSession(id), text);
   }
 
-  /* The three edits need no process: a parked queue on an archived thread is
-     edited without spawning an agent to do it. */
   queueUpdate(id: string, itemId: string, text: string): void {
-    const session = this.requireSession(id);
-    if (!updateQueued(session.id, itemId, text)) throw new Error("that queued message is gone");
-    this.emitQueue(session);
+    this.queue.update(this.requireSession(id), itemId, text);
   }
 
   queueRemove(id: string, itemId: string): void {
-    const session = this.requireSession(id);
-    removeQueued(session.id, itemId);
-    this.emitQueue(session);
+    this.queue.remove(this.requireSession(id), itemId);
   }
 
   queueClear(id: string): void {
-    const session = this.requireSession(id);
-    clearQueue(session.id);
-    this.emitQueue(session);
+    this.queue.clear(this.requireSession(id));
   }
 
-  /** Inject one queued item into the running turn without stopping it — the
-      old steering path (`inflight++`). On an idle thread it simply starts one. */
-  async queueSteer(id: string, itemId: string): Promise<{ turnId: string }> {
-    const session = this.requireSession(id);
-    const bridge = await this.whenSpawnable(session);
-    const item = listQueue(session.id).find((entry) => entry.id === itemId);
-    if (!item) throw new Error("that queued message is gone");
-    const result = this.startTurn(session, bridge, item.text, undefined);
-    removeQueued(session.id, itemId);
-    this.emitQueue(session);
-    return result;
+  queueSteer(id: string, itemId: string): Promise<{ turnId: string }> {
+    return this.queue.steer(this.requireSession(id), itemId);
   }
 
-  /**
-   * Interrupt the running turn and send what is queued — one item, or all of
-   * it combined — in its place. Atomic and server-side for the reason the
-   * respawn route is: cancel → wait for the turn to settle → prompt is three
-   * steps, and a browser driving them could close halfway and leave a
-   * cancelled turn with nothing sent after it. Serialised per thread on
-   * `queueChain`, which is also what stands the auto-drain down meanwhile.
-   */
   queueSendNow(id: string, itemId?: string): Promise<{ turnId: string }> {
-    const session = this.requireSession(id);
-    const ahead = session.queueChain;
-    const run = (async () => {
-      await ahead?.catch(() => {});
-      return this.queueSendNowNow(session, itemId);
-    })();
-    session.queueChain = run;
-    void run
-      .finally(() => {
-        if (session.queueChain === run) session.queueChain = null;
-      })
-      .catch(() => {});
-    return run;
-  }
-
-  private async queueSendNowNow(session: Session, itemId?: string): Promise<{ turnId: string }> {
-    const bridge = await this.whenSpawnable(session);
-    const all = listQueue(session.id);
-    const items = itemId ? all.filter((item) => item.id === itemId) : all;
-    if (items.length === 0) throw new Error("nothing is queued");
-    if (bridge.promptActive) {
-      await bridge.cancel();
-      // The agent answers the cancelled prompt with `stopReason: "cancelled"`,
-      // which settles the turn as interrupted — so nothing drains on its own.
-      await bridge.whenIdle();
-    }
-    /* The process may have died while we waited. The rows are untouched, so
-       the queue is exactly as the user left it and the next revive still has
-       it. */
-    if (session.bridge !== bridge) throw new Error("the agent process is gone");
-    const result = this.startTurn(session, bridge, combineQueued(items), undefined);
-    removeQueuedMany(session.id, items.map((item) => item.id));
-    this.emitQueue(session);
-    return result;
+    return this.queue.sendNow(this.requireSession(id), itemId);
   }
 
   private requireSession(id: string): Session {
     const session = this.sessions.get(id);
     if (!session) throw new Error("unknown session");
     return session;
-  }
-
-  private resetStderr(session: Session): void {
-    session.stderr = [];
-    session.stderrCount = 0;
-    session.stderrMark = 0;
   }
 
   /** Stop the process but keep the thread — the opposite of purge(). The thread
@@ -1852,7 +1653,7 @@ export class SessionManager {
        stitched together. */
     bridge?.close(new Error("thread retired"));
     this.log.flush();
-    this.resetStderr(session);
+    resetStderr(session);
     proc?.kill();
     this.processGone(session, "thread retired");
   }
@@ -1972,7 +1773,7 @@ export class SessionManager {
     queueUpdate: (id, itemId, text) => this.queueUpdate(id, itemId, text),
     queueRemove: (id, itemId) => this.queueRemove(id, itemId),
     queueClear: (id) => this.queueClear(id),
-    enrichError: (session, error) => this.enrichError(session, error),
+    enrichError: (session, error) => enrichError(session, error),
   });
 
   /**
@@ -1996,6 +1797,17 @@ export class SessionManager {
     opts: { window?: number } = {},
   ): Promise<string | null> {
     return this.socket.attach(id, ws, cursor, batch, opts);
+  }
+
+  /** The attach bracket as an HTTP document — what a thread is opened with
+      now, before (and sometimes instead of) a socket. See `SessionSocket.snapshot`. */
+  snapshot(id: string, cursor = 0, opts: { window?: number } = {}) {
+    return this.socket.snapshot(id, cursor, opts);
+  }
+
+  /** One page of history, without a socket. See `SessionSocket.earlierPage`. */
+  earlierPage(id: string, before: number) {
+    return this.socket.earlierPage(id, before);
   }
 }
 

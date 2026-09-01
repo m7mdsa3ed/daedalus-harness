@@ -47,7 +47,6 @@ import {
   SearchIcon,
   ServerIcon,
   ShieldCheck,
-  Sparkles,
   Square,
   SquareKanban,
   SquareStack,
@@ -67,7 +66,7 @@ import { reportError } from "@/lib/errors"
 import { currentChoiceLabel } from "@/lib/session-options"
 import { useKeybindings } from "@/lib/keybindings"
 import { KEYS } from "@/lib/shortcuts"
-import { boardPath, newRoutinePath, settingsPath, studioPath, threadPath } from "@/lib/router"
+import { boardPath, newRoutinePath, settingsPath, threadPath } from "@/lib/router"
 import {
   activityAt,
   clearSettings,
@@ -76,9 +75,10 @@ import {
   loadSettings,
   setActiveServer,
 } from "@/lib/settings"
+import { recordPaletteCommand, usePaletteRecents } from "@/lib/palette-recents"
 import { togglePin, usePins } from "@/lib/pins"
 import { loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
-import { useStore } from "@/lib/store"
+import { useLiveTurnActive, useStoreSelect } from "@/lib/store"
 import { toast } from "@/lib/toast"
 import { FONT_SIZE_DEFAULT, useFontSize, useTheme } from "@/lib/theme"
 import { usePalette } from "./context"
@@ -96,12 +96,27 @@ const MODES = [
 /** How many threads the landing list offers before you have typed anything. */
 const RECENT_LIMIT = 6
 
+/** The threads on the landing list are a destination, not a command: the
+    sidebar's own Recents already answers "what was I just in", and remembering
+    them here would spend the recently-used group on rows that are already one
+    click away. */
+const NOT_A_COMMAND = "Recent threads"
+
 export function RootPage() {
   const palette = usePalette()
-  const { state } = useStore()
+  const sessions = useStoreSelect((store) => store.sessions)
+  const projects = useStoreSelect((store) => store.projects)
+  const profiles = useStoreSelect((store) => store.profiles)
+  const agents = useStoreSelect((store) => store.agents)
+  const personas = useStoreSelect((store) => store.personas)
+  const routines = useStoreSelect((store) => store.routines)
+  /* See search-page: a running mark per row, without subscribing to the
+     stream that produces it. */
+  const liveTurnActive = useLiveTurnActive()
   const navigate = useNavigate()
   const confirm = useConfirm()
   const pins = usePins()
+  const recents = usePaletteRecents()
   const { theme, setTheme } = useTheme()
   const [fontSize, setFontSize] = useFontSize()
   const { toggleSidebar, setOpenMobile } = useSidebar()
@@ -116,9 +131,9 @@ export function RootPage() {
   const activeServer = React.useMemo(loadSettings, [])
 
   const projectName = (projectId: string) =>
-    state.projects.find((project) => project.id === projectId)?.name ?? "Other"
+    projects.find((project) => project.id === projectId)?.name ?? "Other"
   const agentName = (agentId: string) =>
-    state.agents.find((agent) => agent.id === agentId)?.name ?? agentId
+    agents.find((agent) => agent.id === agentId)?.name ?? agentId
 
   /* Where a bare "New thread" lands — resolved with the same functions ⌘N uses
      and said on the row, so the one thing it decides for you (the project,
@@ -126,10 +141,10 @@ export function RootPage() {
   const startTarget = React.useMemo(() => {
     const defaults = loadThreadDefaults()
     const project =
-      state.projects.find((project) => project.id === defaults.projectId) ?? state.projects[0]
-    const start = resolveThreadStart(defaults, state.profiles)
+      projects.find((project) => project.id === defaults.projectId) ?? projects[0]
+    const start = resolveThreadStart(defaults, profiles)
     return project && start ? { project, ...start } : null
-  }, [state.projects, state.profiles])
+  }, [projects, profiles])
 
   const openThread = (id: string) =>
     palette.run(() => {
@@ -160,7 +175,7 @@ export function RootPage() {
     icon: <SearchIcon />,
     onSelect: () => palette.descend("search"),
   })
-  if (state.routines.length > 0) {
+  if (routines.length > 0) {
     /* The one surface that answers "what have these been doing while I wasn't
        watching?" — one chord away on purpose, because a standing grant to act
        unattended is only tolerable if checking on it is cheap. */
@@ -173,7 +188,7 @@ export function RootPage() {
       onSelect: () => palette.descend("routine-activity"),
     })
   }
-  if (state.projects.length > 0) {
+  if (projects.length > 0) {
     items.push({
       id: "jump:projects",
       group: "Jump",
@@ -189,7 +204,7 @@ export function RootPage() {
      the server into every keystroke; typing reaches threads through the search
      page, which can say that it is still asking. */
   if (!query) {
-    const recents = state.sessions
+    const recents = sessions
       .filter(isTopLevel)
       .filter((session) => !session.deletedAt && session.id !== sessionId)
       .sort((a, b) => activityAt(b) - activityAt(a))
@@ -198,9 +213,9 @@ export function RootPage() {
       items.push(
         threadItem({
           session,
-          group: "Recent threads",
+          group: NOT_A_COMMAND,
           project: projectName(session.projectId),
-          running: state.threads[session.id]?.turnActive ?? session.promptActive,
+          running: liveTurnActive.get(session.id) ?? session.promptActive,
           onSelect: () => openThread(session.id),
         })
       )
@@ -230,7 +245,7 @@ export function RootPage() {
     ) : undefined,
     onSelect: () => palette.run(() => palette.newThread()),
   })
-  if (state.projects.length > 1) {
+  if (projects.length > 1) {
     items.push({
       id: "create:thread-in",
       group: "Create",
@@ -247,17 +262,6 @@ export function RootPage() {
     keywords: "workspace directory cwd",
     icon: <FolderPlus />,
     onSelect: () => palette.run(palette.newProject),
-  })
-  /* Under Create beside New project, because it is the other way to make one —
-     the directory does not exist yet, and the first thread opens prefilled with
-     the instruction that fills it. */
-  items.push({
-    id: "create:studio",
-    group: "Create",
-    title: "New project from a template…",
-    keywords: "studio starter scaffold boilerplate clone repo gallery kit",
-    icon: <Sparkles />,
-    onSelect: () => palette.run(() => void navigate(studioPath())),
   })
   items.push({
     // Under Create because that is what it makes: threads. The conversation
@@ -279,7 +283,7 @@ export function RootPage() {
     icon: <Zap />,
     onSelect: () => palette.run(() => void navigate(newRoutinePath())),
   })
-  if (state.routines.length > 0) {
+  if (routines.length > 0) {
     items.push({
       id: "create:run-routine",
       group: "Create",
@@ -288,7 +292,7 @@ export function RootPage() {
       icon: <Zap />,
       trailing: (
         <span className="ml-auto shrink-0 text-[11px] text-muted-foreground tabular-nums">
-          {state.routines.length}
+          {routines.length}
         </span>
       ),
       onSelect: () => palette.descend("routines"),
@@ -339,8 +343,8 @@ export function RootPage() {
        advertising anything: a persona is the harness's own, so every started
        thread can take one. Drafts are excluded — their persona is a field on
        the composer's menu, and there is no thread to restart. */
-    if (!meta.draft && state.personas.length > 0) {
-      const persona = state.personas.find((p) => p.id === meta.personaId)
+    if (!meta.draft && personas.length > 0) {
+      const persona = personas.find((p) => p.id === meta.personaId)
       items.push({
         id: "thread:persona",
         group: "This thread",
@@ -402,7 +406,7 @@ export function RootPage() {
           }),
       })
     }
-    if (thread?.status === "closed") {
+    if (thread && thread.phase.kind === "failed") {
       items.push({
         id: "thread:revive",
         group: "This thread",
@@ -702,7 +706,7 @@ export function RootPage() {
       chord: KEYS.send,
       onSelect: () => palette.run(() => palette.newThread({ text: query })),
     })
-    if (state.projects.length > 1) {
+    if (projects.length > 1) {
       items.push({
         id: "fallback:ask-in",
         group: `“${query}”`,
@@ -715,5 +719,22 @@ export function RootPage() {
     }
   }
 
-  return <ItemList items={items} query={palette.query} />
+  /* Remembering happens here rather than in `list.tsx` because this is the one
+     page whose ids are a vocabulary: a choice page's rows are the current
+     agent's models, and the search page's are somebody's messages. Wrapping
+     `onSelect` rather than recording in the row keeps `ItemList` a renderer,
+     and keeps the rule about *which* rows are commands beside the rows. */
+  const rows = items.map((item) =>
+    item.always || item.group === NOT_A_COMMAND
+      ? item
+      : {
+          ...item,
+          onSelect: () => {
+            recordPaletteCommand(item.id)
+            item.onSelect()
+          },
+        }
+  )
+
+  return <ItemList items={rows} query={palette.query} recents={recents} />
 }

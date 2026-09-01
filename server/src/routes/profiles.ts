@@ -9,7 +9,7 @@ import {
   resolveProfileAgent,
   updateProfile,
 } from "../profiles.js";
-import { getAgent, listAgents } from "../registry.js";
+import { AgentInputSchema, getAgent, isBuiltInAgent, listAgents, resetAgent, updateAgent } from "../registry.js";
 import { getProject } from "../projects.js";
 import { probeAgentOptions } from "../probe.js";
 import { modelsDevProviders, searchModelsDev, toCandidate } from "../models-dev.js";
@@ -22,7 +22,25 @@ import { crud } from "./helpers.js";
 export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): void {
   const { sessions } = deps;
 
-  app.get("/api/agents", (c) => c.json(listAgents()));
+  /* `builtIn` is computed, not stored: it says this release still defines a
+     default for the row, which is exactly the question "is there something to
+     reset to". A row someone added by hand has no answer and is not offered
+     one. */
+  app.get("/api/agents", (c) =>
+    c.json(listAgents().map((agent) => ({ ...agent, builtIn: isBuiltInAgent(agent.id) }))),
+  );
+  /* An agent row is a runtime definition, and its spawn command is a contract
+     with a binary somebody else ships — so only the user's half is writable
+     (`AgentInputSchema`), and a built-in can always be put back. Nothing here
+     touches a running thread: the process it holds was spawned with the old
+     command, and the edit reaches it at its next spawn, exactly like every
+     other change to how an agent is launched. */
+  const agentCrud = crud(AgentInputSchema);
+  app.put("/api/agents/:id", agentCrud.update((id, data) => updateAgent(id, data)));
+  app.post("/api/agents/:id/reset", (c) => {
+    const restored = resetAgent(c.req.param("id"));
+    return restored ? c.json(restored) : c.json({ error: "not found" }, 404);
+  });
 
   // Agents are passed in so an agent with no profile of its own still gets one
   // (virtual, never stored) — see defaultProfileFor.

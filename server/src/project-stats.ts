@@ -113,17 +113,33 @@ export function projectStats(projectId: string, now = Date.now()): ProjectStats 
     .where(eq(sessionsTable.projectId, projectId))
     .all();
 
-  const top = rows.filter((row) => !row.parentSessionId);
-  const live = top.filter((row) => row.deletedAt === null);
-  const tally = (key: "agentId" | "profileId") => {
-    const counts = new Map<string, number>();
-    for (const row of live) counts.set(row[key], (counts.get(row[key]) ?? 0) + 1);
-    return [...counts]
+  /* One pass. Everything below is a tally over the same rows — the counts, the
+     created-at extremes and the per-agent/per-profile breakdowns — and
+     `Math.min(...rows)` on a project with tens of thousands of threads is a
+     spread wide enough to overflow the argument limit as well as a third walk. */
+  const ids: string[] = [];
+  const byAgentCounts = new Map<string, number>();
+  const byProfileCounts = new Map<string, number>();
+  let topCount = 0;
+  let liveCount = 0;
+  let firstAt: number | null = null;
+  let newestAt: number | null = null;
+  for (const row of rows) {
+    ids.push(row.id);
+    if (row.parentSessionId) continue;
+    topCount += 1;
+    if (row.deletedAt !== null) continue;
+    liveCount += 1;
+    if (firstAt === null || row.createdAt < firstAt) firstAt = row.createdAt;
+    if (newestAt === null || row.createdAt > newestAt) newestAt = row.createdAt;
+    byAgentCounts.set(row.agentId, (byAgentCounts.get(row.agentId) ?? 0) + 1);
+    byProfileCounts.set(row.profileId, (byProfileCounts.get(row.profileId) ?? 0) + 1);
+  }
+  const ranked = (counts: Map<string, number>) =>
+    [...counts]
       .map(([id, threads]) => ({ id, threads }))
       .sort((a, b) => b.threads - a.threads || a.id.localeCompare(b.id));
-  };
 
-  const ids = rows.map((row) => row.id);
   /* An empty `inArray` is not a query drizzle will build, and a project with no
      threads at all is the ordinary state of a new one — so the journal half is
      skipped rather than guarded inside each query. */
@@ -133,15 +149,15 @@ export function projectStats(projectId: string, now = Date.now()): ProjectStats 
     projectId,
     cwdExists: existsSync(project.cwd),
     threads: {
-      total: live.length,
-      trashed: top.length - live.length,
-      steps: rows.length - top.length,
-      firstAt: live.length > 0 ? Math.min(...live.map((row) => row.createdAt)) : null,
-      newestAt: live.length > 0 ? Math.max(...live.map((row) => row.createdAt)) : null,
+      total: liveCount,
+      trashed: topCount - liveCount,
+      steps: rows.length - topCount,
+      firstAt,
+      newestAt,
     },
     ...journal,
-    byAgent: tally("agentId"),
-    byProfile: tally("profileId"),
+    byAgent: ranked(byAgentCounts),
+    byProfile: ranked(byProfileCounts),
     knowledge: countOf(
       db
         .select({ n: sql<number>`count(*)` })

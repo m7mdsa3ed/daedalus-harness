@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import type * as acp from "@agentclientprotocol/sdk";
 import type { ModelMessage } from "ai";
 import { EFFORTS, type AgentEnv, type Effort } from "./env.js";
@@ -47,6 +48,13 @@ export class Session {
   mcp: McpHandle | null;
   commands: CommandDef[];
   skills: SkillDef[];
+  /** Whether to read the workspace's own AGENTS.md / CLAUDE.md at all
+      (`DAEDALUS_AGENT_PROJECT_INSTRUCTIONS`). */
+  projectInstructions: boolean;
+  /** Where `~/.claude/CLAUDE.md` is looked for. The OS home, held on the
+      session rather than read at the point of use so a test can point the scan
+      at a tree it controls. */
+  instructionsHome: string;
   personaText: string | null;
   title: string | null;
   /** Last request's total token reading — what compaction thresholds against. */
@@ -69,6 +77,8 @@ export class Session {
     this.mcp = null;
     this.commands = [];
     this.skills = [];
+    this.projectInstructions = env.projectInstructions;
+    this.instructionsHome = homedir();
     this.personaText = env.personaFile ? readOptional(env.personaFile) : null;
     this.title = null;
     this.lastTokens = 0;

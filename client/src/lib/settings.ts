@@ -235,6 +235,14 @@ export function wsUrl(
 export interface AgentDef {
   id: string
   name: string
+  /** The editable half (Settings › Agents). Optional so a payload from a
+      server that predates the editor still parses. */
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  /** Whether this release still defines a default for the row — i.e. whether
+      there is anything to reset to. Computed server-side, never stored. */
+  builtIn?: boolean
   /** Whether this runtime can be moved to another profile, model or effort
       without being restarted, and how (server/src/registry.ts). The client
       reads it for one thing only: whether a pick is worth warning about first.
@@ -496,6 +504,60 @@ export interface SessionMeta {
 
 /** A thread that is nobody's workflow step — the only kind the lists show. */
 export const isTopLevel = (s: SessionMeta): boolean => !s.parentSessionId
+
+const sameIds = (a?: string[], b?: string[]): boolean =>
+  a === b || (!!a && !!b && a.length === b.length && a.every((id, i) => id === b[i]))
+
+/**
+ * Whether two readings of one thread say the same thing.
+ *
+ * Row *identity* is load-bearing in this client, which is why this exists at
+ * all. `useSessionMeta` is a subscription, and `GET /api/sessions` answers with
+ * freshly parsed objects every time — so replacing the list wholesale on every
+ * refresh handed a new object to every consumer of every row, whether or not
+ * anything about it had moved. That woke the sidebar, `AppShell`'s route effect
+ * and *every mounted `ChatPanel`* on each poll, and the last of those is not
+ * merely wasted work: the panel's job on a new row is to open the thread, so a
+ * list refresh became an open, which is how a second connection came to be the
+ * ordinary case rather than a race.
+ *
+ * Compared field by field rather than by a JSON round trip: the key order of a
+ * parsed body is the server's and a stringify would compare it too, and the two
+ * client-only fields below must be excluded deliberately rather than by
+ * accident.
+ *
+ * A draft is never "the same row" as anything, however identical the server's
+ * account of it looks: the whole point of the row that replaces it is that it
+ * is no longer a draft (see the `sessions` reducer), and keeping the old object
+ * would keep `draft: true` on a thread the server has just confirmed.
+ */
+export function sameRow(a: SessionMeta, b: SessionMeta): boolean {
+  if (a === b) return true
+  if (a.draft || b.draft) return false
+  return (
+    a.id === b.id &&
+    a.profileId === b.profileId &&
+    a.projectId === b.projectId &&
+    a.agentId === b.agentId &&
+    a.model === b.model &&
+    a.effort === b.effort &&
+    a.personaId === b.personaId &&
+    a.title === b.title &&
+    a.acpSessionId === b.acpSessionId &&
+    a.createdAt === b.createdAt &&
+    a.lastActivityAt === b.lastActivityAt &&
+    a.deletedAt === b.deletedAt &&
+    a.attached === b.attached &&
+    a.peerCount === b.peerCount &&
+    a.exited === b.exited &&
+    a.promptActive === b.promptActive &&
+    a.cursor === b.cursor &&
+    a.parentSessionId === b.parentSessionId &&
+    sameIds(a.mcpServerIds, b.mcpServerIds) &&
+    sameIds(a.skillIds, b.skillIds) &&
+    sameIds(a.commandIds, b.commandIds)
+  )
+}
 
 /** When this thread was last *worked in* — the one clock every list sorts and
     groups by. A draft and a server too old to report activity have only their

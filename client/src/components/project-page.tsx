@@ -47,7 +47,8 @@ import { describeError } from "@/lib/errors"
 import { settingsFormPath, settingsPath, schedulesPath, threadPath } from "@/lib/router"
 import { scheduleWhen } from "@/lib/schedule"
 import { activityAt, isTopLevel, type Project, type ScheduledMessage, type SessionMeta } from "@/lib/settings"
-import { useStore, type ThreadState } from "@/lib/store"
+import { useStoreSelect, type ThreadState } from "@/lib/store"
+import { IDLE_PHASE, markFor, type ThreadActivity } from "@/lib/thread/phase"
 import { shortAge } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import {
@@ -66,8 +67,7 @@ const THREAD_PAGE = 12
 
 export function ProjectPage({ actions }: { actions: Actions }) {
   const { projectId = "" } = useParams()
-  const { state } = useStore()
-  const project = state.projects.find((entry) => entry.id === projectId)
+  const project = useStoreSelect((store) => store.projects.find((entry) => entry.id === projectId))
   /* A project id that is not in the store is a deleted project or a stale
      bookmark. There is nothing to show and nothing to fetch — the list is the
      honest destination. */
@@ -76,7 +76,13 @@ export function ProjectPage({ actions }: { actions: Actions }) {
 }
 
 function ProjectOverview({ project, actions }: { project: Project; actions: Actions }) {
-  const { state } = useStore()
+  /* The live half of the page, split by what moves it. `threads` is the one
+     slice a streamed token replaces, and this page genuinely draws from it
+     (the running/waiting dots), so it is subscribed to — but on its own, so a
+     `scheduled` or `sessions` refresh no longer drags the rest in with it. */
+  const sessions = useStoreSelect((store) => store.sessions)
+  const allScheduled = useStoreSelect((store) => store.scheduled)
+  const liveThreads = useStoreSelect((store) => store.threads)
   const navigate = useNavigate()
   const startIn = useStartThreadIn(actions)
   const { stats, error, loading, refresh } = useProjectStats(project.id)
@@ -86,27 +92,27 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
      they are reached from their parent's transcript, never listed — and the
      trashed ones are counted but not listed: Trash is the sidebar's tier. */
   const { threads, trashed, running, waiting } = React.useMemo(() => {
-    const mine = state.sessions.filter(isTopLevel).filter((s) => s.projectId === project.id)
+    const mine = sessions.filter(isTopLevel).filter((s) => s.projectId === project.id)
     const threads = mine
       .filter((s) => !s.deletedAt)
       .sort((a, b) => activityAt(b) - activityAt(a))
-    const statusOf = (s: SessionMeta) => threadStatus(s, state.threads[s.id])
+    const statusOf = (s: SessionMeta) => threadStatus(s, liveThreads[s.id])
     return {
       threads,
       trashed: mine.filter((s) => !!s.deletedAt).length,
       running: threads.filter((s) => statusOf(s) === "running").length,
       waiting: threads.filter((s) => statusOf(s) === "waiting").length,
     }
-  }, [state.sessions, state.threads, project.id])
+  }, [sessions, liveThreads, project.id])
 
   const scheduled = React.useMemo(() => {
     const ids = new Set(
-      state.sessions.filter((s) => s.projectId === project.id).map((s) => s.id)
+      sessions.filter((s) => s.projectId === project.id).map((s) => s.id)
     )
-    return state.scheduled
+    return allScheduled
       .filter((row) => ids.has(row.sessionId))
       .sort((a, b) => a.nextAt - b.nextAt)
-  }, [state.scheduled, state.sessions, project.id])
+  }, [allScheduled, sessions, project.id])
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -192,7 +198,7 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
           <ThreadsCard
             threads={threads}
             trashed={trashed}
-            liveThreads={state.threads}
+            liveThreads={liveThreads}
             onOpen={(id) => void navigate(threadPath(id))}
             onNewThread={() => startIn(project)}
           />
@@ -200,7 +206,7 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
             <RuntimesCard stats={stats} />
             <ScheduledCard
               scheduled={scheduled}
-              sessions={state.sessions}
+              sessions={sessions}
               onOpenSchedules={() => void navigate(schedulesPath())}
             />
             <GlanceCard stats={stats} trashed={trashed} />
@@ -244,12 +250,13 @@ function useProjectStats(projectId: string) {
   return { stats, error, loading, refresh: () => setNonce((n) => n + 1) }
 }
 
-/** The same reading the sidebar takes: the live thread is the truth about a
-    running turn, and `promptActive` is the only signal for a thread this
-    client has never connected. */
-function threadStatus(session: SessionMeta, thread: ThreadState | undefined) {
-  if (thread && (thread.permission || thread.elicitation)) return "waiting"
-  return (thread?.turnActive ?? session.promptActive) ? "running" : "idle"
+/** The same reading the sidebar and the dock tabs take — literally the same
+    function, so three surfaces cannot drift into three answers about one
+    thread. The live thread is the truth about a running turn, and
+    `promptActive` is the only signal for one this client has never connected. */
+function threadStatus(session: SessionMeta, thread: ThreadState | undefined): ThreadActivity {
+  const waiting = !!thread && !!(thread.permission || thread.elicitation)
+  return markFor(thread?.phase ?? IDLE_PHASE, thread?.turnActive ?? session.promptActive, waiting)
 }
 
 /* ── Pieces ── */
@@ -539,7 +546,11 @@ function ThreadsCard({
   )
 }
 
-function StatusDot({ status }: { status: "idle" | "running" | "waiting" }) {
+/** One dot, four colours: working, needs you, something is wrong with the
+    connection, and everything else. The connection tints are what a list could
+    not say at all before — a thread mid-reconnect drew the same grey dot as one
+    sitting quietly, which is the reading this page exists to give. */
+function StatusDot({ status }: { status: ThreadActivity }) {
   return (
     <span
       aria-hidden
@@ -549,7 +560,9 @@ function StatusDot({ status }: { status: "idle" | "running" | "waiting" }) {
           ? "bg-primary"
           : status === "waiting"
             ? "bg-amber-500"
-            : "bg-muted-foreground/30"
+            : status === "reconnecting" || status === "offline" || status === "gone"
+              ? "bg-muted-foreground/70 animate-pulse"
+              : "bg-muted-foreground/30"
       )}
     >
       <span className="sr-only">{status}</span>
@@ -560,7 +573,8 @@ function StatusDot({ status }: { status: "idle" | "running" | "waiting" }) {
 /** What this project is actually worked on with — threads per agent and per
     profile. Ids come down from the server; the names are in the store. */
 function RuntimesCard({ stats }: { stats: ProjectStats | null }) {
-  const { state } = useStore()
+  const agents = useStoreSelect((store) => store.agents)
+  const profiles = useStoreSelect((store) => store.profiles)
   if (!stats) return <CardShell title="Worked on with"><CardSkeleton rows={2} /></CardShell>
   if (stats.byAgent.length === 0 && stats.byProfile.length === 0) return null
 
@@ -571,12 +585,12 @@ function RuntimesCard({ stats }: { stats: ProjectStats | null }) {
           <MiniRow
             key={`agent:${entry.id}`}
             icon={<AgentIcon agentId={entry.id} className="size-4" />}
-            label={state.agents.find((a) => a.id === entry.id)?.name ?? entry.id}
+            label={agents.find((a) => a.id === entry.id)?.name ?? entry.id}
             value={entry.threads}
           />
         ))}
         {stats.byProfile.map((entry) => {
-          const profile = state.profiles.find((p) => p.id === entry.id)
+          const profile = profiles.find((p) => p.id === entry.id)
           return (
             <MiniRow
               key={`profile:${entry.id}`}
