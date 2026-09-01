@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react"
+import { createLocalStore } from "./local-store"
 
 /* ── Pinned threads ──
    A pin is this device's opinion about which threads matter, so it lives in
@@ -9,64 +9,31 @@ import { useSyncExternalStore } from "react"
    Order is preserved — newest pin last — so the pinned group stays stable
    instead of reshuffling whenever the underlying session list is refetched. */
 
-const STORAGE_KEY = "ui.pinnedThreads"
+const store = createLocalStore<string[]>(
+  "ui.pinnedThreads",
+  (raw) => (Array.isArray(raw) ? raw.filter((id): id is string => typeof id === "string") : []),
+  []
+)
 
-function read(): string[] {
-  try {
-    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as unknown
-    return Array.isArray(raw) ? raw.filter((id): id is string => typeof id === "string") : []
-  } catch {
-    return []
-  }
-}
+export const pinnedSnapshot = store.get
 
-let cache = read()
-const listeners = new Set<() => void>()
+export const subscribePins = store.subscribe
 
-function write(ids: string[]) {
-  cache = ids
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(ids))
-  } catch {
-    // Losing a pin is survivable; throwing out of a click handler is not.
-  }
-  for (const listener of listeners) listener()
-}
-
-export const pinnedSnapshot = (): string[] => cache
-
-export function subscribePins(listener: () => void): () => void {
-  listeners.add(listener)
-  return () => {
-    listeners.delete(listener)
-  }
-}
-
-export const isPinned = (sessionId: string): boolean => cache.includes(sessionId)
+export const isPinned = (sessionId: string): boolean => store.get().includes(sessionId)
 
 export function togglePin(sessionId: string): void {
-  write(
-    cache.includes(sessionId)
-      ? cache.filter((id) => id !== sessionId)
-      : [...cache, sessionId]
+  const pins = store.get()
+  store.set(
+    pins.includes(sessionId) ? pins.filter((id) => id !== sessionId) : [...pins, sessionId]
   )
 }
 
 /** Drop pins for sessions the server no longer lists — same contract as drafts. */
 export function prunePins(sessionIds: Iterable<string>): void {
   const live = new Set(sessionIds)
-  const kept = cache.filter((id) => live.has(id))
-  if (kept.length !== cache.length) write(kept)
+  const kept = store.get().filter((id) => live.has(id))
+  if (kept.length !== store.get().length) store.set(kept)
 }
-
-/* Another tab pinning a thread pinned it for this device too. */
-window.addEventListener("storage", (event) => {
-  if (event.key !== null && event.key !== STORAGE_KEY) return
-  cache = read()
-  for (const listener of listeners) listener()
-})
 
 /** The pinned ids, live — the sidebar and the palette read the same list. */
-export function usePins(): string[] {
-  return useSyncExternalStore(subscribePins, pinnedSnapshot, pinnedSnapshot)
-}
+export const usePins = store.use

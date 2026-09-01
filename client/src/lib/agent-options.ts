@@ -96,8 +96,8 @@ export function saveAgentOptions(key: string, options: acp.SessionConfigOption[]
   if (options.length === 0) return
   const known = loadAgentOptions(key)
   const model = selectedModel(options)
-  write({
-    ...cache,
+  store.set({
+    ...store.get(),
     [key]: {
       base: options,
       byModel: model ? { ...known.byModel, [model]: options } : known.byModel,
@@ -109,8 +109,8 @@ export function saveAgentOptions(key: string, options: acp.SessionConfigOption[]
 export function saveProbedOptions(key: string, probed: AgentOptionSet): void {
   if (probed.base.length === 0) return
   const known = loadAgentOptions(key)
-  write({
-    ...cache,
+  store.set({
+    ...store.get(),
     [key]: { base: probed.base, byModel: { ...known.byModel, ...probed.byModel } },
   })
 }
@@ -134,11 +134,11 @@ export function useAgentOptions(
   key: string,
   fallbackKeys: readonly string[] = []
 ): AgentOptionSet {
-  const store = useSyncExternalStore(subscribe, snapshot, snapshot)
-  const own = store[key]
+  const known = store.use()
+  const own = known[key]
   if (isSet(own) && own.base.length > 0) return own
   for (const fallback of fallbackKeys) {
-    const sibling = store[fallback]
+    const sibling = known[fallback]
     if (isSet(sibling) && sibling.base.length > 0) return sibling
   }
   return EMPTY
