@@ -318,7 +318,21 @@ export function SessionConfigPopover({
               value={meta.model || DEFAULT_CHOICE}
               choices={[
                 { value: DEFAULT_CHOICE, name: "Profile default" },
-                ...profile.models.map((m) => ({ value: m.id, name: m.label })),
+                ...profile.models.map((m) => ({
+                  value: m.id,
+                  name: m.label,
+                  ...(m.iconUrl
+                    ? {
+                        icon: (
+                          <EntityIcon
+                            src={m.iconUrl}
+                            fallback={<span className="size-4" />}
+                            className="size-4"
+                          />
+                        ),
+                      }
+                    : {}),
+                })),
               ]}
               /* A new model brings its own effort list, and the one you were on
                  may not be in it — clear rather than carry a stale value into

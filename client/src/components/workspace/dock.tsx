@@ -26,6 +26,7 @@ import {
 import "dockview-react/dist/styles/dockview.css"
 
 import { ChatPanel } from "@/components/workspace/chat-panel"
+import { forgetProjectEditors } from "@/lib/ide/editors"
 import { IdePanel } from "@/components/workspace/ide-panel"
 import { PanelContainer } from "@/components/workspace/panel-container"
 import { PanelTab } from "@/components/workspace/panel-tab"
@@ -449,9 +450,13 @@ export function useWorkspaceDock(): DockController {
                   : !projects.has(descriptor.projectId)
           /* A pruned panel takes its guard with it — the panel is gone, so
              there is nothing left to ask, and a stale entry would veto a future
-             panel that happens to reuse the id. */
+             panel that happens to reuse the id. An IDE panel takes its open
+             tabs too: they outlive the panel on purpose (`lib/ide/editors.ts`),
+             which for a project that no longer exists would be a set of tabs
+             pointing at a directory the server will not read. */
           if (gone) {
             guardsRef.current.delete(panel.id)
+            if (descriptor.kind === "ide") forgetProjectEditors(descriptor.projectId)
             api.removePanel(panel)
           }
         }

@@ -948,6 +948,7 @@ export class SessionManager {
       settleWaiters: (s, turnId, outcome) => this.settleWaiters(s, turnId, outcome),
       refreshQuota: (s) => this.refreshQuota(s),
       drainQueue: (s) => this.queue.drain(s),
+      emitQueue: (s) => this.queue.emitQueue(s),
       persist: (s) => this.persist(s),
       events: this.events,
     });

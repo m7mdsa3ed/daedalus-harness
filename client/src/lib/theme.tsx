@@ -99,8 +99,14 @@ function applyThemeColor(resolved: "light" | "dark", colorTheme: ColorTheme) {
     .trim()
   // Empty means the stylesheet has not landed yet. The floor is the Default
   // palette's own background, shared with the splash and the manifest — see
-  // lib/boot-colors.
+  // lib/boot-colors. That floor is painted but never remembered: caching it
+  // under the real palette's key would tint the next boot with Default's
+  // colour instead of the palette's. Once the document has loaded, the real
+  // value is read again.
   let content = background || BOOT_COLORS[resolved]
+  if (!background && document.readyState !== "complete") {
+    window.addEventListener("load", () => applyThemeColor(resolved, colorTheme), { once: true })
+  }
   try {
     const ctx = document.createElement("canvas").getContext("2d")
     if (ctx) {
@@ -122,7 +128,7 @@ function applyThemeColor(resolved: "light" | "dark", colorTheme: ColorTheme) {
     document.head.appendChild(meta)
   }
   meta.setAttribute("content", content)
-  rememberThemeColor(`${colorTheme}:${resolved}`, content)
+  if (background) rememberThemeColor(`${colorTheme}:${resolved}`, content)
 }
 
 function rememberThemeColor(key: string, content: string) {

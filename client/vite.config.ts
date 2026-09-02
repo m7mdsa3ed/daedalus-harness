@@ -27,47 +27,6 @@ function bootColors(): Plugin {
   };
 }
 
-/* ── The IDE's CSS ──
-   VS Code ships its stylesheets as plain `.css` imports meant to be injected
-   by its own loader, into the workbench container. Vite would otherwise put
-   them in the page's global stylesheet, where they restyle the whole app —
-   `?inline` hands each one back as a string instead, which is what the
-   library's `injectCss` expects. Only files under the vendor packages: the
-   app's own CSS is Tailwind's and must stay a real stylesheet. */
-function vscodeCssAsString(): Plugin {
-  return {
-    name: "daedalus-vscode-css-as-string",
-    enforce: "pre",
-    async resolveId(source, importer, options) {
-      const resolved = await this.resolve(source, importer, options);
-      if (
-        resolved &&
-        !resolved.id.endsWith("?inline") &&
-        /node_modules[\\/](?:\.pnpm[\\/][^\\/]+[\\/]node_modules[\\/])?(?:@codingame[\\/]monaco-vscode|vscode|monaco-editor).*\.css$/.test(
-          resolved.id
-        )
-      ) {
-        return { ...resolved, id: `${resolved.id}?inline` };
-      }
-      return undefined;
-    },
-  };
-}
-
-/* The workbench is a hundred-odd megabytes of source across a thousand
-   modules. Vite pre-bundles dependencies, but these are many small packages
-   that resolve into each other, and without naming them Chrome hangs on the
-   first cold load walking the graph. */
-const IDE_PACKAGES = [
-  "@codingame/monaco-vscode-api",
-  "@codingame/monaco-vscode-api/extensions",
-  "@codingame/monaco-vscode-api/monaco",
-  "@codingame/monaco-vscode-api/workbench",
-  "monaco-editor",
-  "vscode",
-  "vscode/localExtensionHost",
-];
-
 // https://vite.dev/config/
 /* The persisted query cache's buster (see src/lib/queries/persist.ts): a
    dumped cache is only safe to rehydrate into the build that wrote it, since
@@ -80,17 +39,13 @@ export default defineConfig({
     __QUERY_CACHE_BUSTER__: JSON.stringify(buildId),
   },
   build: {
-    /* The workbench is authored against a modern baseline and the extension
-       host worker is an ES module. */
+    /* Monaco is authored against a modern baseline and its workers are ES
+       modules. */
     target: "esnext",
-    chunkSizeWarningLimit: 8000,
+    chunkSizeWarningLimit: 4000,
   },
   worker: { format: "es" },
-  optimizeDeps: {
-    include: IDE_PACKAGES,
-  },
   plugins: [
-    vscodeCssAsString(),
     react(),
     tailwindcss(),
     bootColors(),
@@ -114,23 +69,27 @@ export default defineConfig({
       },
       injectManifest: {
         globPatterns: ["**/*.{js,css,html,svg,png,woff2,webmanifest}"],
-        /* The workbench is deliberately NOT precached. It is a dozen megabytes
-           reached only by opening the IDE panel, and precaching it would make
-           the install an order of magnitude bigger for every reader who only
-           reads transcripts. Offline, the IDE is the one surface that does not
-           open; everything else still does.
+        /* The editor is deliberately NOT precached. Monaco and its language
+           workers are the better part of fifteen megabytes, reached only by
+           opening the IDE panel, and precaching them would make the install an
+           order of magnitude bigger for every reader who only reads
+           transcripts. Offline, the IDE is the one surface that does not open;
+           everything else still does.
 
-           It is excluded by size rather than by path: rolldown does not honour
-           a `chunkFileNames` callback in this Vite, so the workbench's chunks
-           are named like any other and there is no `assets/ide/` prefix to
-           match. The threshold sits above the app's own largest chunk and far
-           below the workbench's, and `maximumFileSizeToCacheInBytes` alone
-           would only warn — this drops them from the manifest quietly.
-
-           A grammar or a wasm blob under the threshold may still be precached;
-           that is a few hundred kilobytes and it is not worth a second rule to
-           chase. */
-        globIgnores: ["**/assets/boot-*.js"],
+           Excluded by name rather than by size, because the names are Monaco's
+           own entry points and stay stable across builds: `maximumFileSize…`
+           alone would let the smaller ones (the CSS, the codicon font) in and
+           then *warn* about the big ones, which vite-plugin-pwa treats as a
+           failed build. The threshold below stays as the backstop for anything
+           the app itself grows. */
+        globIgnores: [
+          "**/assets/editor.api-*.js",
+          "**/assets/vs-*.js",
+          "**/assets/vs-*.css",
+          "**/assets/editor-*.css",
+          "**/assets/*.worker-*.js",
+          "**/assets/codicon-*.ttf",
+        ],
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
       },
       manifest: {
@@ -215,10 +174,10 @@ export default defineConfig({
     host: true,
   },
   resolve: {
-    /* One copy of each, however many of the forty-odd override packages
-       depend on them: two `vscode` modules would be two extension APIs, and
-       two `monaco-editor`s two sets of global services. */
-    dedupe: ["vscode", "monaco-editor", "@codingame/monaco-vscode-api"],
+    /* One Monaco per page: two copies would be two theme registries and two
+       language registries, and a model created by one would be invisible to
+       the other. */
+    dedupe: ["monaco-editor"],
     alias: {
       "@": path.resolve(import.meta.dirname, "./src"),
       /* The one module the browser imports from the server for its *value*

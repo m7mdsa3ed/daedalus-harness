@@ -73,6 +73,9 @@ export function ComposerQueue({
   const [open, setOpen] = React.useState(false)
   const items = thread.queue
   const count = items.length
+  /* A held steer is listed but already sent: "send all" and "clear" have
+     nothing to do with it, so they act — and light up — on the rest. */
+  const editable = items.filter((item) => !item.steer)
   useStripSummary(
     count > 0
       ? { id: "queue", icon: ListOrderedIcon, label: count === 1 ? "1 queued" : `${count} queued` }
@@ -155,7 +158,7 @@ export function ComposerQueue({
             variant="ghost"
             size="xs"
             className={cn(ROW_BUTTON, "text-primary hover:text-primary")}
-            disabled={!canSend}
+            disabled={!canSend || editable.length === 0}
             title={
               running
                 ? "Stop the running turn and send everything queued as one message"
@@ -170,7 +173,7 @@ export function ComposerQueue({
             variant="ghost"
             size="xs"
             className={cn(ROW_BUTTON, "text-muted-foreground")}
-            disabled={!canEdit}
+            disabled={!canEdit || editable.length === 0}
             title="Forget every queued message"
             onClick={() => void actions.queueClear(sessionId).catch(() => {})}
           >
@@ -185,11 +188,12 @@ export function ComposerQueue({
               key={item.id}
               item={item}
               index={index}
+              next={item.id === editable[0]?.id}
               last={index === items.length - 1}
               sessionId={sessionId}
               actions={actions}
-              canSend={canSend}
-              canEdit={canEdit}
+              canSend={canSend && !item.steer}
+              canEdit={canEdit && !item.steer}
               running={running}
             />
           ))}
@@ -207,6 +211,7 @@ function firstLine(text: string): string {
 function QueueRow({
   item,
   index,
+  next,
   last,
   sessionId,
   actions,
@@ -216,6 +221,8 @@ function QueueRow({
 }: {
   item: QueuedMessage
   index: number
+  /** The first row the turn's end will send — the first that is not a steer. */
+  next: boolean
   /** The rail is drawn *between* ordinals, so the last row does not carry one
       on down into the padding under the list. */
   last: boolean
@@ -368,14 +375,24 @@ function QueueRow({
           {/* When it was queued, and — for the first row only — that it is the
               one the turn's end will send. */}
           <span className="mt-0.5 flex items-center gap-1.5 ps-0.5 text-[10px] text-muted-foreground/60">
-            {index === 0 && (
-              <span className="rounded bg-primary/10 px-1 font-medium text-primary">Next</span>
+            {item.steer ? (
+              /* Already on the wire, joining the running turn at its next step
+                 boundary — which is where its bubble will land. Until then this
+                 row is the only place the words are. */
+              <span className="flex items-center gap-0.5 rounded bg-primary/10 px-1 font-medium text-primary">
+                <CornerDownRightIcon aria-hidden className="size-2.5" />
+                Steering
+              </span>
+            ) : (
+              next && (
+                <span className="rounded bg-primary/10 px-1 font-medium text-primary">Next</span>
+              )
             )}
             <Timestamp at={item.createdAt} className="text-[10px]" />
           </span>
         </div>
       )}
-      {!editing && (
+      {!editing && !item.steer && (
         /* Revealed on hover, kept on a phone: four lit icon buttons per row
            made a list of the user's own sentences read as a toolbar. Focus
            counts as hover, or the row would be unusable from the keyboard. */

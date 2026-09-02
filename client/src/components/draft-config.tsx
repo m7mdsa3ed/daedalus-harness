@@ -427,7 +427,23 @@ export function DraftConfigPopover({
               value={meta.model || DEFAULT_CHOICE}
               choices={[
                 { value: DEFAULT_CHOICE, name: "Profile default" },
-                ...models.map((m) => ({ value: m.id, name: m.label })),
+                ...models.map((m) => ({
+                  value: m.id,
+                  name: m.label,
+                  /* The model's own icon when it has one — a placeholder keeps
+                     rows without art aligned with those that have it. */
+                  ...(m.iconUrl
+                    ? {
+                        icon: (
+                          <EntityIcon
+                            src={m.iconUrl}
+                            fallback={<span className="size-4" />}
+                            className="size-4"
+                          />
+                        ),
+                      }
+                    : {}),
+                })),
               ]}
               onSelect={(value) =>
                 configure({ model: value === DEFAULT_CHOICE ? "" : value, effort: "" })

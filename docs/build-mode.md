@@ -17,7 +17,7 @@ a channel that hands runtime/build errors back to the model as a prompt ("Fix
 this preview error"). They differ in *where the app runs* — WebContainers,
 Vercel Sandbox, a Replit VM. Here the app runs as an ordinary process in an
 ordinary directory, because that is what every other thread in the harness
-works on: the agent's tools, git, the editor panel and the terminal panel all
+works on: the agent's tools, git, the IDE panel and the terminal panel all
 already address a project cwd. What had to be built is only the part between
 the process and the browser.
 

@@ -1,5 +1,5 @@
 import * as React from "react"
-import { AppWindowIcon, Check, ChevronDown, ChevronLeft, Plus, ServerIcon, Settings2 } from "lucide-react"
+import { AppWindowIcon, Check, ChevronDown, ChevronLeft, Plus, SearchIcon, ServerIcon, Settings2, SquarePen } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -57,7 +57,8 @@ import { consumeQueuedPanels } from "@/lib/workspace/pending-panels"
 import { previewPanel } from "@/lib/workspace/preview-bridge"
 import { BuildPage } from "@/components/build-page"
 import { useShortcut } from "@/hooks/use-hotkey"
-import { KEYS } from "@/lib/shortcuts"
+import { useChord } from "@/lib/keybindings"
+import { formatChord, KEYS } from "@/lib/shortcuts"
 import { defaultsForProfile, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import {
   loadServers,
@@ -176,6 +177,10 @@ export function AppShell({
   )
   const [resizing, setResizing] = React.useState(false)
   const palette = useCommandPalette()
+  // Whatever these two are bound to on this device — the tooltip has to say the
+  // key that actually works, not the one the release shipped.
+  const newThreadChord = useChord("newThread") ?? ""
+  const paletteChord = useChord("palette") ?? ""
   const shortcuts = useShortcutsHelp()
   const [importing, setImporting] = React.useState(false)
   const inSettings = location.pathname.startsWith("/settings")
@@ -410,10 +415,7 @@ export function AppShell({
       // the way the Codex and Claude desktop sidebars open. `New project`
       // stays reachable from /settings/projects and the command palette.
       action: (
-        <SidebarNav
-          onNewThread={() => startThreadRef.current()}
-          onSearch={() => palette.setOpen(true)}
-        />
+        <SidebarNav />
       ),
       body: loading ? <SidebarGroupsSkeleton /> : <ThreadSidebar actions={actions} />,
     },
@@ -472,7 +474,7 @@ export function AppShell({
       <CloseSidebarOnNavigate />
       <Sidebar collapsible="icon">
         <SidebarHeader className="gap-2 p-3 group-data-[collapsible=icon]:p-2">
-          <div data-drag-region className="flex items-center gap-2 px-1 group-data-[collapsible=icon]:px-0">
+          <div data-drag-region className="flex items-center gap-2 px-1 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:px-0">
             <button
               type="button"
               onClick={() => void navigate("/")}
@@ -490,6 +492,30 @@ export function AppShell({
                 Daedalus
               </span>
             </button>
+            {/* New thread and Search sit beside the brand; in the icon rail
+                they stack under it so the rail still has a create affordance. */}
+            <div className="ml-auto flex items-center gap-0.5 group-data-[collapsible=icon]:ml-0 group-data-[collapsible=icon]:flex-col">
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="text-muted-foreground hover:text-foreground"
+                title={`New thread (${formatChord(newThreadChord)})`}
+                aria-label="New thread"
+                onClick={() => startThreadRef.current()}
+              >
+                <SquarePen />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="text-muted-foreground hover:text-foreground"
+                title={`Search threads and commands (${formatChord(paletteChord)})`}
+                aria-label="Search"
+                onClick={() => palette.setOpen(true)}
+              >
+                <SearchIcon />
+              </Button>
+            </div>
           </div>
         </SidebarHeader>
         <SidebarContent className="gap-0">

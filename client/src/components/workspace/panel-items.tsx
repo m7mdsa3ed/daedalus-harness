@@ -45,7 +45,7 @@ const OPENABLE: { kind: PanelKind; label: string; hint: string; shortcut?: Short
   {
     kind: "ide",
     label: "IDE",
-    hint: "Files, search and source control",
+    hint: "Editor, files, search and source control",
     shortcut: "ide",
   },
 ]

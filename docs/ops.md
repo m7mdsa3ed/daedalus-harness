@@ -20,9 +20,9 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   lie, and staging one of those rows would stage a different file. `fileAt` is the one
   call with no `repo` at all — its `path` is project-relative and a file belongs to exactly
   one worktree, so the server derives it, and the editor's descriptor does not grow a
-  second answer that can drift from the path beside it. The routes are still served; the
-  only client left reading them is the editor panel's diff mode, since the source-control
-  panel is gone.
+  second answer that can drift from the path beside it. The clients are the IDE's source-control
+  view (`scm-view.tsx`, the status and the writes) and its diff tab (`diff-tab.tsx`, which
+  reads one side through `fileAt`).
 
 ## Turn changes and the review panel
 

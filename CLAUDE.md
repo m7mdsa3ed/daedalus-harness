@@ -324,35 +324,50 @@ describes; every one of those rules cost a bug.
   toasts are for failures with no surface to go back to. An error a surface could render as
   *emptiness* must be rendered as an error. Toasts are Base UI's, raised only through
   `lib/toast.ts`, and anything with a visible wait goes through `reportPromise`.
-- **The dock holds four panel kinds: chat, ide, terminal and web.** The editor, the file
-  explorer, search and source control are one panel — the real VS Code workbench running in
-  the page (`@codingame/monaco-vscode-api`, `client/src/lib/ide/`), not a framed
-  `code-server`. **There is one workbench per page**: its services are global and initialize
-  once, so the panel is a singleton keyed by project, it is *parked* (detached, never
-  destroyed) when closed, and what is open *inside* it is the workbench's state and not the
-  dock's. Opening a file, a diff or a turn's changes is a request
-  (`lib/ide/open.ts` → `perform.ts`), queued against the boot the panel starts. **Nothing
-  outside `lib/ide/boot.ts` may import the workbench statically** — it is a dynamic import
-  and a 11 MB chunk, excluded from the service worker's precache. The server's `ide.ts` and
-  `ide-proxy.ts` (code-server) are still routed and now unused by the client. None of the
-  subagent or workflow machinery was affected.
-- **The workbench reaches the harness through two seams and no others.** Files are a VS Code
-  `IFileSystemProvider` over the existing workspace routes (`lib/ide/fs-provider.ts`,
-  addressed by the project whose cwd encloses an absolute path — `lib/ide/projects.ts`);
-  everything else is the harness's own **extension**, registered in-process
-  (`lib/ide/extension.ts`), which owns the git source control (`scm.ts`, over the project's
-  git routes) and the turn-changes multi-diff (`turn-changes.ts`). A feature is turned on by
-  adding its **service override** in `boot.ts` and by nothing else.
+- **The dock holds four panel kinds: chat, ide, terminal and web.** The IDE panel holds four
+  surfaces that are one product — the editor, the file explorer, file search and source
+  control (`client/src/components/workspace/ide-panel.tsx`). **Monaco is the text surface and
+  the diff, and nothing else**: the official `monaco-editor` package, not
+  `@codingame/monaco-vscode-api`, so there is no workbench, no service overrides and no
+  extension host, and therefore no "initialize once per page" rule — the panel is an ordinary
+  component and two projects are two panels. The explorer and the source control are the
+  harness's own components over the routes it already had. **Source control starts from
+  `GET …/git/repos`, never from "the project's git"**: a project directory may hold several
+  repositories or sit inside one, so `scm-view.tsx` draws a section per repository with its
+  own status, staging and commit box, and every read and write names its `repo`. Status paths
+  are **repository-relative** — `projectPath(repo, path)` in `git-api.ts` is the one join back
+  to what the file routes take. Changed files are drawn as a tree (single-child chains folded,
+  `lib/workspace/git-tree.ts`) or a list, and which is a **reader's** preference
+  (`lib/ide/prefs.ts`, device-local), never the descriptor's. Touch targets follow
+  `useCoarsePointer`; below 560px the side view and the editor take turns, and picking a file
+  is what closes the side view. Monaco's workers need no wiring
+  (since 0.56 the package declares them as `new URL(…, import.meta.url)`, which is what Vite
+  compiles); defining `MonacoEnvironment` would override that and is deliberately not done.
+- **What is open inside the IDE is the IDE's state, never the dock's.** The descriptor is
+  `{kind:"ide", projectId}` and the tabs live in `lib/ide/editors.ts` — a module store, so
+  they survive the panel being closed and reopened, and a file opened at line 42 is the same
+  tab as that file at line 9. A file, a diff and a turn's changes are **requests**
+  (`lib/ide/open.ts`) into that store. **`open.ts` and `editors.ts` name nothing from Monaco**,
+  because the transcript imports them and every reader loads the transcript; Monaco is reached
+  only through `lib/ide/monaco.ts`'s dynamic import and is excluded **by chunk name** from the
+  service worker's precache (`injectManifest.globIgnores`), so offline the IDE is the one
+  surface that does not open. Unsaved text survives a reload through
+  `lib/workspace/buffers.ts`, and the editor's colours are the app's palette
+  (`--code-*`), rebuilt on every theme change. The server's `ide.ts` and `ide-proxy.ts`
+  (code-server) are still routed and unused by the client. None of the subagent or workflow
+  machinery was affected.
 - **A turn's changes are measured by git, never read off the transcript.** The worktree is
   photographed as a tree object at `turn_started` and `turn_ended` (`git.snapshotTree`, a
   scratch index — the real one is never touched; `server/src/turn-changes.ts`,
   `session_turn_changes`), so a `sed` in a shell and an Edit tool read the same. The summary
   rides the live-only `turn_changes` event and `GET /api/sessions/:id/changes`; hunks are
   read live per scope (`turn:<id>` = its two trees, or start tree → disk while it runs;
-  `uncommitted` = HEAD → disk, untracked included). The review panel (`review-panel.tsx`,
-  keyed by session, opened from the footer chip) stages, discards and commits through the
-  project's existing git routes plus `apply` for one hunk; git's refusal of a stale hunk is
-  shown, not smoothed over. A project that is not a repository reads as a sentence.
+  `uncommitted` = HEAD → disk, untracked included). The footer chip opens the scope as an IDE
+  tab (`changes-tab.tsx`): a file tree and a Monaco diff per file, whose before side is the
+  turn's start tree and whose after side is its end tree — or the **working file itself**
+  while the turn is still running, so a running turn's diff is live. Staging, discarding and
+  committing are the source-control view's (`scm-view.tsx`), because they act on the worktree
+  as it is now and not on a scope. A project that is not a repository reads as a sentence.
 - A project has a page of its own (`/projects/<id>`): the live half from the store, the
   settled half from one `GET /api/projects/:id/stats`, refetched on mount and by Refresh and
   **never on a timer**. **Turns, not events**, are what is counted, buckets are local-time,

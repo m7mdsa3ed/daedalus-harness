@@ -1,8 +1,8 @@
-/* The git client. `gitFileAt` feeds the editor panel's diff mode and takes no
-   `repo`: it is about one file, and a file names its repository by where it is
-   — the server derives the owning worktree. Everything below it is the
-   source-control panel's surface: the per-turn reads, the working-tree status,
-   the stash, the log and the branches. */
+/* The git client. `gitFileAt` feeds the IDE's diff tab and takes no `repo`: it
+   is about one file, and a file names its repository by where it is — the
+   server derives the owning worktree. Everything below it is the source-control
+   view's surface and the turn-changes tab's: the per-turn reads, the
+   working-tree status, the stash, the log and the branches. */
 import { api, loadSettings, ApiError, type ServerSettings } from "@/lib/settings"
 
 export type Comparison = "worktree" | "staged" | "head"
@@ -56,6 +56,22 @@ export function changedFiles(
   return api(settings, `${session(sessionId)}/files?${search}`, { signal })
 }
 
+/** One side of one file under a scope, whole — what a diff editor puts on its
+    left (`before`) or right (`after`). A path the tree does not have is
+    `missing`, not an error: an added file has no before, a deleted one no
+    after. */
+export function changeFileSide(
+  settings: ServerSettings,
+  sessionId: string,
+  scope: ReviewScope,
+  path: string,
+  side: "before" | "after",
+  signal?: AbortSignal
+): Promise<{ content: string; missing: boolean; unavailable?: string }> {
+  const search = new URLSearchParams({ scope, path, side })
+  return api(settings, `${session(sessionId)}/file?${search}`, { signal })
+}
+
 export function changePatch(
   settings: ServerSettings,
   sessionId: string,
@@ -90,8 +106,46 @@ export interface GitStatus {
   conflicted: GitFileState[]
 }
 
-export function gitStatus(settings: ServerSettings, projectId: string, signal?: AbortSignal) {
-  return api<GitStatus>(settings, `${base(projectId)}/status`, { signal })
+/* ── Which repository ──
+   A project directory is not one git repository. It may hold several (a
+   monorepo of checkouts, a `packages/` of them) or sit *inside* a larger one,
+   so every read and every write names the repository it is about: `repo` is a
+   **project-relative directory**, and `""` is the project's own — which is what
+   every call that omits it means.
+
+   The paths inside a `GitStatus` are relative to **that repository's
+   directory**, not to the project. Prefixing them back with `repo` is what
+   turns one into a path the file routes take, which is what `projectPath` below
+   is for — so no caller writes that join by hand and gets it backwards. */
+
+export interface GitRepo {
+  /** Project-relative; `""` is the project directory itself. */
+  path: string
+  /** What to call it — the directory's own name, or "Project" at the root. */
+  name: string
+  branch: string | null
+}
+
+/** Every repository this project can see, the project's own first. */
+export function gitRepos(settings: ServerSettings, projectId: string, signal?: AbortSignal) {
+  return api<GitRepo[]>(settings, `${base(projectId)}/repos`, { signal })
+}
+
+/** A status path (repository-relative) as the file routes want it. */
+export const projectPath = (repo: string, path: string): string =>
+  repo ? `${repo}/${path}` : path
+
+export function gitStatus(
+  settings: ServerSettings,
+  projectId: string,
+  options: { repo?: string; signal?: AbortSignal } = {}
+) {
+  const search = new URLSearchParams()
+  if (options.repo) search.set("repo", options.repo)
+  const query = search.toString()
+  return api<GitStatus>(settings, `${base(projectId)}/status${query ? `?${query}` : ""}`, {
+    signal: options.signal,
+  })
 }
 
 export interface BranchList {
@@ -192,13 +246,16 @@ function writeStatus(
   )
 }
 
-export type GitWrite =
+export type GitAction =
   | { action: "stage" | "unstage" | "discard"; paths: string[] }
   | { action: "commit"; message: string; amend?: boolean }
   /** One hunk: `cached` stages it, `reverse` alone discards it. */
   | { action: "apply"; patch: string; cached?: boolean; reverse?: boolean }
   /** Switch branches; `create` makes it a `-b`. */
   | { action: "checkout"; branch: string; create?: boolean }
+
+/** Paths are relative to `repo`, the same way the status that listed them was. */
+export type GitWrite = GitAction & { repo?: string }
 
 export function gitWrite(
   settings: ServerSettings,

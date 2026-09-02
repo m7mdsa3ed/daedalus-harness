@@ -151,6 +151,9 @@ export async function enrichProviderModels(models: ProviderModel[]): Promise<Pro
           candidate.modalities = hit.modalities;
           candidate.reasoningEfforts = hit.reasoningEfforts;
           candidate.devRef = `${hit.providerId}/${hit.id}`;
+          // The provider's mark, derived exactly as models-dev.ts does for a
+          // search hit — one convention, whichever door the metadata came in.
+          candidate.iconUrl = `https://models.dev/logos/${hit.providerId}.svg`;
           break;
         }
       } catch {

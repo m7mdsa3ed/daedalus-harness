@@ -20,9 +20,9 @@ export type WebTrust = "project" | "external"
 
 export type PanelDescriptor =
   | { kind: "chat"; sessionId: string }
-  /** The workbench — editor, explorer, search and source control in one. One
-      per project, because there is one workbench per page and what is open
-      inside it is its own state, not the dock's. */
+  /** The IDE — the editor, the file explorer, file search and source control
+      in one. One per project, because what is open *inside* it is its own
+      state (`lib/ide/editors.ts`) and not the dock's. */
   | { kind: "ide"; projectId: string }
   | { kind: "terminal"; projectId: string; terminalId: string }
   | { kind: "web"; trust: WebTrust; viewId: string; projectId?: string; url?: string }
@@ -53,8 +53,8 @@ export function isPanelKind(value: unknown): value is PanelKind {
 
 /* Stable ids, so opening a resource twice focuses the panel that already has
    it. The IDE's id is its project alone: a file, a diff and a turn's changes
-   are things opened *inside* it, and the workbench tracks them — a second id
-   per file would be a second workbench, which the page cannot have. */
+   are things opened *inside* it, and its own tab store tracks them — a second
+   id per file is what made the same file at a second line a second panel. */
 export function panelId(panel: PanelDescriptor): string {
   switch (panel.kind) {
     case "chat":

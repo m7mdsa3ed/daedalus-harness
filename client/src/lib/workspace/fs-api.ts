@@ -142,10 +142,18 @@ export async function readFileObjectUrl(
 
 export const basename = (path: string): string => path.split("/").pop() ?? path
 
+/** The directory a path is in; `""` for something at the project root. */
+export const dirname = (path: string): string => {
+  const cut = path.lastIndexOf("/")
+  return cut < 0 ? "" : path.slice(0, cut)
+}
+
+export const joinPath = (dir: string, name: string): string => (dir ? `${dir}/${name}` : name)
+
 /* ── The IDE's file system ──
-   The rest of this file is what the VS Code file system provider
-   (`lib/ide/fs-provider.ts`) needs and the editor panel never did: a stat, a
-   listing, bytes, and the three directory writes. Same routes, same rules —
+   The rest of this file is what the file explorer (`components/workspace/
+   file-explorer.tsx`) needs and the transcript's file chips never did: a stat,
+   a listing, bytes, and the three directory writes. Same routes, same rules —
    project-relative paths in, project-relative paths out. */
 
 export interface WorkspaceListing {
@@ -162,14 +170,30 @@ export function statFile(projectId: string, path: string, signal?: AbortSignal):
   )
 }
 
-/** Every entry, hidden and ignored ones included — VS Code applies its own
-    `files.exclude`, and a tree that hid `.env` from an explorer that was asked
-    for it would be a second, silent exclude list. */
-export function listTree(projectId: string, path: string, signal?: AbortSignal): Promise<WorkspaceListing> {
+export interface ListOptions {
+  /** Dotfiles. Off by default, and the explorer's own toggle. */
+  hidden?: boolean
+  /** Everything `.gitignore` covers — `node_modules`, build output. */
+  ignored?: boolean
+  signal?: AbortSignal
+}
+
+/** One directory's entries. What is hidden is the *caller's* choice and is
+    always stated, so the explorer's eye toggle is the only exclude list there
+    is — a second, silent one in here is how `.env` becomes unopenable. */
+export function listTree(
+  projectId: string,
+  path: string,
+  options: ListOptions = {}
+): Promise<WorkspaceListing> {
   return api<WorkspaceListing>(
     server(),
-    `/api/projects/${encodeURIComponent(projectId)}/tree${q({ path, hidden: "1", ignored: "1" })}`,
-    { signal }
+    `/api/projects/${encodeURIComponent(projectId)}/tree${q({
+      path,
+      hidden: options.hidden ? "1" : undefined,
+      ignored: options.ignored ? "1" : undefined,
+    })}`,
+    { signal: options.signal }
   )
 }
 

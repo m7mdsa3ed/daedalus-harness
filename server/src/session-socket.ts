@@ -1,6 +1,6 @@
 import { WebSocket } from "ws";
 import { toWireError } from "./acp-bridge.js";
-import { listQueue } from "./queue.js";
+import { queueItems } from "./session-queue.js";
 import type { SessionJournal } from "./session-journal.js";
 import type { Peer, Session } from "./sessions.js";
 import { REPLAY_WINDOW_BYTES } from "./protocol.js";
@@ -198,7 +198,7 @@ export class SessionSocket {
       ev: "caught_up",
       cursor: to,
       promptActive: session.bridge?.promptActive ?? false,
-      queue: listQueue(session.id),
+      queue: queueItems(session),
       paused: session.bridge?.paused ?? false,
     });
     /* Caught up: everything held while the replay was on the wire goes out now,
@@ -291,7 +291,7 @@ export class SessionSocket {
       ev: "caught_up",
       cursor: to,
       promptActive: session.bridge?.promptActive ?? false,
-      queue: listQueue(session.id),
+      queue: queueItems(session),
       paused: session.bridge?.paused ?? false,
     };
     yield `],"caughtUp":${JSON.stringify(caughtUp)}}`;

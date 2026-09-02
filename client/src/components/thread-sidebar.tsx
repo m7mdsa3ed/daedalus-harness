@@ -2,8 +2,8 @@
    Laid out the way the Codex and Claude desktop apps lay theirs out, because
    that is the shape people arrive already knowing:
 
-     ┌ brand row
-     │ New thread · Search · Tasks        fixed nav, icon + label, always there
+     ┌ brand row · New thread · Search
+     │ Build · Tasks · …                  fixed nav, icon + label, always there
       ├ Pinned                             the ones you said matter
       │ Recents                            the newest few, flat — a shortcut,
       │                                    running turns first
@@ -49,9 +49,7 @@ import {
   ListFilter,
   Loader2,
   Pin,
-  SearchIcon,
   SquareKanban,
-  SquarePen,
   Trash2,
   Zap,
 } from "lucide-react"
@@ -98,9 +96,6 @@ import { usePins } from "@/lib/pins"
 import { useProfiles, useProjects } from "@/lib/queries/catalog"
 import { useRoutines, useScheduled } from "@/lib/queries/routines"
 import { useInbox } from "@/lib/queries/surfaces"
-import { useChord } from "@/lib/keybindings"
-import { formatChord, type ShortcutId } from "@/lib/shortcuts"
-import { Shortcut } from "@/components/shortcut"
 import { activityAt, isTopLevel, type Project, type SessionMeta } from "@/lib/settings"
 import { defaultsForProfile, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import { useStoreSelect, type ThreadState as LiveThreadState } from "@/lib/store"
@@ -115,10 +110,8 @@ const RECENT_COUNT = 8
 
 /* ── Fixed nav ──
    The rows every screen of the app is one click from, above the list rather
-   than in it: New thread and Search used to be two icon buttons beside the
-   brand, which vanished in the collapsed rail — the one place a create
-   affordance is needed most. As menu rows they collapse to icons with
-   tooltips like everything else.
+   than in it. New thread and Search are the two icon buttons beside the brand
+   in the header (`app-shell.tsx`), stacked under it in the collapsed rail.
 
    Deliberately only the rows that start something. Plan usage used to sit here
    too, as a peak-percentage badge that polled `GET /api/quota` every ten
@@ -126,13 +119,7 @@ const RECENT_COUNT = 8
    worked rather than navigated — it made the sidebar ask the server a question
    nobody had posed, on a timer, for a number that is only ever acted on by
    going to the page that shows it properly. */
-export function SidebarNav({
-  onNewThread,
-  onSearch,
-}: {
-  onNewThread: () => void
-  onSearch: () => void
-}) {
+export function SidebarNav() {
   const location = useLocation()
   const navigate = useNavigate()
   const inBoard = location.pathname.startsWith("/board")
@@ -145,38 +132,10 @@ export function SidebarNav({
   // queries), so the rows can say how much is armed without asking again.
   const routineCount = useRoutines().data?.length ?? 0
   const scheduledCount = useScheduled().data?.length ?? 0
-  // Whatever these two are bound to on this device — the tooltip has to say the
-  // key that actually works, not the one the release shipped.
-  const newThreadChord = useChord("newThread") ?? ""
-  const paletteChord = useChord("palette") ?? ""
   return (
     <SidebarGroup className={GROUP}>
       <SidebarGroupContent>
         <SidebarMenu className={MENU}>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              size="sm"
-              tooltip={`New thread (${formatChord(newThreadChord)})`}
-              onClick={onNewThread}
-              className={ROW}
-            >
-              <SquarePen />
-              <span>New thread</span>
-              <Kbd id="newThread" />
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              size="sm"
-              tooltip={`Search threads and commands (${formatChord(paletteChord)})`}
-              onClick={onSearch}
-              className={ROW}
-            >
-              <SearchIcon />
-              <span>Search</span>
-              <Kbd id="palette" />
-            </SidebarMenuButton>
-          </SidebarMenuItem>
           {/* The builder is a way to start work, like New thread — so it sits
               with it, above the places. */}
           <SidebarMenuItem>
@@ -277,18 +236,6 @@ function NavCount({ count }: { count: number }) {
     <span className="ml-auto text-[10px] tabular-nums text-muted-foreground group-data-[collapsible=icon]:hidden">
       {count}
     </span>
-  )
-}
-
-/** The chord, at the row's trailing edge, only while the row is hovered — a
-    hint, not a label. Hidden in the icon rail, where the tooltip carries it. */
-function Kbd({ id }: { id: ShortcutId }) {
-  return (
-    <Shortcut
-      id={id}
-      className="ml-auto hidden opacity-0 transition-opacity group-hover/menu-button:opacity-100 sm:inline-flex group-data-[collapsible=icon]:hidden"
-      keyClassName="h-4 min-w-4 bg-transparent px-0.5 text-[10px] text-muted-foreground/70"
-    />
   )
 }
 
@@ -577,12 +524,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
           are the folds — but it hides under a status filter that matched
           nothing, where a column of empty folders would be noise. */}
       {projects.length > 0 && !(filtered && nothingLive) && (
-        <SidebarGroup className={cn(TIER, GROUP)}>
-          <SidebarGroupLabel className={GROUP_LABEL}>
-            <FolderIcon className="size-3 shrink-0" />
-            <span className="truncate">Projects</span>
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
+        <FoldableGroup groupKey="__projects" label="Projects" icon={<FolderIcon className="size-3 shrink-0" />}>
             <SidebarMenu className={MENU}>
               {projects.map((project) => (
                 <ProjectFolder
@@ -606,8 +548,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
                 />
               ))}
             </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        </FoldableGroup>
       )}
 
       {/* Trash folds, and folds shut by default: it is where things go, not

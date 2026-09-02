@@ -25,7 +25,7 @@ import type { SessionMeta } from "@/lib/settings"
 import { extractSubagent, extractTodos, toolHeading, toolViewOf } from "@/lib/tools"
 import { activeSubagents, buildRows } from "@/lib/transcript-rows"
 import { useAgents, useProfiles } from "@/lib/queries/catalog"
-import { useStoreSelect, type ThreadState, type ToolItem } from "@/lib/store"
+import { useStoreSelect, type PlanItem, type ThreadState, type ToolItem } from "@/lib/store"
 import { formatTokens } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 
@@ -477,7 +477,15 @@ export function ComposerTodo({ thread }: { thread: ThreadState }) {
     // and letting it win here handed the composer shelf to whichever worker
     // wrote last.
     .find((item): item is ToolItem => item.kind === "tool" && !item.parentId && toolViewOf(item) === "todos")
-  const todos = todoItem ? extractTodos(todoItem) : null
+  /* Claude Code's ACP adapter now sends TodoWrite as an ACP `plan` update
+     rather than a tool call with input, so with no such call the thread's own
+     plan (never a subagent's) is the checklist. */
+  const planItem = todoItem
+    ? null
+    : [...thread.items]
+        .reverse()
+        .find((item): item is PlanItem => item.kind === "plan" && !item.parentId && item.entries.length > 0)
+  const todos = todoItem ? extractTodos(todoItem) : planItem ? planItem.entries : null
   if (!todos || todos.length === 0) return null
 
   const total = todos.length

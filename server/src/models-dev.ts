@@ -65,6 +65,10 @@ export interface ModelDevEntry {
   reasoningEfforts: string[];
   /** Input modalities, e.g. ["text", "image"]. */
   modalities?: string[];
+  /** The provider's own mark — models.dev serves one per provider at
+      https://models.dev/logos/<provider>.svg, so it is derived, not carried by
+      the upstream model entry. */
+  iconUrl?: string;
 }
 
 export interface ModelsDevProvider {
@@ -96,6 +100,10 @@ export const toCandidate = ({ name, ...entry }: ModelDevEntry): ModelsDevCandida
   ...entry,
   label: name,
   devRef: `${entry.providerId}/${entry.id}`,
+  /* Derived here rather than in `toEntry`: the catalog entry is provider- and
+     model-agnostic, and every consumer of the candidate (the profile editor,
+     the presets, the fetch flow) wants the mark. */
+  iconUrl: `https://models.dev/logos/${entry.providerId}.svg`,
 });
 
 interface NormalizedProvider extends ModelsDevProvider {

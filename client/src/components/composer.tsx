@@ -14,20 +14,16 @@
 
    What used to be five separate buttons (attach, voice, pause, stop, send)
    competing for a row that is 300px wide on a phone is now a menu on the left
-   and a menu on the right. The "+" holds everything that *adds to* the
-   message; the chevron beside Send holds everything about *how it goes* —
-   queue or steer while a turn runs, schedule it, and what Enter does. On touch
-   the send menu is also a long-press on Send, on a mouse a right-click, so the
-   chevron is a hint rather than the only door.
+   and one action on the right. The "+" holds everything that *adds to* the
+   message; the end of the row holds the one action the state calls for — the
+   mic while the box is empty, Send as soon as something is in it, and Stop
+   beside either while a turn runs. Queue and steer are still the two sends
+   (⏎ and the steer chord), said in Send's tooltip rather than in a menu.
 
    Features the toolbar offers beyond the old row:
-   — expand: a long prompt gets a taller box (the panel's height, not a fixed
-     forty units) with one click, and folds back the same way;
    — a length reading once a prompt is long enough for its size to matter,
      with a rough token estimate (4 chars ≈ 1 token — an estimate, said as one);
    — camera capture on touch (`capture="environment"` on a second picker);
-   — the Enter preference (`lib/composer-prefs.ts`);
-   — Schedule from the send menu, the same door `/schedule` opens;
    — Clear, which puts back the box, the parked pastes and the attachments in
      one go, from the "+" menu.
 
@@ -41,15 +37,10 @@ import {
   Archive,
   ArrowUp,
   AtSign,
-  CalendarClock,
   Camera,
-  ChevronDown,
   Code,
-  CornerDownLeft,
   History,
-  Maximize2,
   Mic,
-  Minimize2,
   Paperclip,
   Pause,
   Play,
@@ -63,11 +54,8 @@ import {
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuShortcut,
   DropdownMenuTrigger,
@@ -94,7 +82,7 @@ import { useComposerAttachments } from "@/hooks/use-composer-attachments"
 import { useCoarsePointer, useIsMobile } from "@/hooks/use-mobile"
 import { useVoice } from "@/hooks/use-voice"
 import type { Actions } from "@/lib/actions"
-import { setComposerPrefs, useComposerPrefs } from "@/lib/composer-prefs"
+import { useComposerPrefs } from "@/lib/composer-prefs"
 import type { ComposerHistoryEntry } from "@/lib/composer-history"
 import { clearDraft, loadDraft, saveDraft } from "@/lib/drafts"
 import { reportError } from "@/lib/errors"
@@ -133,11 +121,6 @@ export interface ComposerScope {
    question — "is this more than a sentence" — so they share one answer. */
 const LONG_PROMPT_CHARS = 240
 const LONG_PROMPT_LINES = 3
-/* The long-press that opens the send menu on touch. Longer than a tap, shorter
-   than the platform's own context menu (which the handler suppresses on the
-   button anyway). */
-const LONG_PRESS_MS = 450
-
 /** Where the caret is, or the end of the text when the box is not mounted. */
 function selectionOf(el: HTMLTextAreaElement | null, fallback: number): [number, number] {
   const start = el?.selectionStart ?? fallback
@@ -206,9 +189,6 @@ export function Composer({
   const [reviving, setReviving] = React.useState(false)
   /* `beforeSend` in flight: the box is taken, the button is busy. */
   const [gated, setGated] = React.useState(false)
-  /* The taller box. Not persisted: it is about this prompt, not the reader. */
-  const [expanded, setExpanded] = React.useState(false)
-  const [sendMenuOpen, setSendMenuOpen] = React.useState(false)
   const isMobile = useIsMobile()
   const coarse = useCoarsePointer()
   const prefs = useComposerPrefs()
@@ -311,7 +291,6 @@ export function Composer({
     const carriedFiles = files.attachments
     setText("")
     setPastes([])
-    setExpanded(false)
     clearDraft(sessionId)
     clearPastes(sessionId)
     files.clear()
@@ -471,7 +450,6 @@ export function Composer({
   const clearAll = () => {
     setText("")
     setPastes([])
-    setExpanded(false)
     clearDraft(sessionId)
     clearPastes(sessionId)
     files.clear()
@@ -515,28 +493,6 @@ export function Composer({
     setPastes(next.pastes)
   }
 
-  /* The long-press that opens the send menu on touch (and the right-click on
-     a mouse). Held on a ref so a pointer that leaves the button mid-press
-     cancels rather than fires. */
-  const pressTimer = React.useRef<number | null>(null)
-  /* Set when the press fired: the finger lifting afterwards still delivers a
-     click to the button, and that click must not send the message the menu
-     was opened to ask about. */
-  const pressFired = React.useRef(false)
-  const cancelPress = () => {
-    if (pressTimer.current !== null) window.clearTimeout(pressTimer.current)
-    pressTimer.current = null
-  }
-  const startPress = () => {
-    cancelPress()
-    pressFired.current = false
-    pressTimer.current = window.setTimeout(() => {
-      pressTimer.current = null
-      pressFired.current = true
-      setSendMenuOpen(true)
-    }, LONG_PRESS_MS)
-  }
-  React.useEffect(() => cancelPress, [])
 
   /* What the row reads about the prompt. `lines` counts newlines rather than
      wrapped rows: the wrap depends on the width and the reading should not
@@ -672,7 +628,6 @@ export function Composer({
           the overlay stable — `dragleave` fires as the pointer crosses into a
           child, so a boolean would flicker the whole way across. */}
       <div
-        data-expanded={expanded || undefined}
         className={cn(
           "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl bg-composer p-2 shadow-lg",
           "ring-1 ring-transparent transition-[ring-color] duration-200",
@@ -755,13 +710,8 @@ export function Composer({
           rows={1}
           className={cn(
             "min-h-9 w-full resize-none border-0 bg-transparent px-2 py-1.5 leading-relaxed shadow-none focus-visible:ring-0 dark:bg-transparent",
-            /* Folded, the box grows to ten lines and then scrolls. Expanded it
-               takes most of the panel — `--panel-h` inside the dock, the
-               viewport outside it — and half of a phone, where the soft
-               keyboard already has the other half. */
-            expanded
-              ? "max-h-[calc(var(--panel-h,100svh)*0.55)] min-h-40 sm:max-h-[calc(var(--panel-h,100svh)*0.6)]"
-              : "max-h-40"
+            /* The box grows to ten lines and then scrolls. */
+            "max-h-40"
           )}
         />
         {/* One control language across the row: every button is the same
@@ -911,24 +861,7 @@ export function Composer({
             </span>
           )}
           <ContextIndicator thread={thread} meta={meta} actions={actions} />
-          {/* The taller box. Offered once the prompt is more than a sentence,
-              and kept while it is open so it can be closed. */}
-          {(long || expanded) && (
-            <Button
-              variant="ghost"
-              size={iconSize}
-              className="shrink-0 rounded-lg text-muted-foreground hover:text-foreground"
-              onClick={() => {
-                setExpanded((v) => !v)
-                requestAnimationFrame(() => composerRef.current?.focus())
-              }}
-              title={expanded ? "Shrink the box" : "Expand the box"}
-              aria-pressed={expanded}
-            >
-              {expanded ? <Minimize2 /> : <Maximize2 />}
-            </Button>
-          )}
-          {voice.supported && (
+          {voice.supported && (voice.listening || (!hasContent && !gated)) && (
             <Button
               variant="ghost"
               size={iconSize}
@@ -980,118 +913,19 @@ export function Composer({
               <Square className="size-3.5 fill-current" />
             </Button>
           )}
-          {/* How it goes. The chevron is the visible door; a long-press on
-              Send (touch) and a right-click (mouse) open the same menu, so the
-              options are reachable from the button itself. It is hidden on a
-              draft with nothing running and nothing to schedule — then the
-              menu would hold only the Enter preference, which is not worth a
-              control on every new thread's row. */}
-          <DropdownMenu open={sendMenuOpen} onOpenChange={setSendMenuOpen}>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  className={cn(
-                    "-mr-0.5 shrink-0 rounded-lg text-muted-foreground hover:text-foreground data-popup-open:bg-muted data-popup-open:text-foreground",
-                    coarse && "size-8"
-                  )}
-                  title="Send options"
-                />
-              }
+          {(hasContent || gated) && (
+            <Button
+              variant="default"
+              size={iconSize}
+              className="shrink-0 rounded-full shadow-sm disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100"
+              onClick={() => void send()}
+              disabled={!canSend}
+              title={sendTitle}
+              aria-label={sendTitle}
             >
-              <ChevronDown />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" side="top" sideOffset={8} className="min-w-60">
-              {/* The label is Base UI's Menu.GroupLabel: it reads its group from
-                  context and throws outside one, so it sits inside the group it
-                  heads rather than loose in the content. */}
-              <DropdownMenuGroup>
-                <DropdownMenuLabel className="text-xs text-muted-foreground">
-                  {thread.turnActive ? "A turn is running" : "Send"}
-                </DropdownMenuLabel>
-                {thread.turnActive ? (
-                  <>
-                    <DropdownMenuItem disabled={!canSend} onClick={() => void send()}>
-                      <ArrowUp />
-                      Queue for when it finishes
-                      {!isMobile && prefs.enterSends && <DropdownMenuShortcut>⏎</DropdownMenuShortcut>}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem disabled={!canSend} onClick={() => void send({ steer: true })}>
-                      <CornerDownLeft />
-                      Steer the running turn
-                      {!isMobile && <DropdownMenuShortcut>{steerChord}</DropdownMenuShortcut>}
-                    </DropdownMenuItem>
-                  </>
-                ) : (
-                  <DropdownMenuItem disabled={!canSend} onClick={() => void send()}>
-                    <ArrowUp />
-                    Send now
-                    {!isMobile && (
-                      <DropdownMenuShortcut>{prefs.enterSends ? "⏎" : steerChord}</DropdownMenuShortcut>
-                    )}
-                  </DropdownMenuItem>
-                )}
-                {/* The same door `/schedule` opens, for the hand that did not
-                    know the command. A draft cannot be scheduled against — the
-                    server does not know it yet. */}
-                {!draft && (
-                  <DropdownMenuItem disabled={!text.trim()} onClick={() => openSchedule(text.trim())}>
-                    <CalendarClock />
-                    Schedule…
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuGroup>
-              {/* Moot on touch, where Return is always a newline. */}
-              {!isMobile && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuCheckboxItem
-                    checked={prefs.enterSends}
-                    onCheckedChange={(checked) => setComposerPrefs({ enterSends: checked })}
-                    closeOnClick={false}
-                  >
-                    <span className="flex flex-col gap-0.5">
-                      <span>Enter sends</span>
-                      <span className="text-xs text-muted-foreground">
-                        {prefs.enterSends
-                          ? "Shift+Enter breaks the line"
-                          : `Off — Enter breaks the line, ${steerChord} sends`}
-                      </span>
-                    </span>
-                  </DropdownMenuCheckboxItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button
-            variant="default"
-            size={iconSize}
-            className="shrink-0 rounded-full shadow-sm disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100"
-            onClick={() => {
-              if (pressFired.current) {
-                pressFired.current = false
-                return
-              }
-              void send()
-            }}
-            onPointerDown={(e) => {
-              if (e.pointerType === "touch") startPress()
-            }}
-            onPointerUp={cancelPress}
-            onPointerLeave={cancelPress}
-            onPointerCancel={cancelPress}
-            onContextMenu={(e) => {
-              e.preventDefault()
-              cancelPress()
-              setSendMenuOpen(true)
-            }}
-            disabled={!canSend}
-            title={sendTitle}
-            aria-label={sendTitle}
-          >
-            {gated ? <Spinner className="size-4" /> : <ArrowUp className="size-4.5" strokeWidth={2.5} />}
-          </Button>
+              {gated ? <Spinner className="size-4" /> : <ArrowUp className="size-4.5" strokeWidth={2.5} />}
+            </Button>
+          )}
         </div>
       </div>
       {/* Outside the card so the dialog is not inside the element it writes

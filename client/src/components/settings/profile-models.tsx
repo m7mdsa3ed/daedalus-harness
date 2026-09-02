@@ -545,6 +545,9 @@ function ModelsDevMatch({
       pricingInput: hit.pricing ? String(hit.pricing.input) : "",
       pricingOutput: hit.pricing ? String(hit.pricing.output) : "",
       modalities: (hit.modalities ?? []).join(", "),
+      /* The provider's mark, derived from the hit the same way the server
+         derives it — see models-dev.ts's `toCandidate`. */
+      iconUrl: hit.iconUrl ?? (hit.providerId ? `https://models.dev/logos/${hit.providerId}.svg` : ""),
     }
     if (!row.label.trim() || row.label.trim() === row.id.trim())
       patch.label = label === hit.id ? "" : label

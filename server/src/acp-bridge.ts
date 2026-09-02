@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import { Readable, Writable } from "node:stream";
@@ -13,6 +14,7 @@ import type {
   AutoAnswer,
   AutonomyAnswer,
   HistoryLost,
+  QueuedMessage,
   RestoreState,
   SessionUpdate,
   ThreadEvent,
@@ -310,6 +312,10 @@ export interface BridgeHost {
       Read in the same tick as `turn_ended` is emitted, so the event can say
       `continued` about a drain that has not happened yet. */
   hasQueued(): boolean;
+  /** The set of held steers changed (one was taken, or the step let them go),
+      so the absolute `queue` event has to be said again — they are listed on
+      it, flagged `steer`, until their `turn_started` lands. */
+  onHeldSteersChanged(): void;
   /** The logical turn is over and `turn_ended` is journaled. `interrupted` =
       cancelled or failed, after which nothing should auto-follow; `continued`
       = `hasQueued()` said yes and the host is expected to drain now. The push
@@ -413,7 +419,7 @@ export class AcpBridge {
   /** Steers whose `turn_started` has not been emitted yet: the words are
       already on the wire, but the transcript does not show them until the step
       that was running lets go. Drained by `flushSteers`. */
-  private pendingSteers: { event: ThreadEvent; origin: Peer | undefined }[] = [];
+  private pendingSteers: { id: string; createdAt: number; event: ThreadEvent; origin: Peer | undefined }[] = [];
   /** Callers of `whenIdle()` waiting for `inflight` to reach zero. */
   private idleWaiters: (() => void)[] = [];
   private readonly suppressModelMetadataWarning: boolean;
@@ -908,6 +914,23 @@ export class AcpBridge {
   private flushSteers(): void {
     if (this.pendingSteers.length === 0) return;
     for (const { event, origin } of this.pendingSteers.splice(0)) this.host.emit(event, origin);
+    this.host.onHeldSteersChanged();
+  }
+
+  /** The steers still held for a step boundary, as queue rows: what the user
+      said and has not yet seen land. */
+  heldSteers(): QueuedMessage[] {
+    return this.pendingSteers.map(({ id, createdAt, event }) =>
+      event.ev === "turn_started"
+        ? {
+            id,
+            text: event.text,
+            ...(event.attachments ? { attachments: event.attachments } : {}),
+            createdAt,
+            steer: true as const,
+          }
+        : { id, text: "", createdAt, steer: true as const },
+    );
   }
 
   /**
@@ -1097,7 +1120,8 @@ export class AcpBridge {
       /* No origin, exactly as a drained queue item has none: the sender is not
          drawing this bubble itself any more (it cannot — it does not know when
          the step ends), so it needs the event as much as every other peer. */
-      this.pendingSteers.push({ event: started, origin: undefined });
+      this.pendingSteers.push({ id: randomUUID(), createdAt: Date.now(), event: started, origin: undefined });
+      this.host.onHeldSteersChanged();
     } else this.host.emit(started, origin);
     if (this.inflight === 0) {
       this.currentTurnId = turnId;

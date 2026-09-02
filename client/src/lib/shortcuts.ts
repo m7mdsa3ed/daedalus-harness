@@ -254,9 +254,9 @@ export const KEYS = {
       chord: the two are the same gesture — "show me the thing running" —
       and nothing in Chromium or Electron claims ⌘⇧J's neighbour. */
   preview: "mod+shift+e",
-  /** The workbench, beside the thread. VS Code's own ⌘⇧E is the explorer,
-      which is one of the things behind this — and inside the panel that chord
-      still reaches it, because the workbench binds its own keys. */
+  /** The IDE, beside the thread. Not ⌘⇧E (VS Code's explorer chord): inside
+      the panel Monaco binds its own keys, and a chord the app claims first is
+      one the editor can never see. */
   ide: "mod+shift+g",
 } as const
 
@@ -293,7 +293,7 @@ export const SHORTCUTS: ShortcutDef[] = [
     label: "Open the IDE",
     chords: [KEYS.ide],
     rebindable: true,
-    note: "Files, search and source control for the current thread's project — one workbench, however many threads are open.",
+    note: "The editor, files, search and source control for the current thread's project.",
   },
   {
     id: "preview",

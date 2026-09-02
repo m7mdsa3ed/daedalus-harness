@@ -937,6 +937,42 @@ html[data-desktop="true"]:not([data-desktop-platform="darwin"]) [data-drag-regio
   color: oklch(0.8 0.1 325);
 }
 
+/* ── The editor's palette ──
+   Monaco's theme is built from these at load and rebuilt whenever the palette
+   moves (`lib/ide/monaco.ts`), so a custom theme carries the editor with it
+   instead of leaving it on someone else's grey. Same hues as the transcript's
+   fenced code above: a file and a diff of that file in a tool call should read
+   as the same language, not as two products. */
+:root {
+  --code-comment: color-mix(in oklch, var(--muted-foreground) 85%, transparent);
+  --code-keyword: oklch(0.55 0.15 285);
+  --code-string: oklch(0.5 0.13 150);
+  --code-number: oklch(0.55 0.13 40);
+  --code-function: oklch(0.52 0.13 250);
+  --code-property: oklch(0.52 0.1 210);
+  --code-type: oklch(0.55 0.11 320);
+  --code-punctuation: color-mix(in oklch, var(--foreground) 60%, transparent);
+}
+.dark {
+  --code-keyword: oklch(0.78 0.13 290);
+  --code-string: oklch(0.8 0.13 150);
+  --code-number: oklch(0.8 0.12 55);
+  --code-function: oklch(0.78 0.12 245);
+  --code-property: oklch(0.82 0.09 205);
+  --code-type: oklch(0.8 0.1 325);
+}
+
+/* The span a transcript link asked for. A Read of lines 400-460 says where it
+   stopped looking, which a caret cannot — so the range is tinted rather than
+   selected. Quieter than a selection (a selection is the reader's, and taking
+   it would break the very next thing they do) and marked down the line's
+   leading edge as well as behind the text, so a band running off the bottom of
+   the viewport still reads as one region rather than a stripe per line. */
+.daedalus-reveal-band {
+  background-color: color-mix(in oklch, var(--primary) 10%, transparent);
+  box-shadow: inset 2px 0 0 0 color-mix(in oklch, var(--primary) 55%, transparent);
+}
+
 /* A transcript row that is *not* the streaming tail. `content-visibility: auto`
    lets the browser skip layout for off-screen rows — the whole win of a long
    thread — and `contain-intrinsic-size: auto` tells it to remember each one's

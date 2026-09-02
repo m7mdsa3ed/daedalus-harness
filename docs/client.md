@@ -696,67 +696,101 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 ## The dock
 
 - **The dock holds four panel kinds: chat, ide, terminal and web (the *Browser* panel).**
-  The editor, the file explorer, search and source control are not four surfaces but one:
-  the real VS Code workbench, running in this page over `@codingame/monaco-vscode-api`.
-  Everything about it lives in `client/src/lib/ide/`.
-- **Why a workbench and not three panels.** The three it replaces were each a partial
-  re-implementation of something VS Code already does properly — a CodeMirror editor with a
-  hand-rolled conflict bar, a `MergeView` diff, a source-control panel that redrew git's
-  status as rows. They shared no state, so a file open in the editor and the same file in
-  the review panel were two buffers, and neither could be reached from the other. The
-  workbench is one product with one file service behind it.
-- **There is exactly one workbench per page, and that is the constraint everything else
-  follows from.** Its services are global and `initialize` may be called once — the library
-  enforces it. So the panel is a **singleton** keyed by project (`{kind:"ide", projectId}`);
-  closing the tab **parks** the workbench element in a detached holder rather than destroying
-  it, and reopening re-attaches it with its editor groups, dirty buffers and scroll positions
-  intact; and switching project is `reinitializeWorkspace`, never a second workbench.
-- **What is open inside the IDE is the workbench's state, never the dock's.** The old editor
+  The IDE panel (`components/workspace/ide-panel.tsx`, descriptor `{kind:"ide", projectId}`)
+  holds four surfaces that are one product: the editor, the file explorer, file search and
+  source control.
+- **Monaco is the text surface and the diff, and nothing else.** The official `monaco-editor`
+  package — not `@codingame/monaco-vscode-api`, which is what this replaced. That library
+  gave the real VS Code workbench in the page, and with it the whole of VS Code's service
+  architecture: forty-odd override packages pinned in lockstep, an in-page extension host, a
+  file system provider, an SCM provider, a content-scheme registry, a CSS-as-string Vite
+  plugin so its stylesheets did not restyle the app, and one hard rule — services are global
+  and `initialize` may be called once per page — from which everything else followed. The
+  panel had to be a singleton element parked in a detached holder, switching project was
+  `reinitializeWorkspace`, and every feature was a service override rather than a component.
+  What that bought was an explorer and an SCM view drawn in VS Code's design language rather
+  than this app's, for about 15 MB. Monaco alone is the part nobody should rewrite; a file
+  tree and a list of changed files are two afternoons and they then look like the rest of the
+  app.
+- **The explorer, the search and the source control are the harness's own.**
+  `file-explorer.tsx` caches listings **per directory** (`Map<dirPath, entries>` plus a set of
+  expanded paths, so a watch event invalidates exactly the directory that changed and every
+  other branch keeps its expansion and its scroll), and the server is the authority on what
+  exists — create, rename and delete re-read the directory rather than inserting a row
+  optimistically. `file-search.tsx` is the route the composer's `@` menu already reads, so
+  there is one idea of "roughly this name"; it is file *names*, since the server has no grep
+  route, and that limit is stated rather than hidden. `scm-view.tsx` groups `git status` the
+  way git thinks — merge, index, working tree, untracked — and every button is a `gitWrite`
+  against the project's existing routes; a row's mark is read back from the next status,
+  never inferred from what was clicked.
+- **A project is not one repository, and the source-control view starts from the list.**
+  `GET /api/projects/:id/git/repos` walks four levels below the project for `.git`
+  directories (breadth-first, capped, never descending into a checkout) and lists the
+  project's own first — which may be a worktree rooted *above* the project, scoped. The view
+  draws a **section per repository**, each with its own status, staging and commit box,
+  because an index and a HEAD belong to one repository and a commit box spanning two would
+  be a button with no single thing to do; with exactly one repository the section chrome
+  disappears. Every read and write carries `repo` (project-relative, `""` for the project),
+  and the paths inside a status are **relative to that repository** — `projectPath` in
+  `git-api.ts` is the one join back to a path the file routes take, so opening a row from a
+  nested repository does not read a file that is not there. Past eight repositories a section
+  reads its status when first expanded rather than on mount, since each is a git process. The
+  list is re-walked only when a `.git` appears in the watch stream, not on every write.
+- **Changed files are a tree, and the reader chooses.** `lib/workspace/git-tree.ts` is
+  generic in what a row carries (a `GitFileState` in source control, a `ChangedFile` in the
+  turn-changes tab) and folds single-child chains into one row (`src/lib/ide`, not three rows
+  holding one child each) — the thing that makes a tree readable in a 320px column. A folder
+  row acts on everything under it, which on a phone is the difference between one tap and
+  twelve. Tree or list is `lib/ide/prefs.ts`: device-local and global, like the transcript's
+  density, and deliberately not on the panel descriptor, where it would be one panel's in one
+  layout and serialized into stored layouts. The two surfaces remember it separately.
+- **Touch is the device's; width is the panel's.** Row heights and icon buttons follow
+  `useCoarsePointer` (44px on a finger, 24–28px with a mouse), and row actions are always
+  visible on a finger because there is no hover to reveal them. Below 560px of *panel* width
+  the side view and the editor take turns — a 224px explorer beside a 130px editor is two
+  things you cannot use — and picking a file or a diff is what closes the side view. The turn-
+  changes tab does the same with its file list and its diff under `@panel-md`.
+- **Workers need no wiring, and that is worth not undoing.** Since 0.56 Monaco declares every
+  worker it starts as `new Worker(new URL(…, import.meta.url))` inside the package, which is
+  exactly the shape Vite compiles into a worker chunk. Defining `MonacoEnvironment.getWorker`
+  would *override* that with paths we would then have to keep true by hand, so `lib/ide/
+  monaco.ts` deliberately defines nothing.
+- **What is open inside the IDE is the IDE's state, never the dock's.** The old editor
   descriptor carried a path and a comparison, which is why a file at a second line was a
-  second panel and why `reveal.ts` existed to work around it. Now a file, a diff and a turn's
-  changes are **requests** (`lib/ide/open.ts`): the caller opens the one IDE panel and queues
-  one. `lib/workspace/reveal.ts` and `lib/workspace/buffers.ts` are gone with the panel that
-  needed them — VS Code holds its own unsaved buffers.
-- **`lib/ide/open.ts` names nothing from the workbench, and that is load-bearing.** It is
-  imported by the transcript, which every reader loads; a static import of the extension API
-  there would put VS Code in the app's entry chunk. So the queue is one file and the half
-  that performs a request (`perform.ts`) is another, registered by `boot.ts` once the panel's
-  **dynamic** import has pulled the workbench in. The result is an 11 MB chunk nobody
-  downloads until they open the IDE, and one the service worker deliberately does not
-  precache (`injectManifest.globIgnores` in `vite.config.ts` — excluded by chunk name,
-  because rolldown does not honour a `chunkFileNames` callback in this Vite and there is no
-  `assets/ide/` prefix to match on). Offline, the IDE is the one surface that does not open.
-- **Two seams reach the harness, and a third would be a mistake.** Files are an
-  `IFileSystemProvider` (`lib/ide/fs-provider.ts`) over the workspace routes that already
-  existed — stat, tree, file, file-raw, the three directory writes — with an absolute path
-  resolved to a project by `lib/ide/projects.ts` (longest enclosing cwd wins). Watching is the
-  project watch stream, ref-counted per project, with a `rename` settled by a stat because the
-  event does not say which side of it a path is on. Everything else is the harness's own
-  **extension** (`lib/ide/extension.ts`), registered in-process so it can call the app's fetch
-  wrappers directly: it owns the git **source control** (`scm.ts` — status shaped into
-  resource groups, every button a `gitWrite`, HEAD read through the `daedalus-git` content
-  scheme which is also the gutter's quick diff) and the **turn-changes** multi-file diff
-  (`turn-changes.ts`, the `daedalus-turn` scheme reading `GET /api/sessions/:id/changes/file`).
-  Nothing runs git in the browser; the server still owns the worktree.
-- **A feature is turned on by its service override and by nothing else.** `boot.ts`'s
-  `initialize` call is the feature list — files, explorer, search, SCM, the multi-diff editor,
-  the workbench itself. An unregistered service falls back to a stub, which is why a view that
-  is not listed simply is not there. VS Code's own git extension is off
-  (`"git.enabled": false`): the harness's SCM is the one source control, and two would both
-  claim the same repository. Its file watcher is off too (`files.watcherExclude`), because the
-  provider already translates the harness's watch stream.
-- **A turn's changes open as a multi-file diff, not as a panel of their own.** The "N files
-  changed" chip under a turn (`TurnChangesChip` in `thread-view.tsx`) opens the IDE and
-  requests the scope; the before side of each file is read whole from the turn's start tree,
-  and the after side is the end tree for a finished turn or the **working file itself** while
-  it is still running — so a running turn's diff is live and editable in place. Staging,
-  discarding and committing stay in the SCM view, over the project's existing git routes.
-- **Theme is two questions, and only one of them is the app's.** The workbench keeps a VS Code
-  colour theme — a theme there is a TextMate scope map, not the app's palette, and pretending
-  otherwise is how the old `--cm-*` block ended up maintaining a second syntax palette by
-  hand. What follows the app is only *which* of the two it is: `setIdeDark` picks Dark Modern
-  or Light Modern, and it never boots the workbench, so changing theme costs nothing to a
-  reader who has not opened it.
+  second panel and why `reveal.ts` existed to work around it. Now the descriptor is the
+  project alone and the tabs are a module store (`lib/ide/editors.ts`): they survive the panel
+  being closed and reopened, a reveal is a one-shot field on the tab, and a dirty tab is
+  known to the tab bar and to the close confirmation without either asking the editor.
+  Unsaved text survives a *reload* through `lib/workspace/buffers.ts`, which matters because
+  this app reloads itself on purpose when a service-worker update is taken.
+- **`lib/ide/open.ts` and `lib/ide/editors.ts` name nothing from Monaco, and that is
+  load-bearing.** They are imported by the transcript, which every reader loads; a static
+  import of the editor there would put Monaco in the app's entry chunk. A request is plain
+  data written into the store, so there is no queue and no performer — a request made before
+  the panel exists is simply a tab already open when it appears. Monaco arrives through
+  `lib/ide/monaco.ts`'s dynamic import, and its chunks are excluded from the service worker's
+  precache **by name** (`injectManifest.globIgnores` in `vite.config.ts`: `editor.api-*`,
+  `vs-*`, `*.worker-*`, the codicon font). By name rather than by size, because the size rule
+  alone lets the small pieces in and then *warns* about `ts.worker` — and vite-plugin-pwa
+  treats that warning as a failed build. Offline, the IDE is the one surface that does not
+  open.
+- **A turn's changes open as a tab, not as a panel of their own.** The "N files changed" chip
+  under a turn (`TurnChangesChip` in `thread-view.tsx`) opens the IDE and requests the scope;
+  `changes-tab.tsx` draws the files as a tree (twelve files across four directories is
+  unreadable as twelve full paths) and a Monaco diff per file, both sides read whole from
+  `GET /api/sessions/:id/changes/file` — the before side from the turn's start tree, the after
+  side from its end tree once it has ended and from the working file while it is still
+  running. Staging, discarding and committing are not here: they act on the worktree as it is
+  now, which is the source-control view's subject and not this one's.
+- **The editor wears the app's palette, and the conversion is the browser's.** Monaco's theme
+  format takes a hex string per key; the app's palette is `oklch()` and `color-mix()`. So each
+  token is resolved by painting it into a 1×1 canvas and reading the pixel back — the one
+  thing that understands every CSS colour syntax there is — with a sentinel test around it,
+  because `fillStyle` silently keeps its previous value for a colour it cannot parse. The
+  syntax hues are `--code-*` in `index.css`, the same values the transcript's fenced code
+  uses, so a file and a diff of that file read as the same language. Both themes are rebuilt
+  on every theme change (`syncMonacoTheme`), which is what makes a *custom palette* move the
+  editor and not just light↔dark.
 - **What stayed on the server.** `src/ide.ts` and `src/ide-proxy.ts` — the per-project
   `code-server` spawn and its `/ide/<key>/` proxy — are still there and still routed, and
   nothing in the client reaches them any more. The output and agents panels remain gone for

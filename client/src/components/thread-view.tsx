@@ -168,12 +168,11 @@ function withTurnChanges(
   return after
 }
 
-/** The footer chip: "3 files changed +40 −12", opening the turn's files in
-    the IDE's multi-file diff. Git's count, not the transcript's — a shell command that edited
-    a file is in it, an edit tool that declared one is in it once. */
-/** The chip's two halves: bring the workbench up, then ask it for the turn.
-    `requestIde` queues against the boot the panel starts, so the first-ever
-    open and one into a running workbench take the same path. */
+/** The chip's two halves: bring the IDE panel up, and ask it for the turn.
+    `requestIde` writes the tab into the IDE's own store, so the order does not
+    matter and a first-ever open works the same as one into a panel that is
+    already there. Git's count, not the transcript's — a shell command that
+    edited a file is in it, an edit tool that declared one is in it once. */
 function openTurnChanges(
   dock: ReturnType<typeof useDock>,
   sessionId: string,

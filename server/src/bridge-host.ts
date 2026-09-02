@@ -18,6 +18,7 @@ export interface BridgeHostOwner {
   settleWaiters(session: Session, turnId: string, outcome: TurnOutcome): void;
   refreshQuota(session: Session): void;
   drainQueue(session: Session): unknown;
+  emitQueue(session: Session): void;
   persist(session: Session): void;
   events: SessionEvents;
 }
@@ -59,6 +60,7 @@ export function makeBridgeHost(session: Session, owner: BridgeHostOwner): Bridge
       session.autonomyBlocked += 1;
     },
     hasQueued: () => !session.queueChain && listQueue(session.id).length > 0,
+    onHeldSteersChanged: () => owner.emitQueue(session),
     /* The drain runs here, synchronously after `turn_ended` was journaled,
        so the log reads turn_ended(continued) → turn_started(combined). The
        push says "turn finished" only for a turn nothing follows. */

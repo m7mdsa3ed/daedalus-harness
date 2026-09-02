@@ -359,6 +359,11 @@ export interface QueuedMessage {
       carries none. */
   attachments?: AttachmentRef[];
   createdAt: number;
+  /** A steer whose words are already on the wire and whose bubble the bridge
+      is holding until the running step ends (`AcpBridge.prompt`). Listed here
+      so it is not invisible in between; nothing on it can be edited, removed
+      or sent — it has been sent. */
+  steer?: true;
 }
 
 /** The answer to `prompt` and `queue_add`. Which shape comes back is the

@@ -33,13 +33,20 @@ export interface QueueHost {
 
 // ---- the queue ----
 
+/** The queue as a peer sees it: the steers the bridge is holding for a step
+    boundary first (already sent, flagged `steer`, not editable), then the rows
+    waiting for the turn to end. */
+export function queueItems(session: Session): QueuedMessage[] {
+  return [...(session.bridge?.heldSteers() ?? []), ...listQueue(session.id)];
+}
+
 export class SessionQueue {
   constructor(private host: QueueHost) {}
 
   /** The whole queue to every peer, the origin included: ids are minted here,
       so no peer's own picture of the list is the one to keep. */
   emitQueue(session: Session): void {
-    this.host.emit(session, { ev: "queue", items: listQueue(session.id) });
+    this.host.emit(session, { ev: "queue", items: queueItems(session) });
   }
 
   /**

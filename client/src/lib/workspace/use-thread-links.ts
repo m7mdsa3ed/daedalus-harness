@@ -37,14 +37,13 @@ export function useThreadLinksFor(sessionId: string): ThreadLinks | null {
       /* Everything opened *from* a transcript asks for the side, because the
          thread is what you are reading it against — a file the agent named, a
          diff of what it wrote, a page it cited. On a phone that is a tab in
-         front of the thread instead, and once the editor has a group of its own
+         front of the thread instead, and once the IDE has a group of its own
          the next file lands in it: both are `openPanel`'s call, not this one's
          (see SPLIT_MIN_WIDTH). */
       openFile: (path, line, endLine) => {
-        /* Two halves, and the order matters: the dock brings the workbench on
-           screen, and the request is queued against it — `requestIde` waits
-           for the boot the panel starts, so a first-ever open works the same
-           as one into a workbench that is already running. */
+        /* Two halves: the dock brings the IDE on screen, and the request opens
+           the tab inside it. `requestIde` writes to the IDE's own tab store, so
+           a first-ever open works the same as one into a panel already open. */
         dock.openPanel({ kind: "ide", projectId }, { direction: "right" })
         requestIde({ kind: "file", projectId, path: toRelative(path, cwd), line, endLine })
       },
