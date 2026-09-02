@@ -141,3 +141,80 @@ export async function readFileObjectUrl(
 /* ── Path helpers ──────────────────────────────────────────────────────────── */
 
 export const basename = (path: string): string => path.split("/").pop() ?? path
+
+/* ── The IDE's file system ──
+   The rest of this file is what the VS Code file system provider
+   (`lib/ide/fs-provider.ts`) needs and the editor panel never did: a stat, a
+   listing, bytes, and the three directory writes. Same routes, same rules —
+   project-relative paths in, project-relative paths out. */
+
+export interface WorkspaceListing {
+  path: string
+  entries: WorkspaceEntry[]
+  truncated: boolean
+}
+
+export function statFile(projectId: string, path: string, signal?: AbortSignal): Promise<WorkspaceStat> {
+  return api<WorkspaceStat>(
+    server(),
+    `/api/projects/${encodeURIComponent(projectId)}/file-stat${q({ path })}`,
+    { signal }
+  )
+}
+
+/** Every entry, hidden and ignored ones included — VS Code applies its own
+    `files.exclude`, and a tree that hid `.env` from an explorer that was asked
+    for it would be a second, silent exclude list. */
+export function listTree(projectId: string, path: string, signal?: AbortSignal): Promise<WorkspaceListing> {
+  return api<WorkspaceListing>(
+    server(),
+    `/api/projects/${encodeURIComponent(projectId)}/tree${q({ path, hidden: "1", ignored: "1" })}`,
+    { signal }
+  )
+}
+
+/** The raw bytes — what a binary or an oversized file has instead of `content`. */
+export async function readFileBytes(
+  projectId: string,
+  path: string,
+  signal?: AbortSignal
+): Promise<Uint8Array> {
+  const settings = server()
+  const response = await fetch(
+    new URL(`/api/projects/${encodeURIComponent(projectId)}/file-raw${q({ path })}`, settings.url),
+    { headers: { authorization: `Bearer ${settings.token}` }, signal }
+  )
+  if (!response.ok) {
+    const body = await response.text().catch(() => "")
+    let message = body.trim() || undefined
+    try {
+      const parsed = JSON.parse(body) as { error?: unknown }
+      if (typeof parsed.error === "string") message = parsed.error
+    } catch {
+      /* not JSON — the raw text is the message */
+    }
+    throw new ApiError({ status: response.status, path, serverMessage: message })
+  }
+  return new Uint8Array(await response.arrayBuffer())
+}
+
+export function createEntry(projectId: string, path: string, type: "dir" | "file"): Promise<WorkspaceEntry> {
+  return api<WorkspaceEntry>(server(), `/api/projects/${encodeURIComponent(projectId)}/files`, {
+    method: "POST",
+    body: JSON.stringify({ path, type }),
+  })
+}
+
+export function renameEntry(projectId: string, from: string, to: string): Promise<WorkspaceEntry> {
+  return api<WorkspaceEntry>(server(), `/api/projects/${encodeURIComponent(projectId)}/files`, {
+    method: "PATCH",
+    body: JSON.stringify({ from, to }),
+  })
+}
+
+export function deleteEntry(projectId: string, path: string): Promise<{ path: string }> {
+  return api<{ path: string }>(server(), `/api/projects/${encodeURIComponent(projectId)}/files`, {
+    method: "DELETE",
+    body: JSON.stringify({ path }),
+  })
+}

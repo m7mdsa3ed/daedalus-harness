@@ -1,10 +1,10 @@
 /* ── A thread's actions ── one vocabulary, two surfaces.
 
-   The sidebar row (the info card's actions on hover, the right-click menu,
-   and the long-press card on a phone) is where a thread's own actions live —
-   rename, pin, open in a new tab, copy its link, delete — and it is the
-   surface that has *every* thread, not just the routed one. The header's ⋯
-   now offers the same list behind one row,
+   The sidebar row (the ⋯ menu, and the right-click — or long-press, on a
+   phone — context menu) is where a thread's own actions live — rename, pin,
+   open in a new tab, copy its link, delete — and it is the surface that has
+   *every* thread, not just the routed one. The header's ⋯ now offers the same
+   list behind one row,
    because the sidebar is not always there to be asked: it is collapsed on a
    narrow screen, and the thread the reader means is the one already on screen.
 

@@ -13,7 +13,7 @@ import * as React from "react"
 
 import { useDock } from "@/components/workspace/dock"
 import { useSessionMeta, useStoreSelect } from "@/lib/store"
-import { markReveal } from "@/lib/workspace/reveal"
+import { requestIde } from "@/lib/ide/open"
 import { toRelative, type ThreadLinks } from "@/lib/workspace/thread-links"
 
 /** One Browser panel for every source followed out of a transcript, so the
@@ -41,15 +41,16 @@ export function useThreadLinksFor(sessionId: string): ThreadLinks | null {
          the next file lands in it: both are `openPanel`'s call, not this one's
          (see SPLIT_MIN_WIDTH). */
       openFile: (path, line, endLine) => {
-        const relative = toRelative(path, cwd)
-        if (line) markReveal(projectId, relative, line, { endLine })
-        dock.openPanel({ kind: "editor", projectId, path: relative }, { direction: "right" })
+        /* Two halves, and the order matters: the dock brings the workbench on
+           screen, and the request is queued against it — `requestIde` waits
+           for the boot the panel starts, so a first-ever open works the same
+           as one into a workbench that is already running. */
+        dock.openPanel({ kind: "ide", projectId }, { direction: "right" })
+        requestIde({ kind: "file", projectId, path: toRelative(path, cwd), line, endLine })
       },
       openDiff: (path) => {
-        dock.openPanel(
-          { kind: "editor", projectId, path: toRelative(path, cwd), comparison: "head" },
-          { direction: "right" }
-        )
+        dock.openPanel({ kind: "ide", projectId }, { direction: "right" })
+        requestIde({ kind: "diff", projectId, path: toRelative(path, cwd) })
       },
       openUrl: (url) => {
         /* External trust, always — a page an agent found on the web is not the

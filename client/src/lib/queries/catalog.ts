@@ -190,6 +190,14 @@ export function useCatalogReader() {
     () => ({
       projects: (): Project[] =>
         qc.getQueryData<Project[]>(projectsKey(settings)) ?? (EMPTY as Project[]),
+      /* `undefined` until the projects read has answered at all. An empty
+         array from the cache-miss above is indistinguishable from "every
+         project was deleted", and a guard that reads it as the latter fails a
+         perfectly good thread on a cold boot — which is exactly what the
+         "project no longer exists" message did on a fresh load, and why a
+         refresh made it go away. */
+      projectsLoaded: (): Project[] | undefined =>
+        qc.getQueryData<Project[]>(projectsKey(settings)),
       profiles: (): Profile[] =>
         qc.getQueryData<Profile[]>(profilesKey(settings)) ?? (EMPTY as Profile[]),
       agents: (): AgentDef[] =>

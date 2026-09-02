@@ -688,7 +688,6 @@ export function RootPage() {
       onSelect: () =>
         palette.run(() => {
           setActiveServer(server.id)
-          window.location.assign("/")
         }),
     })
   }

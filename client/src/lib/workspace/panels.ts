@@ -11,25 +11,21 @@
    server restart. `parsePanel` is the other half of that contract — anything
    restored has to come back through it before the dock will trust it. */
 
-export type PanelKind = "chat" | "editor" | "terminal" | "web" | "review"
+export type PanelKind = "chat" | "ide" | "terminal" | "web"
 
 /** Whether a web panel is looking at a project's own dev server or the wider
     internet. It is carried on the descriptor so the panel cannot decide for
     itself; a panel may drop to "external" but never raise itself back. */
 export type WebTrust = "project" | "external"
 
-/** How an editor renders what it opened. Four modes, one panel. */
-export type EditorMode = "text" | "diff" | "preview" | "unsupported"
-
 export type PanelDescriptor =
   | { kind: "chat"; sessionId: string }
-  | { kind: "editor"; projectId: string; path: string; comparison?: string }
+  /** The workbench — editor, explorer, search and source control in one. One
+      per project, because there is one workbench per page and what is open
+      inside it is its own state, not the dock's. */
+  | { kind: "ide"; projectId: string }
   | { kind: "terminal"; projectId: string; terminalId: string }
   | { kind: "web"; trust: WebTrust; viewId: string; projectId?: string; url?: string }
-  /** The thread's changes as git saw them — one per thread, `scope` is the
-      turn it opened on (`turn:<id>`) or `uncommitted`, and the panel may move
-      it afterwards. */
-  | { kind: "review"; sessionId: string; scope?: string }
 
 export interface PanelSpec {
   /** One per project — opening it again focuses what is there. */
@@ -44,10 +40,9 @@ export interface PanelSpec {
 
 export const PANEL_SPECS: Record<PanelKind, PanelSpec> = {
   chat: { singleton: true, defaultTitle: "Thread", implemented: true },
-  editor: { singleton: false, defaultTitle: "Editor", implemented: true },
+  ide: { singleton: true, defaultTitle: "IDE", implemented: true },
   terminal: { singleton: false, defaultTitle: "Terminal", implemented: true },
   web: { singleton: false, defaultTitle: "Browser", implemented: true },
-  review: { singleton: true, defaultTitle: "Changes", implemented: true },
 }
 
 export const PANEL_KINDS = Object.keys(PANEL_SPECS) as PanelKind[]
@@ -57,25 +52,21 @@ export function isPanelKind(value: unknown): value is PanelKind {
 }
 
 /* Stable ids, so opening a resource twice focuses the panel that already has
-   it. The editor has two id forms on purpose: a file and a comparison of that
-   file are separately openable and separately closeable, while `mode` still
-   lets one panel toggle between them. */
+   it. The IDE's id is its project alone: a file, a diff and a turn's changes
+   are things opened *inside* it, and the workbench tracks them — a second id
+   per file would be a second workbench, which the page cannot have. */
 export function panelId(panel: PanelDescriptor): string {
   switch (panel.kind) {
     case "chat":
       return `thread:${panel.sessionId}`
-    case "editor":
-      return panel.comparison
-        ? `editor:${panel.projectId}:${panel.path}:${panel.comparison}`
-        : `editor:${panel.projectId}:${panel.path}`
+    case "ide":
+      return `ide:${panel.projectId}`
     case "terminal":
       return `terminal:${panel.projectId}:${panel.terminalId}`
     case "web":
       return panel.trust === "external"
         ? `web:external:${panel.viewId}`
         : `web:${panel.projectId}:${panel.viewId}`
-    case "review":
-      return `review:${panel.sessionId}`
   }
 }
 
@@ -100,11 +91,8 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
       const sessionId = str(p.sessionId)
       return sessionId ? { kind: "chat", sessionId } : null
     }
-    case "editor": {
-      const path = str(p.path)
-      if (!projectId || !path) return null
-      const comparison = str(p.comparison)
-      return { kind: "editor", projectId, path, ...(comparison ? { comparison } : {}) }
+    case "ide": {
+      return projectId ? { kind: "ide", projectId } : null
     }
     case "terminal": {
       const terminalId = str(p.terminalId)
@@ -124,12 +112,6 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
         ...(trust === "project" && projectId ? { projectId } : {}),
         ...(str(p.url) ? { url: str(p.url) } : {}),
       }
-    }
-    case "review": {
-      const sessionId = str(p.sessionId)
-      if (!sessionId) return null
-      const scope = str(p.scope)
-      return { kind: "review", sessionId, ...(scope ? { scope } : {}) }
     }
   }
 }

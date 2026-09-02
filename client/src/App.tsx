@@ -8,12 +8,14 @@ import { ConnectScreen } from "@/components/connect-screen"
 import { useActions } from "@/lib/actions"
 import { refreshNotificationOffer } from "@/lib/notifications"
 import { setupPush } from "@/lib/push"
-import { loadSettings, type ServerSettings } from "@/lib/settings"
+import { loadSettings, subscribeActiveServer, type ServerSettings } from "@/lib/settings"
 import { pruneAgentOptions } from "@/lib/agent-options"
 import { makeQueryClient } from "@/lib/queries/client"
 import { persistOptionsFor } from "@/lib/queries/persist"
 import { useProfiles } from "@/lib/queries/catalog"
+import { navigateTo } from "@/lib/router"
 import { ServerProvider } from "@/lib/server-context"
+import { currentRegistry } from "@/lib/thread/registry"
 import { StoreProvider } from "@/lib/store"
 import { ThemeProvider } from "@/lib/theme"
 import { reportError } from "@/lib/errors"
@@ -23,6 +25,21 @@ function App() {
   // "Add server" reuses the connect screen over the shell; connecting activates
   // the new server, and the reload below is what re-bootstraps against it.
   const [adding, setAdding] = React.useState(false)
+  /* Switching connections is a state change, not a reload: `Connected` and the
+     store below are keyed by the server id, so the new server starts cold —
+     one query cache, one reducer, one bootstrap. What React cannot unmount is
+     the thread registry, which is module-level because it holds live sockets,
+     so the old server's are ended here before the new tree mounts. The route
+     goes back to the root: a thread id belongs to the server that minted it. */
+  React.useEffect(
+    () =>
+      subscribeActiveServer(() => {
+        currentRegistry()?.destroyAll()
+        navigateTo("/")
+        setSettings(loadSettings())
+      }),
+    []
+  )
   /* The reducer is the provider's, not this component's, and that is what
      makes every narrow subscription below it count: holding it here re-ran
      App on every dispatch, which recreated the element for the whole tree, so
@@ -33,7 +50,7 @@ function App() {
     <ThemeProvider>
       <ConfirmProvider>
         <PromptProvider>
-          <StoreProvider>
+          <StoreProvider key={settings?.id ?? "none"}>
             {settings && !adding ? (
               <Connected key={settings.id} settings={settings} onAddServer={() => setAdding(true)} />
             ) : (

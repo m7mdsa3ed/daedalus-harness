@@ -662,8 +662,9 @@ export function Composer({
         <FileMentionMenu state={mentions} />
       </ComposerStrip>
       {/* relative/z-10: the composer paints over the strip's tucked bottom edge.
-          The ring is the focus state of the *card*, since the textarea inside
-          has none of its own: a box you are typing into should look like one.
+          Deliberately no focus ring: the caret in the textarea is the "you are
+          typing here" signal, and the card stays quiet otherwise. The one ring
+          it wears is destructive, and only while voice is listening.
 
           It is also the drop target, and deliberately the whole card rather
           than the textarea: a file aimed at "the composer" lands on the button
@@ -673,8 +674,8 @@ export function Composer({
       <div
         data-expanded={expanded || undefined}
         className={cn(
-          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl bg-composer p-2 shadow-glass-lg",
-          "ring-1 ring-transparent transition-[box-shadow,ring-color] duration-200 focus-within:ring-ring/30",
+          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl bg-composer p-2 shadow-lg",
+          "ring-1 ring-transparent transition-[ring-color] duration-200",
           voice.listening && "ring-destructive/40"
         )}
         onDragOver={(e) => {

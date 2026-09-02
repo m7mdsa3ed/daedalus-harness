@@ -42,7 +42,12 @@ const OPENABLE: { kind: PanelKind; label: string; hint: string; shortcut?: Short
     shortcut: "terminal",
   },
   { kind: "web", label: "Browser", hint: "A page beside the thread" },
-  { kind: "review", label: "Changes", hint: "What this thread did to the repository" },
+  {
+    kind: "ide",
+    label: "IDE",
+    hint: "Files, search and source control",
+    shortcut: "ide",
+  },
 ]
 
 /** One row: icon, label over its hint, the chord at the trailing edge. The

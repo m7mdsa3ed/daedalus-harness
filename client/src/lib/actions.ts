@@ -84,6 +84,7 @@ export function useActions(settings: ServerSettings) {
         dispatch,
         getState,
         projects: () => catalog.projects(),
+        projectsLoaded: () => catalog.projectsLoaded(),
         refreshSessions: async () => {
           await refreshSessions()
         },

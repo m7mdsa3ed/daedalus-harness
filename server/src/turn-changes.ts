@@ -146,6 +146,19 @@ export class TurnChangesRecorder {
     return { patch: await git.patchBetween(sides.dir, sides.from, sides.to, path) };
   }
 
+  /** One side of one file under a scope, whole — what a diff editor puts on
+      its left (`before`) or right (`after`). */
+  async file(
+    sessionId: string,
+    scope: Scope,
+    path: string,
+    side: "before" | "after",
+  ): Promise<{ content: string; missing: boolean; unavailable?: string }> {
+    const sides = await this.sides(sessionId, scope);
+    if ("unavailable" in sides) return { content: "", missing: true, unavailable: sides.unavailable };
+    return git.blobAt(sides.dir, side === "before" ? sides.from : sides.to, path);
+  }
+
   private async sides(
     sessionId: string,
     scope: Scope,

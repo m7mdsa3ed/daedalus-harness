@@ -759,6 +759,27 @@ export async function snapshotTree(dir: string): Promise<string> {
   }
 }
 
+/**
+ * One file as a tree holds it — a turn's before or after side, read whole for
+ * the IDE's diff editor. `path` is relative to `dir` (the same `--relative`
+ * cut `diffTrees` makes), so it is prefixed back to the repository root that
+ * `<tree>:<path>` addresses. A path the tree does not have is `missing`, not
+ * an error: an added file has no before, a deleted one no after.
+ */
+export async function blobAt(
+  dir: string,
+  tree: string,
+  path: string,
+): Promise<{ content: string; missing: boolean }> {
+  const prefix = (await run(dir, ["rev-parse", "--show-prefix"])).stdout.trim();
+  try {
+    const { stdout } = await run(dir, ["show", `${tree}:${prefix}${path}`]);
+    return { content: stdout, missing: false };
+  } catch {
+    return { content: "", missing: true };
+  }
+}
+
 /** Whether an object is still in the store — a turn's trees can be gc'd. */
 export async function hasObject(dir: string, oid: string): Promise<boolean> {
   try {

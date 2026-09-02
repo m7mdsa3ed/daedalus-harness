@@ -192,7 +192,7 @@ export type ShortcutId =
   | "reopenPanel"
   | "terminal"
   | "preview"
-  | "save"
+  | "ide"
   | "send"
   | "steer"
   | "historyPrev"
@@ -254,9 +254,10 @@ export const KEYS = {
       chord: the two are the same gesture — "show me the thing running" —
       and nothing in Chromium or Electron claims ⌘⇧J's neighbour. */
   preview: "mod+shift+e",
-  /** The editor panel's own — bound on the window when a dirty file is in
-      front, and inside the editor itself where the caret lives. */
-  save: "mod+s",
+  /** The workbench, beside the thread. VS Code's own ⌘⇧E is the explorer,
+      which is one of the things behind this — and inside the panel that chord
+      still reaches it, because the workbench binds its own keys. */
+  ide: "mod+shift+g",
 } as const
 
 export const SHORTCUTS: ShortcutDef[] = [
@@ -279,20 +280,20 @@ export const SHORTCUTS: ShortcutDef[] = [
     rebindable: true,
   },
   {
-    id: "save",
-    scope: "Editor",
-    label: "Save the file",
-    chords: [KEYS.save],
-    rebindable: true,
-    note: "Only in an editor panel, and only while it has unsaved changes — nothing else in the app claims it.",
-  },
-  {
     id: "terminal",
     scope: "Global",
     label: "Open a terminal",
     chords: [KEYS.terminal],
     rebindable: true,
     note: "A shell on the Daedalus server, in the current thread's project directory.",
+  },
+  {
+    id: "ide",
+    scope: "Global",
+    label: "Open the IDE",
+    chords: [KEYS.ide],
+    rebindable: true,
+    note: "Files, search and source control for the current thread's project — one workbench, however many threads are open.",
   },
   {
     id: "preview",

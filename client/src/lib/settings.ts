@@ -92,10 +92,23 @@ export function saveSettings(settings: Omit<ServerSettings, "id"> & { id?: strin
   return entry
 }
 
+/** Told when the active connection changes, so the app can re-bootstrap
+    against it in place rather than reloading the page. */
+const activeListeners = new Set<() => void>()
+
+export function subscribeActiveServer(fn: () => void): () => void {
+  activeListeners.add(fn)
+  return () => {
+    activeListeners.delete(fn)
+  }
+}
+
 export function setActiveServer(id: string): void {
   const store = read()
   if (!store.servers.some((s) => s.id === id)) return
+  if (store.activeId === id) return
   write({ ...store, activeId: id })
+  for (const fn of activeListeners) fn()
 }
 
 /** Relabels a connection without touching which one is active — unlike
@@ -562,6 +575,9 @@ export interface ModelOption {
   modalities?: string[]
   /** Provenance when enriched: "providerId/modelId" in models.dev. */
   devRef?: string
+  /** Optional URL for a model-specific icon. When set, the composer trigger
+      shows this icon instead of the profile's logo. */
+  iconUrl?: string
 }
 
 /** A model the agent itself advertised (POST /api/profiles/:id/fetch-models),

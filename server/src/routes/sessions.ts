@@ -372,6 +372,19 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
      process, the transcript and everything else exactly as they were — it is
      answered with no bridge, like the queue edits, so naming an archived
      thread does not cost a spawn. */
+  /* One file at one side of a scope — the IDE's diff editor reads both sides
+     whole rather than a patch, since VS Code draws its own diff. */
+  app.get("/api/sessions/:id/changes/file", (c) => {
+    const id = c.req.param("id");
+    if (!sessions.get(id)) return c.json({ error: "not found" }, 404);
+    const scope = scopeOf(c.req.query("scope"));
+    if (!scope) return c.json({ error: "scope must be `uncommitted` or `turn:<id>`" }, 400);
+    const path = c.req.query("path");
+    if (!path) return c.json({ error: "path is required" }, 400);
+    const side = c.req.query("side") === "before" ? "before" : "after";
+    return workspace(c, () => sessions.turnChanges.file(id, scope, path, side));
+  });
+
   app.patch("/api/sessions/:id", async (c) => {
     const { title } = await c.req.json();
     if (typeof title !== "string") return c.json({ error: "title must be a string" }, 400);

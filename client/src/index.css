@@ -937,30 +937,6 @@ html[data-desktop="true"]:not([data-desktop-platform="darwin"]) [data-drag-regio
   color: oklch(0.8 0.1 325);
 }
 
-/* ── CodeMirror palette ──
-   The editor's theme object references these rather than literals, so a custom
-   palette moves the code colours with it. Same hues as the transcript's fenced
-   code above: a file and a diff of that file in a tool call should read as the
-   same language, not as two products. */
-:root {
-  --cm-comment: color-mix(in oklch, var(--muted-foreground) 85%, transparent);
-  --cm-keyword: oklch(0.55 0.15 285);
-  --cm-string: oklch(0.5 0.13 150);
-  --cm-number: oklch(0.55 0.13 40);
-  --cm-function: oklch(0.52 0.13 250);
-  --cm-property: oklch(0.52 0.1 210);
-  --cm-type: oklch(0.55 0.11 320);
-  --cm-punctuation: color-mix(in oklch, var(--foreground) 60%, transparent);
-}
-.dark {
-  --cm-keyword: oklch(0.78 0.13 290);
-  --cm-string: oklch(0.8 0.13 150);
-  --cm-number: oklch(0.8 0.12 55);
-  --cm-function: oklch(0.78 0.12 245);
-  --cm-property: oklch(0.82 0.09 205);
-  --cm-type: oklch(0.8 0.1 325);
-}
-
 /* A transcript row that is *not* the streaming tail. `content-visibility: auto`
    lets the browser skip layout for off-screen rows — the whole win of a long
    thread — and `contain-intrinsic-size: auto` tells it to remember each one's

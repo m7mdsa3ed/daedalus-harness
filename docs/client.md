@@ -695,46 +695,73 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 
 ## The dock
 
-- **The dock holds five panel kinds: chat, editor, terminal, web (the *Browser* panel)
-  and review.** The review panel (`components/workspace/review-panel.tsx`, descriptor
-  `{kind:"review", sessionId, scope?}`, one per thread) is what a thread did to the
-  repository as git measured it — see "Turn changes" in `docs/ops.md`. It is opened from the
-  "N files changed" chip under a turn (`TurnChangesChip` in `thread-view.tsx`, drawn from
-  `ThreadState.turnChanges`, which the socket's live-only `turn_changes` event writes and
-  `GET /api/sessions/:id/changes` seeds on open), from the thread menu's panel list, and
-  its scope menu lists every turn that changed something. Its file list is a diff of two
-  trees; the staged mark on a row is `git status`, never inferred. Stage, unstage, discard
-  and commit are the project's git routes; a hunk goes through `apply`. Confirmation is asked
-  for every discard, and a rejected hunk shows git's own reason. Unified patches are drawn by
-  `components/ui/patch-view.tsx`, which never computes a diff — git chose the hunk
-  boundaries, and those are the ones `git apply` wants back.
-- **What left the client, and what stayed on the server.** The framed `code-server` panel, the "Simple IDE" opening, the file
-  explorer, the source-control panel, the Output & problems panel and the Subagents &
-  workflows panel have all been removed
-  from the client — with them went `ide-panel.tsx`, `simple-ide.ts`, `explorer-panel.tsx`,
-  `source-control-panel.tsx`, `output-panel.tsx`, `agents-panel.tsx`, `lib/workspace/ide.ts`,
-  `lib/workspace/ide-theme.ts`, `lib/workspace/output.ts` and the ⌘⇧E / ⌘⇧G / ⌘⇧U chords.
-  The server's `src/ide.ts` + `src/ide-proxy.ts` (code-server spawn, `/ide/<key>/` proxy) and
-  `src/git.ts` are still there and still routed; nothing in the UI reaches the IDE half any
-  more, while git is still read by the editor panel's diff mode (`gitFileAt`). An editor
-  panel is opened from the transcript's file links — there is no tree to pick a file from,
-  so `openWorkspacePanel("editor")` is gone too. Output went the same way: it was a
-  device-local buffer per project fed by two producers that already had a home on screen —
-  `recordError`'s failures, which are a transcript row, and task journal events, which are
-  a task card — so the pane was a second copy of both, and `parseLocation` was maintaining
-  four compiler-diagnostic regexes to make a `file:line` clickable in the copy. A layout
-  restored with an output panel in it drops that panel and keeps the rest, which is
-  `parsePanel` returning null for a component it does not know. The agents panel went for
-  the same reason and took `AgentsScope` with it: a thread's workers are already drawn
-  where the work is — the transcript nests every subagent step under the call that
-  launched it and folds a workflow run into one step row, and the composer's shelf says
-  how many are running — so a panel beside it was a third view of one stream, and the only
-  panel that was pruned by session rather than by project. **None of the subagent or
-  workflow machinery is affected**: the RFD events, `mergeWorkflowRuns`, `WorkflowRun`,
-  `SubagentStep`/`SubagentBody`, `ComposerAgents` and the whole server-side engine are
-  untouched.
-
-## The project page
+- **The dock holds four panel kinds: chat, ide, terminal and web (the *Browser* panel).**
+  The editor, the file explorer, search and source control are not four surfaces but one:
+  the real VS Code workbench, running in this page over `@codingame/monaco-vscode-api`.
+  Everything about it lives in `client/src/lib/ide/`.
+- **Why a workbench and not three panels.** The three it replaces were each a partial
+  re-implementation of something VS Code already does properly — a CodeMirror editor with a
+  hand-rolled conflict bar, a `MergeView` diff, a source-control panel that redrew git's
+  status as rows. They shared no state, so a file open in the editor and the same file in
+  the review panel were two buffers, and neither could be reached from the other. The
+  workbench is one product with one file service behind it.
+- **There is exactly one workbench per page, and that is the constraint everything else
+  follows from.** Its services are global and `initialize` may be called once — the library
+  enforces it. So the panel is a **singleton** keyed by project (`{kind:"ide", projectId}`);
+  closing the tab **parks** the workbench element in a detached holder rather than destroying
+  it, and reopening re-attaches it with its editor groups, dirty buffers and scroll positions
+  intact; and switching project is `reinitializeWorkspace`, never a second workbench.
+- **What is open inside the IDE is the workbench's state, never the dock's.** The old editor
+  descriptor carried a path and a comparison, which is why a file at a second line was a
+  second panel and why `reveal.ts` existed to work around it. Now a file, a diff and a turn's
+  changes are **requests** (`lib/ide/open.ts`): the caller opens the one IDE panel and queues
+  one. `lib/workspace/reveal.ts` and `lib/workspace/buffers.ts` are gone with the panel that
+  needed them — VS Code holds its own unsaved buffers.
+- **`lib/ide/open.ts` names nothing from the workbench, and that is load-bearing.** It is
+  imported by the transcript, which every reader loads; a static import of the extension API
+  there would put VS Code in the app's entry chunk. So the queue is one file and the half
+  that performs a request (`perform.ts`) is another, registered by `boot.ts` once the panel's
+  **dynamic** import has pulled the workbench in. The result is an 11 MB chunk nobody
+  downloads until they open the IDE, and one the service worker deliberately does not
+  precache (`injectManifest.globIgnores` in `vite.config.ts` — excluded by chunk name,
+  because rolldown does not honour a `chunkFileNames` callback in this Vite and there is no
+  `assets/ide/` prefix to match on). Offline, the IDE is the one surface that does not open.
+- **Two seams reach the harness, and a third would be a mistake.** Files are an
+  `IFileSystemProvider` (`lib/ide/fs-provider.ts`) over the workspace routes that already
+  existed — stat, tree, file, file-raw, the three directory writes — with an absolute path
+  resolved to a project by `lib/ide/projects.ts` (longest enclosing cwd wins). Watching is the
+  project watch stream, ref-counted per project, with a `rename` settled by a stat because the
+  event does not say which side of it a path is on. Everything else is the harness's own
+  **extension** (`lib/ide/extension.ts`), registered in-process so it can call the app's fetch
+  wrappers directly: it owns the git **source control** (`scm.ts` — status shaped into
+  resource groups, every button a `gitWrite`, HEAD read through the `daedalus-git` content
+  scheme which is also the gutter's quick diff) and the **turn-changes** multi-file diff
+  (`turn-changes.ts`, the `daedalus-turn` scheme reading `GET /api/sessions/:id/changes/file`).
+  Nothing runs git in the browser; the server still owns the worktree.
+- **A feature is turned on by its service override and by nothing else.** `boot.ts`'s
+  `initialize` call is the feature list — files, explorer, search, SCM, the multi-diff editor,
+  the workbench itself. An unregistered service falls back to a stub, which is why a view that
+  is not listed simply is not there. VS Code's own git extension is off
+  (`"git.enabled": false`): the harness's SCM is the one source control, and two would both
+  claim the same repository. Its file watcher is off too (`files.watcherExclude`), because the
+  provider already translates the harness's watch stream.
+- **A turn's changes open as a multi-file diff, not as a panel of their own.** The "N files
+  changed" chip under a turn (`TurnChangesChip` in `thread-view.tsx`) opens the IDE and
+  requests the scope; the before side of each file is read whole from the turn's start tree,
+  and the after side is the end tree for a finished turn or the **working file itself** while
+  it is still running — so a running turn's diff is live and editable in place. Staging,
+  discarding and committing stay in the SCM view, over the project's existing git routes.
+- **Theme is two questions, and only one of them is the app's.** The workbench keeps a VS Code
+  colour theme — a theme there is a TextMate scope map, not the app's palette, and pretending
+  otherwise is how the old `--cm-*` block ended up maintaining a second syntax palette by
+  hand. What follows the app is only *which* of the two it is: `setIdeDark` picks Dark Modern
+  or Light Modern, and it never boots the workbench, so changing theme costs nothing to a
+  reader who has not opened it.
+- **What stayed on the server.** `src/ide.ts` and `src/ide-proxy.ts` — the per-project
+  `code-server` spawn and its `/ide/<key>/` proxy — are still there and still routed, and
+  nothing in the client reaches them any more. The output and agents panels remain gone for
+  the reasons they went: both were second copies of something already drawn where the work
+  is.
 
 - **A project has a page of its own (`/projects/<id>`), and it is assembled from two
   halves on purpose.** Until it did, a project was a row in settings (a form), a folder in

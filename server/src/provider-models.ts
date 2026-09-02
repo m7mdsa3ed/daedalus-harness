@@ -36,6 +36,9 @@ export interface ProviderModelCandidate {
   modalities?: string[];
   /** "providerId/modelId" in models.dev when the metadata came from there. */
   devRef?: string;
+  /** Optional user-facing icon URL, carried through the fetch/enrich flow even
+      though models.dev itself has no per-model artwork to supply. */
+  iconUrl?: string;
 }
 
 const FETCH_TIMEOUT_MS = 15_000;

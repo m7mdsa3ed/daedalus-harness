@@ -1,20 +1,28 @@
-/* ── One thread, one line ── the row, its info card, and its menus. */
+/* ── One thread, one line ── the row, its actions, and its menus. */
 import * as React from "react"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { MoreVertical } from "lucide-react"
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
+import { ItemContextMenu, renderMenuItems } from "@/components/item-context-menu"
 import { AgentIcon, ProjectIcon } from "@/components/entity-icon"
-import { flattenMenuItems, ItemContextMenu } from "@/components/item-context-menu"
 import { threadMenuItems, trashMenuItems } from "@/components/thread-menu"
 import { activityAt, type SessionMeta } from "@/lib/settings"
 import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
 import { useStoreSelect } from "@/lib/store"
 import type { ThreadActivity } from "@/lib/thread/phase"
 import { cn } from "@/lib/utils"
-import { ROW } from "./scale"
+import { FLOAT_ACTION, FLOAT_ROW, ROW } from "./scale"
 
 /* The reading a row shows comes from `lib/thread/phase.ts` and is shared with
    the dock tabs and the project page. It used to be declared here as
@@ -25,19 +33,10 @@ import { ROW } from "./scale"
    the store, which made both hard to grep for. */
 export type ThreadStatus = ThreadActivity
 
-/** How long a finger has to rest on a row before it is a press, not a tap. */
-const LONG_PRESS_MS = 450
-
-/** Hover has to rest this long before the card opens — a pointer crossing
-    the list on its way somewhere else must not flash six cards. */
-const HOVER_DELAY_MS = 500
-
 /** One thread, one line. The title and — when there is one — a status dot;
-    nothing else on the row. Everything else lives in one popover that opens
-    on hover (Base UI's `openOnHover`, so it also closes when the pointer
-    leaves both row and card) and, on a phone, on long press: the info card
-    with the row's actions under it, standing in for the dot menu and, on a
-    phone, for the right-click menu a finger cannot open.
+    nothing else on the row. The actions live in the ⋯ that floats over the
+    title on hover and in the right-click (long-press, on a phone) context
+    menu — the same list, built once.
 
     Memoized on narrow props — the session object (stable between server
     refreshes), three flags and four hoisted callbacks — so the per-token
@@ -67,7 +66,7 @@ export const ThreadRow = React.memo(function ThreadRow({
   onRestore: (session: SessionMeta) => void
   onPurge: (session: SessionMeta) => void
 }) {
-  /* One list feeds both the popover's actions and the right-click menu. */
+  /* One list feeds both the ⋯ menu and the right-click menu. */
   const items = React.useMemo(
     () =>
       trash
@@ -80,41 +79,15 @@ export const ThreadRow = React.memo(function ThreadRow({
     [session, trash, pinned, onOpen, onRename, onDelete, onRestore, onPurge]
   )
   const { isMobile } = useSidebar()
-  const [infoOpen, setInfoOpen] = React.useState(false)
-  /* The press in flight: its timer, and whether it fired. `fired` outlives
-     the timer because the click that ends a long press arrives *after*
-     pointerup, and that click must open the card's row nowhere. */
-  const press = React.useRef<{ timer: number; fired: boolean } | null>(null)
-
-  const cancelPress = () => {
-    if (press.current) window.clearTimeout(press.current.timer)
-  }
-  const startPress = (event: React.PointerEvent) => {
-    if (event.pointerType === "mouse") return
-    cancelPress()
-    const current = { fired: false, timer: 0 }
-    current.timer = window.setTimeout(() => {
-      current.fired = true
-      setInfoOpen(true)
-    }, LONG_PRESS_MS)
-    press.current = current
-  }
-  const click = (event: React.MouseEvent) => {
-    if (press.current?.fired) {
-      press.current.fired = false
-      event.preventDefault()
-      return
-    }
-    onOpen(session, event.metaKey || event.ctrlKey)
-  }
 
   const row = (
     <>
       {/* A running turn is the title itself shimmering — the pale band that
           the working line and a live thought already use — rather than a dot
           beside it: the row *is* the thing in motion. A thread waiting on you
-          keeps the amber dot at the trailing edge — a still mark that says
-          "stopped, for you", on the one row you must act on. */}
+          keeps the amber dot at the trailing edge — the floating ⋯ covers it
+          while the pointer is on the row, which is fine: it is the one row
+          you must act on, and a still mark is what says "stopped, for you". */}
       <span
         className={cn(
           "min-w-0 flex-1 truncate",
@@ -147,89 +120,52 @@ export const ThreadRow = React.memo(function ThreadRow({
       )}
     </>
   )
-  const button = (
-    <SidebarMenuButton
-      size="sm"
-      isActive={active}
-      onClick={click}
-      onPointerDown={startPress}
-      onPointerUp={cancelPress}
-      onPointerCancel={cancelPress}
-      onPointerLeave={cancelPress}
-      /* A finger resting on the row must not also raise the browser's own
-         callout or the native context menu — the popover is the long press. */
-      onContextMenu={(event) => {
-        if (isMobile) event.preventDefault()
-      }}
-      className={cn(ROW, isMobile && "select-none [-webkit-touch-callout:none]")}
-    />
-  )
+
   const card = <ThreadInfoCard session={session} state={state} trash={trash} />
 
   return (
     <SidebarMenuItem>
-      <Popover
-        open={infoOpen}
-        onOpenChange={(open, details) => {
-          /* A tap or click on the row is navigation, never a toggle — the
-             popover's own press handling is ignored. Hover opens are Base
-             UI's (desktop); a long press sets the state itself (mobile). */
-          if (open && details.reason === "trigger-press") return
-          setInfoOpen(open)
-        }}
-      >
-        {isMobile ? (
-          <PopoverTrigger render={button}>{row}</PopoverTrigger>
-        ) : (
-          <ItemContextMenu items={items}>
-            <PopoverTrigger render={button} openOnHover delay={HOVER_DELAY_MS}>
-              {row}
-            </PopoverTrigger>
-          </ItemContextMenu>
-        )}
-        <PopoverContent
-          side={isMobile ? "bottom" : "right"}
-          align="start"
-          sideOffset={8}
-          className="w-72 gap-3 p-3"
+      {/* The right-click menu is the row itself — no wrapper DOM — and it is
+          the same list as the ⋯ below, so the two cannot drift apart. On a
+          phone its trigger is the long press the ⋯ is a finger-reach for. */}
+      <ItemContextMenu items={items}>
+        <SidebarMenuButton
+          size="sm"
+          isActive={active}
+          onClick={(event) => onOpen(session, event.metaKey || event.ctrlKey)}
+          /* A finger resting on the row must not raise the browser's own
+             callout or native context menu — the one context menu is Base
+             UI's, opened on long press. */
+          onContextMenu={(event) => {
+            if (isMobile) event.preventDefault()
+          }}
+          className={cn(ROW, FLOAT_ROW, isMobile && "select-none [-webkit-touch-callout:none]")}
         >
-          {card}
-          {/* The info card carries the row's actions too, so one hover — or one
-              long press — reaches both: the reading and what to do with it. On
-              desktop this replaces the ⋯ dot menu that used to sit over the
-              title; mobile already did this, which is what it now matches. */}
-          <div className="flex flex-col gap-0.5 border-t border-border/60 pt-2">
-            {/* Flattened: this list draws its own rows, so a submenu here
-                would be a row that opens nothing. */}
-            {flattenMenuItems(items).map((item, index) =>
-              item.type === "separator" || item.type === "sub" ? null : (
-                <button
-                  key={index}
-                  type="button"
-                  disabled={item.disabled}
-                  onClick={() => {
-                    setInfoOpen(false)
-                    item.onClick()
-                  }}
-                  className={cn(
-                    "flex h-8 items-center gap-2 rounded-lg px-2 text-[13px] hover:bg-accent disabled:opacity-50 [&>svg]:size-4 [&>svg]:shrink-0",
-                    item.destructive && "text-destructive"
-                  )}
-                >
-                  {item.icon}
-                  <span>{item.label}</span>
-                </button>
-              )
-            )}
-          </div>
-        </PopoverContent>
-      </Popover>
+          {row}
+        </SidebarMenuButton>
+      </ItemContextMenu>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <SidebarMenuAction showOnHover title={`Actions for ${session.title}`} className={FLOAT_ACTION}>
+              <MoreVertical />
+            </SidebarMenuAction>
+          }
+        />
+        {/* The ⋯ opens the reading above the actions: the card with the
+            thread's status and where it runs, then what to do with it. */}
+        <DropdownMenuContent side="right" align="start" className="w-72">
+          <div className="px-2 pt-1.5 pb-1">{card}</div>
+          <DropdownMenuSeparator />
+          {renderMenuItems(items, { Item: DropdownMenuItem, Separator: DropdownMenuSeparator })}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </SidebarMenuItem>
   )
 })
 
-/** What the row no longer says: the thread's status, who runs it and where,
-    and when it began. */
+/** What the row does not say: the thread's status, who runs it and where,
+    and when it began. It rides on the ⋯ menu, above the actions. */
 function ThreadInfoCard({
   session,
   state,

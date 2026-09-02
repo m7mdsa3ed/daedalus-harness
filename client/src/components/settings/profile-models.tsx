@@ -1,7 +1,8 @@
 import * as React from "react"
-import { Download, Pencil, Plus, Star, Trash2 } from "lucide-react"
+import { BotIcon, Download, Pencil, Plus, Star, Trash2 } from "lucide-react"
 import { toast } from "@/lib/toast"
 import { ErrorNote } from "@/components/error-note"
+import { EntityIcon } from "@/components/entity-icon"
 import { captureError, type InlineError } from "@/lib/errors"
 import { api, type ModelCandidate, type ServerSettings } from "@/lib/settings"
 import { Badge } from "@/components/ui/badge"
@@ -46,6 +47,7 @@ export interface ModelRow {
   pricingOutput: string
   modalities: string
   devRef: string
+  iconUrl: string
 }
 
 let modelUid = 0
@@ -61,6 +63,7 @@ export const blankModelRow = (): ModelRow => ({
   pricingOutput: "",
   modalities: "",
   devRef: "",
+  iconUrl: "",
 })
 
 export const candidateToRow = (candidate: ModelCandidate): ModelRow => ({
@@ -77,6 +80,7 @@ export const candidateToRow = (candidate: ModelCandidate): ModelRow => ({
   pricingOutput: candidate.pricing ? String(candidate.pricing.output) : "",
   modalities: (candidate.modalities ?? []).join(", "),
   devRef: candidate.devRef ?? "",
+  iconUrl: candidate.iconUrl ?? "",
 })
 
 export const toModelRows = (models: {
@@ -89,6 +93,7 @@ export const toModelRows = (models: {
   pricing?: { input: number; output: number }
   modalities?: string[]
   devRef?: string
+  iconUrl?: string
 }[]): ModelRow[] =>
   models.map((m) => ({
     uid: `model-${++modelUid}`,
@@ -102,6 +107,7 @@ export const toModelRows = (models: {
     pricingOutput: m.pricing ? String(m.pricing.output) : "",
     modalities: (m.modalities ?? []).join(", "),
     devRef: m.devRef ?? "",
+    iconUrl: m.iconUrl ?? "",
   }))
 
 export function rowsToModels(rows: ModelRow[]) {
@@ -115,6 +121,7 @@ export function rowsToModels(rows: ModelRow[]) {
     pricing?: { input: number; output: number }
     modalities?: string[]
     devRef?: string
+    iconUrl?: string
   }[] = []
   for (const row of rows) {
     const id = row.id.trim()
@@ -145,6 +152,7 @@ export function rowsToModels(rows: ModelRow[]) {
         : {}),
       ...(modalities.length ? { modalities } : {}),
       ...(row.devRef.trim() ? { devRef: row.devRef.trim() } : {}),
+      ...(row.iconUrl.trim() ? { iconUrl: row.iconUrl.trim() } : {}),
     })
   }
   return models
@@ -432,6 +440,23 @@ function ModelEditorFields({
               onChange={(e) => onPatch({ description: e.target.value })}
               className="text-xs"
             />
+          </Field>
+        </div>
+        <div className="sm:col-span-2">
+          <Field label="Icon URL" hint="Optional — shown in the composer trigger when this model is selected.">
+            <div className="flex items-center gap-2">
+              <EntityIcon
+                src={row.iconUrl}
+                fallback={<BotIcon className="size-5 text-muted-foreground" />}
+                className="size-5"
+              />
+              <Input
+                value={row.iconUrl}
+                onChange={(e) => onPatch({ iconUrl: e.target.value })}
+                placeholder="https://models.dev/logos/anthropic.svg"
+                className="font-mono text-xs"
+              />
+            </div>
           </Field>
         </div>
       </div>

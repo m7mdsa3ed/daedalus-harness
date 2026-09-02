@@ -41,6 +41,10 @@ export interface ModelDef {
   /** Provenance when enriched: "providerId/modelId" in models.dev, so the
       entry can be re-looked-up later without guessing by id. */
   devRef?: string;
+  /** Optional URL for a model-specific icon. When set, the composer trigger
+      shows this icon instead of the profile's logo. User-provided (models.dev
+      does not carry per-model artwork). */
+  iconUrl?: string;
 }
 
 /** `{name, value}` pairs — the shape the MCP library already stores. */

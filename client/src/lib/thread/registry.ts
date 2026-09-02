@@ -123,11 +123,15 @@ export class ThreadRegistry {
     return [...this.entries.values()].some((conn) => conn.isParked)
   }
 
-  /** The connection is closing (a different server, or the app unmounting). */
+  /** The connection is closing (a different server, or the app unmounting).
+      The page's registry goes with it: this one has dropped its freeze
+      subscription, so the next `threadRegistry` must build a new one rather
+      than re-point this. */
   destroyAll(): void {
     this.unsubscribeFrozen()
     for (const conn of this.entries.values()) conn.destroy()
     this.entries.clear()
+    if (pageRegistry === this) pageRegistry = null
   }
 }
 

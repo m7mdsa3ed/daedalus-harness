@@ -1,7 +1,7 @@
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
 import { BotIcon } from "lucide-react"
-import { AgentIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
+import { AgentIcon, EntityIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
 import { AvatarGroup } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
@@ -345,7 +345,26 @@ export function DraftConfigPopover({
             className="h-8 gap-1.5 border-0 bg-transparent px-2 text-xs shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent"
             title={[persona?.name, modelLabel, effortLabel].filter(Boolean).join(" · ")}
           >
-            {profile?.logoUrl ? (
+            {/* The model's own icon replaces the profile's logo in the pair —
+                the two marks stay, it is only the second one that changes. A
+                broken model icon falls back to the profile logo, which is what
+                would have shown anyway. */}
+            {resolvedModel?.iconUrl ? (
+              <AvatarGroup className="-space-x-1">
+                <AgentIcon agentId={agent?.id ?? meta.agentId} className="size-4 ring-2 ring-composer" />
+                <EntityIcon
+                  src={resolvedModel.iconUrl}
+                  fallback={
+                    <ProfileIcon
+                      profile={profile}
+                      agentId={agent?.id ?? meta.agentId}
+                      className="size-4 ring-2 ring-composer"
+                    />
+                  }
+                  className="size-4 ring-2 ring-composer"
+                />
+              </AvatarGroup>
+            ) : profile?.logoUrl ? (
               <AvatarGroup className="-space-x-1">
                 <AgentIcon agentId={agent?.id ?? meta.agentId} className="size-4 ring-2 ring-composer" />
                 <ProfileIcon profile={profile} agentId={agent?.id ?? meta.agentId} className="size-4 ring-2 ring-composer" />

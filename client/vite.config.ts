@@ -27,18 +27,48 @@ function bootColors(): Plugin {
   };
 }
 
+/* ── The IDE's CSS ──
+   VS Code ships its stylesheets as plain `.css` imports meant to be injected
+   by its own loader, into the workbench container. Vite would otherwise put
+   them in the page's global stylesheet, where they restyle the whole app —
+   `?inline` hands each one back as a string instead, which is what the
+   library's `injectCss` expects. Only files under the vendor packages: the
+   app's own CSS is Tailwind's and must stay a real stylesheet. */
+function vscodeCssAsString(): Plugin {
+  return {
+    name: "daedalus-vscode-css-as-string",
+    enforce: "pre",
+    async resolveId(source, importer, options) {
+      const resolved = await this.resolve(source, importer, options);
+      if (
+        resolved &&
+        !resolved.id.endsWith("?inline") &&
+        /node_modules[\\/](?:\.pnpm[\\/][^\\/]+[\\/]node_modules[\\/])?(?:@codingame[\\/]monaco-vscode|vscode|monaco-editor).*\.css$/.test(
+          resolved.id
+        )
+      ) {
+        return { ...resolved, id: `${resolved.id}?inline` };
+      }
+      return undefined;
+    },
+  };
+}
+
+/* The workbench is a hundred-odd megabytes of source across a thousand
+   modules. Vite pre-bundles dependencies, but these are many small packages
+   that resolve into each other, and without naming them Chrome hangs on the
+   first cold load walking the graph. */
+const IDE_PACKAGES = [
+  "@codingame/monaco-vscode-api",
+  "@codingame/monaco-vscode-api/extensions",
+  "@codingame/monaco-vscode-api/monaco",
+  "@codingame/monaco-vscode-api/workbench",
+  "monaco-editor",
+  "vscode",
+  "vscode/localExtensionHost",
+];
+
 // https://vite.dev/config/
-/* CodeMirror's `language-data` reaches every grammar through a dynamic
-   import, which is what keeps opening a `.ts` file from also shipping Rust.
-   The chunks land under `assets/lang/` so the service worker has a pattern it
-   can skip: they are the one part of the build that is genuinely on-demand,
-   and precaching them defeats the point of splitting them. */
-const GRAMMAR_PACKAGES =
-  /[\\/]node_modules[\\/](?:\.pnpm[\\/][^\\/]+[\\/]node_modules[\\/])?(@codemirror[\\/](?:lang-|legacy-modes)|@lezer[\\/](?!common|highlight))/;
-
-const isGrammarChunk = (moduleIds: readonly string[]): boolean =>
-  moduleIds.length > 0 && moduleIds.every((id) => GRAMMAR_PACKAGES.test(id));
-
 /* The persisted query cache's buster (see src/lib/queries/persist.ts): a
    dumped cache is only safe to rehydrate into the build that wrote it, since
    what a query's data *is* can change with a release. One value per build, so
@@ -50,16 +80,17 @@ export default defineConfig({
     __QUERY_CACHE_BUSTER__: JSON.stringify(buildId),
   },
   build: {
-    rollupOptions: {
-      output: {
-        chunkFileNames: (chunk) =>
-          isGrammarChunk(chunk.moduleIds ?? [])
-            ? "assets/lang/[name]-[hash].js"
-            : "assets/[name]-[hash].js",
-      },
-    },
+    /* The workbench is authored against a modern baseline and the extension
+       host worker is an ES module. */
+    target: "esnext",
+    chunkSizeWarningLimit: 8000,
+  },
+  worker: { format: "es" },
+  optimizeDeps: {
+    include: IDE_PACKAGES,
   },
   plugins: [
+    vscodeCssAsString(),
     react(),
     tailwindcss(),
     bootColors(),
@@ -83,12 +114,23 @@ export default defineConfig({
       },
       injectManifest: {
         globPatterns: ["**/*.{js,css,html,svg,png,woff2,webmanifest}"],
-        // Syntax grammars are excluded on purpose — see `build.rollupOptions`
-        // below. They are a hundred-odd chunks nobody needs until they open a
-        // file of that language, and precaching them made the install four
-        // times the size of the app for the benefit of nobody who only reads
-        // transcripts. Offline they degrade to plain text, which is fine.
-        globIgnores: ["**/lang/**"],
+        /* The workbench is deliberately NOT precached. It is a dozen megabytes
+           reached only by opening the IDE panel, and precaching it would make
+           the install an order of magnitude bigger for every reader who only
+           reads transcripts. Offline, the IDE is the one surface that does not
+           open; everything else still does.
+
+           It is excluded by size rather than by path: rolldown does not honour
+           a `chunkFileNames` callback in this Vite, so the workbench's chunks
+           are named like any other and there is no `assets/ide/` prefix to
+           match. The threshold sits above the app's own largest chunk and far
+           below the workbench's, and `maximumFileSizeToCacheInBytes` alone
+           would only warn — this drops them from the manifest quietly.
+
+           A grammar or a wasm blob under the threshold may still be precached;
+           that is a few hundred kilobytes and it is not worth a second rule to
+           chase. */
+        globIgnores: ["**/assets/boot-*.js"],
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
       },
       manifest: {
@@ -173,6 +215,10 @@ export default defineConfig({
     host: true,
   },
   resolve: {
+    /* One copy of each, however many of the forty-odd override packages
+       depend on them: two `vscode` modules would be two extension APIs, and
+       two `monaco-editor`s two sets of global services. */
+    dedupe: ["vscode", "monaco-editor", "@codingame/monaco-vscode-api"],
     alias: {
       "@": path.resolve(import.meta.dirname, "./src"),
       /* The one module the browser imports from the server for its *value*

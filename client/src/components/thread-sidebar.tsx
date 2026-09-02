@@ -47,6 +47,7 @@ import {
   FolderIcon,
   HammerIcon,
   ListFilter,
+  Loader2,
   Pin,
   SearchIcon,
   SquareKanban,
@@ -449,7 +450,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
      streamed token changes (statuses is identity-stable, see above), so a
      token costs this component a render but no re-sorting and — through the
      memoized rows — no row re-renders. */
-  const { live, trashed, pinned, recent, filed } = React.useMemo(() => {
+  const { live, trashed, pinned, running, recent, filed } = React.useMemo(() => {
     // Deleting is reversible, so a deleted thread leaves the tiers above but
     // not the sidebar: it drops into Trash until it is restored or purged.
     const live = sessions
@@ -489,20 +490,19 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
        most likely to be looked for — was the one missing from where it lives.
        By project: no Recents at all, which is the view for someone who thinks
        in projects rather than in time. */
-    /* Running first, always. A turn in progress is the one thing in this list
-       that is happening *now*, and by-activity order buried it under whatever
-       was typed most recently — which is why there used to be a Running tier
-       of its own above Recents, saying the same threads twice. Every running
-       thread is in the list whatever its age (that is what the tier bought),
-       and the rest fill the remaining slots. */
+    /* Running is its own group, above Recents. A turn in progress is the one
+       thing in this list that is happening *now*; folding it into Recents
+       either buried it under whatever was typed most recently or ate the
+       slots the recent-but-idle threads needed. Every running thread is
+       listed whatever its age; Recents is the newest few idle ones, and the
+       folders below still hold every thread either way. */
     const isRunning = (session: SessionMeta) => statuses.get(session.id) === "running"
-    const running = rest.filter(isRunning)
-    const idle = rest.filter((session) => !isRunning(session))
-    const recent =
-      view.sort === "recent"
-        ? [...running, ...idle.slice(0, Math.max(RECENT_COUNT - running.length, 0))]
-        : []
-    return { live, trashed, pinned, recent, filed: newestFirst }
+    const byRecency = view.sort === "recent"
+    const running = byRecency ? rest.filter(isRunning) : []
+    const recent = byRecency
+      ? rest.filter((session) => !isRunning(session)).slice(0, RECENT_COUNT)
+      : []
+    return { live, trashed, pinned, running, recent, filed: newestFirst }
   }, [sessions, statuses, pins, view.filter, view.sort])
 
   const { byProject, orphans } = React.useMemo(() => {
@@ -554,6 +554,16 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
       {pinned.length > 0 && (
         <FoldableGroup groupKey="__pinned" label="Pinned" icon={<Pin className="size-3 shrink-0" />}>
           <ThreadList sessions={pinned} {...listProps} />
+        </FoldableGroup>
+      )}
+
+      {running.length > 0 && (
+        <FoldableGroup
+          groupKey="__running"
+          label="Running"
+          icon={<Loader2 className="size-3 shrink-0 animate-spin" />}
+        >
+          <ThreadList sessions={running} {...listProps} />
         </FoldableGroup>
       )}
 

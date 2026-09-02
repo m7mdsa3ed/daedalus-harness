@@ -59,6 +59,8 @@ export interface ThreadDeps {
       lives there rather than in the store, so a connection that needs to know
       whether its project still exists has to be handed a reader. */
   projects: () => Project[]
+  /** The same list, or `undefined` while the first read is still in flight. */
+  projectsLoaded: () => Project[] | undefined
   refreshSessions: () => Promise<void>
   /** Invalidate the projects slice of the catalog — for `project_changed`,
       which says a row moved without saying it is the only thing that did. */
@@ -461,9 +463,12 @@ export class ThreadConnection {
       (this.socket.isArchived || this.phase.kind === "read")
     )
       return
-    // A thread whose project was deleted can never open. Saying nothing left it
-    // stuck on the connecting skeleton forever.
-    if (!this.deps.projects().some((p) => p.id === meta.projectId)) {
+    /* A thread whose project was deleted can never open. Saying nothing left
+       it stuck on the connecting skeleton forever — but a list that has not
+       been read yet is not an empty one, so this waits for the answer rather
+       than failing every thread on a cold boot. */
+    const known = this.deps.projectsLoaded()
+    if (known && !known.some((p) => p.id === meta.projectId)) {
       throw new Error(
         "This thread's project no longer exists, so there is no working directory to run the agent in."
       )
@@ -1104,7 +1109,22 @@ export class ThreadConnection {
              recorded — which is exactly how a failed send became an empty
              thread with no explanation in it. */
           carried = carryOf(getState().threads[id]?.items ?? [])
-          send({ type: "thread-reset", id, thread: { ...emptyThread, phase: this.phase } })
+          /* What each turn did to the worktree survives the reset: it is not
+             part of what the replay rebuilds — it is the server's own
+             measurement, keyed by turn id and seeded once by
+             `GET /api/sessions/:id/changes` when the transcript opened. That
+             GET beats the replay to the store on a reload, so resetting to
+             `emptyThread` here is what left the "N files changed" chips off
+             every reloaded thread, with nothing to fetch them again. */
+          send({
+            type: "thread-reset",
+            id,
+            thread: {
+              ...emptyThread,
+              phase: this.phase,
+              turnChanges: getState().threads[id]?.turnChanges ?? {},
+            },
+          })
         }
         send({ type: "thread-window", id, archived, earlier })
         /* The agent would not reload this conversation, so the replay about to

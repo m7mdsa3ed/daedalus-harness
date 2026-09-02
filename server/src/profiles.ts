@@ -41,6 +41,7 @@ export const ProfileInputSchema = z.object({
         pricing: z.object({ input: z.number().min(0), output: z.number().min(0) }).optional(),
         modalities: z.array(z.string()).optional(),
         devRef: z.string().optional(),
+        iconUrl: z.string().optional(),
       }),
     )
     .default([]),

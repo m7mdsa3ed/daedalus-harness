@@ -27,6 +27,7 @@ import { useFollowStream } from "@/hooks/use-follow-stream"
 import { cn } from "@/lib/utils"
 import { StepTokensProvider, TokenSummary } from "./token-usage"
 import { useDock } from "@/components/workspace/dock"
+import { requestIde } from "@/lib/ide/open"
 import { useServer } from "@/lib/server-context"
 import { sessionChanges, type TurnChanges } from "@/lib/workspace/git-api"
 import { InlineElicitation } from "./elicitation-form"
@@ -167,10 +168,32 @@ function withTurnChanges(
   return after
 }
 
-/** The footer chip: "3 files changed +40 −12", opening the review panel on
-    that turn. Git's count, not the transcript's — a shell command that edited
+/** The footer chip: "3 files changed +40 −12", opening the turn's files in
+    the IDE's multi-file diff. Git's count, not the transcript's — a shell command that edited
     a file is in it, an edit tool that declared one is in it once. */
-function TurnChangesChip({ sessionId, turn }: { sessionId: string; turn: TurnChanges }) {
+/** The chip's two halves: bring the workbench up, then ask it for the turn.
+    `requestIde` queues against the boot the panel starts, so the first-ever
+    open and one into a running workbench take the same path. */
+function openTurnChanges(
+  dock: ReturnType<typeof useDock>,
+  sessionId: string,
+  projectId: string | undefined,
+  scope: string
+): void {
+  if (!projectId) return
+  dock.openPanel({ kind: "ide", projectId }, { direction: "right" })
+  requestIde({ kind: "changes", projectId, sessionId, scope })
+}
+
+function TurnChangesChip({
+  sessionId,
+  projectId,
+  turn,
+}: {
+  sessionId: string
+  projectId: string | undefined
+  turn: TurnChanges
+}) {
   const dock = useDock()
   const added = turn.files.reduce((n, f) => n + f.additions, 0)
   const removed = turn.files.reduce((n, f) => n + f.deletions, 0)
@@ -178,7 +201,7 @@ function TurnChangesChip({ sessionId, turn }: { sessionId: string; turn: TurnCha
     <button
       type="button"
       onClick={() =>
-        dock.openPanel({ kind: "review", sessionId, scope: `turn:${turn.turnId}` }, { direction: "right" })
+        openTurnChanges(dock, sessionId, projectId, `turn:${turn.turnId}`)
       }
       className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2 py-0.5 font-mono text-[11px] text-muted-foreground hover:bg-accent hover:text-accent-foreground"
       title="Review this turn's changes"
@@ -597,7 +620,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   )}
                   {changesFor(row) && (
                     <div className="harness-item-in mt-1">
-                      <TurnChangesChip sessionId={sessionId} turn={changesFor(row)!} />
+                      <TurnChangesChip sessionId={sessionId} projectId={meta?.projectId} turn={changesFor(row)!} />
                     </div>
                   )}
                 </MessageScrollerItem>

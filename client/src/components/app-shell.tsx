@@ -348,11 +348,8 @@ export function AppShell({
           { direction: "right" }
         )
       }
-      /* The review is the thread's, not the project's: its turns are what
-         the scope menu lists. */
-      if (kind === "review") {
-        const sessionId = activeSessionRef.current
-        if (sessionId) dock.openPanel({ kind: "review", sessionId }, { direction: "right" })
+      if (kind === "ide") {
+        dock.openPanel({ kind: "ide", projectId }, { direction: "right" })
       }
     },
     [dock]
@@ -360,6 +357,10 @@ export function AppShell({
 
   useShortcut("terminal", () => {
     openWorkspacePanel("terminal")
+  })
+
+  useShortcut("ide", () => {
+    openWorkspacePanel("ide")
   })
 
   /* The preview: the Browser panel on the project's managed dev server. One
@@ -559,8 +560,8 @@ export function AppShell({
                   data-surface="solid"
                 >
                   {/* The known servers, active one ticked at the top; switching
-                      is a full reload (`location.assign`) because threads, the
-                      sockets and the whole store belong to one server.
+                      is a state change (see App.tsx), which re-mounts the tree
+                      against the newly-active connection.
 
                       Each label is Base UI's Menu.GroupLabel: it reads its
                       group from context and throws outside one, so it sits
@@ -578,7 +579,6 @@ export function AppShell({
                           disabled={isActive}
                           onClick={() => {
                             setActiveServer(server.id)
-                            window.location.assign("/")
                           }}
                         >
                           <span className="grid size-6 shrink-0 place-items-center rounded-md bg-sidebar-accent/70">

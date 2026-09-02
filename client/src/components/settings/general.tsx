@@ -52,10 +52,11 @@ export function GeneralPage() {
   )
 }
 
-/* Switching is a hard navigation: threads, the ACP sockets and the whole
-   store belong to one server, so the cheapest correct swap is to re-boot the
-   app against the newly-active connection. Renaming the active server is the
-   same — its name is read from `settings` throughout the app. */
+/* Switching re-boots the app against the newly-active connection in place —
+   threads, the ACP sockets and the whole store belong to one server, and
+   App.tsx ends and rebuilds all three off `setActiveServer`. Renaming the
+   active server is still a hard navigation: its name is read from `settings`
+   throughout the app. */
 function ServersGroup({ active }: { active: ServerSettings }) {
   const confirm = useConfirm()
   const [servers, setServers] = React.useState(loadServers)
@@ -65,7 +66,6 @@ function ServersGroup({ active }: { active: ServerSettings }) {
   const switchTo = (server: ServerSettings) => {
     if (server.id === active.id) return
     setActiveServer(server.id)
-    location.assign("/")
   }
   const startRename = (server: ServerSettings) => {
     setRenaming(server)

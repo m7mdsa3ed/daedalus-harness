@@ -13,7 +13,7 @@
    - **Params are storage.** Dockview serializes them verbatim, so a descriptor
      is a schema and `parsePanel` guards the way back in.
    - **Every close path is ours.** The default tab is replaced, so `closePanel`
-     is the only door out — which is where a dirty editor gets to ask first. */
+     is the only door out — which is where a guarded panel gets to ask first. */
 import * as React from "react"
 import {
   DockviewReact,
@@ -26,8 +26,7 @@ import {
 import "dockview-react/dist/styles/dockview.css"
 
 import { ChatPanel } from "@/components/workspace/chat-panel"
-import { EditorPanel } from "@/components/workspace/editor-panel"
-import { SourceControlPanel } from "@/components/workspace/source-control-panel"
+import { IdePanel } from "@/components/workspace/ide-panel"
 import { PanelContainer } from "@/components/workspace/panel-container"
 import { PanelTab } from "@/components/workspace/panel-tab"
 import { TerminalPanel } from "@/components/workspace/terminal-panel"
@@ -106,7 +105,8 @@ export interface WorkspaceDock {
   resetLayout: () => void
   reopenClosed: () => void
   applyPreset: (preset: PresetId) => void
-  /** A panel's veto on its own closing — dirty editors, live terminals. */
+  /** A panel's veto on its own closing — live terminals. The IDE keeps its
+      own dirty buffers across a close, so it never vetoes one. */
   registerCloseGuard: (id: string, guard: CloseGuard) => () => void
   /** Descriptors currently open, in tab order, for menus and the palette. */
   listPanels: () => { id: string; panel: PanelDescriptor; title: string }[]
@@ -201,7 +201,7 @@ export function useWorkspaceDock(): DockController {
          columns of nothing: the panel opens as a tab in the group you are in,
          which is what "beside the thread" means on a screen that can only show
          one thing at a time. And when a group of that kind is **already open**,
-         because a second editor asking to open on the right would split the
+         because a second panel asking to open on the right would split the
          dock a second time — the first one established where that kind lives,
          and the second belongs in it. */
       const roomToSplit = window.innerWidth >= SPLIT_MIN_WIDTH && siblings.length === 0
@@ -283,7 +283,7 @@ export function useWorkspaceDock(): DockController {
   }, [])
 
   /* Bulk closes stop at the first refusal rather than skipping past it: a
-     "close others" that silently leaves one dirty editor behind, in a group
+     "close others" that silently leaves one guarded panel behind, in a group
      that no longer looks the way you left it, is worse than stopping where the
      question was asked. */
   const closeEach = React.useCallback(
@@ -438,7 +438,7 @@ export function useWorkspaceDock(): DockController {
             continue
           }
           const gone =
-            descriptor.kind === "chat" || descriptor.kind === "review"
+            descriptor.kind === "chat"
               ? !sessions.has(descriptor.sessionId)
               : !pruneProjects
                 ? false
@@ -626,9 +626,8 @@ export function WorkspaceDock({
     map.chat = contained((props) => (
       <ChatPanel {...(props as IDockviewPanelProps<{ sessionId: string }>)} actions={actions} />
     ))
-    map.editor = contained(EditorPanel as React.FC<IDockviewPanelProps>)
+    map.ide = contained(IdePanel as React.FC<IDockviewPanelProps>)
     map.terminal = contained(TerminalPanel as React.FC<IDockviewPanelProps>)
-    map.review = contained(SourceControlPanel as React.FC<IDockviewPanelProps>)
     /* The preview mode hands errors and picked elements to a thread, which
        is a send — so the web panel takes `actions` the way the chat does. */
     map.web = contained((props) => (

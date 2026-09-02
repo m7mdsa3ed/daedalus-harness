@@ -2,8 +2,7 @@
    `lib/workspace/panels.ts`, which stays a pure storage schema — a serialized
    layout has no business importing a component. */
 import {
-  FileTextIcon,
-  GitCompareIcon,
+  CodeIcon,
   GlobeIcon,
   MessageSquareIcon,
   SquareTerminalIcon,
@@ -14,8 +13,7 @@ import type { PanelKind } from "@/lib/workspace/panels"
 
 export const PANEL_ICONS: Record<PanelKind, LucideIcon> = {
   chat: MessageSquareIcon,
-  editor: FileTextIcon,
+  ide: CodeIcon,
   terminal: SquareTerminalIcon,
   web: GlobeIcon,
-  review: GitCompareIcon,
 }

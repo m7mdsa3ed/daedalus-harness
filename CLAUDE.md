@@ -324,10 +324,25 @@ describes; every one of those rules cost a bug.
   toasts are for failures with no surface to go back to. An error a surface could render as
   *emptiness* must be rendered as an error. Toasts are Base UI's, raised only through
   `lib/toast.ts`, and anything with a visible wait goes through `reportPromise`.
-- **The dock holds five panel kinds: chat, editor, terminal, web and review.** The IDE,
-  explorer, source-control, output and agents panels are gone from the client (the server's
-  `ide.ts`, `ide-proxy.ts` and `git.ts` remain; git is read by the editor's diff mode and by
-  the review panel). None of the subagent or workflow machinery was affected.
+- **The dock holds four panel kinds: chat, ide, terminal and web.** The editor, the file
+  explorer, search and source control are one panel — the real VS Code workbench running in
+  the page (`@codingame/monaco-vscode-api`, `client/src/lib/ide/`), not a framed
+  `code-server`. **There is one workbench per page**: its services are global and initialize
+  once, so the panel is a singleton keyed by project, it is *parked* (detached, never
+  destroyed) when closed, and what is open *inside* it is the workbench's state and not the
+  dock's. Opening a file, a diff or a turn's changes is a request
+  (`lib/ide/open.ts` → `perform.ts`), queued against the boot the panel starts. **Nothing
+  outside `lib/ide/boot.ts` may import the workbench statically** — it is a dynamic import
+  and a 11 MB chunk, excluded from the service worker's precache. The server's `ide.ts` and
+  `ide-proxy.ts` (code-server) are still routed and now unused by the client. None of the
+  subagent or workflow machinery was affected.
+- **The workbench reaches the harness through two seams and no others.** Files are a VS Code
+  `IFileSystemProvider` over the existing workspace routes (`lib/ide/fs-provider.ts`,
+  addressed by the project whose cwd encloses an absolute path — `lib/ide/projects.ts`);
+  everything else is the harness's own **extension**, registered in-process
+  (`lib/ide/extension.ts`), which owns the git source control (`scm.ts`, over the project's
+  git routes) and the turn-changes multi-diff (`turn-changes.ts`). A feature is turned on by
+  adding its **service override** in `boot.ts` and by nothing else.
 - **A turn's changes are measured by git, never read off the transcript.** The worktree is
   photographed as a tree object at `turn_started` and `turn_ended` (`git.snapshotTree`, a
   scratch index — the real one is never touched; `server/src/turn-changes.ts`,

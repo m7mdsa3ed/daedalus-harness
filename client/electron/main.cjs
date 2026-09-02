@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Notification, shell, nativeTheme, ipcMain } = require("electron")
+const { app, BrowserWindow, Menu, Notification, shell, nativeTheme, ipcMain } = require("electron")
 const path = require("node:path")
 const fs = require("node:fs")
 const http = require("node:http")
@@ -122,6 +122,24 @@ function saveState() {
   }
 }
 
+/* Chromium's clipboard accelerators (⌘/Ctrl+C/X/V/A) are the application
+   MENU's, not the web page's: with no menu installed there is no accelerator,
+   and copy silently does nothing. `autoHideMenuBar` only hides the bar — it
+   does not build one — so the menu has to be stated. Everything is a role, so
+   the OS supplies the labels and the platform-correct keys. */
+function installMenu() {
+  const isMac = process.platform === "darwin"
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      ...(isMac ? [{ role: "appMenu" }] : []),
+      { role: "fileMenu" },
+      { role: "editMenu" },
+      { role: "viewMenu" },
+      { role: "windowMenu" },
+    ]),
+  )
+}
+
 async function createWindow() {
   const state = loadState()
 
@@ -239,7 +257,10 @@ if (!app.requestSingleInstanceLock()) {
     }
   })
 
-  app.whenReady().then(createWindow)
+  app.whenReady().then(() => {
+    installMenu()
+    return createWindow()
+  })
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
