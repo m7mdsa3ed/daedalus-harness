@@ -750,11 +750,28 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   the side view and the editor take turns — a 224px explorer beside a 130px editor is two
   things you cannot use — and picking a file or a diff is what closes the side view. The turn-
   changes tab does the same with its file list and its diff under `@panel-md`.
-- **Workers need no wiring, and that is worth not undoing.** Since 0.56 Monaco declares every
-  worker it starts as `new Worker(new URL(…, import.meta.url))` inside the package, which is
-  exactly the shape Vite compiles into a worker chunk. Defining `MonacoEnvironment.getWorker`
-  would *override* that with paths we would then have to keep true by hand, so `lib/ide/
-  monaco.ts` deliberately defines nothing.
+- **Workers are wired, and by import rather than by path.** Since 0.56 the four *language*
+  workers declare themselves as `new Worker(new URL(…, import.meta.url))` inside the package,
+  which is exactly the shape Vite compiles into a worker chunk — and for a while that read as
+  "workers need no wiring". The editor worker is the exception that made it false:
+  `editorWorkerService` names its module with a bare `new URL(…, import.meta.url)` and hands
+  the *string* to a blob bootstrap that imports it. Vite reads a bare `new URL` as an asset
+  reference, and `editorWebWorkerMain.js` is 544 bytes — under `assetsInlineLimit` — so the
+  built app inlined it as a `data:` URL and the worker died on its first import: *Failed to
+  resolve module specifier "../../../base/common/worker/webWorkerBootstrap.js". Invalid
+  relative url or base scheme isn't hierarchical.* A `data:` URL has no base to resolve a
+  relative specifier against. Raising the inline limit does not fix it either — the file would
+  then be copied flat into `assets/` and those same relative imports would 404.
+  So `lib/ide/monaco.ts` defines `MonacoEnvironment.getWorker`, and two things about it are
+  load-bearing. It is `getWorker` and **never** `getWorkerUrl`: each worker is named by a
+  `?worker` import (through the package's export map — `monaco-editor/editor/…`, not
+  `monaco-editor/esm/vs/…`, which the map would double), so the bundler resolves and bundles
+  it and a path that stopped being true is a build error rather than a blank editor. And it
+  must answer for **every** label, not just `editorWorkerService`: the language workers' own
+  factory (`internal/common/workers.js`) consults `MonacoEnvironment.getWorker` first and
+  returns whatever it gets without falling back to the package's own `createWorker`. The new
+  chunk is `editor.worker.start-*.js`, added to the service worker's `globIgnores` beside the
+  language workers — the IDE stays out of the precache.
 - **What is open inside the IDE is the IDE's state, never the dock's.** The old editor
   descriptor carried a path and a comparison, which is why a file at a second line was a
   second panel and why `reveal.ts` existed to work around it. Now the descriptor is the

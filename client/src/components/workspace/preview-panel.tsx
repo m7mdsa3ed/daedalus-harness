@@ -482,7 +482,7 @@ export function PreviewPanel({
   const copyUrl = async () => {
     if (!externalUrl) return
     try {
-      await navigator.clipboard.writeText(externalUrl)
+      await writeClipboard(externalUrl)
       toast.success("Preview address copied", {
         description: "It carries this boot's key — it stops working when the server restarts.",
       })
@@ -1257,3 +1257,4 @@ function HistoryDrawer({
     </aside>
   )
 }
+import { writeClipboard } from "@/lib/clipboard"

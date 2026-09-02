@@ -7,9 +7,9 @@
    toolbar that reads left to right as *what goes in → where it goes → what
    happens*: the "+" menu (attach, photo, mention, command, code block), the
    model/config cluster, then the counters and the actions, ending on a filled
-   Send. Every control on the row is the same shape — 32px on a mouse, 36px on
-   a finger (`useCoarsePointer`, the device's answer; `useIsMobile` is the
-   width's and decides only what Enter means) — and chrome-less except the two
+   Send. Every control on the row is the same shape — 24px (`icon-xs`), on a
+   mouse and a finger alike (`useIsMobile` is the width's and decides only
+   what Enter means) — and chrome-less except the two
    that carry meaning by colour: Send is primary, Stop is destructive.
 
    What used to be five separate buttons (attach, voice, pause, stop, send)
@@ -507,7 +507,7 @@ export function Composer({
     lock.submittable &&
     !files.uploading &&
     (text.trim().length > 0 || files.ready.length > 0)
-  const iconSize = coarse ? "icon" : "icon-sm"
+  const iconSize = "icon-xs"
   const steerChord = formatChord(steerChords[0] ?? "")
 
   const sendTitle = gated
@@ -534,8 +534,8 @@ export function Composer({
             <span className="font-medium">{banner.title}</span> {banner.message}
           </span>
           {banner.action && (
-            <Button size="lg" variant="outline" onClick={recover} disabled={reviving}>
-              <RotateCw className={cn("size-4", reviving && "animate-spin")} />
+            <Button size="xs" variant="outline" onClick={recover} disabled={reviving}>
+              <RotateCw className={cn("size-3.5", reviving && "animate-spin")} />
               {reviving ? banner.action.busyLabel : banner.action.label}
             </Button>
           )}
@@ -549,7 +549,7 @@ export function Composer({
         {thread.archived && (
           <ComposerStripItem
             summary={{ id: "archived", icon: Archive, label: "Agent not running" }}
-            className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-muted-foreground"
+            className="flex items-center gap-2 px-2 py-1.5 text-[11px] text-muted-foreground"
           >
             <Archive className="size-3 shrink-0" />
             <span>This thread's agent isn't running. Sending a message starts it again.</span>
@@ -597,7 +597,7 @@ export function Composer({
         {history.browsing && (
           <ComposerStripItem
             summary={{ id: "history", icon: History, label: "Earlier prompt" }}
-            className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-muted-foreground"
+            className="flex items-center gap-2 px-2 py-1.5 text-[11px] text-muted-foreground"
           >
             <History className="size-3" />
             <span>Earlier prompt</span>
@@ -715,12 +715,12 @@ export function Composer({
           )}
         />
         {/* One control language across the row: every button is the same
-            size (32px on a mouse, 36px on a finger — `iconSize`), rounded-lg,
-            and chrome-less with a hover wash. The row sits INSIDE the composer
-            card, so a bordered button there is a box inside a box; colour
-            carries the meaning instead, and only on the two that act on the
-            message as a whole: Send is a filled primary disc, Stop a
-            destructive one. */}
+            size — 24px (`icon-xs`), the app's xs scale, mouse and finger
+            alike — rounded-lg, and chrome-less with a hover wash. The row
+            sits INSIDE the composer card, so a bordered button there is a
+            box inside a box; colour carries the meaning instead, and only on
+            the two that act on the message as a whole: Send is a filled
+            primary disc, Stop a destructive one. */}
         <div className="flex items-center gap-1 pt-1">
           {/* What goes in. One menu holds every way of adding to the message
               — the row used to give each its own button, and on a phone that
@@ -731,7 +731,7 @@ export function Composer({
                 <Button
                   variant="ghost"
                   size={iconSize}
-                  className="shrink-0 rounded-lg text-muted-foreground hover:text-foreground data-popup-open:bg-muted data-popup-open:text-foreground"
+                  className="shrink-0 rounded-lg text-muted-foreground hover:text-foreground data-popup-open:bg-muted data-popup-open:text-foreground [&_svg]:size-3.5"
                   disabled={disabled || gated}
                   title="Add to the message"
                 />
@@ -840,9 +840,9 @@ export function Composer({
                     actions={actions}
                     editable={false}
                     /* The strip's own dimensions are the strip's; in the
-                       composer row it wears the same 32px, chrome-less shape
+                       composer row it wears the same 24px, chrome-less shape
                        as the config trigger beside it. */
-                    className="h-8 gap-1.5 px-2 text-xs hover:bg-transparent hover:text-foreground data-popup-open:bg-transparent"
+                    className="h-6 gap-1 px-1.5 text-[11px] hover:bg-transparent hover:text-foreground data-popup-open:bg-transparent [&_svg]:size-3.5"
                   />
                 )}
               </>
@@ -866,7 +866,7 @@ export function Composer({
               variant="ghost"
               size={iconSize}
               className={cn(
-                "shrink-0 rounded-lg text-muted-foreground hover:text-foreground",
+                "shrink-0 rounded-lg text-muted-foreground hover:text-foreground [&_svg]:size-3.5",
                 // Listening is a live state, so it stays coloured — but as text,
                 // not as a filled chip that reintroduces the chrome.
                 voice.listening && "animate-pulse text-destructive hover:text-destructive"
@@ -889,7 +889,7 @@ export function Composer({
               variant="ghost"
               size={iconSize}
               className={cn(
-                "shrink-0 rounded-lg text-muted-foreground hover:text-foreground",
+                "shrink-0 rounded-lg text-muted-foreground hover:text-foreground [&_svg]:size-3.5",
                 thread.paused && "text-primary hover:text-primary"
               )}
               onClick={() =>
@@ -923,7 +923,7 @@ export function Composer({
               title={sendTitle}
               aria-label={sendTitle}
             >
-              {gated ? <Spinner className="size-4" /> : <ArrowUp className="size-4.5" strokeWidth={2.5} />}
+              {gated ? <Spinner className="size-3.5" /> : <ArrowUp className="size-3.5" strokeWidth={2.5} />}
             </Button>
           )}
         </div>

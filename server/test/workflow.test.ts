@@ -393,6 +393,145 @@ await test("recoverAtBoot closes what the last process left running", () => {
   assert.equal(manager.journal(parent.id)!.events.filter((e) => e.ev === "update" && e.update.sessionUpdate === "subagent_state_update").length, before + 1);
 });
 
+// ── scripts ───────────────────────────────────────────────────────────────
+// The other engine: the shape of the run is decided by running it. Everything
+// below is what a declarative definition cannot express.
+
+await test("a script fans out over what a first agent found, as real threads on one card", async () => {
+  const view = runner.startScript(
+    parent,
+    `export const meta = {
+       name: 'fanout',
+       description: 'Read a list, then one agent per item',
+       phases: [{ title: 'Scout' }, { title: 'Read' }],
+     }
+     phase('Scout')
+     const listed = await agent('echo:alpha,beta,gamma', { label: 'scout' })
+     const items = listed.split(',')
+     log('fanning out over ' + items.length)
+     phase('Read')
+     const read = await parallel(items.map((it) => () => agent('echo:' + it, { label: 'read:' + it })))
+     return { items, read }`,
+  );
+  assert.equal(view.status, "running");
+  const done = await runner.wait(view.id, 30_000);
+  assert.ok(done);
+  assert.equal(done.status, "completed", done.error ?? "");
+  assert.deepEqual(
+    done.steps.map((s) => s.name),
+    ["scout", "read-alpha", "read-beta", "read-gamma"],
+    "one step per agent, in call order, named by its label",
+  );
+  assert.deepEqual(done.steps.map((s) => s.status), ["completed", "completed", "completed", "completed"]);
+  assert.deepEqual(done.steps.map((s) => s.phase), ["Scout", "Read", "Read", "Read"]);
+  assert.equal(done.steps.find((s) => s.name === "read-beta")!.output, "beta");
+  /* Every agent is a real child thread, exactly as a declarative step is —
+     which is the whole reason the script runs here rather than in the model's
+     own context. */
+  for (const step of done.steps) {
+    const child = manager.get(step.sessionId!)!;
+    assert.equal(child.parentSessionId, parent.id);
+    assert.equal(child.title, `fanout · ${step.name}`);
+    assert.equal(child.exited, true);
+  }
+  // And the card is drawn from the very RFD events the declarative engine emits.
+  const wf = (e: { update: unknown }) =>
+    (e.update as { _meta?: { daedalus?: { workflow?: { runId: string; plan: { name: string; steps: string[] }[] } } } })._meta?.daedalus
+      ?.workflow;
+  const spawns = updatesOf(ws, "subagent_spawned").filter((e) => wf(e)?.runId === view.id);
+  assert.equal(spawns.length, 4, "every agent announced itself on the parent");
+  assert.deepEqual(
+    wf(spawns[3])!.plan,
+    [{ name: "Scout", steps: ["scout"] }, { name: "Read", steps: ["read-alpha", "read-beta", "read-gamma"] }],
+    "the outline grows with the run, so the card shows the stages the script declared",
+  );
+});
+
+await test("a script parses schema output, and a failed agent is a null inside parallel", async () => {
+  const view = runner.startScript(
+    parent,
+    `export const meta = { name: 'mixed', description: 'schema and failure' }
+     const ok = await agent('echo:take it:\\n\\u0060\\u0060\\u0060json\\n{"n":1}\\n\\u0060\\u0060\\u0060', {
+       label: 'good',
+       schema: { type: 'object', required: ['n'], properties: { n: { type: 'number' } } },
+     })
+     const both = await parallel([
+       () => agent('echo:fine', { label: 'fine' }),
+       () => agent('please fail', { label: 'doomed' }),
+     ])
+     return { n: ok.n, both }`,
+  );
+  const done = await runner.wait(view.id, 30_000);
+  assert.ok(done);
+  assert.equal(done.status, "completed", done.error ?? "");
+  assert.deepEqual(done.steps.find((s) => s.name === "good")!.output, { n: 1 }, "a schema step resolves as the parsed object");
+  assert.equal(done.steps.find((s) => s.name === "doomed")!.status, "failed");
+  assert.deepEqual(
+    done.result,
+    { n: 1, both: ["fine", null] },
+    "a thrown agent is null so the script's own filter works, and the run still completes",
+  );
+});
+
+await test("an unguarded agent failure fails the run; cancel stops one mid-flight", async () => {
+  const bad = runner.startScript(
+    parent,
+    `export const meta = { name: 'boom', description: 'unguarded failure' }
+     await agent('please fail', { label: 'only' })
+     return 'unreachable'`,
+  );
+  const failed = await runner.wait(bad.id, 30_000);
+  assert.equal(failed?.status, "failed", "a bare await that throws fails the run");
+
+  const long = runner.startScript(
+    parent,
+    `export const meta = { name: 'slow', description: 'parks' }
+     await agent('needs permission', { label: 'parked' })`,
+  );
+  await waitFor(() => (runner.status(long.id)?.steps ?? []).some((s) => s.status === "running"), "the script's agent to start");
+  assert.equal(runner.cancel(long.id, "by hand"), true);
+  const stopped = await runner.wait(long.id, 20_000);
+  assert.equal(stopped?.status, "cancelled");
+  /* The run's waiters fire the moment it is cancelled; a step already in flight
+     closes itself a beat later, when its own wait loses the race to the abort.
+     So the settling is awaited rather than assumed — the same order the
+     declarative engine's cancel has. */
+  await waitFor(
+    () => (runner.status(long.id)?.steps ?? []).every((s) => s.status !== "running"),
+    "the script's agent to close itself",
+  );
+  const settled = runner.status(long.id)!;
+  assert.deepEqual(settled.steps.map((s) => s.status), ["cancelled"], "cancelling the run cancels its agents");
+  await waitFor(() => manager.get(settled.steps[0].sessionId!)?.exited === true, "the agent's thread to retire");
+});
+
+await test("a script is refused what it may not do", async () => {
+  assert.throws(
+    () => runner.startScript(parent, "const meta = { name: 'x', description: 'y' }"),
+    (e: unknown) => e instanceof WorkflowError,
+    "meta must be exported",
+  );
+  assert.throws(
+    () => runner.startScript(parent, "export const meta = { name: computed(), description: 'y' }"),
+    (e: unknown) => e instanceof WorkflowError,
+    "meta must be a literal, or the run could not be named before it runs",
+  );
+  const child = manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, {
+    parentSessionId: parent.id,
+  });
+  assert.throws(
+    () => runner.startScript(child, "export const meta = { name: 'x', description: 'y' }"),
+    (e: unknown) => e instanceof WorkflowError && e.status === 409,
+    "a step may not start a workflow, whichever engine it would use",
+  );
+  manager.retire(child);
+  // The clock ban is the sandbox's, but it has to reach the run's own error.
+  const clock = runner.startScript(parent, "export const meta = { name: 'clock', description: 'reads a clock' }\nreturn Date.now()");
+  const done = await runner.wait(clock.id, 20_000);
+  assert.equal(done?.status, "failed");
+  assert.match(done!.error ?? "", /unreplayable/);
+});
+
 for (const s of manager.list()) if (!s.exited) manager.retire(manager.get(s.id)!);
 manager.shutdown();
 console.log(`\n${passed} passed${failures.length ? `, ${failures.length} failed: ${failures.join(", ")}` : ""}`);

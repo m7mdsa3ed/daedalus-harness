@@ -47,6 +47,15 @@ function itemText(item: ThreadItem): string {
       return `- **${item.title}** — ${item.status}`
     case "subagent":
       return `- **${item.name}** — ${item.task} (${item.state})`
+    /* A dynamic workflow run. Its steps are derived for the screen and are not
+       items, so this is the only place the run exists to be pasted — hence the
+       counts rather than a bare name: "2 of 9 agents" is the reading. */
+    case "async-task": {
+      const agents = item.progress.filter((entry) => entry.type === "workflow_agent")
+      const done = agents.filter((entry) => entry.state === "done").length
+      const shape = agents.length > 0 ? ` — ${done}/${agents.length} agents` : ""
+      return `- **${item.name}** (${item.state}${shape})`
+    }
     case "plan":
       return item.entries.map((entry) => `- [${entry.status}] ${entry.content}`).join("\n")
     // The summary is the only part of the pre-compaction history the agent

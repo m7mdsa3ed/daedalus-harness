@@ -7,12 +7,23 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Daedalus" />
-    <!-- Overwritten a few lines down from the cached palette colour, and again
-         by ThemeProvider once the stylesheet exists. This value is only what a
-         browser with the script blocked is left with. %BOOT_LIGHT% and
-         %BOOT_DARK% are substituted at build time from src/lib/boot-colors.ts. -->
+    <!-- Two of them, and they carry the SAME colour. Chrome on Android picks the
+         first theme-color whose `media` matches, and when the *system* is in
+         dark mode a page that offers no dark-scheme theme-color gets Chrome's
+         own near-black instead of the unqualified value (crbug 40634649) — which
+         is how an app in light mode on a dark phone ended up with a black status
+         bar. The app's theme is not the system's, so the answer is not a darker
+         colour here: it is to answer *both* media states with whatever the app
+         is actually painting, so the OS preference can no longer decide.
+         The dark-scheme one is first because first-match wins.
+
+         Both are overwritten a few lines down from the cached palette colour,
+         and again by ThemeProvider once the stylesheet exists. These values are
+         only what a browser with the script blocked is left with. %BOOT_LIGHT%
+         and %BOOT_DARK% are substituted at build time from src/lib/boot-colors.ts. -->
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="%BOOT_DARK%" />
     <meta name="theme-color" content="%BOOT_LIGHT%" />
     <title>Daedalus</title>
     <script>
@@ -30,6 +41,9 @@
                 : "light"
               : stored;
           document.documentElement.classList.toggle("dark", resolved === "dark");
+          document.documentElement.style.colorScheme = resolved;
+          var statusBar = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+          if (statusBar) statusBar.content = resolved === "dark" ? "black-translucent" : "default";
           // The palette too: without it the first paint is Default and the app
           // visibly re-tints once ThemeProvider mounts. A custom palette's CSS
           // still arrives with the bundle, but the splash covers that gap.
@@ -42,19 +56,20 @@
           // THEME_COLOR_KEY comment in src/lib/theme.tsx) and this reads it
           // back, so every load after the first tints correctly instead of
           // showing Default's black or white until React mounts.
-          var meta = document.querySelector('meta[name="theme-color"]');
-          if (meta) {
-            var cached;
-            try {
-              cached = JSON.parse(localStorage.getItem("ui.themeColor") || "{}")[
-                (palette || "default") + ":" + resolved
-              ];
-            } catch (e) {}
-            // No cache yet (first ever load, or a palette worn for the first
-            // time) falls back to the Default palette's own background — not
-            // to a black that no palette actually paints.
-            meta.content = cached || (resolved === "dark" ? "%BOOT_DARK%" : "%BOOT_LIGHT%");
-          }
+          var metas = document.querySelectorAll('meta[name="theme-color"]');
+          var cached;
+          try {
+            cached = JSON.parse(localStorage.getItem("ui.themeColor") || "{}")[
+              (palette || "default") + ":" + resolved
+            ];
+          } catch (e) {}
+          // No cache yet (first ever load, or a palette worn for the first
+          // time) falls back to the Default palette's own background — not
+          // to a black that no palette actually paints.
+          var color = cached || (resolved === "dark" ? "%BOOT_DARK%" : "%BOOT_LIGHT%");
+          // Every one of them, media-scoped included: the app's own mode is the
+          // answer to both media states, or the system preference decides.
+          for (var i = 0; i < metas.length; i++) metas[i].content = color;
         } catch (e) {}
       })();
     </script>

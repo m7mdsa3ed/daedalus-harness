@@ -214,7 +214,7 @@ export function ContextIndicator({
         render={
           <Button
             variant="ghost"
-            size="icon-sm"
+            size="icon-xs"
             className={cn(
               "relative shrink-0 rounded-lg hover:text-foreground",
               tone ? tone.text : "text-muted-foreground",
@@ -222,7 +222,7 @@ export function ContextIndicator({
             title={context ? `Context window — ${percent}% used` : "Turn stats"}
           >
             <Ring percent={percent} />
-            <span className="absolute inset-0 grid place-items-center text-[7px] font-semibold tabular-nums">
+            <span className="absolute inset-0 grid place-items-center text-[8px] font-semibold tabular-nums">
               {context ? percent : "—"}
             </span>
           </Button>

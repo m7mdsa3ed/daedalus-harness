@@ -63,7 +63,7 @@ function ToastContent({ className, ...props }: ToastPrimitive.Content.Props) {
     <ToastPrimitive.Content
       data-slot="toast-content"
       className={cn(
-        "flex h-full items-center gap-3 overflow-hidden p-4 transition-opacity duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] data-behind:opacity-0 data-expanded:opacity-100",
+        "flex h-full items-start gap-3 overflow-hidden p-3.5 transition-opacity duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] data-behind:opacity-0 data-expanded:opacity-100",
         className
       )}
       {...props}
@@ -88,7 +88,7 @@ function ToastDescription({
   return (
     <ToastPrimitive.Description
       data-slot="toast-description"
-      className={cn("text-sm text-muted-foreground", className)}
+      className={cn("text-[13px] leading-[1.45] text-pretty text-muted-foreground", className)}
       {...props}
     />
   )
@@ -133,6 +133,16 @@ function ToastClose({
   )
 }
 
+/** The leading disc. Same tinted-disc language as the inbox rows
+    (`KIND_META`), so a toast says its kind before its text is read. */
+const TOAST_ICON_TONE: Record<string, string> = {
+  success: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+  info: "bg-sky-500/10 text-sky-600 dark:text-sky-400",
+  warning: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  error: "bg-destructive/10 text-destructive",
+  loading: "bg-muted text-muted-foreground",
+}
+
 function ToastIcon({ type }: { type: string | undefined }) {
   let icon: React.ReactNode = null
 
@@ -156,7 +166,7 @@ function ToastIcon({ type }: { type: string | undefined }) {
 
   if (type === "error") {
     icon = (
-      <HugeiconsIcon icon={MultiplicationSignCircleIcon} strokeWidth={2} className="text-destructive" aria-hidden="true" />
+      <HugeiconsIcon icon={MultiplicationSignCircleIcon} strokeWidth={2} aria-hidden="true" />
     )
   }
 
@@ -173,7 +183,11 @@ function ToastIcon({ type }: { type: string | undefined }) {
   return (
     <span
       data-slot="toast-icon"
-      className="shrink-0 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4"
+      className={cn(
+        "grid size-8 shrink-0 place-items-center rounded-full",
+        TOAST_ICON_TONE[type ?? ""],
+        "[&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4"
+      )}
     >
       {icon}
     </span>
@@ -190,8 +204,13 @@ function ToastList() {
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <ToastTitle />
           <ToastDescription />
+          {/* The action is part of the message, not a second control row: it
+              reads under the text, close sits top-right, and a toast with no
+              action collapses the row out. */}
+          <div className="mt-1 flex [&:empty]:hidden">
+            <ToastAction />
+          </div>
         </div>
-        <ToastAction />
         <ToastClose />
       </ToastContent>
     </Toast>

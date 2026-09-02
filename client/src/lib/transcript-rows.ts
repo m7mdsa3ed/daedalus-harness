@@ -12,9 +12,10 @@
    recursive: a subagent step draws its children through the same row views
    that draw the top level (thread-items), and thread-view already imports
    those — the types have to live somewhere both can reach without a cycle. */
-import type { SubagentItem, TextItem, ThreadItem, ToolItem } from "./store"
-import { extractSubagent, isSubagentLaunch, subagentItemId } from "./tools"
+import type { AsyncTaskItem, SubagentItem, TextItem, ThreadItem, ToolItem } from "./store"
+import { extractBackgroundTask, extractSubagent, isSubagentLaunch, subagentItemId } from "./tools"
 import type { WorkflowPlanPhase } from "./tools"
+import type { WorkflowProgressEntry } from "@daedalus/protocol"
 
 /** A run of consecutive steps, folded into one row (view-options). The
  *  thoughts woven between the calls ride inside it: the reasoning belongs to
@@ -132,8 +133,242 @@ export function isAnswerItem(item: ThreadItem): boolean {
  * a preference, it is where its steps belong.
  */
 export function buildRows(items: ThreadItem[], groupTools: boolean, turnActive = false): Row[] {
-  const nested = mergeSubagentBatches(mergeWorkflowRuns(nestSubagents(items, groupTools, turnActive)))
-  return groupTools ? groupToolRuns(nested) : nested
+  const nested = mergeSubagentBatches(
+    mergeWorkflowRuns(nestSubagents(withoutAsyncTasks(items), groupTools, turnActive))
+  )
+  const placed = placeNativeWorkflows(nested, items)
+  return groupTools ? groupToolRuns(placed) : placed
+}
+
+/* An async-task item is a record, not a row: it is read into a `WorkflowGroup`
+   by `placeNativeWorkflows` and never drawn on its own, so it is taken out
+   before nesting rather than filtered from every consumer downstream. */
+const withoutAsyncTasks = (items: ThreadItem[]): ThreadItem[] =>
+  items.some((i) => i.kind === "async-task") ? items.filter((i) => i.kind !== "async-task") : items
+
+/* ── Native (Claude Code) workflow runs ──
+   A harness workflow's steps are real threads, so they arrive as `subagent`
+   items and `mergeWorkflowRuns` folds them. A Claude Code dynamic workflow has
+   no such thing: its agents live inside the CLI, have no session anyone can
+   open, and what crosses the wire is a progress array restated on every beat
+   (`AsyncTaskItem.progress`).
+
+   So the steps are built here, at view time, and stamped with the very
+   `_meta.daedalus.workflow` shape the harness's own runner stamps on a spawn —
+   which is the whole point: from `WorkflowRun` down, a native run is not a
+   special case. It gets the phases, the counts, the elapsed, the per-step
+   tokens and the same row vocabulary, and none of that code learns a word
+   about where the run came from. */
+
+/** The runtime's per-agent state onto the step vocabulary. `blocked` is the
+    safety classifier refusing an agent — an ending, and not a success. */
+function nativeStepState(entry: WorkflowProgressEntry): SubagentItem["state"] {
+  switch (entry.state) {
+    case "done":
+      return "completed"
+    case "error":
+      return "failed"
+    case "blocked":
+      return "cancelled"
+    default:
+      return "running"
+  }
+}
+
+/**
+ * The run's outline out of its progress array: the phases the script declared,
+ * each holding the agents filed under it, in the order the runtime numbers
+ * them.
+ *
+ * Step names must be unique — `phasesOf` joins the outline to the arrived steps
+ * by name, so two agents a script labelled the same would collapse into one row
+ * and leave the other drawn as forever pending. The runtime's own index is what
+ * breaks the tie, and only for the names that actually repeat, so the common
+ * case still reads as the script wrote it.
+ */
+function nativeOutline(entries: WorkflowProgressEntry[]): {
+  plan: WorkflowPlanPhase[]
+  nameOf: Map<WorkflowProgressEntry, string>
+} {
+  const agents = entries.filter((e) => e.type === "workflow_agent")
+  const seen = new Map<string, number>()
+  for (const agent of agents) {
+    const label = agent.label ?? ""
+    seen.set(label, (seen.get(label) ?? 0) + 1)
+  }
+  const nameOf = new Map<WorkflowProgressEntry, string>()
+  for (const agent of agents) {
+    const label = agent.label ?? `agent ${agent.index ?? nameOf.size + 1}`
+    nameOf.set(agent, (seen.get(label) ?? 0) > 1 ? `${label} (${agent.index})` : label)
+  }
+
+  const phases = entries
+    .filter((e) => e.type === "workflow_phase")
+    .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+  const stepsIn = (predicate: (agent: WorkflowProgressEntry) => boolean) =>
+    agents.filter(predicate).map((agent) => nameOf.get(agent)!)
+
+  /* No phases declared is one unnamed phase, which `phasesOf` draws without a
+     heading — a heading over the whole list is a level with one child. */
+  if (phases.length === 0) return { plan: [{ name: null, steps: stepsIn(() => true) }], nameOf }
+
+  const plan: WorkflowPlanPhase[] = phases.map((phase) => ({
+    name: phase.title ?? null,
+    steps: stepsIn((agent) => agent.phaseIndex === phase.index),
+  }))
+  // An agent whose phase was never announced cannot be placed and must not
+  // vanish; `phasesOf` appends such strays to the last phase, so name it there.
+  const placed = new Set(phases.map((phase) => phase.index))
+  const strays = stepsIn((agent) => !placed.has(agent.phaseIndex))
+  if (strays.length > 0) plan[plan.length - 1].steps.push(...strays)
+  return { plan, nameOf }
+}
+
+/** One agent of a run as the `SubagentGroup` every other step in the transcript
+    is. No children: the CLI keeps its agents' transcripts to itself, and what
+    it previews instead (the brief, the report, the tool it is on) rides on the
+    head — see `SubagentItem.prompt`/`report`/`activity`. */
+function nativeWorkflowRun(task: AsyncTaskItem, transcriptDir?: string): WorkflowGroup | null {
+  const agents = task.progress.filter((e) => e.type === "workflow_agent")
+  /* No agents is a run whose adapter never carried the array through (an
+     unpatched claude-agent-acp) — there is nothing to draw, and the launch's
+     own row keeps the journal panel it has always had. */
+  if (agents.length === 0) return null
+
+  const { plan, nameOf } = nativeOutline(task.progress)
+  const running = task.state === "running" || task.state === "paused"
+
+  const steps: SubagentGroup[] = agents.map((agent, position) => {
+    const step = nameOf.get(agent)!
+    const id = `subagent:wf:${task.taskId}:${agent.index ?? position}`
+    const state = nativeStepState(agent)
+    const tokens = agent.tokens ?? 0
+    const head: SubagentItem = {
+      kind: "subagent",
+      id,
+      /* Never a real session id, and deliberately unresolvable: `useStepThread`
+         asks the store whether it knows this id, and the honest answer for an
+         agent living inside the CLI is no — so the step draws without an
+         "Open thread" link rather than offering one that goes nowhere. */
+      sessionId: `wf:${task.taskId}:${agent.index ?? position}`,
+      name: step,
+      task: agent.promptPreview ?? step,
+      state,
+      capabilities: {},
+      workflow: {
+        runId: task.taskId,
+        name: task.name,
+        step,
+        index: agent.index,
+        total: agents.length,
+        ...(agent.phaseIndex !== undefined && agent.phaseTitle !== undefined
+          ? { phase: { index: agent.phaseIndex, name: agent.phaseTitle } }
+          : {}),
+        plan,
+      },
+      /* The runtime meters an agent as one number. The split is genuinely not
+         reported, and zeroes are the only honest way to say so — `TokenFigure`
+         prints the total, and `sumUsage` adds totals, so the run's cost is
+         right either way. */
+      usage: tokens > 0 ? { totalTokens: tokens, inputTokens: 0, outputTokens: 0 } : undefined,
+      prompt: agent.promptPreview,
+      report: agent.resultPreview ?? agent.error,
+      activity: agent.lastToolSummary ?? agent.lastToolName,
+      /* Its own history, when the launch told us where the run writes and the
+         runtime has named this agent. Both are needed and both can be late, so
+         a step without them simply draws without a rail rather than with an
+         empty one. */
+      ...(transcriptDir && agent.agentId
+        ? { transcript: { dir: transcriptDir, agentId: agent.agentId } }
+        : {}),
+      startedAt: agent.startedAt ?? agent.queuedAt ?? task.startedAt,
+      at: task.at,
+      parentId: task.parentId,
+    }
+    return {
+      kind: "subagent-group",
+      id,
+      head,
+      /* Not `subagentActive`: that reads liveness off the parent's turn, and a
+         dynamic workflow's whole nature is that it outlives the turn that
+         launched it. The runtime says outright which agents are working, so
+         that is what is believed — bounded by the run itself being live, so a
+         killed run leaves nothing shimmering. */
+      active: running && state === "running",
+      children: [],
+    }
+  })
+
+  return { kind: "workflow-group", id: `workflow:${task.taskId}`, name: task.name, steps, plan }
+}
+
+/**
+ * Put each native run where it belongs: in place of the tool call that launched
+ * it, which is where it happened and where a reader last saw it mentioned.
+ *
+ * **Matched two ways, because one of them is a race.** The adapter mentions the
+ * launching `toolCallId` only when it happens to hold one at the moment it
+ * publishes — for some runs that is the first beat, for others only the last,
+ * and the ordering that decides which is the same unspecified level-vs-started
+ * ordering that already cost this feature two silent failures. So the launch
+ * row is also matched by the runtime's own task id, which the Workflow tool
+ * result carries (`BackgroundTask.taskId`) from the instant the call returns.
+ * Either key alone is enough; together the run lands in the right place from
+ * the first beat rather than jumping there when it finishes.
+ *
+ * A run whose launch row is not on screen (the transcript was windowed past it)
+ * falls back to where its item sits, so a run is never silently dropped.
+ */
+function placeNativeWorkflows(rows: Row[], items: ThreadItem[]): Row[] {
+  const tasks = items.filter((i): i is AsyncTaskItem => i.kind === "async-task")
+  if (tasks.length === 0) return rows
+
+  /* The launches first, because the run needs one of them before it can be
+     built: the transcript directory a step reads its own history out of is
+     named in the tool result, and nowhere in the async-task stream. */
+  const launches = new Map<string, { id: string; dir?: string }>()
+  for (const item of items) {
+    if (item.kind !== "tool") continue
+    const background = extractBackgroundTask(item)
+    if (background?.taskId) launches.set(background.taskId, { id: item.id, dir: background.transcriptDir })
+  }
+
+  const byLaunch = new Map<string, WorkflowGroup>()
+  const byTaskId = new Map<string, WorkflowGroup>()
+  const runs: WorkflowGroup[] = []
+  for (const task of tasks) {
+    const launch = launches.get(task.taskId)
+    const run = nativeWorkflowRun(task, launch?.dir)
+    if (!run) continue
+    runs.push(run)
+    byTaskId.set(task.taskId, run)
+    if (task.toolCallId) byLaunch.set(task.toolCallId, run)
+    if (launch) byLaunch.set(launch.id, run)
+  }
+  if (runs.length === 0) return rows
+
+  /* The launch is a plain tool row: nothing claimed it as a subagent head,
+     because the workflow's agents never arrive as this session's updates. */
+  const launchOf = (row: Row): ToolItem | null =>
+    row.kind === "tool" ? row : row.kind === "subagent-group" && row.head.kind === "tool" ? row.head : null
+
+  const out: Row[] = []
+  const used = new Set<WorkflowGroup>()
+  for (const row of rows) {
+    const launch = launchOf(row)
+    const taskId = launch ? extractBackgroundTask(launch)?.taskId : undefined
+    const run = launch ? (byLaunch.get(launch.id) ?? (taskId ? byTaskId.get(taskId) : undefined)) : undefined
+    if (run && !used.has(run)) {
+      out.push(run)
+      used.add(run)
+      continue
+    }
+    // A launch row whose run is already placed is dropped, not drawn twice.
+    if (run) continue
+    out.push(row)
+  }
+  for (const run of runs) if (!used.has(run)) out.push(run)
+  return out
 }
 
 /**

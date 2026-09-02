@@ -315,7 +315,7 @@ function ProjectHeader({
   const [copied, setCopied] = React.useState(false)
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(project.cwd)
+      await writeClipboard(project.cwd)
       setCopied(true)
       setTimeout(() => setCopied(false), 1200)
     } catch {
@@ -917,3 +917,4 @@ function CardSkeleton({ rows }: { rows: number }) {
     </div>
   )
 }
+import { writeClipboard } from "@/lib/clipboard"

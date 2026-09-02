@@ -237,7 +237,7 @@ export function FileExplorer({
   }
 
   const copyPath = (path: string) => {
-    navigator.clipboard.writeText(path).catch((err) => reportError(err, "Couldn't copy the path"))
+    writeClipboard(path).catch((err) => reportError(err, "Couldn't copy the path"))
   }
 
   /* ── Rendering ───────────────────────────────────────────────────────────── */
@@ -494,3 +494,4 @@ function DraftRow({
     </div>
   )
 }
+import { writeClipboard } from "@/lib/clipboard"

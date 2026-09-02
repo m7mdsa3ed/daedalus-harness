@@ -20,11 +20,16 @@ import { MessageAttachments } from "@/components/message-attachments"
    / ToolRun / SubagentStep / SubagentBody), which cannot move apart without a
    module cycle — which is also why `SubagentStep` reaches a run's list as
    workflow-run's `stepRow` prop rather than as an import. */
+import { loadAgentTranscript, useAgentTranscript } from "@/lib/agent-transcripts"
+import { loadSettings } from "@/lib/settings"
 import {
+  DetailSection,
   FileBadge,
   KIND_ICONS,
   KIND_LABELS,
+  PANE_MAX_H,
   Prose,
+  SmartBlock,
   Timestamp,
   ToolCallContent,
 } from "@/components/tool-parts"
@@ -62,10 +67,12 @@ import {
   extractSubagent,
   fileRangeOf,
   parseTaskNotification,
-  toolKindOf,
   toolHeading,
+  toolKindOf,
   webInput,
+  workflowAgentItems,
 } from "@/lib/tools"
+import { buildRows } from "@/lib/transcript-rows"
 import type { Row, SubagentBatch, SubagentGroup, ToolRunGroup, WorkflowGroup } from "@/lib/transcript-rows"
 import { StepTokens, TokenFigure, useStepTokens } from "@/components/token-usage"
 import { Logo } from "@/components/ui/logo"
@@ -521,10 +528,24 @@ function SubagentBody({
   showTimestamps?: boolean
 }) {
   const tool = group.head.kind === "tool" ? group.head : null
+  const session = group.head.kind === "subagent" ? group.head : null
   const active = group.active
   return (
     <div className="space-y-2">
       {tool && <SubagentBrief item={tool} />}
+      {/* A step the runtime previews rather than streams (a native workflow's
+          agent — see `nativeWorkflowRun`). The same two sections a tool-headed
+          step gets, from the only source there is for one of these. */}
+      {session?.activity && active && (
+        <p className="text-[11px] text-muted-foreground/70 harness-shimmer">{session.activity}</p>
+      )}
+      {session?.prompt && (
+        <DetailSection label="Brief">
+          <div className={cn(PANE_MAX_H, "overflow-auto rounded-md border border-border/50 bg-muted/40 px-2.5 py-2")}>
+            <Prose text={session.prompt} />
+          </div>
+        </DetailSection>
+      )}
       {stepThread && (
         <Link
           to={threadPath(stepThread)}
@@ -536,12 +557,88 @@ function SubagentBody({
       {/* The rail is drawn while the subagent is live even with nothing on it
           yet, so the working line at its foot has somewhere to sit and the
           first step lands in place rather than opening a rail. */}
-      {(group.children.length > 0 || active) && (
+      {(group.children.length > 0 || (active && !session?.transcript)) && (
         <SubagentTranscript rows={group.children} active={active} showTimestamps={showTimestamps} />
       )}
+      {session?.transcript && (
+        <NativeStepTranscript transcript={session.transcript} active={active} showTimestamps={showTimestamps} />
+      )}
       {tool && <SubagentReport item={tool} active={active} />}
+      {session?.report && (
+        <DetailSection label={session.state === "failed" ? "Error" : active ? "Report so far" : "Report"}>
+          <SmartBlock text={session.report} tone={session.state === "failed" ? "error" : undefined} />
+        </DetailSection>
+      )}
     </div>
   )
+}
+
+/** How often an open, still-working step re-reads its file. The agent is
+    writing to it from another process, so there is nothing to push us. */
+const NATIVE_STEP_REFRESH_MS = 6_000
+
+/**
+ * The rail of a native workflow step, read off the server's disk.
+ *
+ * Its agent runs inside the CLI and produces no ACP frames, so unlike every
+ * other subagent this one has no children in the store — what it did is a file
+ * (`agent-<agentId>.jsonl` beside the run's journal) that only the server can
+ * read. Fetched when the step is opened, never before: a run of thirty agents
+ * is thirty files, and a reader opens one.
+ *
+ * The records become ordinary `ThreadItem`s (`workflowAgentItems`) and then
+ * ordinary rows, so the rail, the tool views and the nesting are the same ones
+ * the rest of the transcript uses — the file is where this history came from,
+ * and the only place that fact is known.
+ */
+function NativeStepTranscript({
+  transcript,
+  active,
+  showTimestamps,
+}: {
+  transcript: { dir: string; agentId: string }
+  active: boolean
+  showTimestamps?: boolean
+}) {
+  const events = useAgentTranscript(transcript.dir, transcript.agentId)
+  const [failed, setFailed] = React.useState(false)
+  const { dir, agentId } = transcript
+
+  React.useEffect(() => {
+    const settings = loadSettings()
+    if (!settings) return
+    let cancelled = false
+    const read = (force: boolean) =>
+      loadAgentTranscript(settings, dir, agentId, force).then(
+        () => !cancelled && setFailed(false),
+        () => !cancelled && setFailed(true)
+      )
+    void read(false)
+    // A settled agent's file does not change, so only a live one is re-read.
+    if (!active) return () => {
+      cancelled = true
+    }
+    const timer = setInterval(() => void read(true), NATIVE_STEP_REFRESH_MS)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [dir, agentId, active])
+
+  const rows = React.useMemo(() => buildRows(workflowAgentItems(events), false, active), [events, active])
+
+  if (rows.length === 0) {
+    return (
+      <p className={cn("text-[11px] text-muted-foreground/70", active && !failed && "harness-shimmer")}>
+        {failed
+          ? "Couldn't read this agent's transcript on the server."
+          : active
+            ? "Reading this agent's transcript…"
+            : "This agent left no transcript."}
+      </p>
+    )
+  }
+  return <SubagentTranscript rows={rows} active={active} showTimestamps={showTimestamps} />
 }
 
 /** A subagent's rows, on a rail. Peeks the tail while the subagent is live;

@@ -340,9 +340,14 @@ describes; every one of those rules cost a bug.
   `lib/workspace/git-tree.ts`) or a list, and which is a **reader's** preference
   (`lib/ide/prefs.ts`, device-local), never the descriptor's. Touch targets follow
   `useCoarsePointer`; below 560px the side view and the editor take turns, and picking a file
-  is what closes the side view. Monaco's workers need no wiring
-  (since 0.56 the package declares them as `new URL(…, import.meta.url)`, which is what Vite
-  compiles); defining `MonacoEnvironment` would override that and is deliberately not done.
+  is what closes the side view. **Monaco's workers are wired by
+  `?worker` import, never by path** (`lib/ide/monaco.ts`): the four language workers do
+  declare themselves as `new Worker(new URL(…))`, but `editorWorkerService` names its module
+  with a bare `new URL(…, import.meta.url)`, which Vite reads as an *asset* and — at 544
+  bytes — inlined as a `data:` URL that cannot resolve its own relative imports. So
+  `MonacoEnvironment.getWorker` is defined, answering for **every** label (the language
+  workers' factory consults it first and does not fall back), and `getWorkerUrl` never is —
+  a `?worker` import makes a stale path a build error instead of a blank editor.
 - **What is open inside the IDE is the IDE's state, never the dock's.** The descriptor is
   `{kind:"ide", projectId}` and the tabs live in `lib/ide/editors.ts` — a module store, so
   they survive the panel being closed and reopened, and a file opened at line 42 is the same

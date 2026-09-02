@@ -167,6 +167,27 @@ assert.ok(
   ws1.of("update").some((e) => e.update.sessionUpdate === "subagent_spawned"),
   "the RFD's spawn update survives the SDK's closed union",
 );
+// The AIR async-task lifecycle (a Claude Code dynamic workflow) rides the same
+// detour past the SDK's closed union, and is only sent to a client that
+// claimed `asyncTasks` at initialize — so seeing the three at all proves the
+// handshake carried `_meta.jetbrains.air`, and the array proves the beat came
+// through whole rather than as a logged-and-dropped unknown variant.
+{
+  const kinds: string[] = ws1.of("update").map((e) => e.update.sessionUpdate);
+  for (const kind of ["async_task_spawned", "async_task_progress", "async_task_state_update"]) {
+    assert.ok(kinds.includes(kind), `${kind} survives the SDK's closed union`);
+  }
+  const beat = ws1.of("update").find((e) => e.update.sessionUpdate === "async_task_progress")!.update as {
+    asyncTaskId: string;
+    workflowProgress?: { type: string; label?: string; state?: string }[];
+  };
+  assert.equal(beat.asyncTaskId, "wt-1");
+  assert.deepEqual(
+    beat.workflowProgress?.map((e) => [e.type, e.label ?? null, e.state ?? null]),
+    [["workflow_phase", null, null], ["workflow_agent", "read:server", "done"]],
+    "a workflow beat's progress array reaches the browser verbatim",
+  );
+}
 /* Which children spoke, not how many times: the fake agent's subagent scene is
    the transcript's sample set and grows a worker whenever a row needs one. What
    must not change is that an update of a child's carries that child's id and an

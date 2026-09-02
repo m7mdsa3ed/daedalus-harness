@@ -15,9 +15,10 @@
  * Subscribers are ref-counted: the last one to leave closes the handle, so a
  * project nobody is looking at costs nothing.
  */
-import { watch, type FSWatcher } from "node:fs";
+import { existsSync, lstatSync, readdirSync, watch, type FSWatcher } from "node:fs";
+import { join } from "node:path";
 
-import { projectRoot } from "./workspace-fs.js";
+import { DEFAULT_IGNORES, projectRoot } from "./workspace-fs.js";
 
 /** How long events are collected before a batch goes out. */
 const BATCH_MS = 120;
@@ -43,8 +44,103 @@ export interface WatchBatch {
 
 type Listener = (batch: WatchBatch) => void;
 
+/* ── One handle per directory, not one recursive handle ──
+ * Node's recursive `fs.watch` on Linux walks the whole tree synchronously and
+ * keeps every file in a map: on a project with its `node_modules` that is
+ * ~18,000 directories, three seconds with the event loop blocked and hundreds
+ * of megabytes — paid on every subscribe, and every install or build under it
+ * overflows the batch. So the tree is walked here, skipping what the explorer
+ * hides by default. `.git` is the exception: a ref moving under it is what the
+ * git trigger reads, so it is watched — except `.git/objects`, which every
+ * commit and turn snapshot fans new files into and which nothing reads. */
+const UNWATCHED = new Set(DEFAULT_IGNORES.filter((name) => name !== ".git"));
+
+const isGitDir = (relDir: string) => relDir === ".git" || relDir.endsWith("/.git");
+
+interface TreeWatcher {
+  close(): void;
+}
+
+function watchTree(
+  root: string,
+  onEvent: (kind: WatchEvent["kind"], path: string) => void,
+  onError: (err: Error) => void,
+): TreeWatcher {
+  const handles = new Map<string, FSWatcher>();
+  let closed = false;
+
+  const watchable = (name: string, parentRel: string) =>
+    !UNWATCHED.has(name) && !(name === "objects" && isGitDir(parentRel));
+
+  /** Drop the handle on `dir` and on everything under it. */
+  const forget = (dir: string) => {
+    for (const [key, handle] of handles) {
+      if (key === dir || key.startsWith(dir + "/")) {
+        handle.close();
+        handles.delete(key);
+      }
+    }
+  };
+
+  /** `announce` is for a directory that appeared under a watch: its contents
+      were written before its handle existed, so each entry is reported as if
+      it had been seen arriving — which is what the recursive watcher did. */
+  const scan = (dir: string, relDir: string, announce = false) => {
+    if (closed || handles.has(dir)) return;
+    let handle: FSWatcher;
+    try {
+      handle = watch(dir, { persistent: false });
+    } catch (err) {
+      if (relDir === "") onError(err as Error);
+      return; // gone between the listing and the watch — not an error
+    }
+    handles.set(dir, handle);
+    handle.on("change", (kind, filename) => {
+      const name = filename == null ? "" : filename.toString();
+      const path = relDir === "" ? name : name === "" ? relDir : `${relDir}/${name}`;
+      onEvent(kind === "rename" ? "rename" : "change", path);
+      /* A rename in a directory is a child appearing or going: a new directory
+         needs a handle of its own, a removed one must not keep a stale handle
+         that would leave a recreation at the same path deaf. */
+      if (kind !== "rename" || name === "" || !watchable(name, relDir)) return;
+      const child = join(dir, name);
+      if (!existsSync(child)) return forget(child);
+      try {
+        if (lstatSync(child).isDirectory()) scan(child, path, true);
+      } catch {
+        /* raced away again */
+      }
+    });
+    handle.on("error", (err) => {
+      if (relDir === "") return onError(err);
+      forget(dir); // a subdirectory removed under its watch
+    });
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const rel = relDir === "" ? entry.name : `${relDir}/${entry.name}`;
+      if (announce) onEvent("rename", rel);
+      if (!entry.isDirectory() || !watchable(entry.name, relDir)) continue;
+      scan(join(dir, entry.name), rel, announce);
+    }
+  };
+
+  scan(root, "");
+  return {
+    close() {
+      closed = true;
+      for (const handle of handles.values()) handle.close();
+      handles.clear();
+    },
+  };
+}
+
 interface ProjectWatch {
-  watcher: FSWatcher;
+  watcher: TreeWatcher;
   listeners: Set<Listener>;
   /** Told when the watch is torn down under them — see `watchProject`. */
   closers: Set<() => void>;
@@ -105,34 +201,29 @@ export function watchProject(
   if (!entry) {
     const root = projectRoot(projectId);
     const created: ProjectWatch = {
-      // Recursive watching is native on Linux from Node 20; this server is 22.
-      watcher: watch(root, { recursive: true, persistent: false }),
+      watcher: watchTree(
+        root,
+        (kind, path) => {
+          if (created.pending.size >= MAX_BATCH_PATHS) created.overflow = true;
+          else created.pending.set(path, kind);
+          created.timer ??= setTimeout(() => flush(projectId), BATCH_MS);
+        },
+        (err) => {
+          console.error(`[workspace] watcher for project ${projectId} failed`, err);
+          /* A dead watcher that stays subscribed is worse than none: the client
+             would keep trusting a tree nothing is updating. Tell everyone to
+             resync, then tear it down so the next subscribe starts a fresh one. */
+          created.overflow = true;
+          flush(projectId);
+          closeWatch(projectId);
+        },
+      ),
       listeners: new Set(),
       closers: new Set(),
       pending: new Map(),
       overflow: false,
       timer: null,
     };
-    created.watcher.on("change", (kind, filename) => {
-      const path =
-        typeof filename === "string"
-          ? filename.split(/[\\/]/).join("/")
-          : filename
-            ? filename.toString().split(/[\\/]/).join("/")
-            : "";
-      if (created.pending.size >= MAX_BATCH_PATHS) created.overflow = true;
-      else created.pending.set(path, kind === "rename" ? "rename" : "change");
-      created.timer ??= setTimeout(() => flush(projectId), BATCH_MS);
-    });
-    created.watcher.on("error", (err) => {
-      console.error(`[workspace] watcher for project ${projectId} failed`, err);
-      /* A dead watcher that stays subscribed is worse than none: the client
-         would keep trusting a tree nothing is updating. Tell everyone to
-         resync, then tear it down so the next subscribe starts a fresh one. */
-      created.overflow = true;
-      flush(projectId);
-      closeWatch(projectId);
-    });
     watches.set(projectId, created);
     entry = created;
   }

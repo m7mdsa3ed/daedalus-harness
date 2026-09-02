@@ -209,8 +209,7 @@ function StatusLine({ status }: { status: AgentStatus }) {
     return status.path ? <div className="mt-0.5 truncate font-mono opacity-70">{status.path}</div> : null
   }
   const copy = (text: string) => {
-    navigator.clipboard
-      .writeText(text)
+    writeClipboard(text)
       .then(() => toast.success("Install command copied"))
       .catch((err) => reportError(err, "Couldn't copy the command"))
   }
@@ -373,3 +372,4 @@ function AgentDialog({ agent, onClose }: { agent: AgentDef; onClose: () => void 
     </ResponsiveDialog>
   )
 }
+import { writeClipboard } from "@/lib/clipboard"

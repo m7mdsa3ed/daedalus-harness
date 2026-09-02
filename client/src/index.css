@@ -252,6 +252,10 @@
 
 
 @layer base {
+  html {
+    background-color: var(--background);
+  }
+
   * {
     @apply border-border outline-ring/50;
     scrollbar-width: thin;
@@ -799,8 +803,10 @@ html[data-desktop-vibrancy="true"]:not(.dark) main {
 }
 
 /* Windows/Linux draw min/max/close as an overlay in the top-right corner —
-   keep the header's own actions from sliding under them. */
-html[data-desktop="true"]:not([data-desktop-platform="darwin"]) [data-drag-region] {
+   keep the header's own actions from sliding under them. The sidebar's brand
+   row is a drag region too but never sits under the overlay, so it is left
+   out — padding it pushed New thread and Search off the row's end. */
+html[data-desktop="true"]:not([data-desktop-platform="darwin"]) [data-drag-region]:not([data-sidebar="header"] *) {
   padding-right: 148px;
 }
 /* Sidebar drag-resize (handle lives in app-shell.tsx): kill the width easing

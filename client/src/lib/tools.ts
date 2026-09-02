@@ -59,6 +59,7 @@ export {
   taskAgentRows,
   parseTaskNotification,
   taskFindings,
+  workflowAgentItems,
 } from "./tools/tasks"
 
 export type { TerminalState } from "./tools/terminal"

@@ -164,8 +164,7 @@ export function RootPage() {
       toast.error("Nothing to copy yet")
       return
     }
-    navigator.clipboard
-      .writeText(text)
+    writeClipboard(text)
       .then(() => toast.success("Transcript copied"))
       .catch((err) => reportError(err, "Couldn't copy the transcript"))
   }
@@ -762,3 +761,4 @@ export function RootPage() {
 
   return <ItemList items={rows} query={palette.query} recents={recents} />
 }
+import { writeClipboard } from "@/lib/clipboard"

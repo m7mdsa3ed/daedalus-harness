@@ -94,6 +94,12 @@ export const THEME_COLOR_KEY = "ui.themeColor"
 
 /** Tint the browser/PWA status bar with the app background for the active theme. */
 function applyThemeColor(resolved: "light" | "dark", colorTheme: ColorTheme) {
+  document.documentElement.style.colorScheme = resolved
+  const statusBar = document.querySelector<HTMLMetaElement>(
+    'meta[name="apple-mobile-web-app-status-bar-style"]'
+  )
+  if (statusBar) statusBar.content = resolved === "dark" ? "black-translucent" : "default"
+
   const background = getComputedStyle(document.documentElement)
     .getPropertyValue("--background")
     .trim()
@@ -108,26 +114,43 @@ function applyThemeColor(resolved: "light" | "dark", colorTheme: ColorTheme) {
     window.addEventListener("load", () => applyThemeColor(resolved, colorTheme), { once: true })
   }
   try {
-    const ctx = document.createElement("canvas").getContext("2d")
+    const canvas = document.createElement("canvas")
+    canvas.width = 1
+    canvas.height = 1
+    const ctx = canvas.getContext("2d")
     if (ctx) {
       // `oklch(...)`/`hsl(...)` is a valid theme-color, but Safari has been
-      // fussy about the newer spaces — round-tripping through a canvas is the
-      // cheapest way to hand the platform a plain rgb/hex string. A value it
-      // rejects leaves fillStyle at the sentinel, and the raw token stands.
+      // fussy about the newer spaces. Resolve the color through a canvas and
+      // read its pixel back so the platform always receives a hex value.
       ctx.fillStyle = "#ff00ff"
       ctx.fillStyle = content
-      if (ctx.fillStyle !== "#ff00ff") content = ctx.fillStyle
+      if (ctx.fillStyle !== "#ff00ff") {
+        ctx.fillRect(0, 0, 1, 1)
+        const [red, green, blue] = ctx.getImageData(0, 0, 1, 1).data
+        const hex = (channel: number) => channel.toString(16).padStart(2, "0")
+        content = `#${hex(red)}${hex(green)}${hex(blue)}`
+      }
     }
   } catch {
     // keep raw value
   }
-  let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
-  if (!meta) {
-    meta = document.createElement("meta")
+  // index.html ships two of these — one scoped to `(prefers-color-scheme: dark)`,
+  // one unqualified — and both get this same colour. Chrome on Android uses the
+  // first theme-color whose media matches, and with no dark-scheme one to find it
+  // ignores the unqualified value and paints its own near-black (crbug 40634649):
+  // a light-mode app on a dark-mode phone got a black status bar. The app's mode
+  // is not the system's, so both media states have to be answered with what the
+  // app is actually painting. Anything that writes one of these must write all
+  // of them, which is why this is a querySelectorAll and not a lookup.
+  const metas = document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')
+  if (metas.length === 0) {
+    const meta = document.createElement("meta")
     meta.name = "theme-color"
     document.head.appendChild(meta)
+    meta.setAttribute("content", content)
+  } else {
+    metas.forEach((meta) => meta.setAttribute("content", content))
   }
-  meta.setAttribute("content", content)
   if (background) rememberThemeColor(`${colorTheme}:${resolved}`, content)
 }
 
@@ -283,6 +306,7 @@ declare global {
       platform: string
       vibrancy: boolean
       setTitleBarTheme?: (resolved: "light" | "dark") => void
+      writeClipboard?: (text: string) => Promise<boolean>
       /** Raise an OS notification through the main process (lib/notifications). */
       notify?: (payload: { title: string; body: string; sessionId?: string }) => Promise<boolean>
       /** Subscribe to clicks on those notifications; returns an unsubscribe. */

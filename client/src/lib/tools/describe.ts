@@ -125,11 +125,91 @@ function programOf(segment: string): { name: string; args: string[] } | null {
 
 const isFlag = (word: string): boolean => word.startsWith("-")
 
+/** Options that swallow the next word, per program — `git -C server status` is
+    git's status, not a subcommand named `server`. Per program because the same
+    letter means different things: `kubectl -n` takes a namespace while `grep -n`
+    is boolean, and a program absent here (every leaf command, where the first
+    non-flag argument *is* the object) has no value-taking options. */
+const VALUE_OPTS: Record<string, Set<string>> = {
+  git: new Set(["C", "c"]),
+  docker: new Set(["H", "l"]),
+  kubectl: new Set(["n", "s"]),
+  gh: new Set(["R", "H"]),
+}
+
+/** Long options whose value is the next word, not inline. Anything else is
+    boolean (`--no-pager`, `-A`) or carries its value inline (`--git-dir=x`). */
+const LONG_VALUE: Record<string, Set<string>> = {
+  git: new Set(["git-dir", "work-tree"]),
+  docker: new Set(["host"]),
+  kubectl: new Set(["namespace", "server", "context", "kubeconfig"]),
+  gh: new Set(["repo", "hostname"]),
+}
+
+const NO_VALUE: Set<string> = new Set()
+
+/** The index past the option at `i` and, when it takes one, its value. */
+function afterOption(name: string, args: string[], i: number): number {
+  const word = args[i]
+  if (!word.startsWith("-")) return i
+  if (word.startsWith("--")) {
+    const eq = word.indexOf("=")
+    const flag = eq === -1 ? word.slice(2) : word.slice(2, eq)
+    if (eq !== -1) return i + 1
+    return (LONG_VALUE[name] ?? NO_VALUE).has(flag) ? i + 2 : i + 1
+  }
+  const cluster = word.slice(1)
+  const set = VALUE_OPTS[name] ?? NO_VALUE
+  for (let j = 0; j < cluster.length; j++) {
+    if (set.has(cluster[j])) return j === cluster.length - 1 ? i + 2 : i + 1
+  }
+  return i + 1
+}
+
+/** Index of the first argument that is not a flag or a flag's value. */
+function firstArgIndex(name: string, args: string[]): number {
+  for (let i = 0; i < args.length; i++) {
+    if (!args[i].startsWith("-")) return i
+    i = afterOption(name, args, i) - 1
+  }
+  return -1
+}
+
 /** The first argument that is not a flag — a subcommand, a path, a pattern. */
-const firstArg = (args: string[]): string | undefined => args.find((arg) => !isFlag(arg))
+const firstArg = (args: string[]): string | undefined => {
+  const i = firstArgIndex("", args)
+  return i === -1 ? undefined : args[i]
+}
+
+/** The object a subcommand acts on — the first argument after it that is not an
+    option or an option's value (`kubectl get pods`, `git checkout main`). */
+function objectOf(name: string, args: string[], subIndex: number): string | undefined {
+  for (let i = subIndex + 1; i < args.length; i++) {
+    if (!args[i].startsWith("-")) return args[i]
+    i = afterOption(name, args, i) - 1
+  }
+  return undefined
+}
 
 const hasFlag = (args: string[], ...flags: string[]): boolean =>
   args.some((arg) => flags.some((flag) => arg === flag || (/^-[A-Za-z]+$/.test(arg) && flag.length === 2 && arg.includes(flag[1]))))
+
+/** The archive a `tar` call names, which is the object of every one of its
+    verbs — `-f`'s value, wherever that flag sits. `-f` ends its cluster by
+    convention (`-czf out.tgz`), and tar takes its flags with no dash at all
+    (`tar czf out.tgz`), so the first word is read as a cluster too. `--file`
+    is matched exactly rather than by prefix: `--files-from` names a list of
+    members, not the archive. */
+function tarFile(args: string[]): string | undefined {
+  for (let i = 0; i < args.length; i++) {
+    const word = args[i]
+    if (word === "--file") return args[i + 1]
+    if (word.startsWith("--file=")) return word.slice("--file=".length)
+    const cluster = word.startsWith("-") ? word.slice(1) : i === 0 ? word : ""
+    if (/^[A-Za-z]+$/.test(cluster) && cluster.includes("f")) return args[i + 1]
+  }
+  return undefined
+}
 
 /** A path keeps its last two segments — `server/src` says where it is where a
     bare `src` could be any of five directories — while a plain file name is
@@ -248,10 +328,13 @@ function phraseFor(name: string, args: string[]): string | null {
          `cat | x` feeds a pipeline — neither is a read of anything nameable,
          so an argument-less cat is left to whatever else is in the line. */
       return first ? withTarget("read", shortArg(first)) : null
-    case "sed":
+    case "sed": {
+      const files = args.filter((a) => !isFlag(a))
+      const target = files.at(-1)
       return hasFlag(args, "-i")
-        ? withTarget("edit", shortArg(args.filter((a) => !isFlag(a)).at(-1)))
-        : withTarget("read", shortArg(args.filter((a) => !isFlag(a)).at(-1)))
+        ? withTarget("edit", shortArg(target))
+        : withTarget("read", shortArg(target))
+    }
     case "wc":
       return "count the lines"
     case "file": case "stat":
@@ -282,26 +365,28 @@ function phraseFor(name: string, args: string[]): string | null {
       return "change permissions"
     case "ln":
       return "make a symlink"
-
-    // Toolchains.
-    case "tsc":
-      return "typecheck"
-    case "eslint":
-      return "lint the code"
-    case "prettier":
-      return "format the code"
-    case "vitest": case "jest": case "pytest": case "mocha":
-      return "run the tests"
-    case "node": case "python": case "python3": case "ruby": case "deno":
-      /* No script argument means the body came in on stdin (a heredoc), which
-         is a script all the same — just not one with a name to print. */
-      return withTarget("run", shortArg(first) ?? "a script")
-    case "cargo": case "go": case "dotnet": case "mvn": case "gradle":
-      return first ? `run ${name} ${first}` : null
-    case "make":
-      return first ? `run make ${first}` : "run make"
-    case "docker": case "kubectl": case "pm2": case "systemctl":
-      return first ? `run ${name} ${first}` : null
+    case "tar": {
+      /* The flag is the verb: `-c` writes an archive where `-x` reads one, and
+         the file named by `-f` is the archive either way. */
+      if (hasFlag(args, "-c")) return withTarget("archive into", shortArg(tarFile(args)))
+      if (hasFlag(args, "-x")) return withTarget("extract", shortArg(tarFile(args)))
+      return withTarget("inspect", shortArg(tarFile(args)))
+    }
+    case "zip": case "gzip": case "bzip2": case "xz":
+      return withTarget("compress into", shortArg(first))
+    case "unzip": case "gunzip": case "bunzip2": case "unxz":
+      return withTarget("extract", shortArg(first))
+    case "ssh":
+      return first ? `connect to ${first}` : null
+    case "scp":
+      /* Either side can be the remote; the sentence names the far end. */
+      return args.some((a) => !isFlag(a) && a.includes(":"))
+        ? withTarget("copy to", shortArg(args.find((a) => !isFlag(a) && a.includes(":"))))
+        : withTarget("copy from", shortArg(args.find((a) => !isFlag(a) && a.includes(":"))))
+    case "rsync":
+      return args.some((a) => a.includes(":"))
+        ? withTarget("sync to", shortArg(args.find((a) => a.includes(":"))))
+        : "sync files"
 
     // The network and the machine.
     case "curl": case "wget": case "http": {

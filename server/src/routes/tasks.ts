@@ -328,6 +328,24 @@ export function taskRoutes(app: Hono, deps: { sessions: SessionManager; tasks: T
    * arrive over the thread's WebSocket as `task_event`. Idempotent —
    * panels re-call this to keep the tail alive and to backfill after a reload.
    */
+  /**
+   * One workflow agent's transcript — what a native (Claude Code) workflow step
+   * actually did. Its agents have no session of their own, so this file beside
+   * the run's journal is the only record of their steps; the client asks for it
+   * when a step is opened. Same ownership rule as the watch below.
+   */
+  app.post("/api/tasks/agent", async (c) => {
+    const { transcriptDir, agentId } = await c.req.json();
+    try {
+      return c.json(await tasks.agentTranscript(transcriptDir, agentId, sessions.list()));
+    } catch (err) {
+      if (err instanceof TaskDirError) {
+        return c.json({ error: err.message }, err.status === 404 ? 404 : err.status === 403 ? 403 : 400);
+      }
+      throw err;
+    }
+  });
+
   app.post("/api/tasks/watch", async (c) => {
     const { transcriptDir } = await c.req.json();
     try {

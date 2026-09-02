@@ -1,5 +1,5 @@
 import * as React from "react"
-import { AppWindowIcon, Check, ChevronDown, ChevronLeft, Plus, SearchIcon, ServerIcon, Settings2, SquarePen } from "lucide-react"
+import { AppWindowIcon, Check, ChevronDown, ChevronLeft, ExternalLink, Plus, SearchIcon, ServerIcon, Settings2, SquarePen } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { CommandPalette, useCommandPalette } from "@/components/command-palette"
 import { ImportThreadsDialog } from "@/components/import-threads"
+import { ItemContextMenu } from "@/components/item-context-menu"
 import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
 import { Logo } from "@/components/ui/logo"
 import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
@@ -495,16 +496,20 @@ export function AppShell({
             {/* New thread and Search sit beside the brand; in the icon rail
                 they stack under it so the rail still has a create affordance. */}
             <div className="ml-auto flex items-center gap-0.5 group-data-[collapsible=icon]:ml-0 group-data-[collapsible=icon]:flex-col">
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                className="text-muted-foreground hover:text-foreground"
-                title={`New thread (${formatChord(newThreadChord)})`}
-                aria-label="New thread"
-                onClick={() => startThreadRef.current()}
+              <ItemContextMenu
+                items={[{ label: "New thread in new tab", icon: <ExternalLink />, onClick: newThreadInTab }]}
               >
-                <SquarePen />
-              </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="text-muted-foreground hover:text-foreground"
+                  title={`New thread (${formatChord(newThreadChord)})`}
+                  aria-label="New thread"
+                  onClick={() => startThreadRef.current()}
+                >
+                  <SquarePen />
+                </Button>
+              </ItemContextMenu>
               <Button
                 variant="ghost"
                 size="icon-xs"

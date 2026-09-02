@@ -253,6 +253,112 @@ export interface WorkflowStateUpdate {
   _meta?: Record<string, unknown> | null;
 }
 
+/* ── Async background tasks ──
+   Work an agent launched that outlives the turn that launched it: a Claude Code
+   dynamic workflow, a backgrounded shell command, a monitor. The JetBrains AIR
+   extension to ACP models these as their own lifecycle — spawn, progress,
+   terminal state — and claude-agent-acp sends them only to a client that
+   advertises it (`AIR_ASYNC_TASKS_META` in acp-bridge.ts).
+
+   Not the harness's own, so no `_daedalus/` prefix: these are the adapter's
+   names, spelled exactly as it publishes them, and they pass through the bridge
+   as ordinary journaled `update`s — which is what makes a run replay for free,
+   the same bargain `SubagentSpawned` makes.
+
+   The subagent RFD does not cover these and cannot: an RFD child is a *session*
+   the client can open, while a workflow's agents live inside the CLI and have
+   no session of their own — what crosses is a progress array, not a transcript.
+   See `WorkflowProgressEntry`. */
+
+export interface AsyncTaskSpawned {
+  sessionUpdate: "async_task_spawned";
+  asyncTaskId: string;
+  /** The workflow's `meta.name` for a workflow; the description otherwise. */
+  name: string;
+  /** `workflow` | `shell` | `monitor` | `task` — the adapter's friendly word. */
+  taskType: string;
+  description: string;
+  /** False for housekeeping the CLI does not surface as user work. */
+  showInTranscript: boolean;
+  canStop: boolean;
+  /** The tool call that launched it, which is what ties a run to its row. */
+  toolCallId?: string;
+  outputFilePath?: string;
+  _meta?: Record<string, unknown> | null;
+}
+
+/**
+ * One entry of a dynamic workflow's live shape.
+ *
+ * A `workflow_phase` names a stage; a `workflow_agent` is one agent in it.
+ * Both are keyed by `index` within their type and are **upserted, not
+ * appended** — the CLI rewrites an agent's entry in place as it works, so the
+ * array is a snapshot of the whole run rather than a log of it. That is why
+ * the reducer replaces by `(type, index)` instead of accumulating.
+ *
+ * Every field past the key is optional because it is: a queued agent has no
+ * `startedAt`, a running one no `resultPreview`, and an older CLI may send
+ * neither. The one thing that is always true is that an entry names its phase.
+ */
+export interface WorkflowProgressEntry {
+  type: "workflow_phase" | "workflow_agent" | "workflow_log";
+  index?: number;
+  /** `workflow_phase`: the stage's title. */
+  title?: string;
+  /** `workflow_agent`: the script's own label for this agent. */
+  label?: string;
+  phaseIndex?: number;
+  phaseTitle?: string;
+  /** The CLI's id for the agent — also the name of its transcript file
+      (`agent-<agentId>.jsonl`) in the run's transcript directory. */
+  agentId?: string;
+  model?: string;
+  state?: "start" | "queued" | "progress" | "done" | "error" | "blocked";
+  startedAt?: number;
+  queuedAt?: number;
+  lastProgressAt?: number;
+  tokens?: number;
+  toolCalls?: number;
+  lastToolName?: string;
+  lastToolSummary?: string;
+  promptPreview?: string;
+  resultPreview?: string;
+  /** The agent's result came from a resumed run rather than a fresh call. */
+  cached?: boolean;
+  attempt?: number;
+  error?: string;
+  /** `workflow_log`: a line the script emitted with `log()`. */
+  message?: string;
+}
+
+export interface AsyncTaskProgress {
+  sessionUpdate: "async_task_progress";
+  asyncTaskId: string;
+  description?: string;
+  summary?: string;
+  lastToolName?: string;
+  usage?: { totalTokens: number; toolUses: number; durationMs: number };
+  /** A dynamic workflow's whole shape, resent on every beat. Present only when
+      the adapter carries it through (`pnpm patch:acp`); everything else here
+      arrives with or without that patch. */
+  workflowProgress?: WorkflowProgressEntry[];
+  toolCallId?: string;
+  outputFilePath?: string;
+  _meta?: Record<string, unknown> | null;
+}
+
+export type AsyncTaskState = "running" | "paused" | "completed" | "failed" | "stopped";
+
+export interface AsyncTaskStateUpdate {
+  sessionUpdate: "async_task_state_update";
+  asyncTaskId: string;
+  state: AsyncTaskState;
+  summary?: string;
+  toolCallId?: string;
+  outputFilePath?: string;
+  _meta?: Record<string, unknown> | null;
+}
+
 export interface SubagentUsage {
   sessionUpdate: "_daedalus/subagent_usage";
   subagentSessionId: string;
@@ -319,6 +425,9 @@ export type SessionUpdate =
   | SubagentSpawned
   | SubagentStateUpdate
   | SubagentUsage
+  | AsyncTaskSpawned
+  | AsyncTaskProgress
+  | AsyncTaskStateUpdate
   | WorkflowStateUpdate
   | AutonomyAnswer;
 

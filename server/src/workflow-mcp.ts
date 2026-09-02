@@ -20,6 +20,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { LIMITS, WORKFLOW_SERVER_NAME, WorkflowDefinitionShape } from "./workflow-schema.js";
+import { SCRIPT_LIMITS } from "./workflow-script.js";
 
 const url = process.env.WORKFLOW_URL;
 if (!url) {
@@ -79,6 +80,49 @@ server.registerTool(
     try {
       return summarize(
         await call(`/runs?wait=${clampWait(waitSec)}`, { method: "POST", body: JSON.stringify({ definition, inputs: inputs ?? {} }) }),
+      );
+    } catch (error) {
+      return failed(error);
+    }
+  },
+);
+
+const SCRIPT_RULES = `The script is JavaScript. It runs on this server and orchestrates agents; it is NOT where the work happens — every \`agent()\` call runs its prompt in a NEW thread on this server (same project, profile, agent and model as this thread) and resolves with that agent's final reply.
+
+Begin with a pure literal \`export const meta = { name, description, phases }\` — no variables, calls or interpolation, because the run is named and its stages drawn before it runs. Then the body, where top-level \`await\` and a top-level \`return\` both work; what you return is the run's result.
+
+  export const meta = { name: 'audit', description: 'Audit each subsystem', phases: [{ title: 'Read' }, { title: 'Verify' }] }
+  phase('Read')
+  const found = await parallel(AREAS.map((a) => () => agent(\`Audit \${a}\`, { label: 'read:' + a, schema: FINDINGS })))
+  phase('Verify')
+  return await pipeline(found.filter(Boolean).flatMap((f) => f.findings),
+    (f) => agent(\`Try to refute: \${f.title}\`, { label: 'verify:' + f.title, schema: VERDICT }))
+
+API — agent(prompt, {label, phase, schema, model, effort}) spawns one agent; with \`schema\` (a JSON Schema) its reply must be one \`\`\`json fence matching it, gets one repair turn, and agent() resolves with the parsed object. parallel(thunks) awaits all and is a BARRIER — a thunk that throws becomes null, so \`.filter(Boolean)\`. pipeline(items, ...stages) runs each item through every stage independently with NO barrier between them; each stage gets (previous, item, index). Prefer pipeline: a barrier makes every fast item wait for the slowest. phase(title) names the stage the following agents belong to. log(message) narrates to the reader. \`args\` is what you passed in. \`budget\` is {total, spent(), remaining()}.
+
+Limits: ${SCRIPT_LIMITS.maxAgents} agents per run, ${SCRIPT_LIMITS.maxItems} items per parallel/pipeline call, ${LIMITS.maxParallel} agents running at once (the rest queue). Date.now(), new Date() and Math.random() all throw — a run that reads a clock cannot be replayed; pass a timestamp through \`args\` and vary prompts by index. There is no filesystem, no network and no require: the agents you spawn do that work, not the script.
+Each call returns within its wait budget; if the status is still "running", call wait_workflow with the runId. Agent outputs are in \`steps[].output\`, and the script's own return value in \`result\`.`;
+
+server.registerTool(
+  "run_script",
+  {
+    title: "Run a workflow script",
+    description: `Orchestrate many agents from a script — for work whose shape is only known as it runs: fanning out over a list a first agent discovered, looping until a search goes dry, or having agents check each other's findings. For a pipeline you can write down in full up front, run_workflow is simpler.\n${SCRIPT_RULES}`,
+    inputSchema: {
+      script: z.string().min(1).describe("The orchestration script: `export const meta = {…}` then the body."),
+      args: z.unknown().optional().describe("Passed to the script as the `args` global. Give real JSON, not a JSON string."),
+      tokenBudget: z.number().int().positive().optional().describe("Output-token ceiling for the whole run, readable as `budget`. Agents past it are refused."),
+      waitSec: z.number().int().min(1).max(MAX_WAIT_SEC).optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  async ({ script, args, tokenBudget, waitSec }) => {
+    try {
+      return summarize(
+        await call(`/scripts?wait=${clampWait(waitSec)}`, {
+          method: "POST",
+          body: JSON.stringify({ script, args, tokenBudget }),
+        }),
       );
     } catch (error) {
       return failed(error);

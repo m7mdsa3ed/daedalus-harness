@@ -24,8 +24,7 @@ export function yieldToTextSelection(event: React.MouseEvent & { preventBaseUIHa
 }
 
 export function copyText(text: string) {
-  navigator.clipboard
-    .writeText(text)
+  writeClipboard(text)
     .then(() => toast.success("Copied"))
     .catch((err) => reportError(err, "Couldn't copy"))
 }
@@ -280,3 +279,4 @@ export const StepRow = React.memo(function StepRow({
   )
 })
 StepRow.displayName = "StepRow"
+import { writeClipboard } from "@/lib/clipboard"

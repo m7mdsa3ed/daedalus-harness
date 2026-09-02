@@ -71,8 +71,7 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
       disabled: descriptor?.kind !== "chat",
       onClick: () => {
         if (descriptor?.kind !== "chat") return
-        navigator.clipboard
-          .writeText(new URL(threadPath(descriptor.sessionId), window.location.origin).toString())
+        writeClipboard(new URL(threadPath(descriptor.sessionId), window.location.origin).toString())
           .then(() => toast.success("Link copied"))
           .catch((err) => reportError(err, "Couldn't copy the link"))
       },
@@ -112,3 +111,4 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
     </ItemContextMenu>
   )
 }
+import { writeClipboard } from "@/lib/clipboard"

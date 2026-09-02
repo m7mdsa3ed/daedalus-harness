@@ -198,6 +198,86 @@ export class TaskTailer {
     return { sessionId: owner.id, events, pending: false };
   }
 
+  /**
+   * One workflow agent's own transcript, whole.
+   *
+   * A dynamic workflow's agents run inside the CLI and have no session anyone
+   * can open, so the progress array says only what each is *doing*. What each
+   * actually did is on this disk, beside the run's journal, one
+   * `agent-<agentId>.jsonl` per agent in the CLI's own record format. That is
+   * the only way a step's steps can be shown at all.
+   *
+   * Read whole rather than tailed: a settled agent's file does not grow, and a
+   * live one is re-read when the reader asks again — a second watcher class,
+   * with its own offsets and eviction, to save a few KB on a file nobody is
+   * streaming would be the wrong trade.
+   *
+   * The frames are handed back exactly as the CLI wrote them. The server does
+   * not interpret an agent's payloads (CLAUDE.md); the client's `lib/tools`
+   * quarantine does, the same bargain `watch` makes for the journal.
+   */
+  async agentTranscript(
+    dirInput: unknown,
+    agentIdInput: unknown,
+    sessions: SessionRef[],
+  ): Promise<{ sessionId: string; events: unknown[] }> {
+    if (typeof dirInput !== "string" || !path.isAbsolute(dirInput)) {
+      throw new TaskDirError("transcriptDir must be an absolute path", 400);
+    }
+    /* The id names a file, so it may not name a *path*: it is the CLI's own
+       hex handle and anything else is refused outright rather than sanitised,
+       which is the difference between a check and a guess. */
+    if (typeof agentIdInput !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(agentIdInput)) {
+      throw new TaskDirError("agentId must be a plain identifier", 400);
+    }
+    const requested = path.resolve(dirInput);
+    if (!ownerOf(requested, sessions)) {
+      throw new TaskDirError("that directory does not belong to any thread's agent", 403);
+    }
+    let dir: string;
+    try {
+      dir = await realpath(requested);
+    } catch {
+      throw new TaskDirError("no such transcript directory", 404);
+    }
+    const owner = ownerOf(dir, sessions);
+    if (!owner) {
+      throw new TaskDirError("that directory does not belong to any thread's agent", 403);
+    }
+    const file = path.join(dir, `agent-${agentIdInput}.jsonl`);
+    let size: number;
+    try {
+      size = (await stat(file)).size;
+    } catch {
+      throw new TaskDirError("no such agent transcript", 404);
+    }
+    /* The tail, not the head, when an agent has written more than the ceiling:
+       what it is doing now is what a reader opened the step for, and the first
+       partial line of a sliced read is dropped rather than mis-parsed. */
+    const offset = Math.max(0, size - MAX_READ_BYTES);
+    const fh = await open(file, "r");
+    let text: string;
+    try {
+      const buffer = Buffer.alloc(size - offset);
+      const { bytesRead } = await fh.read(buffer, 0, buffer.length, offset);
+      text = buffer.toString("utf8", 0, bytesRead);
+    } finally {
+      await fh.close();
+    }
+    const lines = text.split("\n");
+    if (offset > 0) lines.shift();
+    const events: unknown[] = [];
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        events.push(JSON.parse(line));
+      } catch {
+        // a trailing partial write, or the head we sliced through
+      }
+    }
+    return { sessionId: owner.id, events };
+  }
+
   /** Start watching the directory itself. Watching the directory rather than
       the journal is deliberate: the file may not exist yet, and only a
       directory watch sees it appear. */

@@ -94,13 +94,62 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 
 ## Workflows
 
-- **Workflows are the harness's, not an agent's.** Claude Code has a `Workflow` tool;
-  Codex and OpenCode have nothing like it, and the harness could only ever *watch* Claude
-  Code's (`tasks.ts` tails its `journal.jsonl`). So `builtin:workflow` is a third library
-  row beside web search and the knowledge base — any agent that links it gets the
-  `workflow` MCP server, and on Claude Code the server disallows `Workflow` and allows
-  `mcp__workflow` (`AcpBridge.claudeMeta`, `workflowViaMcp`), for exactly the classifier
-  reason the web-search pair exists. A definition is **declarative JSON**
+- **Workflows are the harness's where the agent has none.** Codex and OpenCode have
+  nothing like a workflow, so `builtin:workflow` is a third library row beside web search
+  and the knowledge base — an agent that links it gets the `workflow` MCP server, and the
+  server then disallows any native `Workflow` and allows `mcp__workflow`
+  (`AcpBridge.claudeMeta`, `workflowViaMcp`), for exactly the classifier reason the
+  web-search pair exists.
+
+  **Claude Code keeps its own, by rule and not by configuration** (`ownsWorkflows` in
+  `serversFor`): linking the server to it would disallow its native `Workflow`, and those
+  are one switch. Enforced at spawn rather than left to whoever edits a profile's links,
+  where applying half of it silently costs a tool.
+
+  **There are two engines here now, and the second runs a program the agent wrote.**
+  That reverses the rule the first was built on — stated at the top of
+  `workflow-schema.ts` and repeated below — and it was reversed on purpose, because the
+  rule cost more than it bought. What a script buys is not convenience but *capability*:
+  fanning out over a list the run itself discovered, looping until a search goes dry,
+  having agents judge each other's findings. A static graph cannot express any of those,
+  and Claude Code's own workflows are built almost entirely out of them, so every agent
+  without a native workflow tool — the entire reason `builtin:workflow` exists — was being
+  handed a strictly weaker instrument.
+
+  What makes it affordable is that the agent writing the script **already runs shell
+  commands on this machine**. A script can do nothing a `Bash` call could not, so the
+  `node:vm` context in `workflow-script.ts` is not a security boundary and is not asked to
+  be one: it keeps an honest script from reaching what it has no business touching, and
+  makes the failure legible when it does. The isolation that matters is unchanged — every
+  agent a script spawns is a real child session carrying the parent's permission mode.
+
+  **One runner serves both.** A script run's `def` is the very `WorkflowDefinition` the
+  declarative engine reads, except that it *grows*: each `agent()` appends the step it
+  spawned, so `runStep` — with its repair turn, its clocks, its pause and its cancel — is
+  the one path an agent of either engine takes, `workflow_runs` keeps one kind of record,
+  and the client card learns nothing new. `meta.phases` is the outline, which is why it
+  must be a pure literal: a card draws a run's shape from its first step, and a shape known
+  only by running would leave nothing to draw. A phase the script enters that `meta` never
+  declared is appended rather than refused — a stage that ran is a stage the reader must
+  see.
+
+  The API is Claude Code's, name for name (`agent`, `parallel`, `pipeline`, `phase`,
+  `log`, `args`, `budget`), so a script written for one engine runs on the other. That
+  includes the awkward part: `Date.now()`, `new Date()` and `Math.random()` all throw. A
+  run that reads a clock cannot be replayed, and a harness whose scripts quietly diverge
+  from the documented ones would be worse than one with none. They are patched *inside* the
+  realm, because that is the only place its own `Math` and `Date` can be reached —
+  injecting the host's would be worse than useless, since `{...Math}` copies nothing (its
+  methods are non-enumerable) and a script mixing realms gets `instanceof` answers that are
+  true in one and false in the other. The return value crosses back through a JSON round
+  trip for the same reason: everything the script built has another realm's prototypes.
+
+  **A definition is still the right answer for a pipeline you can write down in full.** It
+  is validated before anything spawns — duplicate names, cycles, a template reading a step
+  it never waited for — where a script's only pre-flight is that its `meta` parses. Two
+  tools, and their descriptions say which is which.
+
+  A definition is **declarative JSON**
   (`server/src/workflow-schema.ts`: named steps, `dependsOn` edges, `{{inputs.x}}` /
   `{{steps.y.output…}}` templates, an optional JSON-schema `output` that buys the step one
   repair turn before it fails) and never a script: the server does not interpret an agent's
@@ -258,6 +307,105 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   map — their journals, FTS rows and processes are the manager's to take down — and a backup
   merge inserts sessions in bundle order, where a child may precede its parent inside the one
   transaction; so `softDelete`/`restore`/`purge` cascade to `childrenOf` by hand, children
+- **A native (Claude Code) workflow run is drawn as the same row, from a different
+  source.** A harness run's steps are real threads, so they arrive as `subagent_spawned`
+  and fold through `mergeWorkflowRuns`. A dynamic workflow's agents live inside the CLI:
+  they have no session anyone can open, and no ACP frame carries them. What the runtime
+  does emit is a `workflow_progress` array on the SDK's `task_progress` — one entry per
+  phase and per agent, with the script's own label, the phase, the state, the model, the
+  tokens, the tool count and the tool it is on — **restated in full on every beat**, so it
+  is a snapshot and is *replaced* rather than accumulated (`AsyncTaskItem.progress`).
+
+  It is the only live source, and both alternatives were tried and measured before this
+  was built. The `journal.jsonl` beside the run — which `tasks.ts` still tails, and which
+  was all the harness had — holds nothing but `started`/`result` lines keyed by an agent
+  hash, which is why a native run drew as a column of anonymous dots. The full snapshot
+  (`<session>/workflows/<runId>.json`) has the whole shape but **is not written until the
+  run reaches a terminal state**, verified by watching a live run's directory: during the
+  run only `scripts/` exists. A post-mortem file cannot drive a live view.
+
+  **Four things had to be true for the stream to arrive, and only the first was
+  obvious.** Each of the other three swallowed the whole run in silence, and each
+  was found by driving a live workflow and reading the journal rather than by
+  reasoning — which is what `server/scripts/smoke-native-workflow.mjs` exists to
+  repeat.
+
+  1. The adapter republishes background work as an AIR async-task lifecycle
+     (`async_task_spawned` / `_progress` / `_state_update`) but only to a client
+     that advertises the capability, which the harness now does
+     (`AIR_ASYNC_TASKS_META`).
+  2. It dropped `workflow_progress` on the floor while copying the rest of the
+     beat. `pnpm patch:acp` puts it back in two lines
+     (`server/scripts/patch-claude-acp.mjs` — idempotent, refuses rather than
+     guesses when upstream moves, guarded by `test:acp-workflow` so an adapter
+     upgrade cannot quietly undo it).
+  3. The SDK's `session/update` router validates every frame against a closed
+     union and logs-and-drops anything else, so all three variants died at the
+     door. They ride the same detour the subagent RFD already uses
+     (`SUBAGENT_UPDATE_KINDS`), which is why that constant is no longer only
+     about subagents.
+  4. The adapter pins `showInTranscript` to false for **every** task, because the
+     SDK sends the `background_tasks_changed` level before `task_started` and a
+     level carries no transcript policy. Marking the task panel-only keeps that
+     decision monotonic, so a late `skip_transcript` cannot retract a card it had
+     already drawn — right for a task whose kind it does not yet know, and always
+     wrong for this one, so the reducer does not consult it for a workflow.
+
+  Without step 2 a run still earns its name, its live totals and its terminal
+  state — everything except the per-agent tree — so that degradation is a smaller
+  card and never a broken one. Without 1, 3 or 4 there is no card at all, which is
+  why each of them now has a test standing on it.
+
+  What the run reads by is the runtime's `description` — the model's one-line
+  summary of the workflow — and not the script's `meta.name`. That is not a
+  choice: the level announces the task before `task_started` carries the name,
+  the adapter publishes a name exactly once, and no later frame can correct it.
+  The summary is the better label anyway.
+
+  **A step opens into its agent's own transcript, read off disk.** The progress
+  array says what an agent is *doing* and never what it did, so a step drawn
+  from it alone has nothing under it — which is what a reader notices first.
+  The CLI does keep the history: one `agent-<agentId>.jsonl` per agent beside
+  the run's journal, in its own record format. `TaskTailer.agentTranscript`
+  (`POST /api/tasks/agent`) hands those lines back **unread** — the server does
+  not interpret an agent's payloads — and `workflowAgentItems` turns them into
+  ordinary `ThreadItem`s in the `lib/tools` quarantine with every other vendor
+  shape. They then become rows through the same `buildRows`, so a step's steps
+  draw with the same tool views, the same rail and the same nesting as
+  everything else, and nothing downstream learns that this worker's history
+  arrived as a file rather than as a stream.
+
+  Fetched only when a step is opened, and re-read on a timer only while that
+  step is live: a run of thirty agents is thirty files of a few hundred KB, and
+  a reader opens one. A settled file does not change, so a settled step reads
+  once. The read is bounded and takes the **tail** when an agent has written
+  past the ceiling — what it is doing now is what the step was opened for — and
+  drops the partial first line rather than mis-parsing it.
+
+  Its safety is one rule, because the route reads absolute paths for a living:
+  the path must carry a live thread's ACP session id as a real segment, checked
+  before resolution so `..` cannot claim a segment and then climb out of it, and
+  again after, so a symlink cannot smuggle the read elsewhere. The agent id
+  names a file rather than a path, so it is refused outright unless it is a
+  plain identifier rather than sanitised into one — the difference between a
+  check and a guess. `test:task-agent` stands on all of it.
+
+  The steps themselves are built **at view time** (`nativeWorkflowRun` in
+  `transcript-rows.ts`) and stamped with the very `_meta.daedalus.workflow` shape the
+  runner stamps on a spawn. That is the whole trick: from `WorkflowRun` down, a native run
+  is not a special case — same phases, same counts, same elapsed, same per-step tokens,
+  same row vocabulary, and none of that code learns where the run came from. The run row
+  stands **in place of the tool call that launched it**, which is where it happened. Three
+  things a synthesized step cannot have are stated rather than faked: its `sessionId` is
+  deliberately unresolvable, so `useStepThread` says no and no "Open thread" link is
+  offered for an agent that has no thread; its token split is reported as one number by
+  the runtime, so the input/output halves are zeroes rather than an invented ratio; and it
+  has no rail, so what the runtime previews instead — the brief, the report, the tool it
+  is on — rides on the head (`SubagentItem.prompt`/`report`/`activity`) and is drawn by
+  `SubagentBody`. Liveness is read off the runtime's own per-agent state and NOT off
+  `subagentActive`, because that reads the parent's turn and a dynamic workflow's whole
+  nature is to outlive the turn that launched it.
+
   first on purge. `workflow_runs` is the opposite: one row per run with a `steps` JSON
   column (the only queries are "runs of this thread" and "what was running when the server
   stopped"), and it *does* cascade off the parent, which only a purge deletes. A child is

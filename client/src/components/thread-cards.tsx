@@ -395,8 +395,7 @@ export const ErrorRow = React.memo(function ErrorRow({
                   size="sm"
                   className="h-6 gap-1 rounded-pill px-2 text-[11px]"
                   onClick={() =>
-                    void navigator.clipboard
-                      ?.writeText([item.title, item.reason, item.detail].filter(Boolean).join("\n"))
+                    void writeClipboard([item.title, item.reason, item.detail].filter(Boolean).join("\n"))
                       .catch(() => {})
                   }
                 >
@@ -589,3 +588,4 @@ export const PlanStep = React.memo(function PlanStep({ item }: { item: PlanItem 
   )
 })
 PlanStep.displayName = "PlanStep"
+import { writeClipboard } from "@/lib/clipboard"

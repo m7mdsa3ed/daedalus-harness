@@ -121,12 +121,7 @@ function installingDescription(): ReactNode {
   return (
     // Spans, not divs: this lands inside the toast's <p> description.
     <span className="flex flex-col gap-1.5">
-      <span className="flex items-baseline justify-between gap-2 tabular-nums">
-        <span>
-          {done} of {progress.total} files
-        </span>
-        <span>{percent}%</span>
-      </span>
+      <span className="flex justify-end tabular-nums">{percent}%</span>
       <span className="block h-1 w-full overflow-hidden rounded-pill bg-muted">
         <span
           className="block h-full rounded-pill bg-primary transition-[width] duration-300 ease-out"

@@ -37,6 +37,7 @@ import {
   MinusSignIcon,
   PlusSignIcon,
   RefreshIcon,
+  Tick02Icon,
 } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 
@@ -286,12 +287,15 @@ export function ScmView({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PanelToolbar>
-        <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
-          {single
-            ? (states[repos[0].path]?.status?.branch ??
-              repos[0].branch ??
-              "Source control")
-            : `${repos.length} repositories`}
+        <span className="flex min-w-0 flex-1 items-center gap-1 truncate text-[11px] text-muted-foreground">
+          <HugeiconsIcon icon={GitBranchIcon} strokeWidth={2} className="size-3 shrink-0" />
+          <span className="truncate font-mono">
+            {single
+              ? (states[repos[0].path]?.status?.branch ??
+                repos[0].branch ??
+                "Source control")
+              : `${repos.length} repositories`}
+          </span>
         </span>
         <LayoutToggle layout={layout} onChange={(next) => setIdePref("scmLayout", next)} />
         <IconAction label="Refresh" icon={RefreshIcon} onClick={refreshAll} />
@@ -441,8 +445,8 @@ function RepoSection({
     if (!status) return []
     return (
       [
-        { key: "merge", title: "Merge changes", side: "conflict", files: status.conflicted },
-        { key: "staged", title: "Staged changes", side: "index", files: status.staged },
+        { key: "merge", title: "Conflicts", side: "conflict", files: status.conflicted },
+        { key: "staged", title: "Staged", side: "index", files: status.staged },
         { key: "changes", title: "Changes", side: "worktree", files: status.unstaged },
         { key: "untracked", title: "Untracked", side: "untracked", files: status.untracked },
       ] satisfies { key: string; title: string; side: Side; files: GitFileState[] }[]
@@ -549,8 +553,8 @@ function RepoSection({
               <Textarea
                 value={message}
                 onChange={(event) => setMessage(event.target.value)}
-                placeholder={`Message${collapsible ? ` for ${repo.name}` : ""} (⌘Enter to commit on ${branch})`}
-                rows={coarse ? 3 : 2}
+                placeholder={collapsible ? `Commit to ${repo.name}` : "Commit message"}
+                rows={2}
                 className="min-h-0 text-xs"
                 onKeyDown={(event) => {
                   if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
@@ -559,22 +563,26 @@ function RepoSection({
                   }
                 }}
               />
-              {/* On a finger the two buttons are a row of their own and full
-                  width; with a mouse they sit on one line beside the count. */}
-              <div className={cn("mt-1.5 flex items-center gap-2", coarse && "flex-col-reverse items-stretch")}>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size={coarse ? "default" : "sm"}
+              {/* One row of icons, the same ones the file rows wear: stage
+                  everything on the left, commit what is staged on the right,
+                  each with its count beside it. */}
+              <div className="mt-1 flex items-center gap-1">
+                <IconAction
+                  label={`Stage all ${unstaged.length}`}
+                  icon={PlusSignIcon}
                   disabled={busy || unstaged.length === 0}
                   onClick={() => void write({ action: "stage", paths: unstaged.map((file) => file.path) })}
-                >
-                  Stage all{unstaged.length > 0 ? ` ${unstaged.length}` : ""}
-                </Button>
-                {!coarse && <span className="flex-1" />}
-                <Button type="submit" size={coarse ? "default" : "sm"} disabled={busy || !message.trim()}>
-                  Commit{stagedCount > 0 ? ` ${stagedCount}` : ""}
-                </Button>
+                />
+                <Count value={unstaged.length} />
+                <span className="flex-1" />
+                <Count value={stagedCount} />
+                <IconAction
+                  label={`Commit ${stagedCount > 0 ? `${stagedCount} staged` : ""} on ${branch} (⌘Enter)`}
+                  icon={Tick02Icon}
+                  variant="default"
+                  disabled={busy || !message.trim()}
+                  onClick={() => void commit()}
+                />
               </div>
             </form>
           )}
@@ -907,18 +915,26 @@ function LayoutToggle({
     for room, and an icon with no name is a guess. The tap target is 44px on a
     finger and 24px with a mouse; both draw the same 14px glyph, so the row's
     rhythm does not change with the pointer. */
+/** A count beside an icon action; nothing when there is nothing to count. */
+function Count({ value }: { value: number }) {
+  if (value === 0) return null
+  return <span className="font-mono text-[10px] tabular-nums text-muted-foreground">{value}</span>
+}
+
 function IconAction({
   label,
   icon,
   onClick,
   disabled,
   className,
+  variant = "ghost",
 }: {
   label: string
   icon: typeof PlusSignIcon
   onClick: () => void
   disabled?: boolean
   className?: string
+  variant?: React.ComponentProps<typeof Button>["variant"]
 }) {
   const coarse = useCoarsePointer()
   return (
@@ -926,7 +942,7 @@ function IconAction({
       <TooltipTrigger
         render={
           <Button
-            variant="ghost"
+            variant={variant}
             size="icon-xs"
             disabled={disabled}
             onClick={onClick}

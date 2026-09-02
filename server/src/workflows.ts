@@ -49,6 +49,13 @@ import {
   type WorkflowStep,
 } from "./workflow-schema.js";
 import { HttpError } from "./http-error.js";
+import {
+  SCRIPT_LIMITS,
+  ScriptError,
+  extractMeta,
+  runScript,
+  type ScriptMeta,
+} from "./workflow-script.js";
 
 /** Step threads alive at once, across every run. */
 const MAX_LIVE_CHILDREN = 8;
@@ -72,12 +79,34 @@ export interface RunView {
   createdAt: number;
   endedAt: number | null;
   steps: WorkflowStepRecord[];
+  /** A script run's own answer — whatever its body returned. A definition has
+      none: its answer is its steps' outputs, which are already here.
+      In memory only, and so present for as long as the run is (it is kept for
+      ten minutes past its end, which is the window the tool reads it in). The
+      row keeps the steps, which is the durable record; a return value is the
+      script's summary of them and is not worth a column. */
+  result?: unknown;
+}
+
+/** A run started from a script rather than a definition. The definition it
+    carries is the one the engine builds *as it goes* — see `startScript`. */
+interface ScriptState {
+  source: string;
+  meta: ScriptMeta;
+  /** Labels already used, so a script that labels two agents alike still gets
+      two rows: the client joins a run's outline to its steps by name. */
+  used: Set<string>;
+  /** Output tokens every agent of this run has spent, for `budget`. */
+  spent: number;
 }
 
 interface Run {
   id: string;
   parent: Session;
+  /** For a script run this grows: each `agent()` appends the step it spawned,
+      so one runner, one card and one set of records serve both engines. */
   def: WorkflowDefinition;
+  script?: ScriptState;
   inputs: Record<string, unknown>;
   status: WorkflowRunStatus;
   error: string | null;
@@ -145,6 +174,9 @@ export class WorkflowRunner {
   private key = randomBytes(24).toString("hex");
   private runs = new Map<string, Run>();
   private liveChildren = 0;
+  /** Script agents waiting for a child slot. Woken by `pump`, which every
+      finished step calls for every run. */
+  private slotWaiters: (() => void)[] = [];
 
   constructor(
     private manager: SessionManager,
@@ -241,6 +273,219 @@ export class WorkflowRunner {
       .run();
     this.pump(run);
     return this.view(run);
+  }
+
+  /**
+   * Start a run from an agent-authored script.
+   *
+   * The same runner, the same records, the same card: what differs is only who
+   * decides what runs next. A definition says so up front and `pump` computes
+   * it; a script says so by running, and each `agent()` call appends the step
+   * it spawned to the very `def` the rest of this class reads. So a script's
+   * agents are steps of exactly the same kind — real child threads, with the
+   * repair turn, the timeouts, the pause and the cancel — and everything
+   * downstream (the client card, replay, `workflow_runs`) learns nothing new.
+   *
+   * The outline is `meta.phases`, which is why Claude Code requires it to be a
+   * literal: the card draws a run's shape from its first step, and a shape that
+   * could only be known by running would leave nothing to draw.
+   */
+  startScript(parent: Session, source: unknown, args?: unknown, budgetTotal?: unknown): RunView {
+    if (parent.parentSessionId) throw new WorkflowError("a workflow step cannot start a workflow", 409);
+    if (typeof source !== "string" || !source.trim()) throw new WorkflowError("script must be a non-empty string");
+    let meta: ScriptMeta;
+    try {
+      meta = extractMeta(source);
+    } catch (error) {
+      throw new WorkflowError(describe(error));
+    }
+    const active = [...this.runs.values()].filter((r) => r.parent === parent && !terminal(r.status));
+    if (active.length >= MAX_RUNS_PER_PARENT) {
+      throw new WorkflowError(`this thread already has ${active.length} workflow(s) running — wait for or cancel one first`, 409);
+    }
+    if (!getProfile(parent.profileId)) throw new WorkflowError("this thread's profile no longer exists", 409);
+    if (!getProject(parent.projectId)) throw new WorkflowError("this thread's project no longer exists", 409);
+
+    const now = Date.now();
+    const totalTimeoutSec = LIMITS.totalTimeoutSec.default;
+    const def: WorkflowDefinition = {
+      name: meta.name,
+      description: meta.description,
+      steps: [],
+      // Declared up front so the card can name the stages before any of them
+      // has an agent in it; the step lists fill in as the script fans out.
+      phases: meta.phases.map((p) => ({ name: p.title, description: p.detail, steps: [] })),
+      maxParallel: LIMITS.maxParallel,
+      totalTimeoutSec,
+    };
+    const run: Run = {
+      id: randomUUID(),
+      parent,
+      def,
+      script: { source, meta, used: new Set(), spent: 0 },
+      inputs: {},
+      status: "running",
+      error: null,
+      createdAt: now,
+      endedAt: null,
+      steps: new Map(),
+      outputs: {},
+      abort: new AbortController(),
+      totalTimer: new PausableTimer(totalTimeoutSec * 1000, () =>
+        this.finishRun(run, "failed", `timed out after ${totalTimeoutSec}s`),
+      ),
+      stepTimers: new Set(),
+      waiters: [],
+      resumeWaiters: [],
+    };
+    this.runs.set(run.id, run);
+    db.insert(runsTable)
+      .values({
+        id: run.id,
+        parentSessionId: parent.id,
+        name: def.name,
+        definition: { script: source, meta } as unknown as Record<string, unknown>,
+        inputs: {},
+        status: run.status,
+        error: null,
+        steps: [],
+        createdAt: now,
+        endedAt: null,
+      })
+      .run();
+    void this.driveScript(run, args, typeof budgetTotal === "number" && budgetTotal > 0 ? Math.floor(budgetTotal) : null);
+    return this.view(run);
+  }
+
+  /** Run the script to its end, and make its answer the run's answer. */
+  private async driveScript(run: Run, args: unknown, budgetTotal: number | null): Promise<void> {
+    const script = run.script!;
+    try {
+      const { result } = await runScript({
+        source: script.source,
+        args,
+        budgetTotal,
+        hooks: {
+          agent: (spec) => this.scriptAgent(run, spec),
+          phase: (title) => this.ensurePhase(run, title),
+          log: (message) => this.logLine(run, message),
+          spent: () => script.spent,
+          signal: run.abort.signal,
+        },
+      });
+      if (terminal(run.status)) return;
+      /* The script's return value is the run's output. Kept on the run rather
+         than on a step, because it is the thing the agent asked for and no
+         step produced it. */
+      run.outputs.__result = result ?? null;
+      this.finishRun(run, "completed", null);
+    } catch (error) {
+      if (terminal(run.status)) return;
+      this.finishRun(run, "failed", error instanceof ScriptError ? error.message : describe(error));
+    }
+  }
+
+  /** A phase the script entered. Unknown titles are appended rather than
+      refused: `meta.phases` is documentation the author may drift from, and a
+      stage that ran is a stage the card must show. */
+  private ensurePhase(run: Run, title: string): number {
+    const at = run.def.phases.findIndex((p) => p.name === title);
+    if (at !== -1) return at;
+    run.def.phases.push({ name: title, steps: [] });
+    return run.def.phases.length - 1;
+  }
+
+  private logLine(run: Run, message: string): void {
+    // A script's own narration, on the parent's transcript where the run is.
+    this.manager.emitOn(run.parent.id, {
+      ev: "update",
+      seq: 0,
+      historyReplay: false,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: `${message}\n` },
+        _meta: { daedalus: { workflowLog: { runId: run.id } } },
+      },
+    });
+  }
+
+  /**
+   * `agent()`: one step of a script run.
+   *
+   * Waits for a child slot, appends the step to the growing definition, and
+   * hands it to the very `runStep` a declarative step goes through — so a
+   * script's agent gets the repair turn, the clocks, the pause and the cancel
+   * for free, and appears on the card as the same row.
+   */
+  private async scriptAgent(
+    run: Run,
+    spec: { prompt: string; label: string; phase: string | null; schema?: Record<string, unknown>; model?: string; effort?: string },
+  ): Promise<unknown> {
+    const script = run.script!;
+    await this.acquireSlot(run);
+    if (terminal(run.status) || run.abort.signal.aborted) throw new ScriptError("the run was cancelled");
+
+    /* Two agents a script labelled alike must still be two rows: the card joins
+       a run's outline to its steps by name. The label is kept readable and only
+       the repeat is numbered. */
+    let name = sanitizeStepName(spec.label);
+    if (script.used.has(name)) {
+      let n = 2;
+      while (script.used.has(`${name}-${n}`)) n += 1;
+      name = `${name}-${n}`;
+    }
+    script.used.add(name);
+
+    const phaseIndex = spec.phase === null ? -1 : this.ensurePhase(run, spec.phase);
+    const step: WorkflowStep = {
+      name,
+      prompt: spec.prompt,
+      dependsOn: [],
+      literal: true,
+      output: spec.schema ? { schema: spec.schema } : "text",
+      ...(phaseIndex === -1 ? {} : { phase: { index: phaseIndex, name: run.def.phases[phaseIndex].name } }),
+      ...(spec.model ? { model: spec.model } : {}),
+      ...(spec.effort ? { effort: spec.effort } : {}),
+    };
+    run.def.steps.push(step);
+    if (phaseIndex !== -1) run.def.phases[phaseIndex].steps.push(name);
+    run.steps.set(name, {
+      name,
+      phase: step.phase?.name ?? null,
+      status: "pending",
+      sessionId: null,
+      attempt: 0,
+      output: null,
+      error: null,
+      startedAt: null,
+      endedAt: null,
+    });
+
+    await this.runStep(run, step);
+    const record = run.steps.get(name);
+    if (record?.status === "completed") return run.outputs[name];
+    if (run.abort.signal.aborted) throw new ScriptError("the run was cancelled");
+    /* Thrown, not returned: `parallel`/`pipeline` turn it into the `null` the
+       script's own `.filter(Boolean)` expects, and a bare `await agent(…)`
+       fails the run, which is what an unguarded call should do. */
+    throw new Error(record?.error ?? `step "${name}" did not complete`);
+  }
+
+  /** Wait until this run may start another child: the global ceiling and the
+      run's own width. Woken by `pump`, which every finished step calls. */
+  private async acquireSlot(run: Run): Promise<void> {
+    const free = () =>
+      this.liveChildren < MAX_LIVE_CHILDREN &&
+      [...run.steps.values()].filter((s) => s.status === "running").length < run.def.maxParallel;
+    while (!free()) {
+      if (terminal(run.status) || run.abort.signal.aborted) return;
+      await new Promise<void>((resolve) => {
+        this.slotWaiters.push(resolve);
+        run.abort.signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+    }
+    // A held run stops at the boundary, exactly as a declarative one does.
+    await this.whenRunning(run);
   }
 
   status(runId: string): RunView | null {
@@ -396,6 +641,13 @@ export class WorkflowRunner {
   // ---- scheduling ----
 
   private pump(run: Run): void {
+    /* A script decides what runs next by running; there is no ready set to
+       compute. Its agents take their slots through `acquireSlot` instead, which
+       the same `finally` below releases. */
+    if (run.script) {
+      for (const wake of this.slotWaiters.splice(0)) wake();
+      return;
+    }
     if (terminal(run.status)) return;
     const done = new Set([...run.steps.values()].filter((s) => s.status === "completed").map((s) => s.name));
     const started = new Set([...run.steps.values()].filter((s) => s.status !== "pending").map((s) => s.name));
@@ -429,7 +681,12 @@ export class WorkflowRunner {
     let text = "";
     let textBytes = 0;
     try {
-      const prompt = renderTemplate(step.prompt, { inputs: run.inputs, steps: run.outputs });
+      /* A script wrote this prompt in JavaScript, so it is already whatever
+         its author meant — running it through the template engine would eat
+         any `{{…}}` they had legitimately typed. */
+      const prompt = step.literal
+        ? step.prompt
+        : renderTemplate(step.prompt, { inputs: run.inputs, steps: run.outputs });
       const profile = getProfile(run.parent.profileId);
       if (!profile) throw new WorkflowError("this thread's profile no longer exists", 409);
       const project = getProject(run.parent.projectId);
@@ -437,7 +694,7 @@ export class WorkflowRunner {
       // A step inherits how its parent was configured — the permission mode
       // above all, so a step does not ask what the parent would not.
       const restore = run.parent.bridge?.captureRestoreState();
-      child = this.manager.create(profile, run.parent.agentId, project, run.parent.model, run.parent.effort, undefined, undefined, run.parent.links, {
+      child = this.manager.create(profile, run.parent.agentId, project, step.model ?? run.parent.model, step.effort ?? run.parent.effort, undefined, undefined, run.parent.links, {
         parentSessionId: run.parent.id,
         title: `${run.def.name} · ${step.name}`,
         restore,
@@ -500,6 +757,10 @@ export class WorkflowRunner {
            and replays like everything else the step reports. Per turn, so a
            step that took a repair turn reports twice and the client sums. */
         if (event.ev === "turn_ended" && event.usage) {
+          /* What `budget` counts. Output tokens, as Claude Code's does — the
+             number a run is actually steered by, and the one a reader means by
+             "how much has this spent". */
+          if (run.script) run.script.spent += event.usage.outputTokens ?? event.usage.totalTokens ?? 0;
           this.manager.emitOn(run.parent.id, {
             ev: "update",
             seq: 0,
@@ -662,7 +923,8 @@ export class WorkflowRunner {
 
   private persist(run: Run): void {
     db.update(runsTable)
-      .set({ status: run.status, error: run.error, steps: [...run.steps.values()], endedAt: run.endedAt })
+      .set({
+        status: run.status, error: run.error, steps: [...run.steps.values()], endedAt: run.endedAt })
       .where(eq(runsTable.id, run.id))
       .run();
   }
@@ -676,6 +938,7 @@ export class WorkflowRunner {
       createdAt: run.createdAt,
       endedAt: run.endedAt,
       steps: [...run.steps.values()],
+      ...(run.script ? { result: run.outputs.__result ?? null } : {}),
     };
   }
 }
@@ -703,6 +966,14 @@ function stateUpdate(childId: string, state: "completed" | "failed" | "cancelled
 function planOf(def: WorkflowDefinition): { name: string | null; steps: string[] }[] {
   if (def.phases.length) return def.phases.map((p) => ({ name: p.name, steps: p.steps }));
   return [{ name: null, steps: def.steps.map((s) => s.name) }];
+}
+
+/** A script's free-text label as a step name: the shape the client, the
+    records and the child's title all expect. */
+function sanitizeStepName(label: string): string {
+  const cleaned = label.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+  const named = /^[a-z]/.test(cleaned) ? cleaned : `agent-${cleaned}`;
+  return named.slice(0, 40).replace(/-+$/, "") || "agent";
 }
 
 function firstLine(text: string): string {

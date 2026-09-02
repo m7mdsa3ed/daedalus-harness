@@ -248,7 +248,7 @@ export function reportError(err: unknown, context?: string): ErrorInfo {
     duration: 10_000,
     action: {
       label: "Copy",
-      onClick: () => void navigator.clipboard?.writeText(full).catch(() => {}),
+      onClick: () => void writeClipboard(full).catch(() => {}),
     },
   })
   return info
@@ -303,7 +303,7 @@ export function reportPromise<T>(
         duration: 10_000,
         action: {
           label: "Copy",
-          onClick: () => void navigator.clipboard?.writeText(full).catch(() => {}),
+          onClick: () => void writeClipboard(full).catch(() => {}),
         },
       }
     },
@@ -345,3 +345,4 @@ export function installGlobalErrorReporting(): void {
     console.error("[uncaught]", event.error ?? event.message)
   })
 }
+import { writeClipboard } from "@/lib/clipboard"

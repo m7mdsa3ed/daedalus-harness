@@ -86,7 +86,16 @@ export function useStepThread(group: SubagentGroup): string | null {
     anything — the caller has to know before it renders, because a row with no
     body must not offer a disclosure. */
 export function subagentHasBody(group: SubagentGroup, stepThread: string | null): boolean {
-  return group.head.kind === "tool" || group.children.length > 0 || group.active || stepThread !== null
+  const previews =
+    group.head.kind === "subagent" &&
+    Boolean(group.head.prompt || group.head.report || group.head.activity || group.head.transcript)
+  return (
+    group.head.kind === "tool" ||
+    group.children.length > 0 ||
+    group.active ||
+    stepThread !== null ||
+    previews
+  )
 }
 
 /** What a step spent, when its runtime reported it. Only the RFD/workflow head
@@ -101,8 +110,11 @@ export function stepUsage(group: SubagentGroup): acp.Usage | undefined {
     the newest call at all. A step's own summary counts are the right answer
     for one that has finished and the wrong one while it works — "reading 2
     files" is what it did a minute ago. */
-function currentActivity(rows: Row[]): string | undefined {
-  const tools = collectTools(rows)
+function currentActivity(group: SubagentGroup): string | undefined {
+  /* A step whose runtime previews its activity rather than streaming its calls
+     (a native workflow's agent) has no rows to read — it says so directly. */
+  if (group.head.kind === "subagent" && group.head.activity) return group.head.activity
+  const tools = collectTools(group.children)
   if (!tools.length) return undefined
   const open = [...tools].reverse().find((t) => t.status !== "completed" && t.status !== "failed")
   return toolHeading(open ?? tools[tools.length - 1]).title
@@ -312,7 +324,7 @@ function RunRow({
     : runningStep
     ? [
         [runningPhase, stepNameOf(runningStep)].filter(Boolean).join(" · "),
-        currentActivity(runningStep.children),
+        currentActivity(runningStep),
       ]
         .filter(Boolean)
         .join(" — ")

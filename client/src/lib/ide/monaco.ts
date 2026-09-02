@@ -12,18 +12,58 @@
      once per page" rule, so an editor is an ordinary component: mount it,
      dispose it, mount three. The IDE panel is a normal panel again — nothing is
      parked in a detached holder, and a second project is a second panel.
-   - **Workers need no wiring.** Since 0.56 every worker Monaco starts is
-     declared as `new Worker(new URL(…, import.meta.url))` inside the package,
-     which is precisely the shape Vite compiles into a worker chunk. Defining
-     `MonacoEnvironment.getWorker` would *override* that with paths we would
-     then have to keep true by hand, so we deliberately define nothing.
+   - **Workers are wired, and by import rather than by path.** The four
+     language workers do declare themselves as `new Worker(new URL(…,
+     import.meta.url))`, which is the shape Vite compiles into a worker chunk —
+     but the *editor* worker (diffing, links, word-based suggestions) does not:
+     `editorWorkerService` names its module with a bare `new URL(…,
+     import.meta.url)` and hands the string to a blob bootstrap. Vite reads that
+     as an asset reference, and the file is 544 bytes — under
+     `assetsInlineLimit`, so the built app inlined it as a `data:` URL and the
+     worker died on its own first import with "Invalid relative url or base
+     scheme isn't hierarchical", `data:` having no base to resolve
+     `../../../base/common/worker/webWorkerBootstrap.js` against.
+
+     So `MonacoEnvironment.getWorker` is defined below. Note it is `getWorker`
+     and never `getWorkerUrl`: every worker is named by a `?worker` import, so
+     the bundler resolves and bundles each one and a path that stopped being
+     true is a build error rather than a blank editor. It has to answer for
+     *every* label, not just the editor's — the language workers' own factory
+     (`internal/common/workers.js`) consults `MonacoEnvironment.getWorker` first
+     and does not fall back when it returns nothing.
 
    The module is loaded through `loadMonaco()` and never imported statically by
    anything a reader loads: it is a couple of megabytes, and the transcript must
    not carry it. `lib/ide/open.ts` is the seam that keeps it that way. */
 import type * as Monaco from "monaco-editor"
+import EditorWorker from "monaco-editor/editor/editor.worker.start.js?worker"
+import CssWorker from "monaco-editor/languages/features/css/css.worker.js?worker"
+import HtmlWorker from "monaco-editor/languages/features/html/html.worker.js?worker"
+import JsonWorker from "monaco-editor/languages/features/json/json.worker.js?worker"
+import TsWorker from "monaco-editor/languages/features/typescript/ts.worker.js?worker"
 
 export type MonacoApi = typeof Monaco
+
+/* The label Monaco asks a worker for is the language id where there is one
+   (a mode may have several — `css`/`scss`/`less` share one worker), and the
+   service's own name where there is not. Anything unlisted is the plain editor
+   worker, which is also what `editorWorkerService` asks for. */
+const WORKERS: Record<string, new () => Worker> = {
+  css: CssWorker,
+  scss: CssWorker,
+  less: CssWorker,
+  html: HtmlWorker,
+  handlebars: HtmlWorker,
+  razor: HtmlWorker,
+  json: JsonWorker,
+  typescript: TsWorker,
+  javascript: TsWorker,
+}
+
+/* `MonacoEnvironment` is declared as a global by monaco-editor's own types. */
+globalThis.MonacoEnvironment = {
+  getWorker: (_moduleId, label) => new (WORKERS[label] ?? EditorWorker)(),
+}
 
 let pending: Promise<MonacoApi> | null = null
 

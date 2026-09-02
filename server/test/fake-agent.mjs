@@ -227,6 +227,28 @@ function subagentUpdates() {
       { sessionUpdate: "subagent_state_update", subagentSessionId: "sub-3", state: "failed" },
     );
   }
+  /* The AIR async-task lifecycle, as claude-agent-acp publishes a dynamic
+     workflow — sent only to a client that claimed `asyncTasks` under
+     `_meta.jetbrains.air`, exactly as the adapter gates it. Three frames the
+     SDK's closed union knows nothing about; the bridge test asserts all three
+     reach the browser with the progress array intact. */
+  const air = clientCapabilities?._meta?.jetbrains?.air;
+  if (Array.isArray(air?.capabilities) && air.capabilities.includes("asyncTasks")) {
+    out.push(
+      { sessionUpdate: "async_task_spawned", asyncTaskId: "wt-1", name: "fake-audit", taskType: "workflow", description: "Audit the fake repo", showInTranscript: true, canStop: true, toolCallId: "t7" },
+      {
+        sessionUpdate: "async_task_progress",
+        asyncTaskId: "wt-1",
+        usage: { totalTokens: 4242, toolUses: 3, durationMs: 1200 },
+        lastToolName: "Bash",
+        workflowProgress: [
+          { type: "workflow_phase", index: 1, title: "Map" },
+          { type: "workflow_agent", index: 1, label: "read:server", phaseIndex: 1, phaseTitle: "Map", agentId: "a1", state: "done", tokens: 4242, toolCalls: 3, lastToolName: "Bash", resultPreview: "one finding" },
+        ],
+      },
+      { sessionUpdate: "async_task_state_update", asyncTaskId: "wt-1", state: "completed", summary: "1 agent, 1 finding" },
+    );
+  }
   return out;
 }
 

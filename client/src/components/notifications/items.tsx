@@ -72,12 +72,14 @@ export const KIND_META: Record<
   },
 }
 
-/** The count capsule — one of the app's genuine capsules, so `rounded-pill`. */
+/** The count capsule — one of the app's genuine capsules, so `rounded-pill`.
+    Neutral ink, not destructive red: the badge sits on the header's glass and
+    reads as a count, not as an alarm. */
 export function UnreadCount({ count, className }: { count: number; className?: string }) {
   return (
     <span
       className={cn(
-        "grid h-4 min-w-4 place-items-center rounded-pill bg-destructive px-1 text-[9px] leading-none font-semibold text-white tabular-nums",
+        "grid h-[18px] min-w-[18px] place-items-center rounded-pill bg-foreground px-1.5 text-[10px] leading-none font-semibold text-background tabular-nums",
         className
       )}
     >
@@ -150,15 +152,6 @@ export function NotificationRow({
         !n.read && "bg-primary/[0.04]"
       )}
     >
-      {/* The unread accent: a hairline down the left edge, so a run of unread
-          rows reads as one block rather than as a striped list. */}
-      {!n.read && (
-        <span
-          aria-hidden
-          className={cn("absolute inset-y-0 left-0 w-0.5", meta.dot)}
-        />
-      )}
-
       <KindGlyph
         kind={n.kind}
         read={n.read}

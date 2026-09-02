@@ -45,7 +45,7 @@ export function ErrorNote({
 
   const copy = async () => {
     try {
-      await navigator.clipboard?.writeText(error.text)
+      await writeClipboard(error.text)
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     } catch {
@@ -125,3 +125,4 @@ export function ErrorNote({
     </div>
   )
 }
+import { writeClipboard } from "@/lib/clipboard"

@@ -556,7 +556,7 @@ function CopyLine({ value, mono }: { value: string; mono?: boolean }) {
         size="icon-sm"
         variant="ghost"
         onClick={() => {
-          void navigator.clipboard.writeText(value)
+          void writeClipboard(value)
           setCopied(true)
           window.setTimeout(() => setCopied(false), 1500)
         }}
@@ -577,3 +577,4 @@ const localZone = (): string => {
     return ""
   }
 }
+import { writeClipboard } from "@/lib/clipboard"

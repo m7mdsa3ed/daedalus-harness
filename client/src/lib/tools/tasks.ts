@@ -1,6 +1,6 @@
 /* ── Background tasks ── work a tool call launched that outlives its turn, and
    the task-notification blocks the harness injects when it finishes. */
-import type { ToolItem } from "../store"
+import type { TextItem, ThreadItem, ToolItem } from "../store"
 import { asRecord, str, tagText } from "./helpers"
 
 /**
@@ -14,6 +14,11 @@ import { asRecord, str, tagText } from "./helpers"
  */
 export interface BackgroundTask {
   transcriptDir: string
+  /** The runtime's id for the task — the same id its AIR async-task lifecycle
+      is keyed by (`AsyncTaskItem.taskId`). What lets a native workflow run find
+      the call that launched it without waiting for the adapter to get around to
+      mentioning a `toolCallId`; see `placeNativeWorkflows`. */
+  taskId?: string
   runId?: string
   workflowName?: string
   summary?: string
@@ -26,6 +31,7 @@ export function extractBackgroundTask(item: Pick<ToolItem, "meta">): BackgroundT
   if (!transcriptDir) return null
   return {
     transcriptDir,
+    taskId: str(response?.taskId) ?? undefined,
     runId: str(response?.runId) ?? undefined,
     workflowName: str(response?.workflowName) ?? undefined,
     summary: str(response?.summary) ?? undefined,
@@ -156,4 +162,94 @@ export function taskFindings(rows: TaskAgentRow[]): string[] {
       .map((finding) => str(asRecord(finding)?.title))
       .filter((title): title is string => title !== null)
   })
+}
+
+
+/* ── One workflow agent's own transcript ──
+   A native (Claude Code) dynamic workflow keeps its agents inside the CLI: they
+   have no session the harness can open and produce no ACP frames, so a step
+   drawn from the progress array alone has nothing under it — it says what the
+   agent is doing and never what it did. What it did is on the server's disk,
+   one `agent-<agentId>.jsonl` beside the run's journal, in the CLI's own record
+   format (`/api/tasks/agent` hands the lines back unread; the server does not
+   interpret an agent's payloads, so the reading happens here with every other
+   vendor shape).
+
+   Turning those records into ordinary `ThreadItem`s is the whole point: a step's
+   steps then draw through the same rows, the same tool views and the same rail
+   as everything else in the transcript, and nothing downstream learns that this
+   worker's history arrived as a file rather than as a stream. */
+
+/** The record shape: an assistant turn carries text, thinking and tool calls;
+    a user turn carries the results of those calls. Anything else in the file
+    (attachments, meta rows) has no row of its own and is skipped. */
+export function workflowAgentItems(events: unknown[]): ThreadItem[] {
+  const items: ThreadItem[] = []
+  const calls = new Map<string, ToolItem>()
+  let n = 0
+
+  for (const raw of events) {
+    const record = asRecord(raw)
+    const type = str(record?.type)
+    const content = asRecord(record?.message)?.content
+    if (!Array.isArray(content)) continue
+
+    for (const entry of content) {
+      const block = asRecord(entry)
+      const kind = str(block?.type)
+      if (!block || !kind) continue
+
+      if (type === "assistant" && kind === "text") {
+        const text = str(block.text)
+        if (text?.trim()) items.push({ kind: "agent", id: `wfa:${n++}`, text } satisfies TextItem)
+        continue
+      }
+      /* A thinking block whose text is empty is a signature-only record — the
+         CLI writes one per redacted thought. A row saying nothing is worse than
+         no row. */
+      if (type === "assistant" && kind === "thinking") {
+        const text = str(block.thinking)
+        if (text?.trim()) items.push({ kind: "thought", id: `wfa:${n++}`, text } satisfies TextItem)
+        continue
+      }
+      if (type === "assistant" && kind === "tool_use") {
+        const id = str(block.id) ?? `wfa:tool:${n++}`
+        /* `in_progress` until its result is read below — an agent killed
+           mid-call leaves a row that never settles, which is the truth. */
+        const call: ToolItem = {
+          kind: "tool",
+          id,
+          title: str(block.name) ?? "tool",
+          name: str(block.name) ?? undefined,
+          status: "in_progress",
+          rawInput: block.input,
+          content: [],
+          locations: [],
+          startedAt: 0,
+        }
+        calls.set(id, call)
+        items.push(call)
+        continue
+      }
+      if (type === "user" && kind === "tool_result") {
+        const call = calls.get(str(block.tool_use_id) ?? "")
+        if (!call) continue
+        call.status = block.is_error === true ? "failed" : "completed"
+        call.rawOutput = toolResultText(block.content)
+      }
+    }
+  }
+  return items
+}
+
+/** A tool result is a string, or the block list the API returns. Only its text
+    is kept: an image a worker's tool returned has no row here, and quoting its
+    base64 into one would be worse than leaving it out. */
+function toolResultText(value: unknown): string {
+  if (typeof value === "string") return value
+  if (!Array.isArray(value)) return ""
+  return value
+    .map((entry) => str(asRecord(entry)?.text) ?? "")
+    .filter(Boolean)
+    .join("\n")
 }

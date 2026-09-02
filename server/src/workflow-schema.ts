@@ -7,10 +7,18 @@
  * zod and arithmetic only. Everything is unit-tested without an agent
  * (`test/workflow-schema.test.ts`).
  *
- * A definition is declarative on purpose. The server never interprets an
- * agent's payloads, and it must not start interpreting a *program* an agent
- * wrote either: steps, edges and templates are data the server can validate up
- * front, draw, and replay — a script is none of those.
+ * A definition is declarative on purpose: steps, edges and templates are data
+ * the server can validate up front — duplicate names, cycles, a template that
+ * reads a step it never waited for — and then draw and replay.
+ *
+ * This file used to say that the server must therefore never interpret a
+ * *program* an agent wrote. It does now (`workflow-script.ts`), because that
+ * rule cost more than it bought: fanning out over a list the run discovered,
+ * looping until a search goes dry and having agents check each other are the
+ * shapes real workflows are made of, and none of them is a static graph. Both
+ * engines stand, and a definition is still the better answer whenever the
+ * pipeline can be written down in full — everything below runs before a single
+ * agent spawns, where a script's only pre-flight is that its `meta` parses.
  */
 import { z } from "zod";
 
@@ -110,7 +118,22 @@ export interface PhaseSummary {
   steps: string[];
 }
 
-export type WorkflowStep = z.infer<typeof WorkflowStepSchema> & { phase?: PhaseRef };
+export type WorkflowStep = z.infer<typeof WorkflowStepSchema> & {
+  phase?: PhaseRef;
+  /* ── Set only by the script engine (workflow-script.ts) ──
+     A script's agents are steps of exactly the same kind — the runner spawns,
+     prompts, validates and retires them through the one path — but they are
+     written in code rather than declared, so three things a definition fixes
+     up front arrive per call instead. */
+  /** The prompt is the author's own text and is NOT a template: a script
+      composes its prompts in JavaScript, so `{{…}}` in one is whatever the
+      author typed and must reach the agent untouched. */
+  literal?: boolean;
+  /** `agent(…, {model, effort})`. A definition's steps always run as the
+      parent does; a script may spend a cheaper model on a mechanical stage. */
+  model?: string;
+  effort?: string;
+};
 
 /** A validated definition, always in the engine's one shape: a flat step list
     whose edges include the desugared phase barriers. */

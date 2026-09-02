@@ -58,12 +58,12 @@ export function NotificationBell() {
           <Button
             variant="ghost"
             size="icon-sm"
-            className="relative shrink-0 text-muted-foreground hover:text-foreground"
+            className="relative shrink-0 border border-border/60 bg-muted/25 text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground aria-expanded:border-border aria-expanded:bg-muted aria-expanded:text-foreground"
             aria-label={unread > 0 ? `Notifications (${unread} unread)` : "Notifications"}
             title="Notifications"
           >
             <BellIcon />
-            {unread > 0 && <UnreadCount count={unread} className="absolute top-0.5 right-0.5" />}
+            {unread > 0 && <UnreadCount count={unread} className="absolute -top-1 -right-1" />}
           </Button>
         }
       />

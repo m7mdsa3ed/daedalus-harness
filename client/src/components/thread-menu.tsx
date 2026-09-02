@@ -65,8 +65,7 @@ import { cn } from "@/lib/utils"
 /** Copy the address of a thread. The one action that is the same sentence on
     every surface, so it is written once. */
 function copyThreadLink(session: SessionMeta) {
-  navigator.clipboard
-    .writeText(new URL(threadPath(session.id), window.location.origin).toString())
+  writeClipboard(new URL(threadPath(session.id), window.location.origin).toString())
     .then(() => toast.success("Link copied"))
     .catch((err) => reportError(err, "Couldn't copy the link"))
 }
@@ -407,8 +406,7 @@ export function ThreadHeaderMenu({
         label: "Copy thread ID",
         icon: <Copy />,
         onClick: () => {
-          navigator.clipboard
-            .writeText(thread.id)
+          writeClipboard(thread.id)
             .then(() => toast.success("Thread ID copied"))
             .catch((err) => reportError(err, "Couldn't copy the id"))
         },
@@ -489,3 +487,4 @@ export function ThreadHeaderMenu({
     </>
   )
 }
+import { writeClipboard } from "@/lib/clipboard"

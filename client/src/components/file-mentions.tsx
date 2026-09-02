@@ -243,7 +243,7 @@ export function FileMentionMenu({ state }: { state: FileMentionState }) {
      as the feature breaking rather than as "no file is called that". */
   if (state.matches.length === 0) {
     return (
-      <ComposerStripItem className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-muted-foreground">
+      <ComposerStripItem className="flex items-center gap-2 px-2 py-1.5 text-[11px] text-muted-foreground">
         <AtSign className="size-3 shrink-0" />
         <span>{state.loading ? "Searching files…" : "No matching files"}</span>
       </ComposerStripItem>

@@ -8,6 +8,11 @@ import { WorkflowError, type WorkflowRunner } from "../workflows.js";
 const MAX_WAIT_SEC = 55;
 
 const RunInput = z.object({ definition: z.unknown(), inputs: z.unknown().optional() });
+const ScriptInput = z.object({
+  script: z.string().min(1),
+  args: z.unknown().optional(),
+  tokenBudget: z.number().int().positive().optional(),
+});
 
 /**
  * The loopback the `workflow` MCP server drives — outside `/api`, so outside
@@ -18,6 +23,24 @@ const RunInput = z.object({ definition: z.unknown(), inputs: z.unknown().optiona
 export function workflowRoutes(app: Hono, deps: { runner: WorkflowRunner; sessions: SessionManager }): void {
   const { runner, sessions } = deps;
   const base = "/wf/:key/:sessionId";
+
+  /* A run from a script rather than a definition. Its own route because the
+     two payloads have nothing in common: one is a graph to validate, the other
+     is a program whose only up-front check is that its `meta` parses. */
+  app.post(`${base}/scripts`, async (c) => {
+    const parent = runner.resolveCaller(c.req.param("key"), c.req.param("sessionId"));
+    if (!parent) return c.json({ error: "not found" }, 404);
+    const body = ScriptInput.safeParse(await c.req.json().catch(() => ({})));
+    if (!body.success) return c.json({ error: body.error.issues }, 400);
+    try {
+      const view = runner.startScript(parent, body.data.script, body.data.args, body.data.tokenBudget);
+      const wait = waitSec(c.req.query("wait"));
+      return c.json(wait > 0 ? await runner.wait(view.id, wait * 1000) : view, 201);
+    } catch (error) {
+      if (error instanceof WorkflowError) return c.json({ error: error.message }, error.status);
+      throw error;
+    }
+  });
 
   app.post(`${base}/runs`, async (c) => {
     const parent = runner.resolveCaller(c.req.param("key"), c.req.param("sessionId"));

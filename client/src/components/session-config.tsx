@@ -238,11 +238,11 @@ export function SessionConfigPopover({
                thread's model was unreadable without opening a menu — while the
                same composer squeezed into a narrow dock panel kept saying it,
                because a panel is not a viewport. Both read the same way now:
-               the label is capped at `max-w-56` and ellipsized past it, and
+               the label is capped at `max-w-40` and ellipsized past it, and
                what will not fit scrolls with the rest of the control cluster,
                which is already `overflow-x-auto`. The title still carries the
                settings whole. */
-            className="h-8 gap-1.5 border-0 bg-transparent px-2 text-xs shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent"
+            className="h-6 gap-1 border-0 bg-transparent px-1.5 text-[11px] shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent"
             title={triggerLabel}
           >
             {/* The model's own icon replaces the profile's logo in the pair —
@@ -274,7 +274,7 @@ export function SessionConfigPopover({
             )}
             {/* The mode rides along in the trigger: it left the composer, and a
                 silently-active "accept edits" is the one setting you must see. */}
-            <span className="max-w-56 truncate">
+            <span className="max-w-40 truncate">
               {persona && <span>{persona.name} · </span>}
               {modelLabel}
               {effortLabel && <span className="capitalize"> · {effortLabel}</span>}

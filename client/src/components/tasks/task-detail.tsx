@@ -325,7 +325,7 @@ export function TaskDetailDialog({
 
   const copyLink = () => {
     const url = `${location.origin}${boardPath(board.id, task.id)}`
-    void navigator.clipboard.writeText(url).then(
+    void writeClipboard(url).then(
       () => toast.success(`Copied a link to ${key}`),
       () => toast.error("Couldn't copy the link"),
     )
@@ -872,3 +872,4 @@ export function TaskDetailDialog({
     </ResponsiveDialog>
   )
 }
+import { writeClipboard } from "@/lib/clipboard"

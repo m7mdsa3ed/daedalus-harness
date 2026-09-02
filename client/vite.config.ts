@@ -62,6 +62,9 @@ export default defineConfig({
       // and it reloads the tab out from under a turn in progress. lib/pwa.ts
       // offers it instead and applies it when the user says so.
       registerType: "prompt",
+      // Bump the URL so installed Android PWAs do not keep the previous
+      // manifest's dark system-chrome colors after an update.
+      manifestFilename: "manifest-v2.webmanifest",
       devOptions: {
         enabled: true,
         type: "module",
@@ -88,6 +91,7 @@ export default defineConfig({
           "**/assets/vs-*.css",
           "**/assets/editor-*.css",
           "**/assets/*.worker-*.js",
+          "**/assets/editor.worker.start-*.js",
           "**/assets/codicon-*.ttf",
         ],
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
@@ -121,17 +125,13 @@ export default defineConfig({
           { name: "New thread", short_name: "New", url: "/?new=1" },
         ],
         categories: ["developer", "productivity", "utilities"],
-        /* The same colour the boot splash and the theme-color meta use, so the
-           install's launch screen and the app's first paint agree.
-
-           Dark, unconditionally, because a manifest cannot carry two: there is
-           no `prefers-color-scheme` in it and no way to follow a palette chosen
-           at runtime. It covers only the moment before the page loads — after
-           that the meta tag wins, and ThemeProvider keeps that pointed at the
-           live `--background`. So a light-mode user sees this for one frame of
-           launch, which is the trade for a dark-mode user not seeing white. */
-        theme_color: BOOT_COLORS.dark,
-        background_color: BOOT_COLORS.dark,
+        /* A manifest cannot follow the palette selected at runtime, so use the
+           light baseline here. Android uses these values for the installed
+           app's system chrome before the page can update its theme-color meta;
+           choosing dark would make every light-mode install start with a black
+           status bar. ThemeProvider updates the live meta color after startup. */
+        theme_color: BOOT_COLORS.light,
+        background_color: BOOT_COLORS.light,
         icons: [
           // A maskable icon alone gets letterboxed where the platform wants a
           // plain one, so both purposes are listed rather than shared.

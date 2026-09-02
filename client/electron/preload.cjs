@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld("desktop", {
   // Caption buttons (min/max/close) are drawn natively, colored via
   // titleBarOverlay; the app's theme is a user choice, so main must be told.
   setTitleBarTheme: (resolved) => ipcRenderer.send("theme-changed", resolved),
+  writeClipboard: (text) => ipcRenderer.invoke("write-clipboard", text),
   /* OS notifications are the main process's (see main.cjs): the web
      Notification API inside Electron depends on an OS attribution the shell may
      not have, and silently draws nothing when it is missing. Resolves false

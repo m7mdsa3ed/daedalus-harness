@@ -56,6 +56,11 @@ import {
 import { sweepMaterialisedAttachments } from "./attachment-blocks.js";
 
 /** What the first prompt's opening words are cut to when they become a title. */
+/** The one agent that brings its own workflow engine — see `serversFor`. The
+    registry's id for Claude Code (registry.ts), named here so the rule reads as
+    a rule rather than as a string comparison in the middle of a spawn. */
+const CLAUDE_CODE_AGENT_ID = "claude-code";
+
 const TITLE_SNIFF_MAX = 60;
 /** What a hand-typed title is cut to — longer than the sniff's, because a name
     somebody chose is worth more room than one nobody did, and bounded at all
@@ -1343,9 +1348,26 @@ export class SessionManager {
     /* A workflow step is never handed the workflow server, whatever its
        profile links: a step that could start a workflow makes the lifetime
        accounting — caps, cancel propagation, restart recovery — a tree, and a
-       definition that spawns itself the obvious failure. One level. */
+       definition that spawns itself the obvious failure. One level.
+
+       Neither is Claude Code, which has a far better one of its own. The
+       harness's server exists because Codex and OpenCode have nothing like a
+       workflow; Claude Code's `Workflow` tool writes a *script* — loops,
+       branching, fan-out over a list it discovered — where a definition here is
+       a static graph of at most 16 steps, and the harness can now draw its runs
+       (`AIR_ASYNC_TASKS_META` in acp-bridge.ts, `nativeWorkflowRun` in the
+       client), which is the only thing it ever lacked. Handing Claude Code the
+       lesser engine AND disallowing its own — which is what linking the server
+       does, see `workflowViaMcp` — would be trading down.
+
+       Enforced here rather than left to whoever edits the profile's links:
+       the two decisions are one decision, and a half-applied one silently
+       costs the better tool. */
+    const ownsWorkflows = session.agentId === CLAUDE_CODE_AGENT_ID;
     const workflow =
-      this.workflowRunner && !session.parentSessionId ? workflowServer(session, this.workflowRunner) : null;
+      this.workflowRunner && !session.parentSessionId && !ownsWorkflows
+        ? workflowServer(session, this.workflowRunner)
+        : null;
     const { servers: mcpServers, skipped } = mcpServersFor(
       this.effectiveLinks(session, profile),
       project,

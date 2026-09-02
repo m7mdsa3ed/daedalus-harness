@@ -47,6 +47,7 @@ import {
 } from "@/lib/ide/editors"
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"
 import { useCoarsePointer } from "@/hooks/use-mobile"
+import { idePrefs, setIdePref } from "@/lib/ide/prefs"
 import { useProjects } from "@/lib/queries/catalog"
 import { cn } from "@/lib/utils"
 import { basename } from "@/lib/workspace/fs-api"
@@ -55,6 +56,10 @@ type SideView = "explorer" | "search" | "scm"
 
 /** Below this many pixels the side view and the editor take turns. */
 const NARROW = 560
+/** The side view's width is dragged between these; the editor keeps the rest. */
+const SIDE_MIN = 160
+const SIDE_DEFAULT = 240
+const EDITOR_MIN = 240
 
 const SIDE_VIEWS: { id: SideView; label: string; icon: typeof FilesIcon }[] = [
   { id: "explorer", label: "Files", icon: FilesIcon },
@@ -108,6 +113,21 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
   }, [])
   const narrowRef = React.useRef(narrow)
   narrowRef.current = narrow
+
+  /* ── The divider ──
+     The side view's width is the reader's (`lib/ide/prefs.ts`, device-local,
+     like the app sidebar's), dragged on the strip between it and the editor and
+     reset by a double-click. Clamped against the panel so neither half can be
+     dragged out of existence; while dragging, the width is held here and only
+     written once the pointer is released. */
+  const railRef = React.useRef<HTMLDivElement>(null)
+  const sideWidth = idePrefs.use().sideWidth
+  const [dragWidth, setDragWidth] = React.useState<number | null>(null)
+  const clampWidth = React.useCallback((width: number) => {
+    const total = root.current?.getBoundingClientRect().width ?? Infinity
+    const rail = railRef.current?.getBoundingClientRect().width ?? 0
+    return Math.round(Math.min(Math.max(SIDE_MIN, width), Math.max(SIDE_MIN, total - rail - EDITOR_MIN)))
+  }, [])
 
   React.useEffect(() => {
     const name = project?.name ?? "IDE"
@@ -165,6 +185,7 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
           view you are on collapses the sidebar, which is the gesture every
           editor has and the only way to get the full width on a phone. */}
       <div
+        ref={railRef}
         className={cn(
           "flex shrink-0 flex-col items-center gap-1 border-r border-border/60 py-1",
           coarse ? "w-12" : "w-9"
@@ -202,10 +223,8 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
 
       {sideOpen && (
         <div
-          className={cn(
-            "flex shrink-0 flex-col border-r border-border/60",
-            narrow ? "min-w-0 flex-1" : "w-56 @panel-md:w-64"
-          )}
+          className={cn("flex shrink-0 flex-col border-r border-border/60", narrow && "min-w-0 flex-1")}
+          style={narrow ? undefined : { width: dragWidth ?? sideWidth }}
         >
           {side === "explorer" && (
             <FileExplorer
@@ -217,6 +236,34 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
           {side === "search" && <FileSearch projectId={projectId} onOpenFile={openFile} />}
           {side === "scm" && <ScmView projectId={projectId} onOpenDiff={openDiff} onOpenFile={openFile} />}
         </div>
+      )}
+
+      {sideOpen && !narrow && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          title="Drag to resize · double-click to reset"
+          onPointerDown={(event) => {
+            if (event.button !== 0) return
+            event.currentTarget.setPointerCapture(event.pointerId)
+            setDragWidth(sideWidth)
+          }}
+          onPointerMove={(event) => {
+            if (dragWidth === null) return
+            const left = root.current?.getBoundingClientRect().left ?? 0
+            const rail = railRef.current?.getBoundingClientRect().width ?? 0
+            setDragWidth(clampWidth(event.clientX - left - rail))
+          }}
+          onPointerUp={() => {
+            if (dragWidth !== null) setIdePref("sideWidth", dragWidth)
+            setDragWidth(null)
+          }}
+          onDoubleClick={() => setIdePref("sideWidth", SIDE_DEFAULT)}
+          className={cn(
+            "z-10 -ml-px w-1.5 shrink-0 cursor-col-resize hover:bg-border",
+            dragWidth !== null && "bg-border"
+          )}
+        />
       )}
 
       <div className={cn("flex min-w-0 flex-1 flex-col", narrow && sideOpen && "hidden")}>

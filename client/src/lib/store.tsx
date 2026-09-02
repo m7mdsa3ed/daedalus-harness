@@ -2,12 +2,14 @@
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
 import type {
+  AsyncTaskState,
   AttachmentRef,
   QueuedMessage,
   QuotaSnapshot,
   SessionUpdate,
   SubagentState,
   TurnChanges,
+  WorkflowProgressEntry,
 } from "@daedalus/protocol"
 // Value import, but tools.ts imports only *types* from here — erased at build,
 // so there is no runtime cycle.
@@ -154,6 +156,23 @@ export interface SubagentItem {
       not the thread's — a step is a whole separate session — which is exactly
       why it is stamped here rather than reaching `ThreadState`. */
   context?: acp.UsageUpdate
+  /* ── Previewed, not streamed ──
+     A step of a Claude Code dynamic workflow (see `nativeWorkflowRun` in
+     transcript-rows) has no session and no rail: its agent runs inside the CLI,
+     which reports what it was asked, what it answered and the tool it is on as
+     three previews rather than as a transcript. An RFD child carries none of
+     these — its prose IS its report, and it is already on its rail. */
+  /** The brief this step was given, as far as the runtime previews it. */
+  prompt?: string
+  /** What it answered, or why it failed. */
+  report?: string
+  /** What it is doing right now — the newest tool call, in the runtime's words. */
+  activity?: string
+  /** Where this step's own history is, when it has one the harness can read:
+      a native workflow agent writes `agent-<agentId>.jsonl` beside its run's
+      journal on the server's disk, and that file is the only record of its
+      steps. Fetched when the step is opened (`lib/agent-transcripts`). */
+  transcript?: { dir: string; agentId: string }
   startedAt: number
   at?: number
   parentId?: string
@@ -286,6 +305,49 @@ export interface AutonomyItem {
   parentId?: string
 }
 
+/**
+ * Work an agent launched that outlives the turn that launched it, as the
+ * adapter's AIR async-task lifecycle reports it (`AsyncTaskSpawned` in the
+ * protocol). Today that means one thing: a Claude Code dynamic workflow.
+ *
+ * **One item for the whole run, not one per agent.** `progress` is the run's
+ * live shape as the CLI resends it on every beat — a snapshot, not a log, so
+ * it is *replaced* rather than accumulated. The steps a reader sees are
+ * derived from it at view time (`nativeWorkflowRows` in transcript-rows),
+ * exactly as nesting and tool-run grouping are: the store stays flat and holds
+ * only what the socket wrote, and a run that is folded into a `WorkflowGroup`
+ * is a way of looking at this item rather than a second copy of it.
+ *
+ * Kept out of the transcript's own row vocabulary on purpose — nothing renders
+ * an `async-task` item directly, and `buildRows` drops the ones it did not
+ * turn into a run (see there for the two reasons one would not be).
+ */
+export interface AsyncTaskItem {
+  kind: "async-task"
+  /** `async-task:<asyncTaskId>`. */
+  id: string
+  taskId: string
+  /** The workflow's `meta.name` — the run's heading. */
+  name: string
+  taskType: string
+  description: string
+  state: AsyncTaskState
+  summary?: string
+  /** The tool call that launched it: the run's place in the transcript, and
+      what lets the run row stand where the launch row would have. */
+  toolCallId?: string
+  /** The run's live shape, or empty when the adapter carries no
+      `workflowProgress` (an unpatched claude-agent-acp — see `pnpm patch:acp`).
+      Empty is why a run can exist here and still draw nothing. */
+  progress: WorkflowProgressEntry[]
+  /** The run's own totals, which the runtime reports whether or not the
+      per-agent array comes through. */
+  usage?: { totalTokens: number; toolUses: number; durationMs: number }
+  startedAt: number
+  at?: number
+  parentId?: string
+}
+
 export type ThreadItem =
   | TextItem
   | ToolItem
@@ -294,6 +356,7 @@ export type ThreadItem =
   | CompactionItem
   | SubagentItem
   | AutonomyItem
+  | AsyncTaskItem
 
 export interface PendingPermission {
   /** The server's id for the question, so an answer from another device can be
@@ -796,6 +859,88 @@ export function applySessionUpdate(
     case "subagent_state_update": {
       const id = subagentItemId(update.subagentSessionId)
       return items.map((i) => (i.kind === "subagent" && i.id === id ? { ...i, state: update.state } : i))
+    }
+    /* ── Async background tasks ──
+       A dynamic workflow, announced by the adapter's AIR lifecycle. Only a
+       workflow is kept: a backgrounded shell command is already drawn as its
+       own tool call, and a monitor is not work anyone asked for. Upsert,
+       because `session/load` restates a spawn it has already sent.
+
+       `showInTranscript` is deliberately NOT consulted, and it took a live run
+       to learn why. The SDK sends `background_tasks_changed` — a level with no
+       transcript policy on it — before `task_started`, which the adapter's own
+       note calls unspecified but "in practice the level precedes them". Seeing
+       the level first, the adapter marks the task a panel-only recovery and
+       pins `showInTranscript` to false *forever*, because a late
+       `skip_transcript: true` must not be able to retract a card it had
+       already drawn. Sound for a task whose kind it does not yet know — and
+       always wrong for this one: `local_workflow` is the Workflow tool and
+       nothing else, so it is user work by definition, never the housekeeping
+       (monitors, update watchers) that the flag exists to hide. Gating on it
+       meant every native run was dropped here in silence. */
+    case "async_task_spawned": {
+      if (update.taskType !== "workflow") return items
+      const id = `async-task:${update.asyncTaskId}`
+      const existing = items.find((i): i is AsyncTaskItem => i.kind === "async-task" && i.id === id)
+      const item: AsyncTaskItem = {
+        kind: "async-task",
+        id,
+        taskId: update.asyncTaskId,
+        name: update.name,
+        taskType: update.taskType,
+        description: update.description,
+        state: existing?.state ?? "running",
+        summary: existing?.summary,
+        toolCallId: update.toolCallId ?? existing?.toolCallId,
+        progress: existing?.progress ?? [],
+        usage: existing?.usage,
+        startedAt: existing?.startedAt ?? Date.now(),
+        at: existing?.at ?? at,
+        parentId: owner ?? existing?.parentId,
+      }
+      return existing
+        ? items.map((i) => (i.kind === "async-task" && i.id === id ? item : i))
+        : [...items, item]
+    }
+    /* A beat. `workflowProgress` is the run's whole shape restated, so it
+       REPLACES what we held rather than appending to it — the runtime rewrites
+       an agent's entry in place as it works, and accumulating would leave every
+       agent on screen once per beat. A beat that carries none (an unpatched
+       adapter) still moves the run's totals, so the array is only replaced when
+       one actually arrived.
+
+       A beat for a task we never took the spawn of is a stray — dropped rather
+       than made into a headless run, the same rule `compaction_summary_chunk`
+       follows. */
+    case "async_task_progress": {
+      const id = `async-task:${update.asyncTaskId}`
+      return items.map((i) =>
+        i.kind === "async-task" && i.id === id
+          ? {
+              ...i,
+              description: update.description ?? i.description,
+              summary: update.summary ?? i.summary,
+              usage: update.usage ?? i.usage,
+              toolCallId: i.toolCallId ?? update.toolCallId,
+              progress: update.workflowProgress ?? i.progress,
+            }
+          : i
+      )
+    }
+    case "async_task_state_update": {
+      const id = `async-task:${update.asyncTaskId}`
+      return items.map((i) =>
+        i.kind === "async-task" && i.id === id
+          ? {
+              ...i,
+              state: update.state,
+              summary: update.summary ?? i.summary,
+              /* The adapter mentions the launching call whenever it happens to
+                 have one, which for some runs is only here, on the last frame. */
+              toolCallId: i.toolCallId ?? update.toolCallId,
+            }
+          : i
+      )
     }
     /* A workflow run held or released. The run has no item — it is folded at
        view time from its steps — so the hold is stamped onto every step that

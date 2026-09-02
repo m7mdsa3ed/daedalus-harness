@@ -342,7 +342,7 @@ export function DraftConfigPopover({
             /* Ellipsized rather than collapsed, on a phone as in a narrow dock
                panel — same rule as SessionConfigPopover's trigger, which
                replaces this one the moment the thread starts. */
-            className="h-8 gap-1.5 border-0 bg-transparent px-2 text-xs shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent"
+            className="h-6 gap-1 border-0 bg-transparent px-1.5 text-[11px] shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent"
             title={[persona?.name, modelLabel, effortLabel].filter(Boolean).join(" · ")}
           >
             {/* The model's own icon replaces the profile's logo in the pair —
@@ -372,7 +372,7 @@ export function DraftConfigPopover({
             ) : (
               <ProfileIcon profile={profile} agentId={agent?.id ?? meta.agentId} className="size-4" />
             )}
-            <span className="max-w-56 truncate">
+            <span className="max-w-40 truncate">
               {persona && <span>{persona.name} · </span>}
               {modelLabel}
               {effortLabel && <span className="capitalize"> · {effortLabel}</span>}

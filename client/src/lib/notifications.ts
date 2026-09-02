@@ -56,6 +56,16 @@ const EVENT_LABELS: Record<ThreadEvent, string> = {
     OS notification stays up until it is dealt with where the platform allows. */
 const ACTIONABLE = new Set<ThreadEvent>(["permissionNeeded", "questionAsked", "turnFailed"])
 
+/** Which tone carries which event: the tinted disc on the toast. Actionable
+    kinds are "info" (the agent is waiting), a finished turn is a quiet
+    success, a failure is the one that gets the alert colour. */
+const EVENT_TOAST_TONE: Partial<Record<ThreadEvent, "success" | "info" | "error">> = {
+  turnFinished: "success",
+  turnFailed: "error",
+  permissionNeeded: "info",
+  questionAsked: "info",
+}
+
 const STORAGE_KEY = "ui.notifications"
 
 function read(): NotificationPrefs {
@@ -287,8 +297,9 @@ export function notifyThreadEvent(
   const body = [title, detail].filter(Boolean).join(" — ")
 
   /* In-app, a normal toast. The actionable events — the ones that are
-     waiting on the user — carry an "Open" affordance (and, for a failure, an
-     error tone); a turn that merely finished needs no button. */
+     waiting on the user — carry an "Open" affordance; a turn that merely
+     finished needs no button. The tone says the kind (the tinted disc on the
+     card's leading edge), the same language the inbox rows speak. */
   const actionable = ACTIONABLE.has(event)
   const toastOpts: Parameters<typeof toast>[1] = {
     description: body,
@@ -296,7 +307,10 @@ export function notifyThreadEvent(
       ? { action: { label: "Open", onClick: () => openThread(sessionId) } }
       : {}),
   }
-  if (event === "turnFailed") toast.error(label, toastOpts)
+  const tone = EVENT_TOAST_TONE[event]
+  if (tone === "error") toast.error(label, toastOpts)
+  else if (tone === "success") toast.success(label, toastOpts)
+  else if (tone === "info") toast.info(label, toastOpts)
   else toast(label, toastOpts)
 
   // The toast can't be seen from another window or a minimized app; an OS

@@ -113,6 +113,31 @@ interface SessionNotification {
     excess-property check refusing a key the SDK has not learned yet. */
 const SUBAGENT_CAPABILITY = { subagents: {} } as unknown as Partial<acp.ClientCapabilities>;
 
+/* The fifth bargain, and the one that decides whether a *dynamic workflow* is
+   legible. Claude Code runs one as a background task that outlives the turn,
+   and streams its shape — phases, and per agent a label, a state, a model,
+   tokens, a tool count and the tool it is on — as `workflow_progress` on the
+   SDK's `task_progress`. claude-agent-acp republishes that as the
+   `async_task_*` updates below, but its whole async-task runtime is inert
+   unless the client advertises this, so unclaimed the harness sees none of it.
+   What it saw instead was the run's `journal.jsonl` (tasks.ts still tails it):
+   `started`/`result` lines keyed by an agent hash, which is why a native run
+   drew as a row of anonymous dots. The terminal snapshot beside the run holds
+   the full shape but is not written until the run ends, so the stream is the
+   only live source.
+
+   The shape is the JetBrains AIR extension's, spelled exactly as
+   `clientSupportsAirCapability` reads it — a version and a list of capability
+   names, under `_meta.jetbrains.air`. Declared here as a constant, like
+   SUBAGENT_CAPABILITY, because none of it is in the SDK's types.
+
+   Requires the adapter's `workflow_progress` passthrough (`pnpm patch:acp`).
+   Without the patch this still earns the run's name, live token and tool
+   counts and its terminal state — everything except the per-agent tree. */
+const AIR_ASYNC_TASKS_META = {
+  jetbrains: { air: { version: 1, capabilities: ["asyncTasks"] } },
+} as const;
+
 /* The harness's own pause pair, spelled the same in `agent/src/app.ts`. ACP
    has no pause — `session/cancel` is the one interruption and it throws the
    step away — so this exists only for a runtime that owns its loop and can
@@ -148,6 +173,15 @@ const SUBAGENT_UPDATE_KINDS: ReadonlySet<string> = new Set([
   "subagent_spawned",
   "subagent_state_update",
   "_daedalus/subagent_usage",
+  /* The AIR async-task lifecycle (protocol.ts `AsyncTaskSpawned` and kin) is
+     ahead of the SDK in exactly the same way, and met exactly the same fate:
+     the adapter sent every beat of a dynamic workflow, the server logged each
+     one as an unknown variant and dropped it, and the client saw nothing —
+     found by driving a run end to end after `AIR_ASYNC_TASKS_META` went in.
+     Same detour, for as long as the SDK's union lacks them. */
+  "async_task_spawned",
+  "async_task_progress",
+  "async_task_state_update",
 ]);
 
 /** The structural check the rerouted frames are parsed with: the shape the
@@ -536,7 +570,7 @@ export class AcpBridge {
         // `_meta.claudeCode.parentToolUseId`, but withholds the subagent's
         // prose and thinking — the part that says what it concluded — unless
         // the client says it can render a nested transcript.
-        _meta: { "subagent-transcript": true },
+        _meta: { "subagent-transcript": true, ...AIR_ASYNC_TASKS_META },
       },
     });
     this.agentCapabilities = initialized.agentCapabilities ?? {};

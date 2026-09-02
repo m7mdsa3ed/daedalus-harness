@@ -209,7 +209,7 @@ export function ThreadToolsMenu({
               className
             )}
           >
-            <WrenchIcon className="size-3.5" />
+            <WrenchIcon className="size-4" />
             <span className="max-w-40 truncate">
               {total === 0 ? "No tools" : `${total} tool${total === 1 ? "" : "s"}`}
               {editable && extra > 0 && ` (+${extra})`}

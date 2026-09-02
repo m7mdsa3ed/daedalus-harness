@@ -17,6 +17,8 @@ export type FileLayout = "tree" | "list"
 export interface IdePrefs {
   scmLayout: FileLayout
   changesLayout: FileLayout
+  /** Width of the IDE panel's side view (explorer, search, source control), in px. */
+  sideWidth: number
 }
 
 const DEFAULTS: IdePrefs = {
@@ -25,6 +27,7 @@ const DEFAULTS: IdePrefs = {
      the work happened. */
   scmLayout: "tree",
   changesLayout: "tree",
+  sideWidth: 240,
 }
 
 const isLayout = (value: unknown): value is FileLayout => value === "tree" || value === "list"
@@ -37,6 +40,10 @@ export const idePrefs = createLocalStore<IdePrefs>(
     return {
       scmLayout: isLayout(stored.scmLayout) ? stored.scmLayout : DEFAULTS.scmLayout,
       changesLayout: isLayout(stored.changesLayout) ? stored.changesLayout : DEFAULTS.changesLayout,
+      sideWidth:
+        typeof stored.sideWidth === "number" && Number.isFinite(stored.sideWidth)
+          ? stored.sideWidth
+          : DEFAULTS.sideWidth,
     }
   },
   DEFAULTS

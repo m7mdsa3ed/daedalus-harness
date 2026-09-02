@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Notification, shell, nativeTheme, ipcMain } = require("electron")
+const { app, BrowserWindow, Menu, Notification, shell, nativeTheme, ipcMain, clipboard } = require("electron")
 const path = require("node:path")
 const fs = require("node:fs")
 const http = require("node:http")
@@ -62,6 +62,11 @@ ipcMain.handle("notify", (_event, payload) => {
 ipcMain.on("theme-changed", (_event, resolved) => {
   if (!win || win.isDestroyed() || process.platform === "darwin") return
   win.setTitleBarOverlay({ color: "#00000000", symbolColor: symbolColorFor(resolved), height: 36 })
+})
+
+ipcMain.handle("write-clipboard", (_event, text) => {
+  clipboard.writeText(String(text ?? ""))
+  return true
 })
 
 /* Serve dist/ over local http (not file://) so the service worker (FCM) and
@@ -140,6 +145,36 @@ function installMenu() {
   )
 }
 
+function installClipboardHandlers() {
+  win.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown" || input.alt) return
+    if (!(input.control || input.meta)) return
+
+    const commands = {
+      c: "copy",
+      x: "cut",
+      v: "paste",
+      a: "selectAll",
+    }
+    const command = commands[input.key.toLowerCase()]
+    if (!command) return
+
+    event.preventDefault()
+    win.webContents[command]()
+  })
+
+  win.webContents.on("context-menu", (_event, params) => {
+    const menu = Menu.buildFromTemplate([
+      { role: "copy", enabled: params.editFlags.canCopy },
+      { role: "cut", enabled: params.isEditable && params.editFlags.canCut },
+      { role: "paste", enabled: params.isEditable && params.editFlags.canPaste },
+      { type: "separator" },
+      { role: "selectAll" },
+    ])
+    menu.popup({ window: win })
+  })
+}
+
 async function createWindow() {
   const state = loadState()
 
@@ -190,6 +225,8 @@ async function createWindow() {
       spellcheck: true,
     },
   })
+
+  installClipboardHandlers()
 
   if (state.maximized) win.maximize()
 
