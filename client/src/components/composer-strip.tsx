@@ -57,7 +57,7 @@ type StripContext = {
    arrives mid-turn would land wherever it happened to mount. Sorting by a fixed
    list keeps "Agent · Todos 2/5 · 2 queued" saying the same thing in
    the same places every time. Ids not listed here sort last, in mount order. */
-const SUMMARY_ORDER = ["archived", "scope", "todos", "agents", "queue", "history", "slash"]
+const SUMMARY_ORDER = ["archived", "scope", "todos", "agents", "queue", "attachments", "history", "slash"]
 
 function summaryRank(id: string): number {
   const index = SUMMARY_ORDER.indexOf(id)

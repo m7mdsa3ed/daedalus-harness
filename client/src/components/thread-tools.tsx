@@ -1,5 +1,5 @@
 import * as React from "react"
-import { BlocksIcon, ServerIcon, SlashSquareIcon, WrenchIcon } from "lucide-react"
+import { BlocksIcon, KeyRoundIcon, ServerIcon, SlashSquareIcon, WrenchIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { DropdownMenuContentPositioned } from "@/components/ui-ext/dropdown-menu"
 import type { Actions } from "@/lib/actions"
-import { mcpSubtitle, type SessionMeta } from "@/lib/settings"
+import { mcpNeedsAuth, mcpSubtitle, type SessionMeta } from "@/lib/settings"
 import { saveThreadDefaults } from "@/lib/thread-defaults"
 import { useCommands, useMcpServers, useProfiles, useSkills } from "@/lib/queries/catalog"
 import { cn } from "@/lib/utils"
@@ -99,6 +99,13 @@ export function ThreadToolsMenu({
   const total =
     extra + inherited.mcpServerIds.size + inherited.skillIds.size + inherited.commandIds.size
 
+  /* Only an MCP row can need one; the generic section renderer is handed a
+     predicate rather than learning what a server is. */
+  const needsAuth = (item: { id: string }): boolean => {
+    const server = mcpServers.find((s) => s.id === item.id)
+    return !!server && mcpNeedsAuth(server)
+  }
+
   const section = <T extends { id: string; name: string }>(
     title: string,
     icon: React.ReactNode,
@@ -146,9 +153,23 @@ export function ThreadToolsMenu({
                   onCheckedChange={(checked) => editable && toggle(key, item.id, checked === true)}
                 >
                   <span className="flex min-w-0 flex-col">
-                    <span className="truncate">{item.name}</span>
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="truncate">{item.name}</span>
+                      {/* An OAuth server nobody has connected resolves to
+                          nothing at spawn — it is not advertised at all, the
+                          rule the built-in web-search row already sets. So it
+                          is marked here rather than silently listed as though
+                          the thread had it. */}
+                      {needsAuth(item) && (
+                        <KeyRoundIcon className="size-3 shrink-0 text-destructive" aria-label="needs authorization" />
+                      )}
+                    </span>
                     <span className="truncate font-mono text-[10px] text-muted-foreground">
-                      {from ? "from profile" : hint(item)}
+                      {needsAuth(item)
+                        ? "needs authorization — Settings › MCP servers"
+                        : from
+                          ? "from profile"
+                          : hint(item)}
                     </span>
                   </span>
                 </DropdownMenuCheckboxItem>

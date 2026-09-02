@@ -1,5 +1,6 @@
 import type * as acp from "@agentclientprotocol/sdk"
 import type {
+  AttachmentRef,
   EarlierPage,
   HistoryLost,
   JournaledEvent,
@@ -107,7 +108,10 @@ export interface ThreadCallbacks {
   onSessionConfig: (
     modes: acp.SessionModeState | null | undefined,
     modeId: string | undefined,
-    configOptions: acp.SessionConfigOption[] | undefined
+    configOptions: acp.SessionConfigOption[] | undefined,
+    /** What the runtime can carry in a prompt — the agent's half of the
+        attachment decision. Absent means unchanged, like `configOptions`. */
+    promptCapabilities: acp.PromptCapabilities | undefined
   ) => void
   /** The thread moved to another profile, model or effort without restarting.
       Fanned out to every device, this one included — the server resolves what
@@ -121,7 +125,14 @@ export interface ThreadCallbacks {
   onQuota: (quota: QuotaSnapshot) => void
   /** A turn began. Only ever seen for a prompt this device did NOT send — its
       own message is already on screen. `catchingUp` marks the replay. */
-  onTurnStarted: (turnId: string, text: string, catchingUp: boolean) => void
+  onTurnStarted: (
+    turnId: string,
+    text: string,
+    catchingUp: boolean,
+    /** What the prompt carried. Journaled, so a replayed bubble draws the same
+        chips a live one did. */
+    attachments: AttachmentRef[] | undefined
+  ) => void
   /** `continued` says the queue is draining into a new turn right behind this
       one — nothing to announce as finished. */
   onTurnEnded: (
@@ -580,10 +591,15 @@ export class ThreadSocket {
         this.callbacks.onUpdate(event.update, event.historyReplay, event.sessionId)
         return
       case "session_config":
-        this.callbacks.onSessionConfig(event.modes, event.modeId, event.configOptions)
+        this.callbacks.onSessionConfig(
+          event.modes,
+          event.modeId,
+          event.configOptions,
+          event.promptCapabilities
+        )
         return
       case "turn_started":
-        this.callbacks.onTurnStarted(event.turnId, event.text, this.catchingUp)
+        this.callbacks.onTurnStarted(event.turnId, event.text, this.catchingUp, event.attachments)
         return
       case "turn_ended":
         this.callbacks.onTurnEnded(
@@ -605,12 +621,17 @@ export class ThreadSocket {
    * turn ends — the turn's outcome (and its failure) reaches every device on
    * the thread as `turn_ended`, so waiting here would report it twice.
    */
-  async prompt(text: string, opts: { steer?: boolean } = {}): Promise<PromptReply> {
+  async prompt(
+    text: string,
+    opts: { steer?: boolean; attachmentIds?: string[]; forceLink?: boolean } = {}
+  ): Promise<PromptReply> {
     return (await this.request((id) => ({
       id,
       cmd: "prompt",
       text,
       ...(opts.steer ? { steer: true } : {}),
+      ...(opts.attachmentIds?.length ? { attachmentIds: opts.attachmentIds } : {}),
+      ...(opts.forceLink ? { forceLink: true } : {}),
     }))) as PromptReply
   }
 
@@ -622,12 +643,25 @@ export class ThreadSocket {
   // Every one of these is answered with a `queue` event as well as its reply;
   // the reply is for the caller's own error handling, the event is the state.
 
-  async queueAdd(text: string): Promise<PromptReply> {
-    return (await this.request((id) => ({ id, cmd: "queue_add", text }))) as PromptReply
+  async queueAdd(text: string, attachmentIds?: string[]): Promise<PromptReply> {
+    return (await this.request((id) => ({
+      id,
+      cmd: "queue_add",
+      text,
+      ...(attachmentIds?.length ? { attachmentIds } : {}),
+    }))) as PromptReply
   }
 
-  async queueUpdate(itemId: string, text: string): Promise<void> {
-    await this.request((id) => ({ id, cmd: "queue_update", itemId, text }))
+  /** `attachmentIds` omitted leaves the item's attachments alone; an empty
+      array clears them, which is how a queued chip is removed. */
+  async queueUpdate(itemId: string, text: string, attachmentIds?: string[]): Promise<void> {
+    await this.request((id) => ({
+      id,
+      cmd: "queue_update",
+      itemId,
+      text,
+      ...(attachmentIds ? { attachmentIds } : {}),
+    }))
   }
 
   async queueRemove(itemId: string): Promise<void> {

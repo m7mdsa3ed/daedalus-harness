@@ -6,6 +6,7 @@ import { SEARCH_LIMIT, searchEvents } from "../search.js";
 import { KnowledgeInputSchema, addKnowledge, deleteKnowledge, listAllKnowledge, listKnowledge } from "../knowledge.js";
 import { BundleSchema, exportBundle, importBundle } from "../backup.js";
 import { proxyGatewayRequest } from "../gateway-shim.js";
+import { proxyMcpRequest } from "../mcp-shim.js";
 import { getProfileQuota, getQuota, quotaCwd } from "../quota.js";
 import { profileUsage } from "../usage-api.js";
 import { getAgent, listAgents } from "../registry.js";
@@ -146,6 +147,11 @@ export function miscRoutes(
      `x-api-key` for the gateway itself), and a key the shim did not mint is a
      404. See gateway-shim.ts for the one repair it makes on the way back. */
   app.all("/gw/*", (c) => proxyGatewayRequest(c.req.raw));
+
+  /* The MCP OAuth shim, mounted the same way and for the same reason: the
+     credential is in the path, the route is outside /api, and what it fronts
+     is a library row's own URL with a fresh bearer on it (mcp-shim.ts). */
+  app.all("/mx/*", (c) => proxyMcpRequest(c.req.raw));
 
   /* Aggregate usage of the harness's own web-search MCP server: totals by tool
      and status, plus the most recent calls (`?limit=` caps the tail). */

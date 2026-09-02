@@ -1,3 +1,5 @@
+import type { AttachmentRef } from "@daedalus/protocol"
+
 import { describeError, markReported, type ErrorInfo } from "../errors"
 import type { Action } from "../store"
 
@@ -21,6 +23,10 @@ export function recordThreadError(
   context: string,
   opts: {
     retryText?: string
+    /** What the failed prompt carried — see `ErrorItem.retryAttachments`. Not
+        what Retry sends; what lets the row say what Retry will and will not
+        do, and what the "as file paths" variant re-sends. */
+    retryAttachments?: AttachmentRef[]
     /** False when the failure is this device's connection rather than the
         agent's answer: a reconnect is coming and it re-folds the transcript,
         so nothing in flight is over. */
@@ -40,6 +46,7 @@ export function recordThreadError(
     reason: info.title,
     detail: info.detail,
     retryText: opts.retryText,
+    retryAttachments: opts.retryAttachments,
     settle: opts.settle ?? true,
     /* This client's own account of a failure. Nothing on the server will ever
        replay it, which is what makes it a row an attach has to carry rather

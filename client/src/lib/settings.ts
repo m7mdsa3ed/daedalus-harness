@@ -277,7 +277,37 @@ export interface McpServerHttp {
   name: string
   url: string
   headers: { name: string; value: string }[]
+  /** How the row authenticates. `"none"` is a plain URL, possibly with static
+      headers somebody typed (a PAT). `"oauth"` means the tokens live on the
+      server and the agent is handed a loopback shim URL, never this one — see
+      `server/src/mcp-shim.ts`. A stored answer, discovered by the probe. */
+  auth: "none" | "oauth"
 }
+
+/** What the list route says about an `http` row's OAuth connection. Derived
+    server-side from the join; the tokens themselves never leave the server,
+    exactly as a profile's `apiKey` never does. */
+export type McpAuthState =
+  | { kind: "none" }
+  | {
+      kind: "oauth"
+      state: "connected" | "expired" | "disconnected"
+      /** Unix ms, or null when the authorization server reported no expiry. */
+      expiresAt: number | null
+      issuer: string
+      scope: string | null
+      /** Why the last attempt failed — so the row can say so instead of just
+          going quiet. */
+      error: string | null
+    }
+
+/** What `POST /api/mcp-servers/probe` answers: does this URL demand OAuth?
+    `unknown` is deliberately not "yes" — a 403 from a corporate proxy must
+    not read as "needs authorization". */
+export type McpAuthProbe =
+  | { kind: "none" }
+  | { kind: "oauth"; resource: string; issuer: string; scopesSupported: string[] }
+  | { kind: "unknown"; status: number; detail: string }
 
 /** One of the harness's own servers, in the library as a row that holds
     nothing but which one it is — command, env and credentials are synthesized
@@ -290,7 +320,21 @@ export interface McpServerBuiltin {
 }
 
 /** Library entries projects, profiles and threads link to by id. */
-export type McpServerDef = (McpServerStdio | McpServerHttp | McpServerBuiltin) & { id: string }
+export type McpServerDef = (McpServerStdio | McpServerHttp | McpServerBuiltin) & {
+  id: string
+  /** Only ever present on an `http` row the list route answered for; absent
+      on a row this client wrote optimistically. */
+  authState?: McpAuthState
+}
+
+/** Does this row resolve to nothing at spawn? An OAuth server nobody has
+    connected is not advertised to the agent at all — the rule the built-in
+    web-search row already sets, that a tool which cannot answer is worse than
+    an absent one — so the thread's tools read-out marks it rather than
+    listing a server that is not there. */
+export function mcpNeedsAuth(s: McpServerDef): boolean {
+  return s.type === "http" && s.auth === "oauth" && s.authState?.kind === "oauth" && s.authState.state !== "connected"
+}
 
 /** The one-line description a picker shows under an MCP server's name. */
 export function mcpSubtitle(s: McpServerDef): string {
@@ -299,7 +343,27 @@ export function mcpSubtitle(s: McpServerDef): string {
     if (s.builtin === "workflow") return "built-in · workflows"
     return "built-in · project knowledge base"
   }
-  return s.type === "http" ? s.url : [s.command, ...s.args].join(" ")
+  if (s.type !== "http") return [s.command, ...s.args].join(" ")
+  return s.auth === "oauth" ? `${s.url} · ${authSummary(s.authState)}` : s.url
+}
+
+/** The OAuth half of an `http` row's subtitle, in words. */
+export function authSummary(state: McpAuthState | undefined): string {
+  if (!state || state.kind !== "oauth") return "OAuth"
+  if (state.state === "disconnected") return "needs authorization"
+  if (state.state === "expired") return "authorization expired"
+  return state.expiresAt ? `connected · ${expiresIn(state.expiresAt)}` : "connected"
+}
+
+/** "expires in 42m" / "expired", coarse on purpose: the exact second is not a
+    thing anybody acts on, and the shim renews it without being asked. */
+export function expiresIn(at: number): string {
+  const ms = at - Date.now()
+  if (ms <= 0) return "expired"
+  const minutes = Math.round(ms / 60_000)
+  if (minutes < 60) return `expires in ${minutes}m`
+  const hours = Math.round(minutes / 60)
+  return hours < 48 ? `expires in ${hours}h` : `expires in ${Math.round(hours / 24)}d`
 }
 
 export interface SkillDef {
@@ -547,7 +611,7 @@ const sameIds = (a?: string[], b?: string[]): boolean =>
  * ordinary case rather than a race.
  *
  * Compared field by field rather than by a JSON round trip: the key order of a
- * parsed body is the server's and a stringify would compare it too, and the two
+ * parsed body is the server's and a stringify would compare it too, and the
  * client-only fields below must be excluded deliberately rather than by
  * accident.
  *

@@ -59,8 +59,9 @@ function fieldPrompt(field: ElicitationField, message: string, single: boolean):
 }
 
 /** Step dots: how many questions, which one is open, which are behind you.
-    Cheaper to read at a glance than "2 of 3", and it sits in the header where
-    the eye already is rather than competing with the actions. */
+    The current one is a pill, not a dot — position reads at a glance, which is
+    the one thing about a multi-question form a reader keeps wanting to know.
+    Cheaper than "2 of 3" and it sits in the header where the eye already is. */
 function StepDots({ total, current }: { total: number; current: number }) {
   return (
     <span aria-hidden className="flex shrink-0 items-center gap-1 pt-0.5">
@@ -68,8 +69,12 @@ function StepDots({ total, current }: { total: number; current: number }) {
         <span
           key={index}
           className={cn(
-            "size-1.5 rounded-full transition-colors",
-            index === current ? "bg-primary" : index < current ? "bg-primary/40" : "bg-border"
+            "h-1.5 rounded-full transition-all duration-200",
+            index === current
+              ? "w-3.5 bg-primary"
+              : index < current
+                ? "size-1.5 bg-primary/40"
+                : "size-1.5 bg-border"
           )}
         />
       ))}
@@ -122,17 +127,7 @@ function ElicitationStep({
       {choices && (
         <QuestionnaireChoices>
           {field.options.map((option) => (
-            <QuestionnaireChoice
-              key={option.value}
-              value={option.value}
-              /* Same material as everything else on this card: no outline, a
-                 recess against the tint, and a stronger fill of the accent when
-                 chosen. The kit's default is a bordered pill on a page
-                 background — correct on a settings form, a foreign object
-                 inside a borderless tinted card. The shortcut badge follows,
-                 or it is the one outlined thing left in the card. */
-              className="rounded-xl border-transparent bg-background/60 hover:bg-background/80 data-checked:border-transparent data-checked:bg-primary/15 [&_[data-slot=questionnaire-choice-shortcut]]:border-transparent [&_[data-slot=questionnaire-choice-shortcut]]:bg-primary/10"
-            >
+            <QuestionnaireChoice key={option.value} value={option.value}>
               <ProsePreview text={option.label} className="font-medium" />
               {option.description && (
                 <QuestionnaireChoiceDescription className="text-xs">
@@ -158,20 +153,15 @@ function ElicitationStep({
       )}
       {/* Free text. Alongside options this is the "Other" box: the questionnaire
           hands the field's name to whichever control was actually used, so
-          typing here replaces the selection instead of adding to it. */}
+          typing here replaces the selection instead of adding to it. The kit's
+          recessed field is already the same material as the choices' well, so
+          it needs no per-card overrides. */}
       {(!choices || field.customKey) && (
         <QuestionnaireInput
           type={field.kind === "number" ? "number" : "text"}
           defaultValue={choices ? undefined : field.defaultValue}
           placeholder={choices ? "Or type your own answer…" : "Type your answer…"}
-          // Squared off to match the choice cards; the "Other" box is quieter
-          // than the options it sits under, so it loses the filled background.
-          className={cn(
-            "rounded-xl border-transparent bg-background/60 text-sm",
-            // Under a set of options this is the "Other" box, so it stays
-            // quieter than they are — but it keeps their height and material.
-            choices && "bg-background/40"
-          )}
+          className="text-sm"
         />
       )}
       {/* No children: the primitive's own text already distinguishes a required
@@ -218,6 +208,7 @@ export function InlineElicitation({ elicitation }: { elicitation: PendingElicita
     0,
     fields.findIndex((field) => field.key === step)
   )
+  const currentField = fields[current]
 
   /* Same shell as the permission card — accent rail, tinted body, tinted action
      bar (components/agent-request). Both are "the turn has stopped and you are
@@ -364,13 +355,19 @@ export function InlineElicitation({ elicitation }: { elicitation: PendingElicita
             </Button>
           </div>
           <div className="ms-auto flex items-center gap-1.5">
-            <QuestionnaireSkip
-              size="sm"
-              variant="ghost"
-              className={cn(REQUEST_BUTTON, "text-muted-foreground")}
-            >
-              Skip this
-            </QuestionnaireSkip>
+            {/* Hidden, not disabled, on a required question: the primitive
+                refuses to skip one anyway, so a disabled button would only
+                advertise a dead key. A required question's way out is the
+                "Don't answer" on the left. */}
+            {!currentField?.required && (
+              <QuestionnaireSkip
+                size="sm"
+                variant="ghost"
+                className={cn(REQUEST_BUTTON, "text-muted-foreground")}
+              >
+                Skip this
+              </QuestionnaireSkip>
+            )}
             <QuestionnaireNext size="sm" className={REQUEST_BUTTON} />
             <QuestionnaireSubmit size="sm" className={REQUEST_BUTTON}>
               <CheckIcon aria-hidden className="size-3.5" />

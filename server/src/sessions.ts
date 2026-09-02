@@ -9,6 +9,8 @@ import { db, sessions as sessionsTable } from "./db/index.js";
 import { SESSION_LINKS, emptyLinks, linksOf, readLinks, unionLinks, writeLinks, type LinkSet } from "./db/links.js";
 import { materializeModelAllowlist, materializeWorkspace } from "./materialize.js";
 import { mcpServers as mcpLibrary } from "./library.js";
+import { isConnected as isMcpConnected } from "./mcp-oauth.js";
+import { mcpProxyUrlFor } from "./mcp-shim.js";
 import { personaEffort, resolvePersonaSpawn } from "./personas.js";
 import type { Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
@@ -33,12 +35,20 @@ import { SessionJournal } from "./session-journal.js";
 import { SessionSocket } from "./session-socket.js";
 import {
   JOURNALED_EVENTS,
+  type AttachmentRef,
   type HistoryLost,
   type PromptReply,
   type ThreadEvent,
   type WireError,
 } from "./protocol.js";
 import { enqueue } from "./queue.js";
+import {
+  claimAttachments,
+  claimedAttachmentIds,
+  deleteSessionAttachments,
+  sweepAttachments,
+} from "./attachments.js";
+import { sweepMaterialisedAttachments } from "./attachment-blocks.js";
 
 /** What the first prompt's opening words are cut to when they become a title. */
 const TITLE_SNIFF_MAX = 60;
@@ -295,9 +305,14 @@ export function mcpServersFor(
   /** The `workflow` server as this thread may have it — null for a thread
       that must not (a workflow step: one level, never a tree). */
   workflow: StdioMcpServer | null = null,
-): acp.McpServer[] {
+): { servers: acp.McpServer[]; skipped: string[] } {
   const linked = new Set(links.mcpServerIds);
-  const out: acp.McpServer[] = [];
+  const servers: acp.McpServer[] = [];
+  /** Linked rows that resolved to nothing and *could* have resolved to
+      something — an OAuth server nobody has connected. Not an error and not
+      journaled: nothing failed, the thread simply spawned without a tool it
+      was never able to use. */
+  const skipped: string[] = [];
   for (const s of mcpLibrary.list()) {
     if (!linked.has(s.id)) continue;
     if (s.type === "builtin") {
@@ -307,14 +322,25 @@ export function mcpServersFor(
           : s.builtin === "knowledge"
             ? knowledgeServer(project)
             : workflow;
-      if (built) out.push(built);
+      if (built) servers.push(built);
     } else if (s.type === "http") {
-      out.push({ type: "http", name: s.name, url: s.url, headers: s.headers });
+      /* An OAuth row is handed to the agent as the shim's loopback URL, never
+         its own: the token is short-lived and the child must never hold it
+         (mcp-shim.ts). Unconnected, it is not advertised at all — the rule the
+         built-in web-search row already sets, that a tool which cannot answer
+         is worse than an absent one. The user's static headers still travel,
+         since a row may carry both. */
+      if (s.auth !== "oauth") servers.push({ type: "http", name: s.name, url: s.url, headers: s.headers });
+      else {
+        const proxied = isMcpConnected(s.id) ? mcpProxyUrlFor(s.id) : "";
+        if (proxied) servers.push({ type: "http", name: s.name, url: proxied, headers: s.headers });
+        else skipped.push(s.id);
+      }
     } else {
-      out.push({ name: s.name, command: s.command, args: s.args, env: s.env });
+      servers.push({ name: s.name, command: s.command, args: s.args, env: s.env });
     }
   }
-  return out;
+  return { servers, skipped };
 }
 
 /**
@@ -470,6 +496,12 @@ export class SessionManager {
     // Retention is checked at boot and then hourly, so a server that runs for
     // months does not accumulate every thread it ever ran.
     setInterval(() => this.pruneJournals(), 3_600_000).unref();
+    /* Uploads nobody ever sent, on the same clock. An attachment is claimed by
+       the prompt that references it (see attachments.ts); one that never was
+       is a draft the user abandoned, and keeping it is a disk leak with no
+       reader. */
+    sweepAttachments();
+    setInterval(() => sweepAttachments(), 3_600_000).unref();
   }
 
   /**
@@ -652,6 +684,17 @@ export class SessionManager {
       sets.push(this.effectiveLinks(other));
     }
     materializeWorkspace(project.cwd, unionLinks(...sets));
+    /* The attachments materialised into `<cwd>/.daedalus/attachments/` follow
+       the same rule and for the same reason: the directory is shared by every
+       thread of the project, so the keep-set is the union across every live
+       thread in this cwd — sweeping one thread's alone would delete the file
+       the thread beside it just linked. `.daedalus/` is not covered by the
+       project's own gitignore (we write one into it), so this sweep is the only
+       thing keeping it from growing. */
+    const cwds = [session, ...this.sessions.values()].filter(
+      (s) => s.deletedAt === null && (s === session || (!s.exited && s.project?.cwd === project.cwd)),
+    );
+    sweepMaterialisedAttachments(project.cwd, claimedAttachmentIds(cwds.map((s) => s.id)));
   }
 
   // ---- the event log (see session-journal.ts for the table itself) ----
@@ -1271,7 +1314,17 @@ export class SessionManager {
        definition that spawns itself the obvious failure. One level. */
     const workflow =
       this.workflowRunner && !session.parentSessionId ? workflowServer(session, this.workflowRunner) : null;
-    const mcpServers = mcpServersFor(this.effectiveLinks(session, profile), project, getConfig(), workflow);
+    const { servers: mcpServers, skipped } = mcpServersFor(
+      this.effectiveLinks(session, profile),
+      project,
+      getConfig(),
+      workflow,
+    );
+    if (skipped.length) {
+      console.log(
+        `[mcp] ${session.id}: skipped ${skipped.length} unauthorized MCP server(s) — connect them in Settings › MCP servers`,
+      );
+    }
     return {
       mcpServers,
       websearchViaMcp: mcpServers.some((s) => s.name === WEB_SEARCH_SERVER_NAME),
@@ -1588,17 +1641,22 @@ export class SessionManager {
     id: string,
     text: string,
     peer?: Peer,
-    opts: { steer?: boolean } = {},
+    opts: { steer?: boolean; attachmentIds?: string[]; forceLink?: boolean } = {},
   ): Promise<PromptReply> {
     const session = this.sessions.get(id);
     if (!session) throw new Error("this thread has no running agent");
     const bridge = await this.whenSpawnable(session);
+    /* Claimed before the turn starts, so a row exists to sweep against — and
+       before the queue branch too, since a queued message's attachments are
+       just as much this thread's as a sent one's. Unknown or foreign ids are
+       dropped rather than refused (attachments.ts). */
+    const attachments = claimAttachments(opts.attachmentIds ?? [], session.id);
     if (bridge.promptActive && !opts.steer) {
-      const item = enqueue(session.id, text);
+      const item = enqueue(session.id, text, attachments);
       this.queue.emitQueue(session);
       return { queued: true, itemId: item.id };
     }
-    return this.startTurn(session, bridge, text, peer);
+    return this.startTurn(session, bridge, text, peer, { attachments, forceLink: opts.forceLink });
   }
 
   /** Put a prompt on the wire. `peer` is the origin (told nothing — it already
@@ -1609,11 +1667,12 @@ export class SessionManager {
     bridge: AcpBridge,
     text: string,
     peer: Peer | undefined,
+    opts: { attachments?: AttachmentRef[]; forceLink?: boolean } = {},
   ): { turnId: string } {
     /* One id per logical turn: steering (a second prompt while one is in
        flight) joins the turn already running rather than starting another. */
     const turnId = bridge.promptActive && bridge.currentTurnId ? bridge.currentTurnId : randomUUID();
-    bridge.prompt(text, peer, turnId);
+    bridge.prompt(text, peer, turnId, opts);
     if (text && session.title === "New thread") {
       session.title = text.slice(0, TITLE_SNIFF_MAX);
       this.persist(session);
@@ -1629,15 +1688,20 @@ export class SessionManager {
   private queue = new SessionQueue({
     emit: (session, event) => this.emit(session, event),
     whenSpawnable: (session) => this.whenSpawnable(session),
-    startTurn: (session, bridge, text, peer) => this.startTurn(session, bridge, text, peer),
+    startTurn: (session, bridge, text, peer, opts) => this.startTurn(session, bridge, text, peer, opts),
   });
 
-  queueAdd(id: string, text: string): PromptReply {
-    return this.queue.add(this.requireSession(id), text);
+  queueAdd(id: string, text: string, attachmentIds?: string[]): PromptReply {
+    const session = this.requireSession(id);
+    return this.queue.add(session, text, claimAttachments(attachmentIds ?? [], session.id));
   }
 
-  queueUpdate(id: string, itemId: string, text: string): void {
-    this.queue.update(this.requireSession(id), itemId, text);
+  queueUpdate(id: string, itemId: string, text: string, attachmentIds?: string[]): void {
+    const session = this.requireSession(id);
+    /* Re-claimed rather than trusted: an edit may name an attachment added on
+       another device, and the ids on the row are already this thread's. */
+    if (attachmentIds) claimAttachments(attachmentIds, session.id);
+    this.queue.update(session, itemId, text, attachmentIds);
   }
 
   queueRemove(id: string, itemId: string): void {
@@ -1786,9 +1850,13 @@ export class SessionManager {
     this.retire(session);
     this.sessions.delete(id);
     // ON DELETE CASCADE takes the event rows with it; the FTS rows have no
-    // foreign key (virtual table), so they go by hand.
+    // foreign key (virtual table), so they go by hand — and so do the
+    // attachments, whose rows are deliberately not cascaded either (a cascade
+    // would take a row out from under the bytes this process still owns on
+    // disk). Children first, which the loop above already did.
     db.delete(sessionsTable).where(eq(sessionsTable.id, id)).run();
     deleteSearchIndex([id]);
+    deleteSessionAttachments(id);
     return true;
   }
 
@@ -1804,10 +1872,10 @@ export class SessionManager {
     getSession: (id) => this.sessions.get(id),
     journal: this.log,
     prompt: (id, text, peer, opts) => this.prompt(id, text, peer, opts),
-    queueAdd: (id, text) => this.queueAdd(id, text),
+    queueAdd: (id, text, attachmentIds) => this.queueAdd(id, text, attachmentIds),
     queueSendNow: (id, itemId) => this.queueSendNow(id, itemId),
     queueSteer: (id, itemId) => this.queueSteer(id, itemId),
-    queueUpdate: (id, itemId, text) => this.queueUpdate(id, itemId, text),
+    queueUpdate: (id, itemId, text, attachmentIds) => this.queueUpdate(id, itemId, text, attachmentIds),
     queueRemove: (id, itemId) => this.queueRemove(id, itemId),
     queueClear: (id) => this.queueClear(id),
     enrichError: (session, error) => enrichError(session, error),

@@ -5,9 +5,11 @@ import * as acp from "@agentclientprotocol/sdk";
 import { profileSupports, type Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 import { mentionLinks } from "./mentions.js";
+import { attachmentBlocks } from "./attachment-blocks.js";
 import type { PersonaSpawn } from "./personas.js";
 import { getAgent, resolveSpawn } from "./registry.js";
 import type {
+  AttachmentRef,
   AutoAnswer,
   AutonomyAnswer,
   HistoryLost,
@@ -107,9 +109,20 @@ const SUBAGENT_CAPABILITY = { subagents: {} } as unknown as Partial<acp.ClientCa
  * two are moved to a private method name on the way in (`agentStream`), where
  * the SDK has nothing to say about them, and the bridge listens on both names.
  * Goes away the day the SDK's union carries the RFD.
+ *
+ * `_daedalus/subagent_usage` rides the same detour. It is ours, not the RFD's
+ * — the workflow runner emits it server-side, where no validator ever sees it
+ * — and it is listed here so an agent may say it too: the fake agent draws a
+ * whole run with it, and a runtime that one day reports what a child spent has
+ * somewhere to put it. The bridge forwards it whole either way, as it does
+ * every other update.
  */
 const SUBAGENT_UPDATE_METHOD = "_daedalus/subagent_update";
-const SUBAGENT_UPDATE_KINDS: ReadonlySet<string> = new Set(["subagent_spawned", "subagent_state_update"]);
+const SUBAGENT_UPDATE_KINDS: ReadonlySet<string> = new Set([
+  "subagent_spawned",
+  "subagent_state_update",
+  "_daedalus/subagent_usage",
+]);
 
 /** The structural check the rerouted frames are parsed with: the shape the
     bridge itself relies on. An agent that sends something else is speaking a
@@ -223,6 +236,13 @@ export interface BridgeHost {
       mid-tool-call. Nothing about autonomy travels in the handshake at all —
       the agent is never told, which is the point. */
   autonomy(): AutonomyPolicy | null;
+  /** The model's half of the attachment decision (delivery.ts) — the modalities
+      the thread's current model declares, and whether its profile carries a
+      catalog at all. A callback rather than a BridgeOption for the reason
+      `autonomy` is one: both the profile and the model change on a running
+      agent now, so a value captured at spawn would describe the wrong provider
+      by the time a queued message drained. */
+  deliveryContext(): { modalities: string[] | undefined; hasCatalog: boolean };
   /** A parked question fell through to `askFallback` — nobody came. Counted on
       the session rather than the bridge (which dies with the process) because
       it is what makes a run `blocked` rather than merely finished: the state a
@@ -921,11 +941,28 @@ export class AcpBridge {
    * so a prompt that fails is reported once, on `turn_ended`, rather than twice
    * in two shapes.
    */
-  prompt(text: string, origin: Peer | undefined, turnId: string): void {
+  prompt(
+    text: string,
+    origin: Peer | undefined,
+    turnId: string,
+    opts: { attachments?: AttachmentRef[]; forceLink?: boolean } = {},
+  ): void {
     const sessionId = this.requireSession();
-    // The other peers never see this command (it goes to the agent, not to
-    // them), so tell them a turn started and whose words started it.
-    this.host.emit({ ev: "turn_started", seq: 0, turnId, text }, origin);
+    const attachments = opts.attachments ?? [];
+    /* The other peers never see this command (it goes to the agent, not to
+       them), so tell them a turn started and whose words started it — and what
+       it carried. The refs are journaled with the event, which is what makes a
+       replayed user bubble still draw its chips with nothing else stored. */
+    this.host.emit(
+      {
+        ev: "turn_started",
+        seq: 0,
+        turnId,
+        text,
+        ...(attachments.length > 0 ? { attachments } : {}),
+      },
+      origin,
+    );
     if (this.inflight === 0) {
       this.currentTurnId = turnId;
       this.currentTurnPrompt = text;
@@ -933,14 +970,43 @@ export class AcpBridge {
       this.turnStartedAt = performance.now();
       this.ttftSent = false;
     }
+    /* Decided here, at send. Reading the files costs a `readFileSync` per
+       attachment and the base64 is never held between turns. */
+    const attach = attachmentBlocks({
+      refs: attachments,
+      caps: this.agentCapabilities.promptCapabilities,
+      cwd: this.cwd,
+      forceLink: opts.forceLink,
+      ...this.host.deliveryContext(),
+    });
+    for (const note of attach.notes) {
+      // Logged even on the happy branch: "sent as an image" is the line that
+      // makes the degrade below it legible when it appears.
+      console.log(`[attachments] ${note.name}: ${note.delivery} — ${note.reason}`);
+    }
+    const outgoing = text + attach.textSuffix;
+    const blocks = attach.blocks;
+
     this.inflight++;
     void this.connection.agent
       .request(acp.methods.agent.session.prompt, {
         sessionId,
-        /* The text is the prompt; the links are what an `@path` in it refers
-           to, for an agent that reads the protocol rather than the prose. Only
-           paths that exist inside the cwd become links — see mentions.ts. */
-        prompt: [{ type: "text", text }, ...mentionLinks(this.cwd, text)],
+        /* Three kinds of block, and only the first is the prompt.
+
+           The text is what the user typed. The attachment blocks are the bytes
+           they attached, each on the branch `resolveDelivery` picks for it
+           against this runtime's capabilities and this thread's model — which
+           is decided HERE, at send, and never at attach time, because a message
+           queued twenty minutes ago must be resolved against the model it is
+           actually being sent to. And the links are what an `@path` in the text
+           refers to, for an agent that reads the protocol rather than the
+           prose; only paths that exist inside the cwd become links — see
+           mentions.ts.
+
+           `attachmentBlocks` may append to the text as well (a materialised
+           path, or `[attached: shot.png]`), for the reason mentions.ts states:
+           the text is what every runtime reads without being taught anything. */
+        prompt: [{ type: "text", text: outgoing }, ...blocks, ...mentionLinks(this.cwd, outgoing)],
       })
       .then(
         (response) =>
@@ -1176,6 +1242,15 @@ export class AcpBridge {
         modes: this.modes,
         modeId: this.modes?.currentModeId,
         configOptions: this.configOptions,
+        /* The runtime's half of the attachment decision, on a carrier that
+           already exists: absolute, optional and journaled, exactly as
+           `update.sessionId` was added for subagents, so every event journaled
+           before this replays with its shape unchanged. It travels with the
+           config rather than on an event of its own because it is the same kind
+           of statement — what this session can be asked to do. */
+        ...(this.agentCapabilities.promptCapabilities
+          ? { promptCapabilities: this.agentCapabilities.promptCapabilities }
+          : {}),
       },
       except,
     );

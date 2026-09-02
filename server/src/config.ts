@@ -50,6 +50,21 @@ export interface ServerConfig {
       silently starts in the middle. 0 disables the archive entirely, which is
       the pre-archive behaviour. Defaults to 30. */
   sessionJournalRetentionDays: number;
+  /**
+   * Origin (scheme + host, no trailing slash) an OAuth authorization server
+   * should redirect back to when connecting an MCP server — the `/oauth/mcp/
+   * callback` route hangs off it.
+   *
+   * Unset is the ordinary case: the base is then derived from the request that
+   * started the flow (`X-Forwarded-Proto`/`X-Forwarded-Host`, then `Origin`,
+   * then `Host`), because the browser is already talking to this server and
+   * whatever origin it used is reachable by definition. Set it for a named
+   * tunnel or a reverse proxy — and for an authorization server that only
+   * accepts a loopback redirect, which is the one case nothing can be derived
+   * for. It has to match what was registered byte for byte; when it changes,
+   * the client is re-registered rather than reused.
+   */
+  mcpOauthRedirectBase?: string;
   fcm?: FcmConfig;
   webSearch?: WebSearchConfig;
 }
@@ -104,6 +119,7 @@ export function loadConfig(): ServerConfig {
     port: Number(process.env.DAEDALUS_PORT ?? process.env.PORT) || existing.port || 8791,
     sessionIdleMinutes: existing.sessionIdleMinutes ?? 30,
     sessionJournalRetentionDays: existing.sessionJournalRetentionDays ?? 30,
+    ...(existing.mcpOauthRedirectBase ? { mcpOauthRedirectBase: existing.mcpOauthRedirectBase } : {}),
     ...(existing.fcm ? { fcm: existing.fcm as FcmConfig } : {}),
     ...(existing.webSearch ? { webSearch: existing.webSearch as WebSearchConfig } : {}),
   };

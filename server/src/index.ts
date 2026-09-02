@@ -21,6 +21,7 @@ import { attachTerminal, killProjectTerminals } from "./terminals.js";
 import { adoptOrphans, stopAllIdes } from "./ide.js";
 import { parseIdePath, proxyIdeUpgrade } from "./ide-proxy.js";
 import { configureGatewayShim } from "./gateway-shim.js";
+import { configureMcpShim } from "./mcp-shim.js";
 import { Push } from "./push.js";
 import { addNotification } from "./notifications.js";
 import { backfillSearchIndex } from "./search.js";
@@ -28,6 +29,7 @@ import { bearerToken } from "./routes/helpers.js";
 import { miscRoutes } from "./routes/misc.js";
 import { profileRoutes } from "./routes/profiles.js";
 import { workspaceRoutes } from "./routes/workspace.js";
+import { attachmentRoutes } from "./routes/attachments.js";
 import { ideRoutes } from "./routes/ide.js";
 import { libraryRoutes } from "./routes/library.js";
 import { sessionRoutes } from "./routes/sessions.js";
@@ -42,6 +44,9 @@ backfillSearchIndex();
    spawn from what this hands out, and a spawn that predates it would go to the
    gateway direct (correct, but without the shim's repair). */
 configureGatewayShim({ port: config.port });
+/* The same bargain for an MCP server that demands OAuth: the child is handed
+   `/mx/<key>/<serverId>` and the token is attached here, per request. */
+configureMcpShim({ port: config.port });
 // Editors a previous process left running: taken back under the same key so
 // browser frames survive a restart, or cleaned up. See adoptOrphans.
 await adoptOrphans();
@@ -181,7 +186,10 @@ app.use("/api/*", async (c, next) => {
 
 /* The routes, by domain (src/routes/). Registered after the middleware so
    everything under /api is behind the token; /api/health exempts itself above,
-   and /ide/* + /gw/* + /wf/* + /rt/* are outside /api with the key-in-path rule
+   and /ide/* + /gw/* + /mx/* + /wf/* + /rt/* are outside /api with the key-in-path
+   rule — as is /oauth/mcp/callback, which is unauthenticated by necessity
+   (an authorization server redirects a browser there and no bearer survives
+   that hop; its `state` is the credential instead, see routes/library.ts)
    instead — /rt (the routine fire door) additionally accepts a trigger's own
    stored token in that position, because a per-boot key is not a credential an
    alerting tool outside this process can hold across a restart. The
@@ -189,6 +197,7 @@ app.use("/api/*", async (c, next) => {
 miscRoutes(app, { config, sessions, push });
 profileRoutes(app, { sessions });
 workspaceRoutes(app);
+attachmentRoutes(app);
 ideRoutes(app);
 libraryRoutes(app);
 sessionRoutes(app, { sessions });

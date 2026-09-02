@@ -19,14 +19,15 @@
    wrapped under its own shortcut. A row is one line here: the label never
    wraps, and the chord sits at the trailing edge with a gap it cannot lose. */
 import type * as React from "react"
-import { PlusIcon } from "lucide-react"
+import { PanelsTopLeft, PlusIcon } from "lucide-react"
 
 import {
   DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Shortcut } from "@/components/shortcut"
 import { PANEL_ICONS } from "@/components/workspace/panel-kinds"
@@ -79,7 +80,12 @@ function PanelRow({
   )
 }
 
-/** The workspace rows, for whichever menu is holding them today. */
+/** The workspace rows, for whichever menu is holding them today.
+
+    New thread is a root row and the panels are a submenu behind it: opening a
+    panel is the rarer of the two and it is a *list* — one line that opens
+    sideways beats two more lines the reader walks past to reach the thread's
+    own actions. */
 export function WorkspacePanelItems({
   onNewTab,
   onOpen,
@@ -91,23 +97,23 @@ export function WorkspacePanelItems({
   canOpenPanels: boolean
 }) {
   return (
-    <>
-      <DropdownMenuGroup>
-        <PanelRow
-          icon={PlusIcon}
-          label="New thread"
-          hint="A fresh conversation in this workspace"
-          shortcut="newThread"
-          onClick={onNewTab}
-        />
-      </DropdownMenuGroup>
+    <DropdownMenuGroup>
+      <PanelRow
+        icon={PlusIcon}
+        label="New thread"
+        hint="A fresh conversation in this workspace"
+        shortcut="newThread"
+        onClick={onNewTab}
+      />
       {canOpenPanels && (
-        <>
-          <DropdownMenuSeparator />
-          <DropdownMenuGroup>
-            <DropdownMenuLabel className="px-3 py-1.5 text-[10px] font-medium tracking-widest uppercase">
-              Open a panel
-            </DropdownMenuLabel>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <PanelsTopLeft />
+            Open a panel
+          </DropdownMenuSubTrigger>
+          {/* Same sizing as the menu that holds it: a submenu is anchored to
+              its trigger row, so without this the hints would wrap. */}
+          <DropdownMenuSubContent className="w-auto max-w-[min(20rem,calc(100vw-1.5rem))] min-w-60">
             {OPENABLE.map((entry) => (
               <PanelRow
                 key={entry.kind}
@@ -118,9 +124,9 @@ export function WorkspacePanelItems({
                 onClick={() => onOpen(entry.kind)}
               />
             ))}
-          </DropdownMenuGroup>
-        </>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
       )}
-    </>
+    </DropdownMenuGroup>
   )
 }

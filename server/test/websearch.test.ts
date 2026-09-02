@@ -111,19 +111,19 @@ await test("library gate: linked + configured -> server; linked + unconfigured -
     fetchModel: "server-fetch",
   });
   let cfg = await import("../src/config.js").then((m) => m.loadConfig());
-  assert.deepEqual(mcpServersFor({ mcpServerIds: [] }, project, cfg), [], "not linked -> not offered");
-  const linked = mcpServersFor({ mcpServerIds: [row.id] }, project, cfg);
+  assert.deepEqual(mcpServersFor({ mcpServerIds: [] }, project, cfg).servers, [], "not linked -> not offered");
+  const { servers: linked } = mcpServersFor({ mcpServerIds: [row.id] }, project, cfg);
   assert.equal(linked.length, 1);
   assert.equal(linked[0].name, WEB_SEARCH_SERVER_NAME);
   writeConfig();
   cfg = await import("../src/config.js").then((m) => m.loadConfig());
-  assert.deepEqual(mcpServersFor({ mcpServerIds: [row.id] }, project, cfg), [], "linked but unconfigured -> nothing");
+  assert.deepEqual(mcpServersFor({ mcpServerIds: [row.id] }, project, cfg).servers, [], "linked but unconfigured -> nothing");
 });
 
 await test("knowledge builtin resolves with the project's id in env", async () => {
   const row = mcpServers.ensureBuiltin("knowledge");
   const cfg = await import("../src/config.js").then((m) => m.loadConfig());
-  const [server] = mcpServersFor({ mcpServerIds: [row.id] }, { id: "proj-42" }, cfg);
+  const [server] = mcpServersFor({ mcpServerIds: [row.id] }, { id: "proj-42" }, cfg).servers;
   assert.ok(server && "env" in server, "stdio def");
   assert.ok(server.env!.some((e) => e.name === "KNOWLEDGE_PROJECT_ID" && e.value === "proj-42"));
 });

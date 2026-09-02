@@ -1,7 +1,13 @@
 /* eslint-disable react-refresh/only-export-components */
 import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
-import type { QueuedMessage, QuotaSnapshot, SessionUpdate, SubagentState } from "@daedalus/protocol"
+import type {
+  AttachmentRef,
+  QueuedMessage,
+  QuotaSnapshot,
+  SessionUpdate,
+  SubagentState,
+} from "@daedalus/protocol"
 // Value import, but tools.ts imports only *types* from here — erased at build,
 // so there is no runtime cycle.
 import {
@@ -38,6 +44,13 @@ export interface TextItem {
   kind: "user" | "agent" | "thought" | "notice"
   id: string
   text: string
+  /** What this message carried, on a user bubble. References, never bytes —
+      the chip fetches `/api/attachments/:id` (see `AttachmentRef`). Journaled
+      on `turn_started`, so a replayed bubble draws the same chips a live one
+      did. `inlineData` is the exception, and only for the *agent's* copy: a
+      `session/load` replay hands back image blocks the harness has no row for
+      (see `user_message_chunk` below). */
+  attachments?: (AttachmentRef & { inlineData?: string; oversized?: boolean })[]
   /** Epoch ms this client first saw the item. Absent on anything rebuilt from
       a session/load replay: the journal carries no clock, so a replayed item
       has no honest time to show and shows none rather than the reload's. */
@@ -190,6 +203,17 @@ export interface ErrorItem {
   detail?: string
   /** The prompt this failure killed. Present => the row offers Retry. */
   retryText?: string
+  /** What that prompt carried, when it carried anything.
+      Retry itself is a **text** path by construction (`turn_ended.promptText`),
+      and quietly re-attaching bytes to a re-sent string is a second send the
+      user did not compose — so this is not what Retry sends. It is what makes
+      the row *say so* ("Retry (text only)"), because a plain Retry on a turn
+      that had an image produces prose referring to a picture that is no longer
+      there, which looks like a bug rather than a rule. It is also what the one
+      exception reads: "Retry as file paths", for the failure the whole
+      capability story exists around — a model whose catalog claims `image` and
+      whose provider refuses it anyway. */
+  retryAttachments?: AttachmentRef[]
   /** This client wrote this row; no journal will ever produce it. What makes it
       survive an attach that replaces the transcript — see lib/thread/carry.ts.
       Absent on the error a `turn_ended` carries, which the replay brings back
@@ -311,6 +335,12 @@ export interface ThreadState {
   modes: acp.SessionModeState | null
   /** Agent config options (model, thinking level, …). */
   configOptions: acp.SessionConfigOption[]
+  /** What the *runtime* can carry in a prompt, from the `initialize`
+      handshake — the agent's half of the attachment decision (`resolveDelivery`
+      in @daedalus/delivery). Null until a session has said, which is the
+      ordinary state of a draft: the composer falls back to what the option
+      probe learned for the (profile, agent) pair. */
+  promptCapabilities: acp.PromptCapabilities | null
   /** Slash commands the agent advertises (available_commands_update). */
   availableCommands: acp.AvailableCommand[]
   /** Cumulative token usage from the last completed turn. */
@@ -368,6 +398,7 @@ export const emptyThread: ThreadState = {
   queue: [],
   modes: null,
   configOptions: [],
+  promptCapabilities: null,
   availableCommands: [],
   usage: null,
   turnUsage: {},
@@ -476,6 +507,35 @@ function mergeMeta(
   return merged
 }
 
+/** Past this an inline image from a replay is described rather than held. */
+const MAX_INLINE_HISTORY_IMAGE_BYTES = 256 * 1024
+
+function pushHistoryImage(
+  items: ThreadItem[],
+  content: { data: string; mimeType: string },
+  at?: number
+): ThreadItem[] {
+  // base64 is 4/3, near enough for a threshold.
+  const size = Math.floor((content.data.length * 3) / 4)
+  const oversized = size > MAX_INLINE_HISTORY_IMAGE_BYTES
+  const ref = {
+    // Not a harness id — nothing will ever fetch it. It exists so the chip has
+    // a React key and so the shape matches every other attachment.
+    id: `history:${items.length}:${size}`,
+    name: oversized ? "large image (from history)" : "image",
+    mimeType: content.mimeType,
+    size,
+    ...(oversized ? { oversized: true } : { inlineData: `data:${content.mimeType};base64,${content.data}` }),
+  }
+  /* Onto the user bubble this chunk belongs to, when one is already open: a
+     runtime sends the prose and the picture as two chunks of one message. */
+  const last = items[items.length - 1]
+  if (last && last.kind === "user" && !last.parentId) {
+    return [...items.slice(0, -1), { ...last, attachments: [...(last.attachments ?? []), ref] }]
+  }
+  return [...items, { kind: "user", id: mintItemId("user"), text: "", at, attachments: [ref] }]
+}
+
 export function applySessionUpdate(
   items: ThreadItem[],
   update: SessionUpdate,
@@ -503,6 +563,23 @@ export function applySessionUpdate(
       return appendText(items, kind, update.content.text, at, owner)
     }
     case "user_message_chunk": {
+      /* An image the agent is replaying back at us. It reaches here only on a
+         `session/load` (a live prompt's own attachments are drawn from
+         `turn_started`'s refs), and dropping it — which is what this line did
+         for every non-text block — is why a replayed prompt that carried a
+         picture used to show the prose and silently lose it.
+
+         There is no harness row behind this one: it is the agent's copy, so it
+         becomes an attachment with an inline data URL instead of an id. And it
+         is capped, because those updates are journaled and a history with
+         twenty images would otherwise write twenty base64 blobs into
+         `session_events`: over the cap the chip says "large image (from
+         history)" rather than holding megabytes in the store. The journal cost
+         is then bounded by the agent's own history rather than by anything the
+         composer does. */
+      if (update.content.type === "image" && !owner) {
+        return pushHistoryImage(items, update.content, at)
+      }
       if (update.content.type !== "text") return items
       /* A subagent's "user" turns are its tool results and the brief it was
          handed, echoed by the runtime for the model's benefit. Nobody typed
@@ -862,9 +939,21 @@ export function pushUserMessage(
   text: string,
   at?: number,
   turnId?: string,
-  local?: boolean
+  local?: boolean,
+  attachments?: TextItem["attachments"]
 ): ThreadItem[] {
-  return [...items, { kind: "user", id: mintItemId("user"), text, at, turnId, local }]
+  return [
+    ...items,
+    {
+      kind: "user",
+      id: mintItemId("user"),
+      text,
+      at,
+      turnId,
+      local,
+      ...(attachments?.length ? { attachments } : {}),
+    },
+  ]
 }
 
 /** null only when neither side reported the field — keeps optional stats hidden. */
@@ -958,7 +1047,14 @@ export type Action =
   | { type: "update"; id: string; update: SessionUpdate; allowUserChunks?: boolean; sessionId?: string }
   /** `local` = this device typed it (see `TextItem.local`); the replay's own
       user bubbles and the ones a `turn_started` mints are not. */
-  | { type: "user-message"; id: string; text: string; turnId?: string; local?: boolean }
+  | {
+      type: "user-message"
+      id: string
+      text: string
+      turnId?: string
+      local?: boolean
+      attachments?: TextItem["attachments"]
+    }
   | { type: "tag-user-turn"; id: string; turnId: string }
   /** Take back an optimistic user bubble: the server queued the words instead
       of sending them, and the queue row is where they show now. */
@@ -973,6 +1069,7 @@ export type Action =
       reason?: string
       detail?: string
       retryText?: string
+      retryAttachments?: AttachmentRef[]
       settle?: boolean
       /** Written by this client rather than replayed from a journal — see
           `ErrorItem.local`. */
@@ -992,6 +1089,8 @@ export type Action =
       id: string
       modes: acp.SessionModeState | null
       configOptions?: acp.SessionConfigOption[]
+      /** Same hole, same rule: absent means unchanged. */
+      promptCapabilities?: acp.PromptCapabilities
     }
   | { type: "mode"; id: string; modeId: string }
   | { type: "config-options"; id: string; configOptions: acp.SessionConfigOption[] }
@@ -1178,7 +1277,8 @@ export function reducer(state: State, action: Action): State {
           action.text,
           Date.now(),
           action.turnId,
-          action.local
+          action.local,
+          action.attachments
         ),
       })
     case "tag-user-turn": {
@@ -1228,7 +1328,10 @@ export function reducer(state: State, action: Action): State {
       if (last?.kind === "error" && last.title === action.title && last.reason === action.reason) {
         if (!action.retryText || last.retryText) return state
         return withThread(state, action.id, {
-          items: [...items.slice(0, -1), { ...last, retryText: action.retryText }],
+          items: [
+            ...items.slice(0, -1),
+            { ...last, retryText: action.retryText, retryAttachments: action.retryAttachments },
+          ],
         })
       }
       const withRow: ThreadItem[] = [
@@ -1240,6 +1343,7 @@ export function reducer(state: State, action: Action): State {
           reason: action.reason,
           detail: action.detail,
           retryText: action.retryText,
+          retryAttachments: action.retryAttachments,
           local: action.local,
           at: Date.now(),
         },
@@ -1280,6 +1384,8 @@ export function reducer(state: State, action: Action): State {
       return withThread(state, action.id, {
         modes: action.modes,
         configOptions: action.configOptions ?? thread(state, action.id).configOptions,
+        promptCapabilities:
+          action.promptCapabilities ?? thread(state, action.id).promptCapabilities,
       })
     case "mode": {
       const t = thread(state, action.id)

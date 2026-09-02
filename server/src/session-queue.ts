@@ -1,10 +1,11 @@
 import type { AcpBridge } from "./acp-bridge.js";
-import type { PromptReply, ThreadEvent } from "./protocol.js";
+import type { AttachmentRef, PromptReply, QueuedMessage, ThreadEvent } from "./protocol.js";
 import {
   clearQueue,
   combineQueued,
   enqueue,
   listQueue,
+  queuedAttachmentIds,
   removeQueued,
   removeQueuedMany,
   updateQueued,
@@ -21,7 +22,13 @@ export interface QueueHost {
   emit(session: Session, event: ThreadEvent): void;
   /** The bridge a prompt may be put on, once it exists and is ready. */
   whenSpawnable(session: Session): Promise<AcpBridge>;
-  startTurn(session: Session, bridge: AcpBridge, text: string, peer: Peer | undefined): { turnId: string };
+  startTurn(
+    session: Session,
+    bridge: AcpBridge,
+    text: string,
+    peer: Peer | undefined,
+    opts?: { attachments?: AttachmentRef[] },
+  ): { turnId: string };
 }
 
 // ---- the queue ----
@@ -46,7 +53,9 @@ export class SessionQueue {
     if (!bridge || bridge.promptActive || session.queueChain) return null;
     const items = listQueue(session.id);
     if (items.length === 0) return null;
-    const result = this.host.startTurn(session, bridge, combineQueued(items), undefined);
+    const result = this.host.startTurn(session, bridge, combineQueued(items), undefined, {
+      attachments: attachmentsOf(items),
+    });
     removeQueuedMany(session.id, items.map((item) => item.id));
     this.emitQueue(session);
     return result;
@@ -55,16 +64,18 @@ export class SessionQueue {
   /** `prompt` from a client that already knows the thread is busy. On an idle
       thread it drains straight away — one path, so a client whose picture of
       the turn was stale still gets its words sent. */
-  add(session: Session, text: string): PromptReply {
-    const item = enqueue(session.id, text);
+  add(session: Session, text: string, attachments: AttachmentRef[] = []): PromptReply {
+    const item = enqueue(session.id, text, attachments);
     this.emitQueue(session);
     return this.drain(session) ?? { queued: true, itemId: item.id };
   }
 
   /* The three edits need no process: a parked queue on an archived thread is
      edited without spawning an agent to do it. */
-  update(session: Session, itemId: string, text: string): void {
-    if (!updateQueued(session.id, itemId, text)) throw new Error("that queued message is gone");
+  update(session: Session, itemId: string, text: string, attachmentIds?: string[]): void {
+    if (!updateQueued(session.id, itemId, text, attachmentIds)) {
+      throw new Error("that queued message is gone");
+    }
     this.emitQueue(session);
   }
 
@@ -84,7 +95,9 @@ export class SessionQueue {
     const bridge = await this.host.whenSpawnable(session);
     const item = listQueue(session.id).find((entry) => entry.id === itemId);
     if (!item) throw new Error("that queued message is gone");
-    const result = this.host.startTurn(session, bridge, item.text, undefined);
+    const result = this.host.startTurn(session, bridge, item.text, undefined, {
+      attachments: item.attachments ?? [],
+    });
     removeQueued(session.id, itemId);
     this.emitQueue(session);
     return result;
@@ -128,9 +141,26 @@ export class SessionQueue {
        the queue is exactly as the user left it and the next revive still has
        it. */
     if (session.bridge !== bridge) throw new Error("the agent process is gone");
-    const result = this.host.startTurn(session, bridge, combineQueued(items), undefined);
+    const result = this.host.startTurn(session, bridge, combineQueued(items), undefined, {
+      attachments: attachmentsOf(items),
+    });
     removeQueuedMany(session.id, items.map((item) => item.id));
     this.emitQueue(session);
     return result;
   }
+}
+
+/** A drain is ONE prompt, so it is one attachment set: the rows' lists unioned
+    in row order, deduped. `queuedAttachmentIds` does the dedupe by id; the refs
+    come back off the items so nothing is re-read. */
+function attachmentsOf(items: QueuedMessage[]): AttachmentRef[] {
+  const ids = queuedAttachmentIds(items);
+  const byId = new Map<string, AttachmentRef>();
+  for (const item of items) {
+    for (const ref of item.attachments ?? []) if (!byId.has(ref.id)) byId.set(ref.id, ref);
+  }
+  return ids.flatMap((id) => {
+    const ref = byId.get(id);
+    return ref ? [ref] : [];
+  });
 }

@@ -198,6 +198,6 @@ export function SearchPage() {
     not a cmdk item, so ↑/↓ walk straight past it. */
 function Note({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground">{children}</div>
+    <div className="flex items-center gap-2 px-2 py-3 text-sm text-muted-foreground">{children}</div>
   )
 }

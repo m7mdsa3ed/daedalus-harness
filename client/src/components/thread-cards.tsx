@@ -11,6 +11,7 @@ import {
   CopyIcon,
   FoldVerticalIcon,
   ListTodoIcon,
+  PaperclipIcon,
   RotateCwIcon,
   ShieldCheckIcon,
   TriangleAlertIcon,
@@ -295,18 +296,31 @@ TaskNotificationCard.displayName = "TaskNotificationCard"
 export const ErrorRow = React.memo(function ErrorRow({
   item,
   onRetry,
+  onRetryAsPaths,
   onDismiss,
   showTimestamp = false,
 }: {
   item: Extract<ThreadItem, { kind: "error" }>
   onRetry?: () => void
+  /** Offered only for the failure the capability story exists around: a turn
+      that died carrying attachments that were delivered *inline*. It re-sends
+      the same bytes pinned to the materialise-and-link branch. */
+  onRetryAsPaths?: () => void
   onDismiss?: () => void
   showTimestamp?: boolean
 }) {
   const [open, setOpen] = React.useState(false)
+  /* Retry is a text path by construction — `turn_ended` carries the prompt,
+     never the bytes — so a turn that had an image says so rather than quietly
+     producing prose about a picture that is no longer there. */
+  const carried = (item.retryAttachments?.length ?? 0) > 0
+  const retryLabel = carried ? "Retry (text only)" : "Retry"
   // The pill buttons stay — they are the discoverable path. The menu repeats them.
   const menuItems: MenuItemSpec[] = [
-    ...(onRetry ? [{ label: "Retry", icon: <RotateCwIcon />, onClick: onRetry }] : []),
+    ...(onRetry ? [{ label: retryLabel, icon: <RotateCwIcon />, onClick: onRetry }] : []),
+    ...(onRetryAsPaths
+      ? [{ label: "Retry as file paths", icon: <PaperclipIcon />, onClick: onRetryAsPaths }]
+      : []),
     ...(item.detail
       ? [
           {
@@ -353,10 +367,26 @@ export const ErrorRow = React.memo(function ErrorRow({
                   size="sm"
                   className="h-6 gap-1 rounded-pill px-2 text-[11px]"
                   onClick={onRetry}
-                  title="Send that message again"
+                  title={
+                    carried
+                      ? "Send that message again — the attachments do not travel with it"
+                      : "Send that message again"
+                  }
                 >
                   <RotateCwIcon className="size-3" />
-                  Retry
+                  {retryLabel}
+                </Button>
+              )}
+              {onRetryAsPaths && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-6 gap-1 rounded-pill px-2 text-[11px]"
+                  onClick={onRetryAsPaths}
+                  title="Send it again with the files written into the workspace and named by path, rather than inlined"
+                >
+                  <PaperclipIcon className="size-3" />
+                  Retry as file paths
                 </Button>
               )}
               {item.detail && (

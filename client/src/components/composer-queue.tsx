@@ -36,6 +36,7 @@ import {
   ChevronDownIcon,
   CornerDownRightIcon,
   ListOrderedIcon,
+  PaperclipIcon,
   PencilIcon,
   SendHorizontalIcon,
   XIcon,
@@ -52,6 +53,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Timestamp } from "@/components/tool-parts"
 import type { Actions } from "@/lib/actions"
 import type { ThreadState } from "@/lib/store"
+import { formatBytes } from "@/lib/attachments"
 import { cn } from "@/lib/utils"
 import { useStripSummary } from "./composer-strip"
 
@@ -340,6 +342,29 @@ function QueueRow({
           >
             {item.text}
           </button>
+          {/* What this message will carry when it drains. Shown while the words
+              are still editable, and removable there, because `queue_update`
+              carries the ids — a queued item's attachments are a thing you can
+              take back, not a thing you can add to (the composer is where a
+              message is composed). */}
+          {item.attachments && item.attachments.length > 0 && (
+            <QueuedAttachments
+              attachments={item.attachments}
+              removable={canEdit}
+              onRemove={(id) =>
+                run(
+                  actions.queueUpdate(
+                    sessionId,
+                    item.id,
+                    item.text,
+                    (item.attachments ?? [])
+                      .filter((ref) => ref.id !== id)
+                      .map((ref) => ref.id)
+                  )
+                )
+              }
+            />
+          )}
           {/* When it was queued, and — for the first row only — that it is the
               one the turn's end will send. */}
           <span className="mt-0.5 flex items-center gap-1.5 ps-0.5 text-[10px] text-muted-foreground/60">
@@ -404,5 +429,44 @@ function QueueRow({
         </span>
       )}
     </li>
+  )
+}
+
+/** A queued message's attachments: names and sizes, with a ✕ while the queue is
+    editable. Not thumbnails — the queue is a list of what is waiting, read at
+    the width of a shelf, and a row of pictures there would be the loudest thing
+    on a surface whose job is to be glanceable. */
+function QueuedAttachments({
+  attachments,
+  removable,
+  onRemove,
+}: {
+  attachments: NonNullable<QueuedMessage["attachments"]>
+  removable: boolean
+  onRemove: (id: string) => void
+}) {
+  return (
+    <ul className="mt-1 flex flex-wrap gap-1 ps-0.5">
+      {attachments.map((ref) => (
+        <li
+          key={ref.id}
+          className="flex items-center gap-1 rounded-pill border border-border/40 bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+        >
+          <PaperclipIcon className="size-2.5 shrink-0" />
+          <span className="max-w-32 truncate">{ref.name}</span>
+          <span className="shrink-0 text-muted-foreground/60">{formatBytes(ref.size)}</span>
+          {removable && (
+            <button
+              type="button"
+              aria-label={`Remove ${ref.name}`}
+              className="-me-0.5 rounded-full p-0.5 hover:text-foreground"
+              onClick={() => onRemove(ref.id)}
+            >
+              <XIcon className="size-2.5" />
+            </button>
+          )}
+        </li>
+      ))}
+    </ul>
   )
 }

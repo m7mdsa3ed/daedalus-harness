@@ -57,6 +57,13 @@ export const McpServerInputSchema = z.union([
     name: z.string().min(1),
     url: z.string().url(),
     headers: z.array(z.object({ name: z.string(), value: z.string() })).default([]),
+    /* How the row authenticates. A stored answer, not a typed one: the client
+       gets it from `POST /api/mcp-servers/probe` (the form's Check, and the
+       probe it runs on save) and sends back what the server told it, because
+       a spawn must not make a network call to find out what to hand the
+       agent. Defaults to "none", which is every row written before OAuth
+       existed and every server that answers unauthenticated. */
+    auth: z.enum(["none", "oauth"]).default("none"),
   }),
   z.object({
     type: z.literal("stdio").default("stdio"),
@@ -99,7 +106,7 @@ function toDef(row: McpRow): McpServerDef {
     return { id: row.id, type: "builtin", name: row.name, builtin: row.builtin ?? "web-search" };
   }
   return row.type === "http"
-    ? { id: row.id, type: "http", name: row.name, url: row.url ?? "", headers: row.headers ?? [] }
+    ? { id: row.id, type: "http", name: row.name, url: row.url ?? "", headers: row.headers ?? [], auth: row.auth }
     : {
         id: row.id,
         type: "stdio",
@@ -111,12 +118,12 @@ function toDef(row: McpRow): McpServerDef {
 }
 
 function toRow(id: string, input: McpServerInput): typeof mcpServersTable.$inferInsert {
-  const blank = { url: null, headers: null, command: null, args: null, env: null, builtin: null };
+  const blank = { url: null, headers: null, command: null, args: null, env: null, builtin: null, auth: "none" as const };
   if (input.type === "builtin") {
     return { ...blank, id, type: "builtin", name: input.name, builtin: input.builtin };
   }
   return input.type === "http"
-    ? { ...blank, id, type: "http", name: input.name, url: input.url, headers: input.headers }
+    ? { ...blank, id, type: "http", name: input.name, url: input.url, headers: input.headers, auth: input.auth }
     : {
         ...blank,
         id,

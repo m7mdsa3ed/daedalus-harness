@@ -167,9 +167,13 @@ assert.ok(
   ws1.of("update").some((e) => e.update.sessionUpdate === "subagent_spawned"),
   "the RFD's spawn update survives the SDK's closed union",
 );
+/* Which children spoke, not how many times: the fake agent's subagent scene is
+   the transcript's sample set and grows a worker whenever a row needs one. What
+   must not change is that an update of a child's carries that child's id and an
+   update of the thread's own carries none. */
 assert.deepEqual(
-  ws1.of("update").filter((e) => e.sessionId !== undefined).map((e) => e.sessionId),
-  ["sub-1", "sub-1"],
+  [...new Set(ws1.of("update").filter((e) => e.sessionId !== undefined).map((e) => e.sessionId))],
+  ["sub-1", "sub-2", "sub-3"],
   "the child's updates carry its session id, the thread's own carry none",
 );
 assert.ok(

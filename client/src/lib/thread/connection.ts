@@ -1,11 +1,11 @@
 import * as React from "react"
 import { AgentError, ThreadSocket, type ThreadCallbacks } from "../thread-socket"
 import { api, ApiError, type Project, type ServerSettings, type SessionMeta } from "../settings"
-import { optionKey, saveAgentOptions } from "../agent-options"
+import { optionKey, saveAgentOptions, savePromptCapabilities } from "../agent-options"
 import { appendTaskEvent } from "../task-events"
 import { notifyThreadEvent } from "../notifications"
 import { describeError } from "../errors"
-import { emptyThread, type Action, type State, type ThreadItem } from "../store"
+import { emptyThread, type Action, type State, type TextItem, type ThreadItem } from "../store"
 import { carryOf } from "./carry"
 import { recordThreadError } from "./record-error"
 import {
@@ -979,13 +979,13 @@ export class ThreadConnection {
       /* The session's whole settings state, from wherever it changed: the
          handshake, this device, or another one. It is absolute, so applying it
          twice is the same as applying it once. */
-      onSessionConfig: (modes, modeId, configOptions) => {
-        if (modes !== undefined || configOptions !== undefined) {
+      onSessionConfig: (modes, modeId, configOptions, promptCapabilities) => {
+        if (modes !== undefined || configOptions !== undefined || promptCapabilities !== undefined) {
           /* Left out means unchanged, and the reducer is what resolves it:
              inside a batched replay this action is not committed yet, so reading
              the current value here would read the thread as it was before the
              replay began. */
-          send({ type: "session-config", id, modes: modes ?? null, configOptions })
+          send({ type: "session-config", id, modes: modes ?? null, configOptions, promptCapabilities })
         } else if (modeId) {
           send({ type: "mode", id, modeId })
         }
@@ -995,6 +995,12 @@ export class ThreadConnection {
         const meta = getState().sessions.find((s) => s.id === id)
         if (meta?.profileId && meta.agentId && configOptions && configOptions.length > 0) {
           saveAgentOptions(optionKey(meta.profileId, meta.agentId), configOptions)
+        }
+        /* And what it can carry, on the same store and for the same reason:
+           the next draft on this pair has to know whether an image will reach
+           the model before it has a process to ask. */
+        if (meta?.profileId && meta.agentId && promptCapabilities) {
+          savePromptCapabilities(optionKey(meta.profileId, meta.agentId), promptCapabilities)
         }
       },
       /* The thread was moved to another profile, model or effort with nothing
@@ -1017,7 +1023,17 @@ export class ThreadConnection {
             id,
             error,
             "The agent couldn't answer this message",
-            { retryText: promptText }
+            {
+              retryText: promptText,
+              /* Off the user bubble this turn opened — `turn_ended` carries no
+                 attachments (Retry is text, deliberately), and the refs the
+                 journaled `turn_started` carried are already on that item. */
+              retryAttachments: (
+                getState().threads[id]?.items.find(
+                  (item) => item.kind === "user" && item.turnId === turnId
+                ) as TextItem | undefined
+              )?.attachments,
+            }
           )
           /* And on the row, so every list says it too — the transcript is the
              only place a failure was ever visible before, and a thread whose
@@ -1048,8 +1064,8 @@ export class ThreadConnection {
       /* A turn began on words this device did not type — either another peer
          prompted, or this is the replay rebuilding the transcript. Only the
          first is live activity. */
-      onTurnStarted: (turnId, text, catchingUp) => {
-        send({ type: "user-message", id, text, turnId })
+      onTurnStarted: (turnId, text, catchingUp, attachments) => {
+        send({ type: "user-message", id, text, turnId, attachments })
         send({ type: "session-title", id, title: text.slice(0, 60) })
         if (!catchingUp) send({ type: "turn-active", id, active: true })
       },

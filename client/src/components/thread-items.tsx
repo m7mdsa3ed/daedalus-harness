@@ -11,15 +11,16 @@ import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import { ItemContextMenu } from "@/components/item-context-menu"
 import { Message, MessageContent } from "@/components/ui/message"
+import { MessageAttachments } from "@/components/message-attachments"
 /* The tool-call layouts and the boxes they are built from live in their own
    files — see the header comment on each. This one keeps the transcript's own
    rows: a message, a step, a plan, a compaction. The shared step chrome is
    `step-row.tsx`, the non-recursive leaf layouts are `thread-cards.tsx`, and
-   the workflow/subagent *run* card and its dialog are `workflow-run.tsx`;
+   a run of them (a workflow, a batch of subagents) is `workflow-run.tsx`;
    what stays here is the mutually recursive cluster (RowView / ThreadItemView
    / ToolRun / SubagentStep / SubagentBody), which cannot move apart without a
-   module cycle — which is also why `SubagentBody` reaches the run's step rows
-   as workflow-run's `stepBody` prop rather than as an import. */
+   module cycle — which is also why `SubagentStep` reaches a run's list as
+   workflow-run's `stepRow` prop rather than as an import. */
 import {
   FileBadge,
   KIND_ICONS,
@@ -37,9 +38,10 @@ import {
   toolHasDetail,
   toolOpensByDefault,
 } from "@/components/tool-views"
-import { copyText, StepRow, yieldToTextSelection } from "@/components/step-row"
+import { copyText, RAIL_CLASS, StepRow, yieldToTextSelection } from "@/components/step-row"
 import {
   collectTools,
+  stepNameOf,
   stepUsage,
   SubagentBatchRun,
   subagentHasBody,
@@ -148,12 +150,31 @@ function summarise(items: ToolItem[]): { verb: string; noun: string; count: numb
 /** How much of a running group stays on screen without being expanded. */
 const PEEK = 3
 
+/** The group's title as a sentence: "Reading 10 files · Running 28 shell
+    commands". The verbs stay in the row's muted voice and the counts take the
+    foreground, so a scanned transcript reads the numbers first; the segments
+    join on dots rather than commas, which keeps several kinds reading as one
+    title instead of a run-on list. Drawn as markup rather than the plain
+    string the metric column builds (SubagentStep), because the emphasis is
+    per-word — a sentence-cased string could not carry it. */
+function RunSummary({ summary }: { summary: ReturnType<typeof summarise> }) {
+  return (
+    <>
+      {summary.map(({ verb, noun, count }, i) => (
+        <React.Fragment key={`${verb}:${noun}`}>
+          {i > 0 && <span className="text-muted-foreground/40">{" · "}</span>}
+          {verb.charAt(0).toUpperCase() + verb.slice(1)}{" "}
+          <span className="text-foreground/80">{count}</span> {pluralNoun(noun, count)}
+        </React.Fragment>
+      ))}
+    </>
+  )
+}
+
 /** The rail nested steps hang off: one for a run and for a subagent's
     transcript alike, so a subagent's steps read as steps and not as a second
     kind of list. `ml-[calc(0.75rem-1px)]` puts the line under the parent
     row's icon column, and a rail inside a rail indents once more. */
-const RAIL_CLASS = "mt-0.5 ml-[calc(0.75rem-1px)] space-y-0.5 border-l border-border/60 pl-2.5"
-
 /* ── A run's rail ──
    Drawn per step rather than as one border down the box around them: the line
    has to *stop* at the last step's elbow (a tail running on under the last row
@@ -255,10 +276,6 @@ export const ToolRun = React.memo(function ToolRun({
   const setOpen = (value: boolean | ((previous: boolean) => boolean)) =>
     setChoice(typeof value === "function" ? value(open) : value)
 
-  const prose = summary
-    .map(({ verb, noun, count }) => `${verb} ${count} ${pluralNoun(noun, count)}`)
-    .join(", ")
-
   /* A run the reader has closed by hand while it is *still running* keeps its
      tail visible rather than going fully dark: the group the agent is inside
      is the one thing on screen that is actually happening, and a live process
@@ -290,7 +307,7 @@ export const ToolRun = React.memo(function ToolRun({
             active && "harness-shimmer"
           )}
         >
-          {prose}
+          <RunSummary summary={summary} />
         </span>
         {failed > 0 && (
           <span className="shrink-0 text-[11px] leading-6 text-destructive">{failed} failed</span>
@@ -350,6 +367,7 @@ export const RowView = React.memo(function RowView({
   row,
   onContinue,
   onRetry,
+  onRetryAsPaths,
   onDismiss,
   showTimestamps,
   streaming,
@@ -357,6 +375,7 @@ export const RowView = React.memo(function RowView({
   row: Row
   onContinue?: () => void
   onRetry?: () => void
+  onRetryAsPaths?: () => void
   onDismiss?: () => void
   showTimestamps?: boolean
   /** This row is the transcript's tail and the turn is still open — it is the
@@ -368,14 +387,15 @@ export const RowView = React.memo(function RowView({
     return <ToolRun items={row.items} showTimestamps={showTimestamps} tail={streaming} />
   if (row.kind === "subagent-group") return <SubagentStep group={row} showTimestamps={showTimestamps} />
   if (row.kind === "workflow-group")
-    return <WorkflowRun group={row} showTimestamps={showTimestamps} stepBody={SubagentBody} />
+    return <WorkflowRun group={row} showTimestamps={showTimestamps} stepRow={SubagentStep} />
   if (row.kind === "subagent-batch")
-    return <SubagentBatchRun group={row} showTimestamps={showTimestamps} stepBody={SubagentBody} />
+    return <SubagentBatchRun group={row} showTimestamps={showTimestamps} stepRow={SubagentStep} />
   return (
     <ThreadItemView
       item={row}
       onContinue={onContinue}
       onRetry={onRetry}
+      onRetryAsPaths={onRetryAsPaths}
       onDismiss={onDismiss}
       showTimestamps={showTimestamps}
       streaming={streaming}
@@ -430,10 +450,16 @@ export const SubagentStep = React.memo(function SubagentStep({
   const active = group.active
   const status = active ? "in_progress" : headStatus
 
-  const target = tool ? (call?.description ?? toolHeading(tool).title) : session!.task || session!.name
-  const caption = tool
+  /* One naming rule for a subagent, in a run or on its own: the workflow
+     definition's name for the step when there is one, else what the worker was
+     asked to do. Shared with the run's list (`stepNameOf`) so a step does not
+     change its name depending on where it is read. */
+  const target = stepNameOf(group)
+  const captionOf = tool
     ? [call?.agentType, call?.model].filter(Boolean).join(" · ") || undefined
     : session!.name
+  // Never the same string twice: the name can be what the row is already titled.
+  const caption = captionOf === target ? undefined : captionOf
   const steps = collectTools(children)
   const prose = summarise(steps)
     .map(({ verb, noun, count }) => `${verb} ${count} ${pluralNoun(noun, count)}`)
@@ -583,6 +609,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
   item,
   onContinue,
   onRetry,
+  onRetryAsPaths,
   onDismiss,
   showTimestamps = false,
   streaming = false,
@@ -592,6 +619,8 @@ export const ThreadItemView = React.memo(function ThreadItemView({
   onContinue?: () => void
   /** Present on an error row that knows the prompt it killed. */
   onRetry?: () => void
+  /** Present when that prompt's attachments were delivered inline — see ErrorRow. */
+  onRetryAsPaths?: () => void
   onDismiss?: () => void
   showTimestamps?: boolean
   /** See RowView. */
@@ -608,6 +637,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
         <ErrorRow
           item={item}
           onRetry={onRetry}
+          onRetryAsPaths={onRetryAsPaths}
           onDismiss={onDismiss}
           showTimestamp={showTimestamps}
         />
@@ -628,7 +658,12 @@ export const ThreadItemView = React.memo(function ThreadItemView({
             <MessageContent>
               <Bubble variant="tinted" align="end">
                 <BubbleContent dir="auto" className="rounded-2xl rounded-br-sm px-4 py-2.5 text-sm">
-                  <Prose text={item.text} />
+                  {/* Above the prose, inside the same tinted bubble: what was
+                      attached is part of the message, not a note beside it. */}
+                  {item.attachments && item.attachments.length > 0 && (
+                    <MessageAttachments attachments={item.attachments} />
+                  )}
+                  {item.text && <Prose text={item.text} />}
                 </BubbleContent>
               </Bubble>
             </MessageContent>

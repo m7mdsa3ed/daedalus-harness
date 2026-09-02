@@ -298,11 +298,11 @@ await test("the loopback key resolves the caller and a step may not start a work
 await test("a step is never handed the workflow server", () => {
   mcpServers.ensureBuiltin("workflow");
   const links = { mcpServerIds: ["builtin:workflow"] };
-  const top = mcpServersFor(links, project, getConfig(), workflowServer(parent, runner));
+  const { servers: top } = mcpServersFor(links, project, getConfig(), workflowServer(parent, runner));
   assert.equal(top.length, 1);
   assert.equal(top[0].name, "workflow");
   assert.ok((top[0] as { env: { name: string; value: string }[] }).env.some((e) => e.name === "WORKFLOW_URL" && e.value.endsWith(`/${parent.id}`)));
-  assert.equal(mcpServersFor(links, project, getConfig(), null).length, 0);
+  assert.equal(mcpServersFor(links, project, getConfig(), null).servers.length, 0);
 });
 
 await test("bad definitions are refused before anything spawns", () => {

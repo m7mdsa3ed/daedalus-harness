@@ -1,6 +1,8 @@
 import { sql } from "drizzle-orm";
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
+import type { AuthorizationServerMetadata } from "@modelcontextprotocol/sdk/shared/auth.js";
+
 import type { AutonomyPolicy } from "../autonomy.js";
 
 /*
@@ -227,6 +229,60 @@ export const mcpServers = sqliteTable("mcp_servers", {
   command: text("command"),
   args: text("args", { mode: "json" }).$type<string[]>(),
   env: text("env", { mode: "json" }).$type<NameValue[]>(),
+  /** How the row authenticates. "none" is a plain URL, possibly with static
+      headers the user typed (a PAT). "oauth" means the tokens are in
+      `mcp_oauth` and the agent is handed the shim's URL, never this one.
+      A stored answer rather than a typed one — `probeMcpAuth` sets it —
+      because a spawn must not make a network call to find out what to hand
+      the agent. Only ever meaningful on an `http` row. */
+  auth: text("auth", { enum: ["none", "oauth"] }).notNull().default("none"),
+});
+
+/** RFC 8414 / OIDC authorization server metadata, as discovered. Stored whole
+    rather than picked apart: the token and revocation endpoints, the client
+    auth methods and the PKCE support are all read back out of it by the SDK's
+    own helpers, so it is the SDK's type — a hand-written subset would be one
+    more thing to widen every time a helper reads a field we did not copy. */
+export type AuthServerMetadata = AuthorizationServerMetadata;
+
+/**
+ * One OAuth connection per `http` MCP server that demands one.
+ *
+ * A table of its own rather than more columns on `mcp_servers`, for three
+ * reasons: the secrets are then trivially separable in `backup.ts`
+ * (`secrets=0` blanks one table's three columns rather than reaching into a
+ * row of mixed provenance); connecting and disconnecting is an insert and a
+ * delete rather than an edit of the library row, so it never collides with
+ * somebody renaming the server; and the cascade means deleting the server
+ * takes the tokens with it, the same guarantee `profile_*`/`session_*` give.
+ */
+export const mcpOauth = sqliteTable("mcp_oauth", {
+  mcpServerId: text("mcp_server_id")
+    .primaryKey()
+    .references(() => mcpServers.id, { onDelete: "cascade" }),
+  /** RFC 8707 canonical resource identifier, from PRM — what the token is *for*.
+      The real server's URL, never the shim's: a token minted for the proxy
+      would be rejected by the upstream that has to accept it. */
+  resource: text("resource").notNull(),
+  /** The authorization server chosen from PRM's list, and its cached metadata. */
+  issuer: text("issuer").notNull(),
+  metadata: text("metadata", { mode: "json" }).$type<AuthServerMetadata>().notNull(),
+  /** From dynamic registration (RFC 7591). There is no out-of-band client id
+      for a personal tool. `clientSecret` is null for a public client. */
+  clientId: text("client_id").notNull(),
+  clientSecret: text("client_secret"),
+  /** Registered exactly, and re-registered when the reachable base changes —
+      an AS refusing a redirect it never saw is a dead end nobody can diagnose. */
+  redirectUri: text("redirect_uri").notNull(),
+  scope: text("scope"),
+  accessToken: text("access_token"),
+  refreshToken: text("refresh_token"),
+  /** Unix ms. Null = no expiry was reported; treat as valid until a 401 says
+      otherwise. */
+  expiresAt: integer("expires_at"),
+  /** Why the last attempt failed, so the row can say so instead of going quiet. */
+  lastError: text("last_error"),
+  updatedAt: integer("updated_at").notNull(),
 });
 
 export const skills = sqliteTable("skills", {
@@ -1055,9 +1111,63 @@ export const sessionQueue = sqliteTable(
       .references(() => sessions.id, { onDelete: "cascade" }),
     position: integer("position").notNull(),
     text: text("text").notNull(),
+    /** The attachments this queued message carries, as a JSON array of
+        `attachments.id`. A queued message with an image has to survive a tab
+        closing and a server restart like every other queued message, and the
+        bytes are already on disk under a row — the queue only needs the
+        pointer. Null for every row written before attachments existed, which
+        is what makes this a pure add. */
+    attachmentIds: text("attachment_ids", { mode: "json" }).$type<string[]>(),
     createdAt: integer("created_at").notNull(),
   },
   (t) => [index("session_queue_order").on(t.sessionId, t.position)],
+);
+
+/**
+ * An uploaded file, waiting to be — or already — referenced by a prompt.
+ *
+ * Bytes live once on disk at `data/attachments/<id>`; this row is everything
+ * else anybody needs (`AttachmentRef` in protocol.ts is a strict subset of it).
+ * Nothing that travels — the journal, the queue row, the client store — carries
+ * the bytes: a 6MB base64 image journaled into `session_events` is a frame held
+ * whole as a string on both ends of every replay, forever, of a thread whose
+ * transcript is otherwise a few hundred bytes per event.
+ *
+ * `session_id` is **not** a foreign key, for the reason `sessions.parent_session_id`
+ * is not: a row is created before any session exists (threads start as drafts
+ * and `POST /api/sessions` is deliberately not called until the first message,
+ * so an upload route scoped to a session id would 404 on exactly the composer
+ * that needs it most), and an SQL cascade would take the file's row out from
+ * under the manager that still owns the bytes on disk. `softDelete`/`purge`
+ * delete the rows and the files by hand.
+ *
+ * So an attachment is owned by nobody at upload time and **claimed** by the
+ * prompt that references it; unclaimed rows are swept after a day, because an
+ * upload whose prompt was never sent is a draft the user abandoned and keeping
+ * it forever is a disk leak with no reader.
+ *
+ * `sha256` has a reader: `POST /api/attachments` is idempotent on content, so a
+ * retry after a failed upload is free and the same screenshot dropped into five
+ * threads costs one file. Rows stay one per claim — a claim is a thread's, a
+ * file is content's — so the sweep deletes bytes only when no row still
+ * references that hash.
+ */
+export const attachments = sqliteTable(
+  "attachments",
+  {
+    /** Client-minted UUID, like a session id. */
+    id: text("id").primaryKey(),
+    /** NULL until claimed by a prompt. Not a foreign key — see above. */
+    sessionId: text("session_id"),
+    /** The user's filename, for display only — never used as a path. */
+    name: text("name").notNull(),
+    mimeType: text("mime_type").notNull(),
+    size: integer("size").notNull(),
+    sha256: text("sha256").notNull(),
+    createdAt: integer("created_at").notNull(),
+    claimedAt: integer("claimed_at"),
+  },
+  (t) => [index("attachments_session").on(t.sessionId), index("attachments_sha").on(t.sha256)],
 );
 
 /**

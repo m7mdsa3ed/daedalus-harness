@@ -37,6 +37,13 @@ export function copyText(text: string) {
    already said. Only a failure claims that column now. Everything a step
    produced is collapsed behind the row until clicked. */
 
+/** The nested-transcript rail: a hairline down the gutter with the child rows
+    indented off it. Here rather than in thread-items because both the rows
+    inside a subagent (`SubagentTranscript`) and the steps inside a run
+    (`workflow-run`) hang off it, and those two files may not import each other
+    (see the header comment on workflow-run). */
+export const RAIL_CLASS = "mt-0.5 ml-[calc(0.75rem-1px)] space-y-0.5 border-l border-border/60 pl-2.5"
+
 export function useElapsed(startedAt: number, active: boolean): number | null {
   const [ms, setMs] = React.useState<number | null>(null)
   React.useEffect(() => {
@@ -230,7 +237,15 @@ export const StepRow = React.memo(function StepRow({
                 prose. `-mt-1` claws back the slack in the two leadings so the
                 pair reads as one row rather than as two. */}
             {caption && (
-              <span className="-mt-1 min-w-0 truncate font-mono text-[11px] leading-5 text-muted-foreground/55">
+              <span
+                className={cn(
+                  "-mt-1 min-w-0 truncate text-[11px] leading-5 text-muted-foreground/55",
+                  // Mono follows the title: a caption under a command is the
+                  // literal thing that ran, but under prose (a subagent's
+                  // model, a run's live step) it is prose too.
+                  mono && "font-mono"
+                )}
+              >
                 {caption}
               </span>
             )}

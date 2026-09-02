@@ -530,6 +530,16 @@
   animation: harness-shimmer 1.8s linear infinite;
 }
 
+/* ── Transcript reading size ──
+   The app's one body size (`--text-xs`) is set for controls, sidebar and
+   settings; a transcript is read, not scanned, so the column nudges the same
+   knob up a step for itself alone. Everything inside — prose, step rows, tool
+   views — sizes off `text-xs`, so this is the only place the number changes. */
+.thread-transcript {
+  --text-xs: 0.875rem;
+  --text-xs--line-height: 1.25rem;
+}
+
 /* ── Streaming prose, a word at a time ──
    `use-streamed-text` paces *when* a word lands; these are what landing looks
    like, one block per `streamEffect`. The spans are the tail of the row being
@@ -771,13 +781,21 @@ html[data-desktop-vibrancy="true"] body::before {
 @supports (backdrop-filter: blur(0)) or (-webkit-backdrop-filter: blur(0)) {
   html[data-desktop-vibrancy="true"] [data-sidebar="sidebar"] {
     @apply backdrop-blur-[var(--app-blur)] backdrop-saturate-[1.15];
-    background-color: color-mix(in oklch, var(--sidebar) 55%, transparent);
+    background-color: color-mix(in oklch, var(--sidebar) 70%, transparent);
   }
 }
 
 html[data-desktop-vibrancy="true"] [data-slot="sidebar-inset"],
 html[data-desktop-vibrancy="true"] main {
   background-color: color-mix(in oklch, var(--background) 92%, transparent);
+}
+
+/* The transcript is read, not glanced at, and a light page over the desktop is
+   the one surface where 8% of what is behind the window lands under body text.
+   Light mode is therefore fully opaque; dark mode keeps the tint above. */
+html[data-desktop-vibrancy="true"]:not(.dark) [data-slot="sidebar-inset"],
+html[data-desktop-vibrancy="true"]:not(.dark) main {
+  background-color: var(--background);
 }
 
 /* Windows/Linux draw min/max/close as an overlay in the top-right corner —

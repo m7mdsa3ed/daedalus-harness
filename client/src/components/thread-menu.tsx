@@ -1,18 +1,18 @@
-/* ── A thread's actions ── one vocabulary, three surfaces.
+/* ── A thread's actions ── one vocabulary, two surfaces.
 
    The sidebar row (hover ⋯, right-click, and the long-press card on a phone)
    is where a thread's own actions live — rename, pin, open in a new tab, copy
    its link, delete — and it is the surface that has *every* thread, not just
-   the routed one. So the header's ⋯ holds none of them: two menus offering the
-   same five rows is one menu the reader has to check twice, and the header is
-   the smaller, more crowded of the two.
+   the routed one. The header's ⋯ now offers the same list behind one row,
+   because the sidebar is not always there to be asked: it is collapsed on a
+   narrow screen, and the thread the reader means is the one already on screen.
 
-   What is left in the header is what only it can say, because it is the only
-   surface that has the **open** thread and its process: Refresh, the
-   Connection submenu, its id, the project it runs in — beside the workspace
-   rows and View settings, which were never a thread's actions at all. The
-   items are still built here, next to the row's, so the split stays visible in
-   one file rather than being inferred from two. */
+   So the header menu is three rows deep by design. "Open a panel" is a
+   submenu of the workspace group, and everything about the routed thread —
+   the sidebar's five, plus what only this surface can say (Refresh, the
+   Connection submenu, its id, the project it runs in) — is behind "This
+   thread". Both lists are still built here, next to the row's, so the two
+   surfaces cannot drift apart. */
 import * as React from "react"
 import {
   Copy,
@@ -20,6 +20,7 @@ import {
   Eye,
   FolderOpen,
   Link as LinkIcon,
+  MessageSquare,
   MoreHorizontal,
   Pencil,
   Pin,
@@ -39,7 +40,6 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
@@ -54,7 +54,7 @@ import type { PanelKind } from "@/lib/workspace/panels"
 import { usePrompt } from "@/components/prompt-dialog"
 import type { Actions } from "@/lib/actions"
 import { reportError } from "@/lib/errors"
-import { togglePin } from "@/lib/pins"
+import { togglePin, usePins } from "@/lib/pins"
 import { projectPath, threadPath } from "@/lib/router"
 import { type SessionMeta } from "@/lib/settings"
 import { useStoreSelect } from "@/lib/store"
@@ -264,11 +264,13 @@ export function useThreadRowActions(
  * It used to be three icon buttons in a 12px-tall header — a + that opened a
  * menu, an eye that opened a dialog, and Refresh — which is a row you have to
  * learn rather than read, and on a phone it is three targets in the space of
- * one. So there is a single ⋯ now, holding what each of them held:
+ * one. So there is a single ⋯ now, and its root is three lines:
  *
- *   - the workspace rows (New thread, Open a panel), drawn by their own
+ *   - New thread, with "Open a panel" folded behind it — drawn by their own
  *     module so the chords they print stay bound in one place;
- *   - this thread's actions, from the same builders the sidebar row uses;
+ *   - "This thread", which is every action the sidebar row offers *plus* the
+ *     ones only this surface can perform, built from the same builders the
+ *     row uses so the two lists say the same words;
  *   - View settings, which opens the dialog it always did.
  *
  * Refresh is the first thread row because it is the reflexive one — the
@@ -289,16 +291,21 @@ export function ThreadHeaderMenu({
   session,
   onNewTab,
   onOpenPanel,
+  onOpenInNewTab,
 }: {
   actions: Actions
   session?: SessionMeta
   onNewTab: () => void
   onOpenPanel: (kind: PanelKind) => void
+  /** Open the routed thread in a second dock tab — the sidebar row's action,
+      which needs the dock and so is handed down rather than done here. */
+  onOpenInNewTab?: (session: SessionMeta) => void
 }) {
   const navigate = useNavigate()
   const [viewSettings, setViewSettings] = React.useState(false)
   const [refreshing, setRefreshing] = React.useState(false)
   const sessionId = session?.id
+  const pins = usePins()
   /* One boolean off one thread. This menu is drawn beside a live transcript,
      so reading the whole state here re-opened the question on every streamed
      token of every thread. Undefined = no live thread, which is what the
@@ -306,6 +313,12 @@ export function ThreadHeaderMenu({
   const liveTurnActive = useStoreSelect((state) =>
     sessionId ? state.threads[sessionId]?.turnActive : undefined
   )
+  /* The same three the sidebar list holds, from the same hook: deleting from
+     here asks the same question, and leaves the route the same way. */
+  const { rename, remove } = useThreadRowActions(actions, {
+    activeThreadId: sessionId,
+    onLeave: () => void navigate("/"),
+  })
   const refresh = React.useCallback(() => {
     if (!sessionId || refreshing) return
     setRefreshing(true)
@@ -371,6 +384,21 @@ export function ThreadHeaderMenu({
           },
         ],
       },
+      { type: "separator" },
+      /* The sidebar row's own list, in the sidebar's order — the same
+         builders, so a change to Rename or Pin reaches both surfaces. */
+      renameItem(thread, rename),
+      pinItem(thread, pins.includes(thread.id)),
+      ...(onOpenInNewTab
+        ? [
+            {
+              label: "Open in new tab",
+              icon: <ExternalLink />,
+              onClick: () => onOpenInNewTab(thread),
+            } satisfies MenuItemSpec,
+          ]
+        : []),
+      { label: "Copy link", icon: <LinkIcon />, onClick: () => copyThreadLink(thread) },
       {
         label: "Copy thread ID",
         icon: <Copy />,
@@ -386,7 +414,17 @@ export function ThreadHeaderMenu({
         icon: <FolderOpen />,
         onClick: () => void navigate(projectPath(thread.projectId)),
       },
+      { type: "separator" },
+      deleteItem(thread, remove),
     ]
+  }
+
+  const parts = {
+    Item: DropdownMenuItem,
+    Separator: DropdownMenuSeparator,
+    Sub: DropdownMenuSub,
+    SubTrigger: DropdownMenuSubTrigger,
+    SubContent: DropdownMenuSubContent,
   }
 
   return (
@@ -421,20 +459,15 @@ export function ThreadHeaderMenu({
           {items.length > 0 && (
             <>
               <DropdownMenuSeparator />
-              {/* The label is Base UI's Menu.GroupLabel: it reads its group
-                  from context and throws outside one, so it sits inside the
-                  group it names rather than loose in the content. */}
+              {/* One row, not a labelled block: the thread's list is long now
+                  that it carries the sidebar's actions too, and the header is
+                  not where somebody reads a list — it is where they reach for
+                  one thing they already have in mind. */}
               <DropdownMenuGroup>
-                <DropdownMenuLabel className="px-3 py-1.5 text-[10px] font-medium tracking-widest uppercase">
-                  This thread
-                </DropdownMenuLabel>
-                {renderMenuItems(items, {
-                  Item: DropdownMenuItem,
-                  Separator: DropdownMenuSeparator,
-                  Sub: DropdownMenuSub,
-                  SubTrigger: DropdownMenuSubTrigger,
-                  SubContent: DropdownMenuSubContent,
-                })}
+                {renderMenuItems(
+                  [{ type: "sub", label: "This thread", icon: <MessageSquare />, items }],
+                  parts
+                )}
               </DropdownMenuGroup>
             </>
           )}

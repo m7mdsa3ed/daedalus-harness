@@ -175,6 +175,12 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "./src"),
+      /* The one module the browser imports from the server for its *value*
+         rather than its types. `@daedalus/protocol` stays type-only (it is
+         mapped in tsconfig alone, and deliberately not here); this is the pure
+         function both ends have to run so a chip's forecast and the bridge's
+         branch cannot disagree about the same file. */
+      "@daedalus/delivery": path.resolve(import.meta.dirname, "../server/src/delivery.ts"),
     },
   },
 });

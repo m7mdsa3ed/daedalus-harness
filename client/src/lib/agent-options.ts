@@ -39,6 +39,13 @@ export interface AgentOptionSet {
   /** Model value -> the set advertised while it is selected. Some options only
       exist for some models, so the menu picks the entry for the chosen one. */
   byModel: Record<string, acp.SessionConfigOption[]>
+  /** What the runtime can carry in a prompt — the agent's half of the
+      attachment decision (`resolveDelivery`). It rides this store for the
+      reason everything else here does: a draft has no process to ask, and the
+      composer has to say whether the screenshot it is holding will reach the
+      model as an image or as a path *before* the first send. Filled by the
+      option probe and re-filled by any live session's `session_config`. */
+  promptCapabilities?: acp.PromptCapabilities
 }
 
 const EMPTY: AgentOptionSet = { base: [], byModel: {} }
@@ -91,8 +98,23 @@ export function saveProbedOptions(key: string, probed: AgentOptionSet): void {
   const known = loadAgentOptions(key)
   store.set({
     ...store.get(),
-    [key]: { base: probed.base, byModel: { ...known.byModel, ...probed.byModel } },
+    [key]: {
+      ...known,
+      base: probed.base,
+      byModel: { ...known.byModel, ...probed.byModel },
+      ...(probed.promptCapabilities ? { promptCapabilities: probed.promptCapabilities } : {}),
+    },
   })
+}
+
+/** Learned from a live session, which outranks a probe: the process answering
+    is the one a prompt would actually go to. Written on its own rather than
+    through `saveAgentOptions`, because `session_config` carries the two fields
+    independently — an agent may restate its options with no capabilities and
+    vice versa. */
+export function savePromptCapabilities(key: string, caps: acp.PromptCapabilities): void {
+  const known = loadAgentOptions(key)
+  store.set({ ...store.get(), [key]: { ...known, promptCapabilities: caps } })
 }
 
 /** The set to show while `model` is selected, falling back to the base one. */
@@ -122,6 +144,22 @@ export function useAgentOptions(
     if (isSet(sibling) && sibling.base.length > 0) return sibling
   }
   return EMPTY
+}
+
+/** What the runtime can carry, live — the composer's fallback when the thread
+    itself has not said (a draft, or a thread with no process). A sibling
+    profile's answer is as good as this pair's: the capability is the *binary's*
+    and a profile only ever overrides the model and the effort. */
+export function usePromptCapabilities(
+  key: string,
+  fallbackKeys: readonly string[] = []
+): acp.PromptCapabilities | undefined {
+  const known = store.use()
+  for (const candidate of [key, ...fallbackKeys]) {
+    const entry = known[candidate]
+    if (isSet(entry) && entry.promptCapabilities) return entry.promptCapabilities
+  }
+  return undefined
 }
 
 /** Has this pair already been asked (or is being asked) this page-load? */

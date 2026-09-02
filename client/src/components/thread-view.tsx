@@ -1,6 +1,6 @@
 import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
-import { Archive, ArrowUp, ChevronUp, History, Mic, RotateCw, Square } from "lucide-react"
+import { Archive, ArrowUp, ChevronUp, History, Mic, Paperclip, RotateCw, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Shortcut } from "@/components/shortcut"
@@ -10,6 +10,12 @@ import {
   ComposerTodo,
   ContextIndicator,
 } from "@/components/composer-status"
+import {
+  ComposerAttachments,
+  useAttachmentDelivery,
+  wentInline,
+  type AttachmentDelivery,
+} from "@/components/composer-attachments"
 import { ComposerQueue } from "@/components/composer-queue"
 import { ComposerStrip, ComposerStripItem } from "@/components/composer-strip"
 import { Textarea } from "@/components/ui/textarea"
@@ -21,12 +27,25 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller"
+import { useComposerAttachments } from "@/hooks/use-composer-attachments"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useHotkey } from "@/hooks/use-hotkey"
 import { useChords } from "@/lib/keybindings"
 import { useVoice } from "@/hooks/use-voice"
 import type { Actions } from "@/lib/actions"
 import { clearDraft, loadDraft, saveDraft } from "@/lib/drafts"
+import {
+  clearPastes,
+  dropPaste,
+  expandPastes,
+  isLongPaste,
+  livePastes,
+  loadPastes,
+  mintPaste,
+  pasteToken,
+  savePastes,
+  type Paste,
+} from "@/lib/pastes"
 import { reportError } from "@/lib/errors"
 import {
   bannerFor,
@@ -272,6 +291,10 @@ function useThreadKeys({
 
 const OPTION_DIGITS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
 
+/** A transcript, addressed by the pair that names it. The panel above hands
+    the key down (see workspace/chat-panel): every store read, every action and
+    every device-local draft below is keyed by it, because a bare session id is
+    unique only on the server that minted it. */
 export function ThreadView({ sessionId, actions }: { sessionId: string; actions: Actions }) {
   /* Narrow subscriptions, not the wide hook: the dock keeps every opened
      transcript mounted, and on `useStore()` a streamed token in ANY thread
@@ -379,8 +402,24 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
      same thing twice. */
   const resume = () => void actions.send(sessionId, "Continue.").catch(() => {})
   const retry = (text: string) => void actions.send(sessionId, text).catch(() => {})
+  /* The one exception to "attachments do not survive Retry", and it exists for
+     the one failure `resolveDelivery` cannot prevent: a model whose catalog
+     claims `image` and whose provider refuses it anyway. Same bytes, same text,
+     pinned to the materialise-and-link branch. */
+  const retryAsPaths = (item: Extract<ThreadItem, { kind: "error" }>) =>
+    void actions
+      .send(sessionId, item.retryText ?? "", {
+        attachments: item.retryAttachments,
+        forceLink: true,
+      })
+      .catch(() => {})
 
   const meta = useSessionMeta(sessionId)
+  /* What an attachment on this thread would actually do — read once here
+     because two surfaces need the same answer: the composer's chips forecast
+     it, and an error row uses it to decide whether "Retry as file paths" would
+     change anything. */
+  const delivery = useAttachmentDelivery(meta, thread)
   /* Which transcript the keys belong to. The dock keeps every opened thread
      mounted and navigates the URL as tabs are activated (see workspace/dock), so
      the route is the app's own answer to "which one is in front". */
@@ -426,7 +465,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
               data-wrap={options.codeWrap ? "on" : undefined}
               data-motion={options.calmMotion ? "calm" : undefined}
               className={cn(
-                "mx-auto w-full gap-0.5 px-4 py-4",
+                "thread-transcript mx-auto w-full gap-0.5 px-4 py-4",
                 options.compactDensity && "gap-0 py-2",
                 options.wideTranscript ? "max-w-[82rem]" : "max-w-[var(--harness-chat-width)]",
               )}
@@ -503,6 +542,17 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                       onRetry={
                         row.kind === "error" && row.retryText
                           ? () => retry(row.retryText!)
+                          : undefined
+                      }
+                      /* Offered only when something on that turn would actually
+                         have been inlined — a turn whose files all went as paths
+                         already failed for some other reason, and a button that
+                         changes nothing is worse than no button. Read through
+                         the same `resolveDelivery` the chip's note and the
+                         bridge's branch use. */
+                      onRetryAsPaths={
+                        row.kind === "error" && wentInline(row, delivery)
+                          ? () => retryAsPaths(row)
                           : undefined
                       }
                       onDismiss={
@@ -603,7 +653,13 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
           difference. */}
       <div className="relative min-w-0">
         {empty && <ThreadWelcome draft={meta?.draft} />}
-        <Composer sessionId={sessionId} actions={actions} thread={thread} meta={meta} />
+        <Composer
+          sessionId={sessionId}
+          actions={actions}
+          thread={thread}
+          meta={meta}
+          delivery={delivery}
+        />
       </div>
       {/* The spacer that collapses. Nothing renders in it — its whole job is to
           be the bottom half of the centring while the thread is empty. */}
@@ -796,20 +852,48 @@ function Composer({
   actions,
   thread,
   meta,
+  /* Resolved by ThreadView and handed down: the transcript's error rows read
+     the same answer (see `wentInline`), and two `useAttachmentDelivery` calls
+     in one tree would be two subscriptions to the same absolute state. */
+  delivery,
 }: {
   sessionId: string
   actions: Actions
   thread: ThreadState
   meta?: SessionMeta
+  delivery: AttachmentDelivery
 }) {
   const navigate = useNavigate()
   const location = useLocation()
   /* The draft lives on this device, per session (lib/drafts). ThreadView is
-     keyed by sessionId today so the initializer would be enough — the effect
+     keyed by the thread's key today so the initializer would be enough — the effect
      keeps it correct if that key ever goes away. */
   const [text, setText] = React.useState(() => loadDraft(sessionId))
+  /* The box as it is NOW, for the one reader that runs long after the render it
+     was written in: a send that fails asks whether the composer is still the
+     empty one it left behind before putting the words back. */
+  const textRef = React.useRef(text)
+  textRef.current = text
   React.useEffect(() => setText(loadDraft(sessionId)), [sessionId])
   React.useEffect(() => saveDraft(sessionId, text), [sessionId, text])
+  /* The sidecar for long pastes: the body is parked here and a token stands in
+     for it in `text` (lib/pastes). Same per-session localStorage bargain as the
+     draft, in a second key rather than a widened value — every caller of
+     `loadDraft` depends on it being a string. */
+  const [pastes, setPastes] = React.useState<Paste[]>(() => loadPastes(sessionId))
+  React.useEffect(() => setPastes(loadPastes(sessionId)), [sessionId])
+  React.useEffect(() => savePastes(sessionId, pastes), [sessionId, pastes])
+  /* A chip is a view of a token, so a token the user deleted drops its paste —
+     checked on every keystroke, and again at send. Kept as a derived list
+     rather than by pruning state: pruning inside a render is a write during a
+     render, and the persisted array is what a reload has to agree with. */
+  const shownPastes = React.useMemo(() => livePastes(text, pastes), [text, pastes])
+  /* Files, which are not text and so cannot be a token in it: they are
+     uploaded as they are picked and travel as references beside the prompt. */
+  const files = useComposerAttachments(sessionId)
+  const [dragging, setDragging] = React.useState(false)
+  const dragCounter = React.useRef(0)
+  const filePicker = React.useRef<HTMLInputElement>(null)
   const [reviving, setReviving] = React.useState(false)
   const isMobile = useIsMobile()
   // Rebindable in Settings › Keyboard, so it is read rather than named here.
@@ -855,7 +939,12 @@ function Composer({
      the form is a place you can back out of. */
   const send = (opts: { steer?: boolean } = {}) => {
     const value = text.trim()
-    if (!value) return
+    /* The one place the empty-prompt rule lives, and it has learned about
+       attachments: an image with no sentence is a real prompt. An upload still
+       in flight is not — the prompt would name a row the server does not have
+       yet — so it waits rather than sending less than was meant. */
+    if (!value && files.ready.length === 0) return
+    if (files.uploading) return
     /* The thread is on its way to existing (a create or a respawn POST is in
        flight, or the transcript is still being read). The words stay in the box
        rather than being taken and dropped: Enter used to re-enter `actions.send`
@@ -867,15 +956,48 @@ function Composer({
     if (command?.name === "schedule") {
       void navigate(schedulePath(sessionId), {
         state: {
-          defaultText: command.args,
+          /* Expanded here too: the form is going to store this text on the
+             server, where the sidecar that a token points into does not exist.
+             The draft and its pastes are deliberately NOT cleared — nothing has
+             been sent, and the form is a place you can back out of. */
+          defaultText: expandPastes(command.args, pastes),
           returnTo: location.pathname + location.search,
         },
       })
       return
     }
+    /* The tokens become their bodies here, at the last moment, exactly as
+       `mentions.ts` derives resource links from the text at the last moment.
+       Everything downstream sees the string it always did. */
+    const outgoing = expandPastes(value, pastes)
+    const attachments = files.ready.map(({ id, name, mimeType, size }) => ({
+      id,
+      name,
+      mimeType,
+      size,
+    }))
+    /* Kept for the send that never leaves: what goes back in the box is what
+       was typed, tokens and all, not the expanded string that went out. */
+    const carriedPastes = pastes
+    const carriedFiles = files.attachments
     setText("")
+    setPastes([])
     clearDraft(sessionId)
-    void actions.send(sessionId, value, opts).catch(() => {})
+    clearPastes(sessionId)
+    files.clear()
+    /* A message that never reached the server comes back here rather than
+       surviving only as a Retry button on a `local` error row — which is a row
+       this device alone holds and a reload deletes, taking the words with it.
+       Refused when the user has started typing again: that is a different
+       message, and `actions.send` keeps Retry on the row for exactly that. */
+    const onUnsent = () => {
+      if (textRef.current.trim()) return false
+      setText(value)
+      setPastes(carriedPastes)
+      files.restore(carriedFiles)
+      return true
+    }
+    void actions.send(sessionId, outgoing, { ...opts, attachments, onUnsent }).catch(() => {})
   }
 
   /* Up/Down walk what has already been sent here. It goes after the slash menu
@@ -927,6 +1049,44 @@ function Composer({
     projectId: meta?.projectId,
     inputRef: composerRef,
   })
+
+  /* A long paste is parked rather than pasted: the token goes in at the caret
+     and the body waits in the sidecar until send. Below the threshold nothing
+     happens at all — the affordance has to be invisible for the pastes people
+     actually make (a URL, an error line, a name).
+
+     The caret is the same hazard `file-mentions.tsx` documents: rewriting
+     `text` is a render, and the caret it wants has to be re-applied *after*
+     that render and ahead of the sync from `selectionStart`. So it goes through
+     that hook's own slot rather than a second mechanism racing it. */
+  const onPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    /* Files BEFORE text: a screenshot on the clipboard usually carries a
+       text/plain fallback too, and reading text first would turn every
+       screenshot paste into an empty chip. */
+    const pastedFiles = [...event.clipboardData.files]
+    if (pastedFiles.length > 0) {
+      event.preventDefault()
+      files.add(pastedFiles)
+      return
+    }
+    const plain = event.clipboardData.getData("text/plain")
+    if (!plain || !isLongPaste(plain)) return
+    event.preventDefault()
+    const el = event.currentTarget
+    const start = el.selectionStart ?? text.length
+    const end = el.selectionEnd ?? start
+    const paste = mintPaste(pastes, plain)
+    const token = pasteToken(paste.n)
+    setPastes([...pastes, paste])
+    mentions.requestCaret(start + token.length)
+    setText(text.slice(0, start) + token + text.slice(end))
+  }
+
+  const removePaste = (n: number) => {
+    const next = dropPaste(text, pastes, n)
+    setText(next.text)
+    setPastes(next.pastes)
+  }
 
   return (
     <div className="px-4 pt-1 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
@@ -989,6 +1149,16 @@ function Composer({
         {/* What is waiting for this turn to end. The user's own words, so
             they are editable in place until the moment they go. */}
         <ComposerQueue sessionId={sessionId} thread={thread} actions={actions} />
+        {/* What is riding along with the message but is not in the box: a long
+            paste parked behind a token. */}
+        <ComposerAttachments
+          pastes={shownPastes}
+          attachments={files.attachments}
+          delivery={delivery}
+          onRemovePaste={removePaste}
+          onRemoveAttachment={files.remove}
+          onRetryAttachment={files.retry}
+        />
         {/* Says what the box is showing and how to get back out of it — without
             it, a recalled prompt is indistinguishable from one you typed. */}
         {history.browsing && (
@@ -1014,13 +1184,49 @@ function Composer({
         <SlashCommandMenu state={slash} />
         <FileMentionMenu state={mentions} />
       </ComposerStrip>
-      {/* relative/z-10: the composer paints over the strip's tucked bottom edge. */}
-      <div className="relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl bg-composer p-2 shadow-glass-lg">
+      {/* relative/z-10: the composer paints over the strip's tucked bottom edge.
+
+          It is also the drop target, and deliberately the whole card rather
+          than the textarea: a file aimed at "the composer" lands on the button
+          row or the padding as often as on the box. `dragCounter` is what makes
+          the overlay stable — `dragleave` fires as the pointer crosses into a
+          child, so a boolean would flicker the whole way across. */}
+      <div
+        className="relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl bg-composer p-2 shadow-glass-lg"
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes("Files")) return
+          e.preventDefault()
+          e.dataTransfer.dropEffect = "copy"
+        }}
+        onDragEnter={(e) => {
+          if (!e.dataTransfer.types.includes("Files")) return
+          dragCounter.current += 1
+          setDragging(true)
+        }}
+        onDragLeave={(e) => {
+          if (!e.dataTransfer.types.includes("Files")) return
+          dragCounter.current -= 1
+          if (dragCounter.current <= 0) setDragging(false)
+        }}
+        onDrop={(e) => {
+          if (!e.dataTransfer.types.includes("Files")) return
+          e.preventDefault()
+          dragCounter.current = 0
+          setDragging(false)
+          files.add(e.dataTransfer.files)
+        }}
+      >
+        {dragging && (
+          <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-2xl border-2 border-dashed border-primary bg-composer/80 text-xs font-medium text-primary">
+            Drop to attach
+          </div>
+        )}
         <Textarea
           ref={composerRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onSelect={mentions.onSelect}
+          onPaste={onPaste}
           onKeyDown={(e) => {
             // The command menu owns navigation keys (and Enter) while open.
             if (slash.onKeyDown(e)) return
@@ -1094,6 +1300,34 @@ function Composer({
             )}
           </div>
           <ContextIndicator thread={thread} meta={meta} actions={actions} />
+          {/* The touch path — ⌘V and drag-and-drop cover the pointer, and
+              neither exists on a phone. No chord: `lib/shortcuts.ts` holds the
+              rule that a bound key is a listed key, and this does not need to
+              spend one. */}
+          <input
+            ref={filePicker}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files) files.add(e.target.files)
+              // Cleared, or picking the same file twice fires no change event.
+              e.target.value = ""
+            }}
+          />
+          <Button
+            variant="ghost"
+            /* The size is the *device's* question, not the panel's: a narrow
+               chat panel on a desktop is still driven by a mouse, and this is
+               the one control on the row that is the only way in on touch. */
+            size={isMobile ? "icon" : "icon-sm"}
+            className="shrink-0 rounded-lg"
+            onClick={() => filePicker.current?.click()}
+            disabled={disabled}
+            title="Attach a file"
+          >
+            <Paperclip />
+          </Button>
           {voice.supported && (
             <Button
               variant="ghost"
@@ -1127,7 +1361,12 @@ function Composer({
             size="icon-sm"
             className="shrink-0 rounded-lg text-primary hover:text-primary disabled:text-muted-foreground"
             onClick={() => send()}
-            disabled={disabled || !lock.submittable || !text.trim()}
+            disabled={
+              disabled ||
+              !lock.submittable ||
+              files.uploading ||
+              (!text.trim() && files.ready.length === 0)
+            }
             title={
               thread.turnActive
                 ? `Queue (${formatChord(steerChords[0] ?? "")} steers the running turn instead)`

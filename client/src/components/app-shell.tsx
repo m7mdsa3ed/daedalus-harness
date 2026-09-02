@@ -672,6 +672,7 @@ export function AppShell({
                   session={active}
                   onNewTab={newThreadInTab}
                   onOpenPanel={openWorkspacePanel}
+                  onOpenInNewTab={(thread) => dock.openChat(thread.id, { newTab: true })}
                 />
               )}
             </div>

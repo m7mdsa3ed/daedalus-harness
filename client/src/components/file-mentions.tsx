@@ -48,6 +48,12 @@ export interface FileMentionState {
   onKeyDown: (e: React.KeyboardEvent) => boolean
   /** Attach to the textarea: caret moves are what open and close the menu. */
   onSelect: (e: React.SyntheticEvent<HTMLTextAreaElement>) => void
+  /** Where the caret must land once the *next* text change has rendered.
+      Exported because this hook already owns the caret after every edit (see
+      the effect below) — anything else that rewrites `text` and wants a caret
+      placement has to go through the same slot, or the sync branch runs against
+      the old selection and undoes it. The long-paste chip is the other caller. */
+  requestCaret: (position: number) => void
 }
 
 export function useFileMentions(opts: {
@@ -184,7 +190,21 @@ export function useFileMentions(opts: {
   const onSelect = (e: React.SyntheticEvent<HTMLTextAreaElement>) =>
     setCaret(e.currentTarget.selectionStart ?? 0)
 
-  return { matches, selected: index, loading, query, pick, setSelected, onKeyDown, onSelect }
+  const requestCaret = (position: number) => {
+    pendingCaret.current = position
+  }
+
+  return {
+    matches,
+    selected: index,
+    loading,
+    query,
+    pick,
+    setSelected,
+    onKeyDown,
+    onSelect,
+    requestCaret,
+  }
 }
 
 /**

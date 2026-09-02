@@ -19,7 +19,10 @@ const pairsOf = (map: unknown) =>
 /** ~/.claude.json entry -> library shape. `sse` collapses to http (ACP has no sse variant here). */
 function fromClaudeEntry(name: string, entry: Record<string, unknown>): McpServerInput | null {
   if (typeof entry.url === "string") {
-    return { type: "http", name, url: entry.url, headers: pairsOf(entry.headers) };
+    /* An imported row starts "none": what an agent's own config knows about
+       this server is a URL and some headers, never whether it demands OAuth.
+       The form's Check — or a save — is what discovers that. */
+    return { type: "http", name, url: entry.url, headers: pairsOf(entry.headers), auth: "none" };
   }
   if (typeof entry.command === "string") {
     return {

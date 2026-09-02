@@ -8,6 +8,7 @@ import {
   commands as commandsTable,
   db,
   knowledge as knowledgeTable,
+  mcpOauth as mcpOauthTable,
   mcpServers as mcpServersTable,
   notifications as notificationsTable,
   personas as personasTable,
@@ -152,11 +153,37 @@ const McpServerRow = z.object({
   type: z.enum(["http", "stdio", "builtin"]),
   name: str,
   builtin: z.enum(["web-search", "knowledge", "workflow"]).nullish(),
+  /** Absent in a bundle written before OAuth existed, which read as "none". */
+  auth: z.enum(["none", "oauth"]).default("none"),
   url: optStr,
   headers: nameValues.nullish(),
   command: optStr,
   args: z.array(str).nullish(),
   env: nameValues.nullish(),
+});
+
+/** The OAuth connection behind an `http` MCP server. Its three secrets follow
+    the same bargain a profile's key does under `secrets=0`: blanked to "", and
+    a blank on import keeps whatever the install already holds — so a redacted
+    bundle merged over its own install changes nothing. The registration
+    (client id, redirect URI, discovered metadata) is not a secret and always
+    travels; a restored row on another machine keeps it, and the first 401
+    through the shim is what discovers the redirect URI no longer matches,
+    which is the same recovery path a revoked token takes. */
+const McpOauthRow = z.object({
+  mcpServerId: str.min(1),
+  resource: str,
+  issuer: str,
+  metadata: z.record(z.string(), z.unknown()),
+  clientId: str,
+  clientSecret: optStr,
+  redirectUri: str,
+  scope: optStr,
+  accessToken: optStr,
+  refreshToken: optStr,
+  expiresAt: int.nullish(),
+  lastError: optStr,
+  updatedAt: int,
 });
 
 const SkillRow = z.object({ id: str.min(1), name: str, path: str });
@@ -243,6 +270,11 @@ const QueueRow = z.object({
   sessionId: str.min(1),
   position: int,
   text: str,
+  /* The ids travel; the bytes do not. `attachments` rows are excluded from a
+     bundle for the same reason `history_*` is — they are meaningless without
+     the files beside them — so a restored queue row keeps saying what it was
+     going to send and its chips resolve to the "missing" state. */
+  attachmentIds: z.array(str).nullish(),
   createdAt: int,
 });
 
@@ -481,6 +513,7 @@ export const BundleSchema = z.object({
   agents: z.array(AgentRow).default([]),
   profiles: z.array(ProfileRow).default([]),
   mcpServers: z.array(McpServerRow).default([]),
+  mcpOauth: z.array(McpOauthRow).default([]),
   skills: z.array(SkillRow).default([]),
   commands: z.array(CommandRow).default([]),
   personas: z.array(PersonaRow).default([]),
@@ -523,6 +556,7 @@ export function exportBundle(opts: ExportOptions): Bundle {
   const profiles = db.select().from(profilesTable).all();
   const sessions = db.select().from(sessionsTable).all();
   const mcpServers = db.select().from(mcpServersTable).all();
+  const mcpOauthRows = db.select().from(mcpOauthTable).all();
   const routines = db.select().from(routinesTable).all();
   const triggers = db.select().from(routineTriggersTable).all();
   const webSearch = readWebSearch();
@@ -544,6 +578,13 @@ export function exportBundle(opts: ExportOptions): Bundle {
     mcpServers: opts.includeSecrets
       ? mcpServers
       : mcpServers.map((s) => ({ ...s, headers: blankValues(s.headers), env: blankValues(s.env) })),
+    /* The tokens are the second kind of credential in the library and are
+       blanked with the first. What is left — the registration and the
+       discovered metadata — is configuration, and a connection stripped of its
+       tokens still restores as a row that only needs reconnecting. */
+    mcpOauth: opts.includeSecrets
+      ? mcpOauthRows
+      : mcpOauthRows.map((r) => ({ ...r, accessToken: "", refreshToken: "", clientSecret: "" })),
     skills: db.select().from(skillsTable).all(),
     commands: db.select().from(commandsTable).all(),
     personas: db.select().from(personasTable).all(),
@@ -584,7 +625,7 @@ export function exportBundle(opts: ExportOptions): Bundle {
 export type ImportMode = "merge" | "replace";
 
 export type ImportSummary = Record<
-  | "agents" | "profiles" | "mcpServers" | "skills" | "commands" | "personas" | "projects" | "knowledge" | "previews"
+  | "agents" | "profiles" | "mcpServers" | "mcpOauth" | "skills" | "commands" | "personas" | "projects" | "knowledge" | "previews"
   | "sessions" | "queue" | "scheduled" | "workflowRuns" | "events" | "boards" | "boardStatuses" | "tasks"
   | "routines" | "routineTriggers" | "routineRuns"
   | "webSearchUsage" | "pushTokens" | "notifications",
@@ -670,7 +711,7 @@ function keepPairs(incoming: NameValue[] | null | undefined, existing: NameValue
  */
 export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
   const summary: ImportSummary = {
-    agents: 0, profiles: 0, mcpServers: 0, skills: 0, commands: 0, personas: 0, projects: 0, knowledge: 0, previews: 0,
+    agents: 0, profiles: 0, mcpServers: 0, mcpOauth: 0, skills: 0, commands: 0, personas: 0, projects: 0, knowledge: 0, previews: 0,
     sessions: 0, queue: 0, scheduled: 0, workflowRuns: 0, events: 0, boards: 0, boardStatuses: 0, tasks: 0,
     routines: 0, routineTriggers: 0, routineRuns: 0,
     webSearchUsage: 0, pushTokens: 0, notifications: 0,
@@ -681,6 +722,7 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
   // secrets a redacted bundle is allowed to keep.
   const existingProfiles = new Map(db.select().from(profilesTable).all().map((p) => [p.id, p]));
   const existingMcp = new Map(db.select().from(mcpServersTable).all().map((s) => [s.id, s]));
+  const existingOauth = new Map(db.select().from(mcpOauthTable).all().map((r) => [r.mcpServerId, r]));
   const existingTriggers = new Map(db.select().from(routineTriggersTable).all().map((t) => [t.id, t]));
   const existingWebSearch = readWebSearch();
 
@@ -689,7 +731,9 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
       // Children first only for readability — every child table cascades from
       // its parent, and the ones that do not (usage, tokens, tasks) stand alone.
       for (const table of [
-        sessionsTable, profilesTable, projectsTable, mcpServersTable, skillsTable, commandsTable,
+        // `mcp_oauth` cascades off `mcp_servers`, and is named here anyway so
+        // the list reads as the whole of what `replace` empties.
+        sessionsTable, profilesTable, projectsTable, mcpOauthTable, mcpServersTable, skillsTable, commandsTable,
         personasTable,
         // A root of its own: its triggers, runs and links all cascade from it.
         routinesTable,
@@ -734,6 +778,34 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
       }),
     );
     summary.mcpServers = bundle.mcpServers.length;
+
+    /* The connections, after the rows they cascade off. One whose server is in
+       neither the bundle nor the install is orphaned rather than fatal, exactly
+       like a knowledge entry for a project that no longer exists — and the
+       cascade would refuse the insert anyway. */
+    const mcpIds = new Set([...existingMcp.keys(), ...bundle.mcpServers.map((s) => s.id)]);
+    const oauth = bundle.mcpOauth.filter((r) => mcpIds.has(r.mcpServerId));
+    summary.orphaned += bundle.mcpOauth.length - oauth.length;
+    upsertChunked(
+      tx,
+      mcpOauthTable,
+      "mcpServerId",
+      oauth.map((r) => {
+        const was = existingOauth.get(r.mcpServerId);
+        return {
+          ...r,
+          metadata: r.metadata as (typeof mcpOauthTable.$inferInsert)["metadata"],
+          /* A blank secret keeps the install's own — the profile-key rule. */
+          clientSecret: r.clientSecret || was?.clientSecret || null,
+          accessToken: r.accessToken || was?.accessToken || null,
+          refreshToken: r.refreshToken || was?.refreshToken || null,
+          scope: r.scope ?? null,
+          expiresAt: r.expiresAt ?? null,
+          lastError: r.lastError ?? null,
+        };
+      }),
+    );
+    summary.mcpOauth = oauth.length;
 
     upsertChunked(tx, skillsTable, "id", bundle.skills);
     summary.skills = bundle.skills.length;

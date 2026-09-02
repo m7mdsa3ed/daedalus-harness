@@ -90,7 +90,7 @@ function QuestionnaireChoices({
     <QuestionnairePrimitive.Choices
       data-slot="questionnaire-choices"
       className={cn(
-        "group/questionnaire-choices grid min-w-0 gap-3",
+        "group/questionnaire-choices grid min-w-0 gap-0.5 rounded-xl bg-background/40 p-1",
         className
       )}
       {...props}
@@ -107,7 +107,15 @@ function QuestionnaireChoice({
     <QuestionnairePrimitive.Choice
       data-slot="questionnaire-choice"
       className={cn(
-        "group/questionnaire-choice relative flex min-h-11 cursor-pointer items-start gap-3 rounded-4xl border border-input px-4 py-3.5 text-start text-sm transition-colors outline-none select-none hover:bg-input/40 has-[>input:focus-visible]:border-ring has-[>input:focus-visible]:ring-[3px] has-[>input:focus-visible]:ring-ring/50 data-invalid:border-destructive data-checked:border-primary/40 data-checked:bg-primary/10",
+        /* The options sit in a recessed well, so the states are a ladder of
+           surfaces rather than outlines: resting is transparent on the well,
+           hover lifts a step, and the chosen row lifts all the way out of the
+           well (full background + a shadow) — the same treatment as a segment
+           picker, read at a glance as "this one is up". No borders anywhere: a
+           chosen outline would be a second way of saying what the lift says. */
+        "group/questionnaire-choice relative flex min-h-11 min-w-0 cursor-pointer items-start gap-3 rounded-lg px-3 py-2.5 text-start text-sm transition-colors outline-none select-none",
+        "hover:bg-background/70 has-[>input:focus-visible]:ring-[3px] has-[>input:focus-visible]:ring-ring/50",
+        "data-invalid:bg-destructive/[0.06] data-checked:bg-background data-checked:shadow-sm",
         "data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-disabled:opacity-50",
         className
       )}
@@ -120,13 +128,13 @@ function QuestionnaireChoice({
       <span
         aria-hidden="true"
         data-slot="questionnaire-choice-indicator"
-        className="pointer-events-none relative flex size-4 shrink-0 translate-y-[--spacing(0.45)] items-center justify-center rounded-[6px] border border-input group-has-data-[slot=questionnaire-choice-description]/questionnaire-choice:translate-y-0.5 group-data-[type=radio]/questionnaire-choice:rounded-full group-data-checked/questionnaire-choice:border-primary group-data-checked/questionnaire-choice:bg-primary group-data-checked/questionnaire-choice:text-primary-foreground dark:bg-input/30 dark:group-data-checked/questionnaire-choice:bg-primary"
+        className="pointer-events-none relative mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-[5px] border border-input/80 bg-background/60 group-has-data-[slot=questionnaire-choice-description]/questionnaire-choice:mt-[0.1875rem] group-data-[type=radio]/questionnaire-choice:rounded-full group-data-checked/questionnaire-choice:border-primary group-data-checked/questionnaire-choice:bg-primary group-data-checked/questionnaire-choice:text-primary-foreground dark:bg-input/30 dark:group-data-checked/questionnaire-choice:bg-primary"
       >
         <span
           data-slot="questionnaire-choice-indicator-dot"
-          className="hidden size-2 rounded-full bg-primary-foreground group-data-[type=checkbox]/questionnaire-choice:hidden group-data-checked/questionnaire-choice:block"
+          className="hidden size-1.5 rounded-full bg-primary-foreground group-data-[type=checkbox]/questionnaire-choice:hidden group-data-checked/questionnaire-choice:block"
         />
-        <HugeiconsIcon icon={Tick02Icon} strokeWidth={2} data-slot="questionnaire-choice-indicator-check" className="hidden size-3.5 group-data-[type=radio]/questionnaire-choice:hidden group-data-checked/questionnaire-choice:block" />
+        <HugeiconsIcon icon={Tick02Icon} strokeWidth={2.5} data-slot="questionnaire-choice-indicator-check" className="hidden size-3 group-data-[type=radio]/questionnaire-choice:hidden group-data-checked/questionnaire-choice:block" />
       </span>
       <QuestionnairePrimitive.ChoiceLabel
         data-slot="questionnaire-choice-label"
@@ -134,9 +142,12 @@ function QuestionnaireChoice({
       >
         {children}
       </QuestionnairePrimitive.ChoiceLabel>
+      {/* The row's number key, as the one quiet chip on the row — it is how you
+          answer from the keyboard, and it is the last thing to decorate a row
+          you have already answered, so it fades once checked. */}
       <QuestionnairePrimitive.ChoiceShortcut
         data-slot="questionnaire-choice-shortcut"
-        className="pointer-events-none ms-auto hidden size-5 shrink-0 translate-y-[--spacing(0.45)] items-center justify-center rounded-full border border-input bg-background/80 font-mono text-[0.625rem] leading-none font-medium text-muted-foreground group-has-data-[slot=questionnaire-choice-description]/questionnaire-choice:translate-y-0.5 group-data-[shortcut]/questionnaire-choice:inline-flex"
+        className="pointer-events-none ms-auto hidden size-5 shrink-0 items-center justify-center rounded-md bg-muted/70 font-mono text-[0.625rem] leading-none font-medium text-muted-foreground group-has-data-[slot=questionnaire-choice-description]/questionnaire-choice:mt-0.5 group-data-[shortcut]/questionnaire-choice:inline-flex group-data-checked/questionnaire-choice:opacity-25"
       />
     </QuestionnairePrimitive.Choice>
   )
@@ -167,7 +178,7 @@ function QuestionnaireInput({
       <QuestionnairePrimitive.Input
         data-slot="questionnaire-input"
         className={cn(
-          "h-9 min-h-11 w-full min-w-0 rounded-4xl border border-input bg-input/30 px-3 py-1 text-base transition-[color,box-shadow,background-color] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-[3px] aria-invalid:ring-destructive/20 sm:min-h-0 md:text-sm dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40",
+          "h-9 min-h-11 w-full min-w-0 rounded-lg border border-transparent bg-background/40 px-3 py-1 text-base transition-[color,box-shadow,background-color] outline-none focus-visible:border-ring focus-visible:bg-background focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-[3px] aria-invalid:ring-destructive/20 sm:min-h-0 md:text-sm dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40",
           "selection:bg-primary selection:text-primary-foreground placeholder:text-muted-foreground",
           className
         )}

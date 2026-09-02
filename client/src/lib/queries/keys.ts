@@ -1,8 +1,9 @@
 /* Query-key grammar. Every key is prefixed with the server's id (`scope`), so
    an invalidation or a stale read can never cross a connection even if a
-   component forgot which server it is on. Switching servers hard-reloads the
-   app today, so this is belt-and-braces — but a key that is only safe because
-   of a reload is not safe.
+   component forgot which server it is on. This used to be belt-and-braces on
+   top of a hard reload — but a key that is only safe because of a reload is not
+   safe, and switching servers is a state change now (see `switchServer` in
+   App.tsx), which is the case this was written for.
 
    Keys are built by the helpers here and nowhere else, the way chord strings
    are built by lib/shortcuts: a hand-typed key in a component is an

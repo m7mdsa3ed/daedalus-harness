@@ -1,5 +1,6 @@
 import * as React from "react"
 import type * as acp from "@agentclientprotocol/sdk"
+import type { AttachmentRef } from "@daedalus/protocol"
 import { useQueryClient } from "@tanstack/react-query"
 import { reportError } from "./errors"
 import { uuid } from "./uuid"
@@ -12,6 +13,8 @@ import {
   type AgentOptionSet,
 } from "./agent-options"
 import { pruneDrafts } from "./drafts"
+import { prunePastes } from "./pastes"
+import { pruneDraftAttachments } from "./draft-attachments"
 import { defaultToolPicks, loadThreadDefaults } from "./thread-defaults"
 import { prunePins } from "./pins"
 import {
@@ -97,10 +100,22 @@ export function useActions(settings: ServerSettings) {
       sessionId: string,
       err: unknown,
       context: string,
-      retryText?: string,
+      /* What sending this again would carry. A bare string is the prompt text;
+         the object form adds the refs it went out with, which is what the row's
+         "Retry as file paths" re-sends. `undefined` is a deliberate answer: the
+         words are somewhere else (back in the composer), and one Retry button
+         beside them would send the same message twice. */
+      retry?: string | { text?: string; attachments?: AttachmentRef[] },
       emit: (action: Action) => void = dispatch,
       settle = true
-    ) => recordThreadError(emit, sessionId, err, context, { retryText, settle })
+    ) => {
+      const carried = typeof retry === "string" ? { text: retry } : retry
+      return recordThreadError(emit, sessionId, err, context, {
+        retryText: carried?.text,
+        retryAttachments: carried?.attachments,
+        settle,
+      })
+    }
 
     /** The connection for a thread, only if this device already has one — for
         readers that must not bring one into existence by asking about it. */
@@ -287,6 +302,8 @@ export function useActions(settings: ServerSettings) {
         ...getState().sessions.filter((s) => s.draft).map((s) => s.id),
       ]
       pruneDrafts(ids)
+      prunePastes(ids)
+      pruneDraftAttachments(ids)
       prunePins(ids)
       /* A connection leaks the same way the device-local stores do — a cursor,
          a backoff timer or a live socket for a thread the server no longer
@@ -547,7 +564,48 @@ export function useActions(settings: ServerSettings) {
        * text, so the row can offer Retry — and then rethrown, so the composer
        * can react too. Callers must not toast it a second time.
        */
-      async send(sessionId: string, text: string, opts: { steer?: boolean } = {}) {
+      async send(
+        sessionId: string,
+        text: string,
+        opts: {
+          steer?: boolean
+          /** What this message carries. The refs are already uploaded — the
+              composer refuses to send while one is in flight — so this is a
+              list of ids plus the names the optimistic bubble draws before the
+              round trip. Unknown or foreign ids are dropped server-side rather
+              than refused: a stale draft id must not fail a send whose text is
+              fine. */
+          attachments?: AttachmentRef[]
+          /** Pin every attachment to the materialise-and-link branch. One
+              caller: the error row's "Retry as file paths". */
+          forceLink?: boolean
+          /** Offered the words back when the send died before anything reached
+              the server. The composer answers `true` when it has taken them —
+              a persisted draft the user can edit, where the error row it would
+              otherwise live on is `local` and dies with a reload. Callers with
+              nowhere to put them (Retry, Continue, the palette) leave it unset
+              and keep the row's Retry. */
+          onUnsent?: () => boolean
+        } = {}
+      ) {
+        const attachments = opts.attachments ?? []
+        const attachmentIds = attachments.map((ref) => ref.id)
+        /**
+         * Record a failure whose message never left this device.
+         *
+         * The words end up in exactly one place, and whoever holds them is who
+         * offers to send them again: the composer if it took them back, the
+         * error row's Retry if it did not.
+         */
+        const recordUnsent = (error: unknown, context: string) => {
+          const reclaimed = opts.onUnsent?.() === true
+          recordError(
+            sessionId,
+            error,
+            reclaimed ? `${context} — the text is back in the composer` : context,
+            reclaimed ? undefined : { text, attachments }
+          )
+        }
         /* First message on a draft: show the message instantly, then create the
            thread on the server. A failure leaves the draft a draft and lands the
            text in a Retry row like any other send failure — and retrying re-runs
@@ -559,8 +617,11 @@ export function useActions(settings: ServerSettings) {
              for the full server round-trip — the agent spawn, handshake and
              WebSocket replay can take seconds. On failure, clean up the
              optimistic state and record a Retry-able error. */
-          dispatch({ type: "user-message", id: sessionId, text, local: true })
-          dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
+          dispatch({ type: "user-message", id: sessionId, text, local: true, attachments })
+          /* Only when there are words to take it from: an image with no
+             sentence is a real prompt, and the server's own title sniff skips
+             an empty one too — a thread called "" is worse than "New thread". */
+          if (text) dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
           dispatch({ type: "turn-active", id: sessionId, active: true })
           try {
             await createSession(draft)
@@ -568,7 +629,7 @@ export function useActions(settings: ServerSettings) {
             threads.for(sessionId).markIdle()
             dispatch({ type: "drop-user-message", id: sessionId })
             dispatch({ type: "turn-active", id: sessionId, active: false })
-            recordError(sessionId, error, "Couldn't start this thread", text)
+            recordUnsent(error, "Couldn't start this thread")
             throw error
           }
           /* The optimistic bubble survives the attach on its own now: a
@@ -600,7 +661,7 @@ export function useActions(settings: ServerSettings) {
              prompt-failure branch below does. Left on, it spins forever on a
              thread that is not working on anything. */
           if (draft) dispatch({ type: "turn-active", id: sessionId, active: false })
-          recordError(sessionId, error, "Couldn't send the message", text)
+          recordUnsent(error, "Couldn't send the message")
           throw error
         }
         /* Steering — a prompt sent while a turn is already running — is why this
@@ -619,9 +680,9 @@ export function useActions(settings: ServerSettings) {
            server saw this, `queue_add` drains at once and the same holds. */
         if (!draft && alreadyRunning && !opts.steer) {
           try {
-            await thread.queueAdd(text)
+            await thread.queueAdd(text, attachmentIds)
           } catch (error) {
-            recordError(sessionId, error, "Couldn't queue this message", text)
+            recordUnsent(error, "Couldn't queue this message")
             throw error
           }
           return
@@ -629,8 +690,8 @@ export function useActions(settings: ServerSettings) {
         /* A draft already dispatched its optimistic bubble and turn-active
            above — only emit them for threads that were already live. */
         if (!draft) {
-          dispatch({ type: "user-message", id: sessionId, text, local: true })
-          dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
+          dispatch({ type: "user-message", id: sessionId, text, local: true, attachments })
+          if (text) dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
         }
         /* This device is the one peer that does not get a `turn_started` — it
            already put the message on screen — so it lights its own indicator.
@@ -650,7 +711,11 @@ export function useActions(settings: ServerSettings) {
           /* Resolves when the server has dispatched the prompt, not when the
              turn ends: how the turn went reaches every device on the thread as
              `turn_ended`, and awaiting it here would report a failure twice. */
-          const reply = await thread.prompt(text, opts)
+          const reply = await thread.prompt(text, {
+            steer: opts.steer,
+            attachmentIds,
+            forceLink: opts.forceLink,
+          })
           if ("queued" in reply) {
             /* The server was busy before this device knew — another peer or
                the scheduler started a turn. The words are on the queue row
@@ -666,7 +731,10 @@ export function useActions(settings: ServerSettings) {
              where alreadyRunning was true, another turn is genuinely active
              and must not be disturbed. */
           if (!alreadyRunning || draft) dispatch({ type: "turn-active", id: sessionId, active: false })
-          recordError(sessionId, error, "The agent couldn't answer this message", text)
+          recordError(sessionId, error, "The agent couldn't answer this message", {
+            text,
+            attachments,
+          })
           throw error
         }
       },
@@ -772,9 +840,16 @@ export function useActions(settings: ServerSettings) {
       // Each answers with a `queue` event to every peer; a failure lands in
       // the thread like any other, with the text where there is one to retry.
 
-      async queueUpdate(sessionId: string, itemId: string, text: string) {
+      async queueUpdate(
+        sessionId: string,
+        itemId: string,
+        text: string,
+        /** Omitted leaves the item's attachments alone; an empty array clears
+            them. */
+        attachmentIds?: string[]
+      ) {
         try {
-          await requireLive(sessionId).queueUpdate(itemId, text)
+          await requireLive(sessionId).queueUpdate(itemId, text, attachmentIds)
         } catch (error) {
           recordError(sessionId, error, "Couldn't edit the queued message", text)
           throw error

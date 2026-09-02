@@ -25,6 +25,7 @@ export function LibrarySection<T extends { id: string; name: string }>({
   settings,
   refresh,
   extraActions,
+  rowExtra,
   editable = () => true,
   importable = true,
 }: {
@@ -37,6 +38,9 @@ export function LibrarySection<T extends { id: string; name: string }>({
   refresh: () => Promise<void>
   /** Section-specific buttons beside Import / New (the MCP page's built-ins). */
   extraActions?: React.ReactNode
+  /** Per-row controls before Edit / Delete — the MCP page's Connect and its
+      status pill, which are about a row rather than about the library. */
+  rowExtra?: (item: T) => React.ReactNode
   /** Whether a row gets an Edit button. Every row can still be deleted. */
   editable?: (item: T) => boolean
   /** Whether there is anything to import from. False for a library the agents'
@@ -99,6 +103,7 @@ export function LibrarySection<T extends { id: string; name: string }>({
         <Group>
           {items.map((item) => (
             <Row key={item.id} icon={meta.icon} title={item.name} subtitle={<span className="font-mono">{subtitle(item)}</span>}>
+              {rowExtra?.(item)}
               {editable(item) && (
                 <Button variant="ghost" size="icon-lg" title="Edit" onClick={() => void navigate(settingsFormPath(meta.id, item.id))}>
                   <Pencil />

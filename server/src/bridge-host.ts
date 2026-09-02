@@ -1,6 +1,7 @@
 import type { BridgeHost } from "./acp-bridge.js";
 import type { ThreadEvent } from "./protocol.js";
 import { listQueue } from "./queue.js";
+import { getProfile } from "./profiles.js";
 import { bareModelId } from "./registry.js";
 import { enrichError, markTurnStderr } from "./stderr-ring.js";
 import { watchers, type Peer, type Session, type SessionEvents, type TurnOutcome } from "./sessions.js";
@@ -37,6 +38,21 @@ export function makeBridgeHost(session: Session, owner: BridgeHostOwner): Bridge
     },
     onElicitationRequest: () => {
       if (!session.parentSessionId) owner.events.onElicitationRequest?.(session);
+    },
+    /* The model's half of the attachment decision (delivery.ts). Read per
+       prompt rather than captured at spawn, and that is the point: the model
+       and the profile both change on a running agent now, so a queued message
+       drained after a live model change must be resolved against the model it
+       is actually being sent to. `hasCatalog` is the carve-out — a profile with
+       no `models[]` defers to the agent by construction, which is exactly where
+       `promptCapabilities` is authoritative. */
+    deliveryContext: () => {
+      const profile = getProfile(session.profileId);
+      const models = profile?.models ?? [];
+      if (models.length === 0) return { modalities: undefined, hasCatalog: false };
+      const wanted = bareModelId(profile!, session.model);
+      const entry = models.find((model) => model.id === wanted || model.id === session.model);
+      return { modalities: entry?.modalities, hasCatalog: true };
     },
     autonomy: () => session.autonomy,
     onAutonomyBlocked: () => {

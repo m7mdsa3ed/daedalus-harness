@@ -17,11 +17,16 @@ import type { EarlierPage, PromptReply, ThreadCommand, ThreadEvent, WireError } 
 export interface SocketHost {
   getSession(id: string): Session | undefined;
   journal: SessionJournal;
-  prompt(id: string, text: string, peer?: Peer, opts?: { steer?: boolean }): Promise<PromptReply>;
-  queueAdd(id: string, text: string): PromptReply;
+  prompt(
+    id: string,
+    text: string,
+    peer?: Peer,
+    opts?: { steer?: boolean; attachmentIds?: string[]; forceLink?: boolean },
+  ): Promise<PromptReply>;
+  queueAdd(id: string, text: string, attachmentIds?: string[]): PromptReply;
   queueSendNow(id: string, itemId?: string): Promise<{ turnId: string }>;
   queueSteer(id: string, itemId: string): Promise<{ turnId: string }>;
-  queueUpdate(id: string, itemId: string, text: string): void;
+  queueUpdate(id: string, itemId: string, text: string, attachmentIds?: string[]): void;
   queueRemove(id: string, itemId: string): void;
   queueClear(id: string): void;
   enrichError(session: Session, error: WireError): WireError;
@@ -337,7 +342,7 @@ export class SessionSocket {
     switch (command.cmd) {
       case "queue_update":
         this.run(session, peer, command.id, async () => {
-          this.host.queueUpdate(session.id, command.itemId, command.text);
+          this.host.queueUpdate(session.id, command.itemId, command.text, command.attachmentIds);
           return {};
         });
         return;
@@ -377,11 +382,17 @@ export class SessionSocket {
       }
       case "prompt":
         this.run(session, peer, command.id, () =>
-          this.host.prompt(session.id, command.text, peer, { steer: command.steer }),
+          this.host.prompt(session.id, command.text, peer, {
+            steer: command.steer,
+            attachmentIds: command.attachmentIds,
+            forceLink: command.forceLink,
+          }),
         );
         return;
       case "queue_add":
-        this.run(session, peer, command.id, async () => this.host.queueAdd(session.id, command.text));
+        this.run(session, peer, command.id, async () =>
+          this.host.queueAdd(session.id, command.text, command.attachmentIds),
+        );
         return;
       case "queue_send_now":
         this.run(session, peer, command.id, () => this.host.queueSendNow(session.id, command.itemId));

@@ -87,6 +87,30 @@ export interface QuotaSnapshot {
   error?: string;
 }
 
+/**
+ * An attachment, as everything that is not the bytes sees it.
+ *
+ * The journal, the queue row and the client store all carry *references*; the
+ * bytes live once on disk under `data/attachments/` and are fetched by id (see
+ * server/src/attachments.ts). That is the `REPLAY_CHUNK_BYTES` lesson stated
+ * ahead of time rather than after: a 6MB base64 image journaled into
+ * `session_events` is a frame held whole as a string on both ends of every
+ * replay, forever, of a thread whose transcript is otherwise a few hundred
+ * bytes per event.
+ */
+export interface AttachmentRef {
+  id: string;
+  /** The user's filename — display text and the name the prose uses. */
+  name: string;
+  mimeType: string;
+  size: number;
+}
+
+/* Which branch one of these takes is `resolveDelivery` in `delivery.ts`, not
+   here: this file is type-only by contract (the client maps it as
+   `@daedalus/protocol` and imports nothing but types from it), and that
+   decision is a *function* both ends have to run. */
+
 /** A JSON-RPC error flattened for the wire. The shape matters: `lib/errors.ts`
     reads `code` for its title table and `data.stderr` for the agent's own
     output, so carrying prose instead would throw both away. */
@@ -245,6 +269,10 @@ export interface AutoAnswer {
 export interface QueuedMessage {
   id: string;
   text: string;
+  /** What this message will carry when it is drained. Absent (rather than
+      empty) on a row written before attachments existed, and on every row that
+      carries none. */
+  attachments?: AttachmentRef[];
   createdAt: number;
 }
 
@@ -264,7 +292,21 @@ export type ThreadCommand =
   /** Send a prompt. While a turn is running it is QUEUED (answered
       `{queued, itemId}`) unless `steer` is set, which joins the running turn
       the way every mid-turn prompt used to. */
-  | { id: number; cmd: "prompt"; text: string; steer?: boolean }
+  | {
+      id: number;
+      cmd: "prompt";
+      text: string;
+      steer?: boolean;
+      /** Uploaded attachments this prompt carries (`POST /api/attachments`).
+          Ids, never bytes — see `AttachmentRef`. Unknown or foreign ids are
+          dropped rather than refused: a stale draft id must not fail a send
+          whose text is fine. */
+      attachmentIds?: string[];
+      /** Pin every attachment on this one prompt to the materialise-and-link
+          branch whatever the capabilities say. Exactly one caller: the "Retry
+          as file paths" action on a turn that died with inline blocks in it. */
+      forceLink?: boolean;
+    }
   | { id: number; cmd: "cancel" }
   /* ---- the queue ----
      `queue_add` is `prompt` from a client that already knows the thread is
@@ -273,8 +315,8 @@ export type ThreadCommand =
      archived thread is edited without spawning one to do it. `queue_send_now`
      interrupts the running turn and sends (one item, or everything combined);
      `queue_steer` injects one item into the running turn without stopping it. */
-  | { id: number; cmd: "queue_add"; text: string }
-  | { id: number; cmd: "queue_update"; itemId: string; text: string }
+  | { id: number; cmd: "queue_add"; text: string; attachmentIds?: string[] }
+  | { id: number; cmd: "queue_update"; itemId: string; text: string; attachmentIds?: string[] }
   | { id: number; cmd: "queue_remove"; itemId: string }
   | { id: number; cmd: "queue_clear" }
   | { id: number; cmd: "queue_send_now"; itemId?: string }
@@ -463,6 +505,14 @@ export type ThreadEvent =
       modes?: acp.SessionModeState | null;
       modeId?: string;
       configOptions?: acp.SessionConfigOption[];
+      /** What the *runtime* can carry in a prompt, from the `initialize`
+          handshake — the agent's half of the attachment decision (see
+          delivery.ts). Optional and absolute like everything else here, so an
+          event journaled before it existed replays with its shape unchanged.
+          The other carrier is the option probe, which is what lets a draft —
+          which has no process, by construction — resolve delivery before its
+          first send. */
+      promptCapabilities?: acp.PromptCapabilities;
     }
   /** The thread moved to another provider, model or effort *without* being
       restarted (`SessionManager.applyConfig`). Absolute, like `session_config`,
@@ -474,7 +524,11 @@ export type ThreadEvent =
   | { ev: "spawn_config"; profileId: string; model: string; effort: string; personaId?: string }
   /** A turn began, and whose words began it. Fanned out to every peer except
       the sender, which already showed its own message. */
-  | { ev: "turn_started"; seq: number; turnId: string; text: string }
+  /** `attachments` is journaled, which is the whole point of carrying refs
+      rather than bytes: a replayed user bubble still shows what was attached
+      with nothing else stored. Absent on every event journaled before
+      attachments existed, so their shape is unchanged. */
+  | { ev: "turn_started"; seq: number; turnId: string; text: string; attachments?: AttachmentRef[] }
   /** `promptText` is what lets a replayed failure still offer Retry.
       `continued` says the queue is draining into a new turn right behind this
       one — a "turn finished" notification for it would announce a pause that
