@@ -1,4 +1,4 @@
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 import type {
   AttachmentRef,
   EarlierPage,

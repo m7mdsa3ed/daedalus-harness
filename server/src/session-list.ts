@@ -1,5 +1,5 @@
 import { inArray } from "drizzle-orm";
-import * as acp from "@agentclientprotocol/sdk";
+import * as acp from "./acp.js";
 import { db, sessions as sessionsTable } from "./db/index.js";
 import { withAgentConnection } from "./probe.js";
 import type { Profile } from "./profiles.js";

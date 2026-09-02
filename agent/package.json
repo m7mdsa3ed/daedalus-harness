@@ -19,7 +19,7 @@
     "test:subagents": "tsx test/subagents.test.ts"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "^1.4.0",
+    "@agentclientprotocol/sdk": "1.4.0",
     "@ai-sdk/openai-compatible": "^2.0.0",
     "@ai-sdk/provider": "^4.0.9",
     "@modelcontextprotocol/sdk": "^1.30.0",

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "./acp.js";
 import { streamText, type ModelMessage } from "ai";
 import type { AgentEnv } from "./env.js";
 import type { ModelFactory } from "./provider.js";

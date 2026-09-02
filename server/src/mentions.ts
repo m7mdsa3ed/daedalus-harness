@@ -23,7 +23,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import type * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "./acp.js";
 
 /** A token after a whitespace boundary: `@` then a run of non-space. The
     boundary is what keeps `user@example.com` from reading as a mention. */

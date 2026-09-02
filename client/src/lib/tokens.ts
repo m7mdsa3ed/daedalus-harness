@@ -8,7 +8,7 @@
    Nothing here is a component: a *figure* is shared, the layout that holds it
    is not (a step row's trailing column and a popover's `<dl>` are not the same
    thing). See `components/token-usage.tsx` for the drawn forms. */
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 
 /** `842`, `12.4k`, `1.3M` — three significant-ish digits at every scale, so a
     column of them stays the same width. */

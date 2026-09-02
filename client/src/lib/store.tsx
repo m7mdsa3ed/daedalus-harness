@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import * as React from "react"
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 import type {
   AttachmentRef,
   QueuedMessage,

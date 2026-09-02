@@ -1,5 +1,5 @@
 import * as React from "react"
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 import { BotIcon } from "lucide-react"
 import { AgentIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
 import { AvatarGroup } from "@/components/ui/avatar"

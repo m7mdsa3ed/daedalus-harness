@@ -1,5 +1,5 @@
 import * as React from "react"
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 import { Archive, ArrowUp, ChevronUp, History, Mic, Paperclip, RotateCw, Square } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"

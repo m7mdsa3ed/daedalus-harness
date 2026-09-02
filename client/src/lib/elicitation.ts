@@ -14,7 +14,7 @@
    Everything else renders from the schema alone: titled enums (`oneOf`), plain
    enums (`enum`), multi-select arrays (`items.anyOf`/`items.enum`), booleans,
    numbers, free text. */
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 
 const CUSTOM_ANSWER_META_KEY = "_askUserQuestionCustomAnswer"
 const CLAUDE_OPTION_META_KEY = "_claude/askUserQuestionOption"

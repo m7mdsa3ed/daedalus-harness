@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import type * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "../src/acp.js";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { MockLanguageModelV4, convertArrayToReadableStream } from "ai/test";
 import { buildAgentApp } from "../src/app.js";

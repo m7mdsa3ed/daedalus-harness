@@ -19,7 +19,7 @@
    default. A plan opens (see `PlanApproval` below) and everything else stays
    folded behind a row that already names the act in full. */
 import * as React from "react"
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 import {
   CheckIcon,
   ChevronDownIcon,

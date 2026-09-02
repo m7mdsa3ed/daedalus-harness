@@ -1,6 +1,6 @@
 import * as React from "react"
 import { CalendarClock, SlashSquare, type LucideIcon } from "lucide-react"
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 import { cn } from "@/lib/utils"
 import { ComposerStripItem, useStripSummary } from "./composer-strip"
 

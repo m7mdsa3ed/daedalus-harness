@@ -1,6 +1,6 @@
 import * as React from "react"
 import { ClipboardListIcon, FileIcon, FileTextIcon, ImageIcon, PaperclipIcon, XIcon } from "lucide-react"
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 
 import {
   Attachment,

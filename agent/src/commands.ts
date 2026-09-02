@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
-import type * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "./acp.js";
 
 export interface CommandDef {
   name: string;

@@ -49,7 +49,12 @@ export interface TerminalInfo {
   /** Set once the process has gone; the row survives so the panel can say so. */
   exitCode: number | null;
   attached: boolean;
+  /** What this terminal is for. Absent for a shell the user opened; `dev` is
+      the project's dev server (`dev-server.ts`), which owns its lifecycle. */
+  role?: TerminalRole;
 }
+
+export type TerminalRole = "dev" | "install" | "build";
 
 interface Terminal {
   id: string;
@@ -65,6 +70,15 @@ interface Terminal {
   /** When the last peer left, or null while one is attached. */
   detachedAt: number | null;
   lastActivity: number;
+  role?: TerminalRole;
+  /** Exempt from the sweeper: some module owns this terminal's lifetime and
+      kills it explicitly. A dev server is the case — it is *supposed* to sit
+      there detached for hours with nothing to say. */
+  pinned: boolean;
+  /** Output listeners besides the attached peer — the dev-server module reads
+      the stream for the port a server announces. Fed the same chunks. */
+  taps: Set<(chunk: string) => void>;
+  exits: Set<(code: number) => void>;
 }
 
 const terminals = new Map<string, Terminal>();
@@ -74,12 +88,62 @@ const fail = (status: 400 | 403 | 404 | 409 | 413, message: string) =>
   new WorkspaceError(message, status);
 
 /** The shell to run. `SHELL` is what the user actually uses; the fallbacks are
-    only for a stripped environment (a container, a systemd unit). */
-function shellFor(): { file: string; args: string[] } {
+    only for a stripped environment (a container, a systemd unit). With a
+    `command` the shell runs it and exits — still a login shell, for the same
+    PATH reason. */
+function shellFor(command?: string): { file: string; args: string[] } {
   const shell = process.env.SHELL || (process.platform === "win32" ? "powershell.exe" : "/bin/bash");
   // A login shell reads the profile, which is where PATH usually gets its
   // interesting entries — without it `pnpm` is frequently just missing.
-  return { file: shell, args: process.platform === "win32" ? [] : ["-l"] };
+  if (process.platform === "win32") return { file: shell, args: command ? ["-Command", command] : [] };
+  return { file: shell, args: command ? ["-l", "-c", command] : ["-l"] };
+}
+
+/** Read a terminal's output alongside its peer. Returns the unsubscribe. The
+    scrollback so far is handed over first, so a late subscriber sees the line
+    it was looking for even if it already went by. */
+export function tapTerminal(
+  terminalId: string,
+  fn: (chunk: string) => void,
+  options: { replay?: boolean } = {},
+): () => void {
+  const terminal = terminals.get(terminalId);
+  if (!terminal) return () => {};
+  if (options.replay && terminal.scrollback) fn(terminal.scrollback);
+  terminal.taps.add(fn);
+  return () => {
+    terminal.taps.delete(fn);
+  };
+}
+
+/** Told once, with the exit code, when the process ends — or immediately if it
+    already has. Returns the unsubscribe. */
+export function onTerminalExit(terminalId: string, fn: (code: number) => void): () => void {
+  const terminal = terminals.get(terminalId);
+  if (!terminal) return () => {};
+  if (terminal.exitCode !== null) {
+    fn(terminal.exitCode);
+    return () => {};
+  }
+  terminal.exits.add(fn);
+  return () => {
+    terminal.exits.delete(fn);
+  };
+}
+
+/** The recent output, for a module that wants the tail rather than a stream. */
+export function terminalScrollback(terminalId: string): string {
+  return terminals.get(terminalId)?.scrollback ?? "";
+}
+
+/** Write to the process — `q` to a vite server, a newline to a paused
+    installer. The peer's frames come through `attachTerminal`; this is for
+    the server's own modules. */
+export function writeTerminal(terminalId: string, data: string): boolean {
+  const terminal = terminals.get(terminalId);
+  if (!terminal?.proc) return false;
+  terminal.proc.write(data);
+  return true;
 }
 
 function startSweeper(): void {
@@ -87,6 +151,7 @@ function startSweeper(): void {
   sweeper = setInterval(() => {
     const now = Date.now();
     for (const terminal of [...terminals.values()]) {
+      if (terminal.pinned) continue;
       const detachedTooLong =
         terminal.detachedAt !== null && now - terminal.detachedAt > DETACH_GRACE_MS;
       const idleTooLong = now - terminal.lastActivity > IDLE_MS;
@@ -119,12 +184,26 @@ const describe = (terminal: Terminal): TerminalInfo => ({
   rows: terminal.rows,
   exitCode: terminal.exitCode,
   attached: terminal.peer !== null,
+  ...(terminal.role ? { role: terminal.role } : {}),
 });
 
-export function createTerminal(
-  projectId: string,
-  options: { title?: string; cols?: number; rows?: number } = {},
-): TerminalInfo {
+export interface CreateTerminalOptions {
+  title?: string;
+  cols?: number;
+  rows?: number;
+  /** Run this instead of an interactive prompt: the shell is started with
+      `-c`, so the user's PATH and profile still apply (`pnpm` is found the way
+      it is found in their own terminal), and the terminal ends when it does. */
+  command?: string;
+  role?: TerminalRole;
+  /** See `Terminal.pinned`. Only meaningful with a `command` — an interactive
+      shell nobody comes back to should still be reclaimed. */
+  pinned?: boolean;
+  /** Extra environment for the process. */
+  env?: Record<string, string>;
+}
+
+export function createTerminal(projectId: string, options: CreateTerminalOptions = {}): TerminalInfo {
   // Resolves the project and its cwd, and throws the 404 if either is gone.
   const cwd = projectRoot(projectId);
   const project = getProject(projectId);
@@ -135,7 +214,7 @@ export function createTerminal(
 
   const cols = clamp(options.cols ?? 80, 2, 500);
   const rows = clamp(options.rows ?? 24, 2, 200);
-  const { file, args } = shellFor();
+  const { file, args } = shellFor(options.command);
 
   const id = randomUUID();
   const proc = pty.spawn(file, args, {
@@ -149,6 +228,7 @@ export function createTerminal(
       // So a shell prompt, and anything that greps the environment, can say
       // where it is running. Nothing reads these back.
       DAEDALUS_PROJECT: project?.name ?? projectId,
+      ...options.env,
     },
   });
 
@@ -164,6 +244,10 @@ export function createTerminal(
     exitCode: null,
     detachedAt: Date.now(),
     lastActivity: Date.now(),
+    role: options.role,
+    pinned: options.pinned === true && !!options.command,
+    taps: new Set(),
+    exits: new Set(),
   };
   terminals.set(id, terminal);
   startSweeper();
@@ -172,6 +256,7 @@ export function createTerminal(
     terminal.lastActivity = Date.now();
     terminal.scrollback = trim(terminal.scrollback + chunk);
     send(terminal.peer, { t: "data", data: chunk });
+    for (const tap of terminal.taps) tap(chunk);
   });
 
   proc.onExit(({ exitCode, signal }) => {
@@ -179,6 +264,7 @@ export function createTerminal(
     terminal.proc = null;
     terminal.lastActivity = Date.now();
     send(terminal.peer, { t: "exit", exitCode, signal: signal ?? null });
+    for (const fn of terminal.exits) fn(exitCode);
     /* The row stays: a peer attaching after the process died should be told it
        died, with the output that led there, rather than getting a 404 that
        reads like the terminal never existed. The sweeper collects it. */

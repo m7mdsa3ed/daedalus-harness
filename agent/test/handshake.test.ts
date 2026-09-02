@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
-import * as acp from "@agentclientprotocol/sdk";
+import * as acp from "../src/acp.js";
 import { buildAgentApp } from "../src/app.js";
 import { FULL_CAPS, initialize, makeClient, testEnv } from "./helpers/scripted.js";
 

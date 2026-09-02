@@ -1,5 +1,5 @@
 import * as React from "react"
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 import { AgentIcon, ProfileIcon } from "@/components/entity-icon"
 import { AvatarGroup } from "@/components/ui/avatar"
 import { useConfirm } from "@/components/confirm-dialog"

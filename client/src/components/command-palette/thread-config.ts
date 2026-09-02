@@ -7,7 +7,7 @@
    that advertises no model selector simply has no model page here, and the
    palette never invents one. */
 import { useLocation } from "react-router"
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 
 import { reportError } from "@/lib/errors"
 import { flattenSelectOptions, partitionSessionOptions } from "@/lib/session-options"

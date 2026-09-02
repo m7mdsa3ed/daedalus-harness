@@ -1,4 +1,4 @@
-import type * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "./acp.js";
 import type { SessionStore } from "./persistence.js";
 import type { AnySessionUpdate, UpdateParams } from "./types.js";
 

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { hostname, platform } from "node:os";
-import type * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "./acp.js";
 import {
   stepCountIs,
   streamText,

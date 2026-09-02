@@ -10,7 +10,7 @@
    in the component that draws the link. Best-effort throughout: no range is a
    fine answer, and a wrong one is worse than none, so anything that does not
    parse as a pair of positive line numbers is dropped. */
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 import type { ToolItem } from "../store"
 import { asRecord } from "./helpers"
 import { extractEdits } from "./edits"

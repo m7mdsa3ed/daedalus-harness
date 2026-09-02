@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import { Readable, Writable } from "node:stream";
-import * as acp from "@agentclientprotocol/sdk";
+import * as acp from "./acp.js";
 import { profileSupports, type Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 import { mentionLinks } from "./mentions.js";
@@ -108,7 +108,10 @@ const SUBAGENT_CAPABILITY = { subagents: {} } as unknown as Partial<acp.ClientCa
  * dropped before a handler registered with its own parser gets a look. So the
  * two are moved to a private method name on the way in (`agentStream`), where
  * the SDK has nothing to say about them, and the bridge listens on both names.
- * Goes away the day the SDK's union carries the RFD.
+ * Goes away the day the SDK's union carries the RFD. The agent runtime meets
+ * the same closed schema from the other side (`agent/src/app.ts`, the identity
+ * parser on `initialize`); the one fact behind both is written up once in
+ * docs/protocol.md ("The SDK seam").
  *
  * `_daedalus/subagent_usage` rides the same detour. It is ours, not the RFD's
  * — the workflow runner emits it server-side, where no validator ever sees it
@@ -349,11 +352,15 @@ export class AcpBridge {
   private idleWaiters: (() => void)[] = [];
   private readonly suppressModelMetadataWarning: boolean;
 
-  constructor(host: BridgeHost, proc: ChildProcessWithoutNullStreams, opts: BridgeOptions) {
+  /** `stream` is the transport, not the process: `agentStream(proc)` for a
+      child on stdio (the only kind today), and whatever carries ndJSON frames
+      for anything else — a socket to a sandboxed agent would plug in here
+      without the protocol handling above knowing. The caller owns the process
+      (stderr, exit, kill); the bridge owns only the conversation on it. */
+  constructor(host: BridgeHost, stream: acp.Stream, opts: BridgeOptions) {
     this.host = host;
     this.cwd = opts.cwd;
     this.suppressModelMetadataWarning = opts.suppressModelMetadataWarning === true;
-    const stream = agentStream(proc);
     this.connection = acp
       .client({ name: "daedalus" })
       .onNotification(acp.methods.client.session.update, (ctx) => this.onUpdate(ctx.params))

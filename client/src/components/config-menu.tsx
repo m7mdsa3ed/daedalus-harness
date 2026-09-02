@@ -4,7 +4,7 @@
    that a picker driven by ACP and a picker driven by the profile catalog are
    the same control to look at — the difference between them is what happens on
    select, and that is the caller's business, not the row's. */
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 import type * as React from "react"
 import {
   DropdownMenuPortal,

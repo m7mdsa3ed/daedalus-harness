@@ -1,6 +1,6 @@
 /* ── Questions, findings, plans, skills ── the structured calls a runtime's
    workflow tools make, plus the flags a repo search ran with. */
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 import type { ToolItem } from "../store"
 import { asRecord, str } from "./helpers"
 import { isOneOf } from "./naming"

@@ -15,7 +15,7 @@
    Model and effort are the agent's business now. The profile catalog in
    settings only says how a thread *starts*; once it is running, these are what
    the menus read. */
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 
 export interface SessionOptions {
   /** The agent's model selector, if it advertises one. */

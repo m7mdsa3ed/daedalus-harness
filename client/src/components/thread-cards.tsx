@@ -5,7 +5,7 @@
    SubagentStep) stays in thread-items, which imports from here — never the
    reverse, so the two files cannot cycle. */
 import * as React from "react"
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 import {
   ChevronRightIcon,
   CopyIcon,

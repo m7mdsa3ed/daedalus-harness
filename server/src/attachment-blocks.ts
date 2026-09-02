@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "./acp.js";
 
 import { MAX_INLINE_PROMPT_BYTES, attachmentPath, listAttachments, readAttachment } from "./attachments.js";
 import { isTextish, resolveDelivery, type Delivery } from "./delivery.js";

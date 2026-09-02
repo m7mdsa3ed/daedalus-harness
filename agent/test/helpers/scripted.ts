@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as acp from "@agentclientprotocol/sdk";
+import * as acp from "../../src/acp.js";
 import type { LanguageModelV4StreamPart, LanguageModelV4Usage } from "@ai-sdk/provider";
 import { MockLanguageModelV4, convertArrayToReadableStream } from "ai/test";
 import type { AgentEnv } from "../../src/env.js";

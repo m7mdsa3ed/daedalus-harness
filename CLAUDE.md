@@ -106,6 +106,13 @@ describes; every one of those rules cost a bug.
   (`ensureSocket`). A dropped socket is reported once with the server's reason, never
   answered by the reconnect ladder — nothing reattaches, or respawns an idle-retired agent,
   behind the reader's back.
+- **The ACP SDK is named in one file per half** — `server/src/acp.ts`, `agent/src/acp.ts`,
+  and the client's `@daedalus/acp` path onto the server's; import `acp` from there, never
+  from the package. `AcpBridge` takes an `acp.Stream`, not a process — `agentStream(proc)`
+  is the stdio transport and the caller owns the child. The version is pinned exactly in all
+  three manifests and `test:acp-units` asserts the runtime surface. A chat-shaped adapter
+  (`@ai-sdk/harness-acp`) cannot replace the SDK behind this seam — → `docs/protocol.md`
+  "The SDK seam" for the list of what it drops.
 - **Live and replay are one code path.** `attached`/`caught_up` bracket the replay and
   everything between them is the same event the live socket sends, so the client has no second
   parser. `session_config` carries **absolute** state — never make it a delta. Replay start

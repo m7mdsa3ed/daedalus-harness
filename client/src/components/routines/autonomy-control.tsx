@@ -23,7 +23,7 @@
       dialog is having watched the thing work once. */
 import * as React from "react"
 import { AlertTriangleIcon, ShieldCheckIcon } from "lucide-react"
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 
 import { useConfirm } from "@/components/confirm-dialog"
 import { Field } from "@/components/settings/primitives"

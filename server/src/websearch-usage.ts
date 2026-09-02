@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, count, desc, eq, lt } from "drizzle-orm";
-import type * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "./acp.js";
 import type { SessionUpdate } from "./protocol.js";
 import { db, webSearchUsage } from "./db/index.js";
 

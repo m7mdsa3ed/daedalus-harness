@@ -202,6 +202,51 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 - ACP schema is the source for modes/config options/usage — render generically, don't
   hardcode per-agent knowledge in the client.
 
+## The SDK seam
+
+- **The ACP SDK is named in one file per half**: `server/src/acp.ts` and `agent/src/acp.ts`
+  are barrels over `@agentclientprotocol/sdk`, and the client reaches the same vocabulary
+  through the `@daedalus/acp` tsconfig path onto the server's. Everything else imports
+  `acp` from there — type-only in ~40 files, at runtime in exactly five: `acp-bridge.ts`
+  (`acp.client()`, `ndJsonStream`, `methods`, `RequestError`, `PROTOCOL_VERSION`),
+  `probe.ts` and `session-list.ts` (`acp.client().connectWith`), `agent/src/app.ts`
+  (`acp.agent()`) and `agent/src/index.ts` (`ndJsonStream`). The version is **pinned
+  exactly** in all three manifests, because the behaviour below is version-sensitive and the
+  three installs are separate. `test:acp-units` asserts the runtime surface and the
+  method-name table, so an SDK release that moves a symbol fails there rather than in a
+  spawn.
+- **A barrel is a rename shim, not an abstraction.** It makes swapping the *package* a
+  three-file change; it does nothing for swapping the *shapes*. What a replacement must
+  carry is the whole of `protocol.ts`'s vocabulary (`SessionUpdate`, `RequestPermissionRequest`,
+  `CreateElicitationRequest`, `SessionConfigOption`, `SessionModeState`, `Usage`, …) plus
+  the calls the bridge makes: `initialize` with our capability set (see "Capabilities we
+  advertise"), `session/new`, `session/load` (the one resume path), `session/list`,
+  `session/prompt` twice in flight for steering, `session/cancel`, `session/set_mode`,
+  `session/set_config_option`, and the client side of `session/update`,
+  `session/request_permission`, `elicitation/create` and `elicitation/complete`. An adapter
+  that pre-interprets the update stream into a chat-shaped one — Vercel's
+  `@ai-sdk/harness-acp` is the reference case — cannot sit behind this seam: it drops
+  steering, compaction, per-turn usage, arbitrary config options, elicitation forms,
+  `session/list`, the subagent RFD and `session/load`, requires a network sandbox with an
+  exposed port instead of a local binary, and does not export the schema types, so the SDK
+  would stay a dependency regardless. It would fit as an *additional* transport (below),
+  never as a replacement.
+- **The transport is the bridge's constructor argument, not the process.** `AcpBridge`
+  takes an `acp.Stream`; `agentStream(proc)` is the ndJSON-over-stdio factory the one
+  caller (`SessionManager.spawnAgent`) and the probe build, and it is where the inbound
+  frame rewrite for the subagent RFD lives. A socket to a remote or sandboxed agent is a
+  second factory beside it, with the protocol handling untouched. The caller keeps the
+  process — stderr, exit, kill — and the bridge keeps only the conversation.
+- **One fact, two workarounds, both of which any replacement must carry**: the SDK's
+  generated schema is a *closed* union. On the client side `acp.client()` validates every
+  `session/update` in a router that runs before any handler, so `agentStream` re-addresses
+  the RFD's `subagent_spawned`/`subagent_state_update` (and our own
+  `_daedalus/subagent_usage`) to `_daedalus/subagent_update` on the way in — see
+  "Subagents". On the agent side the same schema *strips* capability keys it has not heard
+  of, `subagents` above all, so `agent/src/app.ts` registers `initialize` with an identity
+  parser. They are the same knowledge in two places because the two halves share types and
+  nothing else; both go away the day the SDK's union carries the RFD.
+
 ## The client mints session ids; threads start as drafts
 
 - **The client mints session ids and threads start as drafts.** "New thread" is a route

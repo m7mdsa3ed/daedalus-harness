@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import type * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "./acp.js";
 import type { ModelMessage } from "ai";
 import { EFFORTS, type AgentEnv, type Effort } from "./env.js";
 import type { McpHandle } from "./mcp.js";

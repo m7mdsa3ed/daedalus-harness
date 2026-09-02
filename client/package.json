@@ -118,7 +118,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@agentclientprotocol/sdk": "^1.4.0",
+    "@agentclientprotocol/sdk": "1.4.0",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",

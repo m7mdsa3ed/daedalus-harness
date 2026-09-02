@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "../src/acp.js";
 import { buildAgentApp } from "../src/app.js";
 import {
   initialize,

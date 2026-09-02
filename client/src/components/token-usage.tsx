@@ -21,7 +21,7 @@
    transcript mounts per row. */
 import * as React from "react"
 import { CoinsIcon } from "lucide-react"
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { formatTokens, promptTokens } from "@/lib/tokens"

@@ -1,4 +1,4 @@
-import type * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "./acp.js";
 
 /**
  * Which branch an attachment takes on its way to the agent — one pure

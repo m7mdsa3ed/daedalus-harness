@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 import type { WebSocket } from "ws";
-import type * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "./acp.js";
 import { db, sessions as sessionsTable } from "./db/index.js";
 import { SESSION_LINKS, emptyLinks, linksOf, readLinks, unionLinks, writeLinks, type LinkSet } from "./db/links.js";
 import { materializeModelAllowlist, materializeWorkspace } from "./materialize.js";
@@ -22,7 +22,7 @@ import { getConfig, loadConfig } from "./config.js";
 import { WEB_SEARCH_SERVER_NAME, toMcpServerEnv } from "./websearch.js";
 import { pruneWebSearchUsage, recordWebSearchUsage } from "./websearch-usage.js";
 import { KNOWLEDGE_SERVER_NAME, toKnowledgeServerEnv } from "./knowledge-db.js";
-import { AcpBridge, spawnAgent, type BridgeHost } from "./acp-bridge.js";
+import { AcpBridge, agentStream, spawnAgent, type BridgeHost } from "./acp-bridge.js";
 import { makeBridgeHost } from "./bridge-host.js";
 import { enrichError, pushStderr, resetStderr } from "./stderr-ring.js";
 import { SessionQueue } from "./session-queue.js";
@@ -1273,7 +1273,7 @@ export class SessionManager {
     // load that failed and mark a thread that has just been restored fine.
     session.liveAcpSessionId = null;
     session.historyLost = null;
-    const bridge = new AcpBridge(this.hostFor(session), proc, {
+    const bridge = new AcpBridge(this.hostFor(session), agentStream(proc), {
       cwd: project.cwd,
       mcpServers,
       ...opts,

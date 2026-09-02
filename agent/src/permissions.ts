@@ -1,4 +1,4 @@
-import type * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "./acp.js";
 import type { Session } from "./session.js";
 
 export type PermissionGroup = "edit" | "execute" | "mcp";

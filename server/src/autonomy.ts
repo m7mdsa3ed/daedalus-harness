@@ -1,4 +1,4 @@
-import type * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "./acp.js";
 
 /*
  * How a thread answers the agent for the user.

@@ -1,4 +1,4 @@
-import type * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "../acp.js";
 import type { Session } from "../session.js";
 import type { Emitter } from "../updates.js";
 

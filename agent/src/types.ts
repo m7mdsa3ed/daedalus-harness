@@ -1,4 +1,4 @@
-import type * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "./acp.js";
 
 /* The ACP Subagent Sessions RFD's two update kinds are not in the SDK's
    generated SessionUpdate union yet. Outbound notifications are not

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import * as acp from "@agentclientprotocol/sdk";
+import * as acp from "./acp.js";
 import { scanCommands, scanSkills, toAvailableCommands } from "./commands.js";
 import type { AgentEnv } from "./env.js";
 import { connectMcpServers } from "./mcp.js";
@@ -78,7 +78,10 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
     /* Registered with an identity parser on purpose: the SDK's generated
        schema strips capability keys it has not heard of — `subagents` (the
        RFD opt-in the harness sends) above all — and a stripped claim would
-       silently disable the whole subagent path. */
+       silently disable the whole subagent path. The server's bridge meets
+       the same closed schema from the other side (`agentStream` in
+       server/src/acp-bridge.ts); docs/protocol.md "The SDK seam" is the one
+       write-up of both. */
     .onRequest("initialize", (params: unknown) => params as acp.InitializeRequest, ({ params }) => {
       clientCaps = params.clientCapabilities ?? null;
       return {

@@ -1,6 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
-import type * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "../acp.js";
 import type { ToolMeta, ToolRuntime } from "./context.js";
 
 export const askUserMeta: ToolMeta = {

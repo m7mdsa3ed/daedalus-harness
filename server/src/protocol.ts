@@ -1,4 +1,4 @@
-import type * as acp from "@agentclientprotocol/sdk";
+import type * as acp from "./acp.js";
 
 /**
  * The Daedalus thread protocol — what travels over `/ws`.

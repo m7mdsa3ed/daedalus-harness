@@ -1,5 +1,5 @@
 /* ── Targets and headings ── the strings a step row prints about a call. */
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 import type { ToolItem } from "../store"
 import { describeCommand } from "./describe"
 import { asRecord, str } from "./helpers"

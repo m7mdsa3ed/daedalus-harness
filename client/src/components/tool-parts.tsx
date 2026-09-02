@@ -11,7 +11,7 @@ import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import rehypeHighlight from "rehype-highlight"
 import { needsTail, rehypeStreamWords, type StreamEffect } from "@/lib/stream-words"
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 import {
   ArrowLeftRightIcon,
   BrainIcon,

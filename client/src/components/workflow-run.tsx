@@ -1,5 +1,5 @@
 import * as React from "react"
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 import { BotIcon, CircleDashedIcon, WorkflowIcon } from "lucide-react"
 /* The workflow/subagent *run* surfaces — a run in the transcript, and the
    list of its steps underneath it.

@@ -1,5 +1,5 @@
 import * as React from "react"
-import type * as acp from "@agentclientprotocol/sdk"
+import type * as acp from "@daedalus/acp"
 import type { AttachmentRef } from "@daedalus/protocol"
 import { useQueryClient } from "@tanstack/react-query"
 import { reportError } from "./errors"

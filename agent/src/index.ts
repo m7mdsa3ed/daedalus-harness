@@ -1,5 +1,5 @@
 import { Readable, Writable } from "node:stream";
-import { ndJsonStream } from "@agentclientprotocol/sdk";
+import { ndJsonStream } from "./acp.js";
 import { buildAgentApp } from "./app.js";
 import { readEnv } from "./env.js";
 
