@@ -3,6 +3,7 @@
    layout has no business importing a component. */
 import {
   FileTextIcon,
+  GitCompareIcon,
   GlobeIcon,
   MessageSquareIcon,
   SquareTerminalIcon,
@@ -16,4 +17,5 @@ export const PANEL_ICONS: Record<PanelKind, LucideIcon> = {
   editor: FileTextIcon,
   terminal: SquareTerminalIcon,
   web: GlobeIcon,
+  review: GitCompareIcon,
 }

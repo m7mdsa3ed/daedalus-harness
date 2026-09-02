@@ -3,25 +3,27 @@
    ranked by `ItemList` on the root page and drawn in declared order by the
    search page without either of them knowing how the other orders things. */
 import * as React from "react"
-import { FolderIcon, MessageSquareIcon } from "lucide-react"
+import { MessageSquareIcon } from "lucide-react"
 
-import { ProjectIcon } from "@/components/entity-icon"
+import { AgentIcon, ProjectIcon } from "@/components/entity-icon"
 import { snippetParts, type SearchResult } from "@/lib/search"
 import { activityAt, type Project, type SessionMeta } from "@/lib/settings"
 import { shortAge } from "@/lib/time"
-import { cn } from "@/lib/utils"
-import type { PaletteItem } from "./list"
+import type { PaletteItem, PaletteMeta } from "./list"
 
-/** Project + age, the pair that tells one thread from another with the same
-    title. */
-function Meta({ project, at }: { project: string; at?: number }) {
-  return (
-    <span className="ml-auto flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
-      <FolderIcon className="size-3" />
-      {project}
-      {at ? <span className="tabular-nums opacity-70">· {shortAge(at)}</span> : null}
-    </span>
-  )
+/** Where a thread lives and when it last moved — the pair that tells one
+    thread from another with the same title. The project comes with its mark
+    when the store knows it; a search hit only knows the name. */
+function threadMeta(
+  project: { name: string; logoUrl?: string | null } | string,
+  at?: number
+): PaletteMeta[] {
+  const meta: PaletteMeta[] =
+    typeof project === "string"
+      ? [{ label: project, icon: <ProjectIcon project={{ name: project }} className="size-3.5" /> }]
+      : [{ label: project.name, icon: <ProjectIcon project={project} className="size-3.5" /> }]
+  if (at) meta.push({ label: shortAge(at), dim: true })
+  return meta
 }
 
 export function threadItem({
@@ -34,24 +36,24 @@ export function threadItem({
 }: {
   session: SessionMeta
   group: string
-  project: string
+  /** The project row when the store has it, else its name. */
+  project: Project | string
   running: boolean
   onSelect: () => void
   always?: boolean
 }): PaletteItem {
+  const projectName = typeof project === "string" ? project : project.name
   return {
     id: `thread:${session.id}`,
     group,
     title: session.title,
-    keywords: `thread ${project} ${session.id}`,
+    keywords: `thread ${projectName} ${session.id}`,
     always,
-    icon: <MessageSquareIcon className={session.exited ? "opacity-50" : undefined} />,
-    render: (
-      <span className={cn("truncate", running && "harness-shimmer text-primary")}>
-        {session.title}
-      </span>
-    ),
-    trailing: <Meta project={project} at={activityAt(session)} />,
+    icon: <AgentIcon agentId={session.agentId} className="size-5" />,
+    running,
+    muted: session.exited && !running,
+    badges: session.lastTurnError ? [{ label: "Failed", tone: "danger" }] : undefined,
+    meta: threadMeta(project, activityAt(session)),
     onSelect,
   }
 }
@@ -65,25 +67,17 @@ export function messageItem(hit: SearchResult, onSelect: () => void): PaletteIte
     title: hit.title,
     // Ranked by the server's own FTS score; nothing here re-sorts it.
     always: true,
-    className: "items-start",
-    icon: <MessageSquareIcon className="mt-0.5" />,
-    render: (
-      <span className="min-w-0 flex-1">
-        <span className="block truncate">{hit.title}</span>
-        <span className="block truncate text-[11px] text-muted-foreground">
-          {snippetParts(hit.snippet).map((part, i) =>
-            part.match ? (
-              <span key={i} className="font-semibold text-foreground">
-                {part.text}
-              </span>
-            ) : (
-              <React.Fragment key={i}>{part.text}</React.Fragment>
-            )
-          )}
+    icon: <MessageSquareIcon />,
+    subtitle: snippetParts(hit.snippet).map((part, i) =>
+      part.match ? (
+        <span key={i} className="font-semibold text-foreground">
+          {part.text}
         </span>
-      </span>
+      ) : (
+        <React.Fragment key={i}>{part.text}</React.Fragment>
+      )
     ),
-    trailing: <Meta project={hit.projectName || "Other"} at={hit.at} />,
+    meta: threadMeta(hit.projectName || "Other", hit.at),
     onSelect,
   }
 }
@@ -104,31 +98,17 @@ export function projectItem({
   lastActivity?: number
   always?: boolean
 }): PaletteItem {
+  const meta: PaletteMeta[] = [{ label: project.cwd, mono: true }]
+  if (lastActivity) meta.push({ label: shortAge(lastActivity), dim: true })
   return {
     id: `project:${project.id}`,
     group,
     title: project.name,
     keywords: `project workspace ${project.cwd}`,
     always,
-    icon: <ProjectIcon project={project} className="size-4" />,
-    render: (
-      <>
-        <span className="truncate">{project.name}</span>
-        {badge && (
-          <span className="shrink-0 rounded-sm bg-muted px-1.5 py-px text-[10px] text-muted-foreground">
-            {badge}
-          </span>
-        )}
-      </>
-    ),
-    trailing: (
-      <span className="ml-auto flex min-w-0 shrink items-center gap-2 text-[11px] text-muted-foreground">
-        <span className="truncate font-mono">{project.cwd}</span>
-        {lastActivity ? (
-          <span className="shrink-0 tabular-nums opacity-70">{shortAge(lastActivity)}</span>
-        ) : null}
-      </span>
-    ),
+    icon: <ProjectIcon project={project} className="size-5" />,
+    badges: badge ? [{ label: badge, tone: "primary" }] : undefined,
+    meta,
     onSelect,
   }
 }

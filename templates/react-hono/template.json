@@ -1,0 +1,43 @@
+{
+  "id": "react-hono",
+  "name": "React + Hono",
+  "description": "Vite 8, React 19, Tailwind v4 and a Hono API in one process.",
+  "tags": [
+    "react",
+    "hono",
+    "tailwind",
+    "fullstack"
+  ],
+  "install": "pnpm install",
+  "dev": "pnpm dev",
+  "check": "pnpm check",
+  "build": "pnpm build",
+  "signals": [
+    "api",
+    "backend",
+    "server",
+    "database",
+    "db",
+    "auth",
+    "login",
+    "sign up",
+    "signup",
+    "accounts",
+    "users",
+    "save",
+    "persist",
+    "store data",
+    "crud",
+    "rest",
+    "endpoint",
+    "fullstack",
+    "full-stack",
+    "full stack",
+    "dashboard",
+    "admin",
+    "upload",
+    "webhook",
+    "hono"
+  ],
+  "sortOrder": 10
+}

@@ -19,6 +19,8 @@ import { ItemList, type PaletteItem } from "./list"
 import { projectItem } from "./rows"
 import { retune, useThreadTarget } from "./thread-config"
 
+const capitalize = (text: string) => (text ? text.charAt(0).toUpperCase() + text.slice(1) : text)
+
 export function ThemePage() {
   const palette = usePalette()
   const navigate = useNavigate()
@@ -85,8 +87,7 @@ export function EffortPage() {
   const items: PaletteItem[] = effortChoices.map((choice) => ({
     id: `effort:${choice.value}`,
     group: options.effort?.name ?? "Reasoning effort",
-    title: choice.name,
-    className: "capitalize",
+    title: capitalize(choice.name),
     icon: <Gauge className={current === choice.value ? "text-primary" : undefined} />,
     checked: current === choice.value,
     onSelect: () =>
@@ -105,7 +106,7 @@ export function ModePage() {
     id: `mode:${mode.id}`,
     group: "Permission mode",
     title: mode.name,
-    keywords: mode.description ?? "",
+    subtitle: mode.description,
     icon: <ShieldCheck className={modes.currentModeId === mode.id ? "text-primary" : undefined} />,
     checked: modes.currentModeId === mode.id,
     onSelect: () =>
@@ -142,7 +143,7 @@ export function PersonaPage() {
     id: `persona:${persona.id}`,
     group: "Persona",
     title: persona.name,
-    keywords: persona.description,
+    subtitle: persona.description,
     icon: <Drama className={current === persona.id ? "text-primary" : undefined} />,
     checked: current === persona.id,
     onSelect: () =>

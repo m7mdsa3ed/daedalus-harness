@@ -28,6 +28,7 @@ import { TerminalKeyRow } from "@/components/workspace/terminal-keys"
 import { describeError, reportError } from "@/lib/errors"
 import { loadSettings, serverName } from "@/lib/settings"
 import { useProjects } from "@/lib/queries/catalog"
+import { Logo } from "@/components/ui/logo"
 import { cn } from "@/lib/utils"
 import { createTerminal, killTerminal, terminalSocketUrl } from "@/lib/workspace/terminals"
 import { panelId } from "@/lib/workspace/panels"
@@ -233,11 +234,22 @@ export function TerminalPanel({
         {status !== "ready" && (
           <span
             className={cn(
-              "shrink-0 text-[11px]",
-              status === "failed" ? "text-destructive" : "text-muted-foreground"
+              "flex shrink-0 items-center gap-1.5 text-[11px]",
+              status === "failed"
+                ? "text-destructive"
+                : status === "connecting"
+                  ? "text-primary"
+                  : "text-muted-foreground"
             )}
           >
-            {status === "connecting" ? "connecting…" : status === "exited" ? "exited" : "disconnected"}
+            {status === "connecting" && <Logo working className="size-3.5 shrink-0" />}
+            {status === "connecting" ? (
+              <span className="harness-shimmer">connecting…</span>
+            ) : status === "exited" ? (
+              "exited"
+            ) : (
+              "disconnected"
+            )}
           </span>
         )}
         <Button

@@ -10,9 +10,7 @@
      │ Projects                           one folder per project, ALL its
      │   ▸ harness              + ·       threads, by period; + starts one *in* it
      │   ▸ website
-     │ Automations                        what happens with nobody watching
-     │   Routines                        …start a new thread on their own
-     │   Scheduled                       …speak into one that already exists
+     │ Routines · Scheduled             …two more fixed rows: each is a page
      │ Trash                              folded shut
      └ <server> / Settings                the "account" row
 
@@ -25,29 +23,36 @@
    project". Rows are one line and carry the title alone, like both apps: a
    running turn shimmers the title and a thread waiting on you gets an amber
    dot at the trailing edge — that is the whole ornament. Everything else about
-   a thread — agent, profile, model, project, when it started — is in the
-   `ThreadInfoCard`, one popover that opens on hover and, on a phone, on long
-   press (where it also carries the row's actions, since it replaces the
-   right-click menu a finger cannot open).
+   a thread — agent, profile, model, project, when it started, and the row's
+   actions — is in the `ThreadInfoCard`, one popover that opens on hover (and,
+   on a phone, on long press) and carries the actions beside the reading, so
+   one hover reaches both a thread's what and its what-to-do.
 
    Pins, fold state and the sort/filter are device-local (the harness's session
    list is shared, and one person's sidebar must not reorder another's).
 
+   Routines and scheduled messages are not listed here at all. Each is a page
+   of its own (`/routines`, `/schedules`) with the whole list, its counts and
+   the controls, so the sidebar carries one nav row per page rather than a
+   second, smaller copy of the list with fewer controls on it.
+
    The pieces live under `components/sidebar/` — the spacing scale, the
-   memoized row/list, the folder/group primitives and the Automations tier —
-   with this file as the layout that stacks them (and the stable import path
-   for the scale). */
+   memoized row/list and the folder/group primitives — with this file as the
+   layout that stacks them (and the stable import path for the scale). */
 import * as React from "react"
 import {
   BellIcon,
+  CalendarClock,
   Clock,
   FolderIcon,
+  HammerIcon,
   ListFilter,
   Pin,
   SearchIcon,
   SquareKanban,
   SquarePen,
   Trash2,
+  Zap,
 } from "lucide-react"
 import { useLocation, useNavigate } from "react-router"
 import { reportError } from "@/lib/errors"
@@ -70,9 +75,9 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { useConfirm } from "@/components/confirm-dialog"
+import { Badge } from "@/components/ui/badge"
 import { FoldableGroup, ProjectFolder } from "@/components/sidebar/groups"
 import { GROUP, GROUP_LABEL, MENU, PROJECT_PAGE_SIZE, ROW, TIER } from "@/components/sidebar/scale"
-import { AutomationsGroup } from "@/components/sidebar/automations"
 import { ThreadList } from "@/components/sidebar/thread-list"
 import { UnreadCount } from "@/components/notifications/items"
 import type { ThreadStatus } from "@/components/sidebar/thread-row"
@@ -80,13 +85,17 @@ import { IDLE_PHASE, markFor } from "@/lib/thread/phase"
 import type { Actions } from "@/lib/actions"
 import {
   boardPath,
+  buildPath,
   notificationsPath,
   projectPath,
+  routinesPath,
+  schedulesPath,
   settingsPath,
   threadPath,
 } from "@/lib/router"
 import { usePins } from "@/lib/pins"
 import { useProfiles, useProjects } from "@/lib/queries/catalog"
+import { useRoutines, useScheduled } from "@/lib/queries/routines"
 import { useInbox } from "@/lib/queries/surfaces"
 import { useChord } from "@/lib/keybindings"
 import { formatChord, type ShortcutId } from "@/lib/shortcuts"
@@ -126,8 +135,15 @@ export function SidebarNav({
   const location = useLocation()
   const navigate = useNavigate()
   const inBoard = location.pathname.startsWith("/board")
+  const inBuild = location.pathname.startsWith("/build")
   const inNotifications = location.pathname.startsWith("/notifications")
+  const inRoutines = location.pathname.startsWith("/routines")
+  const inSchedules = location.pathname.startsWith("/schedules")
   const unread = useInbox().inbox?.unread ?? 0
+  // Both lists are loaded at boot (the palette and the pages read the same
+  // queries), so the rows can say how much is armed without asking again.
+  const routineCount = useRoutines().data?.length ?? 0
+  const scheduledCount = useScheduled().data?.length ?? 0
   // Whatever these two are bound to on this device — the tooltip has to say the
   // key that actually works, not the one the release shipped.
   const newThreadChord = useChord("newThread") ?? ""
@@ -160,6 +176,23 @@ export function SidebarNav({
               <Kbd id="palette" />
             </SidebarMenuButton>
           </SidebarMenuItem>
+          {/* The builder is a way to start work, like New thread — so it sits
+              with it, above the places. */}
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="sm"
+              tooltip="Build an app from a starter"
+              isActive={inBuild}
+              onClick={() => void navigate(buildPath())}
+              className={ROW}
+            >
+              <HammerIcon />
+              <span>Build an app</span>
+              <Badge variant="outline" className="ml-auto text-[10px] px-1.5 h-4 font-medium">
+                Experimental
+              </Badge>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               size="sm"
@@ -170,6 +203,39 @@ export function SidebarNav({
             >
               <SquareKanban />
               <span>Tasks</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          {/* Two pages for what happens with nobody watching. The labels are
+              the feature: a routine starts a NEW thread on its own (a clock, a
+              webhook, a commit) and answers the agent's questions itself; a
+              scheduled message speaks into a thread that ALREADY EXISTS. They
+              sit together because "routine" and "scheduled" are not words
+              that tell themselves apart, and the count on each is how much is
+              armed — the number you are asking about before you open it. */}
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="sm"
+              tooltip="Routines — threads that start on their own"
+              isActive={inRoutines}
+              onClick={() => void navigate(routinesPath())}
+              className={ROW}
+            >
+              <Zap />
+              <span>Routines</span>
+              <NavCount count={routineCount} />
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="sm"
+              tooltip="Scheduled — messages sent into a thread later"
+              isActive={inSchedules}
+              onClick={() => void navigate(schedulesPath())}
+              className={ROW}
+            >
+              <CalendarClock />
+              <span>Scheduled</span>
+              <NavCount count={scheduledCount} />
             </SidebarMenuButton>
           </SidebarMenuItem>
           {/* A row, not the badge itself: the count capsule lives on the
@@ -198,6 +264,18 @@ export function SidebarNav({
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>
+  )
+}
+
+/** The quiet count a nav row carries when its page has something in it —
+    hidden at zero (an empty page needs no number in front of it) and in the
+    icon rail, where the icon is the whole row. */
+function NavCount({ count }: { count: number }) {
+  if (count <= 0) return null
+  return (
+    <span className="ml-auto text-[10px] tabular-nums text-muted-foreground group-data-[collapsible=icon]:hidden">
+      {count}
+    </span>
   )
 }
 
@@ -521,8 +599,6 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
           </SidebarGroupContent>
         </SidebarGroup>
       )}
-
-      <AutomationsGroup />
 
       {/* Trash folds, and folds shut by default: it is where things go, not
           where anyone works. */}

@@ -408,7 +408,28 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   XML arrive — `parseTaskWrapper` unwraps it); its `acp-subagent-events` branch (PR #40654)
   projects the child onto the root with `_meta["opencode/child-session"] = {id, parentID,
   depth, title}` and tool ids namespaced `<childSid>:<callId>`, which is read as a third
-  shape. Two things on the server make the RFD path possible. The SDK's `SessionUpdate`
+  shape. **Until that branch ships, the harness reads OpenCode's children itself, on the
+  server, and there is no fourth shape.** `opencode acp` runs OpenCode's HTTP server in the
+  same process, and its `/event` SSE bus carries every session's events — the bridge's
+  filter is what drops the children, not the data. An agent whose `subagentFeed` is
+  `"opencode-http"` is spawned with `--port <n> --hostname 127.0.0.1` and a per-spawn
+  `OPENCODE_SERVER_PASSWORD` (minted in `SessionManager.start` from a `PortPool`, never
+  stored — the probe spawns without either). `server/src/opencode-subagents.ts` subscribes
+  with Basic auth, retrying while the server comes up, keeps an allowlist rooted at the
+  bridge's `acpSessionId` (a `session.created` seen before the handshake answers is held and
+  re-checked; the `task` tool's `metadata.sessionId` is the fallback when one was missed),
+  and translates the child's bus events into the RFD sequence: `subagent_spawned` on the
+  parent, the child's `agent_message_chunk`/`agent_thought_chunk`/`tool_call`/
+  `tool_call_update` on the child's own session id, `_daedalus/subagent_usage` per
+  `step-finish`, `subagent_state_update` on idle or `session.error`. Those frames are merged
+  into the stdio stream by `agentStream(proc, extra)` **ahead of** the RFD rewrite, so the
+  bridge, the journal, replay and the client tree see exactly what a Codex child looks like.
+  The root's own parts and every user-role part are ignored (ACP already carried the
+  former; the brief is on the `task` row). Not covered: a revive (`respawnNow` clears the
+  journal and `session/load` replays the parent alone, so children vanish until the next
+  task runs — a `GET /session/{root}/children` backfill is the documented follow-up), and a
+  child's permission asks, which OpenCode's bridge also drops and the seeded
+  `"permission":"allow"` makes moot. `pnpm test:opencode-subagents`. Two things on the server make the RFD path possible. The SDK's `SessionUpdate`
   union is **closed** and `acp.client()` validates every `session/update` against it in a
   router that runs *before any handler* — so `agentStream` re-addresses the two RFD
   variants to `_daedalus/subagent_update` on the way in and the bridge listens on both
@@ -436,6 +457,39 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   draws it: bot icon, brief → rail of `RowView`s → report, open while live. Consumers that
   read `thread.items` must ignore `parentId` items where the thread's own is meant — the
   composer todo shelf, the rail's reply previews and the palette's transcript text do.
+
+
+## Pause
+
+- **ACP has no pause, so the harness owns one — and only its own runtime takes it.** The
+  spec's one interruption is `session/cancel`: the agent stops its model and tool calls,
+  the client answers every open permission with `cancelled`, and the prompt returns
+  `stopReason: "cancelled"` — the step in flight is gone. `session/resume` and
+  `session/load` are reattachment, not un-pausing; the Subagent Sessions RFD advertises
+  `cancel`, `prompt` and `close` on a child and nothing else. Claude Code's and Codex's
+  adapters therefore cannot be paused, only cancelled and re-prompted (context kept, step
+  lost). The `agent/` runtime owns its loop, so it can hold: `Session.gate` is awaited at
+  the top of `prepareStep` — the boundary between one step's tool results and the next
+  model call — in the main turn and in every subagent loop, so a held parent holds its
+  workers too. The pair is `_daedalus/session/pause` / `_daedalus/session/resume`
+  (extension methods, `_`-prefixed as the spec asks, registered through the SDK's
+  string-method `onRequest` overload), advertised as
+  `agentCapabilities._meta["daedalus/pause"]` — `_meta` being the slot ACP reserves for
+  exactly this, and one the SDK's initialize schema keeps. Both answer at once with
+  `{paused, turnActive}`: a pause takes effect when the step in flight ends, and the flag,
+  not the step, is what the peers are told. The gate races the turn's abort, so a cancel
+  while held ends the turn as `cancelled` (an abort raised inside `prepareStep` reaches the
+  stream as an error part, which `pumpStream` folds back into `aborted`) and **a cancel
+  clears the pause** on both ends — a pause is part of what a cancel abandons. A paused
+  session with no turn open holds its next prompt at its first step, which is why the
+  composer's toggle stays while `paused` even after the turn has ended.
+  On the wire: `AcpBridge.pause()/resume()` behind the `pause`/`resume` commands, gated on
+  `bridge.canPause`, answered with the **absolute, live-only `paused` event** to every peer
+  including the one that asked — it is current state like `queue`, never journaled, and
+  `caught_up` carries it on attach. `session_config.canPause` is the offer, on the same
+  carrier and by the same rules as `promptCapabilities`. The fake agent takes the pair with
+  a flag and nothing else, which is what `test:workflow` exercises the bridge path with;
+  the gate itself is `agent/test/turn.test.ts`.
 
 ## stderr in errors
 

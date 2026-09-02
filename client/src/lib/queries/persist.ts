@@ -70,8 +70,15 @@ export function persistOptionsFor(
     maxAge: MAX_AGE_MS,
     buster: __QUERY_CACHE_BUSTER__,
     dehydrateOptions: {
+      /* A query can also opt out by declaring `meta: { persist: false }` —
+         the dev-server status does, because what it holds is a process state
+         and a per-boot credential, neither of which means anything to the
+         next page load. Declared on the query rather than listed here so a
+         read that must not outlive the page says so where it is written. */
       shouldDehydrateQuery: (query) =>
-        query.state.status === "success" && JSON.stringify(query.queryKey) !== inboxKey,
+        query.state.status === "success" &&
+        query.meta?.persist !== false &&
+        JSON.stringify(query.queryKey) !== inboxKey,
       /* A mutation is an action, not a reading. Resuming one from a previous
          page load would re-send a write the user has no memory of asking for. */
       shouldDehydrateMutation: () => false,

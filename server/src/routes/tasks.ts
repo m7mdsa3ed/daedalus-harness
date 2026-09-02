@@ -4,31 +4,57 @@ import { createScheduled, deleteScheduled, listScheduled, updateScheduled } from
 import { TaskDirError, type TaskTailer } from "../tasks.js";
 import {
   BoardError,
+  CompleteSprintSchema,
   CreateBoardSchema,
+  CreateSprintSchema,
   CreateStatusSchema,
+  CreateViewSchema,
   ReorderStatusesSchema,
   UpdateBoardSchema,
+  UpdateSprintSchema,
   UpdateStatusSchema,
+  UpdateViewSchema,
+  completeSprint,
   createBoard,
+  createSprint,
   createStatus,
+  createView,
   deleteBoard,
+  deleteSprint,
   deleteStatus,
+  deleteView,
   getBoard,
+  listAllSprints,
   listAllStatuses,
+  listAllViews,
   listBoards,
   listStatuses,
   reorderStatuses,
+  startSprint,
   updateBoard,
+  updateSprint,
   updateStatus,
+  updateView,
 } from "../boards.js";
 import {
+  BulkUpdateSchema,
+  CommentSchema,
   CreateTaskSchema,
+  LinkSchema,
   ReorderEntrySchema,
   UpdateTaskSchema,
+  addComment,
+  addLink,
   applyReorder,
+  bulkUpdate,
   createTask,
+  deleteComment,
+  deleteLink,
   deleteTask,
+  findTaskByKey,
+  getTaskDetail,
   listTasks,
+  updateComment,
   updateTask,
 } from "../tasks-board.js";
 import type { SessionManager } from "../sessions.js";
@@ -58,7 +84,7 @@ const ScheduledPatchSchema = z
   })
   .refine((patch) => Object.keys(patch).length > 0, "nothing to update");
 
-/** Scheduled messages, the tasks board, and the background-task watch. */
+/** Scheduled messages, the task workspace, and the background-task watch. */
 export function taskRoutes(app: Hono, deps: { sessions: SessionManager; tasks: TaskTailer }): void {
   const { sessions, tasks } = deps;
 
@@ -98,15 +124,32 @@ export function taskRoutes(app: Hono, deps: { sessions: SessionManager; tasks: T
   };
 
   app.get("/api/boards", (c) =>
-    // One request for the whole switcher: the boards plus every column of
-    // every board, since the client needs a board's columns the instant it is
-    // selected and a request per board would make switching feel remote.
-    c.json({ boards: listBoards(), statuses: listAllStatuses() }),
+    // One request for the whole workspace: the boards plus every column,
+    // sprint and saved view of every board, since the client needs a board's
+    // columns the instant it is selected and a request per board would make
+    // switching feel remote.
+    c.json({
+      boards: listBoards(),
+      statuses: listAllStatuses(),
+      sprints: listAllSprints(),
+      views: listAllViews(),
+    }),
   );
 
-  app.post("/api/boards", crud(CreateBoardSchema, { lenientJson: true }).create(createBoard));
+  app.post("/api/boards", async (c) => {
+    const parsed = CreateBoardSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    return guard(c, () => c.json(createBoard(parsed.data), 201));
+  });
 
-  app.patch("/api/boards/:id", crud(UpdateBoardSchema, { lenientJson: true }).update(updateBoard));
+  app.patch("/api/boards/:id", async (c) => {
+    const parsed = UpdateBoardSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    return guard(c, () => {
+      const row = updateBoard(c.req.param("id"), parsed.data);
+      return row ? c.json(row) : c.json({ error: "not found" }, 404);
+    });
+  });
 
   app.delete("/api/boards/:id", (c) =>
     guard(c, () =>
@@ -146,20 +189,95 @@ export function taskRoutes(app: Hono, deps: { sessions: SessionManager; tasks: T
     );
   });
 
-  /* Tasks board. A standalone, top-level resource — no project/session/agent
-     scoping yet, per "no connection between the agents and the board, initially".
-     The whole board is small (a few hundred rows at most), so every mutation
-     answers with the full list and the client reconciles from it rather than
-     trying to diff. */
+  /* ── Sprints ──
+     A dated window of a board's work. planned → active → closed; closing one
+     asks where its open tasks go, the way a column delete does. */
+  app.post("/api/boards/:id/sprints", async (c) => {
+    const parsed = CreateSprintSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    return guard(c, () => c.json(createSprint(c.req.param("id"), parsed.data), 201));
+  });
+
+  app.patch("/api/sprints/:id", async (c) => {
+    const parsed = UpdateSprintSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    return guard(c, () => {
+      const row = updateSprint(c.req.param("id"), parsed.data);
+      return row ? c.json(row) : c.json({ error: "not found" }, 404);
+    });
+  });
+
+  app.post("/api/sprints/:id/start", (c) => guard(c, () => c.json(startSprint(c.req.param("id")))));
+
+  app.post("/api/sprints/:id/complete", async (c) => {
+    const parsed = CompleteSprintSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    return guard(c, () => c.json(completeSprint(c.req.param("id"), parsed.data.moveTo)));
+  });
+
+  app.delete("/api/sprints/:id", (c) =>
+    deleteSprint(c.req.param("id")) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404),
+  );
+
+  /* ── Saved views ── a layout plus the filters it was saved with. */
+  app.post("/api/boards/:id/views", async (c) => {
+    const parsed = CreateViewSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    return guard(c, () => c.json(createView(c.req.param("id"), parsed.data), 201));
+  });
+
+  app.patch("/api/views/:id", crud(UpdateViewSchema, { lenientJson: true }).update(updateView));
+
+  app.delete("/api/views/:id", (c) =>
+    deleteView(c.req.param("id")) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404),
+  );
+
+  /* ── Tasks ──
+     A standalone, top-level resource — no session/agent scoping. The whole
+     list is small (a few thousand rows at most), so every mutation answers with
+     the row(s) it changed and the client reconciles from that. */
   app.get("/api/tasks", (c) => {
     const boardId = c.req.query("board");
     return c.json(listTasks(boardId || undefined));
+  });
+
+  /** `KEY-12` → the task, for deep links and the link picker. */
+  app.get("/api/tasks/by-key/:key", (c) => {
+    const task = findTaskByKey(c.req.param("key"));
+    return task ? c.json(task) : c.json({ error: "not found" }, 404);
   });
 
   app.post("/api/tasks", async (c) => {
     const parsed = CreateTaskSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
     return guard(c, () => c.json(createTask(parsed.data), 201));
+  });
+
+  /* Whole-board reorder + status moves, one request. The body is the board's new
+     column-by-column order; the server commits it atomically. Registered before
+     `/api/tasks/:id` so the literal segment wins. */
+  app.post("/api/tasks/reorder", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { entries?: unknown; board?: unknown };
+    const entries = Array.isArray(body.entries) ? body.entries : [];
+    const parsed = z.array(ReorderEntrySchema).safeParse(entries);
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    const boardId = typeof body.board === "string" && body.board.trim() ? body.board : "default";
+    return guard(c, () => c.json(applyReorder(parsed.data, boardId)));
+  });
+
+  /* One patch, many tasks: the multi-select's "set status / priority /
+     assignee / sprint / archive" in one transaction. */
+  app.post("/api/tasks/bulk", async (c) => {
+    const parsed = BulkUpdateSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    return guard(c, () => c.json(bulkUpdate(parsed.data)));
+  });
+
+  /** The task with its comments, activity, links and children — what the
+      detail panel opens on. */
+  app.get("/api/tasks/:id", (c) => {
+    const detail = getTaskDetail(c.req.param("id"));
+    return detail ? c.json(detail) : c.json({ error: "not found" }, 404);
   });
 
   app.patch("/api/tasks/:id", async (c) => {
@@ -171,19 +289,35 @@ export function taskRoutes(app: Hono, deps: { sessions: SessionManager; tasks: T
     });
   });
 
-  /* Whole-board reorder + status moves, one request. The body is the board's new
-     column-by-column order; the server commits it atomically. */
-  app.post("/api/tasks/reorder", async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as { entries?: unknown; board?: unknown };
-    const entries = Array.isArray(body.entries) ? body.entries : [];
-    const parsed = z.array(ReorderEntrySchema).safeParse(entries);
-    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-    const boardId = typeof body.board === "string" && body.board.trim() ? body.board : "default";
-    return guard(c, () => c.json(applyReorder(parsed.data, boardId)));
-  });
-
   app.delete("/api/tasks/:id", (c) =>
     deleteTask(c.req.param("id")) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404),
+  );
+
+  app.post("/api/tasks/:id/comments", async (c) => {
+    const parsed = CommentSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    return guard(c, () => c.json(addComment(c.req.param("id"), parsed.data), 201));
+  });
+
+  app.patch("/api/comments/:id", async (c) => {
+    const parsed = CommentSchema.pick({ body: true }).safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    const row = updateComment(c.req.param("id"), parsed.data.body);
+    return row ? c.json(row) : c.json({ error: "not found" }, 404);
+  });
+
+  app.delete("/api/comments/:id", (c) =>
+    deleteComment(c.req.param("id")) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404),
+  );
+
+  app.post("/api/tasks/:id/links", async (c) => {
+    const parsed = LinkSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    return guard(c, () => c.json(addLink(c.req.param("id"), parsed.data), 201));
+  });
+
+  app.delete("/api/links/:id", (c) =>
+    deleteLink(c.req.param("id")) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404),
   );
 
   /**

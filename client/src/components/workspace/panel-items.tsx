@@ -19,7 +19,7 @@
    wrapped under its own shortcut. A row is one line here: the label never
    wraps, and the chord sits at the trailing edge with a gap it cannot lose. */
 import type * as React from "react"
-import { PanelsTopLeft, PlusIcon } from "lucide-react"
+import { AppWindowIcon, PanelsTopLeft, PlusIcon } from "lucide-react"
 
 import {
   DropdownMenuGroup,
@@ -42,6 +42,7 @@ const OPENABLE: { kind: PanelKind; label: string; hint: string; shortcut?: Short
     shortcut: "terminal",
   },
   { kind: "web", label: "Browser", hint: "A page beside the thread" },
+  { kind: "review", label: "Changes", hint: "What this thread did to the repository" },
 ]
 
 /** One row: icon, label over its hint, the chord at the trailing edge. The
@@ -89,10 +90,15 @@ function PanelRow({
 export function WorkspacePanelItems({
   onNewTab,
   onOpen,
+  onOpenPreview,
   canOpenPanels,
 }: {
   onNewTab: () => void
   onOpen: (kind: PanelKind) => void
+  /** Present only when the routed thread's project has a dev command — the
+      preview is the Browser panel pointed at the managed dev server, and a
+      project without one has nothing to point at. */
+  onOpenPreview?: () => void
   /** False with no thread routed: there is no project to open a panel for. */
   canOpenPanels: boolean
 }) {
@@ -114,6 +120,15 @@ export function WorkspacePanelItems({
           {/* Same sizing as the menu that holds it: a submenu is anchored to
               its trigger row, so without this the hints would wrap. */}
           <DropdownMenuSubContent className="w-auto max-w-[min(20rem,calc(100vw-1.5rem))] min-w-60">
+            {onOpenPreview && (
+              <PanelRow
+                icon={AppWindowIcon}
+                label="Preview"
+                hint="The app, running in its dev server"
+                shortcut="preview"
+                onClick={onOpenPreview}
+              />
+            )}
             {OPENABLE.map((entry) => (
               <PanelRow
                 key={entry.kind}

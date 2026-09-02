@@ -10,6 +10,7 @@ import type {
   SessionUpdate,
   ThreadCommand,
   ThreadEvent,
+  TurnChanges,
   WireError,
 } from "@daedalus/protocol"
 import { api, wsUrl, type ServerSettings } from "./settings"
@@ -111,7 +112,9 @@ export interface ThreadCallbacks {
     configOptions: acp.SessionConfigOption[] | undefined,
     /** What the runtime can carry in a prompt — the agent's half of the
         attachment decision. Absent means unchanged, like `configOptions`. */
-    promptCapabilities: acp.PromptCapabilities | undefined
+    promptCapabilities: acp.PromptCapabilities | undefined,
+    /** Whether the runtime takes pause. Absent means unchanged. */
+    canPause: boolean | undefined
   ) => void
   /** The thread moved to another profile, model or effort without restarting.
       Fanned out to every device, this one included — the server resolves what
@@ -123,6 +126,13 @@ export interface ThreadCallbacks {
       settled. Absolute and live-only — never journaled, so a replay never
       redraws an old percentage as though it were now. */
   onQuota: (quota: QuotaSnapshot) => void
+  /** What a turn did to the worktree, as git measured it — live-only; the
+      list on open comes from `GET /api/sessions/:id/changes`. */
+  onTurnChanges: (turn: TurnChanges) => void
+  /** The thread's project row moved on the server's own initiative (a
+      from-scratch build that earned its dev command). Live-only; the row is
+      refetched, not read off the frame. */
+  onProjectChanged: () => void
   /** A turn began. Only ever seen for a prompt this device did NOT send — its
       own message is already on screen. `catchingUp` marks the replay. */
   onTurnStarted: (
@@ -184,7 +194,10 @@ export interface ThreadCallbacks {
   /** The replay is over; everything after this is live. `promptActive` is read
       server-side in the same tick as the log it follows, so it cannot pair a
       stale turn state with a fresh replay window. */
-  onCaughtUp: (cursor: number, promptActive: boolean, queue: QueuedMessage[]) => void
+  onCaughtUp: (cursor: number, promptActive: boolean, queue: QueuedMessage[], paused: boolean) => void
+  /** The turn is held at a step boundary, or released. Absolute, live-only,
+      to every peer — the one that asked included. */
+  onPaused: (paused: boolean) => void
   /** The journal position this device has folded up to, as it moves — so the
       cursor a reconnect resumes from describes what is actually on screen and
       not merely what was there when this socket attached. Raised on every
@@ -516,7 +529,10 @@ export class ThreadSocket {
            back while the archive streams), in which case ours is ahead and the
            server's would give that event back on the next resume. */
         this.cursor = Math.max(this.cursor, event.cursor)
-        this.callbacks.onCaughtUp(this.cursor, event.promptActive, event.queue ?? [])
+        this.callbacks.onCaughtUp(this.cursor, event.promptActive, event.queue ?? [], event.paused ?? false)
+        return
+      case "paused":
+        this.callbacks.onPaused(event.paused)
         return
       /* The replay, arriving whole. Unrolled through this same switch so there
          is no second parser: `catchingUp` is already true (the `attached` that
@@ -568,6 +584,12 @@ export class ThreadSocket {
       case "quota":
         this.callbacks.onQuota(event.quota)
         return
+      case "turn_changes":
+        this.callbacks.onTurnChanges(event.turn)
+        return
+      case "project_changed":
+        this.callbacks.onProjectChanged()
+        return
       case "task_event":
         this.callbacks.onTaskEvent(event.transcriptDir, event.event)
         return
@@ -595,7 +617,8 @@ export class ThreadSocket {
           event.modes,
           event.modeId,
           event.configOptions,
-          event.promptCapabilities
+          event.promptCapabilities,
+          event.canPause
         )
         return
       case "turn_started":
@@ -637,6 +660,16 @@ export class ThreadSocket {
 
   async cancel(): Promise<void> {
     await this.request((id) => ({ id, cmd: "cancel" }))
+  }
+
+  /** Hold the turn at its next step boundary — only on a runtime whose
+      `session_config` said `canPause`. Not a cancel: nothing is thrown away. */
+  async pause(): Promise<void> {
+    await this.request((id) => ({ id, cmd: "pause" }))
+  }
+
+  async resume(): Promise<void> {
+    await this.request((id) => ({ id, cmd: "resume" }))
   }
 
   // ---- the queue ----

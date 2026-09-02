@@ -24,6 +24,42 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   only client left reading them is the editor panel's diff mode, since the source-control
   panel is gone.
 
+## Turn changes and the review panel
+
+- **A turn's footprint is measured by git, never read off the transcript.** The
+  transcript knows the edits a *tool* declared; it does not know what a shell command did,
+  and an agent that ran `sed`, a codemod or a script of its own changed the project just as
+  much. So `server/src/turn-changes.ts` photographs the worktree as a tree object on the
+  journaled `turn_started` and again on `turn_ended` (`git.snapshotTree`: the real index is
+  copied to a scratch `GIT_INDEX_FILE` so git's stat cache carries over and only changed
+  files are re-hashed, `add --all -- .`, `write-tree`; the real index is never touched, so
+  the user's own staging and a terminal next door are unaffected). Both ids and the
+  `--name-status`/`--numstat` summary land in `session_turn_changes` (cascading), and the
+  summary rides the live-only `turn_changes` event so the footer chip can draw "3 files
+  changed" without a git run per row.
+- **Snapshots are off the prompt path, and the window is stated.** `turn_started` is emitted
+  synchronously deep in the bridge and a queue drain starts the next turn in the same tick
+  the last one ended, so both snapshots run on the next tick; a turn that ends before its
+  start snapshot finished waits for it. The agent needs a model round-trip before it can
+  touch a file, and a stat-cached snapshot takes milliseconds.
+- **Scopes are tree pairs.** `turn:<id>` is the turn's two trees, or its start tree against
+  a snapshot taken now while it is still running (or when the end snapshot failed);
+  `uncommitted` is `HEAD` (the empty tree on an unborn branch) against a snapshot taken now —
+  which is what makes untracked files appear, where `git diff HEAD` would not show them.
+  Diffs are `--relative` to the project directory, so a project inside a larger checkout is
+  measured at the project, the way `status` scopes itself. A tree git has pruned (they are
+  dangling; the grace period is git's, a fortnight by default) reads as "unavailable", and so
+  does a project that is not a repository — a sentence in the panel, never an error toast.
+- **Writes are the project's git routes.** Stage/unstage/discard/commit act on the index and
+  the worktree *as they are now*, whatever scope is being read: staging a file a turn touched
+  stages the whole file. The one hunk-level door is `POST …/git/apply` (`git apply --cached`
+  to stage a hunk, `--reverse` to discard one); git checks the preimage and refuses a hunk
+  whose surroundings have moved on, with its own message. Routes:
+  `GET /api/sessions/:id/changes` (every turn's summary), `…/changes/files?scope=`,
+  `…/changes/patch?scope=&path=`. `pnpm test:fs` covers the tree helpers. The rows are not
+  in a backup: the trees live in the repository, and a row without them is a summary that
+  can no longer be opened.
+
 ## Backup & import
 
 - **Backup is one JSON document, and import is one transaction.** `server/src/backup.ts`
@@ -137,8 +173,46 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   agent. Configured in the profile form's "Plan usage" section, where the token follows
   the same write-only bargain as `apiKey` (a boolean comes back; empty on save keeps the
   stored one) and empty means "use the profile's own key", which is the ordinary case.
-  The one built-in adapter is `zai` — `GET {host}/api/monitor/usage/quota/limit`, host
-  inferred from the profile's own base URL so a `bigmodel.cn` gateway reads the CN
-  platform — and adding a provider is `USAGE_KINDS`, a branch in `readProfileUsage`, and
-  a label in `USAGE_PROVIDERS`. `pnpm test:quota` covers `foldZaiQuota` and
-  `zaiQuotaUrl` beside the other two parsers.
+  The built-in adapters, and adding one is `USAGE_KINDS`, a branch in
+  `readProfileUsage`, a label in `USAGE_PROVIDERS` and a fold test in `pnpm test:quota`:
+  - `zai` — `GET {host}/api/monitor/usage/quota/limit`, bare `Authorization`, host
+    inferred from the profile's own base URL so a `bigmodel.cn` gateway reads the CN
+    platform. Undocumented (the Plan Overview page's route).
+  - `minimax` — `GET {host}/v1/token_plan/remains`, bearer; every model carries its own
+    5-hour and weekly request counters and the fullest one is the plan's reading. A
+    bad key is HTTP 200 with `base_resp.status_code: 1004`. Undocumented; host from the
+    base URL (`minimaxi.com` is the CN platform).
+  - `kimi` — `GET {host}/coding/v1/usages`, bearer, counts as strings; `usage` is the
+    weekly allowance and `limits[]` the rolling windows (`TIME_UNIT_HOUR × 5`). Host
+    taken from a base URL that names `/coding`, else api.kimi.com.
+  - `synthetic` — `GET https://api.synthetic.new/v2/quotas`, bearer; one object per
+    pool (`subscription`, `search`), read as any top-level object with a `limit` and a
+    `requests`/`used` count, so a pool added later is a labelled window with no duration.
+  - `deepseek` — `GET https://api.deepseek.com/user/balance`, documented; pay-as-you-go,
+    so the reading is `credits` on an `api-key` status and never a window.
+  - `openrouter` — `GET /api/v1/key` and `/api/v1/credits`, documented; a key with a
+    `limit` is a window over its `limit_reset`, the credits line is the account's.
+    `/credits` failing is folded as "no credits line", not as the reading's failure.
+  Two that were checked and deliberately not added: Alibaba's coding-plan quota (the
+  console's `queryCodingPlanInstanceInfoV2` route answers `ConsoleNeedLogin` to a bare
+  API key — it needs a browser session the harness will not hold) and Chutes (no pinned
+  response shape). Their presets carry endpoints only.
+
+## Profile presets
+
+- **A preset is a starting point, never a stored kind** (`server/src/profile-presets.ts`,
+  `GET /api/profile-presets`). A coding plan is a provider with everything already
+  decided — the Anthropic-shaped path for Claude Code, the OpenAI-shaped one for the
+  rest, the plan's own (shorter) model list, and which usage reader reports it — and
+  typing that by hand is where a z.ai key ends up on `/api/paas/v4` instead of
+  `/api/coding/paas/v4`, billing the pay-as-you-go balance and reading back "no plan".
+  Picking one on the new-profile form copies those fields in; what gets saved is an
+  ordinary profile with no preset id on it, so a preset the harness later changes never
+  rewrites a saved profile and nothing has a "detached" state. **Models come from
+  models.dev, not from the preset**: each names the models.dev provider that *is* the
+  plan (`zai-coding-plan`, not `zai`) and the route fills `models` through the same
+  `searchModelsDev`/`toCandidate` the editor's "Fill from models.dev" uses; a dead
+  models.dev answers `modelsUnavailable: true` with the URLs intact rather than failing
+  the list. The route also drops agents this install does not register, so the form
+  cannot save a link to a runtime that is not here. Codex is on a preset only when the
+  plan serves the Responses API — the shim forwards it, it does not translate it.

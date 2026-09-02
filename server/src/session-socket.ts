@@ -199,6 +199,7 @@ export class SessionSocket {
       cursor: to,
       promptActive: session.bridge?.promptActive ?? false,
       queue: listQueue(session.id),
+      paused: session.bridge?.paused ?? false,
     });
     /* Caught up: everything held while the replay was on the wire goes out now,
        in the order it was journaled, and from here the peer is live. */
@@ -291,6 +292,7 @@ export class SessionSocket {
       cursor: to,
       promptActive: session.bridge?.promptActive ?? false,
       queue: listQueue(session.id),
+      paused: session.bridge?.paused ?? false,
     };
     yield `],"caughtUp":${JSON.stringify(caughtUp)}}`;
   }
@@ -402,6 +404,12 @@ export class SessionSocket {
         return;
       case "cancel":
         this.run(session, peer, command.id, () => bridge.cancel());
+        return;
+      case "pause":
+        this.run(session, peer, command.id, () => bridge.pause());
+        return;
+      case "resume":
+        this.run(session, peer, command.id, () => bridge.resume());
         return;
       case "set_mode":
         this.run(session, peer, command.id, () => bridge.setMode(command.modeId, peer));

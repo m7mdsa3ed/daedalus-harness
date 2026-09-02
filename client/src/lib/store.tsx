@@ -7,6 +7,7 @@ import type {
   QuotaSnapshot,
   SessionUpdate,
   SubagentState,
+  TurnChanges,
 } from "@daedalus/protocol"
 // Value import, but tools.ts imports only *types* from here — erased at build,
 // so there is no runtime cycle.
@@ -325,6 +326,13 @@ export interface ThreadState {
    */
   phase: ConnPhase
   turnActive: boolean
+  /** The turn is held at a step boundary (`paused` event / `caught_up`).
+      Independent of `turnActive`: a paused session with no turn open holds
+      its next prompt at its first step, and the toggle has to say so. */
+  paused: boolean
+  /** Whether the runtime takes pause at all (`session_config.canPause`) —
+      the harness's own agent; every other runtime has only Stop. */
+  canPause: boolean
   permission: PendingPermission | null
   elicitation: PendingElicitation | null
   /** Messages waiting for the running turn to end, in order. The server's
@@ -366,6 +374,12 @@ export interface ThreadState {
   usageMark: string | null
   /** Time to first update of the last turn, ms. */
   ttftMs: number | null
+  /** What each turn did to the project's worktree, keyed by turn id — git's
+      answer, not the transcript's (server turn-changes.ts). The socket's
+      `turn_changes` nudges land here and `GET /api/sessions/:id/changes`
+      seeds the lot on open; a thread whose project is not a repository has
+      rows that say `unavailable`. */
+  turnChanges: Record<string, TurnChanges>
   /** What is left of the subscription this thread's (profile, agent) pair
       spends — see lib/quota.ts. Null until a turn settles or the composer's
       stats popover asks for one: it is not part of the transcript, so nothing
@@ -393,6 +407,8 @@ export const emptyThread: ThreadState = {
   items: [],
   phase: IDLE_PHASE,
   turnActive: false,
+  paused: false,
+  canPause: false,
   permission: null,
   elicitation: null,
   queue: [],
@@ -406,6 +422,7 @@ export const emptyThread: ThreadState = {
   stepUsage: {},
   usageMark: null,
   ttftMs: null,
+  turnChanges: {},
   quota: null,
   archived: false,
   earlier: 0,
@@ -780,6 +797,17 @@ export function applySessionUpdate(
       const id = subagentItemId(update.subagentSessionId)
       return items.map((i) => (i.kind === "subagent" && i.id === id ? { ...i, state: update.state } : i))
     }
+    /* A workflow run held or released. The run has no item — it is folded at
+       view time from its steps — so the hold is stamped onto every step that
+       carries the run's id, and the card reads it off any of them. Journaled,
+       so a replayed run stands where it stood. */
+    case "_daedalus/workflow_state": {
+      return items.map((i) =>
+        i.kind === "subagent" && i.workflow?.runId === update.runId
+          ? { ...i, workflow: { ...i.workflow, paused: update.paused } }
+          : i
+      )
+    }
     /* What the step's turn cost, lifted off the child's own `turn_ended` by the
        workflow runner (see SubagentUsage in the protocol). One per settled
        turn, so it accumulates — `addUsage` is the same fold the thread's own
@@ -1022,6 +1050,7 @@ export type Action =
     }
   | { type: "thread-reset"; id: string; thread: ThreadState }
   | { type: "turn-active"; id: string; active: boolean; settle?: boolean }
+  | { type: "paused"; id: string; paused: boolean }
   /** How the turn that just ended went, onto the *session* row rather than the
       thread: it is what a list draws about a thread nothing is looking at, and
       the server records the same verdict on its own row. `error` is the
@@ -1091,11 +1120,14 @@ export type Action =
       configOptions?: acp.SessionConfigOption[]
       /** Same hole, same rule: absent means unchanged. */
       promptCapabilities?: acp.PromptCapabilities
+      canPause?: boolean
     }
   | { type: "mode"; id: string; modeId: string }
   | { type: "config-options"; id: string; configOptions: acp.SessionConfigOption[] }
   | { type: "usage"; id: string; usage: acp.Usage; turnId?: string }
   | { type: "ttft"; id: string; ms: number }
+  | { type: "turn-changes"; id: string; turn: TurnChanges }
+  | { type: "turn-changes-all"; id: string; turns: TurnChanges[] }
   | { type: "quota"; id: string; quota: QuotaSnapshot }
   /** A run of actions folded into one commit. The replay is the only thing
       that sends it: rebuilding a long thread is a few thousand of the actions
@@ -1386,7 +1418,10 @@ export function reducer(state: State, action: Action): State {
         configOptions: action.configOptions ?? thread(state, action.id).configOptions,
         promptCapabilities:
           action.promptCapabilities ?? thread(state, action.id).promptCapabilities,
+        canPause: action.canPause ?? thread(state, action.id).canPause,
       })
+    case "paused":
+      return withThread(state, action.id, { paused: action.paused })
     case "mode": {
       const t = thread(state, action.id)
       return t.modes
@@ -1408,6 +1443,19 @@ export function reducer(state: State, action: Action): State {
     }
     case "ttft":
       return withThread(state, action.id, { ttftMs: action.ms })
+    case "turn-changes": {
+      const current = thread(state, action.id)
+      return withThread(state, action.id, {
+        turnChanges: { ...current.turnChanges, [action.turn.turnId]: action.turn },
+      })
+    }
+    /* The seed on open. Merged over, not replaced: a live nudge that landed
+       while the GET was in flight is newer than the list it beat. */
+    case "turn-changes-all": {
+      const turnChanges = { ...thread(state, action.id).turnChanges }
+      for (const turn of action.turns) if (!turnChanges[turn.turnId]?.ended) turnChanges[turn.turnId] = turn
+      return withThread(state, action.id, { turnChanges })
+    }
     /* Absolute, like the queue: the server sends the whole reading, never a
        delta, so there is nothing to merge. */
     case "quota":

@@ -10,6 +10,25 @@ import { handlePrompt, type TurnDeps } from "./turn.js";
 
 export const VERSION = "0.1.0";
 
+/** The pause pair's names and the capability key that advertises them — the
+    server's `acp-bridge.ts` spells the same three strings. */
+export const PAUSE_METHOD = "_daedalus/session/pause";
+export const RESUME_METHOD = "_daedalus/session/resume";
+export const PAUSE_CAPABILITY = "daedalus/pause";
+
+export interface PauseResponse {
+  paused: boolean;
+  /** Whether a turn is open — what the pause is holding, or what the next
+      prompt will meet at its first step. */
+  turnActive: boolean;
+}
+
+const sessionRef = (params: unknown): { sessionId: string } => {
+  const sessionId = (params as { sessionId?: unknown } | null)?.sessionId;
+  if (typeof sessionId !== "string") throw acp.RequestError.invalidParams("sessionId is required");
+  return { sessionId };
+};
+
 export interface AppOptions {
   env: AgentEnv;
   makeModel?: ModelFactory;
@@ -91,6 +110,10 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
           loadSession: true,
           promptCapabilities: { image: false, audio: false, embeddedContext: true },
           sessionCapabilities: { list: {} },
+          /* ACP has no pause — only `session/cancel`, which throws the step
+             away. This runtime owns its loop, so it can stop at a step
+             boundary and carry on; the harness reads this to offer it. */
+          _meta: { [PAUSE_CAPABILITY]: true },
         },
       } satisfies acp.InitializeResponse;
     })
@@ -171,5 +194,19 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
     })
     .onNotification("session/cancel", ({ params }) => {
       sessions.get(params.sessionId)?.cancel();
+    })
+    /* The harness's own pair (extension methods, `_`-prefixed as the spec
+       asks). Both answer at once with the session's state: a pause takes
+       effect at the next step boundary, not on the wire, and the harness is
+       told so by the flag rather than by waiting for the step to end. */
+    .onRequest(PAUSE_METHOD, sessionRef, ({ params }) => {
+      const session = get(params.sessionId);
+      session.pause();
+      return { paused: true, turnActive: session.turnActive } satisfies PauseResponse;
+    })
+    .onRequest(RESUME_METHOD, sessionRef, ({ params }) => {
+      const session = get(params.sessionId);
+      session.resume();
+      return { paused: false, turnActive: session.turnActive } satisfies PauseResponse;
     });
 }

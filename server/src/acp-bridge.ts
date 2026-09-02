@@ -62,6 +62,13 @@ export function spawnAgent(
       `"acp-meta"` agent's persona travels in the handshake instead
       (`sessionMeta`), and the probe has no thread and passes nothing. */
   persona?: PersonaSpawn,
+  /** The loopback port and secret an agent with a `subagentFeed` is given so
+      the server can read its event bus (`opencode-subagents.ts`). Minted per
+      spawn by the SessionManager and never stored; the probe passes nothing
+      and gets a process with no bus, which is all a probe needs. Appended to
+      the resolved args and env here so the registry's own `args` — the
+      user's — are never edited. */
+  sidecar?: { port: number; password: string },
 ): ChildProcessWithoutNullStreams {
   const agent = getAgent(agentId);
   if (!agent) throw new Error(`unknown agent: ${agentId}`);
@@ -80,6 +87,10 @@ export function spawnAgent(
     sessionId,
     agent.personaVia === "env" ? persona : undefined,
   );
+  if (sidecar && agent.subagentFeed === "opencode-http") {
+    args.push("--port", String(sidecar.port), "--hostname", "127.0.0.1");
+    env.OPENCODE_SERVER_PASSWORD = sidecar.password;
+  }
   return spawn(command, args, {
     cwd,
     env: { ...process.env, ...env },
@@ -99,6 +110,16 @@ interface SessionNotification {
     capabilities so it can be spread into the handshake literal without the
     excess-property check refusing a key the SDK has not learned yet. */
 const SUBAGENT_CAPABILITY = { subagents: {} } as unknown as Partial<acp.ClientCapabilities>;
+
+/* The harness's own pause pair, spelled the same in `agent/src/app.ts`. ACP
+   has no pause — `session/cancel` is the one interruption and it throws the
+   step away — so this exists only for a runtime that owns its loop and can
+   hold at a step boundary. Advertised by the agent at the handshake, under
+   the `_meta` the spec reserves for exactly this, and offered to the browser
+   through `session_config.canPause`. */
+const PAUSE_METHOD = "_daedalus/session/pause";
+const RESUME_METHOD = "_daedalus/session/resume";
+const PAUSE_CAPABILITY = "daedalus/pause";
 
 /**
  * The subagent RFD's two updates are ahead of the SDK, and the SDK is not
@@ -172,7 +193,15 @@ function isFallbackModelMetadataWarning(update: { sessionUpdate?: unknown; conte
     stdout — a stray 'data' listener anywhere else silently steals its bytes.
     Inbound frames pass through one rewrite: a `session/update` carrying an RFD
     subagent variant is re-addressed to `SUBAGENT_UPDATE_METHOD` (see there). */
-export function agentStream(proc: ChildProcessWithoutNullStreams): acp.Stream {
+export function agentStream(
+  proc: ChildProcessWithoutNullStreams,
+  /** A second source of inbound frames, merged ahead of the rewrite — the
+      OpenCode sidecar's synthesized `session/update`s, addressed to a child's
+      session id (`opencode-subagents.ts`). The merged stream ends when
+      **stdout** ends: the process is the conversation, and a feed that
+      outlives it has nothing left to say. */
+  extra?: ReadableStream<acp.AnyMessage>,
+): acp.Stream {
   const stream = acp.ndJsonStream(
     Writable.toWeb(proc.stdin) as WritableStream<Uint8Array>,
     Readable.toWeb(proc.stdout) as ReadableStream<Uint8Array>,
@@ -184,7 +213,32 @@ export function agentStream(proc: ChildProcessWithoutNullStreams): acp.Stream {
       );
     },
   });
-  return { writable: stream.writable, readable: stream.readable.pipeThrough(reroute) };
+  const inbound = extra ? mergeReadables(stream.readable, extra) : stream.readable;
+  return { writable: stream.writable, readable: inbound.pipeThrough(reroute) };
+}
+
+/** `primary` and `extra` interleaved in arrival order; closes with `primary`.
+    Exported for the unit test. */
+export function mergeReadables<T>(primary: ReadableStream<T>, extra: ReadableStream<T>): ReadableStream<T> {
+  const merged = new TransformStream<T, T>();
+  const writer = merged.writable.getWriter();
+  const pump = async (source: ReadableStream<T>) => {
+    const reader = source.getReader();
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        await writer.write(value);
+      }
+    } catch {
+      /* the writer closed under us — the primary ended */
+    } finally {
+      reader.releaseLock();
+    }
+  };
+  void pump(extra);
+  void pump(primary).then(() => writer.close().catch(() => {}));
+  return merged.readable;
 }
 
 /** An agent request the agent is currently blocked on. Held here rather than in
@@ -323,6 +377,10 @@ export class AcpBridge {
   modes: acp.SessionModeState | null = null;
   configOptions: acp.SessionConfigOption[] = [];
   agentCapabilities: acp.AgentCapabilities = {};
+  /** Held at a step boundary by `pause()`. Cleared by `resume()`, by
+      `cancel()` (the agent drops its pause with the turn), and with the
+      process. Stated on `caught_up`, so an attaching peer draws the hold. */
+  paused = false;
   readonly pending = new Map<string, PendingRequest>();
 
   private readonly host: BridgeHost;
@@ -348,6 +406,14 @@ export class AcpBridge {
   /** Id of the logical turn in flight, null between turns. Steering joins it. */
   currentTurnId: string | null = null;
   private currentTurnPrompt: string | null = null;
+  /** Tool calls this turn has announced and not yet settled. A steer's bubble
+      waits on this being empty — see `announceSteer`. Cleared with the turn,
+      because a turn that ended has no step left to finish. */
+  private readonly openToolCalls = new Set<string>();
+  /** Steers whose `turn_started` has not been emitted yet: the words are
+      already on the wire, but the transcript does not show them until the step
+      that was running lets go. Drained by `flushSteers`. */
+  private pendingSteers: { event: ThreadEvent; origin: Peer | undefined }[] = [];
   /** Callers of `whenIdle()` waiting for `inflight` to reach zero. */
   private idleWaiters: (() => void)[] = [];
   private readonly suppressModelMetadataWarning: boolean;
@@ -792,6 +858,17 @@ export class AcpBridge {
       this.ttftSent = true;
       this.host.emit({ ev: "ttft", ms: Math.round(performance.now() - this.turnStartedAt) });
     }
+    /* The step boundary a held steer is waiting for. ACP has no "step ended"
+       event, and the closest honest reading of one is a tool call reaching a
+       terminal status with none left open: the model has stopped streaming and
+       stopped calling, so the next thing it does is read its messages — the
+       steer among them. That is the one boundary a turn announces mid-flight;
+       the other is the turn's own end (`settleTurn`), which is where a steer
+       held through a turn that never called a tool comes out.
+       Only the thread's OWN calls count: a subagent's run *inside* the
+       parent's step and are not what the parent's steer is waiting on. A
+       replay is history and moves nothing. */
+    const settled = own && !this.historyReplay ? this.trackToolCall(update) : false;
     this.host.emit({
       ev: "update",
       seq: 0,
@@ -799,6 +876,38 @@ export class AcpBridge {
       historyReplay: this.historyReplay,
       ...(own ? {} : { sessionId: notification.sessionId }),
     });
+    /* Only a settling tool call is a boundary — `openToolCalls` being empty is
+       also true of a turn that has not called anything yet, and flushing there
+       would put the bubble back in the middle of the thought it was typed
+       into. */
+    if (own && !this.historyReplay && settled && this.openToolCalls.size === 0) this.flushSteers();
+  }
+
+  /** Follow a tool call from announced to settled, and say whether THIS update
+      is one settling. `tool_call` opens one (an agent may announce it already
+      finished); `tool_call_update` closes it on a terminal status. An update
+      carrying no status is progress and says nothing about whether the call is
+      over. */
+  private trackToolCall(update: SessionUpdate): boolean {
+    if (update.sessionUpdate !== "tool_call" && update.sessionUpdate !== "tool_call_update") {
+      return false;
+    }
+    const status = update.sessionUpdate === "tool_call" ? (update.status ?? "pending") : update.status;
+    if (status === "completed" || status === "failed") {
+      this.openToolCalls.delete(update.toolCallId);
+      return true;
+    }
+    if (status) this.openToolCalls.add(update.toolCallId);
+    return false;
+  }
+
+  /** Emit every steer whose step has now finished, oldest first. Also called
+      when the turn settles: a turn ending is a boundary like any other, and a
+      steer still held there must not be lost — it reached the agent, and for
+      the runtimes that keep it as context the next turn will answer it. */
+  private flushSteers(): void {
+    if (this.pendingSteers.length === 0) return;
+    for (const { event, origin } of this.pendingSteers.splice(0)) this.host.emit(event, origin);
   }
 
   /**
@@ -953,23 +1062,43 @@ export class AcpBridge {
     origin: Peer | undefined,
     turnId: string,
     opts: { attachments?: AttachmentRef[]; forceLink?: boolean } = {},
-  ): void {
+  ): { deferred: boolean } {
     const sessionId = this.requireSession();
     const attachments = opts.attachments ?? [];
     /* The other peers never see this command (it goes to the agent, not to
        them), so tell them a turn started and whose words started it — and what
        it carried. The refs are journaled with the event, which is what makes a
-       replayed user bubble still draw its chips with nothing else stored. */
-    this.host.emit(
-      {
-        ev: "turn_started",
-        seq: 0,
-        turnId,
-        text,
-        ...(attachments.length > 0 ? { attachments } : {}),
-      },
-      origin,
-    );
+       replayed user bubble still draw its chips with nothing else stored.
+
+       A STEER is the one case where this is not said at once. Its words join a
+       turn that is mid-step — mid-thought, or with a tool call still running —
+       and no runtime reads them until that step ends: ours drains its
+       `steerQueue` in `prepareStep`, and the others cannot act on a second
+       prompt any sooner either. Announcing it here would draw the bubble in
+       the middle of the step it is not part of, and — because the runtimes
+       journal the message where they actually take it — a reload would then
+       move it. So the event is held and emitted at the boundary, which is the
+       position the replay will agree with. */
+    const started: ThreadEvent = {
+      ev: "turn_started",
+      seq: 0,
+      turnId,
+      text,
+      ...(attachments.length > 0 ? { attachments } : {}),
+    };
+    /* Any prompt joining a turn already in flight. Not "only while a tool is
+       running": there is no moment in a running turn that ACP reports as being
+       BETWEEN steps, so a steer typed mid-thought is just as mid-step as one
+       typed mid-tool — the model is streaming, and it will not read the new
+       words until it stops. Deferring on `inflight` alone is the rule that
+       covers both; what varies is only which boundary marker releases it. */
+    const deferred = this.inflight > 0;
+    if (deferred) {
+      /* No origin, exactly as a drained queue item has none: the sender is not
+         drawing this bubble itself any more (it cannot — it does not know when
+         the step ends), so it needs the event as much as every other peer. */
+      this.pendingSteers.push({ event: started, origin: undefined });
+    } else this.host.emit(started, origin);
     if (this.inflight === 0) {
       this.currentTurnId = turnId;
       this.currentTurnPrompt = text;
@@ -1020,6 +1149,7 @@ export class AcpBridge {
           this.settleTurn(response.usage ?? null, undefined, text, response.stopReason),
         (error: unknown) => this.onPromptRejected(error, text),
       );
+    return { deferred };
   }
 
   /**
@@ -1049,6 +1179,11 @@ export class AcpBridge {
     // Steering: a second prompt sent mid-turn keeps the turn open. Only the one
     // that empties the set ends it.
     if (--this.inflight > 0) return;
+    /* The turn is over, so every step in it is: nothing is still running for a
+       held steer to wait on, and its bubble must land before `turn_ended`
+       rather than never. Ahead of the emit below for exactly that ordering. */
+    this.openToolCalls.clear();
+    this.flushSteers();
     this.turnStartedAt = null;
     /* The session has content now, so the agent has written it down and a later
        `session/load` can find it. Before this point its id is unloadable, and
@@ -1117,11 +1252,46 @@ export class AcpBridge {
     return this.configOptions;
   }
 
+  /** Whether the runtime answers `pause`/`resume` at all. */
+  get canPause(): boolean {
+    const meta = this.agentCapabilities._meta as Record<string, unknown> | null | undefined;
+    return Boolean(meta?.[PAUSE_CAPABILITY]);
+  }
+
+  /**
+   * Hold the turn at its next step boundary. The agent answers at once — the
+   * hold takes effect when the step in flight ends, and the flag, not the
+   * step, is what the peers are told — and a session with no turn open holds
+   * its next prompt at its first step. Not a cancel: nothing is thrown away.
+   */
+  async pause(): Promise<{ paused: boolean }> {
+    return this.setPaused(true);
+  }
+
+  async resume(): Promise<{ paused: boolean }> {
+    return this.setPaused(false);
+  }
+
+  private async setPaused(paused: boolean): Promise<{ paused: boolean }> {
+    if (!this.canPause) throw new Error("this agent cannot be paused — only cancelled");
+    const sessionId = this.requireSession();
+    const reply = await this.connection.agent.request<{ paused?: boolean }>(paused ? PAUSE_METHOD : RESUME_METHOD, { sessionId });
+    this.paused = reply?.paused ?? paused;
+    this.host.emit({ ev: "paused", paused: this.paused });
+    return { paused: this.paused };
+  }
+
   async cancel(): Promise<void> {
     if (!this.acpSessionId) return;
     await this.connection.agent.notify(acp.methods.agent.session.cancel, {
       sessionId: this.acpSessionId,
     });
+    /* The agent's cancel abandons its pause with the turn (agent/src/session.ts);
+       said here too, so the peers' toggle follows. */
+    if (this.paused) {
+      this.paused = false;
+      this.host.emit({ ev: "paused", paused: false });
+    }
     /* ACP asks the cancelling client to answer whatever it is still being asked
        with `cancelled` — and a question left open here would be handed to every
        later attacher as if the cancelled turn were still waiting on it. */
@@ -1227,6 +1397,12 @@ export class AcpBridge {
   close(reason?: unknown): void {
     if (this.closed) return;
     this.closed = true;
+    /* A steer held for a step boundary that will never come. The words did
+       reach the agent, so the transcript has to show them — a dying process
+       must not also swallow the last thing the user said. Before `settleAll`,
+       so the bubble precedes the failure it ran into. */
+    this.openToolCalls.clear();
+    this.flushSteers();
     this.settleAll();
     // Whatever was held for want of an explanation now has one.
     if (this.held.length > 0) {
@@ -1258,6 +1434,7 @@ export class AcpBridge {
         ...(this.agentCapabilities.promptCapabilities
           ? { promptCapabilities: this.agentCapabilities.promptCapabilities }
           : {}),
+        ...(this.canPause ? { canPause: true } : {}),
       },
       except,
     );

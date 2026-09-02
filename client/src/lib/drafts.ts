@@ -14,6 +14,7 @@ const SAVE_DEBOUNCE_MS = 300
    every caller gets it for free. `pending` is the read-through buffer: a
    `loadDraft` or `clearDraft` inside the window must see what was just typed,
    not what last reached disk. */
+type DraftListener = (text: string) => void
 const pending = new Map<string, string>()
 const timers = new Map<string, ReturnType<typeof setTimeout>>()
 
@@ -54,8 +55,30 @@ export function loadDraft(sessionId: string): string {
   }
 }
 
+/* Readers that follow the box as it is typed into — the build page derives a
+   project name from it. Told on every `saveDraft`, ahead of the debounce,
+   and never by `appendDraft`'s own listeners: those are the composer's, and
+   they move the caret. */
+const watchers = new Map<string, Set<DraftListener>>()
+
+export function watchDraft(sessionId: string, listener: DraftListener): () => void {
+  let set = watchers.get(sessionId)
+  if (!set) {
+    set = new Set()
+    watchers.set(sessionId, set)
+  }
+  set.add(listener)
+  return () => {
+    const current = watchers.get(sessionId)
+    if (!current) return
+    current.delete(listener)
+    if (current.size === 0) watchers.delete(sessionId)
+  }
+}
+
 export function saveDraft(sessionId: string, text: string): void {
   pending.set(sessionId, text)
+  for (const listener of [...(watchers.get(sessionId) ?? [])]) listener(text)
   const timer = timers.get(sessionId)
   if (timer) clearTimeout(timer)
   timers.set(
@@ -67,6 +90,39 @@ export function saveDraft(sessionId: string, text: string): void {
       if (buffered !== undefined) write(sessionId, buffered)
     }, SAVE_DEBOUNCE_MS)
   )
+}
+
+/* ── Writes from outside the composer ──
+   The composer owns its own `text` state and only *writes* the draft, so a
+   line another surface wants to put in the box — the preview's "Selected
+   element" — has to be announced, or it would land in storage and never on
+   screen. `appendDraft` writes and announces; the composer subscribes and
+   adopts the text (and takes the caret). Per session, like everything here. */
+const listeners = new Map<string, Set<DraftListener>>()
+
+export function subscribeDraft(sessionId: string, listener: DraftListener): () => void {
+  let set = listeners.get(sessionId)
+  if (!set) {
+    set = new Set()
+    listeners.set(sessionId, set)
+  }
+  set.add(listener)
+  return () => {
+    const current = listeners.get(sessionId)
+    if (!current) return
+    current.delete(listener)
+    if (current.size === 0) listeners.delete(sessionId)
+  }
+}
+
+/** Add a line under whatever is in the box (a blank box gets the line alone)
+    and tell the mounted composer, if there is one. */
+export function appendDraft(sessionId: string, line: string): string {
+  const current = loadDraft(sessionId)
+  const next = current.trim() ? `${current.replace(/\s+$/, "")}\n${line}` : line
+  saveDraft(sessionId, next)
+  for (const listener of [...(listeners.get(sessionId) ?? [])]) listener(next)
+  return next
 }
 
 /** Immediate, not debounced: clearing rides a send, and a draft that

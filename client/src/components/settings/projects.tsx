@@ -135,6 +135,7 @@ export function ProjectForm({
     cwd: project?.cwd ?? "",
     description: project?.description ?? "",
     logoUrl: project?.logoUrl ?? "",
+    devCommand: project?.devCommand ?? "",
   }))
   const [busy, setBusy] = React.useState(false)
   const [saveError, setSaveError] = React.useState<InlineError | null>(null)
@@ -151,6 +152,10 @@ export function ProjectForm({
         cwd: form.cwd === "/" ? form.cwd : form.cwd.replace(/\/+$/, ""),
         description: form.description.trim() || null,
         logoUrl: form.logoUrl.trim(),
+        devCommand: form.devCommand.trim() || null,
+        /* Round-tripped, not edited: the template a project came from is a
+           record, and a PUT that left it out would null it. */
+        templateId: project?.templateId ?? null,
       }
       if (project) {
         await api(settings, `/api/projects/${project.id}`, { method: "PUT", body: JSON.stringify(payload) })
@@ -191,6 +196,18 @@ export function ProjectForm({
             onChange={(e) => set({ description: e.target.value })}
             rows={2}
             placeholder="What runs here, and why."
+          />
+        </Field>
+        <Field
+          label="Dev command"
+          hint="Optional — what the harness runs to serve the app in the preview panel. It gets PORT and BASE_PATH in its environment; empty means no preview."
+        >
+          <Input
+            value={form.devCommand}
+            onChange={(e) => set({ devCommand: e.target.value })}
+            placeholder="pnpm dev"
+            className="font-mono text-xs"
+            spellCheck={false}
           />
         </Field>
         <Field label="Logo URL" hint="Optional — shown next to this project in the sidebar and pickers. Empty shows the project's initial.">

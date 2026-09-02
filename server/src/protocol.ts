@@ -57,6 +57,62 @@ export type QuotaStatus =
   /** The probe could not be run, or could not be understood. */
   | "error";
 
+/* ── Dev server ──
+   The managed dev server of a project (`dev-server.ts`), as the builder panel
+   sees it. Read over `GET /api/projects/:id/dev` and streamed line by line
+   over `/dev/events`; never on the thread socket, because it belongs to a
+   project, not a conversation. Mirrored in client/src/lib/settings.ts. */
+export type DevState = "off" | "installing" | "starting" | "ready" | "failed" | "exited";
+
+export interface DevError {
+  id: string;
+  at: number;
+  /** Which process said it: the dev server, or a build/check task. */
+  source: "terminal" | "build" | "check";
+  text: string;
+}
+
+/** What `POST /dev {action: "build" | "check"}` runs: the project's build or
+    check script, in its own terminal, one at a time. Absolute like the rest
+    of the status; `null` once nothing has been run this boot. */
+export type DevTaskKind = "build" | "check";
+
+export interface DevTask {
+  kind: DevTaskKind;
+  state: "running" | "passed" | "failed";
+  command: string;
+  terminalId: string;
+  /** Exit summary on failure — code and last line. */
+  message: string | null;
+  startedAt: number;
+  endedAt: number | null;
+}
+
+export interface DevStatus {
+  projectId: string;
+  state: DevState;
+  /** Server-relative preview root, e.g. "/preview/<key>/<projectId>/"; set
+      while starting/ready, else null. */
+  url: string | null;
+  port: number | null;
+  /** The dev process's terminal (attachable through the existing /terminal
+      socket); null when off. */
+  terminalId: string | null;
+  installTerminalId: string | null;
+  command: string | null;
+  /** Why it failed/exited: exit code, last output line, "no dev command". */
+  message: string | null;
+  /** Recent errors parsed from process output, newest last, max 20, cleared
+      on (re)start. */
+  errors: DevError[];
+  /** ms timestamp of the last state change. */
+  since: number;
+  /** When the server last answered on its base path; null unless `ready`. */
+  readyAt: number | null;
+  /** The last build/check run this boot, if any. */
+  task: DevTask | null;
+}
+
 export interface QuotaSnapshot {
   /** Empty for a `source: "profile"` reading: a provider's plan is one account
       whatever runtime spends it, and the reading is shared across every agent
@@ -183,6 +239,20 @@ export interface SubagentStateUpdate {
  * Per turn, like the `Usage` it carries: a step that takes a repair turn sends
  * two, and the reader adds them up.
  */
+/**
+ * A harness workflow run was paused or resumed (`WorkflowRunner.pause`). The
+ * harness's own, like `_daedalus/subagent_usage`, and journaled for the same
+ * reason: the run card is drawn from the parent's log alone, and a replayed
+ * run has to say it is standing still. Absolute — `paused` is the state, not a
+ * toggle — and addressed by run, since the steps it holds are several.
+ */
+export interface WorkflowStateUpdate {
+  sessionUpdate: "_daedalus/workflow_state";
+  runId: string;
+  paused: boolean;
+  _meta?: Record<string, unknown> | null;
+}
+
 export interface SubagentUsage {
   sessionUpdate: "_daedalus/subagent_usage";
   subagentSessionId: string;
@@ -230,11 +300,26 @@ export interface AutonomyAnswer {
 }
 
 /** Everything a `session/update` can carry: the SDK's union plus the RFD's. */
+export type { ChangedFile } from "./db/schema.js";
+
+/** One turn's footprint on the project's git worktree — see
+    `session_turn_changes` in db/schema.ts for what the two trees are. */
+export interface TurnChanges {
+  turnId: string;
+  files: import("./db/schema.js").ChangedFile[];
+  /** False while the turn runs (the review reads start → worktree live). */
+  ended: boolean;
+  /** Neither tree could be taken — the project is not a repository. */
+  unavailable: boolean;
+  startedAt: number;
+}
+
 export type SessionUpdate =
   | acp.SessionUpdate
   | SubagentSpawned
   | SubagentStateUpdate
   | SubagentUsage
+  | WorkflowStateUpdate
   | AutonomyAnswer;
 
 /** What a respawn has to put back: the agent's configuration minus the two
@@ -278,8 +363,16 @@ export interface QueuedMessage {
 
 /** The answer to `prompt` and `queue_add`. Which shape comes back is the
     server's call: only it knows whether the turn is still open, so a client
-    that believed the thread idle can still be told its words were queued. */
-export type PromptReply = { turnId: string } | { queued: true; itemId: string };
+    that believed the thread idle can still be told its words were queued.
+
+    `deferred` says the words are on the wire but their `turn_started` is being
+    held until the running step ends (a steer — see `AcpBridge.prompt`). The
+    sender reads it as "do not draw this bubble yourself": the event will come,
+    to every peer, at the position the transcript will still have after a
+    reload. Absent means the bubble was announced at once, as it always was. */
+export type PromptReply =
+  | { turnId: string; deferred?: boolean }
+  | { queued: true; itemId: string };
 
 // ---- client -> server ----
 
@@ -308,6 +401,12 @@ export type ThreadCommand =
       forceLink?: boolean;
     }
   | { id: number; cmd: "cancel" }
+  /** Hold the turn at its next step boundary / let it go on. Only an agent
+      whose `session_config` said `canPause` (the harness's own runtime, over
+      `_daedalus/session/pause`); ACP itself has only `session/cancel`. Answered
+      with the absolute `paused` event to every peer. */
+  | { id: number; cmd: "pause" }
+  | { id: number; cmd: "resume" }
   /* ---- the queue ----
      `queue_add` is `prompt` from a client that already knows the thread is
      busy — on an idle thread it drains at once, so there is one path. The
@@ -468,7 +567,7 @@ export type ThreadEvent =
   /** `queue` rides here because the queue is not journaled (see the `queue`
       event): a peer attaching has to be handed it the way it is handed an
       open permission after the replay. */
-  | { ev: "caught_up"; cursor: number; promptActive: boolean; queue?: QueuedMessage[] }
+  | { ev: "caught_up"; cursor: number; promptActive: boolean; queue?: QueuedMessage[]; paused?: boolean }
   /** The replay, in bulk. A container, not a fifth journaled kind: the events
       inside are the same events a live socket receives and the client unrolls
       them through the same dispatch, so `attached`/`caught_up` still bracket
@@ -513,7 +612,17 @@ export type ThreadEvent =
           which has no process, by construction — resolve delivery before its
           first send. */
       promptCapabilities?: acp.PromptCapabilities;
+      /** Whether the runtime takes `pause`/`resume` — advertised at the
+          handshake as `agentCapabilities._meta["daedalus/pause"]`. Same
+          carrier and same rules as `promptCapabilities`: absolute, optional,
+          a statement of what this session can be asked to do. */
+      canPause?: boolean;
     }
+  /** The turn is held at a step boundary, or no longer is. Absolute and
+      live-only, like `queue`: it is current state rather than history, so
+      `caught_up` carries it on attach and a replay never redraws an old hold.
+      To every peer including the one that asked. */
+  | { ev: "paused"; paused: boolean }
   /** The thread moved to another provider, model or effort *without* being
       restarted (`SessionManager.applyConfig`). Absolute, like `session_config`,
       but live-only and not journaled: it is the session row's own state, and a
@@ -559,6 +668,20 @@ export type ThreadEvent =
   /** Time to first update of a turn, measured server-side — so it no longer
       includes the WebSocket hop to the browser. */
   | { ev: "ttft"; ms: number }
+  /** What a turn did to the worktree, as git measured it (turn-changes.ts).
+      Live-only: the row is the server's (`GET /api/sessions/:id/changes`
+      answers every turn on attach) and this is only the nudge that it moved.
+      Sent once when the turn's start snapshot exists (`files` empty, `ended`
+      false) and once more with the diff when it has ended. */
+  | { ev: "turn_changes"; turn: TurnChanges }
+  /** The thread's project row changed under it on the server's own
+      initiative — today, one thing: a from-scratch build whose first turn
+      gave the directory a dev command, which the manager sensed at
+      `turn_ended` and wrote onto the row (templates.ts › detectDevCommand).
+      Live-only and absolute (the whole row): the catalog is TanStack Query's
+      and this is only the nudge that a routed answer moved, so the client
+      invalidates the projects list rather than patching from it. */
+  | { ev: "project_changed"; project: import("./projects.js").Project }
   /** What is left of the subscription this thread's (profile, agent) pair is
       spending — see quota.ts. Only a profile that names a plan of its own has
       one to report: a thread on an API-key profile is billed per token, and the

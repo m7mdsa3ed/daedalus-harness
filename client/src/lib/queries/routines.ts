@@ -21,6 +21,7 @@ import type {
 import { useServer } from "@/lib/server-context"
 import {
   allRoutineRunsKey,
+  routineRunsFamilyKey,
   routineRunsKey,
   routineTriggersKey,
   routinesKey,
@@ -160,7 +161,7 @@ export function useDeleteRoutine() {
 export function useRunRoutine() {
   const settings = useServer()
   return useApiMutation<{ id: string; text?: string; dryRun?: boolean }, RoutineRun>(
-    (_run, { id }) => [routinesKey(settings), routineRunsKey(settings, id)],
+    (_run, { id }) => [routinesKey(settings), routineRunsFamilyKey(settings, id)],
     (conn, { id, ...opts }) => postJson<RoutineRun>(conn, `${routinePath(id)}/run`, opts)
   )
 }
@@ -173,7 +174,7 @@ export function useRunRoutine() {
 export function useCancelRoutineRun() {
   const settings = useServer()
   return useApiMutation<{ routineId: string; runId: string }, { stopped: boolean }>(
-    (_stopped, { routineId }) => [routineRunsKey(settings, routineId)],
+    (_stopped, { routineId }) => [routineRunsFamilyKey(settings, routineId)],
     (conn, { runId }) =>
       postJson<{ stopped: boolean }>(conn, `/api/routines/runs/${encodeURIComponent(runId)}/cancel`, {})
   )

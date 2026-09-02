@@ -6,10 +6,12 @@
    where it is now, beside the thread's own ⋯ menu.
 
    The sidebar keeps a row, and it navigates: `/notifications` is the whole
-   history, and this popover is the glance. Fetched on open and on return to
-   the window, never on a timer (see lib/notifications-inbox). */
+   history, and this popover is the glance — the newest handful, unread first
+   in the sense that they are the coloured ones, and one line to the page for
+   the rest. Fetched on open and on return to the window, never on a timer
+   (see lib/notifications-inbox). */
 import * as React from "react"
-import { BellIcon, CheckIcon, ListIcon } from "lucide-react"
+import { BellIcon, CheckCheckIcon, ChevronRightIcon } from "lucide-react"
 import { useNavigate } from "react-router"
 
 import { NotificationRow, UnreadCount } from "@/components/notifications/items"
@@ -21,6 +23,9 @@ import {
 } from "@/lib/queries/surfaces"
 import { notificationsPath } from "@/lib/router"
 
+/** The glance is the newest few; the page is the rest. */
+const GLANCE = 8
+
 export function NotificationBell() {
   /* The query cache owns the read: the badge fetches on mount, opening
      re-fetches, and returning to the window re-fetches via focus — the three
@@ -31,6 +36,14 @@ export function NotificationBell() {
   const [open, setOpen] = React.useState(false)
 
   const unread = inbox?.unread ?? 0
+  const items = inbox?.items ?? []
+  const shown = items.slice(0, GLANCE)
+  const rest = items.length - shown.length
+
+  const goToAll = () => {
+    setOpen(false)
+    void navigate(notificationsPath())
+  }
 
   return (
     <Popover
@@ -50,29 +63,56 @@ export function NotificationBell() {
             title="Notifications"
           >
             <BellIcon />
-            {unread > 0 && <UnreadCount count={unread} className="absolute top-0 right-0" />}
+            {unread > 0 && <UnreadCount count={unread} className="absolute top-0.5 right-0.5" />}
           </Button>
         }
       />
-      <PopoverContent align="end" side="bottom" sideOffset={8} className="w-80 p-0">
-        <div className="flex max-h-[min(24rem,var(--panel-h,100svh))] flex-col">
-          <div className="flex items-center justify-between gap-2 px-3 py-2.5">
-            <p className="text-sm font-medium">Notifications</p>
+      <PopoverContent
+        align="end"
+        side="bottom"
+        sideOffset={8}
+        className="w-[min(24rem,calc(100vw-1rem))] p-0"
+      >
+        <div className="flex max-h-[min(28rem,var(--panel-h,100svh))] flex-col">
+          {/* Header: the title, the unread count as a plain phrase, and the
+              one action that belongs with a glance. */}
+          <div className="flex items-center gap-2 border-b px-3.5 py-2.5">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium leading-5">Notifications</p>
+              <p className="text-[11px] leading-4 text-muted-foreground tabular-nums">
+                {!inbox
+                  ? "Loading…"
+                  : items.length === 0
+                    ? "Nothing recorded"
+                    : unread > 0
+                      ? `${unread} unread`
+                      : "All read"}
+              </p>
+            </div>
             {unread > 0 && (
-              <span className="rounded-pill bg-muted px-2 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground">
-                {unread} unread
-              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1 px-2 text-xs text-muted-foreground"
+                onClick={() => markRead.mutate(undefined)}
+                title="Mark all read"
+              >
+                <CheckCheckIcon className="size-3.5" /> Mark all read
+              </Button>
             )}
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {(inbox?.items.length ?? 0) === 0 ? (
-              <div className="grid min-h-28 place-items-center px-4 py-6 text-center text-xs text-muted-foreground">
-                {inbox ? "Nothing here yet." : "Loading…"}
+            {shown.length === 0 ? (
+              <div className="flex min-h-32 flex-col items-center justify-center gap-2 px-4 py-8 text-center">
+                <BellIcon className="size-5 text-muted-foreground/50" />
+                <p className="text-xs text-muted-foreground">
+                  {inbox ? "You're all caught up." : "Loading…"}
+                </p>
               </div>
             ) : (
               <ul className="divide-y">
-                {inbox!.items.map((n) => (
+                {shown.map((n) => (
                   <li key={n.id}>
                     <NotificationRow notification={n} />
                   </li>
@@ -83,29 +123,16 @@ export function NotificationBell() {
 
           {/* Clearing the inbox is housekeeping, and it lives on the page: a
               destructive button under a list you opened for a glance is one
-              press away from taking the history with it. */}
-          <div className="flex items-center gap-1 border-t px-2 py-1.5">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 gap-1 text-xs text-muted-foreground"
-              disabled={unread === 0}
-              onClick={() => markRead.mutate(undefined)}
-            >
-              <CheckIcon className="size-3.5" /> Mark all read
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="ml-auto h-7 gap-1 text-xs text-muted-foreground"
-              onClick={() => {
-                setOpen(false)
-                void navigate(notificationsPath())
-              }}
-            >
-              <ListIcon className="size-3.5" /> All notifications
-            </Button>
-          </div>
+              press away from taking the history with it. The footer is one
+              line to the page, and says how much is waiting there. */}
+          <button
+            type="button"
+            onClick={goToAll}
+            className="flex items-center justify-between gap-2 border-t px-3.5 py-2.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          >
+            <span>{rest > 0 ? `${rest} more in the inbox` : "All notifications"}</span>
+            <ChevronRightIcon className="size-3.5" />
+          </button>
         </div>
       </PopoverContent>
     </Popover>

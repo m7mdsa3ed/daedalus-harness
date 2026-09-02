@@ -23,7 +23,6 @@ import * as React from "react"
 import { AlertTriangle, Bot, History, Loader2, Zap } from "lucide-react"
 import { useNavigate } from "react-router"
 
-import { CommandGroup } from "@/components/ui/command"
 import { RUN_STATUS } from "@/components/routines/status"
 import { useSidebar } from "@/components/ui/sidebar"
 import { reportError } from "@/lib/errors"
@@ -38,7 +37,7 @@ import { shortAge } from "@/lib/time"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 import { usePalette } from "./context"
-import { ItemList, Row, type PaletteItem } from "./list"
+import { Group, ItemList, Row, type PaletteBadge, type PaletteItem } from "./list"
 
 /** Runs read per routine, and rows drawn in total. Both small on purpose: this
     is a digest, not the archive — the archive is the routine's own page. */
@@ -87,18 +86,19 @@ export function RunRoutinePage() {
     group: "Run now",
     title: routine.name,
     keywords: `routine automation ${routine.description ?? ""} ${projectName(routine.projectId)}`,
-    icon: <Zap className={routine.enabled ? undefined : "opacity-50"} />,
-    trailing: (
-      <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-        {/* A disabled routine is still listed and still selectable, because the
-            engine answers a fire on one with a `skipped` run rather than an
-            error — so the honest thing is to say it will not do anything, not
-            to hide the row and leave the reason unguessable. */}
-        {!routine.enabled && <span className="text-amber-600 dark:text-amber-400">Disabled</span>}
-        {!routine.dryRunCompleted && routine.enabled && <span>First run · forced to ask</span>}
-        <span className="truncate">{projectName(routine.projectId)}</span>
-      </span>
-    ),
+    icon: <Zap />,
+    muted: !routine.enabled,
+    subtitle: routine.description,
+    /* A disabled routine is still listed and still selectable, because the
+       engine answers a fire on one with a `skipped` run rather than an
+       error — so the honest thing is to say it will not do anything, not
+       to hide the row and leave the reason unguessable. */
+    badges: !routine.enabled
+      ? [{ label: "Disabled", tone: "warn" }]
+      : !routine.dryRunCompleted
+        ? [{ label: "First run · forced to ask", tone: "neutral" }]
+        : undefined,
+    meta: [{ label: projectName(routine.projectId) }],
     onSelect: () =>
       palette.run(() =>
         fire(routine, (id, opts) => runRoutine.mutateAsync({ id, ...opts }))
@@ -219,7 +219,7 @@ export function RoutineActivityPage() {
         </Note>
       )}
 
-      <CommandGroup heading="Recent runs">
+      <Group heading="Recent runs">
         {runs.map((run) => (
           <Row key={run.id} item={runItem(run, nameOf(run.routineId), seenAt, () => open(run))} />
         ))}
@@ -250,7 +250,7 @@ export function RoutineActivityPage() {
             Some routines' history couldn't be read — this list is incomplete.
           </Note>
         )}
-      </CommandGroup>
+      </Group>
 
       {/* Said once, at the foot, and not per row: the alternative to stating it
           is a reader who assumes an empty Blocked column means nothing was ever
@@ -283,28 +283,14 @@ function runItem(run: RoutineRun, name: string, seenAt: number, onSelect: () => 
     // Ordered by time here, not by match — the digest's whole claim is that it
     // is in the order things happened.
     always: true,
-    className: "items-start",
-    icon: <Bot className={cn("mt-0.5", tone.text)} />,
-    render: (
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1.5">
-          {fresh && <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-label="New" />}
-          <span className="truncate">{name}</span>
-          <span className={cn("shrink-0 rounded-pill px-1.5 py-px text-[10px]", tone.chip)}>
-            {tone.label}
-          </span>
-          {run.dryRun && (
-            <span className="shrink-0 text-[10px] text-muted-foreground">forced to ask</span>
-          )}
-        </span>
-        <span className="block truncate text-[11px] text-muted-foreground">{detail}</span>
-      </span>
-    ),
-    trailing: (
-      <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground">
-        {shortAge(run.startedAt)}
-      </span>
-    ),
+    icon: <Bot className={tone.text} />,
+    fresh,
+    badges: [
+      { label: tone.label, className: tone.chip },
+      ...(run.dryRun ? [{ label: "forced to ask" } satisfies PaletteBadge] : []),
+    ],
+    subtitle: detail,
+    meta: [{ label: shortAge(run.startedAt), dim: true }],
     onSelect,
   }
 }

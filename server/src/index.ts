@@ -20,6 +20,8 @@ import { stopWatching } from "./workspace-watch.js";
 import { attachTerminal, killProjectTerminals } from "./terminals.js";
 import { adoptOrphans, stopAllIdes } from "./ide.js";
 import { parseIdePath, proxyIdeUpgrade } from "./ide-proxy.js";
+import { parsePreviewPath, proxyPreviewUpgrade } from "./preview-proxy.js";
+import { stopAllDevServers } from "./dev-server.js";
 import { configureGatewayShim } from "./gateway-shim.js";
 import { configureMcpShim } from "./mcp-shim.js";
 import { Push } from "./push.js";
@@ -31,6 +33,7 @@ import { profileRoutes } from "./routes/profiles.js";
 import { workspaceRoutes } from "./routes/workspace.js";
 import { attachmentRoutes } from "./routes/attachments.js";
 import { ideRoutes } from "./routes/ide.js";
+import { builderRoutes } from "./routes/builder.js";
 import { libraryRoutes } from "./routes/library.js";
 import { sessionRoutes } from "./routes/sessions.js";
 import { taskRoutes } from "./routes/tasks.js";
@@ -186,7 +189,7 @@ app.use("/api/*", async (c, next) => {
 
 /* The routes, by domain (src/routes/). Registered after the middleware so
    everything under /api is behind the token; /api/health exempts itself above,
-   and /ide/* + /gw/* + /mx/* + /wf/* + /rt/* are outside /api with the key-in-path
+   and /ide/* + /preview/* + /gw/* + /mx/* + /wf/* + /rt/* are outside /api with the key-in-path
    rule — as is /oauth/mcp/callback, which is unauthenticated by necessity
    (an authorization server redirects a browser there and no bearer survives
    that hop; its `state` is the credential instead, see routes/library.ts)
@@ -199,10 +202,11 @@ profileRoutes(app, { sessions });
 workspaceRoutes(app);
 attachmentRoutes(app);
 ideRoutes(app);
+builderRoutes(app);
 libraryRoutes(app);
 sessionRoutes(app, { sessions });
 taskRoutes(app, { sessions, tasks });
-workflowRoutes(app, { runner: workflows });
+workflowRoutes(app, { runner: workflows, sessions });
 routineRoutes(app, { engine: routines });
 
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
@@ -292,6 +296,12 @@ server.on("upgrade", (req, socket, head) => {
     proxyIdeUpgrade(req, socket, head);
     return;
   }
+  /* Vite's HMR socket, for the same reason and under the same rule: the
+     per-boot key in the path is the credential (see preview-proxy.ts). */
+  if (parsePreviewPath(url.pathname)) {
+    proxyPreviewUpgrade(req, socket, head);
+    return;
+  }
   if (url.pathname !== "/ws" && url.pathname !== "/terminal") {
     // Destroying the socket leaves the browser with a bare "connection failed".
     // An HTTP response at least names the problem in the network panel.
@@ -349,6 +359,9 @@ async function shutdown(code: number): Promise<never> {
        `stop()` is what tells the git triggers to stay down. */
     routineGitTriggers?.stop();
     stopWatching();
+    /* Before the terminals go, so a dev server's exit is not read as a crash
+       and reported to a subscriber mid-shutdown. */
+    stopAllDevServers();
     killProjectTerminals();
     stopAllIdes();
     stopScheduler();

@@ -93,6 +93,72 @@ const cwd = mkdtempSync(join(tmpdir(), "daedalus-agent-cwd-"));
   console.log("turn: cancel ok");
 }
 
+// --- pause: the turn holds at the next step boundary, and resume carries on ---
+{
+  const agent = buildAgentApp({
+    env: testEnv(),
+    makeModel: scriptedModel([
+      toolCallScript("bash", { command: "sleep 0.2; echo one" }),
+      textScript("after the pause "),
+    ]),
+  });
+  const { app: client, harness } = makeClient();
+  await client.connectWith(agent, async (ctx) => {
+    await initialize(ctx);
+    const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
+    await ctx.request("session/set_mode", { sessionId, modeId: "bypassPermissions" });
+    const turn = ctx.request("session/prompt", { sessionId, prompt: promptOf("run it") });
+    await new Promise((r) => setTimeout(r, 100));
+    const paused = await ctx.request<{ paused: boolean; turnActive: boolean }>("_daedalus/session/pause", { sessionId });
+    assert.deepEqual(paused, { paused: true, turnActive: true });
+    // The bash step finishes whole; the model step after it does not begin.
+    await new Promise((r) => setTimeout(r, 600));
+    const toolDone = harness.updatesOf("tool_call_update").some((u) => (u.update as { status?: string }).status === "completed");
+    assert.ok(toolDone, "the step in flight ran to its end");
+    assert.equal(harness.updatesOf("agent_message_chunk").length, 0, "nothing streamed while paused");
+    const resumed = await ctx.request<{ paused: boolean }>("_daedalus/session/resume", { sessionId });
+    assert.equal(resumed.paused, false);
+    const response = await turn;
+    assert.equal(response.stopReason, "end_turn");
+    const text = harness
+      .updatesOf("agent_message_chunk")
+      .map((u) => ((u.update as { content?: { text?: string } }).content?.text ?? ""))
+      .join("");
+    assert.equal(text, "after the pause ");
+  });
+  console.log("turn: pause/resume ok");
+}
+
+// --- pause then cancel: the held turn ends as cancelled, and the pause goes with it ---
+{
+  const agent = buildAgentApp({
+    env: testEnv(),
+    makeModel: scriptedModel([
+      toolCallScript("bash", { command: "echo one" }),
+      textScript("never reached "),
+      textScript("second turn "),
+    ]),
+  });
+  const { app: client, harness } = makeClient();
+  await client.connectWith(agent, async (ctx) => {
+    await initialize(ctx);
+    const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
+    await ctx.request("session/set_mode", { sessionId, modeId: "bypassPermissions" });
+    await ctx.request("_daedalus/session/pause", { sessionId });
+    // A paused session's next prompt waits at its first step.
+    const turn = ctx.request("session/prompt", { sessionId, prompt: promptOf("run it") });
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(harness.updatesOf("tool_call").length, 0, "the first step did not start");
+    await ctx.notify("session/cancel", { sessionId });
+    const response = await turn;
+    assert.equal(response.stopReason, "cancelled");
+    // The cancel cleared the pause: the next turn runs at once.
+    const next = await ctx.request("session/prompt", { sessionId, prompt: promptOf("again") });
+    assert.equal(next.stopReason, "end_turn");
+  });
+  console.log("turn: pause then cancel ok");
+}
+
 // --- compaction: crossing the threshold summarizes before the next turn ---
 {
   const agent = buildAgentApp({

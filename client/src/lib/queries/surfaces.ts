@@ -10,6 +10,12 @@ import { navigateTo, threadPath } from "@/lib/router"
 import { fetchAllQuota, fetchProfileQuota, fetchQuota, type QuotaSnapshot } from "@/lib/quota"
 import type { AppNotification } from "@/lib/notifications-inbox"
 import { clearInbox, markRead } from "@/lib/notifications-inbox"
+import {
+  clearComposerHistory,
+  recordComposerHistory,
+  type ComposerHistoryEntry,
+  type ComposerHistoryState,
+} from "@/lib/composer-history"
 import type { ServerSettings } from "@/lib/settings"
 import { useServer } from "@/lib/server-context"
 import {
@@ -25,6 +31,7 @@ import {
   agentQuotaKey,
   allKnowledgeKey,
   allQuotaKey,
+  composerHistoryKey,
   notificationsKey,
   projectKnowledgeKey,
   projectStatsKey,
@@ -271,4 +278,69 @@ export function useOpenNotification() {
     if (n.sessionId) navigateTo(threadPath(n.sessionId))
     if (!n.read) mark.mutate(n.id)
   }
+}
+
+
+// ---- the composer's prompt history ----
+
+/**
+ * Every prompt this server has been sent, newest first and global across
+ * threads — what Up walks and what the history page lists.
+ *
+ * Read once and kept: unlike the inbox this has no badge to keep honest, and
+ * the list only changes when *this* user sends something, which is a write
+ * that patches the cache itself (`useRecordComposerHistory`). The staleness
+ * that matters is another device's send, which window focus collects.
+ *
+ * The cache is the reason Up is instant. A keystroke cannot wait for a round
+ * trip, so the recall list is whatever the persisted cache last held — it is
+ * on screen before the first read answers, and the read only ever adds to it.
+ */
+export function useComposerHistory() {
+  const settings = useServer()
+  const query = useApiQuery<ComposerHistoryState>(composerHistoryKey(settings), "/api/composer-history")
+  return {
+    items: query.data?.items ?? [],
+    isPending: query.isPending,
+    refetch: () => void query.refetch(),
+  }
+}
+
+/**
+ * Record a prompt that has actually been sent.
+ *
+ * The cache is patched from the server's own row rather than invalidated: the
+ * answer is authoritative (it is the row that de-duplicated a repeat), and a
+ * re-read on every send would cost a round trip for a list this device already
+ * knows the new head of. A failure is swallowed by the caller — a history that
+ * did not record is never a send that failed.
+ */
+export function useRecordComposerHistory() {
+  const settings = useServer()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (entry: { text: string; sessionId?: string | null; threadTitle?: string | null }) =>
+      recordComposerHistory(settings, entry),
+    onSuccess: (result) => {
+      if (!result.entry) return
+      qc.setQueryData<ComposerHistoryState>(composerHistoryKey(settings), (prev) => {
+        const entry = result.entry as ComposerHistoryEntry
+        /* The same de-duplication the server just did, applied to the copy on
+           screen: the row moves to the head, it does not appear twice. */
+        const rest = (prev?.items ?? []).filter((i) => i.id !== entry.id && i.text !== entry.text)
+        return { items: [entry, ...rest] }
+      })
+    },
+  })
+}
+
+/** Forget one line, or the whole history. Invalidates rather than patches —
+    a clear is rare and the next read should say what is actually there. */
+export function useClearComposerHistory() {
+  const settings = useServer()
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id?: string) => clearComposerHistory(settings, id),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: composerHistoryKey(settings) }),
+  })
 }

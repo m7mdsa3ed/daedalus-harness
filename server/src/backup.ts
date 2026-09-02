@@ -11,6 +11,7 @@ import {
   mcpOauth as mcpOauthTable,
   mcpServers as mcpServersTable,
   notifications as notificationsTable,
+  composerHistory as composerHistoryTable,
   personas as personasTable,
   profiles as profilesTable,
   projectPreviews as previewsTable,
@@ -25,6 +26,12 @@ import {
   sessions as sessionsTable,
   skills as skillsTable,
   boards as boardsTable,
+  boardViews as boardViewsTable,
+  type BoardViewConfig,
+  sprints as sprintsTable,
+  taskActivity as taskActivityTable,
+  taskComments as taskCommentsTable,
+  taskLinks as taskLinksTable,
   boardStatuses as boardStatusesTable,
   tasks as tasksTable,
   webSearchUsage as usageTable,
@@ -217,6 +224,8 @@ const ProjectRow = z.object({
   cwd: str,
   description: optStr,
   logoUrl: optStr,
+  devCommand: optStr,
+  templateId: optStr,
 });
 
 const KnowledgeRow = z.object({
@@ -293,7 +302,7 @@ const WorkflowRunRow = z.object({
   name: str,
   definition: z.record(z.string(), z.unknown()),
   inputs: z.record(z.string(), z.unknown()),
-  status: z.enum(["running", "completed", "failed", "cancelled"]),
+  status: z.enum(["running", "paused", "completed", "failed", "cancelled"]),
   error: optStr,
   steps: z.array(
     z.object({
@@ -416,11 +425,23 @@ const EventRow = z.object({
   at: int.default(0),
 });
 
+const CustomFieldRow = z.object({
+  id: str.min(1),
+  name: str,
+  type: z.enum(["text", "number", "select", "date", "checkbox", "url"]),
+  options: z.array(str).optional(),
+});
+
 const BoardRow = z.object({
   id: str.min(1),
   name: str,
+  key: str.default("TASK"),
+  description: optStr,
+  projectId: optStr,
   color: optStr,
   order: int.default(0),
+  nextNumber: int.default(1),
+  customFields: z.array(CustomFieldRow).default([]),
   createdAt: int,
   updatedAt: int,
 });
@@ -430,9 +451,61 @@ const BoardStatusRow = z.object({
   boardId: str.min(1),
   name: str,
   color: optStr,
+  category: z.enum(["todo", "in_progress", "done"]).default("todo"),
+  wipLimit: int.nullish(),
   order: int.default(0),
   createdAt: int,
   updatedAt: int,
+});
+
+const SprintRow = z.object({
+  id: str.min(1),
+  boardId: str.min(1),
+  name: str,
+  goal: optStr,
+  startAt: int.nullish(),
+  endAt: int.nullish(),
+  state: z.enum(["planned", "active", "closed"]).default("planned"),
+  order: int.default(0),
+  createdAt: int,
+  updatedAt: int,
+});
+
+const BoardViewRow = z.object({
+  id: str.min(1),
+  boardId: str.min(1),
+  name: str,
+  kind: z.enum(["board", "list", "table", "calendar", "timeline"]).default("board"),
+  config: z.record(z.string(), z.unknown()).default({}),
+  order: int.default(0),
+  createdAt: int,
+  updatedAt: int,
+});
+
+const TaskCommentRow = z.object({
+  id: str.min(1),
+  taskId: str.min(1),
+  body: str,
+  author: optStr,
+  createdAt: int,
+  updatedAt: int,
+});
+
+const TaskActivityRow = z.object({
+  id: str.min(1),
+  taskId: str.min(1),
+  at: int,
+  field: str,
+  from: z.unknown().nullish(),
+  to: z.unknown().nullish(),
+});
+
+const TaskLinkRow = z.object({
+  id: str.min(1),
+  fromId: str.min(1),
+  toId: str.min(1),
+  kind: z.enum(["blocks", "relates", "duplicates"]).default("relates"),
+  createdAt: int,
 });
 
 /* A task's board and column are ids now, where a bundle written before boards
@@ -455,13 +528,25 @@ const TaskRow = z.preprocess(
   z.object({
     id: str.min(1),
     boardId: str.default("default"),
+    number: int.nullable().default(null),
+    type: z.enum(["task", "bug", "story", "epic"]).default("task"),
     title: str,
     description: optStr,
     statusId: str.default("todo"),
-    priority: z.enum(["low", "medium", "high", "urgent"]).default("medium"),
+    priority: z.enum(["lowest", "low", "medium", "high", "urgent"]).default("medium"),
     labels: z.array(str).default([]),
     assignee: optStr,
+    parentId: optStr,
+    sprintId: optStr,
+    estimate: int.nullish(),
+    startAt: int.nullish(),
     dueAt: int.nullish(),
+    completedAt: int.nullish(),
+    archived: z.boolean().nullable().default(false),
+    checklist: z
+      .array(z.object({ id: str.min(1), text: str, done: z.boolean().default(false) }))
+      .default([]),
+    custom: z.record(z.string(), z.unknown()).default({}),
     note: optStr,
     order: int.default(0),
     createdAt: int,
@@ -493,6 +578,16 @@ const NotificationRow = z.object({
   threadTitle: optStr,
   body: optStr,
   read: z.boolean().default(false),
+  createdAt: int,
+});
+
+/* The prompts the user has typed — theirs, and the one table here that is
+   worth carrying to a new install even though nothing points at it. */
+const ComposerHistoryRow = z.object({
+  id: str.min(1),
+  text: str,
+  sessionId: optStr,
+  threadTitle: optStr,
   createdAt: int,
 });
 
@@ -530,10 +625,16 @@ export const BundleSchema = z.object({
   events: z.array(EventRow).default([]),
   boards: z.array(BoardRow).default([]),
   boardStatuses: z.array(BoardStatusRow).default([]),
+  sprints: z.array(SprintRow).default([]),
+  boardViews: z.array(BoardViewRow).default([]),
   tasks: z.array(TaskRow).default([]),
+  taskComments: z.array(TaskCommentRow).default([]),
+  taskActivity: z.array(TaskActivityRow).default([]),
+  taskLinks: z.array(TaskLinkRow).default([]),
   webSearchUsage: z.array(UsageRow).default([]),
   pushTokens: z.array(PushTokenRow).default([]),
   notifications: z.array(NotificationRow).default([]),
+  composerHistory: z.array(ComposerHistoryRow).default([]),
   config: z.object({ webSearch: WebSearchBlock.optional() }).default({}),
 });
 
@@ -608,10 +709,20 @@ export function exportBundle(opts: ExportOptions): Bundle {
       : [],
     boards: db.select().from(boardsTable).all(),
     boardStatuses: db.select().from(boardStatusesTable).all(),
+    sprints: db.select().from(sprintsTable).all(),
+    boardViews: db
+      .select()
+      .from(boardViewsTable)
+      .all()
+      .map((v) => ({ ...v, config: v.config as Record<string, unknown> })),
     tasks: db.select().from(tasksTable).all(),
+    taskComments: db.select().from(taskCommentsTable).all(),
+    taskActivity: db.select().from(taskActivityTable).all(),
+    taskLinks: db.select().from(taskLinksTable).all(),
     webSearchUsage: db.select().from(usageTable).all(),
     pushTokens: db.select().from(pushTokensTable).all(),
     notifications: db.select().from(notificationsTable).all(),
+    composerHistory: db.select().from(composerHistoryTable).all(),
     config: webSearch
       ? {
           webSearch: opts.includeSecrets
@@ -626,9 +737,9 @@ export type ImportMode = "merge" | "replace";
 
 export type ImportSummary = Record<
   | "agents" | "profiles" | "mcpServers" | "mcpOauth" | "skills" | "commands" | "personas" | "projects" | "knowledge" | "previews"
-  | "sessions" | "queue" | "scheduled" | "workflowRuns" | "events" | "boards" | "boardStatuses" | "tasks"
+  | "sessions" | "queue" | "scheduled" | "workflowRuns" | "events" | "boards" | "boardStatuses" | "sprints" | "boardViews" | "tasks" | "taskComments" | "taskActivity" | "taskLinks"
   | "routines" | "routineTriggers" | "routineRuns"
-  | "webSearchUsage" | "pushTokens" | "notifications",
+  | "webSearchUsage" | "pushTokens" | "notifications" | "composerHistory",
   number
 > & {
   /** Rows dropped because the row they belong to is in neither the bundle
@@ -712,9 +823,9 @@ function keepPairs(incoming: NameValue[] | null | undefined, existing: NameValue
 export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
   const summary: ImportSummary = {
     agents: 0, profiles: 0, mcpServers: 0, mcpOauth: 0, skills: 0, commands: 0, personas: 0, projects: 0, knowledge: 0, previews: 0,
-    sessions: 0, queue: 0, scheduled: 0, workflowRuns: 0, events: 0, boards: 0, boardStatuses: 0, tasks: 0,
+    sessions: 0, queue: 0, scheduled: 0, workflowRuns: 0, events: 0, boards: 0, boardStatuses: 0, sprints: 0, boardViews: 0, tasks: 0, taskComments: 0, taskActivity: 0, taskLinks: 0,
     routines: 0, routineTriggers: 0, routineRuns: 0,
-    webSearchUsage: 0, pushTokens: 0, notifications: 0,
+    webSearchUsage: 0, pushTokens: 0, notifications: 0, composerHistory: 0,
     orphaned: 0, missingSecrets: false,
   };
 
@@ -737,8 +848,9 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
         personasTable,
         // A root of its own: its triggers, runs and links all cascade from it.
         routinesTable,
-        agentsTable, tasksTable, boardStatusesTable, boardsTable, usageTable, pushTokensTable,
+        agentsTable, taskLinksTable, taskActivityTable, taskCommentsTable, tasksTable, boardViewsTable, sprintsTable, boardStatusesTable, boardsTable, usageTable, pushTokensTable,
         notificationsTable,
+        composerHistoryTable,
         agentOptionsTable,
       ]) {
         tx.delete(table).run();
@@ -986,15 +1098,39 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
     // The standalone tables. Boards and their columns go in before the tasks
     // that point at them, so `reconcileTaskStatuses` below has something to
     // reconcile against.
-    upsertChunked(tx, boardsTable, "id", bundle.boards.map((b) => ({ ...b, color: b.color ?? null })));
+    upsertChunked(
+      tx,
+      boardsTable,
+      "id",
+      bundle.boards.map((b) => ({
+        ...b,
+        color: b.color ?? null,
+        description: b.description ?? null,
+        projectId: b.projectId ?? null,
+      })),
+    );
     summary.boards = bundle.boards.length;
     upsertChunked(
       tx,
       boardStatusesTable,
       "id",
-      bundle.boardStatuses.map((s) => ({ ...s, color: s.color ?? null })),
+      bundle.boardStatuses.map((s) => ({ ...s, color: s.color ?? null, wipLimit: s.wipLimit ?? null })),
     );
     summary.boardStatuses = bundle.boardStatuses.length;
+    upsertChunked(
+      tx,
+      sprintsTable,
+      "id",
+      bundle.sprints.map((s) => ({ ...s, goal: s.goal ?? null, startAt: s.startAt ?? null, endAt: s.endAt ?? null })),
+    );
+    summary.sprints = bundle.sprints.length;
+    upsertChunked(
+      tx,
+      boardViewsTable,
+      "id",
+      bundle.boardViews.map((v) => ({ ...v, config: v.config as BoardViewConfig })),
+    );
+    summary.boardViews = bundle.boardViews.length;
     upsertChunked(
       tx,
       tasksTable,
@@ -1003,17 +1139,30 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
         ...t,
         description: t.description ?? null,
         assignee: t.assignee ?? null,
+        parentId: t.parentId ?? null,
+        sprintId: t.sprintId ?? null,
+        estimate: t.estimate ?? null,
+        startAt: t.startAt ?? null,
         dueAt: t.dueAt ?? null,
+        completedAt: t.completedAt ?? null,
         note: t.note ?? null,
       })),
     );
     summary.tasks = bundle.tasks.length;
+    upsertChunked(tx, taskCommentsTable, "id", bundle.taskComments.map((c) => ({ ...c, author: c.author ?? null })));
+    summary.taskComments = bundle.taskComments.length;
+    upsertChunked(tx, taskActivityTable, "id", bundle.taskActivity.map((a) => ({ ...a, from: a.from ?? null, to: a.to ?? null })));
+    summary.taskActivity = bundle.taskActivity.length;
+    upsertChunked(tx, taskLinksTable, "id", bundle.taskLinks);
+    summary.taskLinks = bundle.taskLinks.length;
     upsertChunked(tx, usageTable, "id", bundle.webSearchUsage.map((u) => ({ ...u, completedAt: u.completedAt ?? null })));
     summary.webSearchUsage = bundle.webSearchUsage.length;
     insertChunked(tx, pushTokensTable, bundle.pushTokens);
     summary.pushTokens = bundle.pushTokens.length;
     upsertChunked(tx, notificationsTable, "id", bundle.notifications);
     summary.notifications = bundle.notifications.length;
+    upsertChunked(tx, composerHistoryTable, "id", bundle.composerHistory);
+    summary.composerHistory = bundle.composerHistory.length;
   });
 
   /* A bundle written before boards existed carries tasks and no boards, and a

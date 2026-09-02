@@ -26,6 +26,7 @@ import { stopWatching, watchProject, type WatchBatch } from "../workspace-watch.
 import * as git from "../git.js";
 import { createPreview, deletePreview, listPreviews } from "../previews.js";
 import { createTerminal, killProjectTerminals, killTerminal, listTerminals } from "../terminals.js";
+import { forgetDevServer } from "../dev-server.js";
 import { crud, flag, workspace } from "./helpers.js";
 
 /** Projects and everything scoped to a project's directory: the workspace
@@ -43,6 +44,9 @@ export function workspaceRoutes(app: Hono): void {
     // this project any more — and a watcher nobody can unsubscribe from is a
     // handle held until the process exits.
     stopWatching(id);
+    // The manager's state first, so the pty's exit below is not reported as
+    // a dev server crashing; the terminals themselves go with the rest.
+    forgetDevServer(id);
     killProjectTerminals(id);
     return c.json({ ok: true });
   });
@@ -193,6 +197,16 @@ export function workspaceRoutes(app: Hono): void {
     workspace(c, () => git.branches(c.req.param("projectId"), c.req.query("repo"))),
   );
 
+  app.get("/api/projects/:projectId/git/log", (c) => {
+    const limit = Number(c.req.query("limit"));
+    return workspace(c, () =>
+      git.log(c.req.param("projectId"), {
+        limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
+        repo: c.req.query("repo"),
+      }),
+    );
+  });
+
   app.get("/api/projects/:projectId/git/file", (c) => {
     const comparison = c.req.query("comparison");
     const side: git.Comparison =
@@ -214,6 +228,9 @@ export function workspaceRoutes(app: Hono): void {
       create?: unknown;
       amend?: unknown;
       repo?: unknown;
+      patch?: unknown;
+      cached?: unknown;
+      reverse?: unknown;
     };
     const paths = Array.isArray(body.paths)
       ? body.paths.filter((p): p is string => typeof p === "string")
@@ -244,6 +261,17 @@ export function workspaceRoutes(app: Hono): void {
           });
           return { ...result, status: await git.status(projectId, repo) };
         });
+      /* One hunk, cut out of a diff by the review panel: `cached` stages it,
+         `reverse` (without `cached`) discards it from the worktree. */
+      case "apply":
+        return workspace(c, async () => {
+          await git.applyPatch(projectId, String(body.patch ?? ""), {
+            cached: body.cached === true,
+            reverse: body.reverse === true,
+            repo,
+          });
+          return git.status(projectId, repo);
+        });
       case "checkout":
         return workspace(c, async () => {
           await git.checkout(projectId, String(body.branch ?? ""), {
@@ -255,6 +283,54 @@ export function workspaceRoutes(app: Hono): void {
       default:
         return c.json({ error: `unknown git action: ${action}` }, 404);
     }
+  });
+
+  /* Stash: the working set's parking spot. `stash` answers the new status (the
+     way stage/unstage do) so the panel repaints; the rest answer only the status
+     after the operation. `index` is the numeric `stash@{n}`, never a message, so
+     it can never be read as a ref or pathspec. */
+  app.get("/api/projects/:projectId/git/stashes", (c) =>
+    workspace(c, () => git.stashList(c.req.param("projectId"), c.req.query("repo"))),
+  );
+
+  app.post("/api/projects/:projectId/git/stash", async (c) => {
+    const projectId = c.req.param("projectId");
+    const body = (await c.req.json().catch(() => ({}))) as { message?: unknown; repo?: unknown };
+    const repo = typeof body.repo === "string" ? body.repo : undefined;
+    return workspace(c, async () => {
+      const { created } = await git.stashPush(projectId, {
+        message: typeof body.message === "string" ? body.message : undefined,
+        repo,
+      });
+      return { created, status: await git.status(projectId, repo) };
+    });
+  });
+
+  /* apply / pop / drop are one shape: a stash index and what to do with it.
+     `verb` is matched against a closed map rather than interpolated, so the
+     path segment can never name a git subcommand of its own. */
+  const STASH_VERBS = {
+    apply: git.stashApply,
+    pop: git.stashPop,
+    drop: git.stashDrop,
+  } as const;
+
+  app.post("/api/projects/:projectId/git/stash/:verb", async (c) => {
+    const projectId = c.req.param("projectId");
+    const verb = c.req.param("verb");
+    const action = Object.hasOwn(STASH_VERBS, verb)
+      ? STASH_VERBS[verb as keyof typeof STASH_VERBS]
+      : null;
+    if (!action) return c.json({ error: `unknown stash action: ${verb}` }, 404);
+    const body = (await c.req.json().catch(() => ({}))) as { index?: unknown; repo?: unknown };
+    const repo = typeof body.repo === "string" ? body.repo : undefined;
+    const index = body.index;
+    if (typeof index !== "number" || !Number.isInteger(index) || index < 0)
+      return c.json({ error: "stash index must be a non-negative integer" }, 400);
+    return workspace(c, async () => {
+      await action(projectId, index, repo);
+      return git.status(projectId, repo);
+    });
   });
 
   /* Terminals. The list and the lifecycle are ordinary JSON routes; the bytes go

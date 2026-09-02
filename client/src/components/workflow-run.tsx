@@ -1,6 +1,6 @@
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
-import { BotIcon, CircleDashedIcon, WorkflowIcon } from "lucide-react"
+import { BotIcon, CircleDashedIcon, PauseIcon, PlayIcon, WorkflowIcon } from "lucide-react"
 /* The workflow/subagent *run* surfaces — a run in the transcript, and the
    list of its steps underneath it.
 
@@ -35,6 +35,9 @@ import { sumUsage } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 import { useViewOptionsContext } from "@/lib/view-options"
 import { useStoreSelect, type ToolItem } from "@/lib/store"
+import { reportError } from "@/lib/errors"
+import { useServer } from "@/lib/server-context"
+import { api } from "@/lib/settings"
 
 /** How a run draws one of its steps: `SubagentStep` from thread-items, which
     is the same row the step would draw as on its own. A component prop
@@ -249,10 +252,17 @@ function RunRow({
   countNoun,
   showTimestamps,
   stepRow: StepView,
+  paused = false,
+  control,
 }: {
   name: string
   steps: SubagentGroup[]
   plan?: WorkflowGroup["plan"]
+  /** The run is held (a harness workflow's `_daedalus/workflow_state`). */
+  paused?: boolean
+  /** A control beside the metric — the hold toggle. Outside the row's own
+      button, which is why it is a slot here and not part of `target`. */
+  control?: React.ReactNode
   icon: React.ComponentType<{ className?: string }>
   /** What the `2/9` counts — "steps" of a definition, "done" of a batch, which
       has no shape beyond the workers in it. */
@@ -292,7 +302,14 @@ function RunRow({
   const runningPhase = runningStep
     ? (phases.find((phase) => phase.steps.some((s) => s.group === runningStep))?.name ?? null)
     : null
-  const caption = runningStep
+  const caption = paused
+    ? [
+        "paused",
+        runningStep ? [runningPhase, stepNameOf(runningStep)].filter(Boolean).join(" · ") : "",
+      ]
+        .filter(Boolean)
+        .join(" — ")
+    : runningStep
     ? [
         [runningPhase, stepNameOf(runningStep)].filter(Boolean).join(" · "),
         currentActivity(runningStep.children),
@@ -318,6 +335,7 @@ function RunRow({
           {ms !== null && ms >= 2000 && ` · ${formatElapsed(ms)}`}
           {tokens && " · "}
           {tokens && <TokenFigure usage={tokens} />}
+          {control}
         </>
       }
       /* A run that is running when it mounts opens itself — it is the liveliest
@@ -373,6 +391,19 @@ export const WorkflowRun = React.memo(function WorkflowRun({
   showTimestamps?: boolean
   stepRow: StepRowComponent
 }) {
+  /* The hold is stamped on every step of the run (see the reducer), so any
+     head says it; the thread the run belongs to rides the same stamp. The
+     toggle is only offered while the run is live — a settled run has nothing
+     to hold — and stays offered while held, since a held run has no active
+     step to read liveness from. */
+  const heads = group.steps.map((s) => (s.head.kind === "subagent" ? s.head : null))
+  const info = heads.find((h) => h?.workflow)?.workflow
+  const paused = heads.some((h) => h?.workflow?.paused)
+  const live =
+    paused ||
+    group.steps.some((s) => stepStateOf(s) === "running") ||
+    (info?.total !== undefined && group.steps.length < info.total)
+  const runId = group.id.slice("workflow:".length)
   return (
     <RunRow
       name={group.name}
@@ -382,10 +413,53 @@ export const WorkflowRun = React.memo(function WorkflowRun({
       countNoun="steps"
       showTimestamps={showTimestamps}
       stepRow={stepRow}
+      paused={paused}
+      control={
+        live && info?.sessionId ? (
+          <WorkflowHold sessionId={info.sessionId} runId={runId} paused={paused} />
+        ) : undefined
+      }
     />
   )
 })
 WorkflowRun.displayName = "WorkflowRun"
+
+/** The hold toggle on a run's row. Posts straight to the run's route: the
+    answer comes back as the journaled `_daedalus/workflow_state`, which is
+    what redraws the card — so nothing is set here. */
+function WorkflowHold({ sessionId, runId, paused }: { sessionId: string; runId: string; paused: boolean }) {
+  const settings = useServer()
+  const [busy, setBusy] = React.useState(false)
+  const toggle = async () => {
+    setBusy(true)
+    try {
+      await api(settings, `/api/sessions/${sessionId}/workflows/${runId}/${paused ? "resume" : "pause"}`, {
+        method: "POST",
+        body: "{}",
+      })
+    } catch (err) {
+      reportError(err, paused ? "Couldn't resume the workflow" : "Couldn't pause the workflow")
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={() => void toggle()}
+      title={paused ? "Resume the workflow" : "Pause the workflow after the steps in flight"}
+      className={cn(
+        "ml-1.5 inline-flex h-6 w-5 items-center justify-center rounded align-middle transition-colors",
+        paused ? "text-primary hover:text-primary" : "text-muted-foreground/60 hover:text-foreground",
+        busy && "opacity-50"
+      )}
+    >
+      {paused ? <PlayIcon className="size-3" /> : <PauseIcon className="size-3" />}
+      <span className="sr-only">{paused ? "Resume" : "Pause"}</span>
+    </button>
+  )
+}
 
 /**
  * The subagents an agent fired side by side (`SubagentBatch`) as the same row.

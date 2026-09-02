@@ -11,7 +11,7 @@
    server restart. `parsePanel` is the other half of that contract — anything
    restored has to come back through it before the dock will trust it. */
 
-export type PanelKind = "chat" | "editor" | "terminal" | "web"
+export type PanelKind = "chat" | "editor" | "terminal" | "web" | "review"
 
 /** Whether a web panel is looking at a project's own dev server or the wider
     internet. It is carried on the descriptor so the panel cannot decide for
@@ -26,6 +26,10 @@ export type PanelDescriptor =
   | { kind: "editor"; projectId: string; path: string; comparison?: string }
   | { kind: "terminal"; projectId: string; terminalId: string }
   | { kind: "web"; trust: WebTrust; viewId: string; projectId?: string; url?: string }
+  /** The thread's changes as git saw them — one per thread, `scope` is the
+      turn it opened on (`turn:<id>`) or `uncommitted`, and the panel may move
+      it afterwards. */
+  | { kind: "review"; sessionId: string; scope?: string }
 
 export interface PanelSpec {
   /** One per project — opening it again focuses what is there. */
@@ -43,6 +47,7 @@ export const PANEL_SPECS: Record<PanelKind, PanelSpec> = {
   editor: { singleton: false, defaultTitle: "Editor", implemented: true },
   terminal: { singleton: false, defaultTitle: "Terminal", implemented: true },
   web: { singleton: false, defaultTitle: "Browser", implemented: true },
+  review: { singleton: true, defaultTitle: "Changes", implemented: true },
 }
 
 export const PANEL_KINDS = Object.keys(PANEL_SPECS) as PanelKind[]
@@ -69,6 +74,8 @@ export function panelId(panel: PanelDescriptor): string {
       return panel.trust === "external"
         ? `web:external:${panel.viewId}`
         : `web:${panel.projectId}:${panel.viewId}`
+    case "review":
+      return `review:${panel.sessionId}`
   }
 }
 
@@ -117,6 +124,12 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
         ...(trust === "project" && projectId ? { projectId } : {}),
         ...(str(p.url) ? { url: str(p.url) } : {}),
       }
+    }
+    case "review": {
+      const sessionId = str(p.sessionId)
+      if (!sessionId) return null
+      const scope = str(p.scope)
+      return { kind: "review", sessionId, ...(scope ? { scope } : {}) }
     }
   }
 }

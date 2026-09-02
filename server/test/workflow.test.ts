@@ -3,6 +3,8 @@
 //   - JSON output extraction + validation, the one repair turn, then failure
 //   - a failing step skips its dependents; siblings finish; the run fails
 //   - cancel interrupts a parked step and retires its thread
+//   - pause starts nothing, holds a pausable child and stops the clocks;
+//     resume carries on; a paused run can still be cancelled
 //   - every step is mirrored into the parent's log as RFD subagent events,
 //     live and on replay; the child is a real session with parentSessionId
 //   - a step's token usage reaches the parent as an update of its own, while
@@ -280,6 +282,60 @@ await test("cancel interrupts a parked step and retires its thread", async () =>
   await waitFor(() => manager.get(childId)?.exited === true, "the child to retire");
   await waitFor(() => updatesOf(ws, "subagent_state_update").some((e) => (e.update as { subagentSessionId: string; state: string }).subagentSessionId === childId && (e.update as { state: string }).state === "cancelled"), "the cancelled state on the parent");
   assert.equal(runner.cancel(view.id), false, "a finished run cannot be cancelled again");
+});
+
+await test("pause holds the run, resume carries it on", async () => {
+  const view = runner.start(parent, {
+    name: "hold",
+    steps: [
+      { name: "a", prompt: "needs permission" },
+      { name: "b", prompt: "echo:B", dependsOn: ["a"] },
+    ],
+  });
+  const stepOf = (n: string) => runner.status(view.id)!.steps.find((s) => s.name === n)!;
+  await waitFor(() => stepOf("a").sessionId != null && manager.get(stepOf("a").sessionId!)?.bridge?.promptActive === true, "a to park");
+  const child = manager.get(stepOf("a").sessionId!)!;
+  assert.equal(runner.resume(view.id), false, "a running run is not resumed");
+  assert.equal(runner.pause(view.id), true);
+  assert.equal(runner.pause(view.id), false, "a held run is not paused twice");
+  assert.equal(runner.status(view.id)!.status, "paused");
+  // The stamp names the thread the run belongs to, and the hold is said on it.
+  const spawn = updatesOf(ws, "subagent_spawned").find((e) => (e.update as { subagentSessionId: string }).subagentSessionId === child.id)!;
+  assert.equal(((spawn.update as unknown as { _meta: { daedalus: { workflow: { sessionId: string } } } })._meta.daedalus.workflow.sessionId), parent.id);
+  const states = () => updatesOf(ws, "_daedalus/workflow_state").map((e) => e.update as { runId: string; paused: boolean }).filter((u) => u.runId === view.id);
+  await waitFor(() => states().some((u) => u.paused), "the hold on the parent");
+  // The running child's own runtime was asked to hold (the fake agent takes the pair).
+  await waitFor(() => child.bridge?.paused === true, "the child to be paused");
+  // Its question is answered; the step completes — and its dependent does not start.
+  const pending = child.bridge!.pendingEvents()[0] as { requestId: string; request: { options: { optionId: string }[] } };
+  child.bridge!.answer(pending.requestId, { outcome: { outcome: "selected", optionId: pending.request.options[0].optionId } });
+  await waitFor(() => stepOf("a").status === "completed", "a to complete under the hold");
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(stepOf("b").status, "pending", "b did not start while paused");
+  assert.equal(runner.status(view.id)!.status, "paused");
+  assert.equal(runner.statusFor("someone-else", view.id), null, "a run is only its thread's");
+  assert.equal(runner.statusFor(parent.id, view.id)?.id, view.id);
+  assert.equal(runner.resume(view.id), true);
+  const done = (await runner.wait(view.id, 20_000))!;
+  assert.equal(done.status, "completed", done.error ?? "");
+  assert.equal(done.steps.find((s) => s.name === "b")!.output, "B");
+  assert.ok(states().some((u) => !u.paused), "the release on the parent");
+});
+
+await test("a paused run can be cancelled and a step's clock stands still while held", async () => {
+  const view = runner.start(parent, { name: "hold-cancel", steps: [{ name: "ask", prompt: "needs permission", timeoutSec: 1 }] });
+  await waitFor(() => runner.status(view.id)?.steps[0].sessionId != null && manager.get(runner.status(view.id)!.steps[0].sessionId!)?.bridge?.promptActive === true, "the step's turn to park");
+  const childId = runner.status(view.id)!.steps[0].sessionId!;
+  assert.equal(runner.pause(view.id), true);
+  // Past the step's own timeout: a clock that kept running would have failed it.
+  await new Promise((r) => setTimeout(r, 1_300));
+  assert.equal(runner.status(view.id)!.status, "paused");
+  assert.equal(runner.status(view.id)!.steps[0].status, "running");
+  assert.equal(runner.cancel(view.id), true);
+  const done = (await runner.wait(view.id, 5_000))!;
+  assert.equal(done.status, "cancelled");
+  await waitFor(() => manager.get(childId)?.exited === true, "the child to retire");
+  assert.equal(runner.resume(view.id), false, "a finished run cannot be resumed");
 });
 
 await test("the loopback key resolves the caller and a step may not start a workflow", async () => {

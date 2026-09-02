@@ -282,6 +282,8 @@ await waitFor(() => a.of("turn_ended").length === 2, "the permission-gated turn 
 assert.equal(b.of("turn_ended").length, 2);
 assert.equal(session.bridge!.promptActive, false);
 
+const allowOnce = { outcome: { outcome: "selected", optionId: "allow" } } as const;
+
 // Steering: a second prompt sent mid-turn must not end the turn early — the
 // indicator belongs to the whole turn, not to the first prompt in it. It has
 // to say `steer` now: a bare prompt sent mid-turn is queued instead.
@@ -292,13 +294,56 @@ await waitFor(() => a.of("turn_ended").length >= before2 + 1, "the steered turn 
 await new Promise((r) => setTimeout(r, 200));
 assert.equal(a.of("turn_ended").length, before2 + 1, "two prompts, exactly one turn end");
 
+/* A steer's words go out at once, but its BUBBLE waits for the step boundary.
+   No runtime reads a mid-turn prompt before its current step ends — ours drains
+   `steerQueue` in `prepareStep` — and the runtimes journal the message where
+   they actually take it, so announcing it at send time would draw it in the
+   middle of a step it is not part of and a reload would then move it.
+
+   Both prompts park on a permission, which is a turn held open with no tool
+   call settling: exactly the state in which the bubble must not appear yet. */
+const steerStarted = b.of("turn_started").length;
+send(a, { id: 6, cmd: "prompt", text: "hold for permission" });
+await waitFor(() => b.of("permission").length === 2, "the turn parks, holding the step open");
+assert.equal(b.of("turn_started").length, steerStarted + 1, "the parked turn announced itself");
+
+send(a, { id: 7, cmd: "prompt", text: "steered, also needs permission", steer: true });
+await waitFor(() => a.of("reply").some((r) => r.id === 7), "the steer is answered");
+const steerReply = a.of("reply").find((r) => r.id === 7)!.result as { deferred?: boolean };
+assert.equal(steerReply.deferred, true, "the sender is told to hold its own bubble");
+await waitFor(() => b.of("permission").length === 3, "the steer reached the agent");
+assert.equal(
+  b.of("turn_started").length,
+  steerStarted + 1,
+  "…and yet its bubble is NOT drawn while the step is still running",
+);
+
+/* Answering both releases the turn. A turn ending is a boundary like any
+   other, so the held bubble comes out — and before the `turn_ended` it belongs
+   inside, rather than being lost. */
+for (const requestId of b.of("permission").slice(-2).map((p) => p.requestId)) {
+  send(a, { cmd: "answer_permission", requestId, response: allowOnce });
+}
+await waitFor(
+  () => b.of("turn_started").length === steerStarted + 2,
+  "the held steer lands once the step lets go",
+);
+assert.equal(b.of("turn_started").at(-1)!.text, "steered, also needs permission");
+// To every peer INCLUDING the sender: it dropped its optimistic bubble, so this
+// event is the only thing that draws one.
+assert.equal(a.of("turn_started").at(-1)!.text, "steered, also needs permission", "the origin gets it too");
+await waitFor(() => session.bridge!.promptActive === false, "the steered turn settles");
+
 // --- the queue ---
 
 const allow = { outcome: { outcome: "selected", optionId: "allow" } } as const;
 const lastQueue = (ws: MockWs) => ws.of("queue").at(-1)?.items ?? [];
+/* Relative, not absolute: this counts permissions cumulatively across the whole
+   file, so a test added above must not shift what "turn n" means here. */
 const park = async (n: number) => {
+  const before = b.of("permission").length;
   send(a, { id: 1000 + n, cmd: "prompt", text: "needs permission" });
-  await waitFor(() => b.of("permission").length === n, `turn ${n} parks on a permission`);
+  await waitFor(() => b.of("permission").length === before + 1, `turn ${n} parks on a permission`);
   return b.of("permission").at(-1)!.requestId;
 };
 

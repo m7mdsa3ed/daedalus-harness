@@ -16,9 +16,11 @@ import {
   Plug,
   Search,
   Server,
+  Settings2,
   Drama,
   Sparkles,
   SquareSlash,
+  type LucideIcon,
 } from "lucide-react"
 
 export const SETTINGS_SECTIONS = [
@@ -143,6 +145,20 @@ export const SETTINGS_SECTIONS = [
 
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]["id"]
 export type SectionMeta = (typeof SETTINGS_SECTIONS)[number]
+
+/* The index page (`/settings`, components/settings/overview.tsx) is not a
+   section — it has no sidebar row, and the palette does not list it beside
+   the sections — but it has a header like one, so it carries the same shape. */
+export const SETTINGS_OVERVIEW: PageMeta & { label: string; icon: LucideIcon } = {
+  label: "Settings",
+  icon: Settings2,
+  title: "Settings",
+  description:
+    "Everything this device and this server can be configured with, in one place. Preferences stay on this device; the workspace, agents and server sections are the server's.",
+}
+
+/** What a page header needs — every section has it; so does the overview. */
+export type PageMeta = { title: string; description: string }
 
 export const sectionMeta = (id: SettingsSectionId): SectionMeta =>
   SETTINGS_SECTIONS.find((s) => s.id === id) ?? SETTINGS_SECTIONS[0]

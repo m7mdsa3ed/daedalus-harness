@@ -197,6 +197,13 @@ export const subagentItemId = (sessionId: string): string => `subagent:${session
  */
 export interface WorkflowStepInfo {
   runId: string
+  /** The thread the run belongs to — the card is drawn from the log with no
+      thread of its own in hand, and this is what it addresses
+      `/api/sessions/:id/workflows/:runId/…` with. */
+  sessionId?: string
+  /** The run is held (`_daedalus/workflow_state`). Stamped onto every step of
+      the run by the reducer, since the run has no item of its own. */
+  paused?: boolean
   /** The workflow's name — the run's heading, repeated on every step. */
   name: string
   /** This step's name within the definition. */
@@ -224,10 +231,12 @@ export function workflowInfoOf(meta: unknown): WorkflowStepInfo | undefined {
   const name = str(wf?.name)
   const step = str(wf?.step)
   if (!runId || !name || !step) return undefined
+  const sessionId = str(wf?.sessionId)
   const phase = asRecord(wf?.phase)
   const phaseName = str(phase?.name)
   return {
     runId,
+    ...(sessionId ? { sessionId } : {}),
     name,
     step,
     index: typeof wf?.index === "number" ? wf.index : undefined,

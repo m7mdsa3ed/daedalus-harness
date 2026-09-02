@@ -31,6 +31,7 @@ import {
   CommandList,
 } from "@/components/ui/command"
 import { PaletteInput } from "./palette-input"
+import { cn } from "@/lib/utils"
 import { useShortcut } from "@/hooks/use-hotkey"
 import { KEYS, matchesChord } from "@/lib/shortcuts"
 import type { Actions } from "@/lib/actions"
@@ -168,7 +169,15 @@ export function CommandPalette({
     <CommandDialog
       open={open}
       onOpenChange={onOpenChange}
-      className="top-1/2 -translate-y-1/2 sm:max-w-xl"
+      className={cn(
+        "top-1/2 -translate-y-1/2 sm:max-w-xl",
+        /* The rows are drawn by `list.tsx`, which sets its own padding — the
+           dialog's roomier `[cmdk-item]`/`[cmdk-group]` rules are turned back
+           off here so one row is one shape on every page. */
+        "**:[[cmdk-item]]:px-2 **:[[cmdk-item]]:py-1.5",
+        "**:[[cmdk-group]]:px-2 **:[[cmdk-group-heading]]:px-2 **:[[cmdk-group-heading]]:font-medium",
+        "[&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-0"
+      )}
     >
       <PaletteContext.Provider value={palette}>
         {/* Filtering is this file's, not cmdk's — see score.ts. */}

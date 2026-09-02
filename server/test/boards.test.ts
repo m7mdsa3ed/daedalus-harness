@@ -12,6 +12,10 @@ import {
   boardStatuses as boardStatusesTable,
   boards as boardsTable,
   db,
+  sprints as sprintsTable,
+  taskActivity as taskActivityTable,
+  taskComments as taskCommentsTable,
+  taskLinks as taskLinksTable,
   tasks as tasksTable,
 } from "../src/db/index.js";
 import {
@@ -26,7 +30,25 @@ import {
   reorderStatuses,
   updateStatus,
 } from "../src/boards.js";
-import { applyReorder, createTask, listTasks, updateTask } from "../src/tasks-board.js";
+import {
+  addComment,
+  addLink,
+  applyReorder,
+  bulkUpdate,
+  createTask,
+  deleteTask,
+  findTaskByKey,
+  getTaskDetail,
+  listTasks,
+  updateTask,
+} from "../src/tasks-board.js";
+import {
+  completeSprint,
+  createSprint,
+  getBoard,
+  keyFromName,
+  startSprint,
+} from "../src/boards.js";
 
 let passed = 0;
 const failures: string[] = [];
@@ -44,6 +66,10 @@ function reset() {
   db.delete(tasksTable).run();
   db.delete(boardStatusesTable).run();
   db.delete(boardsTable).run();
+  db.delete(sprintsTable).run();
+  db.delete(taskActivityTable).run();
+  db.delete(taskCommentsTable).run();
+  db.delete(taskLinksTable).run();
   ensureDefaultBoard();
 }
 
@@ -252,4 +278,107 @@ if (failures.length) {
   for (const failure of failures) console.error(`FAIL ${failure}\n`);
   process.exit(1);
 }
+test("keys: a board mints its key from its name, tasks are numbered per board", () => {
+  reset();
+  assert.equal(keyFromName("Web Platform"), "WP");
+  assert.equal(keyFromName("Daedalus"), "DAED");
+  assert.equal(keyFromName("Web Platform", new Set(["WP"])), "WP2");
+  const a = createTask({ title: "first" });
+  const b = createTask({ title: "second" });
+  assert.deepEqual([a.number, b.number], [1, 2]);
+  assert.equal(getBoard("default")!.nextNumber, 3);
+  assert.equal(findTaskByKey("task-2")?.id, b.id, "lookup by key is case-insensitive");
+  const other = createBoard({ name: "Other" });
+  const moved = updateTask(a.id, { boardId: other.id })!;
+  assert.equal(moved.number, 1, "a board move takes a number from the new board");
+  assert.equal(moved.boardId, other.id);
+});
+
+test("ensureDefaultBoard backfills numbers onto pre-key rows", () => {
+  reset();
+  db.insert(tasksTable)
+    .values({ id: "old1", title: "a", statusId: "todo", createdAt: 1, updatedAt: 1 })
+    .run();
+  db.insert(tasksTable)
+    .values({ id: "old2", title: "b", statusId: "todo", createdAt: 2, updatedAt: 2 })
+    .run();
+  ensureDefaultBoard();
+  assert.deepEqual(
+    listTasks().map((t) => t.number),
+    [1, 2],
+  );
+  assert.equal(getBoard("default")!.nextNumber, 3);
+});
+
+test("completion is stamped by the column's category", () => {
+  reset();
+  const t = createTask({ title: "x" });
+  assert.equal(t.completedAt, null);
+  const done = updateTask(t.id, { statusId: "done" })!;
+  assert.ok(done.completedAt, "entering a done column stamps completedAt");
+  const reopened = updateTask(t.id, { statusId: "todo" })!;
+  assert.equal(reopened.completedAt, null, "leaving it clears the stamp");
+  applyReorder([{ id: t.id, statusId: "done", order: 0 }]);
+  assert.ok(listTasks()[0]!.completedAt, "a drag into done stamps too");
+  updateStatus("done", { category: "in_progress" });
+  assert.equal(listTasks()[0]!.completedAt, null, "recategorising the column clears its tasks");
+});
+
+test("a parent must be on the same board and never a descendant", () => {
+  reset();
+  const epic = createTask({ title: "Epic", type: "epic" });
+  const child = createTask({ title: "Child", parentId: epic.id });
+  assert.throws(() => updateTask(epic.id, { parentId: child.id }), /ancestor/);
+  const other = createBoard({ name: "Other" });
+  const away = createTask({ title: "Away", boardId: other.id });
+  assert.throws(() => updateTask(away.id, { parentId: epic.id }), /same board/);
+  assert.deepEqual(getTaskDetail(epic.id)!.children.map((c) => c.id), [child.id]);
+  deleteTask(epic.id);
+  assert.equal(listTasks().find((t) => t.id === child.id)!.parentId, null, "children are detached, not deleted");
+});
+
+test("activity records every tracked change, comments and links", () => {
+  reset();
+  const a = createTask({ title: "a" });
+  const b = createTask({ title: "b" });
+  updateTask(a.id, { priority: "high", title: "A", labels: ["x"] });
+  updateTask(a.id, { priority: "high" });
+  addComment(a.id, { body: "hello" });
+  addLink(a.id, { toId: b.id, kind: "blocks" });
+  const fields = getTaskDetail(a.id)!.activity.map((e) => e.field).sort();
+  assert.deepEqual(fields, ["commented", "created", "labels", "linked", "priority", "title"]);
+  assert.equal(getTaskDetail(b.id)!.links.length, 1, "a link is seen from both ends");
+  assert.throws(() => addLink(a.id, { toId: a.id, kind: "relates" }), /itself/);
+});
+
+test("sprints: one active at a time, and closing moves the open work", () => {
+  reset();
+  const s1 = createSprint("default", { name: "Sprint 1" });
+  const s2 = createSprint("default", { name: "Sprint 2" });
+  startSprint(s1.id);
+  assert.throws(() => startSprint(s2.id), /still active/);
+  const done = createTask({ title: "done", sprintId: s1.id, statusId: "done" });
+  const open = createTask({ title: "open", sprintId: s1.id });
+  const result = completeSprint(s1.id, "next");
+  assert.equal(result.moved, 1);
+  assert.equal(result.next?.id, s2.id);
+  assert.equal(listTasks().find((t) => t.id === open.id)!.sprintId, s2.id);
+  assert.equal(listTasks().find((t) => t.id === done.id)!.sprintId, s1.id, "done work stays on the record");
+  assert.equal(result.sprint.state, "closed");
+  const third = completeSprint(s2.id, "next");
+  assert.ok(third.next && third.next.id !== s2.id, "closing the last sprint creates the next one");
+});
+
+test("bulk updates skip a status from another board rather than failing", () => {
+  reset();
+  const other = createBoard({ name: "Other" });
+  const here = createTask({ title: "here" });
+  const there = createTask({ title: "there", boardId: other.id });
+  const rows = bulkUpdate({ ids: [here.id, there.id], patch: { statusId: "done", priority: "urgent" } });
+  assert.equal(rows.length, 2);
+  assert.equal(rows.find((r) => r.id === here.id)!.statusId, "done");
+  assert.notEqual(rows.find((r) => r.id === there.id)!.statusId, "done");
+  assert.ok(rows.every((r) => r.priority === "urgent"));
+});
+
 console.log(`\nboards: ${passed} passed, 0 failed`);

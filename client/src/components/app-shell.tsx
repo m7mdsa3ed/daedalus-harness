@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Check, ChevronDown, ChevronLeft, Plus, ServerIcon, Settings2 } from "lucide-react"
+import { AppWindowIcon, Check, ChevronDown, ChevronLeft, Plus, ServerIcon, Settings2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -17,11 +17,11 @@ import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
 import { ThreadHeaderMenu } from "@/components/thread-menu"
 import { NotificationBell } from "@/components/notifications/bell"
 import { NotificationsInboxPage } from "@/components/notifications/page"
-import type { PanelKind } from "@/lib/workspace/panels"
+import { panelId, type PanelKind } from "@/lib/workspace/panels"
 import { openTerminal } from "@/components/workspace/terminal-panel"
 import { RoutinesPage } from "@/components/routines-page"
 import { SchedulePage } from "@/components/schedule-page"
-import { TasksBoard } from "@/components/tasks-board"
+import { TasksWorkspace } from "@/components/tasks"
 import type { DockviewApi } from "dockview-react"
 import { SetupCardsSkeleton, SidebarGroupsSkeleton } from "@/components/ui/skeletons"
 import {
@@ -49,9 +49,13 @@ import {
   projectPath,
   settingsFormPath,
   settingsPath,
+  settingsRootPath,
   threadPath,
 } from "@/lib/router"
 import { consumeNewTab, markNewTab } from "@/lib/session-tabs"
+import { consumeQueuedPanels } from "@/lib/workspace/pending-panels"
+import { previewPanel } from "@/lib/workspace/preview-bridge"
+import { BuildPage } from "@/components/build-page"
 import { useShortcut } from "@/hooks/use-hotkey"
 import { KEYS } from "@/lib/shortcuts"
 import { defaultsForProfile, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
@@ -61,17 +65,20 @@ import {
   type ServerSettings,
 } from "@/lib/settings"
 import { useCatalogLoaded, useProfiles, useProjects } from "@/lib/queries/catalog"
+import { useRoutines } from "@/lib/queries/routines"
 import { useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { ProjectFormPage, ProjectsPage } from "@/components/settings/projects"
 import { ProjectPage } from "@/components/project-page"
 import {
   SETTINGS_NAV_GROUPS,
+  SETTINGS_OVERVIEW,
   SETTINGS_SECTIONS,
   settingsMaxWidth,
   type SettingsSectionId,
 } from "@/components/settings/sections"
 import { SettingsLayout } from "@/components/settings/layout"
+import { SettingsOverviewPage } from "@/components/settings/overview"
 import { GeneralPage } from "@/components/settings/general"
 import { KnowledgePage } from "@/components/settings/knowledge"
 import { AppearancePage } from "@/components/settings/appearance"
@@ -124,9 +131,11 @@ interface SidebarPanel {
 const SIDEBAR_WIDTH_KEY = "sidebar_width"
 const SIDEBAR_WIDTH_DEFAULT = "16rem"
 
-/** URL segment → a section that exists; anything else falls back to General. */
-const sectionOf = (value: string): SettingsSectionId =>
-  SETTINGS_SECTIONS.find((s) => s.id === value)?.id ?? "general"
+/** URL segment → a section that exists. `null` is the overview (`/settings`
+    itself) and every segment that names nothing — the route tree redirects
+    those to the overview, so nothing lights up on the way. */
+const sectionOf = (value: string): SettingsSectionId | null =>
+  SETTINGS_SECTIONS.find((s) => s.id === value)?.id ?? null
 
 export function AppShell({
   settings,
@@ -146,6 +155,9 @@ export function AppShell({
   const sessions = useStoreSelect((state) => state.sessions)
   const projects = useProjects()
   const profiles = useProfiles()
+  /* Loaded at boot and read by the sidebar already — the header only names
+     the routine the URL points at. */
+  const routines = useRoutines().data ?? []
   /* `bootstrap` answers for the session list alone now — each catalog is its
      own query — so the shell's loading gate is the two together. Without it
      an empty catalog mid-read draws the "Finish the setup" screen at every
@@ -168,25 +180,35 @@ export function AppShell({
   const [importing, setImporting] = React.useState(false)
   const inSettings = location.pathname.startsWith("/settings")
   const inSchedule = location.pathname.startsWith("/schedules")
+  const inRoutines = location.pathname.startsWith("/routines")
   const inBoard = location.pathname.startsWith("/board")
   const inProject = location.pathname.startsWith("/projects")
   const inNotifications = location.pathname.startsWith("/notifications")
+  const inBuild = location.pathname.startsWith("/build")
   const sessionId =
-    inSettings || inSchedule || inBoard || inProject || inNotifications
+    inSettings || inSchedule || inRoutines || inBoard || inProject || inNotifications || inBuild
       ? null
       : currentThreadId(location.pathname, location.search)
-  const section = sectionOf(inSettings ? (location.pathname.split("/")[2] ?? "") : "")
+  const section = inSettings ? sectionOf(location.pathname.split("/")[2] ?? "") : null
   // Leaving settings returns to the thread it was opened from.
   const lastThread = React.useRef<string | null>(null)
   if (sessionId) lastThread.current = sessionId
   const active = sessions.find((s) => s.id === sessionId)
   const ready = !loading && projects.length > 0 && profiles.length > 0
   const dock = useWorkspaceDock()
+  /* The routed thread's project, when it can run a dev server: what gates the
+     Preview button, the menu row, the chord and the auto-open below. */
+  const activeProject = projects.find((p) => p.id === active?.projectId)
+  const canPreview = !!activeProject?.devCommand
   const routeSessionRef = React.useRef(sessionId)
   routeSessionRef.current = sessionId
+  /** Threads this page load has already opened a preview beside. */
+  const autoPreviewed = React.useRef(new Set<string>())
   // The project the workspace panels act on: the routed thread's own.
   const activeProjectRef = React.useRef<string | null>(null)
   activeProjectRef.current = active?.projectId ?? null
+  const activeSessionRef = React.useRef<string | null>(null)
+  activeSessionRef.current = active?.id ?? null
 
   /* The route is the source of truth for the focused tab; each mounted chat owns
      its own ACP connection, so background tabs keep streaming while hidden. */
@@ -196,6 +218,29 @@ export function AppShell({
     const meta = sessions.find((s) => s.id === sessionId)
     if (meta) {
       dock.openChat(sessionId, { newTab: consumeNewTab() })
+      /* Panels a page without a dock asked to open beside this thread — the
+         build page's preview. After the chat, so they split against it. */
+      const queued = consumeQueuedPanels()
+      for (const entry of queued) dock.openPanel(entry.panel, entry.options)
+      /* A thread of an app the harness scaffolded opens with its preview
+         beside it, the first time this page visits it — the preview is what
+         Build mode is *for*, and a thread revisited after a reload would
+         otherwise come back as a bare transcript. Once per thread per page
+         load, so closing the preview is respected for the rest of the visit;
+         in the background, so the chat keeps focus. */
+      const project = projects.find((p) => p.id === meta.projectId)
+      if (
+        queued.length === 0 &&
+        project?.templateId &&
+        project.devCommand &&
+        !autoPreviewed.current.has(meta.id) &&
+        !meta.draft
+      ) {
+        autoPreviewed.current.add(meta.id)
+        const panel = previewPanel(project.id)
+        if (!dock.isPanelOpen(panelId(panel)))
+          dock.openPanel(panel, { direction: "right", background: true })
+      }
       return
     }
     /* A route for a thread nobody knows about: an unsent draft after a reload
@@ -239,8 +284,11 @@ export function AppShell({
     startThreadRef.current()
   })
 
+  /* A section opens that section; plain "Settings" opens the overview, which
+     is the one page that lists them all — the sidebar does on a desktop, but
+     on a phone it is a drawer that closed when you tapped Settings. */
   const openSettings = (next?: SettingsSectionId) =>
-    void navigate(settingsPath(next ?? section))
+    void navigate(next ? settingsPath(next) : settingsRootPath())
   /* A new thread is a route change, not a round trip: mint the id, put a draft
      row in the store and navigate. Nothing is created on the server and no
      agent is spawned until the first message — see actions.newDraftThread. The
@@ -300,12 +348,31 @@ export function AppShell({
           { direction: "right" }
         )
       }
+      /* The review is the thread's, not the project's: its turns are what
+         the scope menu lists. */
+      if (kind === "review") {
+        const sessionId = activeSessionRef.current
+        if (sessionId) dock.openPanel({ kind: "review", sessionId }, { direction: "right" })
+      }
     },
     [dock]
   )
 
   useShortcut("terminal", () => {
     openWorkspacePanel("terminal")
+  })
+
+  /* The preview: the Browser panel on the project's managed dev server. One
+     opener for the header button, the menu row, ⌘K and the chord — beside
+     the thread, or focused if it is already open. */
+  const openPreview = React.useCallback(() => {
+    const projectId = activeProjectRef.current
+    if (!projectId) return
+    dock.openPanel(previewPanel(projectId), { direction: "right" })
+  }, [dock])
+
+  useShortcut("preview", () => {
+    if (canPreview) openPreview()
   })
 
   /* The + on the tab strip. Same thread-creation path as ⌘N and the sidebar —
@@ -359,6 +426,7 @@ export function AppShell({
         <SettingsNav
           section={section}
           onSelect={(next) => void navigate(settingsPath(next))}
+          onOverview={() => void navigate(settingsRootPath())}
         />
       ),
     },
@@ -607,9 +675,21 @@ export function AppShell({
                   {inSettings
                     ? (SETTINGS_SECTIONS.find((s) => s.id === section)?.label ?? "Settings")
                     : inSchedule
-                      ? (location.pathname.endsWith("/new") ? "New schedule" : "Schedules")
+                      ? (location.pathname.endsWith("/new")
+                          ? "New schedule"
+                          : location.pathname.split("/")[2]
+                            ? "Schedule"
+                            : "Schedules")
+                    : inRoutines
+                      ? (location.pathname.endsWith("/new")
+                          ? "New routine"
+                          : location.pathname.split("/")[2]
+                            ? (routines.find((r) => r.id === location.pathname.split("/")[2])?.name ?? "Routine")
+                            : "Routines")
                       : inBoard
                         ? "Tasks"
+                        : inBuild
+                          ? "Build an app"
                         : inNotifications
                           ? "Notifications"
                         : inProject
@@ -619,12 +699,16 @@ export function AppShell({
                           : (active?.title ?? "Daedalus")}
                 </h1>
               )}
-              {inSettings ? (
+              {inSettings && section ? (
                 <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Settings</span>
               ) : inSchedule ? (
                 <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Scheduled messages</span>
+              ) : inRoutines ? (
+                <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Routines</span>
               ) : inBoard ? (
                 <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Board</span>
+              ) : inBuild ? (
+                <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Builder</span>
               ) : inNotifications ? (
                 <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Inbox</span>
               ) : inProject ? (
@@ -660,18 +744,34 @@ export function AppShell({
                   pinned to the corner of a row. The sidebar keeps the row —
                   it goes to the inbox page. */}
               <NotificationBell />
+              {/* The one workspace panel that gets a button of its own: for an
+                  app project the preview is the point, and a click in the header
+                  beats a submenu two levels down. Gated on the project being
+                  able to run one, so it is never a dead control. */}
+              {canPreview && !inSettings && !inSchedule && !inBoard && !inProject && !inNotifications && !inBuild && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  title="Open the preview"
+                  aria-label="Open the preview"
+                  onClick={openPreview}
+                >
+                  <AppWindowIcon />
+                </Button>
+              )}
               {/* One menu, not three icons. It holds what the + held (new
                   thread, the workspace panels), what the eye held (view
                   settings) and what the routed thread can be asked to do —
                   Refresh first. Three targets in a 12px header is a row you
                   have to learn rather than read, and on a phone it is three
                   targets in the space of one. */}
-              {!inSettings && !inSchedule && !inBoard && !inProject && !inNotifications && (
+              {!inSettings && !inSchedule && !inRoutines && !inBoard && !inProject && !inNotifications && !inBuild && (
                 <ThreadHeaderMenu
                   actions={actions}
                   session={active}
                   onNewTab={newThreadInTab}
                   onOpenPanel={openWorkspacePanel}
+                  onOpenPreview={canPreview ? openPreview : undefined}
                   onOpenInNewTab={(thread) => dock.openChat(thread.id, { newTab: true })}
                 />
               )}
@@ -690,7 +790,8 @@ export function AppShell({
               />
             }
           >
-            <Route index element={<Navigate to="general" replace />} />
+            {/* The overview: every section as a link, in the sidebar's groups. */}
+            <Route index element={<SettingsOverviewPage />} />
             <Route path="general" element={<GeneralPage />} />
             <Route path="knowledge" element={<KnowledgePage />} />
             <Route path="appearance" element={<AppearancePage />} />
@@ -718,18 +819,26 @@ export function AppShell({
             <Route path="usage" element={<QuotaPage />} />
             <Route path="web-search" element={<WebSearchPage />} />
             <Route path="backup" element={<BackupPage />} />
-            {/* /settings/<unknown> — the sidebar still needs a page to light up. */}
-            <Route path="*" element={<Navigate to="/settings/general" replace />} />
+            {/* /settings/<unknown> — back to the overview, which lists what exists. */}
+            <Route path="*" element={<Navigate to={settingsRootPath()} replace />} />
           </Route>
-          {/* /schedules is the list, /schedules/new the creation form — one
-              component reads the path (see SchedulePage). */}
-          {["/schedules", "/schedules/new"].map((path) => (
+          {/* /schedules is the list, /schedules/new the creation form and
+              /schedules/<id> one schedule — one component reads the path (see
+              SchedulePage). The form keeps a form's measure; the list and the
+              detail page carry tiles and two columns, so they get the width
+              the project page has. */}
+          {["/schedules", "/schedules/new", "/schedules/:scheduleId"].map((path) => (
             <Route
               key={path}
               path={path}
               element={
                 <div className="min-h-0 flex-1 overflow-y-auto">
-                  <div className="mx-auto w-full max-w-3xl px-4 pt-6 pb-16 sm:px-8">
+                  <div
+                    className={cn(
+                      "mx-auto w-full px-4 pt-6 pb-16 sm:px-8",
+                      path === "/schedules/new" ? "max-w-3xl" : "max-w-5xl"
+                    )}
+                  >
                     <SchedulePage actions={actions} />
                   </div>
                 </div>
@@ -775,11 +884,17 @@ export function AppShell({
               Outside /settings on purpose — settings holds the *form*, and a
               workspace with a history is not a settings screen. */}
           <Route path="/projects/:projectId" element={<ProjectPage actions={actions} />} />
+          {/* The app builder: a starter, a prompt, and out the other side a
+              project, a thread and a preview. Before the thread catch-alls,
+              like every other place. */}
+          <Route path="/build" element={<BuildPage actions={actions} />} />
+          {/* The task workspace: one board per URL, a task's detail as a
+              search param, so both survive a reload and can be shared. */}
           <Route
-            path="/board"
+            path="/board/:boardId?"
             element={
               <div className="flex min-h-0 flex-1 flex-col">
-                <TasksBoard settings={settings} />
+                <TasksWorkspace />
               </div>
             }
           />
@@ -807,23 +922,45 @@ export function AppShell({
   )
 }
 
-/** Settings sections as sidebar nav — the app has no horizontal tabs. */
+/** Settings sections as sidebar nav — the app has no horizontal tabs. The
+    first row is the overview (`/settings`), lit when no section is. */
 function SettingsNav({
   section,
   onSelect,
+  onOverview,
 }: {
-  section: SettingsSectionId
+  section: SettingsSectionId | null
   onSelect: (id: SettingsSectionId) => void
+  onOverview: () => void
 }) {
   const { isMobile, setOpenMobile } = useSidebar()
 
-  const select = (id: SettingsSectionId) => {
+  const select = (id: SettingsSectionId | null) => {
     if (isMobile) setOpenMobile(false)
-    onSelect(id)
+    if (id) onSelect(id)
+    else onOverview()
   }
 
   return (
     <>
+      <SidebarGroup className={cn(TIER, GROUP)}>
+        <SidebarGroupContent>
+          <SidebarMenu className={MENU}>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                size="sm"
+                tooltip={SETTINGS_OVERVIEW.label}
+                isActive={section === null}
+                onClick={() => select(null)}
+                className={ROW}
+              >
+                <SETTINGS_OVERVIEW.icon className="size-4" />
+                <span>All settings</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroupContent>
+      </SidebarGroup>
       {SETTINGS_NAV_GROUPS.map((group) => (
         <SidebarGroup key={group.label} className={cn(TIER, GROUP)}>
           <SidebarGroupLabel className={GROUP_LABEL}>{group.label}</SidebarGroupLabel>

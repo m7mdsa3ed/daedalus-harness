@@ -22,6 +22,7 @@ import * as React from "react"
 import {
   ActivityIcon,
   AlertTriangleIcon,
+  AppWindowIcon,
   BookOpenIcon,
   BotIcon,
   CalendarClockIcon,
@@ -58,6 +59,11 @@ import { shortAge } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { activityDays, type ProjectStats } from "@/lib/workspace/project-stats"
 import { useProjectStats } from "@/lib/queries/surfaces"
+import { useDevStatus } from "@/lib/queries/dev-server"
+import { DEV_STATE_LABEL } from "@/lib/workspace/dev-server"
+import { Spinner } from "@/components/ui/spinner"
+import { queuePanel } from "@/lib/workspace/pending-panels"
+import { previewPanel } from "@/lib/workspace/preview-bridge"
 import { useScheduled } from "@/lib/queries/routines"
 
 /** Matches the server's `ACTIVITY_DAYS`. The strip is drawn as a fixed run of
@@ -108,6 +114,19 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
     }
   }, [sessions, liveThreads, project.id])
 
+  /* The preview lives beside a thread, and this page has no dock — so the
+     panel is queued for the next thread to open: the project's latest, or a
+     fresh one when it has none yet. */
+  const openPreview = () => {
+    queuePanel(
+      previewPanel(project.id),
+      { direction: "right" }
+    )
+    const latest = threads[0]
+    if (latest) void navigate(threadPath(latest.id))
+    else startIn(project)
+  }
+
   const scheduled = React.useMemo(() => {
     const ids = new Set(
       sessions.filter((s) => s.projectId === project.id).map((s) => s.id)
@@ -123,6 +142,7 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
         <ProjectHeader
           project={project}
           onNewThread={() => startIn(project)}
+          onOpenPreview={project.devCommand ? openPreview : undefined}
           onImport={() => setImporting(true)}
           onEdit={() => void navigate(settingsFormPath("projects", project.id))}
           onRefresh={refresh}
@@ -237,9 +257,47 @@ function threadStatus(session: SessionMeta, thread: ThreadState | undefined): Th
 
 /* ── Pieces ── */
 
+/** The dev server's state, on the Open preview button: a dot and a word,
+    from the same stream the panel reads, so the page says "Live" before the
+    panel is even open. Stopped is drawn quietly — most projects are. */
+function DevBadge({ projectId }: { projectId: string }) {
+  const { data } = useDevStatus(projectId)
+  const state = data?.state ?? "off"
+  const live = state === "installing" || state === "starting"
+  return (
+    <span
+      className={cn(
+        "ml-1 inline-flex items-center gap-1 rounded-pill px-1.5 py-px text-[10px] font-medium",
+        state === "ready"
+          ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+          : state === "failed"
+            ? "bg-destructive/10 text-destructive"
+            : live
+              ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+              : "bg-muted text-muted-foreground"
+      )}
+      title={data?.message ?? undefined}
+    >
+      {live ? (
+        <Spinner className="size-2.5" />
+      ) : (
+        <span
+          aria-hidden
+          className={cn(
+            "size-1.5 rounded-full",
+            state === "ready" ? "bg-emerald-500" : state === "failed" ? "bg-destructive" : "bg-muted-foreground/60"
+          )}
+        />
+      )}
+      {DEV_STATE_LABEL[state]}
+    </span>
+  )
+}
+
 function ProjectHeader({
   project,
   onNewThread,
+  onOpenPreview,
   onImport,
   onEdit,
   onRefresh,
@@ -247,6 +305,8 @@ function ProjectHeader({
 }: {
   project: Project
   onNewThread: () => void
+  /** Present only when the project has a dev command to run. */
+  onOpenPreview?: () => void
   onImport: () => void
   onEdit: () => void
   onRefresh: () => void
@@ -301,6 +361,12 @@ function ProjectHeader({
         <Button variant="outline" onClick={onEdit}>
           <Pencil /> Edit
         </Button>
+        {onOpenPreview && (
+          <Button variant="outline" onClick={onOpenPreview}>
+            <AppWindowIcon /> Open preview
+            <DevBadge projectId={project.id} />
+          </Button>
+        )}
         <Button onClick={onNewThread}>
           <Plus /> New thread
         </Button>

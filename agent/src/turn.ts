@@ -127,7 +127,12 @@ export async function handlePrompt(
           /* Surfaced through the fullStream 'error' part below; without this
              handler streamText also logs the error, which is fine on stderr. */
         },
-        prepareStep: ({ messages }) => {
+        prepareStep: async ({ messages }) => {
+          /* The pause gate, first: a paused session holds here, between one
+             step's tool results and the next model call, until the harness
+             resumes it — and only then reads the steering that may have
+             arrived while it waited. */
+          await session.gate(abort.signal);
           if (session.steerQueue.length === 0) return {};
           const injected = session.steerQueue.flatMap((s) => s.messages);
           session.steerQueue = [];
@@ -366,6 +371,10 @@ async function pumpStream(
     else if (outcome.error === undefined) outcome.error = err;
   }
   flushBlock();
+  /* An abort raised inside `prepareStep` (the pause gate's) reaches the
+     stream as an error part rather than an `abort` part; it is the same
+     cancellation. */
+  if (outcome.error !== undefined && isAbortError(outcome.error)) outcome.aborted = true;
   if (outcome.aborted) outcome.error = undefined;
   return outcome;
 }
@@ -426,6 +435,13 @@ async function runSubagent(
         reasoning: session.effort ?? undefined,
         maxOutputTokens: deps.env.maxOutputTokens ?? undefined,
         onError: () => {},
+        /* A subagent pauses with its parent: the Codex thread-tree issue's
+           complaint is exactly a root held while its collaborators keep
+           spending, so the child's steps pass the same gate. */
+        prepareStep: async () => {
+          await session.gate(session.abort?.signal);
+          return {};
+        },
       });
 
       try {

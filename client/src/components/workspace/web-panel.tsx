@@ -45,7 +45,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { PreviewPanel } from "@/components/workspace/preview-panel"
 import { PanelEmptyState, PanelNotice, PanelToolbar } from "@/components/workspace/primitives"
+import type { Actions } from "@/lib/actions"
 import { reportError } from "@/lib/errors"
 import { useProjects } from "@/lib/queries/catalog"
 import { cn } from "@/lib/utils"
@@ -74,10 +76,24 @@ const VIEWPORTS = [
 
 type ViewportId = (typeof VIEWPORTS)[number]["id"]
 
+type WebPanelParams = { trust: "project" | "external"; viewId: string; projectId?: string; url?: string }
+
+/** The Browser panel. `viewId: "preview"` on a project is the one view whose
+    address is not typed but derived from the project's managed dev server —
+    that whole surface is `preview-panel.tsx`; everything else (a typed URL,
+    a source followed out of a transcript) is the browser below. */
 export function WebPanel({
-  api,
-  params,
-}: IDockviewPanelProps<{ trust: "project" | "external"; viewId: string; projectId?: string; url?: string }>) {
+  actions,
+  ...props
+}: IDockviewPanelProps<WebPanelParams> & { actions: Actions }) {
+  const { api, params } = props
+  if (params.viewId === "preview" && params.trust === "project" && params.projectId) {
+    return <PreviewPanel api={api} projectId={params.projectId} actions={actions} />
+  }
+  return <BrowserPanel {...props} />
+}
+
+function BrowserPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
   const { trust, projectId, url: initialUrl } = params
   /* The catalog lives in the query cache now, so a streamed token never
      reaches this panel; only a projects refresh (rare, and its own clock)

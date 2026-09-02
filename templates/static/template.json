@@ -1,0 +1,38 @@
+{
+  "id": "static",
+  "name": "Static site",
+  "description": "Vite 8, TypeScript and Tailwind v4 — plain HTML pages with no framework. Landing pages, portfolios, docs.",
+  "tags": [
+    "html",
+    "tailwind",
+    "typescript",
+    "static"
+  ],
+  "install": "pnpm install",
+  "dev": "pnpm dev",
+  "check": "pnpm check",
+  "build": "pnpm build",
+  "signals": [
+    "landing page",
+    "landing",
+    "portfolio",
+    "website",
+    "homepage",
+    "home page",
+    "marketing",
+    "brochure",
+    "docs",
+    "documentation",
+    "blog",
+    "resume",
+    "cv",
+    "about page",
+    "static",
+    "html",
+    "one-pager",
+    "one pager",
+    "coming soon",
+    "pricing page"
+  ],
+  "sortOrder": 30
+}

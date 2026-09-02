@@ -11,13 +11,19 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import type { InlineError } from "@/lib/errors"
 import { cn } from "@/lib/utils"
-import { type SectionMeta } from "./sections"
+import { type PageMeta } from "./sections"
 
 
 /** Page title block: title + description, with room for one action. On
     mobile the action stacks full-width under the title so it never crowds the
     text or wraps awkwardly; on sm+ it sits to the right. */
-export function PageHeader({ meta, action }: { meta: SectionMeta; action?: React.ReactNode }) {
+export function PageHeader({
+  meta,
+  action,
+}: {
+  meta: PageMeta
+  action?: React.ReactNode
+}) {
   return (
     <header className="mb-6 flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0 flex-1">

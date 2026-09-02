@@ -90,6 +90,21 @@ export interface AgentDef {
    *    naming the placeholder — exactly as the Codex catalog does.
    */
   personaVia?: "acp-meta" | "env" | null;
+  /**
+   * Where this runtime's subagent transcripts come from when its ACP bridge
+   * does not carry them, or null/absent when ACP is all there is.
+   *
+   *  - `"opencode-http"` (opencode): `opencode acp` drops every event of a
+   *    child session on the floor (`docs/protocol.md`, "Subagents"). The
+   *    process is spawned with `--port <n> --hostname 127.0.0.1` and a
+   *    per-spawn `OPENCODE_SERVER_PASSWORD`, and the server subscribes to
+   *    its `/event` bus and re-emits the children as RFD subagent updates
+   *    (`opencode-subagents.ts`). Retire the day sst/opencode#40654 ships.
+   *
+   * Declarative like the three above it: a fact about the runtime behind
+   * `command`, and not offered on `PUT /api/agents/:id` for the same reason.
+   */
+  subagentFeed?: "opencode-http" | null;
 }
 
 /** A default agent, plus the seed releases that bear on it. Give a new default
@@ -536,11 +551,16 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // `writePersonaPrompt` puts the prompt somewhere for it to point at.
     // Seed 13 enables OpenCode's permission bypass for the built-in template;
     // this is deliberately merged only when no permission policy exists.
-    since: 13,
+    // Seed 16 declares the subagent feed (`subagentFeed`, see AgentDef). It
+    // is a fact about the runtime, not a template key, so the backfill sets it
+    // beside the row's env without touching the env — which is also why the
+    // probe cache is left alone: nothing the agent advertises changed.
+    since: 16,
     introduced: 1,
     backfill: (existing) => ({
       env: withOpencodeBypass(withOpencodePersonaKey(existing.env)),
       personaVia: existing.personaVia ?? "env",
+      subagentFeed: existing.subagentFeed ?? "opencode-http",
     }),
     id: "opencode",
     name: "OpenCode",
@@ -548,6 +568,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     args: ["acp"],
     spawnCategories: SPAWN_CATEGORIES,
     personaVia: "env",
+    subagentFeed: "opencode-http",
     env: {
       DAEDALUS_OPENCODE_API_KEY: "{apiKey}",
       DAEDALUS_OPENCODE_BASE_URL: "{baseUrl?https://api.opencode.ai}",
@@ -635,6 +656,7 @@ export function seedAgents(): void {
           quotaProbe: agent.quotaProbe ?? null,
           liveConfig: agent.liveConfig ?? null,
           personaVia: agent.personaVia ?? null,
+          subagentFeed: agent.subagentFeed ?? null,
           seededVersion: since,
         })
         .run();
@@ -654,6 +676,7 @@ export function seedAgents(): void {
         quotaProbe: existing.quotaProbe ?? agent.quotaProbe ?? null,
         liveConfig: existing.liveConfig ?? agent.liveConfig ?? null,
         personaVia: existing.personaVia ?? agent.personaVia ?? null,
+        subagentFeed: existing.subagentFeed ?? agent.subagentFeed ?? null,
         ...added,
       })
       .where(eq(agentsTable.id, agent.id))
@@ -740,6 +763,7 @@ export function resetAgent(id: string): AgentDef | undefined {
       liveConfig: seed.liveConfig ?? null,
       quotaProbe: seed.quotaProbe ?? null,
       personaVia: seed.personaVia ?? null,
+      subagentFeed: seed.subagentFeed ?? null,
     })
     .where(eq(agentsTable.id, id))
     .run();

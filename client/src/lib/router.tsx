@@ -11,13 +11,18 @@
    /                     home (no thread open)
    /t/<sessionId>        one thread
    /projects/<id>        one project: overview, threads, metrics
+   /settings             the settings overview: every section as a link
    /settings/<section>   settings, one page per section (components/settings/)
    /notifications        the inbox: every notice the server recorded
-   /routines             every routine; /routines/new and /routines/<id> its form */
+   /schedules            every scheduled message; /schedules/new the form, /schedules/<id> one
+   /routines             every routine; /routines/new the form, /routines/<id> one routine
+   /build                the app builder: a starter, a prompt, a project, a preview */
 import * as React from "react"
 import { matchPath, useNavigate, type NavigateFunction } from "react-router"
 
 export const threadPath = (sessionId: string) => `/t/${encodeURIComponent(sessionId)}`
+/** The overview — where "Settings" (not a section) opens. */
+export const settingsRootPath = () => `/settings`
 export const settingsPath = (section: string) => `/settings/${section}`
 export const settingsFormPath = (section: string, id: string = "new") =>
   `/settings/${section}/${encodeURIComponent(id)}`
@@ -28,7 +33,19 @@ export const projectPath = (projectId: string) => `/projects/${encodeURIComponen
 export const schedulesPath = () => `/schedules`
 export const schedulePath = (sessionId?: string) =>
   `/schedules/new${sessionId ? `?session=${encodeURIComponent(sessionId)}` : ""}`
-export const boardPath = () => `/board`
+/** One scheduled message's own page — what it says, where it lands, when it
+    fires next, and the form that changes any of those. */
+export const scheduleDetailPath = (scheduleId: string) =>
+  `/schedules/${encodeURIComponent(scheduleId)}`
+/** The task workspace: one board, optionally with one task's detail open
+    (`?task=<id>`), so a task is a URL that can be shared and reloaded. */
+export const boardPath = (boardId?: string, taskId?: string) =>
+  `/board${boardId ? `/${encodeURIComponent(boardId)}` : ""}${taskId ? `?task=${encodeURIComponent(taskId)}` : ""}`
+/* The front door for making an app: pick a starter, say what to build, and
+   the harness scaffolds a project, opens the thread and frames the preview.
+   A place of its own — not a settings form, not a thread — because it ends
+   in a thread that did not exist when the page was opened. */
+export const buildPath = () => `/build`
 /* The inbox as a place. The header's bell is the glance at it; this is the
    whole history, and it is not a settings screen — Settings › Notifications is
    where push is *configured*, which is a different question. */

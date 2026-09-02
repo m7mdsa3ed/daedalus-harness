@@ -8,7 +8,11 @@
 //   - foldZaiQuota (src/usage-api.ts) does the same for a PROVIDER's plan — the
 //     other reader, chosen by the profile rather than the agent — including the
 //     (unit, number) pair z.ai describes a window with, and zaiQuotaUrl picks
-//     the platform the profile's own base URL implies.
+//     the platform the profile's own base URL implies;
+//   - the MiniMax, Kimi, Synthetic, DeepSeek and OpenRouter folds do the same
+//     for their providers' routes — each fixture is the shape the route answers
+//     (the rejections are verbatim captures; the successes follow the fields
+//     the providers' own dashboards read).
 //
 // Pure functions only: no processes, no database. The fixtures are what the two
 // runtimes actually answered on a real install — the Claude report is a verbatim
@@ -18,7 +22,17 @@
 import assert from "node:assert/strict";
 
 const { parseClaudeUsage, foldCodexQuota } = await import("../src/quota.js");
-const { foldZaiQuota, zaiQuotaUrl } = await import("../src/usage-api.js");
+const {
+  foldZaiQuota,
+  zaiQuotaUrl,
+  foldMinimaxQuota,
+  minimaxQuotaUrl,
+  foldKimiQuota,
+  kimiQuotaUrl,
+  foldSyntheticQuota,
+  foldDeepseekQuota,
+  foldOpenrouterQuota,
+} = await import("../src/usage-api.js");
 
 let passed = 0;
 const failures: string[] = [];
@@ -263,6 +277,177 @@ test("zaiQuotaUrl picks the platform from the profile's own base URL", () => {
     "https://open.bigmodel.cn/api/monitor/usage/quota/limit",
   );
 });
+
+// ---- MiniMax ---------------------------------------------------------------
+
+const MINIMAX_REPORT = {
+  base_resp: { status_code: 0, status_msg: "success" },
+  data: {
+    plan_name: "Coding Plan Pro",
+    model_remains: [
+      {
+        model_name: "MiniMax-M3",
+        current_interval_total_count: 1500,
+        current_interval_usage_count: 300,
+        start_time: 1_788_150_000_000,
+        end_time: 1_788_168_000_000,
+        current_interval_remaining_percent: 80,
+        current_weekly_total_count: 10_000,
+        current_weekly_usage_count: 1_000,
+        weekly_end_time: 1_788_500_000_000,
+        current_weekly_remaining_percent: 90,
+      },
+      {
+        model_name: "MiniMax-M2.7",
+        current_interval_total_count: 1000,
+        current_interval_usage_count: 900,
+        start_time: 1_788_150_000_000,
+        end_time: 1_788_168_000_000,
+        current_weekly_total_count: 5000,
+        current_weekly_usage_count: 100,
+        weekly_end_time: 1_788_500_000_000,
+      },
+    ],
+  },
+};
+
+test("foldMinimaxQuota reads the fullest model's 5-hour and weekly counters", () => {
+  const snap = foldMinimaxQuota(MINIMAX_REPORT);
+  assert.equal(snap.status, "subscription");
+  assert.equal(snap.planName, "Coding Plan Pro");
+  assert.deepEqual(
+    snap.windows.map((w) => [w.id, w.label, w.usedPercent, w.windowMinutes, w.resetsAt]),
+    [
+      ["five_hour", "Requests (5 hour) · MiniMax-M2.7", 90, 300, 1_788_168_000_000],
+      ["seven_day", "Requests (weekly) · MiniMax-M3", 10, 10080, 1_788_500_000_000],
+    ],
+  );
+});
+
+test("foldMinimaxQuota reads the fields at the root when there is no data envelope", () => {
+  const { data, ...rest } = MINIMAX_REPORT;
+  const snap = foldMinimaxQuota({ ...rest, ...data });
+  assert.equal(snap.windows.length, 2);
+});
+
+test("foldMinimaxQuota reads the provider's 1004 as unauthenticated even on a 200", () => {
+  // Verbatim: what api.minimax.io answers a bad key, with HTTP 200.
+  const snap = foldMinimaxQuota(
+    { base_resp: { status_code: 1004, status_msg: "login fail: Please carry the API secret key in the 'Authorization' field of the request header" } },
+    200,
+  );
+  assert.equal(snap.status, "unauthenticated");
+  assert.match(snap.raw, /API secret key/);
+});
+
+test("foldMinimaxQuota reads an empty model list on a good key as no plan", () => {
+  assert.equal(foldMinimaxQuota({ base_resp: { status_code: 0 }, data: { model_remains: [] } }).status, "api-key");
+});
+
+test("minimaxQuotaUrl picks the platform from the profile's own base URL", () => {
+  assert.equal(minimaxQuotaUrl(zaiProfile("https://api.minimax.io/anthropic"), { kind: "minimax" }), "https://api.minimax.io/v1/token_plan/remains");
+  assert.equal(minimaxQuotaUrl(zaiProfile("https://api.minimaxi.com/v1"), { kind: "minimax" }), "https://api.minimaxi.com/v1/token_plan/remains");
+  assert.equal(minimaxQuotaUrl(zaiProfile(), { kind: "minimax", baseUrl: "https://proxy.example/" }), "https://proxy.example/v1/token_plan/remains");
+});
+
+// ---- Kimi ------------------------------------------------------------------
+
+const KIMI_REPORT = {
+  usage: { limit: "2000", used: "312", remaining: "1688", resetTime: "2026-09-08T00:00:00Z" },
+  limits: [
+    { window: { duration: 5, timeUnit: "TIME_UNIT_HOUR" }, detail: { limit: "200", used: "17", remaining: "183", resetTime: "2026-09-02T15:00:00Z" } },
+  ],
+};
+
+test("foldKimiQuota reads the rolling window and the weekly allowance, counts as strings", () => {
+  const snap = foldKimiQuota(KIMI_REPORT);
+  assert.equal(snap.status, "subscription");
+  assert.deepEqual(
+    snap.windows.map((w) => [w.id, w.label, Math.round(w.usedPercent * 10) / 10, w.windowMinutes]),
+    [
+      ["five_hour", "Requests (5 hour)", 8.5, 300],
+      ["seven_day", "Requests (weekly)", 15.6, 10080],
+    ],
+  );
+  assert.equal(snap.windows[0].resetsAt, Date.parse("2026-09-02T15:00:00Z"));
+});
+
+test("foldKimiQuota reads the API's unauthenticated code as such", () => {
+  // Verbatim shape of api.kimi.com's 401.
+  assert.equal(foldKimiQuota({ code: "unauthenticated", details: [] } as never, 401).status, "unauthenticated");
+});
+
+test("kimiQuotaUrl derives the host from a base URL that names the coding API", () => {
+  assert.equal(kimiQuotaUrl(zaiProfile("https://api.kimi.com/coding/v1"), { kind: "kimi" }), "https://api.kimi.com/coding/v1/usages");
+  assert.equal(kimiQuotaUrl(zaiProfile("https://api.kimi.com/coding"), { kind: "kimi" }), "https://api.kimi.com/coding/v1/usages");
+  assert.equal(kimiQuotaUrl(zaiProfile("https://some.gateway/v1"), { kind: "kimi" }), "https://api.kimi.com/coding/v1/usages");
+});
+
+// ---- Synthetic -------------------------------------------------------------
+
+test("foldSyntheticQuota reads each named pool with its known duration", () => {
+  const snap = foldSyntheticQuota({
+    subscription: { limit: 135, requests: 27, renewsAt: "2026-09-02T15:00:00Z" },
+    search: { limit: 100, requests: 3, renewsAt: "2026-09-02T13:00:00Z" },
+    other: { limit: 10, used: 5 },
+  });
+  assert.equal(snap.status, "subscription");
+  assert.deepEqual(
+    snap.windows.map((w) => [w.id, w.label, w.usedPercent, w.windowMinutes]),
+    [
+      ["five_hour", "Requests (5 hour)", 20, 300],
+      ["search_hourly", "Search (hourly)", 3, 60],
+      ["other", "Other", 50, null],
+    ],
+  );
+});
+
+test("foldSyntheticQuota reads the verbatim invalid-key body as unauthenticated", () => {
+  assert.equal(foldSyntheticQuota({ error: "Invalid API Key." }, 401).status, "unauthenticated");
+});
+
+// ---- DeepSeek --------------------------------------------------------------
+
+test("foldDeepseekQuota reads the balance as credits on an api-key status, never as a window", () => {
+  const snap = foldDeepseekQuota({
+    is_available: true,
+    balance_infos: [{ currency: "USD", total_balance: "12.34", granted_balance: "0.00", topped_up_balance: "12.34" }],
+  });
+  assert.equal(snap.status, "api-key");
+  assert.deepEqual(snap.windows, []);
+  assert.deepEqual(snap.credits, { balance: "12.34 USD", unlimited: false });
+});
+
+test("foldDeepseekQuota reads the documented 401 as unauthenticated", () => {
+  const snap = foldDeepseekQuota({ error: { message: "Authentication Fails, Your api key: ****alid is invalid" } }, 401);
+  assert.equal(snap.status, "unauthenticated");
+});
+
+// ---- OpenRouter ------------------------------------------------------------
+
+test("foldOpenrouterQuota draws a key limit as a window and the credits underneath", () => {
+  const snap = foldOpenrouterQuota(
+    { data: { label: "harness", usage: 1.23, limit: 10, limit_remaining: 8.77, limit_reset: "monthly", is_free_tier: false } },
+    { data: { total_credits: 50, total_usage: 31.2 } },
+  );
+  assert.equal(snap.status, "subscription");
+  assert.deepEqual(snap.windows.map((w) => [w.id, w.label, Math.round(w.usedPercent * 100) / 100, w.windowMinutes]), [
+    ["key_monthly", "Key spend (monthly) · $10", 12.3, 43200],
+  ]);
+  assert.deepEqual(snap.credits, { balance: "$18.80 of $50.00", unlimited: false });
+});
+
+test("foldOpenrouterQuota reads a key with no limit as api-key, credits still shown", () => {
+  const snap = foldOpenrouterQuota({ data: { label: "k", usage: 0.5, limit: null } }, { data: { total_credits: 5, total_usage: 0.5 } });
+  assert.equal(snap.status, "api-key");
+  assert.deepEqual(snap.windows, []);
+  assert.equal(snap.credits?.balance, "$4.50 of $5.00");
+});
+
+test("foldOpenrouterQuota reads the verbatim missing-auth body as unauthenticated", () => {
+  assert.equal(foldOpenrouterQuota({ error: { message: "Missing Authentication header", code: 401 } }, null, 401).status, "unauthenticated");
+});
+
 
 test("zaiQuotaUrl takes an override as an origin, or whole when it names the route", () => {
   assert.equal(

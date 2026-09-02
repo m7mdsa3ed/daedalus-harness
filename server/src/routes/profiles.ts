@@ -10,9 +10,11 @@ import {
   updateProfile,
 } from "../profiles.js";
 import { AgentInputSchema, getAgent, isBuiltInAgent, listAgents, resetAgent, updateAgent } from "../registry.js";
+import { evictAgentStatus, getAgentsStatus } from "../agent-status.js";
 import { getProject } from "../projects.js";
 import { probeAgentOptions } from "../probe.js";
 import { modelsDevProviders, searchModelsDev, toCandidate } from "../models-dev.js";
+import { resolveProfilePresets } from "../profile-presets.js";
 import { enrichProviderModels, fetchProviderModels } from "../provider-models.js";
 import type { SessionManager } from "../sessions.js";
 import { crud } from "./helpers.js";
@@ -35,16 +37,46 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
      touches a running thread: the process it holds was spawned with the old
      command, and the edit reaches it at its next spawn, exactly like every
      other change to how an agent is launched. */
+  /* Whether each row's binary is on this machine, and what it says it is
+     (agent-status.ts): the install check plus one ACP handshake per agent,
+     cached with a short TTL. `?refresh=1` re-measures — the way past the cache
+     after an install that just ran. Registered before `/:id` so the literal
+     wins. */
+  app.get("/api/agents/status", async (c) =>
+    c.json(await getAgentsStatus(listAgents(), { refresh: c.req.query("refresh") === "1" })),
+  );
   const agentCrud = crud(AgentInputSchema);
-  app.put("/api/agents/:id", agentCrud.update((id, data) => updateAgent(id, data)));
+  app.put(
+    "/api/agents/:id",
+    agentCrud.update((id, data) => {
+      evictAgentStatus(id);
+      return updateAgent(id, data);
+    }),
+  );
   app.post("/api/agents/:id/reset", (c) => {
     const restored = resetAgent(c.req.param("id"));
+    if (restored) evictAgentStatus(restored.id);
     return restored ? c.json(restored) : c.json({ error: "not found" }, 404);
   });
 
   // Agents are passed in so an agent with no profile of its own still gets one
   // (virtual, never stored) — see defaultProfileFor.
   app.get("/api/profiles", (c) => c.json(listProfiles(listAgents()).map(redact)));
+  /* The coding plans a new profile can start from (profile-presets.ts), each
+     with its catalog read from models.dev. Never a failure: a preset whose
+     catalog could not be read says so and keeps its URLs. Only the agents this
+     install registers are offered on a preset — the form would otherwise save
+     a link to a runtime that does not exist here. */
+  app.get("/api/profile-presets", async (c) => {
+    const known = new Set(listAgents().map((a) => a.id));
+    const presets = await resolveProfilePresets();
+    return c.json({
+      presets: presets.map((preset) => ({
+        ...preset,
+        agents: Object.fromEntries(Object.entries(preset.agents).filter(([id]) => known.has(id))),
+      })),
+    });
+  });
   const profileCrud = crud(ProfileInputSchema);
   app.post("/api/profiles", profileCrud.create((data) => redact(createProfile(data))));
   app.put("/api/profiles/:id", profileCrud.update((id, data) => {

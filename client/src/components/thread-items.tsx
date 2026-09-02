@@ -2,7 +2,6 @@ import * as React from "react"
 import {
   ArrowUpRightIcon,
   BotIcon,
-  LoaderCircleIcon,
   PlayIcon,
   WrenchIcon,
 } from "lucide-react"
@@ -69,6 +68,7 @@ import {
 } from "@/lib/tools"
 import type { Row, SubagentBatch, SubagentGroup, ToolRunGroup, WorkflowGroup } from "@/lib/transcript-rows"
 import { StepTokens, TokenFigure, useStepTokens } from "@/components/token-usage"
+import { Logo } from "@/components/ui/logo"
 import { cn } from "@/lib/utils"
 import { useViewOptionsContext } from "@/lib/view-options"
 import type { TextItem, ThreadItem, ToolItem } from "@/lib/store"
@@ -579,7 +579,7 @@ function SubagentTranscript({
           aria-label="Subagent working"
           className="flex items-center gap-2 px-1.5 py-0.5 text-[11px] leading-6 text-primary"
         >
-          <LoaderCircleIcon aria-hidden className="size-3.5 shrink-0 animate-spin" />
+          <Logo working className="size-3.5 shrink-0" />
           <span className="harness-shimmer">{rows.length === 0 ? "Starting…" : "Working…"}</span>
         </div>
       )}

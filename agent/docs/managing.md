@@ -20,8 +20,20 @@ prompt and its tool descriptions.
 | **Working directory** | Settings › Projects | per thread |
 | **The spawn command and env** | Settings › Agents → Edit | applies at the thread's next spawn |
 | **Who answers permission prompts** | the autonomy policy | live |
+| **Pause / resume the turn** | the composer's pause toggle (beside Stop), a workflow's hold toggle | live (`_daedalus/session/pause`) |
 
-Two of those are worth expanding.
+Three of those are worth expanding.
+
+**Pause is this runtime's, not ACP's.** The protocol's only interruption is
+`session/cancel`, which throws the step in flight away; Claude Code and Codex
+can be stopped and re-prompted, never held. This agent owns its loop, so the
+harness's `_daedalus/session/pause` holds it at the next step boundary — after
+the tool calls of the current step have finished, before the next model call —
+and `resume` carries on with nothing lost, steering that arrived meanwhile
+included. Subagents hold with their parent. A cancel while held ends the turn
+as cancelled and drops the pause; a session paused with no turn open holds its
+next prompt at its first step. A workflow run pauses the same way one level
+up: no further step starts, steps on this runtime hold, and the clocks stop.
 
 **The model list is live and it is not magic.** Because the agent is declared
 `liveConfig: "acp"`, the server materializes the union of every profile's

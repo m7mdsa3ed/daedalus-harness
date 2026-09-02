@@ -11,9 +11,17 @@
    Nothing here touches a running thread: the process it holds was spawned with
    the old command, and an edit reaches it at its next spawn — which the form
    says out loud, because a settings page that silently does nothing to what is
-   in front of you is worse than one that does nothing at all. */
+   in front of you is worse than one that does nothing at all.
+
+   Each row also says whether its binary is actually on the server, and what
+   answered (`useAgentsStatus`, one ACP handshake per agent, server-cached).
+   A row is a contract with a binary somebody else ships, and until this the
+   first place a missing one showed was an ENOENT inside a thread — the page
+   that lists the row is where "not installed" belongs, next to the line that
+   installs it. Versions are what the agent reports over ACP (`agentInfo`),
+   not a `--version` flag parsed per CLI, so every runtime reads the same. */
 import * as React from "react"
-import { Cpu, PencilIcon, RotateCcwIcon } from "lucide-react"
+import { CopyIcon, Cpu, PencilIcon, RefreshCwIcon, RotateCcwIcon } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -31,8 +39,9 @@ import { useConfirm } from "@/components/confirm-dialog"
 import { ErrorNote } from "@/components/error-note"
 import { useAsyncAction } from "@/hooks/use-async-action"
 import { dropAgentOptionsFor } from "@/lib/agent-options"
-import { api, profileSupports, type AgentDef } from "@/lib/settings"
-import { useInvalidateProfileCatalog, useAgents, useProfiles } from "@/lib/queries/catalog"
+import { inlineFromQuery, reportError } from "@/lib/errors"
+import { api, profileSupports, type AgentDef, type AgentStatus } from "@/lib/settings"
+import { useAgentsStatus, useInvalidateProfileCatalog, useAgents, useProfiles } from "@/lib/queries/catalog"
 import { toast } from "@/lib/toast"
 import { PageHeader, Group, Row, EmptyCard, Field, lines } from "./primitives"
 import { sectionMeta } from "./sections"
@@ -82,29 +91,72 @@ export function AgentsPage() {
   const meta = sectionMeta("agents")
   const profiles = useProfiles()
   const agents = useAgents()
+  const { status, loading, error, refresh } = useAgentsStatus()
   const [editing, setEditing] = React.useState<AgentDef | null>(null)
+  const [checking, setChecking] = React.useState(false)
+  const byAgent = React.useMemo(
+    () => new Map((status?.agents ?? []).map((s) => [s.agentId, s])),
+    [status],
+  )
+
+  /* A re-check spawns every agent once; the button says so while it does. */
+  const recheck = async () => {
+    setChecking(true)
+    try {
+      await refresh()
+    } catch (err) {
+      reportError(err, "Couldn't check the agents")
+    } finally {
+      setChecking(false)
+    }
+  }
 
   return (
     <>
-      <PageHeader meta={meta} />
+      <PageHeader
+        meta={meta}
+        action={
+          <Button variant="outline" size="sm" disabled={checking} onClick={() => void recheck()}>
+            <RefreshCwIcon className={`size-4 ${checking ? "animate-spin" : ""}`} />
+            {checking ? "Checking…" : "Check again"}
+          </Button>
+        }
+      />
+      <p className="-mt-3 mb-4 text-xs text-muted-foreground">
+        {status ? (
+          <>
+            Harness speaks ACP protocol v{status.acp.protocolVersion} through SDK{" "}
+            <span className="font-mono">{status.acp.sdkVersion}</span>
+            {" · "}checked {new Date(Math.max(...status.agents.map((s) => s.checkedAt), 0)).toLocaleTimeString()}
+          </>
+        ) : loading ? (
+          "Checking which agents are installed…"
+        ) : null}
+      </p>
+      <ErrorNote error={inlineFromQuery(error, "Couldn't check the agents")} />
       {agents.length === 0 ? (
         <EmptyCard icon={Cpu} text="The server has no agents registered." />
       ) : (
         <Group>
           {agents.map((agent) => {
             const uses = profiles.filter((p) => profileSupports(p, agent.id)).length
+            const st = byAgent.get(agent.id)
             return (
               <Row
                 key={agent.id}
                 icon={<AgentIcon agentId={agent.id} className="size-5" />}
                 title={agent.name}
                 subtitle={
-                  <span className="font-mono">
-                    {agent.id}
-                    {agent.command ? ` · ${[agent.command, ...(agent.args ?? [])].join(" ")}` : ""}
-                  </span>
+                  <>
+                    <span className="font-mono">
+                      {agent.id}
+                      {agent.command ? ` · ${[agent.command, ...(agent.args ?? [])].join(" ")}` : ""}
+                    </span>
+                    {st && <StatusLine status={st} />}
+                  </>
                 }
               >
+                <StatusBadges status={st} pending={loading || checking} />
                 <Badge variant="secondary">
                   {uses} profile{uses === 1 ? "" : "s"}
                 </Badge>
@@ -118,6 +170,73 @@ export function AgentsPage() {
       )}
       {editing && <AgentDialog agent={editing} onClose={() => setEditing(null)} />}
     </>
+  )
+}
+
+/* ── One agent's reading, in badges ──
+   Installed: the version the agent reported and the protocol it answered
+   with. Not installed: one red badge, and the sentence below the row says
+   what is missing and how to get it. Present but silent: the handshake's
+   own error, in the badge's title and in the line below. */
+function StatusBadges({ status, pending }: { status: AgentStatus | undefined; pending: boolean }) {
+  if (!status) {
+    return pending ? <Badge variant="outline">Checking…</Badge> : null
+  }
+  if (!status.installed) return <Badge variant="destructive">Not installed</Badge>
+  if (status.error) {
+    return (
+      <Badge variant="destructive" title={status.error}>
+        Not answering
+      </Badge>
+    )
+  }
+  return (
+    <>
+      <Badge variant="secondary" title={status.agent?.name ?? undefined}>
+        {status.agent?.version ? `v${status.agent.version}` : "version unknown"}
+      </Badge>
+      {status.protocolVersion !== null && <Badge variant="outline">ACP v{status.protocolVersion}</Badge>}
+    </>
+  )
+}
+
+/* The line under the command. Nothing for a healthy agent beyond where it
+   was found; for a missing one, the install command with a copy button —
+   the command is the server's to run, not the browser's, so it is offered as
+   text rather than as a button that runs `npm install -g` on somebody's box. */
+function StatusLine({ status }: { status: AgentStatus }) {
+  if (status.installed && !status.error) {
+    return status.path ? <div className="mt-0.5 truncate font-mono opacity-70">{status.path}</div> : null
+  }
+  const copy = (text: string) => {
+    navigator.clipboard
+      .writeText(text)
+      .then(() => toast.success("Install command copied"))
+      .catch((err) => reportError(err, "Couldn't copy the command"))
+  }
+  return (
+    <div className="mt-1 space-y-1">
+      {!status.installed && (
+        <div className="text-destructive">
+          <span className="font-mono">{status.missing}</span> was not found on the server.
+        </div>
+      )}
+      {status.error && <div className="text-destructive">{status.error}</div>}
+      {!status.installed && status.install && (
+        <div className="flex items-center gap-1.5">
+          <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground">{status.install}</code>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            title="Copy the install command"
+            onClick={() => copy(status.install!)}
+          >
+            <CopyIcon className="size-3.5" />
+          </Button>
+        </div>
+      )}
+    </div>
   )
 }
 

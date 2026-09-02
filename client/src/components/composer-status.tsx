@@ -99,17 +99,36 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
   const readable = planReadable(profile, agent)
   const { quota } = thread
   const asked = React.useRef(false)
+  /* True from the ask until the answer: the probe spawns a CLI on the server,
+     which can take seconds, and the section should say so rather than appear
+     from nowhere once it lands. Cleared on failure too — a swallowed error
+     leaves `quota` null, and a spinner that never stops is worse than no row. */
+  const [pending, setPending] = useState(false)
   React.useEffect(() => {
     if (asked.current || quota || !meta || !readable) return
     asked.current = true
-    void actions.loadQuota(meta)
+    setPending(true)
+    void actions.loadQuota(meta).finally(() => setPending(false))
   }, [quota, meta, actions, readable])
 
   /* A thread on a stored profile with no plan of its own draws nothing here:
      the reading an agent probe would give back belongs to the machine's login,
      which that thread never spent, and Settings › Usage is where that answer
      lives. */
-  if (!readable || !quota || quota.status === "unsupported") return null
+  if (!readable) return null
+  if (!quota) {
+    if (!pending) return null
+    return (
+      <div className="border-t pt-2">
+        <p className="font-medium">Plan usage</p>
+        <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground" aria-live="polite">
+          <LoaderCircleIcon aria-hidden className="size-3 animate-spin" />
+          Reading plan usage…
+        </p>
+      </div>
+    )
+  }
+  if (quota.status === "unsupported") return null
   const peak = peakWindow(quota)
 
   return (

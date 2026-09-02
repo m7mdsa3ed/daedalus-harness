@@ -1,24 +1,11 @@
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
-import { Archive, ArrowUp, ChevronUp, History, Mic, Paperclip, RotateCw, Square } from "lucide-react"
+import { ChevronUp, GitCompare } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
-import { Shortcut } from "@/components/shortcut"
-import {
-  ActivityIndicator,
-  ComposerAgents,
-  ComposerTodo,
-  ContextIndicator,
-} from "@/components/composer-status"
-import {
-  ComposerAttachments,
-  useAttachmentDelivery,
-  wentInline,
-  type AttachmentDelivery,
-} from "@/components/composer-attachments"
-import { ComposerQueue } from "@/components/composer-queue"
-import { ComposerStrip, ComposerStripItem } from "@/components/composer-strip"
-import { Textarea } from "@/components/ui/textarea"
+import { Logo } from "@/components/ui/logo"
+import { ActivityIndicator } from "@/components/composer-status"
+import { useAttachmentDelivery, wentInline } from "@/components/composer-attachments"
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -27,53 +14,28 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller"
-import { useComposerAttachments } from "@/hooks/use-composer-attachments"
-import { useIsMobile } from "@/hooks/use-mobile"
 import { useHotkey } from "@/hooks/use-hotkey"
-import { useChords } from "@/lib/keybindings"
-import { useVoice } from "@/hooks/use-voice"
 import type { Actions } from "@/lib/actions"
-import { clearDraft, loadDraft, saveDraft } from "@/lib/drafts"
-import {
-  clearPastes,
-  dropPaste,
-  expandPastes,
-  isLongPaste,
-  livePastes,
-  loadPastes,
-  mintPaste,
-  pasteToken,
-  savePastes,
-  type Paste,
-} from "@/lib/pastes"
 import { reportError } from "@/lib/errors"
-import {
-  bannerFor,
-  composerLock,
-  slowLine,
-  startingLine,
-  type ConnPhase,
-} from "@/lib/thread/phase"
-import { currentThreadId, schedulePath } from "@/lib/router"
-import type { SessionMeta } from "@/lib/settings"
-import { KEYS, formatChord, isInteractiveTarget, isTypingTarget, matchesChord, overlayOpen } from "@/lib/shortcuts"
+import { slowLine, startingLine, type ConnPhase } from "@/lib/thread/phase"
+import { currentThreadId } from "@/lib/router"
+import { KEYS, isInteractiveTarget, isTypingTarget, overlayOpen } from "@/lib/shortcuts"
 import { useDispatch, useSessionMeta, useThread, threadIsEmpty, type ThreadItem, type ThreadState } from "@/lib/store"
-import { useLocation, useNavigate } from "react-router"
+import { useLocation } from "react-router"
 import { useViewOptions, ViewOptionsContext } from "@/lib/view-options"
 import { useFollowStream } from "@/hooks/use-follow-stream"
 import { cn } from "@/lib/utils"
-import { DraftConfigPopover, DraftScopeRow } from "./draft-config"
-import { SessionConfigPopover } from "./session-config"
-import { ThreadToolsMenu } from "./thread-tools"
-import { FileMentionMenu, useFileMentions } from "./file-mentions"
-import { HARNESS_COMMANDS, SlashCommandMenu, harnessCommandFor, useSlashCommands } from "./slash-commands"
 import { StepTokensProvider, TokenSummary } from "./token-usage"
+import { useDock } from "@/components/workspace/dock"
+import { useServer } from "@/lib/server-context"
+import { sessionChanges, type TurnChanges } from "@/lib/workspace/git-api"
 import { InlineElicitation } from "./elicitation-form"
 import { InlineApproval, primaryPermissionOption } from "./tool-approval"
 import { RowView, SourcesStrip } from "./thread-items"
 import { splitTurns, turnSources, type TurnSources } from "@/lib/sources"
 import { buildRows, isAnswerItem, rowTailId, type Row } from "@/lib/transcript-rows"
 import { ThreadRail } from "./thread-rail"
+import { Composer } from "./composer"
 
 /**
  * Append a Sources row to every finished turn that has any. Computed on the
@@ -184,6 +146,49 @@ function withTurnUsage(
     if (usage) after.set(tailId, usage)
   }
   return after
+}
+
+/** What each finished turn did to the worktree, keyed by the row it ends on
+    — same walk as `withTurnUsage`, same footer slot. A turn that changed
+    nothing (or was not measured) draws nothing. */
+function withTurnChanges(
+  items: ThreadItem[],
+  turnActive: boolean,
+  turnChanges: Record<string, TurnChanges>,
+  answersOnly: boolean
+): Map<string, TurnChanges> {
+  const after = new Map<string, TurnChanges>()
+  for (const { turn, tailId } of finishedTurns(items, turnActive, answersOnly)) {
+    const head = turn[0]
+    const turnId = head.kind === "user" ? head.turnId : undefined
+    const changes = turnId ? turnChanges[turnId] : undefined
+    if (changes && changes.ended && changes.files.length > 0) after.set(tailId, changes)
+  }
+  return after
+}
+
+/** The footer chip: "3 files changed +40 −12", opening the review panel on
+    that turn. Git's count, not the transcript's — a shell command that edited
+    a file is in it, an edit tool that declared one is in it once. */
+function TurnChangesChip({ sessionId, turn }: { sessionId: string; turn: TurnChanges }) {
+  const dock = useDock()
+  const added = turn.files.reduce((n, f) => n + f.additions, 0)
+  const removed = turn.files.reduce((n, f) => n + f.deletions, 0)
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        dock.openPanel({ kind: "review", sessionId, scope: `turn:${turn.turnId}` }, { direction: "right" })
+      }
+      className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2 py-0.5 font-mono text-[11px] text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+      title="Review this turn's changes"
+    >
+      <GitCompare className="size-3" />
+      {turn.files.length} {turn.files.length === 1 ? "file" : "files"} changed
+      <span className="text-emerald-600 dark:text-emerald-400">+{added}</span>
+      <span className="text-red-600 dark:text-red-400">−{removed}</span>
+    </button>
+  )
 }
 
 /** Every row's turn, keyed by the row's own id. A step's popover reads the
@@ -379,6 +384,22 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
     [thread.items, thread.turnActive, thread.turnUsage, options.answersOnly]
   )
   const usageFor = (row: Row): acp.Usage | undefined => usageAfter.get(rowTailId(row))
+  const changesAfter = React.useMemo(
+    () => withTurnChanges(thread.items, thread.turnActive, thread.turnChanges, options.answersOnly),
+    [thread.items, thread.turnActive, thread.turnChanges, options.answersOnly]
+  )
+  const changesFor = (row: Row): TurnChanges | undefined => changesAfter.get(rowTailId(row))
+  /* The per-turn rows are the server's and live-only on the socket, so a
+     transcript opened cold seeds them once here. Failure is silence: the
+     chips are ambient, and a thread with no project has nothing to read. */
+  const settings = useServer()
+  React.useEffect(() => {
+    const controller = new AbortController()
+    sessionChanges(settings, sessionId, controller.signal)
+      .then(({ turns }) => dispatch({ type: "turn-changes-all", id: sessionId, turns }))
+      .catch(() => {})
+    return () => controller.abort()
+  }, [settings, sessionId, dispatch])
   const stepTurnAfter = React.useMemo(
     () => withStepTurnUsage(thread.items, thread.turnUsage),
     [thread.items, thread.turnUsage]
@@ -574,6 +595,11 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                       <TokenSummary usage={usageFor(row)!} label="This turn" />
                     </div>
                   )}
+                  {changesFor(row) && (
+                    <div className="harness-item-in mt-1">
+                      <TurnChangesChip sessionId={sessionId} turn={changesFor(row)!} />
+                    </div>
+                  )}
                 </MessageScrollerItem>
                 )
               })}
@@ -729,9 +755,15 @@ function StartingLine({ phase }: { phase: ConnPhase }) {
   const slowText = slow ? slowLine(phase) : null
   return (
     <div className="py-2">
-      <div className="harness-shimmer text-xs text-primary">{line.text}</div>
+      {/* The same mark and layout as the working line (`ActivityIndicator`):
+          spawning, restarting and connecting are the thread being worked on,
+          and the reader should not have to learn a second shape for the wait. */}
+      <div className="flex min-w-0 items-center gap-2 text-primary" role="status">
+        <Logo working className="size-4 shrink-0" />
+        <span className="harness-shimmer min-w-0 truncate text-xs leading-6">{line.text}</span>
+      </div>
       {bar ? (
-        <div className="flex max-w-xs items-center gap-2 pt-1.5">
+        <div className="flex max-w-xs items-center gap-2 pl-6 pt-1.5">
           <Progress
             value={bar.done}
             max={bar.total}
@@ -742,641 +774,10 @@ function StartingLine({ phase }: { phase: ConnPhase }) {
           </span>
         </div>
       ) : (
-        slowText && <div className="pt-1 text-xs text-muted-foreground">{slowText}</div>
+        slowText && <div className="pl-6 pt-1 text-xs text-muted-foreground">{slowText}</div>
       )}
     </div>
   )
 }
 
 
-/* ── Prompt history ──
-   Up recalls what you have already sent in this thread, the way a shell recalls
-   a command. The history IS the transcript — every user turn, oldest last — so
-   there is nothing to persist and nothing that can disagree with what is on
-   screen above the box. Walking back stashes whatever was half-typed; Escape,
-   and walking forward off the end, put it back. */
-function usePromptHistory(items: ThreadItem[], setText: (text: string) => void) {
-  /* The list only changes when a user message is added (or its item object
-     replaced) — never per streamed token — but `items` is a new array on every
-     token, so a memo keyed on it re-scanned the transcript constantly. Keyed
-     instead on the count and the identity of the last user item: the reducer
-     replaces an item object whenever its content changes, so the pair is an
-     exact fingerprint of the user turns. */
-  const cache = React.useRef<{ count: number; last: ThreadItem | null; history: string[] }>({
-    count: -1,
-    last: null,
-    history: [],
-  })
-  let userCount = 0
-  let lastUser: ThreadItem | null = null
-  for (const item of items) {
-    if (item.kind === "user" && item.text) {
-      userCount++
-      lastUser = item
-    }
-  }
-  if (userCount !== cache.current.count || lastUser !== cache.current.last) {
-    cache.current = {
-      count: userCount,
-      last: lastUser,
-      history: items.flatMap((item) => (item.kind === "user" && item.text ? [item.text] : [])),
-    }
-  }
-  const history = cache.current.history
-  /** null = not browsing. Otherwise an index into `history`. */
-  const [index, setIndex] = React.useState<number | null>(null)
-  const stash = React.useRef("")
-
-  // Sending (or a replay landing) changes the list under the cursor, so the
-  // walk is over — the index would point at a different prompt than it did.
-  React.useEffect(() => setIndex(null), [history.length])
-
-  const apply = (el: HTMLTextAreaElement, value: string) => {
-    setText(value)
-    // The caret belongs at the end of the recalled prompt — after React has put
-    // it in the DOM, which is the next frame.
-    requestAnimationFrame(() => el.setSelectionRange(el.value.length, el.value.length))
-  }
-
-  /** True when it consumed the event, matching the slash menu's contract. */
-  const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): boolean => {
-    const el = event.currentTarget
-    if (matchesChord(event, KEYS.escape)) {
-      if (index === null) return false
-      setIndex(null)
-      apply(el, stash.current)
-      /* Stop it reaching the thread's Escape, which would read this as "stop the
-         turn" — leaving the history is the more local meaning and wins. */
-      event.preventDefault()
-      event.stopPropagation()
-      return true
-    }
-    if (history.length === 0) return false
-
-    if (matchesChord(event, KEYS.historyPrev)) {
-      /* Only from the very start of the box. Anywhere else Up is a caret move,
-         which is what the key is for while editing a long prompt. */
-      if (index === null && !(el.selectionStart === 0 && el.selectionEnd === 0)) return false
-      const next = index === null ? history.length - 1 : index - 1
-      event.preventDefault()
-      // At the oldest prompt: stay there rather than falling out of the walk.
-      if (next < 0) return true
-      if (index === null) stash.current = el.value
-      setIndex(next)
-      apply(el, history[next])
-      return true
-    }
-
-    if (matchesChord(event, KEYS.historyNext)) {
-      if (index === null) return false
-      event.preventDefault()
-      const next = index + 1
-      if (next >= history.length) {
-        setIndex(null)
-        apply(el, stash.current)
-      } else {
-        setIndex(next)
-        apply(el, history[next])
-      }
-      return true
-    }
-    return false
-  }
-
-  return { onKeyDown, browsing: index !== null }
-}
-
-
-function Composer({
-  sessionId,
-  actions,
-  thread,
-  meta,
-  /* Resolved by ThreadView and handed down: the transcript's error rows read
-     the same answer (see `wentInline`), and two `useAttachmentDelivery` calls
-     in one tree would be two subscriptions to the same absolute state. */
-  delivery,
-}: {
-  sessionId: string
-  actions: Actions
-  thread: ThreadState
-  meta?: SessionMeta
-  delivery: AttachmentDelivery
-}) {
-  const navigate = useNavigate()
-  const location = useLocation()
-  /* The draft lives on this device, per session (lib/drafts). ThreadView is
-     keyed by the thread's key today so the initializer would be enough — the effect
-     keeps it correct if that key ever goes away. */
-  const [text, setText] = React.useState(() => loadDraft(sessionId))
-  /* The box as it is NOW, for the one reader that runs long after the render it
-     was written in: a send that fails asks whether the composer is still the
-     empty one it left behind before putting the words back. */
-  const textRef = React.useRef(text)
-  textRef.current = text
-  React.useEffect(() => setText(loadDraft(sessionId)), [sessionId])
-  React.useEffect(() => saveDraft(sessionId, text), [sessionId, text])
-  /* The sidecar for long pastes: the body is parked here and a token stands in
-     for it in `text` (lib/pastes). Same per-session localStorage bargain as the
-     draft, in a second key rather than a widened value — every caller of
-     `loadDraft` depends on it being a string. */
-  const [pastes, setPastes] = React.useState<Paste[]>(() => loadPastes(sessionId))
-  React.useEffect(() => setPastes(loadPastes(sessionId)), [sessionId])
-  React.useEffect(() => savePastes(sessionId, pastes), [sessionId, pastes])
-  /* A chip is a view of a token, so a token the user deleted drops its paste —
-     checked on every keystroke, and again at send. Kept as a derived list
-     rather than by pruning state: pruning inside a render is a write during a
-     render, and the persisted array is what a reload has to agree with. */
-  const shownPastes = React.useMemo(() => livePastes(text, pastes), [text, pastes])
-  /* Files, which are not text and so cannot be a token in it: they are
-     uploaded as they are picked and travel as references beside the prompt. */
-  const files = useComposerAttachments(sessionId)
-  const [dragging, setDragging] = React.useState(false)
-  const dragCounter = React.useRef(0)
-  const filePicker = React.useRef<HTMLInputElement>(null)
-  const [reviving, setReviving] = React.useState(false)
-  const isMobile = useIsMobile()
-  // Rebindable in Settings › Keyboard, so it is read rather than named here.
-  const steerChords = useChords("steer")
-  const voice = useVoice((transcript) => setText((t) => (t ? t + " " : "") + transcript))
-  /* A draft has no connection, so none of the connection states apply to it —
-     it is waiting to be typed into, which is the one case where the composer
-     must stay live whatever else is true. Everything else comes from the phase:
-     `typable` is almost always true (refusing words the user has already written
-     is the bug, not the safety) and `submittable` is what goes false while a
-     thread is opening — which is what stops a second Enter on a draft from
-     POSTing the same session id twice. */
-  const draft = meta?.draft === true
-  const lock = composerLock(thread.phase, draft)
-  const disabled = !lock.typable
-  const banner = bannerFor(thread.phase)
-
-  /* One recovery path with three names. Which one a phase offers is decided in
-     `failureFor`, beside the close codes it reads: a takeover only needs a
-     reattach (the process is alive), the other codes mean the process is gone
-     and `session/load` restores the conversation, and a trashed thread needs a
-     restore before either. */
-  const recover = () => {
-    if (!banner?.action) return
-    setReviving(true)
-    const run =
-      banner.action.kind === "restore" ? actions.restoreThread : actions.reconnectThread
-    // The connection already writes the failure into the thread; the toast is
-    // for the case where the user is looking at the button, not the transcript.
-    run(sessionId)
-      .catch((err) => reportError(err, banner.action!.busyLabel.replace("…", " failed")))
-      .finally(() => setReviving(false))
-  }
-
-  /* The draft is cleared optimistically: a failure leaves a transcript row that
-     carries the exact text and a Retry button, which is a better home for it
-     than a textarea the user has since typed into.
-
-     `/schedule` is intercepted here rather than sent: it is the harness's own
-     command (see slash-commands.tsx), so its text opens the schedule form
-     pre-filled instead of reaching the agent — which is also why the draft is
-     NOT cleared on that path. The message has not been sent anywhere yet, and
-     the form is a place you can back out of. */
-  const send = (opts: { steer?: boolean } = {}) => {
-    const value = text.trim()
-    /* The one place the empty-prompt rule lives, and it has learned about
-       attachments: an image with no sentence is a real prompt. An upload still
-       in flight is not — the prompt would name a row the server does not have
-       yet — so it waits rather than sending less than was meant. */
-    if (!value && files.ready.length === 0) return
-    if (files.uploading) return
-    /* The thread is on its way to existing (a create or a respawn POST is in
-       flight, or the transcript is still being read). The words stay in the box
-       rather than being taken and dropped: Enter used to re-enter `actions.send`
-       here, find the row still flagged as a draft, and POST the same session id
-       a second time — which the server answers with a 409 and the user sees as
-       a failure to send the message that was already sending. */
-    if (!lock.submittable) return
-    const command = draft ? null : harnessCommandFor(value, thread.availableCommands)
-    if (command?.name === "schedule") {
-      void navigate(schedulePath(sessionId), {
-        state: {
-          /* Expanded here too: the form is going to store this text on the
-             server, where the sidecar that a token points into does not exist.
-             The draft and its pastes are deliberately NOT cleared — nothing has
-             been sent, and the form is a place you can back out of. */
-          defaultText: expandPastes(command.args, pastes),
-          returnTo: location.pathname + location.search,
-        },
-      })
-      return
-    }
-    /* The tokens become their bodies here, at the last moment, exactly as
-       `mentions.ts` derives resource links from the text at the last moment.
-       Everything downstream sees the string it always did. */
-    const outgoing = expandPastes(value, pastes)
-    const attachments = files.ready.map(({ id, name, mimeType, size }) => ({
-      id,
-      name,
-      mimeType,
-      size,
-    }))
-    /* Kept for the send that never leaves: what goes back in the box is what
-       was typed, tokens and all, not the expanded string that went out. */
-    const carriedPastes = pastes
-    const carriedFiles = files.attachments
-    setText("")
-    setPastes([])
-    clearDraft(sessionId)
-    clearPastes(sessionId)
-    files.clear()
-    /* A message that never reached the server comes back here rather than
-       surviving only as a Retry button on a `local` error row — which is a row
-       this device alone holds and a reload deletes, taking the words with it.
-       Refused when the user has started typing again: that is a different
-       message, and `actions.send` keeps Retry on the row for exactly that. */
-    const onUnsent = () => {
-      if (textRef.current.trim()) return false
-      setText(value)
-      setPastes(carriedPastes)
-      files.restore(carriedFiles)
-      return true
-    }
-    void actions.send(sessionId, outgoing, { ...opts, attachments, onUnsent }).catch(() => {})
-  }
-
-  /* Up/Down walk what has already been sent here. It goes after the slash menu
-     in the key handler below: while that menu is open the arrows are its. */
-  const history = usePromptHistory(thread.items, setText)
-
-  /* Running an agent command is just sending `/name args` as the prompt — the
-     agent resolves it — so the menu only completes the name. Drafts advertise
-     no commands (no process yet); they are also offered no harness commands,
-     because `/schedule` needs a thread the server knows about to schedule
-     against, which a draft is not until its first message. */
-  const slash = useSlashCommands(
-    text,
-    thread.availableCommands,
-    setText,
-    draft ? [] : HARNESS_COMMANDS
-  )
-
-  /* `@` completes a path in the project. It reads the token at the caret — a
-     file is named mid-sentence, unlike a command — so the textarea has to be
-     reachable. It goes after the command menu in the key handler for the same
-     reason history does: whichever menu is open owns the arrows. The two cannot
-     both be open (a `/name` token holds no `@`), but the order is stated rather
-     than relied upon. */
-  const composerRef = React.useRef<HTMLTextAreaElement>(null)
-
-  /* A new thread is a route change into an empty screen whose only purpose is
-     the box, so the box takes the caret itself — "New thread" then typing,
-     with nothing to click in between. Scoped tightly, because focus taken
-     wrongly is worse than focus not taken:
-     — only a draft (an existing thread is opened to read at least as often as
-       to write to, and stealing focus there scrolls a phone to the bottom);
-     — only while this thread is the routed one, since the dock keeps every
-       opened transcript mounted and a background panel must not grab the caret;
-     — never on touch, where focusing raises the keyboard over the screen the
-       user has just arrived at.
-     After a frame: dockview moves focus itself as it activates a new panel,
-     and the later mover wins. */
-  const routed = currentThreadId(location.pathname, location.search) === sessionId
-  React.useEffect(() => {
-    if (!draft || !routed || isMobile) return
-    const frame = requestAnimationFrame(() => composerRef.current?.focus())
-    return () => cancelAnimationFrame(frame)
-  }, [sessionId, draft, routed, isMobile])
-
-  const mentions = useFileMentions({
-    text,
-    setText,
-    projectId: meta?.projectId,
-    inputRef: composerRef,
-  })
-
-  /* A long paste is parked rather than pasted: the token goes in at the caret
-     and the body waits in the sidecar until send. Below the threshold nothing
-     happens at all — the affordance has to be invisible for the pastes people
-     actually make (a URL, an error line, a name).
-
-     The caret is the same hazard `file-mentions.tsx` documents: rewriting
-     `text` is a render, and the caret it wants has to be re-applied *after*
-     that render and ahead of the sync from `selectionStart`. So it goes through
-     that hook's own slot rather than a second mechanism racing it. */
-  const onPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    /* Files BEFORE text: a screenshot on the clipboard usually carries a
-       text/plain fallback too, and reading text first would turn every
-       screenshot paste into an empty chip. */
-    const pastedFiles = [...event.clipboardData.files]
-    if (pastedFiles.length > 0) {
-      event.preventDefault()
-      files.add(pastedFiles)
-      return
-    }
-    const plain = event.clipboardData.getData("text/plain")
-    if (!plain || !isLongPaste(plain)) return
-    event.preventDefault()
-    const el = event.currentTarget
-    const start = el.selectionStart ?? text.length
-    const end = el.selectionEnd ?? start
-    const paste = mintPaste(pastes, plain)
-    const token = pasteToken(paste.n)
-    setPastes([...pastes, paste])
-    mentions.requestCaret(start + token.length)
-    setText(text.slice(0, start) + token + text.slice(end))
-  }
-
-  const removePaste = (n: number) => {
-    const next = dropPaste(text, pastes, n)
-    setText(next.text)
-    setPastes(next.pastes)
-  }
-
-  return (
-    <div className="px-4 pt-1 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-      {/* What this device's connection is doing, when it is doing something
-          worth interrupting for. A *state*, not a transcript row: the ladder
-          used to append an error when it gave up, and giving up is exactly the
-          condition that ends on its own — so the row stayed in the middle of
-          the conversation, one per outage, describing something that was over. */}
-      {banner && (
-        <div
-          className={cn(
-            "mx-auto mb-1.5 flex w-full max-w-[var(--harness-composer-width)] flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-lg border border-dashed px-3 py-1.5 text-center text-xs",
-            banner.tone === "error" ? "text-destructive" : "text-muted-foreground"
-          )}
-        >
-          <span>
-            <span className="font-medium">{banner.title}</span> {banner.message}
-          </span>
-          {banner.action && (
-            <Button size="lg" variant="outline" onClick={recover} disabled={reviving}>
-              <RotateCw className={cn("size-4", reviving && "animate-spin")} />
-              {reviving ? banner.action.busyLabel : banner.action.label}
-            </Button>
-          )}
-        </div>
-      )}
-      <ComposerStrip>
-        {/* Read from the journal, with no agent behind it. Said rather than
-            enforced: the composer stays live because sending is what revives
-            the thread (see actions.send), and a box you cannot type into would
-            make the user go looking for a button to press first. */}
-        {thread.archived && (
-          <ComposerStripItem
-            summary={{ id: "archived", icon: Archive, label: "Agent not running" }}
-            className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-muted-foreground"
-          >
-            <Archive className="size-3 shrink-0" />
-            <span>This thread's agent isn't running. Sending a message starts it again.</span>
-          </ComposerStripItem>
-        )}
-        {/* Where it runs and who answers, before either is settled. They belong
-            on the shelf rather than in the settings menu: picking a different
-            agent changes what every option under it even means, and a thread
-            started in the wrong project is started in the wrong directory. */}
-        {draft && meta && (
-          <ComposerStripItem>
-            {/* Registers its own summary — the names it prints are the ones it
-                already looks up. */}
-            <DraftScopeRow meta={meta} actions={actions} />
-          </ComposerStripItem>
-        )}
-        {/* The agent's checklist when it arrives as a tool call rather than an
-            ACP plan. The ACP plan itself is NOT here: it is a running account of
-            the work, so it belongs in the transcript with the work — the shelf
-            keeps the list a runtime sends as tool input, which has nowhere else
-            to go. */}
-        <ComposerTodo thread={thread} />
-        {/* How many subagents are out working, while any are. */}
-        <ComposerAgents thread={thread} />
-        {/* What is waiting for this turn to end. The user's own words, so
-            they are editable in place until the moment they go. */}
-        <ComposerQueue sessionId={sessionId} thread={thread} actions={actions} />
-        {/* What is riding along with the message but is not in the box: a long
-            paste parked behind a token. */}
-        <ComposerAttachments
-          pastes={shownPastes}
-          attachments={files.attachments}
-          delivery={delivery}
-          onRemovePaste={removePaste}
-          onRemoveAttachment={files.remove}
-          onRetryAttachment={files.retry}
-        />
-        {/* Says what the box is showing and how to get back out of it — without
-            it, a recalled prompt is indistinguishable from one you typed. */}
-        {history.browsing && (
-          <ComposerStripItem
-            summary={{ id: "history", icon: History, label: "Earlier prompt" }}
-            className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-muted-foreground"
-          >
-            <History className="size-3" />
-            <span>Earlier prompt</span>
-            {/* The way out, for the pointer that has one. Hidden on touch —
-                there is no Esc key on a phone, so it is an instruction that
-                cannot be followed taking up the end of the row. */}
-            <span className="ms-auto hidden items-center gap-1.5 sm:flex">
-              <Shortcut chord="esc" />
-              to go back
-            </span>
-          </ComposerStripItem>
-        )}
-        {/* Last on the shelf, nearest the composer: these suggestions are about
-            the text being typed right now, where everything above belongs to
-            the turn. It is a row, not an overlay, so the plan and the history
-            notice stay readable while you complete a command. */}
-        <SlashCommandMenu state={slash} />
-        <FileMentionMenu state={mentions} />
-      </ComposerStrip>
-      {/* relative/z-10: the composer paints over the strip's tucked bottom edge.
-
-          It is also the drop target, and deliberately the whole card rather
-          than the textarea: a file aimed at "the composer" lands on the button
-          row or the padding as often as on the box. `dragCounter` is what makes
-          the overlay stable — `dragleave` fires as the pointer crosses into a
-          child, so a boolean would flicker the whole way across. */}
-      <div
-        className="relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl bg-composer p-2 shadow-glass-lg"
-        onDragOver={(e) => {
-          if (!e.dataTransfer.types.includes("Files")) return
-          e.preventDefault()
-          e.dataTransfer.dropEffect = "copy"
-        }}
-        onDragEnter={(e) => {
-          if (!e.dataTransfer.types.includes("Files")) return
-          dragCounter.current += 1
-          setDragging(true)
-        }}
-        onDragLeave={(e) => {
-          if (!e.dataTransfer.types.includes("Files")) return
-          dragCounter.current -= 1
-          if (dragCounter.current <= 0) setDragging(false)
-        }}
-        onDrop={(e) => {
-          if (!e.dataTransfer.types.includes("Files")) return
-          e.preventDefault()
-          dragCounter.current = 0
-          setDragging(false)
-          files.add(e.dataTransfer.files)
-        }}
-      >
-        {dragging && (
-          <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-2xl border-2 border-dashed border-primary bg-composer/80 text-xs font-medium text-primary">
-            Drop to attach
-          </div>
-        )}
-        <Textarea
-          ref={composerRef}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onSelect={mentions.onSelect}
-          onPaste={onPaste}
-          onKeyDown={(e) => {
-            // The command menu owns navigation keys (and Enter) while open.
-            if (slash.onKeyDown(e)) return
-            // Then the `@` menu, for the same reason.
-            if (mentions.onKeyDown(e)) return
-            if (history.onKeyDown(e)) return
-            if (e.key !== "Enter") return
-            /* Past the queue: into the turn that is already running. Checked
-               first because it is the more specific chord, and it is every
-               Cmd/Ctrl+Enter now — with no turn running `send({steer})` is an
-               ordinary send, so the chord never has to be told apart from the
-               plain one by the person pressing it. */
-            if (steerChords.some((chord) => matchesChord(e, chord))) {
-              e.preventDefault()
-              send({ steer: true })
-              return
-            }
-            /* Bare Enter sends on desktop and inserts a newline on touch, where
-               Return is the only newline key there is and every soft keyboard
-               shows it as one. Shift+Enter is the desktop escape hatch. IME
-               composition is left alone — Enter is how you accept a
-               candidate. */
-            if (isMobile || e.shiftKey || e.altKey || e.nativeEvent.isComposing) return
-            e.preventDefault()
-            send()
-          }}
-          aria-label="Message the agent"
-          placeholder={
-            lock.note ??
-            (thread.turnActive
-              ? "Queue a message for when the agent finishes…"
-              : "Message the agent…")
-          }
-          disabled={disabled}
-          rows={1}
-          className="max-h-40 min-h-9 w-full resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"
-        />
-        {/* One control language across the row: every button is icon-sm (32px,
-            the height the model/config trigger already sets), rounded-lg, and
-            chrome-less — no resting border or fill, only a hover wash. The row
-            sits INSIDE the composer card, so a bordered button there is a box
-            inside a box; colour carries the meaning instead (primary sends,
-            destructive stops). */}
-        <div className="flex items-center gap-1 pt-1">
-          <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {/* Before the session exists the profile catalog is the only thing
-                that knows the choices; after it, the agent is. Two controls,
-                one slot — see CLAUDE.md's rule about which owns the model. */}
-            {draft && meta ? (
-              <DraftConfigPopover meta={meta} actions={actions} />
-            ) : (
-              <>
-                <SessionConfigPopover sessionId={sessionId} actions={actions} thread={thread} />
-                {/* The kit picked on the draft, still said once the thread is
-                    running: the links were written at create and are what a
-                    revive spawns with, so this is a read-out rather than the
-                    picker the strip carried. It draws nothing when the thread
-                    carries no tools. */}
-                {meta && (
-                  <ThreadToolsMenu
-                    meta={meta}
-                    actions={actions}
-                    editable={false}
-                    /* The strip's own dimensions are the strip's; in the
-                       composer row it wears the same 32px, chrome-less shape
-                       as the config trigger beside it. */
-                    className="h-8 gap-1.5 px-2 text-xs hover:bg-transparent hover:text-foreground data-popup-open:bg-transparent"
-                  />
-                )}
-              </>
-            )}
-          </div>
-          <ContextIndicator thread={thread} meta={meta} actions={actions} />
-          {/* The touch path — ⌘V and drag-and-drop cover the pointer, and
-              neither exists on a phone. No chord: `lib/shortcuts.ts` holds the
-              rule that a bound key is a listed key, and this does not need to
-              spend one. */}
-          <input
-            ref={filePicker}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              if (e.target.files) files.add(e.target.files)
-              // Cleared, or picking the same file twice fires no change event.
-              e.target.value = ""
-            }}
-          />
-          <Button
-            variant="ghost"
-            /* The size is the *device's* question, not the panel's: a narrow
-               chat panel on a desktop is still driven by a mouse, and this is
-               the one control on the row that is the only way in on touch. */
-            size={isMobile ? "icon" : "icon-sm"}
-            className="shrink-0 rounded-lg"
-            onClick={() => filePicker.current?.click()}
-            disabled={disabled}
-            title="Attach a file"
-          >
-            <Paperclip />
-          </Button>
-          {voice.supported && (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className={cn(
-                "shrink-0 rounded-lg",
-                // Listening is a live state, so it stays coloured — but as text,
-                // not as a filled chip that reintroduces the chrome.
-                voice.listening && "animate-pulse text-destructive hover:text-destructive"
-              )}
-              onClick={() => (voice.listening ? voice.stop() : voice.start())}
-              disabled={disabled}
-              title="Voice input"
-            >
-              <Mic />
-            </Button>
-          )}
-          {thread.turnActive && (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="shrink-0 rounded-lg text-destructive hover:text-destructive"
-              onClick={() => actions.stop(sessionId).catch(() => {})}
-              title="Stop"
-            >
-              <Square />
-            </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="shrink-0 rounded-lg text-primary hover:text-primary disabled:text-muted-foreground"
-            onClick={() => send()}
-            disabled={
-              disabled ||
-              !lock.submittable ||
-              files.uploading ||
-              (!text.trim() && files.ready.length === 0)
-            }
-            title={
-              thread.turnActive
-                ? `Queue (${formatChord(steerChords[0] ?? "")} steers the running turn instead)`
-                : "Send"
-            }
-          >
-            <ArrowUp />
-          </Button>
-        </div>
-      </div>
-    </div>
-  )
-}

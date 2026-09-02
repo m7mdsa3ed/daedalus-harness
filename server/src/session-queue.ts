@@ -28,7 +28,7 @@ export interface QueueHost {
     text: string,
     peer: Peer | undefined,
     opts?: { attachments?: AttachmentRef[] },
-  ): { turnId: string };
+  ): { turnId: string; deferred?: boolean };
 }
 
 // ---- the queue ----

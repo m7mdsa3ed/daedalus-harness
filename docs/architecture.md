@@ -121,6 +121,30 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   way to read a *missing* row as **deleted on purpose** rather than as a fresh install owed
   the agent — with one version, backfilling a built-in resurrects it for everyone who
   removed it.
+- **Whether a row's binary is actually there is a reading, not a row** (`server/src/agent-status.ts`,
+  `GET /api/agents/status`, drawn on Settings › Agents). `checkInstalled` resolves the command
+  the way `spawn` will (`locateCommand`: PATH lookup for a bare name, cwd-relative for a
+  path) and requires every *absolute path among the args* to exist — which is how the
+  harness's own `node <repo>/agent/dist/index.js` reads as "not installed" when `dist` was
+  never built, since `node` always is. A missing one carries its install line
+  (`INSTALL_COMMANDS`, keyed by agent id — the package behind the *default* command, which is
+  why it is not on the editable row). Versions are read the way everything about a runtime
+  is read here: one ACP `initialize` per agent (`withAgentConnection`, on the virtual Default
+  profile, in the server's cwd), whose answer carries the negotiated `protocolVersion` and
+  `agentInfo {name, version}` — every runtime we ship fills it, so no `--version` output is
+  parsed per CLI. The harness's own half (SDK pin, `acp.PROTOCOL_VERSION`) rides beside them.
+  Cached in memory for five minutes, never in the database (the next boot may be on a host
+  where the binary moved); an edit or reset of the row evicts, and `?refresh=1` re-measures
+  for the case the cache cannot see — an `npm install -g` that just ran.
+- Seed 16 adds `subagentFeed` to the `opencode` row (`"opencode-http"`): a declarative field
+  like `liveConfig`, so it is set by the backfill beside the user's env rather than inside
+  it, and it does **not** evict the probe cache — nothing the agent advertises changed. At
+  spawn (`SessionManager.start`) an agent that declares it is handed a loopback port from a
+  pre-bound `PortPool` (`server/src/net.ts`, which is also where `freePort` now lives for
+  code-server and the dev server) and a fresh 24-byte password; `spawnAgent` appends
+  `--port`/`--hostname` to the resolved args and `OPENCODE_SERVER_PASSWORD` to the env, so
+  the registry row's own `args` are never edited and the probe, which passes no sidecar,
+  spawns the plain process. The feed is closed on the process's `close`.
 
 ## Deployment (built, not tsx)
 

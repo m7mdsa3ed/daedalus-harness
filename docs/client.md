@@ -256,6 +256,17 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   already answers for) and the `always` rows that are about the query.
   Otherwise a palette that reshuffles itself before you have typed is one you
   have to read.
+  **A row is slots, never markup** (`PaletteItem` in `rank.ts`, drawn only by
+  `Row` in `list.tsx`): a leading tile (one fixed box, so a stroke glyph, a
+  project's mark and an agent's logo share a vertical line), a body (title,
+  optional `badges`, optional `subtitle`), a `meta` column (`label` with an
+  optional `icon`, `mono`, `dim`; drawn `a · b`, truncating from the right as
+  one unit) and an end slot for a `chord` *or* a tick. Before, every page
+  brought its own `trailing` JSX with its own `ml-auto`, and `ui/command`'s
+  `CommandItem` drew an invisible tick at the end of every row — which is why
+  nothing lined up. `Row` is cmdk's primitive directly, and `index.tsx`
+  turns the dialog's roomier `[cmdk-item]` spacing back off, so one row is one
+  shape on the root, the choice pages, search and the routine digest alike.
   Reading a tool call — inferring its kind, target, language and diff out of
   ACP's opaque `rawInput`/`rawOutput` — is quarantined in `lib/tools.ts`, and
   **drawing** one is `components/tool-views.tsx` on top of the primitives in
@@ -439,6 +450,50 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `/var/www/mawared-off/social-live-agent/ai-agent-web` (glass surfaces, Inter, step-row
   transcript). Electron shell lives in `client/electron/` (frameless, vibrancy/acrylic).
 
+- **`/settings` itself is a page, not a redirect** (`components/settings/overview.tsx`):
+  every section as a link, in the groups the sidebar nav draws
+  (`SETTINGS_NAV_GROUPS`). It exists for the phone, where the sidebar is a drawer
+  that closes on every pick — "Settings" used to drop you into General with the
+  other sections behind the menu button. Every opener that means *settings* and
+  not a section (the footer row, the palette's "Settings", an unknown
+  `/settings/<x>`) lands there through `settingsRootPath`; the nav rows and the
+  palette's per-section entries still go straight to a section. The nav's first
+  row, "All settings", is lit when no section is (`section === null` in
+  app-shell, which is also what drops the "Settings" suffix from the header).
+
+## Composer
+
+- **The composer is one component, `components/composer.tsx`, and one card of two rows.**
+  The textarea, and under it a single toolbar reading *what goes in → where it goes → what
+  happens*: a "+" menu (attach, take a photo on touch, mention a file, run a command, insert a
+  code block, clear), the model/config cluster, the length reading, the context ring, then
+  expand, voice, pause, stop and a filled primary Send. It used to be five loose buttons on a
+  row that a phone overflowed first; every way of *adding to* the message is behind the "+",
+  and every way of *sending* it is behind the chevron beside Send (queue or steer while a turn
+  runs, Schedule…, and the Enter preference). A long-press on Send (touch) and a right-click
+  (mouse) open that same menu, so the chevron is a hint, not the only door.
+- **Two "mobile" answers, used for two different things.** `useCoarsePointer` (the device's
+  pointer) sizes the touch targets — 36px on a finger, 32px on a mouse — and decides whether
+  "Take a photo" is offered (`capture="environment"` on a second picker: `capture` is an
+  attribute, not a mode, so the attach picker stays gallery-first). `useIsMobile` (the width)
+  keeps deciding what Enter means, because a soft keyboard is a width question in practice.
+- **What Enter does is a preference, not a key binding** (`lib/composer-prefs.ts`,
+  `ui.composerPrefs`, global and device-local like the view options). `enterSends` on: Enter
+  sends, Shift+Enter breaks the line. Off: Enter breaks the line and the steer chord (an
+  ordinary send while nothing runs) or the button sends. Rebinding Enter in `keybindings.ts`
+  was refused for a reason — that is a broken composer — but choosing its meaning is what
+  every chat app offers. Touch ignores the switch; Return is always a newline there.
+- **Expand is about this prompt, not the reader**: state, never persisted, offered once the
+  text is more than a sentence (`LONG_PROMPT_CHARS`/`LONG_PROMPT_LINES`) and folded back by a
+  send. The taller box is a fraction of `--panel-h` (the viewport outside the dock), half a
+  phone. The length reading beside it prints a *rough* token count (4 chars ≈ 1 token) with a
+  tilde, so a pasted document reads as "about 3k tokens" before it goes rather than after.
+- Every insertion the "+" menu makes (`@`, `/`, fences) goes through the `@` completer's
+  `requestCaret` slot, for the reason `file-mentions.tsx` documents: rewriting `text` is a
+  render, and the caret must be re-applied after it. A command is put at the *front* of the
+  text wherever the caret was, because the completer reads `^/name`; a mention is a word and
+  earns a space before it; fences go on their own line.
+
 ## Slash commands
 
 - **A slash command is either the agent's or the harness's, and the composer draws one
@@ -446,7 +501,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `/name args` is sent, the agent resolves it, the send path is untouched. The harness's own
   (`HARNESS_COMMANDS` in `components/slash-commands.tsx`, declared in the same
   `acp.AvailableCommand` shape) are the exception the send path knows about:
-  `harnessCommandFor` reads the composed text in `ThreadComposer.send` and, for
+  `harnessCommandFor` reads the composed text in `Composer`'s `send` (`components/composer.tsx`) and, for
   `/schedule`, opens the schedule form with the rest of the line as its message instead of
   sending anything. That is how a message is scheduled now — the clock button beside the
   composer is gone: scheduling is *what to say and when*, which is typing, not a second
@@ -640,8 +695,20 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 
 ## The dock
 
-- **The dock holds four panel kinds: chat, editor, terminal and web (the *Browser*
-  panel).** The framed `code-server` panel, the "Simple IDE" opening, the file
+- **The dock holds five panel kinds: chat, editor, terminal, web (the *Browser* panel)
+  and review.** The review panel (`components/workspace/review-panel.tsx`, descriptor
+  `{kind:"review", sessionId, scope?}`, one per thread) is what a thread did to the
+  repository as git measured it — see "Turn changes" in `docs/ops.md`. It is opened from the
+  "N files changed" chip under a turn (`TurnChangesChip` in `thread-view.tsx`, drawn from
+  `ThreadState.turnChanges`, which the socket's live-only `turn_changes` event writes and
+  `GET /api/sessions/:id/changes` seeds on open), from the thread menu's panel list, and
+  its scope menu lists every turn that changed something. Its file list is a diff of two
+  trees; the staged mark on a row is `git status`, never inferred. Stage, unstage, discard
+  and commit are the project's git routes; a hunk goes through `apply`. Confirmation is asked
+  for every discard, and a rejected hunk shows git's own reason. Unified patches are drawn by
+  `components/ui/patch-view.tsx`, which never computes a diff — git chose the hunk
+  boundaries, and those are the ones `git apply` wants back.
+- **What left the client, and what stayed on the server.** The framed `code-server` panel, the "Simple IDE" opening, the file
   explorer, the source-control panel, the Output & problems panel and the Subagents &
   workflows panel have all been removed
   from the client — with them went `ide-panel.tsx`, `simple-ide.ts`, `explorer-panel.tsx`,
@@ -704,3 +771,37 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   page is reached from the folder's hover control in the sidebar, the project name in a
   thread's header, the palette's Projects group and the settings row — settings keeps the
   *form*, this is the workspace as a thing with a history.
+
+## Routines and schedules pages
+
+`/routines` and `/schedules` are places, not settings sections, and both are drawn
+the way the project page is: a `SurfaceHeader`, a row of `StatTile`s, then the list
+(`components/page-primitives.tsx` holds those pieces; nothing in it knows which
+surface it is on). **The sidebar reaches each through one fixed nav row** (Routines,
+Scheduled — beside Tasks and Notifications, carrying the armed count) and lists
+neither. They used to be two fold groups under an "Automations" tier, each a smaller
+copy of its page's list with fewer controls: the page had to exist anyway for the
+detail views, so the sidebar copy was a second surface to keep consistent, a second
+place a row's menu had to be maintained, and the way *to* the page was a pencil that
+only appeared on hover once something existed. A page that is a URL gets a row that
+goes to it.
+
+- **The routines list reads one extra thing: the newest run of every routine**, one
+  `limit=1` request each through `useQueries`, on the visit and never on a timer, so a
+  row can say what happened last and the tiles can count running and blocked runs across
+  every routine. Mutations invalidate `routineRunsFamilyKey` — the prefix under every
+  limit — never one limit's key, or the list and the detail page would disagree after a
+  fire. Rows are filed under their project; a routine whose project is gone is listed,
+  not hidden.
+- **A routine's page is one URL with four tabs** (`?tab=overview|runs|triggers|settings`,
+  the overview carrying no param). The overview shows a little of each — the newest five
+  runs, the triggers with their next fire, the policy as facts — and the tiles say last
+  run, next fire, run outcomes and tokens. The counts are over what the page has read
+  (the server's newest 50), and say "50+" rather than a total they do not know.
+  Triggers and runs are read on this page and nowhere else; `trigger-summary.ts` is how a
+  trigger is said in one line.
+- **A schedule has a page too** (`/schedules/<id>`), and it has no history section on
+  purpose: a delivered message is a turn in the thread it was sent to, and that
+  transcript is the record. The page names the thread, says when it fires next and how
+  often, shows the skip state, and holds the editor. The list files schedules under the
+  thread they land in.

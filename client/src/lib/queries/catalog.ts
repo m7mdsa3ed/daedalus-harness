@@ -9,22 +9,27 @@
 import * as React from "react"
 import { useQueryClient } from "@tanstack/react-query"
 
-import type {
-  AgentDef,
-  CommandDef,
-  McpServerDef,
-  Persona,
-  Profile,
-  Project,
-  ServerSettings,
-  SkillDef,
+import {
+  api,
+  type AgentDef,
+  type AgentsStatus,
+  type CommandDef,
+  type McpServerDef,
+  type Persona,
+  type Profile,
+  type ProfilePreset,
+  type Project,
+  type ServerSettings,
+  type SkillDef,
 } from "@/lib/settings"
 import { useServer } from "@/lib/server-context"
 import {
   agentsKey,
+  agentsStatusKey,
   commandsKey,
   mcpServersKey,
   personasKey,
+  profilePresetsKey,
   profilesKey,
   projectsKey,
   scope,
@@ -43,11 +48,47 @@ export function useProfiles(): Profile[] {
   }).data ?? (EMPTY as Profile[])
 }
 
+/** The coding-plan presets (`GET /api/profile-presets`). Read lazily — only
+    the new-profile form asks — and kept for the session: the answer is the
+    server build's list plus models.dev's catalogs, neither of which moves
+    while a form is open. */
+export function useProfilePresets(): { presets: ProfilePreset[]; loading: boolean; error: Error | null } {
+  const settings = useServer()
+  const query = useApiQuery<{ presets: ProfilePreset[] }>(profilePresetsKey(settings), "/api/profile-presets", {
+    staleTime: 10 * 60_000,
+  })
+  return { presets: query.data?.presets ?? (EMPTY as ProfilePreset[]), loading: query.isPending, error: query.error }
+}
+
 export function useAgents(): AgentDef[] {
   const settings = useServer()
   return useApiQuery<AgentDef[]>(agentsKey(settings), "/api/agents", {
     staleTime: CATALOG_STALE_MS,
   }).data ?? (EMPTY as AgentDef[])
+}
+
+/** Install state and reported versions of every agent, read once per page
+    load and kept for the TTL the server measures on: a handshake per agent is
+    what a read costs, so nothing polls it. `refresh` asks the server to
+    measure again (`?refresh=1`) and writes the answer straight into the cache,
+    which is the one case a reader bypasses a query's own fetch on purpose —
+    the fresh read is the same route with a flag, not a different resource. */
+export function useAgentsStatus(): {
+  status: AgentsStatus | undefined
+  loading: boolean
+  error: Error | null
+  refresh: () => Promise<AgentsStatus>
+} {
+  const settings = useServer()
+  const qc = useQueryClient()
+  const key = agentsStatusKey(settings)
+  const query = useApiQuery<AgentsStatus>(key, "/api/agents/status", { staleTime: 5 * 60_000 })
+  const refresh = React.useCallback(async () => {
+    const fresh = await api<AgentsStatus>(settings, "/api/agents/status?refresh=1")
+    qc.setQueryData(key, fresh)
+    return fresh
+  }, [settings, qc, key])
+  return { status: query.data, loading: query.isPending, error: query.error, refresh }
 }
 
 export function useProjects(): Project[] {

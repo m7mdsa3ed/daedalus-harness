@@ -353,6 +353,49 @@ await test("a non-repository is a normal answer, not a failure", async () => {
   assert.equal(await status(() => git.commit(project.id, "nope")), 400);
 });
 
+await test("trees: a snapshot sees shell edits and untracked files, and a hunk applies", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "daedalus-trees-"));
+  const run = (args: string[]) =>
+    execFileSync("git", args, { cwd: repo, stdio: "pipe", encoding: "utf8" });
+  run(["init", "--quiet", "-b", "main"]);
+  run(["config", "user.email", "test@example.com"]);
+  run(["config", "user.name", "Test"]);
+  writeFileSync(join(repo, "a.txt"), "one\ntwo\nthree\n");
+  run(["add", "."]);
+  run(["commit", "--quiet", "-m", "first"]);
+  const project = createProject({ name: "trees", cwd: repo, description: null });
+
+  const dir = await git.repoDirAt(repo);
+  assert.equal(dir, repo);
+  const before = await git.snapshotTree(repo);
+  /* Not through any tool: the way a `sed` in a shell changes a file. */
+  writeFileSync(join(repo, "a.txt"), "one\nTWO\nthree\n");
+  writeFileSync(join(repo, "new.txt"), "fresh\n");
+  const after = await git.snapshotTree(repo);
+  assert.notEqual(before, after);
+  /* The real index was never touched. */
+  assert.equal(run(["diff", "--cached", "--name-only"]).trim(), "");
+
+  const files = await git.diffTrees(repo, before, after);
+  assert.deepEqual(
+    files.map((f) => [f.path, f.status, f.additions, f.deletions]),
+    [["a.txt", "modified", 1, 1], ["new.txt", "added", 1, 0]],
+  );
+  const patch = await git.patchBetween(repo, before, after, "a.txt");
+  assert.match(patch, /^diff --git a\/a\.txt b\/a\.txt/);
+  assert.match(patch, /-two\n\+TWO/);
+
+  /* Staging one hunk from the patch: it lands in the index and not beyond. */
+  await git.applyPatch(project.id, patch, { cached: true });
+  assert.equal(run(["diff", "--cached", "--name-only"]).trim(), "a.txt");
+  /* And reversing it on the worktree puts the file back. */
+  await git.applyPatch(project.id, patch, { reverse: true });
+  assert.equal(readFileSync(join(repo, "a.txt"), "utf8"), "one\ntwo\nthree\n");
+  assert.equal(await git.hasObject(repo, before), true);
+  assert.equal(await git.hasObject(repo, "0".repeat(40)), false);
+  deleteProject(project.id);
+});
+
 await test("status parses porcelain v2, including renames and untracked", async () => {
   const repo = mkdtempSync(join(tmpdir(), "daedalus-git-"));
   const run = (args: string[]) =>

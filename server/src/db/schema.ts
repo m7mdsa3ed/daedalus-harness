@@ -92,6 +92,12 @@ export const agents = sqliteTable("agents", {
       `"env"` = a key in its own config template, filled from `{personaPrompt}`
       or `{personaFile}`. Null = no known door, and a persona is not applied. */
   personaVia: text("persona_via").$type<"acp-meta" | "env">(),
+  /** Where this runtime's subagent transcripts come from when its ACP bridge
+      does not carry them. `"opencode-http"` = the sidecar in
+      `opencode-subagents.ts`: the process is spawned with an HTTP port and the
+      server subscribes to its event bus for the children ACP drops. Null =
+      whatever arrives over ACP is all there is. */
+  subagentFeed: text("subagent_feed").$type<"opencode-http">(),
   /** Which release of DEFAULT_AGENTS seeded this row. A later release can add
       an agent to an install that already has rows without touching user edits —
       the old seed-if-the-file-is-empty rule could never do that. */
@@ -132,12 +138,30 @@ export type ProfileUsageKind =
   /** No plan to report. The agent's own probe answers, if it has one. */
   | "none"
   /** Z.AI / Zhipu GLM Coding Plan (`/api/monitor/usage/quota/limit`). */
-  | "zai";
+  | "zai"
+  /** MiniMax Coding Plan (`/v1/token_plan/remains`). */
+  | "minimax"
+  /** Moonshot Kimi For Coding (`/coding/v1/usages`). */
+  | "kimi"
+  /** Synthetic's flat-rate plan (`/v2/quotas`). */
+  | "synthetic"
+  /** DeepSeek's account balance (`/user/balance`) — no windows, credits. */
+  | "deepseek"
+  /** OpenRouter's key limit and credits (`/api/v1/key`, `/api/v1/credits`). */
+  | "openrouter";
 
 /** Every `kind` a profile may name, for the form's picker and for validating a
     saved profile. Adding a provider is this array, the union above, and a branch
     in `readProfileUsage` (usage-api.ts). */
-export const USAGE_KINDS = ["none", "zai"] as const satisfies readonly ProfileUsageKind[];
+export const USAGE_KINDS = [
+  "none",
+  "zai",
+  "minimax",
+  "kimi",
+  "synthetic",
+  "deepseek",
+  "openrouter",
+] as const satisfies readonly ProfileUsageKind[];
 
 export interface ProfileUsage {
   kind: ProfileUsageKind;
@@ -208,6 +232,14 @@ export const projects = sqliteTable("projects", {
       folder, pickers, the projects list. Null/empty means "no logo", which
       falls back to the project's initial in the client. */
   logoUrl: text("logo_url"),
+  /** The command that runs this project's dev server (`dev-server.ts`), e.g.
+      `pnpm dev`. Null for a project that has none — most of them; set by the
+      template scaffold and editable in the project form. */
+  devCommand: text("dev_command"),
+  /** The template (`templates/<id>/`) this project was scaffolded from, or null.
+      Provenance only — nothing is re-read from the template afterwards except
+      its install command, when a dev start finds no `node_modules`. */
+  templateId: text("template_id"),
 });
 
 /** The harness's own MCP servers, as library rows. `builtin` names which; the
@@ -501,7 +533,7 @@ export const workflowRuns = sqliteTable(
     name: text("name").notNull(),
     definition: text("definition", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
     inputs: text("inputs", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
-    status: text("status", { enum: ["running", "completed", "failed", "cancelled"] })
+    status: text("status", { enum: ["running", "paused", "completed", "failed", "cancelled"] })
       .$type<WorkflowRunStatus>()
       .notNull(),
     error: text("error"),
@@ -512,7 +544,10 @@ export const workflowRuns = sqliteTable(
   (t) => [index("workflow_runs_parent").on(t.parentSessionId, t.createdAt)],
 );
 
-export type WorkflowRunStatus = "running" | "completed" | "failed" | "cancelled";
+/** `paused` is a live state like `running`: the run is held (no step starts,
+    pausable steps hold at their step boundary) and comes back with `resume`.
+    A restart ends it exactly as it ends a running one. */
+export type WorkflowRunStatus = "running" | "paused" | "completed" | "failed" | "cancelled";
 export type WorkflowStepStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "skipped";
 
 /** One step's progress inside `workflow_runs.steps`. */
@@ -980,6 +1015,48 @@ export const webSearchUsage = sqliteTable(
 /* The `history_checkpoints` / `history_branches` tables lived here until the
    checkpoint controller was deleted; migration 0027 drops them. */
 
+/**
+ * Every prompt the user has actually sent, newest read first — the composer's
+ * own history (`composer-history.ts`).
+ *
+ * Global on purpose, and that is the whole point of the table. Recall used to
+ * be the transcript of the thread you were standing in, which meant the
+ * sentence you wrote an hour ago was unreachable from the thread you are in
+ * now — the hand that types is the same in every thread, and so is the phrase
+ * it keeps re-typing. One list per server, like `notifications`: there is one
+ * bearer token and one human behind it, so a second device recalling what the
+ * first one sent is the feature, not a leak.
+ *
+ * `session_id`/`project_id` are plain ids for provenance — what the history
+ * panel says a line came from — and deliberately not foreign keys: deleting a
+ * thread must not delete the words that were typed into it, which are the
+ * user's and outlive it. `text` is what was *typed*, before paste tokens are
+ * expanded (composer.tsx expands at the last moment), so recalling a line puts
+ * the same short token back in the box rather than the document behind it.
+ */
+export const composerHistory = sqliteTable(
+  "composer_history",
+  {
+    id: text("id").primaryKey(),
+    /** The prompt as it was typed. Never empty — an attachment-only send has
+        nothing to recall and is not recorded. */
+    text: text("text").notNull(),
+    /** Where it was sent from, for the panel's subtitle. Null once nothing
+        knows (a send from a surface with no thread). */
+    sessionId: text("session_id"),
+    /** Snapshotted like `notifications.threadTitle`, so a line stays
+        intelligible after its thread is deleted. */
+    threadTitle: text("thread_title"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("composer_history_created").on(t.createdAt),
+    /** The newest row carrying a given text — what the insert reads to collapse
+        a repeat instead of writing it twice. */
+    index("composer_history_text").on(t.text),
+  ],
+);
+
 export const pushTokens = sqliteTable("push_tokens", {
   token: text("token").primaryKey(),
   createdAt: integer("created_at").notNull(),
@@ -1124,6 +1201,49 @@ export const sessionQueue = sqliteTable(
 );
 
 /**
+ * What a turn did to the project's working tree — as git saw it, not as the
+ * agent reported it.
+ *
+ * Two tree objects are written into the repository's object store around each
+ * turn (`git.snapshotTree`: the whole worktree, untracked files included, via
+ * a scratch index that never touches the real one). `start_tree` is taken on
+ * `turn_started`, `end_tree` on `turn_ended`, and `files` is the diff between
+ * them summarised once so the transcript can draw "3 files changed" without
+ * running git per row. A `sed` in a shell, a script the agent ran and an edit
+ * tool all land here the same way, which is the point: the transcript's tool
+ * calls only know about the edits a tool declared. The review panel reads the
+ * hunks live from the two trees (or from `start_tree` to the worktree while
+ * the turn is still running). Dangling trees are gc'd by git eventually, and
+ * a turn whose trees are gone reads as "unavailable", never as a crash.
+ */
+export const sessionTurnChanges = sqliteTable(
+  "session_turn_changes",
+  {
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    turnId: text("turn_id").notNull(),
+    startTree: text("start_tree"),
+    endTree: text("end_tree"),
+    files: text("files", { mode: "json" }).$type<ChangedFile[]>().notNull(),
+    startedAt: integer("started_at").notNull(),
+    endedAt: integer("ended_at"),
+  },
+  (t) => [primaryKey({ columns: [t.sessionId, t.turnId] })],
+);
+
+/** One entry of `session_turn_changes.files` (protocol.ts re-exports it). */
+export interface ChangedFile {
+  /** Repo-relative, POSIX. For a rename, the new name. */
+  path: string;
+  from?: string;
+  status: "added" | "modified" | "deleted" | "renamed";
+  additions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+/**
  * An uploaded file, waiting to be — or already — referenced by a prompt.
  *
  * Bytes live once on disk at `data/attachments/<id>`; this row is everything
@@ -1206,23 +1326,65 @@ export const searchMeta = sqliteTable("search_meta", {
   value: text("value").notNull(),
 });
 
-/**
- * A board on the tasks board — one kanban, owning its own columns.
+/* ── Tasks ──
+ * A Jira/ClickUp-shaped task workspace: a board is a project of work with its
+ * own key, columns, sprints, saved views and custom fields; a task is one
+ * numbered item on it with a type, an optional parent (epic or task), a
+ * checklist, comments, an activity log and links to other tasks.
  *
- * Like `tasks` below, this holds no foreign keys: an SQL cascade would take a
- * board's tasks with it silently, and deleting a column has to be a *decision*
- * (where do its tasks go?) rather than a delete. `boards.ts` cascades by hand,
- * in one transaction, so every one of those decisions is written down.
+ * No foreign keys anywhere in this group, on purpose: an SQL cascade would
+ * take a board's tasks with it silently, and deleting a column has to be a
+ * *decision* (where do its tasks go?) rather than a delete. `boards.ts` and
+ * `tasks-board.ts` cascade by hand, in one transaction, so every one of those
+ * decisions is written down. Every column added since the first cut has a
+ * default, so the change is a pure additive push with no data rewrite.
+ */
+
+/** A custom field a board declares; a task stores its value in `tasks.custom`
+    keyed by the field's id. `options` is only read for `select`. */
+export interface CustomFieldDef {
+  id: string;
+  name: string;
+  type: "text" | "number" | "select" | "date" | "checkbox" | "url";
+  options?: string[];
+}
+
+/** One checklist item on a task. */
+export interface ChecklistItem {
+  id: string;
+  text: string;
+  done: boolean;
+}
+
+/**
+ * A board — one project of work, owning its columns, sprints and views.
+ *
+ * `key` is the prefix of every task key on it (`DAE-42`); `nextNumber` is the
+ * counter that mints the number, bumped inside the create transaction so two
+ * creates can never share one. `projectId` is a pointer at `projects.id` and
+ * nothing more — a project's deletion leaves the board standing, unlinked.
  */
 export const boards = sqliteTable(
   "boards",
   {
     id: text("id").primaryKey(),
     name: text("name").notNull(),
+    /** Uppercase 2–6 letter prefix of task keys. */
+    key: text("key").notNull().default("TASK"),
+    description: text("description"),
+    /** → `projects.id`, or null for a board that belongs to no project. */
+    projectId: text("project_id"),
     /** Palette token (`boards.ts: BOARD_COLORS`); null = neutral. */
     color: text("color"),
     /** Position in the board switcher. */
     order: integer("order").notNull().default(0),
+    /** Per-board task counter — the next task gets this number. */
+    nextNumber: integer("next_number").notNull().default(1),
+    /** Field definitions a task on this board may carry values for. */
+    customFields: text("custom_fields", { mode: "json" })
+      .$type<CustomFieldDef[]>()
+      .notNull()
+      .default([]),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -1238,6 +1400,11 @@ export const boards = sqliteTable(
  * meant editing every one of them and a schema push besides. A status is now a
  * row with a name the user picks, and `tasks.status_id` points at it.
  *
+ * `category` is what the harness knows about a column beyond its name: a task
+ * entering a `done` column is completed (its `completedAt` is stamped), and a
+ * sprint's burndown counts by it. `wipLimit` is advisory — the board shows a
+ * column over it, nothing refuses the move.
+ *
  * The default board's four statuses are seeded with their *legacy slugs* as ids
  * (`todo`, `in_progress`, `blocked`, `done`) — which is the whole migration:
  * every task written before boards existed already holds one of those strings
@@ -1249,10 +1416,14 @@ export const boardStatuses = sqliteTable(
   {
     id: text("id").primaryKey(),
     boardId: text("board_id").notNull(),
-    /** What the column header reads. */
     name: text("name").notNull(),
     /** Palette token (`boards.ts: STATUS_COLORS`); null = neutral. */
     color: text("color"),
+    category: text("category", { enum: ["todo", "in_progress", "done"] })
+      .notNull()
+      .default("todo"),
+    /** Work-in-progress limit; null = none. */
+    wipLimit: integer("wip_limit"),
     /** Left-to-right position on the board. */
     order: integer("order").notNull().default(0),
     createdAt: integer("created_at").notNull(),
@@ -1262,20 +1433,73 @@ export const boardStatuses = sqliteTable(
 );
 
 /**
- * A task on the tasks board.
+ * A sprint: a named, dated window of a board's work. `state` moves
+ * planned → active → closed; a board has at most one active sprint, and closing
+ * one moves its unfinished tasks to wherever the closer said (backlog or the
+ * next sprint) — `boards.ts: completeSprint`.
+ */
+export const sprints = sqliteTable(
+  "sprints",
+  {
+    id: text("id").primaryKey(),
+    boardId: text("board_id").notNull(),
+    name: text("name").notNull(),
+    goal: text("goal"),
+    startAt: integer("start_at"),
+    endAt: integer("end_at"),
+    state: text("state", { enum: ["planned", "active", "closed"] })
+      .notNull()
+      .default("planned"),
+    order: integer("order").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("sprints_board_order").on(t.boardId, t.order)],
+);
+
+/** What a saved view remembers: which layout, and the filter/group/sort the
+    page was showing when it was saved. Free-form so a new filter is not a
+    schema push; the client validates what it reads. */
+export interface BoardViewConfig {
+  filters?: Record<string, unknown>;
+  groupBy?: string;
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
+  /** Table view: which columns, in order. */
+  columns?: string[];
+}
+
+/** A saved view on a board — a layout plus the filters it was saved with. */
+export const boardViews = sqliteTable(
+  "board_views",
+  {
+    id: text("id").primaryKey(),
+    boardId: text("board_id").notNull(),
+    name: text("name").notNull(),
+    kind: text("kind", { enum: ["board", "list", "table", "calendar", "timeline"] })
+      .notNull()
+      .default("board"),
+    config: text("config", { mode: "json" }).$type<BoardViewConfig>().notNull().default({}),
+    order: integer("order").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("board_views_board_order").on(t.boardId, t.order)],
+);
+
+/**
+ * A task on a board.
  *
- * Standalone: a genuinely top-level resource, not scoped to a session, project
- * or agent. The board is user-managed; wiring tasks to agent turns (the "no
- * connection between the agents and the board, initially" promise) is a later
- * step, and the schema deliberately holds no foreign keys so nothing here has
- * to be rethought when that arrives.
+ * Standalone: a genuinely top-level resource, not scoped to a session or
+ * agent. `boardId` and `statusId` are the two halves of a task's position:
+ * which board it is on, and which of *that board's* columns it sits in. Both
+ * keep their original column names (`board`, `status`) — the values already
+ * stored there are exactly the ids the seed mints.
  *
- * `boardId` and `statusId` are the two halves of a task's position: which
- * kanban it is on, and which of *that board's* columns it sits in. Both are
- * ids into the two tables above, and both keep their original column names
- * (`board`, `status`) — the values already stored there are exactly the ids the
- * seed mints, so widening the app from one board with four fixed statuses to
- * many boards with any statuses is a pure additive push with no data rewrite.
+ * `number` with the board's `key` is the task's human key. `parentId` makes
+ * the tree: an epic's children, or a task's subtasks — one column, read either
+ * way by the parent's `type`. `completedAt` is stamped when the task enters a
+ * `done`-category column and cleared when it leaves one.
  */
 export const tasks = sqliteTable(
   "tasks",
@@ -1283,20 +1507,45 @@ export const tasks = sqliteTable(
     id: text("id").primaryKey(),
     /** → `boards.id`. Column name predates the table. */
     boardId: text("board").notNull().default("default"),
+    /** Per-board sequence; null on rows written before keys existed (backfilled at
+        boot). Nullable on purpose, like `archived`: drizzle-kit reads a NOT NULL
+        column whose default is `0`/`false` as having no default and plans a
+        `delete from tasks` before adding it to a populated table — a nullable
+        column is a plain ALTER with no data-loss path. */
+    number: integer("number"),
+    type: text("type", { enum: ["task", "bug", "story", "epic"] })
+      .notNull()
+      .default("task"),
     title: text("title").notNull(),
     /** Markdown body; null = none. */
     description: text("description"),
     /** → `board_statuses.id`, always one belonging to `boardId`. */
     statusId: text("status").notNull().default("todo"),
-    priority: text("priority", { enum: ["low", "medium", "high", "urgent"] })
+    priority: text("priority", { enum: ["lowest", "low", "medium", "high", "urgent"] })
       .notNull()
       .default("medium"),
     /** Free text tag names, stored as a JSON string-array. */
     labels: text("labels", { mode: "json" }).$type<string[]>().notNull().default([]),
     /** Who it is assigned to; free text (no user system yet). */
     assignee: text("assignee"),
+    /** → `tasks.id` of the epic or parent task; null = top level. */
+    parentId: text("parent_id"),
+    /** → `sprints.id`; null = backlog. */
+    sprintId: text("sprint_id"),
+    /** Story points / effort estimate; null = unestimated. */
+    estimate: integer("estimate"),
+    /** Epoch ms planned start; null = none. Timeline draws start→due. */
+    startAt: integer("start_at"),
     /** Epoch ms due timestamp; null = no due date. */
     dueAt: integer("due_at"),
+    /** Epoch ms the task entered a done column; null = open. */
+    completedAt: integer("completed_at"),
+    /** Archived tasks are hidden from every view unless asked for. Null reads
+        as false — see `number` for why it is nullable. */
+    archived: integer("archived", { mode: "boolean" }),
+    checklist: text("checklist", { mode: "json" }).$type<ChecklistItem[]>().notNull().default([]),
+    /** Custom field values keyed by `CustomFieldDef.id`. */
+    custom: text("custom", { mode: "json" }).$type<Record<string, unknown>>().notNull().default({}),
     /** Sticky note for within-column ordering on the kanban. */
     note: text("note"),
     /** Position within the column, for a stable manual order. */
@@ -1304,5 +1553,57 @@ export const tasks = sqliteTable(
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (t) => [index("tasks_board_order").on(t.boardId, t.statusId, t.order)],
+  (t) => [
+    index("tasks_board_order").on(t.boardId, t.statusId, t.order),
+    index("tasks_board_number").on(t.boardId, t.number),
+    index("tasks_parent").on(t.parentId),
+  ],
+);
+
+/** A comment on a task. `author` is free text, like `assignee`. */
+export const taskComments = sqliteTable(
+  "task_comments",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id").notNull(),
+    body: text("body").notNull(),
+    author: text("author"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("task_comments_task").on(t.taskId, t.createdAt)],
+);
+
+/**
+ * One field change on a task. Written by `updateTask` for every field that
+ * actually changed, plus `created`, `commented`, `linked` and `archived`
+ * markers, so the detail panel can show a history without diffing rows.
+ */
+export const taskActivity = sqliteTable(
+  "task_activity",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id").notNull(),
+    at: integer("at").notNull(),
+    field: text("field").notNull(),
+    from: text("from", { mode: "json" }).$type<unknown>(),
+    to: text("to", { mode: "json" }).$type<unknown>(),
+  },
+  (t) => [index("task_activity_task").on(t.taskId, t.at)],
+);
+
+/** A directed relation between two tasks: `from` blocks / relates to /
+    duplicates `to`. `relates` is read symmetrically. */
+export const taskLinks = sqliteTable(
+  "task_links",
+  {
+    id: text("id").primaryKey(),
+    fromId: text("from_id").notNull(),
+    toId: text("to_id").notNull(),
+    kind: text("kind", { enum: ["blocks", "relates", "duplicates"] })
+      .notNull()
+      .default("relates"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("task_links_from").on(t.fromId), index("task_links_to").on(t.toId)],
 );

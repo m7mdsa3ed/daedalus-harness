@@ -17,6 +17,32 @@ import type { ReactNode } from "react"
 
 import { scoreItem } from "./score"
 
+/** A tone a badge can wear. `custom` hands the colours to `className`, for a
+    chip whose colours are decided elsewhere (a run status). */
+export type BadgeTone = "neutral" | "primary" | "warn" | "danger" | "success"
+
+export interface PaletteBadge {
+  label: string
+  tone?: BadgeTone
+  /** Colour classes that replace `tone`'s. */
+  className?: string
+}
+
+/** One fact in the row's right-hand column: a short label, optionally led by
+    a small picture (a project's mark, an agent's). Drawn `a · b · c`, the
+    whole column truncating from the right as a unit. */
+export interface PaletteMeta {
+  label: string
+  icon?: ReactNode
+  /** Monospace — a path, a URL, a size. */
+  mono?: boolean
+  /** Fainter than the rest of the column: an age, a count. */
+  dim?: boolean
+}
+
+/* A row is data. Every field below is a *slot* the renderer in `list.tsx`
+   knows where to put, which is what keeps forty rows built by nine functions
+   lined up: no row brings its own markup or its own `ml-auto`. */
 export interface PaletteItem {
   /** Unique within the page; also cmdk's item value, so selection survives a
       re-render that reorders the list. */
@@ -27,15 +53,24 @@ export interface PaletteItem {
   title: string
   /** Extra words that should match but are not printed. */
   keywords?: string
-  /** Drawn instead of the title, for a row that needs more than one line. */
-  render?: ReactNode
+  /** The glyph in the leading tile. */
   icon?: ReactNode
-  /** Trailing content — bring your own `ml-auto`. */
-  trailing?: ReactNode
+  /** A second line under the title — a snippet, a verdict, what the row does
+      when its title alone does not say. */
+  subtitle?: ReactNode
+  /** Small chips after the title: a state ("Disabled"), a status, "Last used". */
+  badges?: PaletteBadge[]
+  /** The right-hand column: where the row goes, what it is currently set to. */
+  meta?: PaletteMeta[]
   chord?: string
   /** Draws the tick. */
   checked?: boolean
-  className?: string
+  /** The title shimmers: a thread whose turn is running. */
+  running?: boolean
+  /** A dot before the title: unseen since this device last looked. */
+  fresh?: boolean
+  /** Drawn faded: an exited thread, a disabled routine. Still selectable. */
+  muted?: boolean
   /** Pinned regardless of score: `"bottom"` is for a row that is *about* the
       query (start a thread with it, search for it) and must never take ↵ from a
       command the query actually names. */

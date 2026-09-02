@@ -60,6 +60,9 @@ export interface ThreadDeps {
       whether its project still exists has to be handed a reader. */
   projects: () => Project[]
   refreshSessions: () => Promise<void>
+  /** Invalidate the projects slice of the catalog — for `project_changed`,
+      which says a row moved without saying it is the only thing that did. */
+  refreshProjects: () => Promise<void>
   /** Told when this thread stops being reachable at all, so the registry can
       forget it. The connection cannot remove itself from a map it does not
       own. */
@@ -979,13 +982,13 @@ export class ThreadConnection {
       /* The session's whole settings state, from wherever it changed: the
          handshake, this device, or another one. It is absolute, so applying it
          twice is the same as applying it once. */
-      onSessionConfig: (modes, modeId, configOptions, promptCapabilities) => {
-        if (modes !== undefined || configOptions !== undefined || promptCapabilities !== undefined) {
+      onSessionConfig: (modes, modeId, configOptions, promptCapabilities, canPause) => {
+        if (modes !== undefined || configOptions !== undefined || promptCapabilities !== undefined || canPause !== undefined) {
           /* Left out means unchanged, and the reducer is what resolves it:
              inside a batched replay this action is not committed yet, so reading
              the current value here would read the thread as it was before the
              replay began. */
-          send({ type: "session-config", id, modes: modes ?? null, configOptions, promptCapabilities })
+          send({ type: "session-config", id, modes: modes ?? null, configOptions, promptCapabilities, canPause })
         } else if (modeId) {
           send({ type: "mode", id, modeId })
         }
@@ -1011,6 +1014,10 @@ export class ThreadConnection {
         send({ type: "spawn-config", id, profileId, model, effort, personaId }),
       onTtft: (ms) => send({ type: "ttft", id, ms }),
       onQuota: (quota) => send({ type: "quota", id, quota }),
+      onTurnChanges: (turn) => send({ type: "turn-changes", id, turn }),
+      /* The catalog is TanStack Query's; the row is refetched, not patched
+         in from a socket frame (docs/client.md, "one owner per slice"). */
+      onProjectChanged: () => void this.deps.refreshProjects(),
       onTurnEnded: (usage, error, promptText, catchingUp, continued, turnId) => {
         send({ type: "turn-active", id, active: false })
         if (usage) send({ type: "usage", id, usage, turnId })
@@ -1129,7 +1136,10 @@ export class ThreadConnection {
       onCursor: (cursor) => {
         this.cursor = cursor
       },
-      onCaughtUp: (cursor, promptActive, queue) => {
+      onPaused: (paused) => {
+        send({ type: "paused", id, paused })
+      },
+      onCaughtUp: (cursor, promptActive, queue, paused) => {
         this.cursor = cursor
         if (this.socket === owner()) this.promptActiveAtLoad = promptActive
         /* The document (or the socket) reached the end of what it had. An
@@ -1147,6 +1157,7 @@ export class ThreadConnection {
         // Not journaled, so it rides here — the way an open permission is handed
         // over after the replay rather than replayed.
         send({ type: "queue", id, items: queue })
+        send({ type: "paused", id, paused })
         flush()
       },
       /* A page of older history arrived and the socket is about to fold the

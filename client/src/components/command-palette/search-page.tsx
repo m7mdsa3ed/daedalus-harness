@@ -21,7 +21,7 @@ import * as React from "react"
 import { Loader2, MessageSquarePlusIcon, SearchXIcon } from "lucide-react"
 import { useNavigate } from "react-router"
 
-import { CommandGroup, CommandSeparator } from "@/components/ui/command"
+import { CommandSeparator } from "@/components/ui/command"
 import { useSidebar } from "@/components/ui/sidebar"
 import { KEYS } from "@/lib/shortcuts"
 import { searchThreads, type SearchResult } from "@/lib/search"
@@ -31,7 +31,7 @@ import { useProjects } from "@/lib/queries/catalog"
 import { threadPath } from "@/lib/router"
 import { useLiveTurnActive, useStoreSelect } from "@/lib/store"
 import { usePalette } from "./context"
-import { Row, type PaletteItem } from "./list"
+import { Group, Row, type PaletteItem } from "./list"
 import { messageItem, threadItem } from "./rows"
 import { score } from "./score"
 
@@ -123,7 +123,7 @@ export function SearchPage() {
     threadItem({
       session,
       group: "Threads",
-      project: projectName(session.projectId),
+      project: projects.find((project) => project.id === session.projectId) ?? "Other",
       running: liveTurnActive.get(session.id) ?? session.promptActive,
       onSelect: () => open(session.id),
       always: true,
@@ -134,15 +134,15 @@ export function SearchPage() {
 
   return (
     <>
-      <CommandGroup heading={query ? "Threads" : "Recent threads"}>
+      <Group heading={query ? "Threads" : "Recent threads"}>
         {threadRows.length > 0 ? (
           threadRows.map((item) => <Row key={item.id} item={item} />)
         ) : (
           <Note>No thread title matches “{query}”.</Note>
         )}
-      </CommandGroup>
+      </Group>
 
-      <CommandGroup heading="Messages">
+      <Group heading="Messages">
         {messageRows.map((item) => <Row key={item.id} item={item} />)}
         {/* The state of the request, always said in words: a group that is
             silently empty for 200ms reads as "nothing found", which is a
@@ -170,12 +170,12 @@ export function SearchPage() {
             Updating…
           </Note>
         )}
-      </CommandGroup>
+      </Group>
 
       {query.length > 0 && (
         <>
           <CommandSeparator />
-          <CommandGroup>
+          <Group>
             <Row
               item={{
                 id: "search:ask",
@@ -187,7 +187,7 @@ export function SearchPage() {
                 onSelect: () => palette.run(() => palette.newThread({ text: query })),
               }}
             />
-          </CommandGroup>
+          </Group>
         </>
       )}
     </>
@@ -198,6 +198,6 @@ export function SearchPage() {
     not a cmdk item, so ↑/↓ walk straight past it. */
 function Note({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-2 px-2 py-3 text-sm text-muted-foreground">{children}</div>
+    <div className="flex items-center gap-2 px-2 py-2.5 text-xs text-muted-foreground">{children}</div>
   )
 }

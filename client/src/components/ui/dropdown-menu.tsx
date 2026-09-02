@@ -1,5 +1,6 @@
 import * as React from "react"
 import { Menu as MenuPrimitive } from "@base-ui/react/menu"
+import { useRender } from "@base-ui/react/use-render"
 
 import { cn } from "@/lib/utils"
 import { HugeiconsIcon } from "@hugeicons/react"
@@ -48,8 +49,23 @@ function DropdownMenuContent({
   )
 }
 
+/* Base UI's `Menu.GroupLabel` reads its group from context and *throws*
+   (production error #31) when it cannot find one, so a label dropped loose in
+   the content takes the whole menu down. The two components that publish that
+   context are `Menu.Group` and `Menu.RadioGroup`; this flag mirrors them, so
+   `DropdownMenuLabel` can tell whether it has a group to name and fall back to
+   a plain caption instead of crashing when it has not. Wrapping the label and
+   the items it heads in a group is still the correct thing to write — that is
+   what associates them for a screen reader — this only stops the omission from
+   being fatal. */
+const InMenuGroup = React.createContext(false)
+
 function DropdownMenuGroup({ ...props }: MenuPrimitive.Group.Props) {
-  return <MenuPrimitive.Group data-slot="dropdown-menu-group" {...props} />
+  return (
+    <InMenuGroup.Provider value={true}>
+      <MenuPrimitive.Group data-slot="dropdown-menu-group" {...props} />
+    </InMenuGroup.Provider>
+  )
 }
 
 function DropdownMenuLabel({
@@ -59,15 +75,44 @@ function DropdownMenuLabel({
 }: MenuPrimitive.GroupLabel.Props & {
   inset?: boolean
 }) {
+  const grouped = React.useContext(InMenuGroup)
+  const { render, style, ...rest } = props
+  const merged = cn(
+    "px-3 py-2.5 text-xs text-muted-foreground data-inset:pl-9.5",
+    className
+  )
+
+  /* Outside a group there is nothing for the label to be associated with, so
+     it is drawn as the caption it already looks like rather than throwing.
+     `useRender` is Base UI's own, so `render`, function-valued `className` and
+     `style`, and refs keep behaving exactly as they do on the real part. */
+  const fallback = useRender({
+    render,
+    state: {},
+    props: {
+      "data-slot": "dropdown-menu-label",
+      "data-inset": inset,
+      role: "presentation",
+      className: merged,
+      style,
+      ...rest,
+    },
+    // eslint-disable-next-line react-hooks/rules-of-hooks -- `grouped` is fixed
+    // for the lifetime of the element: a label does not move between menus.
+    enabled: !grouped,
+  })
+
+  if (!grouped) {
+    return fallback
+  }
   return (
     <MenuPrimitive.GroupLabel
       data-slot="dropdown-menu-label"
       data-inset={inset}
-      className={cn(
-        "px-3 py-2.5 text-xs text-muted-foreground data-inset:pl-9.5",
-        className
-      )}
-      {...props}
+      className={merged}
+      style={style}
+      render={render}
+      {...rest}
     />
   )
 }
@@ -179,10 +224,12 @@ function DropdownMenuCheckboxItem({
 
 function DropdownMenuRadioGroup({ ...props }: MenuPrimitive.RadioGroup.Props) {
   return (
-    <MenuPrimitive.RadioGroup
-      data-slot="dropdown-menu-radio-group"
-      {...props}
-    />
+    <InMenuGroup.Provider value={true}>
+      <MenuPrimitive.RadioGroup
+        data-slot="dropdown-menu-radio-group"
+        {...props}
+      />
+    </InMenuGroup.Provider>
   )
 }
 

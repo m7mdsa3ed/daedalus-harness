@@ -1,5 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
@@ -17,7 +17,9 @@ import type { Project } from "./projects.js";
 import { getProfile, listProfiles, profileBaseUrl, profileSupports } from "./profiles.js";
 import { agentModelId, bareModelId, getAgent, modelAllowlistFor } from "./registry.js";
 import { gatewayUrlFor, setGatewaySessionResolver, type GatewaySession } from "./gateway-shim.js";
-import { getProject } from "./projects.js";
+import { getProject, updateProject } from "./projects.js";
+import { SCRATCH_TEMPLATE_ID, detectDevCommand } from "./templates.js";
+import { startDevServer } from "./dev-server.js";
 import { getConfig, loadConfig } from "./config.js";
 import { WEB_SEARCH_SERVER_NAME, toMcpServerEnv } from "./websearch.js";
 import { pruneWebSearchUsage, recordWebSearchUsage } from "./websearch-usage.js";
@@ -32,6 +34,9 @@ import { deleteSearchIndex } from "./search.js";
 import { getQuota, invalidateQuota, planReadable } from "./quota.js";
 import { profileUsage } from "./usage-api.js";
 import { SessionJournal } from "./session-journal.js";
+import { TurnChangesRecorder } from "./turn-changes.js";
+import { OpencodeSubagentFeed } from "./opencode-subagents.js";
+import { PortPool } from "./net.js";
 import { SessionSocket } from "./session-socket.js";
 import {
   JOURNALED_EVENTS,
@@ -776,6 +781,11 @@ export class SessionManager {
        does not claim to be today's, because attaching journals nothing. */
     if (event.ev === "turn_started" || event.ev === "turn_ended") {
       session.lastActivityAt = Date.now();
+      /* And what the turn did to the worktree, measured by git rather than
+         read off the transcript (turn-changes.ts). Off the prompt path: both
+         calls return at once and do their git work on the next tick. */
+      if (event.ev === "turn_started") this.turnChanges.begin(session.id, event.turnId);
+      else this.turnChanges.end(session.id, event.turnId);
       /* And how that turn went, in the same write. A turn beginning clears the
          last one's failure — the thread is being worked on again, and a row
          that still said "failed" would be describing a turn two ago — and a
@@ -1256,6 +1266,15 @@ export class SessionManager {
        the stale prompt file cleared as much as one that gained a persona needs
        it written. */
     const persona = resolvePersonaSpawn(session.id, session.personaId, agent);
+    /* An agent whose children never reach ACP is given a port and a secret so
+       the server can read them off its own event bus (opencode-subagents.ts).
+       Minted here, per spawn, never stored — like the gateway key. The pool
+       is empty only in the first moments after boot; a thread spawned then
+       runs without the feed and the log says so, rather than waiting. */
+    const wantsFeed = agent?.subagentFeed === "opencode-http";
+    const feedPort = wantsFeed ? this.ports.take() : undefined;
+    const sidecar = feedPort ? { port: feedPort, password: randomBytes(24).toString("hex") } : undefined;
+    if (wantsFeed && !sidecar) console.warn(`[${session.id.slice(0, 8)}] no port ready for the subagent feed; spawning without it`);
     const proc = spawnAgent(
       profile,
       session.agentId,
@@ -1264,7 +1283,19 @@ export class SessionManager {
       ownsCatalog ? effort : undefined,
       session.id,
       persona,
+      sidecar,
     );
+    const feed = sidecar
+      ? new OpencodeSubagentFeed({
+          ...sidecar,
+          /* The bridge below fills this on `session/new`/`session/load`; the
+             feed holds a child seen before then and re-checks it after. Read
+             through the session so a respawn's stale feed sees null, not the
+             successor's id. */
+          rootSessionId: () => (session.proc === proc ? session.bridge?.acpSessionId ?? null : null),
+        })
+      : undefined;
+    if (feed) proc.on("close", () => feed.close());
     const { mcpServers, websearchViaMcp, workflowViaMcp } = this.serversFor(session, profile, project);
     session.websearchViaMcp = websearchViaMcp;
     session.websearchCalls = new Set(); // in-flight calls went with the old process
@@ -1273,7 +1304,7 @@ export class SessionManager {
     // load that failed and mark a thread that has just been restored fine.
     session.liveAcpSessionId = null;
     session.historyLost = null;
-    const bridge = new AcpBridge(this.hostFor(session), agentStream(proc), {
+    const bridge = new AcpBridge(this.hostFor(session), agentStream(proc, feed?.stream), {
       cwd: project.cwd,
       mcpServers,
       ...opts,
@@ -1668,16 +1699,18 @@ export class SessionManager {
     text: string,
     peer: Peer | undefined,
     opts: { attachments?: AttachmentRef[]; forceLink?: boolean } = {},
-  ): { turnId: string } {
+  ): { turnId: string; deferred?: boolean } {
     /* One id per logical turn: steering (a second prompt while one is in
        flight) joins the turn already running rather than starting another. */
     const turnId = bridge.promptActive && bridge.currentTurnId ? bridge.currentTurnId : randomUUID();
-    bridge.prompt(text, peer, turnId, opts);
+    /* `deferred` = the words went out but their bubble is held for the step
+       boundary, so the sender must not draw one of its own. */
+    const { deferred } = bridge.prompt(text, peer, turnId, opts);
     if (text && session.title === "New thread") {
       session.title = text.slice(0, TITLE_SNIFF_MAX);
       this.persist(session);
     }
-    return { turnId };
+    return deferred ? { turnId, deferred } : { turnId };
   }
 
   // ---- the queue ----
@@ -1685,6 +1718,57 @@ export class SessionManager {
   /** The queue block — the drain, the edits, steer and "send now" — lives in
       session-queue.ts, behind a port of exactly the two prompt-path steps it
       drives. The public methods below keep the manager's surface identical. */
+  /** Loopback ports for spawns that need one (`subagentFeed`), bound ahead of
+      time because `start` is synchronous — see net.ts. */
+  private readonly ports = new PortPool();
+
+  /** Per-turn worktree snapshots and their diffs — see turn-changes.ts. */
+  readonly turnChanges = new TurnChangesRecorder({
+    cwdOf: (id) => this.sessions.get(id)?.project?.cwd ?? null,
+    emit: (id, turn) => {
+      const session = this.sessions.get(id);
+      if (!session) return;
+      this.emit(session, { ev: "turn_changes", turn });
+      if (turn.ended) this.senseDevCommand(session);
+    },
+  });
+
+  /**
+   * A project built from scratch has no dev command until the agent has
+   * chosen a stack; the end of a turn is when the directory can be asked.
+   * Reads `daedalus.json` / `package.json` (templates.ts › detectDevCommand),
+   * writes the answer onto the row, points every session of the project at
+   * the fresh row, tells the peers (`project_changed`) and starts the server
+   * — the same thing the scaffold route does for a template, one turn later.
+   * Only a project that Build mode made and that still has no command: a
+   * plain project the user never gave one is left alone, and a command once
+   * written is the user's (Settings › Projects) and never re-sensed.
+   */
+  private senseDevCommand(session: Session): void {
+    const project = session.project;
+    if (!project || project.devCommand || project.templateId !== SCRATCH_TEMPLATE_ID) return;
+    let command: string | null;
+    try {
+      command = detectDevCommand(project.cwd);
+    } catch {
+      return;
+    }
+    if (!command) return;
+    const current = getProject(project.id);
+    if (!current || current.devCommand) return;
+    const updated = updateProject(project.id, { ...current, devCommand: command });
+    if (!updated) return;
+    for (const other of this.sessions.values()) {
+      if (other.project?.id === updated.id) {
+        other.project = updated;
+        this.emit(other, { ev: "project_changed", project: updated });
+      }
+    }
+    startDevServer(updated.id).catch((error) =>
+      console.error(`[dev-server] start after sensing ${command} for ${updated.id} failed`, error),
+    );
+  }
+
   private queue = new SessionQueue({
     emit: (session, event) => this.emit(session, event),
     whenSpawnable: (session) => this.whenSpawnable(session),

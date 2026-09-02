@@ -191,6 +191,7 @@ export type ShortcutId =
   | "splitRight"
   | "reopenPanel"
   | "terminal"
+  | "preview"
   | "save"
   | "send"
   | "steer"
@@ -249,6 +250,10 @@ export const KEYS = {
       is not part of the vocabulary — and ⌘` is macOS's own "cycle windows",
       which this app should not be taking. */
   terminal: "mod+j",
+  /** The project's live preview, beside the thread. ⇧ on the terminal's
+      chord: the two are the same gesture — "show me the thing running" —
+      and nothing in Chromium or Electron claims ⌘⇧J's neighbour. */
+  preview: "mod+shift+e",
   /** The editor panel's own — bound on the window when a dirty file is in
       front, and inside the editor itself where the caret lives. */
   save: "mod+s",
@@ -290,6 +295,14 @@ export const SHORTCUTS: ShortcutDef[] = [
     note: "A shell on the Daedalus server, in the current thread's project directory.",
   },
   {
+    id: "preview",
+    scope: "Global",
+    label: "Open the preview",
+    chords: [KEYS.preview],
+    rebindable: true,
+    note: "The current thread's project, running in its managed dev server. Only for a project with a dev command.",
+  },
+  {
     id: "reopenPanel",
     scope: "Global",
     label: "Reopen the last closed panel",
@@ -304,7 +317,7 @@ export const SHORTCUTS: ShortcutDef[] = [
     scope: "Composer",
     label: "Send",
     chords: ["enter"],
-    note: "While the agent is working this queues the message for when it finishes. Shift+Enter inserts a newline. On touch it is the other way round — Return is a newline and the send button sends.",
+    note: "While the agent is working this queues the message for when it finishes. Shift+Enter inserts a newline. The send menu beside the button can swap the two (Enter breaks the line, the steer chord sends). On touch it is always the other way round — Return is a newline and the send button sends.",
   },
   {
     id: "steer",

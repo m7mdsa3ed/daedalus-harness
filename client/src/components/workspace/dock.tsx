@@ -27,6 +27,7 @@ import "dockview-react/dist/styles/dockview.css"
 
 import { ChatPanel } from "@/components/workspace/chat-panel"
 import { EditorPanel } from "@/components/workspace/editor-panel"
+import { SourceControlPanel } from "@/components/workspace/source-control-panel"
 import { PanelContainer } from "@/components/workspace/panel-container"
 import { PanelTab } from "@/components/workspace/panel-tab"
 import { TerminalPanel } from "@/components/workspace/terminal-panel"
@@ -437,7 +438,7 @@ export function useWorkspaceDock(): DockController {
             continue
           }
           const gone =
-            descriptor.kind === "chat"
+            descriptor.kind === "chat" || descriptor.kind === "review"
               ? !sessions.has(descriptor.sessionId)
               : !pruneProjects
                 ? false
@@ -627,7 +628,12 @@ export function WorkspaceDock({
     ))
     map.editor = contained(EditorPanel as React.FC<IDockviewPanelProps>)
     map.terminal = contained(TerminalPanel as React.FC<IDockviewPanelProps>)
-    map.web = contained(WebPanel as React.FC<IDockviewPanelProps>)
+    map.review = contained(SourceControlPanel as React.FC<IDockviewPanelProps>)
+    /* The preview mode hands errors and picked elements to a thread, which
+       is a send — so the web panel takes `actions` the way the chat does. */
+    map.web = contained((props) => (
+      <WebPanel {...(props as React.ComponentProps<typeof WebPanel>)} actions={actions} />
+    ))
     return map
   }, [actions])
 

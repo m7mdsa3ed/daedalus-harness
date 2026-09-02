@@ -46,7 +46,10 @@
  * package published from its own repo.
  */
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
+import { copyFile, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 
 import {
@@ -56,6 +59,9 @@ import {
   relativePath,
   resolveInProject,
 } from "./workspace-fs.js";
+import type { ChangedFile } from "./db/schema.js";
+
+export type { ChangedFile } from "./db/schema.js";
 
 /** Longest any single git invocation may run. Hooks are the usual culprit. */
 const TIMEOUT_MS = 20_000;
@@ -117,12 +123,18 @@ interface RunResult {
  * the user is running in a terminal next door — this panel refreshes on every
  * file event, and taking the index lock to do it would be a nasty surprise.
  */
-function run(cwd: string, args: string[]): Promise<RunResult> {
+function run(cwd: string, args: string[], env?: Record<string, string>): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     execFile(
       "git",
       ["--no-optional-locks", "-c", "core.quotepath=false", ...args],
-      { cwd, timeout: TIMEOUT_MS, maxBuffer: MAX_BUFFER, windowsHide: true },
+      {
+        cwd,
+        timeout: TIMEOUT_MS,
+        maxBuffer: MAX_BUFFER,
+        windowsHide: true,
+        ...(env ? { env: { ...process.env, ...env } } : {}),
+      },
       (error, stdout, stderr) => {
         if (!error) return resolve({ stdout, stderr });
         const err = error as NodeJS.ErrnoException & { killed?: boolean; code?: number | string };
@@ -514,6 +526,154 @@ export async function checkout(
   await run(dir, options.create ? ["checkout", "-b", branch, "--"] : ["checkout", branch, "--"]);
 }
 
+/* ── History: the checkpoints Build mode restores to ──
+   The App builder persona commits after every completed change, so the log
+   is a list of restore points in the user's own words. Restoring is a *new
+   commit* whose tree is the old one, never a reset: the history stays whole,
+   the dev server's watcher sees an ordinary write, and a restore can itself
+   be restored from. Anything uncommitted is committed first under its own
+   name, so the one thing a restore never does is lose work. */
+
+export interface GitCommit {
+  hash: string;
+  short: string;
+  subject: string;
+  author: string;
+  /** Unix seconds. */
+  at: number;
+  filesChanged: number;
+  insertions: number;
+  deletions: number;
+}
+
+const RS = "\x1e";
+const US = "\x1f";
+/** The most `log` hands back however large the limit asked for. */
+const LOG_MAX = 200;
+
+/** The most recent commits, newest first, with a per-commit shortstat. An
+    unborn repository is an empty list, not an error. */
+export async function log(
+  projectId: string,
+  options: { limit?: number; repo?: string } = {},
+): Promise<GitCommit[]> {
+  const { dir } = await repoOrThrow(projectId, options.repo);
+  const limit = Math.max(1, Math.min(LOG_MAX, Math.floor(options.limit ?? 50)));
+  let stdout: string;
+  try {
+    ({ stdout } = await run(dir, [
+      "log",
+      `--max-count=${limit}`,
+      "--shortstat",
+      `--format=${RS}%H${US}%h${US}%s${US}%an${US}%at`,
+    ]));
+  } catch (err) {
+    /* No commits yet — `git log` on an unborn branch is a 128, and a fresh
+       scaffold whose `git init` succeeded but whose commit did not is one. */
+    if (err instanceof WorkspaceError && /does not have any commits|bad default revision|unknown revision/i.test(err.message))
+      return [];
+    throw err;
+  }
+  const out: GitCommit[] = [];
+  for (const chunk of stdout.split(RS)) {
+    if (!chunk.trim()) continue;
+    const [head = "", ...rest] = chunk.split("\n");
+    const [hash = "", short = "", subject = "", author = "", at = "0"] = head.split(US);
+    if (!hash) continue;
+    const stat = rest.join("\n");
+    const files = /(\d+) files? changed/.exec(stat);
+    const ins = /(\d+) insertions?/.exec(stat);
+    const del = /(\d+) deletions?/.exec(stat);
+    out.push({
+      hash,
+      short,
+      subject,
+      author,
+      at: Number(at) || 0,
+      filesChanged: files ? Number(files[1]) : 0,
+      insertions: ins ? Number(ins[1]) : 0,
+      deletions: del ? Number(del[1]) : 0,
+    });
+  }
+  return out;
+}
+
+/** Whether the worktree has anything to commit, untracked files included. */
+async function isDirty(dir: string): Promise<boolean> {
+  const { stdout } = await run(dir, ["status", "--porcelain=v2", "-z", "--untracked-files=all"]);
+  return stdout.length > 0;
+}
+
+/** Commit under the harness's own identity when the machine has none — the
+    same fallback `templates.ts` uses for the scaffold commit. */
+async function commitAll(dir: string, message: string): Promise<void> {
+  await run(dir, ["add", "--all"]);
+  try {
+    await run(dir, ["commit", "--quiet", "--message", message]);
+  } catch (err) {
+    if (!(err instanceof WorkspaceError) || !/user\.(name|email)|Please tell me who you are/i.test(err.message)) throw err;
+    await run(dir, [
+      "-c", "user.name=Daedalus", "-c", "user.email=daedalus@localhost",
+      "commit", "--quiet", "--message", message,
+    ]);
+  }
+}
+
+/** Commit everything as a named checkpoint. Answers whether there was
+    anything to commit — a clean tree is not a failure, it is "already
+    checkpointed". */
+export async function checkpoint(
+  projectId: string,
+  message: string,
+  options: { repo?: string } = {},
+): Promise<{ committed: boolean; commit: GitCommit | null }> {
+  const { dir } = await repoOrThrow(projectId, options.repo);
+  const text = message.trim() || "Checkpoint";
+  if (!(await isDirty(dir))) return { committed: false, commit: null };
+  await commitAll(dir, text);
+  const [commit = null] = await log(projectId, { limit: 1, repo: options.repo });
+  return { committed: true, commit };
+}
+
+const HASH = /^[0-9a-f]{7,40}$/;
+
+/**
+ * Make the working tree what it was at `hash`, as a new commit on top.
+ *
+ * Uncommitted work is committed first ("Checkpoint before restore"), then the
+ * index and worktree are read from the target tree (`read-tree -u --reset`
+ * removes what the target does not have, which `checkout <hash> -- .` would
+ * not) and committed. Untracked, ignored files — `node_modules`, `.env` —
+ * are not the tree's and are left alone. Restoring to HEAD's own tree is a
+ * no-op answered as such.
+ */
+export async function restoreTo(
+  projectId: string,
+  hash: string,
+  options: { repo?: string } = {},
+): Promise<{ restored: boolean; commit: GitCommit | null }> {
+  const { dir } = await repoOrThrow(projectId, options.repo);
+  const target = hash.trim();
+  if (!HASH.test(target)) throw fail(400, "a restore needs a commit hash");
+  let full: string;
+  let subject: string;
+  try {
+    ({ stdout: full } = await run(dir, ["rev-parse", "--verify", `${target}^{commit}`]));
+    ({ stdout: subject } = await run(dir, ["log", "-1", "--format=%s", full.trim()]));
+  } catch {
+    throw fail(404, `no such commit: ${target}`);
+  }
+  full = full.trim();
+  if (await isDirty(dir)) await commitAll(dir, "Checkpoint before restore");
+  const { stdout: headTree } = await run(dir, ["rev-parse", "HEAD^{tree}"]);
+  const { stdout: targetTree } = await run(dir, ["rev-parse", `${full}^{tree}`]);
+  if (headTree.trim() === targetTree.trim()) return { restored: false, commit: null };
+  await run(dir, ["read-tree", "-u", "--reset", full]);
+  await commitAll(dir, `Restore to ${full.slice(0, 7)}: ${subject.trim()}`.slice(0, 200));
+  const [commit = null] = await log(projectId, { limit: 1, repo: options.repo });
+  return { restored: true, commit };
+}
+
 export type Comparison = "worktree" | "staged" | "head";
 
 /**
@@ -556,4 +716,262 @@ export async function fileAt(
   } catch {
     return { content: "", missing: true };
   }
+}
+
+/* ── Trees: what a turn did to the worktree ──
+   The review panel measures a turn by git, not by the transcript: an edit tool
+   declares what it changed, a `sed` in a shell does not, and the two have to
+   read the same. So the worktree is photographed as a tree object before and
+   after each turn (session_turn_changes), and everything below is arithmetic
+   on trees — a diff between two of them, or between one and a snapshot taken
+   right now. Snapshots go through a scratch index so the real one, the thing
+   `stage`/`unstage` edit and the user's own terminal reads, is never touched. */
+
+/** The directory git runs in for a cwd, or `null` when it is not inside a
+    worktree. It is the cwd itself, not the worktree root: a project inside a
+    larger checkout is measured — and its diffs are cut — at the project
+    (`--relative` below), the way `status` scopes itself with `-- .`. */
+export async function repoDirAt(cwd: string): Promise<string | null> {
+  return (await toplevelOf(cwd)) ? cwd : null;
+}
+
+/**
+ * Write the whole worktree — tracked, modified, untracked, but not ignored —
+ * as a tree object, and answer its id. The scratch index starts as a copy of
+ * the real one so git's stat cache carries over and only files that actually
+ * changed are re-hashed; on a repository with no index yet it starts empty.
+ * The object is dangling (nothing references it) and git will prune it after
+ * its grace period, which is why a reader treats a missing tree as
+ * "unavailable" rather than as an error.
+ */
+export async function snapshotTree(dir: string): Promise<string> {
+  const { stdout } = await run(dir, ["rev-parse", "--git-path", "index"]);
+  const realIndex = join(dir, stdout.trim());
+  const scratch = join(tmpdir(), `daedalus-index-${randomBytes(6).toString("hex")}`);
+  try {
+    if (existsSync(realIndex)) await copyFile(realIndex, scratch);
+    const env = { GIT_INDEX_FILE: scratch };
+    await run(dir, ["add", "--all", "--", "."], env);
+    const tree = await run(dir, ["write-tree"], env);
+    return tree.stdout.trim();
+  } finally {
+    await unlink(scratch).catch(() => {});
+  }
+}
+
+/** Whether an object is still in the store — a turn's trees can be gc'd. */
+export async function hasObject(dir: string, oid: string): Promise<boolean> {
+  try {
+    await run(dir, ["cat-file", "-e", `${oid}^{tree}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const STATUS_OF: Record<string, ChangedFile["status"]> = {
+  A: "added",
+  M: "modified",
+  D: "deleted",
+  R: "renamed",
+  C: "added",
+  T: "modified",
+};
+
+/**
+ * The files that differ between two trees, with per-file line counts. Two
+ * invocations — `--name-status` for the kind of change and `--numstat` for the
+ * counts — joined on the path, because git has no single `-z` format that
+ * carries both. Renames are detected so a moved file reads as one row.
+ */
+export async function diffTrees(dir: string, from: string, to: string): Promise<ChangedFile[]> {
+  const [names, nums] = await Promise.all([
+    run(dir, ["diff", "--relative", "--name-status", "-z", "-M", from, to]),
+    run(dir, ["diff", "--relative", "--numstat", "-z", "-M", from, to]),
+  ]);
+  const counts = new Map<string, { additions: number; deletions: number; binary: boolean }>();
+  {
+    /* `--numstat -z`: `<add>\t<del>\t<path>\0`, or for a rename
+       `<add>\t<del>\t\0<from>\0<to>\0`. `-` on both counts means binary. */
+    const parts = nums.stdout.split("\0");
+    for (let i = 0; i < parts.length; i++) {
+      const head = parts[i];
+      if (!head) continue;
+      const [add, del, inline] = head.split("\t");
+      let path = inline;
+      if (path === undefined || path === "") {
+        i += 2;
+        path = parts[i] ?? "";
+      }
+      counts.set(path, {
+        additions: add === "-" ? 0 : Number(add) || 0,
+        deletions: del === "-" ? 0 : Number(del) || 0,
+        binary: add === "-" && del === "-",
+      });
+    }
+  }
+  const files: ChangedFile[] = [];
+  const parts = names.stdout.split("\0");
+  for (let i = 0; i < parts.length; i++) {
+    const code = parts[i];
+    if (!code) continue;
+    const kind = code[0];
+    let from: string | undefined;
+    let path: string;
+    if (kind === "R" || kind === "C") {
+      from = parts[++i] ?? "";
+      path = parts[++i] ?? "";
+    } else {
+      path = parts[++i] ?? "";
+    }
+    const count = counts.get(path) ?? { additions: 0, deletions: 0, binary: false };
+    files.push({
+      path,
+      ...(from !== undefined && kind === "R" ? { from } : {}),
+      status: STATUS_OF[kind] ?? "modified",
+      ...count,
+    });
+  }
+  return files;
+}
+
+/** The unified patch between two trees, for one path or for everything. */
+export async function patchBetween(dir: string, from: string, to: string, path?: string): Promise<string> {
+  const { stdout } = await run(dir, [
+    "diff",
+    "--relative",
+    "-M",
+    "--no-color",
+    "--no-ext-diff",
+    from,
+    to,
+    ...(path ? ["--", path] : []),
+  ]);
+  return stdout;
+}
+
+/**
+ * Apply a unified patch — one hunk the panel cut out of a file's diff — to the
+ * index (`cached`, "stage this hunk") or, reversed, to the worktree ("discard
+ * this hunk"). git checks the preimage, so a hunk whose surroundings have
+ * moved on since the diff was drawn is refused with git's own explanation
+ * rather than applied somewhere else.
+ */
+export async function applyPatch(
+  projectId: string,
+  patch: string,
+  options: { cached?: boolean; reverse?: boolean; repo?: string } = {},
+): Promise<void> {
+  const { dir } = await repoOrThrow(projectId, options.repo);
+  if (!patch.trim()) throw fail(400, "an empty patch applies nothing");
+  const args = ["apply", "--whitespace=nowarn"];
+  if (options.cached) args.push("--cached");
+  if (options.reverse) args.push("--reverse");
+  args.push("-");
+  await new Promise<void>((resolve, reject) => {
+    const child = execFile(
+      "git",
+      ["--no-optional-locks", ...args],
+      { cwd: dir, timeout: TIMEOUT_MS, maxBuffer: MAX_BUFFER, windowsHide: true },
+      (error, stdout, stderr) => {
+        if (!error) return resolve();
+        const message = (stderr || stdout || error.message).trim();
+        reject(fail(409, message.slice(0, 4000)));
+      },
+    );
+    child.stdin?.end(patch.endsWith("\n") ? patch : `${patch}\n`);
+  });
+}
+
+/* ── Stash ──
+   The working set's parking spot: set aside the uncommitted work (staged and
+   unstaged alike, untracked only when asked) so a branch can be switched or a
+   piece of work paused, then brought back with `apply` (which keeps the stash)
+   or `pop` (which drops it). Each entry is `stash@{<n>}`; `n` is a stable index
+   the list reports, and the verbs take that number rather than the message — a
+   message is text from the browser and would be a pathspec/ref injection point
+   if it reached a shell, whereas the numeric index is an argument git parses as
+   an object name. An empty working set is not an error: "stash" with nothing to
+   stash simply does nothing, and answering 409 would turn a no-op button into a
+   failure. */
+
+export interface StashEntry {
+  /** The `stash@{n}` index, newest first (`git stash list` reports 0 as newest). */
+  index: number;
+  /** `stash@{n}` — the ref the apply/pop/drop verbs take. */
+  ref: string;
+  message: string;
+  /** Unix seconds of the stash's author date, or null when git omits it. */
+  at: number | null;
+}
+
+/** Whether there is anything to stash — `git stash` on a clean tree is a no-op
+    that we answer as "nothing stashed" rather than an error. */
+async function isStashable(dir: string): Promise<boolean> {
+  const { stdout } = await run(dir, [
+    "status",
+    "--porcelain=v2",
+    "-z",
+    "--untracked-files=all",
+  ]);
+  return stdout.length > 0;
+}
+
+export async function stashPush(
+  projectId: string,
+  options: { message?: string; repo?: string } = {},
+): Promise<{ created: boolean }> {
+  const { dir } = await repoOrThrow(projectId, options.repo);
+  if (!(await isStashable(dir))) return { created: false };
+  const args = ["stash", "push", "-m", options.message?.trim() || "Stash"];
+  const { stdout, stderr } = await run(dir, args);
+  // "No local changes to save" is git's own clean-tree answer; treat as no-op.
+  if (/No local changes to save/i.test(stderr) || /No local changes to save/i.test(stdout))
+    return { created: false };
+  return { created: true };
+}
+
+export async function stashList(projectId: string, repo?: string): Promise<StashEntry[]> {
+  const { dir } = await repoOrThrow(projectId, repo);
+  /* `%H` full hash keeps the ref unambiguous, `%gd` is the `stash@{n}`, `%s` the
+     message, and a date only when one exists. Entries are NUL-grouped (`-z`) —
+     a message containing a newline cannot then split across rows. */
+  const { stdout } = await run(dir, [
+    "stash",
+    "list",
+    "-z",
+    "--format=%gd%x1f%s%x1f%ad%x1e",
+    "--date=unix",
+  ]);
+  const entries: StashEntry[] = [];
+  for (const group of stdout.split("\x1e")) {
+    if (!group) continue;
+    const [ref, message = "", date] = group.split("\x1f");
+    if (!ref) continue;
+    const match = /stash@\{(\d+)\}/.exec(ref);
+    entries.push({
+      index: match ? Number(match[1]) : entries.length,
+      ref,
+      message,
+      at: date && /^\d+$/.test(date) ? Number(date) : null,
+    });
+  }
+  return entries;
+}
+
+const stashRef = (index: number): string => `stash@{${index}}`;
+
+export async function stashApply(projectId: string, index: number, repo?: string): Promise<void> {
+  const { dir } = await repoOrThrow(projectId, repo);
+  await run(dir, ["stash", "apply", stashRef(index)]);
+}
+
+export async function stashPop(projectId: string, index: number, repo?: string): Promise<void> {
+  const { dir } = await repoOrThrow(projectId, repo);
+  await run(dir, ["stash", "pop", stashRef(index)]);
+}
+
+export async function stashDrop(projectId: string, index: number, repo?: string): Promise<void> {
+  const { dir } = await repoOrThrow(projectId, repo);
+  await run(dir, ["stash", "drop", stashRef(index)]);
 }

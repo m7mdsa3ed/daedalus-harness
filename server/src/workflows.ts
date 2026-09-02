@@ -25,7 +25,7 @@
  * server: one level, never a tree.
  */
 import { randomBytes, randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { db, workflowRuns as runsTable, type WorkflowRunStatus, type WorkflowStepRecord } from "./db/index.js";
 import { safeKeyEqual } from "./gateway-shim.js";
 import { getProfile } from "./profiles.js";
@@ -88,8 +88,55 @@ interface Run {
   outputs: Record<string, unknown>;
   /** Aborted on cancel; every running step's wait is racing it. */
   abort: AbortController;
-  totalTimer: ReturnType<typeof setTimeout>;
+  /** The run's clock. Paused with the run: a deadline that kept advancing
+      through a hold would fail the run for the time the user spent thinking. */
+  totalTimer: PausableTimer;
+  /** Every running step's own clock, for the same reason. */
+  stepTimers: Set<PausableTimer>;
   waiters: ((view: RunView) => void)[];
+  /** Steps holding between a step's prompts (the JSON repair turn) until the
+      run is running again — see `whenRunning`. */
+  resumeWaiters: (() => void)[];
+}
+
+/**
+ * A timeout that can stand still. `setTimeout` has no pause, and re-arming
+ * one by hand at every hold is how a clock ends up armed twice; this keeps
+ * the remaining time itself and re-arms exactly once on resume.
+ */
+class PausableTimer {
+  private handle: ReturnType<typeof setTimeout> | null = null;
+  private remaining: number;
+  private armedAt = 0;
+  private fn: () => void;
+  constructor(ms: number, fn: () => void) {
+    this.remaining = ms;
+    this.fn = fn;
+    this.arm();
+  }
+  private arm(): void {
+    this.armedAt = Date.now();
+    this.handle = setTimeout(() => {
+      this.handle = null;
+      this.fn();
+    }, this.remaining);
+    this.handle.unref();
+  }
+  pause(): void {
+    if (!this.handle) return;
+    clearTimeout(this.handle);
+    this.handle = null;
+    this.remaining = Math.max(0, this.remaining - (Date.now() - this.armedAt));
+  }
+  resume(): void {
+    if (this.handle || this.remaining < 0) return;
+    this.arm();
+  }
+  clear(): void {
+    if (this.handle) clearTimeout(this.handle);
+    this.handle = null;
+    this.remaining = -1;
+  }
 }
 
 type UpdateEvent = Extract<ThreadEvent, { ev: "update" }>;
@@ -170,13 +217,13 @@ export class WorkflowRunner {
       ),
       outputs: {},
       abort: new AbortController(),
-      totalTimer: setTimeout(
-        () => this.finishRun(run, "failed", `timed out after ${def.totalTimeoutSec ?? LIMITS.totalTimeoutSec.default}s`),
-        (def.totalTimeoutSec ?? LIMITS.totalTimeoutSec.default) * 1000,
+      totalTimer: new PausableTimer((def.totalTimeoutSec ?? LIMITS.totalTimeoutSec.default) * 1000, () =>
+        this.finishRun(run, "failed", `timed out after ${def.totalTimeoutSec ?? LIMITS.totalTimeoutSec.default}s`),
       ),
+      stepTimers: new Set(),
       waiters: [],
+      resumeWaiters: [],
     };
-    run.totalTimer.unref();
     this.runs.set(run.id, run);
     db.insert(runsTable)
       .values({
@@ -205,6 +252,15 @@ export class WorkflowRunner {
       : null;
   }
 
+  /** `status`, but only for a run of that thread's — the browser's routes
+      name a thread, and a run id on another thread is not theirs to touch. */
+  statusFor(parentId: string, runId: string): RunView | null {
+    const run = this.runs.get(runId);
+    if (run) return run.parent.id === parentId ? this.view(run) : null;
+    const row = db.select().from(runsTable).where(eq(runsTable.id, runId)).get();
+    return row && row.parentSessionId === parentId ? this.status(runId) : null;
+  }
+
   /** The run's view once it is over, or as it stands when `timeoutMs` runs out. */
   wait(runId: string, timeoutMs: number): Promise<RunView | null> {
     const run = this.runs.get(runId);
@@ -230,6 +286,73 @@ export class WorkflowRunner {
     return true;
   }
 
+  /**
+   * Hold the run. No pending step starts; every running step that can be
+   * paused (its thread's agent advertises the harness's pause — our own
+   * runtime) holds at its next step boundary; a step that cannot runs to its
+   * end and its dependents wait. Both clocks stop. What ACP has instead is
+   * `session/cancel`, and a cancel throws the step away — the whole reason
+   * this is a state of the run and not a cancel-and-restart.
+   */
+  pause(runId: string): boolean {
+    const run = this.runs.get(runId);
+    if (!run || run.status !== "running") return false;
+    run.status = "paused";
+    run.totalTimer.pause();
+    for (const t of run.stepTimers) t.pause();
+    for (const child of this.liveSteps(run)) {
+      if (child.bridge?.canPause) void child.bridge.pause().catch(() => {});
+    }
+    this.persist(run);
+    this.emitState(run);
+    return true;
+  }
+
+  resume(runId: string): boolean {
+    const run = this.runs.get(runId);
+    if (!run || run.status !== "paused") return false;
+    run.status = "running";
+    run.totalTimer.resume();
+    for (const t of run.stepTimers) t.resume();
+    for (const child of this.liveSteps(run)) {
+      if (child.bridge?.paused) void child.bridge.resume().catch(() => {});
+    }
+    this.persist(run);
+    this.emitState(run);
+    for (const w of run.resumeWaiters.splice(0)) w();
+    this.pump(run);
+    return true;
+  }
+
+  /** The threads of the run's running steps, live. */
+  private liveSteps(run: Run): Session[] {
+    const out: Session[] = [];
+    for (const s of run.steps.values()) {
+      if (s.status !== "running" || !s.sessionId) continue;
+      const child = this.manager.get(s.sessionId);
+      if (child && !child.exited) out.push(child);
+    }
+    return out;
+  }
+
+  /** Resolves when the run is running or over — what a step waits on before
+      sending a prompt of its own into a hold. */
+  private whenRunning(run: Run): Promise<void> {
+    if (run.status !== "paused") return Promise.resolve();
+    return new Promise((resolve) => run.resumeWaiters.push(resolve));
+  }
+
+  /** The run's hold, said on the parent — journaled with the spawns it holds,
+      so a replayed card stands still where the live one did. */
+  private emitState(run: Run): void {
+    this.manager.emitOn(run.parent.id, {
+      ev: "update",
+      seq: 0,
+      historyReplay: false,
+      update: { sessionUpdate: "_daedalus/workflow_state", runId: run.id, paused: run.status === "paused" },
+    });
+  }
+
   /** The parent's process is gone (retired, deleted, crashed): nobody is
       waiting on the answer any more, and its steps must not run on. */
   cancelForParent(parentId: string, reason: string): void {
@@ -243,7 +366,7 @@ export class WorkflowRunner {
       told, so a reopened thread shows the steps as disconnected rather than
       forever running. */
   recoverAtBoot(): void {
-    const rows = db.select().from(runsTable).where(eq(runsTable.status, "running")).all();
+    const rows = db.select().from(runsTable).where(inArray(runsTable.status, ["running", "paused"])).all();
     for (const row of rows) {
       const steps = row.steps.map((s) => ({
         ...s,
@@ -278,7 +401,10 @@ export class WorkflowRunner {
     const started = new Set([...run.steps.values()].filter((s) => s.status !== "pending").map((s) => s.name));
     const running = [...run.steps.values()].filter((s) => s.status === "running").length;
     const ready = readySteps(run.def, done, started);
-    let slots = Math.min(run.def.maxParallel - running, MAX_LIVE_CHILDREN - this.liveChildren);
+    /* A paused run starts nothing — but is still allowed to finish: a step
+       that was already running when the hold began may be the last one, and
+       a run with nothing left to do is complete, held or not. */
+    let slots = run.status === "paused" ? 0 : Math.min(run.def.maxParallel - running, MAX_LIVE_CHILDREN - this.liveChildren);
     for (const step of ready) {
       if (slots <= 0) break;
       slots -= 1;
@@ -288,7 +414,7 @@ export class WorkflowRunner {
     if (pending.length === 0) {
       const failed = [...run.steps.values()].find((s) => s.status === "failed");
       this.finishRun(run, failed ? "failed" : "completed", failed ? `step "${failed.name}" failed: ${failed.error}` : null);
-    } else if (running === 0 && ready.length === 0 && this.liveChildren < MAX_LIVE_CHILDREN) {
+    } else if (running === 0 && ready.length === 0 && this.liveChildren < MAX_LIVE_CHILDREN && run.status !== "paused") {
       // Pending steps none of which can ever run: a dependency was skipped.
       for (const s of pending) this.patchStep(run, s.name, { status: "skipped", endedAt: Date.now() });
       this.pump(run);
@@ -345,6 +471,10 @@ export class WorkflowRunner {
             daedalus: {
               workflow: {
                 runId: run.id,
+                /* The thread the run belongs to, so the card — which is drawn
+                   from the log with no thread of its own in hand — can address
+                   `/api/sessions/:id/workflows/:runId/…`. */
+                sessionId: run.parent.id,
                 name: run.def.name,
                 step: step.name,
                 index: run.def.steps.findIndex((s) => s.name === step.name),
@@ -398,6 +528,9 @@ export class WorkflowRunner {
       let issue: string | null = null;
       let next: string = prompt;
       for (;;) {
+        /* Between prompts (the repair turn) as well as before the first: a
+           step does not put a prompt into a held run. */
+        await this.whenRunning(run);
         attempt += 1;
         text = "";
         textBytes = 0;
@@ -460,20 +593,26 @@ export class WorkflowRunner {
     const reply = await this.manager.prompt(child.id, text);
     if (!("turnId" in reply)) throw new WorkflowError("the step's thread was busy"); // a fresh child never is
     const settled = this.manager.whenTurnSettled(child.id, reply.turnId);
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: PausableTimer | undefined;
     let onAbort = () => {};
     const result = await Promise.race<{ kind: "settled"; error?: TurnOutcome["error"]; interrupted: boolean } | { kind: "timeout" } | { kind: "cancelled" }>([
       settled.then((o) => ({ kind: "settled" as const, ...o })),
       new Promise((resolve) => {
-        timer = setTimeout(() => resolve({ kind: "timeout" }), stepTimeoutSec(step) * 1000);
-        timer.unref();
+        timer = new PausableTimer(stepTimeoutSec(step) * 1000, () => resolve({ kind: "timeout" }));
+        // Born held if the run is: a step whose child is being paused right
+        // now must not have its clock running while it stands.
+        if (run.status === "paused") timer.pause();
+        run.stepTimers.add(timer);
       }),
       new Promise((resolve) => {
         onAbort = () => resolve({ kind: "cancelled" });
         run.abort.signal.addEventListener("abort", onAbort, { once: true });
       }),
     ]);
-    clearTimeout(timer);
+    if (timer) {
+      timer.clear();
+      run.stepTimers.delete(timer);
+    }
     run.abort.signal.removeEventListener("abort", onAbort);
     if (result.kind !== "settled") {
       // The turn is still open in the child; ask it to stop before the retire
@@ -494,12 +633,14 @@ export class WorkflowRunner {
     run.status = status;
     run.error = error;
     run.endedAt = Date.now();
-    clearTimeout(run.totalTimer);
+    run.totalTimer.clear();
     for (const s of run.steps.values()) {
       if (s.status === "pending") this.patchStep(run, s.name, { status: "cancelled", endedAt: run.endedAt });
     }
-    // Running steps hear this through their race and close themselves.
+    // Running steps hear this through their race and close themselves — a
+    // held one included: its child's cancel releases the pause with the turn.
     run.abort.abort();
+    for (const w of run.resumeWaiters.splice(0)) w();
     this.persist(run);
     const view = this.view(run);
     for (const w of run.waiters.splice(0)) w(view);
@@ -540,7 +681,7 @@ export class WorkflowRunner {
 }
 
 function terminal(status: WorkflowRunStatus): boolean {
-  return status !== "running";
+  return status !== "running" && status !== "paused";
 }
 
 function stepTimeoutSec(step: WorkflowStep): number {

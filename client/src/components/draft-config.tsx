@@ -89,12 +89,20 @@ export function DraftScopeRow({
   meta,
   actions,
   remember = true,
+  hideProject = false,
+  leading,
 }: {
   meta: SessionMeta
   actions: Actions
   /** False when these controls are editing a saved configuration rather than
       the draft you are about to send — see `useDraft`. */
   remember?: boolean
+  /** Drop the project half. For a caller whose project does not exist yet —
+      the build page, which makes one from a starter at send time. */
+  hideProject?: boolean
+  /** Drawn where the project picker would be (or after the agent when the
+      project is shown): the build page's starter picker. */
+  leading?: React.ReactNode
 }) {
   const { projects, agents, profiles, project, profile, agent, configure } = useDraft(meta, actions, remember)
 
@@ -104,7 +112,9 @@ export function DraftScopeRow({
   useStripSummary({
     id: "scope",
     icon: BotIcon,
-    label: `${agent?.name ?? "No agent"} · ${project?.name ?? "No project"}`,
+    label: hideProject
+      ? (agent?.name ?? "No agent")
+      : `${agent?.name ?? "No agent"} · ${project?.name ?? "No project"}`,
   })
 
   /* Switching agent keeps the profile when it serves the new agent too — that
@@ -144,28 +154,40 @@ export function DraftScopeRow({
         }))}
         onSelect={chooseAgent}
       />
-      {divider}
-      <PickerMenu
-        icon={<ProjectIcon project={project} className="size-3.5" />}
-        label={project?.name ?? "No project"}
-        title="Project"
-        value={project?.id ?? ""}
-        options={projects.map((p) => ({
-          value: p.id,
-          name: p.name,
-          hint: p.cwd,
-          icon: <ProjectIcon project={p} className="size-4" />,
-        }))}
-        onSelect={(id) => configure({ projectId: id })}
-      />
+      {leading && (
+        <>
+          {divider}
+          {leading}
+        </>
+      )}
+      {!hideProject && (
+        <>
+          {divider}
+          <PickerMenu
+            icon={<ProjectIcon project={project} className="size-3.5" />}
+            label={project?.name ?? "No project"}
+            title="Project"
+            value={project?.id ?? ""}
+            options={projects.map((p) => ({
+              value: p.id,
+              name: p.name,
+              hint: p.cwd,
+              icon: <ProjectIcon project={p} className="size-4" />,
+            }))}
+            onSelect={(id) => configure({ projectId: id })}
+          />
+        </>
+      )}
       {divider}
       <ThreadToolsMenu meta={meta} actions={actions} editable remember={remember} />
     </div>
   )
 }
 
-/** One inline picker on the strip: icon, current value, menu. */
-function PickerMenu({
+/** One inline picker on the strip: icon, current value, menu. Exported for
+    the build page's starter picker, which sits in this row's project slot and
+    has to read as the same control. */
+export function PickerMenu({
   icon,
   label,
   title,

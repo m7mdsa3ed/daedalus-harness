@@ -36,7 +36,8 @@ const RULES = `A workflow is a set of named steps. Each step runs its prompt in 
 Write it either way: \`steps\` is one flat list ordered by dependsOn; \`phases\` is that list grouped into up to ${LIMITS.maxPhases} named stages (\`[{name, steps:[…]}]\`) that run one after another — a phase begins only when every step of the phase before it has completed, and its own steps run side by side. Prefer phases when the work has stages ("research" then "implement" then "verify"): the stages are named for the reader, and within them you only need dependsOn for ordering *inside* a phase.
 Templates: a prompt may contain {{inputs.NAME}} and {{steps.STEP.output}} (STEP must be in that step's dependsOn, or — with phases — in any earlier phase). When a step declares \`output: {schema}\` its reply must contain exactly one \`\`\`json fence matching that JSON Schema; then {{steps.STEP.output.path.to.field}} reads into it (arrays by index). A reply that does not validate gets one repair turn, then the step fails.
 Steps run with your permission mode and cannot start workflows themselves. A step takes a few seconds to start. A step that fails skips everything depending on it; siblings already running finish.
-Each call returns within its wait budget. If the returned status is "running", call wait_workflow with the runId until it is completed, failed or cancelled. Step outputs are in \`steps[].output\`.`;
+A run can be paused (pause_workflow): no further step starts, steps whose runtime can hold do so at their next step boundary (a step on a runtime that cannot runs to its end), and the clocks stop; resume_workflow carries on exactly where it stood. Nothing is thrown away, which is what makes it a pause and not a cancel.
+Each call returns within its wait budget. If the returned status is "running" or "paused", call wait_workflow with the runId until it is completed, failed or cancelled. Step outputs are in \`steps[].output\`.`;
 
 async function call(path: string, init: RequestInit = {}): Promise<unknown> {
   const res = await fetch(`${url}${path}`, {
@@ -135,6 +136,28 @@ server.registerTool(
     }
   },
 );
+
+for (const verb of ["pause", "resume"] as const) {
+  server.registerTool(
+    `${verb}_workflow`,
+    {
+      title: verb === "pause" ? "Pause a workflow" : "Resume a workflow",
+      description:
+        verb === "pause"
+          ? "Hold a running workflow: no further step starts, pausable steps hold at their next step boundary, and the clocks stop. Nothing is lost — resume_workflow continues it."
+          : "Continue a paused workflow exactly where it stood.",
+      inputSchema: { runId: z.string().min(1) },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ runId }) => {
+      try {
+        return summarize(await call(`/runs/${encodeURIComponent(runId)}/${verb}`, { method: "POST", body: "{}" }));
+      } catch (error) {
+        return failed(error);
+      }
+    },
+  );
+}
 
 const transport = new StdioServerTransport();
 server

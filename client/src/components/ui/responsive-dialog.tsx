@@ -23,9 +23,15 @@ import { Cancel01Icon } from "@hugeicons/core-free-icons"
    Layout invariant: header and footer are `shrink-0`, and everything between
    them is collected into one `min-h-0 flex-1 overflow-y-auto` region — the
    only part that scrolls. No sticky positioning, so a dialog with no body
-   collapses to exactly header + footer. */
+   collapses to exactly header + footer.
+
+   `tall` is the escape hatch for rich editing surfaces (a task's detail: a
+   description, a checklist, comments). It raises the sheet's height cap to
+   near-full screen on mobile and the dialog's to 92svh on desktop — it never
+   goes fullscreen, so the grab handle and the swipe-to-dismiss stay. */
 
 const MobileCtx = React.createContext(false)
+const TallCtx = React.createContext(false)
 
 /* The panel: shared by the centred popup and the sheet. `data-slot` is what
    index.css keys the glass background/blur/shadow on. */
@@ -42,30 +48,35 @@ function ResponsiveDialog({
   open,
   onOpenChange,
   children,
+  tall = false,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   children: React.ReactNode
+  /** Near-full-height surface: raises the sheet's mobile cap and the desktop cap. */
+  tall?: boolean
 }) {
   const isMobile = useIsMobile()
   return (
-    <MobileCtx.Provider value={isMobile}>
-      {isMobile ? (
-        <DrawerPrimitive.Root
-          data-slot="responsive-dialog"
-          open={open}
-          onOpenChange={onOpenChange}
-          modal
-          swipeDirection="down"
-        >
-          {children}
-        </DrawerPrimitive.Root>
-      ) : (
-        <DialogPrimitive.Root data-slot="responsive-dialog" open={open} onOpenChange={onOpenChange}>
-          {children}
-        </DialogPrimitive.Root>
-      )}
-    </MobileCtx.Provider>
+    <TallCtx.Provider value={tall}>
+      <MobileCtx.Provider value={isMobile}>
+        {isMobile ? (
+          <DrawerPrimitive.Root
+            data-slot="responsive-dialog"
+            open={open}
+            onOpenChange={onOpenChange}
+            modal
+            swipeDirection="down"
+          >
+            {children}
+          </DrawerPrimitive.Root>
+        ) : (
+          <DialogPrimitive.Root data-slot="responsive-dialog" open={open} onOpenChange={onOpenChange}>
+            {children}
+          </DialogPrimitive.Root>
+        )}
+      </MobileCtx.Provider>
+    </TallCtx.Provider>
   )
 }
 
@@ -122,6 +133,7 @@ type ContentProps = Omit<
 
 function ResponsiveDialogContent({ className, bodyClassName, children, ...props }: ContentProps) {
   const isMobile = React.useContext(MobileCtx)
+  const tall = React.useContext(TallCtx)
   const { header, body, footer } = partitionChildren(children)
 
   if (isMobile) {
@@ -146,7 +158,8 @@ function ResponsiveDialogContent({ className, bodyClassName, children, ...props 
               SURFACE,
               SHEET_INSET,
               // A sheet floating off the bottom edge, following the finger.
-              "fixed inset-x-0 bottom-0 z-50 m-(--drawer-inset) flex max-h-[calc(100dvh-6rem)] min-h-0 origin-bottom flex-col rounded-4xl select-none",
+              "fixed inset-x-0 bottom-0 z-50 m-(--drawer-inset) flex min-h-0 origin-bottom flex-col rounded-4xl select-none",
+              tall ? "max-h-[calc(100dvh-1.5rem)]" : "max-h-[calc(100dvh-6rem)]",
               "transform-[translate3d(0,var(--drawer-swipe-movement-y),0)] will-change-transform",
               "[--closed-transform:translate3d(0,calc(100%+var(--drawer-inset)+2px),0)]",
               "transition-[transform,opacity] duration-450 ease-[cubic-bezier(0.22,1,0.36,1)]",
@@ -192,7 +205,8 @@ function ResponsiveDialogContent({ className, bodyClassName, children, ...props 
         data-slot="dialog-content"
         className={cn(
           SURFACE,
-          "fixed top-1/2 left-1/2 z-50 flex max-h-[85svh] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-4xl sm:max-w-lg",
+          "fixed top-1/2 left-1/2 z-50 flex w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-4xl sm:max-w-lg",
+          tall ? "max-h-[92svh]" : "max-h-[85svh]",
           "duration-100 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className
         )}

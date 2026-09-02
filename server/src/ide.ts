@@ -35,7 +35,7 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
+import { freePort } from "./net.js";
 import { join } from "node:path";
 
 import { z } from "zod";
@@ -133,21 +133,6 @@ function spawnSyncQuiet(command: string): boolean {
   return !result.error && result.status === 0;
 }
 
-/** An unused loopback port. Bound and released rather than guessed — the window
-    between the release and code-server's own bind is small enough that a
-    collision is a failed start the user can retry, and picking a number out of
-    a range collides far more often than that. */
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const probe = createServer();
-    probe.once("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
-      const address = probe.address();
-      const port = typeof address === "object" && address ? address.port : 0;
-      probe.close(() => (port ? resolve(port) : reject(new Error("no free port"))));
-    });
-  });
-}
 
 /* ── Surviving a restart ──
  *

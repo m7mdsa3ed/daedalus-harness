@@ -31,7 +31,7 @@ import {
   type SkillDef,
   type CommandDef,
 } from "./settings"
-import { scheduledKey } from "./queries/keys"
+import { projectsKey, scheduledKey } from "./queries/keys"
 import { useCatalogReader } from "./queries/catalog"
 import type { ScheduleInput } from "./queries/routines"
 import { fetchQuota, planReadable } from "./quota"
@@ -87,6 +87,7 @@ export function useActions(settings: ServerSettings) {
         refreshSessions: async () => {
           await refreshSessions()
         },
+        refreshProjects: () => queryClient.invalidateQueries({ queryKey: projectsKey(settings) }),
       },
       probe: serverReachable,
       onParked: startHealthPoll,
@@ -724,6 +725,17 @@ export function useActions(settings: ServerSettings) {
             if (!alreadyRunning) dispatch({ type: "turn-active", id: sessionId, active: true })
             return
           }
+          if (reply.deferred) {
+            /* A steer whose bubble the server is holding until the running
+               step ends. The words ARE on the wire — this is not the queued
+               case — but where they belong in the transcript is not known yet,
+               and no runtime reads them before that boundary either. So the
+               optimistic bubble comes off exactly as it does for a queue, and
+               the held `turn_started` draws it at the position a reload will
+               agree with. The indicator stays lit: the turn is running. */
+            dispatch({ type: "drop-user-message", id: sessionId })
+            return
+          }
           dispatch({ type: "tag-user-turn", id: sessionId, turnId: reply.turnId })
         } catch (error) {
           /* For a draft we set turn-active ourselves above, so clear it on
@@ -894,6 +906,24 @@ export function useActions(settings: ServerSettings) {
           recordError(sessionId, error, "Couldn't steer with the queued message")
           throw error
         }
+      },
+
+      /** Hold the turn at its next step boundary, or let it go on. The
+          `paused` event is what moves the toggle, this device's included, so
+          nothing is dispatched here. */
+      async pause(sessionId: string) {
+        await requireLive(sessionId).pause()
+      },
+
+      async resume(sessionId: string) {
+        await requireLive(sessionId).resume()
+      },
+
+      /** Hold or release a harness workflow run of this thread. The hold is
+          said back as a journaled `_daedalus/workflow_state` on the thread,
+          which is what moves the card. */
+      async setWorkflowPaused(sessionId: string, runId: string, paused: boolean) {
+        await postJson(settings, `/api/sessions/${sessionId}/workflows/${runId}/${paused ? "pause" : "resume"}`, {})
       },
 
       async stop(sessionId: string) {

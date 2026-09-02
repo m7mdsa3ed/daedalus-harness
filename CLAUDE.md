@@ -72,6 +72,12 @@ describes; every one of those rules cost a bug.
   (`server/src/registry.ts`); each carries `introduced` and `since` seed versions, and seeding
   backfills fields a release adds but never replaces name/command/args/env — those are the
   user's, and editable through `PUT /api/agents/:id`.
+- **Whether an agent is installed is measured, never assumed** (`server/src/agent-status.ts`,
+  `GET /api/agents/status`, Settings › Agents): the command is resolved like `spawn` does and
+  every absolute path in the args must exist (an unbuilt `agent/dist` reads as not installed,
+  not as `node` present); a missing one shows its install line. Versions come from the ACP
+  `initialize` answer (`protocolVersion` + `agentInfo`), never a parsed `--version`. In-memory,
+  5-minute TTL, evicted on row edit, `?refresh=1` re-measures. → `docs/architecture.md`
 - **The server is deployed built, not with tsx.** `pnpm build` → `server/dist/` via
   `tsconfig.build.json` (`tsconfig.json` stays `noEmit` — it is what the editor and tests
   typecheck); `pnpm serve` runs it, `pnpm pm2:start` builds, pushes the schema and starts on
@@ -144,11 +150,23 @@ describes; every one of those rules cost a bug.
   plans, compaction. Questions arrive as `elicitation/create`, not as a permission request;
   narrow with `isFormElicitation`/`isUrlElicitation`, never `mode === "form"`. `decline` is a
   real answer; `cancel` aborts the tool call.
+- **ACP has no pause — `session/cancel` throws the step away — so pause is the harness's own
+  pair**, `_daedalus/session/pause`/`resume`, advertised by an agent as
+  `agentCapabilities._meta["daedalus/pause"]` and taken only by our runtime, which holds at
+  its next model step (`Session.gate` in `prepareStep`, subagents included) with nothing
+  lost. `session_config.canPause` offers it; `pause`/`resume` commands answer with the
+  absolute, live-only `paused` event, stated again on `caught_up`. A cancel clears the pause
+  on both ends; a paused session with no turn open holds its next prompt at its first step.
 - **Subagents: the store is flat, the transcript is a tree.** Three runtimes say ownership
   three ways; it is resolved in one place (`applySessionUpdate`'s `owner` — `_meta` outranks
   the child session id) and lands as `parentId` on every item, with `lib/transcript-rows.ts`
   building the tree at view time. Consumers reading `thread.items` must ignore `parentId`
-  items where the thread's own are meant.
+  items where the thread's own are meant. **OpenCode's children are read off the side of the
+  process, on the server** (`AgentDef.subagentFeed`, `server/src/opencode-subagents.ts`): its
+  ACP bridge drops them, so the spawn gets `--port` plus a per-spawn password, the server
+  subscribes to the `/event` bus and re-emits each child as an RFD subagent session through
+  `agentStream(proc, extra)`. Nothing downstream learns a fourth shape. Retire it when
+  sst/opencode#40654 ships.
 - The server splices the agent's stderr into errors on the way out
   (`SessionManager.enrichError`); a turn dying with the process is held until the stderr has
   drained. `GET /api/sessions/:id/stderr` exposes the tail. `app.onError` turns every route
@@ -240,6 +258,14 @@ describes; every one of those rules cost a bug.
   cost travels as `_daedalus/subagent_usage`, because `turn_ended` is not mirrored. One level,
   never a tree; the MCP server drives the engine over `/wf/<key>/<sessionId>/…`; nothing
   survives a restart (`recoverAtBoot`). `pnpm test:workflow-schema`, `pnpm test:workflow`.
+- **A run pauses as a state, never as a cancel-and-restart** (`WorkflowRunner.pause`,
+  status `paused`): no pending step starts, a running step whose child `canPause` is held
+  at its step boundary (any other runs to its end and its dependents wait), and both clocks
+  are `PausableTimer`s that stand still. Journaled on the parent as
+  `_daedalus/workflow_state {runId, paused}` and stamped onto every step's `workflow` by
+  the reducer, since a run has no item of its own; the spawn stamp carries the parent
+  `sessionId` for the card's `/api/sessions/:id/workflows/:runId/pause|resume`. The agent
+  gets `pause_workflow`/`resume_workflow`. A restart ends a paused run as it ends a running one.
 
 ### Client and UI → `docs/client.md`
 
@@ -271,6 +297,12 @@ describes; every one of those rules cost a bug.
   every one of its threads.
 - **Everything with a face is drawn by `components/entity-icon.tsx`** — `EntityIcon` plus
   `AgentIcon`/`ProfileIcon`/`ProjectIcon`. No component draws a folder for a project.
+- **The composer is `components/composer.tsx`: one card, two rows** — the box, and one
+  toolbar where everything that *adds to* the message is behind the "+" menu and everything
+  about *how it sends* (queue/steer, Schedule…, the Enter preference in
+  `lib/composer-prefs.ts`) is behind the chevron beside a filled Send, also a long-press on
+  Send on touch and a right-click on a mouse. Touch targets and the camera follow
+  `useCoarsePointer` (the device); what Enter means follows `useIsMobile` (the width).
 - **A slash command is either the agent's or the harness's, and the composer draws one
   list**; the agent's catalog shadows the harness's, and a draft thread is offered no harness
   commands. An `@` mention is text in the prompt *and* a `resource_link` beside it, added
@@ -292,14 +324,109 @@ describes; every one of those rules cost a bug.
   toasts are for failures with no surface to go back to. An error a surface could render as
   *emptiness* must be rendered as an error. Toasts are Base UI's, raised only through
   `lib/toast.ts`, and anything with a visible wait goes through `reportPromise`.
-- **The dock holds four panel kinds: chat, editor, terminal and web.** The IDE, explorer,
-  source-control, output and agents panels are gone from the client (the server's `ide.ts`,
-  `ide-proxy.ts` and `git.ts` remain; git is still read by the editor's diff mode). None of
-  the subagent or workflow machinery was affected.
+- **The dock holds five panel kinds: chat, editor, terminal, web and review.** The IDE,
+  explorer, source-control, output and agents panels are gone from the client (the server's
+  `ide.ts`, `ide-proxy.ts` and `git.ts` remain; git is read by the editor's diff mode and by
+  the review panel). None of the subagent or workflow machinery was affected.
+- **A turn's changes are measured by git, never read off the transcript.** The worktree is
+  photographed as a tree object at `turn_started` and `turn_ended` (`git.snapshotTree`, a
+  scratch index — the real one is never touched; `server/src/turn-changes.ts`,
+  `session_turn_changes`), so a `sed` in a shell and an Edit tool read the same. The summary
+  rides the live-only `turn_changes` event and `GET /api/sessions/:id/changes`; hunks are
+  read live per scope (`turn:<id>` = its two trees, or start tree → disk while it runs;
+  `uncommitted` = HEAD → disk, untracked included). The review panel (`review-panel.tsx`,
+  keyed by session, opened from the footer chip) stages, discards and commits through the
+  project's existing git routes plus `apply` for one hunk; git's refusal of a stale hunk is
+  shown, not smoothed over. A project that is not a repository reads as a sentence.
 - A project has a page of its own (`/projects/<id>`): the live half from the store, the
   settled half from one `GET /api/projects/:id/stats`, refetched on mount and by Refresh and
   **never on a timer**. **Turns, not events**, are what is counted, buckets are local-time,
   and a tile skeletons rather than zeroes.
+
+### Tasks → `docs/tasks.md`
+
+- **A board is a project of work, not a kanban**: it owns a `key`, its columns, sprints,
+  saved views and custom field definitions (`server/src/boards.ts`); a task's `KEY-n` is
+  minted from `boards.next_number` inside the create transaction and backfilled onto
+  pre-key rows by `ensureDefaultBoard`. **A column's `category` is what the harness
+  knows** — entering a `done` column stamps `completed_at`, leaving one clears it, and
+  everything that counts "done" reads the stamp, never the name. `wip_limit` is advisory.
+- **The tree is `parent_id`** (an epic's children or a task's subtasks, by the parent's
+  `type`), same board only, never a descendant; deleting a parent *detaches*. Every change
+  is written to `task_activity` by `updateTask` — history is recorded, not diffed. Sprints
+  are `planned → active → closed`, one active per board, and completing one asks where the
+  open tasks go, the way a column delete does. **No foreign keys**; every cascade is by hand.
+- Client: `lib/tasks-view.ts` is the pure half (filters, grouping, sort, derived facts,
+  saved-view ↔ `ViewState`); how a board is *read* is device-local, a *saved* view is the
+  server's. Every view takes the one `ViewProps` contract and never touches the cache; the
+  open task is `?task=<id>`. `pnpm test:boards`.
+
+### Build mode → `docs/build-mode.md`
+
+- **Build mode is composition, and a template is a directory.** `/build` scaffolds
+  `templates/<id>/` (everything but `template.json`, lockfile included) into
+  `config.appsDir` (`~/daedalus-apps`), `git init`s it, records a project with
+  `devCommand`/`templateId`, and starts the dev server — the harness does it, never
+  the agent's first turn. Scaffolding is the **one write outside a project root**
+  and follows `plans/project-studio.md`'s rules (absolute existing parent, empty or
+  absent target, undo on row failure). Every template honours `PORT` and
+  `BASE_PATH` (leading and trailing slash) and ships an `AGENTS.md` saying the dev
+  server is the harness's.
+- **The dev server is a pinned terminal** (`server/src/dev-server.ts` over
+  `terminals.ts`, `role: "dev"|"install"`), one per project, status absolute
+  (`DevStatus`, streamed as NDJSON on `/api/projects/:id/dev/events`, never
+  persisted client-side). Errors are read off its output as bursts (two blank
+  lines or 400ms end a report). **Never kill a dev server by command pattern** —
+  this host runs other Vite servers under pm2. Any project with `devCommand` set
+  gets a preview, template or not.
+- **The preview proxy keeps the prefix and the key is the credential.**
+  `/preview/<key>/<projectId>/…` is outside `/api` (an iframe cannot send a bearer),
+  key minted per boot and never stored; the app's `base` *is* the prefix, so the
+  path is forwarded unchanged (Vite accepts its HMR upgrade only at
+  `pathname === base`), `Host` is rewritten to loopback, frame headers dropped.
+  Transport lives in `reverse-proxy.ts`, shared with `ide-proxy.ts`. HTML gets the
+  bridge script injected (`preview-bridge.ts`); the iframe stays sandboxed
+  **without `allow-same-origin`** (same origin as the harness = the token), so the
+  bridge speaks only `postMessage` and the panel checks `event.source`.
+- **`/build`'s prompt box is the thread composer on a real draft**, persona
+  `builtin:app-builder`, project half of the scope row swapped for the stack picker;
+  `beforeSend` scaffolds, re-points the draft's project and navigates, then the ordinary
+  send materialises it. Never a lookalike textarea.
+- **The stack is sensed from the prompt, never defaulted** (`client/src/lib/stack-sense.ts`,
+  pure): each starter's `signals` in its manifest score the brief, a stack no starter ships
+  (Next.js, Flask, Go…) answers *from scratch*, and an explicit card click outranks both.
+  From scratch is `templateId: null` on `POST /api/projects/from-template` → an empty repo
+  with the rules file, `templateId: "scratch"` (`SCRATCH_TEMPLATE_ID`, a sentinel no
+  `templates/` directory may claim) and **no dev command**. The agent scaffolds the stack;
+  at `turn_ended` the manager reads `daedalus.json` (`dev`/`check`/`build`/`install`) then
+  `package.json` scripts (`templates.ts › detectDevCommand`), writes the command onto the
+  row once, fans out the live-only `project_changed`, and starts the server. A project with
+  no template reads its task and install commands the same way.
+- The preview panel is the web panel with `viewId: "preview"` on a project: its
+  URL comes from `DevStatus.url` at render, never from stored params. Browser and
+  terminal errors merge into one strip whose "Fix" sends the bolt-shaped prompt to
+  the project's thread; a picked element is appended to the composer draft, not
+  sent. A page outside the dock **queues** panels (`lib/workspace/pending-panels.ts`)
+  for the shell to open after `openChat`.
+- **Every opener names the panel through `previewPanel(projectId)`** and is gated
+  on `project.devCommand`. The panel **starts the server on mount, from `off`
+  only** — never from `failed`/`exited`. A thread of a *scaffolded* project
+  (`templateId` set) opens with its preview beside it, once per thread per page
+  load, in the background.
+- **Check and build are `DevStatus.task`**: the project's own script in a
+  `role: "build"` terminal, one at a time, not tied to the run generation; its
+  errors carry `source: "check" | "build"` and take the same Fix. **Auto-fix sends
+  an error at most twice** (`AUTO_FIX_ROUNDS`, keyed by `errorSignature`) and only
+  to an idle thread; the ledger clears on (re)start.
+- **Restore is a new commit with the old tree, never a reset** (`git.ts ›
+  restoreTo`: checkpoint anything uncommitted, `read-tree -u --reset`, commit).
+  History is `git log --shortstat` in a record-separated format. The persona
+  commits after each change in the user's words because each commit is a restore
+  point. `pnpm test:history`.
+- The bridge also forwards **every console level** (`daedalus:console`, rate-capped)
+  and **failed fetches** (kind `network`), takes `daedalus:history`, and a pick
+  carries the React **component chain** and an HTML snippet — React 19 has no
+  `_debugSource`, so that is how the agent finds the file.
 
 ### PWA and notifications → `docs/pwa-and-notifications.md`
 
@@ -341,7 +468,14 @@ describes; every one of those rules cost a bug.
   agent's probe** (`profiles.usage`, `server/src/usage-api.ts`). The adapter owns the
   endpoint; `ProfileUsage` never carries a URL, and an unknown `kind` throws rather than
   falling through. That reading is keyed `<profileId>:usage` — one account whatever runtime
-  spends it. Settings › Usage is the only surface that lists plans. `pnpm test:quota`.
+  spends it. Settings › Usage is the only surface that lists plans. Adapters: `zai`,
+  `minimax`, `kimi`, `synthetic`, `deepseek`, `openrouter`; each is a fold with a fixture in
+  `pnpm test:quota`.
+- **A profile preset is a starting point, never a stored kind** (`server/src/profile-presets.ts`,
+  `GET /api/profile-presets`): a coding plan's per-runtime endpoints, usage reader and
+  models.dev catalog, copied into the new-profile form. Nothing about the preset is saved
+  on the profile; models are read from models.dev at request time, never listed in the
+  preset; the route drops agents this install does not register.
 
 ## Testing
 
@@ -359,4 +493,6 @@ describes; every one of those rules cost a bug.
 | `docs/mcp-and-workflows.md` | built-in MCP rows, the MCP OAuth shim, workflows, link ownership |
 | `docs/client.md` | state ownership, theming, palette, sidebar, tool views, shortcuts, errors, toasts, dock, project page |
 | `docs/pwa-and-notifications.md` | service worker, FCM, notification shape, backgrounded pages |
+| `docs/tasks.md` | the task workspace: boards, keys, columns and categories, the parent tree, activity, sprints, links, custom fields, views |
+| `docs/build-mode.md` | templates, scaffolding, the managed dev server, the preview proxy and bridge, the build flow |
 | `docs/ops.md` | git, backup/import, agent quota, provider plan usage |

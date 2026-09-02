@@ -1,5 +1,5 @@
 import * as React from "react"
-import { KeyRound, Pencil, Plus, Trash2 } from "lucide-react"
+import { ExternalLink, KeyRound, Pencil, Plus, Trash2 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
 import { dropAgentOptions } from "@/lib/agent-options"
 import { reportError } from "@/lib/errors"
@@ -23,6 +23,7 @@ import {
   profileAgentIds,
   type Profile,
   type ProfileAgentLink,
+  type ProfilePreset,
   type ProfileUsageKind,
   type ServerSettings,
 } from "@/lib/settings"
@@ -31,6 +32,7 @@ import {
   useCommands,
   useInvalidateProfileCatalog,
   useMcpServers,
+  useProfilePresets,
   useProfiles,
   useSkills,
 } from "@/lib/queries/catalog"
@@ -38,6 +40,7 @@ import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, For
 import {
   ModelsSection,
   blankModelRow,
+  candidateToRow,
   rowsToModels,
   toModelRows,
   type ModelRow,
@@ -63,6 +66,36 @@ const USAGE_PROVIDERS: { kind: ProfileUsageKind; label: string; hint: string; ho
     label: "Z.AI / Zhipu — GLM Coding Plan",
     hint: "Reads the plan's rolling 5-hour and weekly token windows, and the monthly MCP tool allowance, from the provider's own monitor API. The platform (api.z.ai or open.bigmodel.cn) is picked from the base URL above unless you name a host.",
     hostPlaceholder: "https://api.z.ai",
+  },
+  {
+    kind: "minimax",
+    label: "MiniMax — Coding Plan",
+    hint: "Reads each model's rolling 5-hour and weekly request counters from the plan's own remains route, and shows the fullest. The platform (minimax.io or minimaxi.com) is picked from the base URL above unless you name a host.",
+    hostPlaceholder: "https://api.minimax.io",
+  },
+  {
+    kind: "kimi",
+    label: "Moonshot — Kimi For Coding",
+    hint: "Reads the plan's weekly request allowance and its shorter rolling windows from the coding API's usages route, on the same key.",
+    hostPlaceholder: "https://api.kimi.com",
+  },
+  {
+    kind: "synthetic",
+    label: "Synthetic",
+    hint: "Reads the plan's rolling 5-hour request quota and the hourly search allowance from the quotas route, on the same key.",
+    hostPlaceholder: "https://api.synthetic.new",
+  },
+  {
+    kind: "deepseek",
+    label: "DeepSeek — account balance",
+    hint: "Pay-as-you-go: no windows, only the account balance from the documented balance route.",
+    hostPlaceholder: "https://api.deepseek.com",
+  },
+  {
+    kind: "openrouter",
+    label: "OpenRouter — key limit and credits",
+    hint: "Reads the key's own spend limit (when one is set) as a window, and the account's credit balance underneath. Both are documented routes.",
+    hostPlaceholder: "https://openrouter.ai/api/v1",
   },
 ]
 
@@ -261,6 +294,12 @@ function ProfileForm({
       .map((id) => ({ id, name: id, unregistered: true })),
   ]
   const [rows, setRows] = React.useState<ModelRow[]>(() => toModelRows(profile?.models ?? []))
+  /* The coding plan this new profile started from, if any. Only the form
+     remembers it — the saved profile carries no preset id (see
+     server/src/profile-presets.ts) — and only for the link to where the key
+     comes from. Editing an existing profile offers no presets: filling over a
+     stored key and catalog is not "start from". */
+  const [preset, setPreset] = React.useState<ProfilePreset | null>(null)
   const { busy, error: saveError, run } = useAsyncAction()
   const set = (patch: Partial<typeof form>) => setForm((f) => ({ ...f, ...patch }))
   const patchRow = (uid: string, patch: Partial<ModelRow>) =>
@@ -282,6 +321,26 @@ function ProfileForm({
     const row = rows.find((r) => r.uid === uid)
     if (row?.id.trim() === form.defaultModel) set({ defaultModel: "" })
     setRows((r) => r.filter((x) => x.uid !== uid))
+  }
+  /** Copy a plan into the form: every field the preset names, replacing what
+      was there (the form is new, so "there" is empty or a previous preset).
+      The key is the one thing a preset cannot supply, and the one thing left
+      alone. Agents the server does not register were already dropped by the
+      route, so the links are exactly what the plan serves here. */
+  const applyPreset = (next: ProfilePreset | null) => {
+    setPreset(next)
+    if (!next) return
+    const models = next.models.map(candidateToRow)
+    set({
+      name: next.name,
+      baseUrl: next.baseUrl,
+      logoUrl: next.logoUrl,
+      usageKind: next.usage,
+      usageBaseUrl: "",
+      defaultModel: models.some((m) => m.id === next.defaultModel) ? next.defaultModel : (models[0]?.id ?? ""),
+    })
+    setLinks(Object.fromEntries(Object.entries(next.agents).map(([id, link]) => [id, { baseUrl: link.baseUrl ?? "" }])))
+    setRows(models)
   }
   /** Imports never clobber: a row whose id is already listed is skipped. */
   const importModels = (imported: ModelRow[]) =>
@@ -340,6 +399,7 @@ function ProfileForm({
         onBack={() => onDone(false)}
       />
       <PageForm onSubmit={save}>
+      {!profile && <PresetPicker value={preset} onPick={applyPreset} />}
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Name">
           <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
@@ -354,6 +414,16 @@ function ProfileForm({
         </Field>
         <Field label="API key" hint={profile?.hasApiKey ? "Stored — leave empty to keep it." : "Never sent back to clients."}>
           <Input type="password" value={form.apiKey} onChange={(e) => set({ apiKey: e.target.value })} />
+          {preset?.keyUrl && (
+            <a
+              href={preset.keyUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:underline"
+            >
+              Get a {preset.name} key <ExternalLink className="size-3" />
+            </a>
+          )}
         </Field>
         <Field
           label="Logo URL"
@@ -530,5 +600,59 @@ function ProfileForm({
       <FormActions busy={busy} onCancel={() => onDone(false)} error={saveError} />
       </PageForm>
     </>
+  )
+}
+
+/* ── Presets ──
+   The coding plans a new profile can start from, read from the server
+   (`GET /api/profile-presets`) because the server is what knows which usage
+   readers it has and what models.dev lists for each plan. Picking one is a
+   copy into the form above; nothing about the choice is saved. A preset whose
+   catalog could not be read is still offered — its endpoints and usage reader
+   are most of the value — and says so, because an empty model list is a
+   different thing from a plan with no models. */
+
+/* A sentinel rather than "" for the blank choice: Base UI reads an empty
+   value as "nothing selected", which would blank the trigger's label. */
+const BLANK = "blank"
+
+function PresetPicker({ value, onPick }: { value: ProfilePreset | null; onPick: (preset: ProfilePreset | null) => void }) {
+  const { presets, loading, error } = useProfilePresets()
+  if (error && presets.length === 0) return null
+  const hint = value
+    ? value.modelsUnavailable
+      ? `${value.description} The model catalog couldn't be read from models.dev — use "Fetch from endpoint" below once the key is in.`
+      : value.description
+    : "Optional — a coding plan's endpoints, model catalog and usage reader, filled in for you. Only the key is yours to add."
+  return (
+    <Field label="Start from a plan" hint={hint}>
+      <Select value={value?.id ?? BLANK} onValueChange={(id) => onPick(presets.find((p) => p.id === id) ?? null)}>
+        <SelectTrigger className="w-full" disabled={loading}>
+          <SelectValue>
+            {value ? (
+              <span className="flex items-center gap-2">
+                <ProfileIcon profile={{ logoUrl: value.logoUrl, agents: value.agents }} className="size-4" />
+                {value.name}
+              </span>
+            ) : loading ? (
+              "Loading plans…"
+            ) : (
+              "Blank profile"
+            )}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={BLANK}>Blank profile</SelectItem>
+          {presets.map((p) => (
+            <SelectItem key={p.id} value={p.id}>
+              <span className="flex items-center gap-2">
+                <ProfileIcon profile={{ logoUrl: p.logoUrl, agents: p.agents }} className="size-4" />
+                {p.name}
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </Field>
   )
 }

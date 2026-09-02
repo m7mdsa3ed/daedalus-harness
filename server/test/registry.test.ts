@@ -16,6 +16,10 @@ import type { Project } from "../src/projects.js";
 import { configureGatewayShim } from "../src/gateway-shim.js";
 import { getAgent, isBuiltInAgent, resetAgent, resolveSpawn, seedAgents, updateAgent } from "../src/registry.js";
 import type { PersonaSpawn } from "../src/personas.js";
+import { checkInstalled, locateCommand } from "../src/agent-status.js";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 let passed = 0;
 const failures: string[] = [];
@@ -291,6 +295,23 @@ test("OpenCode backfill preserves an explicit permission policy", () => {
   assert.equal(config.model, "{model}");
 });
 
+test("seed 16 declares OpenCode's subagent feed without touching the user's env", () => {
+  resetAgents([
+    {
+      id: "opencode",
+      seededVersion: 15,
+      env: { OPENCODE_CONFIG_CONTENT: '{"permission":{"bash":"ask"},"model":"{model}"}', MY_KEY: "kept" },
+    },
+  ]);
+  seedAgents();
+  const opencode = getAgent("opencode");
+  assert.equal(opencode?.subagentFeed, "opencode-http");
+  assert.equal(opencode?.env.MY_KEY, "kept");
+  assert.equal(opencode?.command, "opencode");
+  assert.deepEqual(JSON.parse(opencode?.env.OPENCODE_CONFIG_CONTENT ?? "{}").permission, { bash: "ask" });
+  /* The probe cache is left alone — nothing the agent advertises changed. */
+});
+
 test("a fresh install gets the built-ins, pointed at {smallModel}", () => {
   resetAgents([]);
   seedAgents();
@@ -526,6 +547,47 @@ test("seeding twice changes nothing", () => {
   const before = db.select().from(agentsTable).where(eq(agentsTable.id, "claude-code")).get();
   seedAgents();
   assert.deepEqual(db.select().from(agentsTable).where(eq(agentsTable.id, "claude-code")).get(), before);
+});
+
+
+/* ── Install detection (agent-status.ts) ──
+   Pure: PATH and cwd are arguments, so a fake layout in a temp dir is the
+   whole fixture. The one rule beyond "is the command on PATH" is that an
+   absolute path among the args must exist — the harness's own agent is
+   `node <entry>`, and `node` is always there. */
+test("locateCommand finds a binary on PATH and nowhere else", () => {
+  const root = mkdtempSync(join(tmpdir(), "daedalus-status-"));
+  const bin = join(root, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "fake-acp"), "#!/bin/sh\n");
+  chmodSync(join(bin, "fake-acp"), 0o755);
+  writeFileSync(join(bin, "not-exec"), "");
+  chmodSync(join(bin, "not-exec"), 0o644);
+  const path = `${root}/nowhere:${bin}`;
+  assert.equal(locateCommand("fake-acp", { path, cwd: root, exts: [] }), join(bin, "fake-acp"));
+  assert.equal(locateCommand("missing-acp", { path, cwd: root, exts: [] }), null);
+  assert.equal(locateCommand("not-exec", { path, cwd: root, exts: [] }), null);
+  // A path is a path, not a PATH lookup: relative to cwd, or absolute.
+  assert.equal(locateCommand("bin/fake-acp", { path: "", cwd: root, exts: [] }), join(bin, "fake-acp"));
+  assert.equal(locateCommand(join(bin, "fake-acp"), { path: "", cwd: "/", exts: [] }), join(bin, "fake-acp"));
+  assert.equal(locateCommand(join(bin, "gone"), { path, cwd: root, exts: [] }), null);
+});
+
+test("checkInstalled names what is missing — the command, or a file the args point at", () => {
+  resetAgents([]);
+  seedAgents();
+  const missingCommand = { ...getAgent("codex")!, command: "definitely-not-a-binary-here" };
+  const a = checkInstalled(missingCommand, project);
+  assert.equal(a.installed, false);
+  assert.equal(a.missing, "definitely-not-a-binary-here");
+  /* `node` exists; the entry it is handed does not. */
+  const missingEntry = { ...getAgent("daedalus")!, args: ["/nonexistent/daedalus/agent/dist/index.js"] };
+  const b = checkInstalled(missingEntry, project);
+  assert.equal(b.installed, false);
+  assert.ok(b.path, "node itself was found");
+  assert.equal(b.missing, "/nonexistent/daedalus/agent/dist/index.js");
+  const present = { ...getAgent("daedalus")!, args: [process.execPath] };
+  assert.deepEqual(checkInstalled(present, project).installed, true);
 });
 
 console.log(`registry: ${passed} passed, ${failures.length} failed`);

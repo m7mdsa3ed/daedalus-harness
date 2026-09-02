@@ -42,6 +42,13 @@ export class Session {
   steerQueue: SteerEntry[];
   abort: AbortController | null;
   turnActive: boolean;
+  /** A pause the harness asked for (`_daedalus/session/pause`). Read by the
+      gate every model step passes through, so a paused turn stops at the next
+      step boundary with nothing thrown away, and a paused session's next
+      prompt waits at its first step. Cleared by `resume()` and by `cancel()`:
+      a cancel abandons the turn, and a pause is part of what it abandons. */
+  paused: boolean;
+  private resumeWaiters: (() => void)[];
   /** Sticky per-tool permission answers ("always allow/reject" for this session). */
   alwaysAllow: Set<string>;
   alwaysReject: Set<string>;
@@ -72,6 +79,8 @@ export class Session {
     this.steerQueue = [];
     this.abort = null;
     this.turnActive = false;
+    this.paused = false;
+    this.resumeWaiters = [];
     this.alwaysAllow = new Set();
     this.alwaysReject = new Set();
     this.mcp = null;
@@ -147,8 +156,51 @@ export class Session {
   }
 
   cancel(): void {
+    this.paused = false;
     this.abort?.abort();
+    this.release();
   }
+
+  pause(): void {
+    this.paused = true;
+  }
+
+  resume(): void {
+    this.paused = false;
+    this.release();
+  }
+
+  /**
+   * The step boundary. Returns at once while the session is running; while it
+   * is paused, waits for `resume()` — or for the turn's abort, which ends the
+   * wait as a cancellation (the SDK's own abort shape, so the stream reads it
+   * as `aborted` rather than as a failure). Nothing is retried or replayed
+   * around it: the step before it finished whole, and the one after it has not
+   * begun, which is what makes this a pause and not an interrupt.
+   */
+  async gate(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw abortError();
+    if (!this.paused) return;
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        signal?.removeEventListener("abort", done);
+        resolve();
+      };
+      this.resumeWaiters.push(done);
+      signal?.addEventListener("abort", done, { once: true });
+    });
+    if (signal?.aborted) throw abortError();
+  }
+
+  private release(): void {
+    for (const w of this.resumeWaiters.splice(0)) w();
+  }
+}
+
+function abortError(): Error {
+  const err = new Error("The turn was cancelled while paused.");
+  err.name = "AbortError";
+  return err;
 }
 
 function readOptional(path: string): string | null {

@@ -20,6 +20,7 @@
    one that spawns an agent below it and on ⌘↵. */
 import * as React from "react"
 import {
+  AppWindowIcon,
   Copy,
   Cpu,
   DownloadIcon,
@@ -27,6 +28,7 @@ import {
   FolderIcon,
   FolderPlus,
   Gauge,
+  Hammer,
   Keyboard,
   LogOut,
   MessageSquarePlusIcon,
@@ -46,6 +48,7 @@ import {
   Rows3,
   SearchIcon,
   ServerIcon,
+  Settings2,
   ShieldCheck,
   Square,
   SquareKanban,
@@ -66,7 +69,8 @@ import { reportError } from "@/lib/errors"
 import { currentChoiceLabel } from "@/lib/session-options"
 import { useKeybindings } from "@/lib/keybindings"
 import { KEYS } from "@/lib/shortcuts"
-import { boardPath, newRoutinePath, settingsPath, threadPath } from "@/lib/router"
+import { boardPath, buildPath, newRoutinePath, settingsPath, settingsRootPath, threadPath } from "@/lib/router"
+import { previewPanel } from "@/lib/workspace/preview-bridge"
 import {
   activityAt,
   clearSettings,
@@ -88,6 +92,8 @@ import { ItemList, type PaletteItem } from "./list"
 import { threadItem } from "./rows"
 import { useThreadTarget } from "./thread-config"
 import { transcriptText } from "./transcript-text"
+
+const capitalize = (text: string) => (text ? text.charAt(0).toUpperCase() + text.slice(1) : text)
 
 const MODES = [
   { value: "light", label: "Light", icon: Sun },
@@ -132,8 +138,6 @@ export function RootPage() {
   const servers = React.useMemo(loadServers, [])
   const activeServer = React.useMemo(loadSettings, [])
 
-  const projectName = (projectId: string) =>
-    projects.find((project) => project.id === projectId)?.name ?? "Other"
   const agentName = (agentId: string) =>
     agents.find((agent) => agent.id === agentId)?.name ?? agentId
 
@@ -175,6 +179,7 @@ export function RootPage() {
     title: "Search threads and messages…",
     keywords: "find full text transcript grep look for",
     icon: <SearchIcon />,
+    subtitle: "Titles instantly, full transcripts from the index",
     onSelect: () => palette.descend("search"),
   })
   if (routines.length > 0) {
@@ -187,6 +192,7 @@ export function RootPage() {
       title: "Routine activity…",
       keywords: "runs verdicts automation history blocked failed digest what happened",
       icon: <Zap />,
+      subtitle: "Every routine's recent runs, newest first",
       onSelect: () => palette.descend("routine-activity"),
     })
   }
@@ -216,7 +222,7 @@ export function RootPage() {
         threadItem({
           session,
           group: NOT_A_COMMAND,
-          project: projectName(session.projectId),
+          project: projects.find((project) => project.id === session.projectId) ?? "Other",
           running: liveTurnActive.get(session.id) ?? session.promptActive,
           onSelect: () => openThread(session.id),
         })
@@ -234,17 +240,18 @@ export function RootPage() {
     chord: binds.newThread.chords[0],
     // What ↵ here is about to pick, in the order it is decided: the project
     // (the cwd), then the pair that runs in it.
-    trailing: startTarget ? (
-      <span className="ml-auto flex min-w-0 shrink items-center gap-1.5 text-[11px] text-muted-foreground">
-        <ProjectIcon project={startTarget.project} className="size-3.5" />
-        <span className="truncate">{startTarget.project.name}</span>
-        <span className="opacity-70">·</span>
-        <AgentIcon agentId={startTarget.agentId} className="size-3.5" />
-        {/* The palette is a viewport dialog, not a panel — so the breakpoint is
-            the window's. */}
-        <span className="hidden truncate sm:inline">{agentName(startTarget.agentId)}</span>
-      </span>
-    ) : undefined,
+    meta: startTarget
+      ? [
+          {
+            label: startTarget.project.name,
+            icon: <ProjectIcon project={startTarget.project} className="size-3.5" />,
+          },
+          {
+            label: agentName(startTarget.agentId),
+            icon: <AgentIcon agentId={startTarget.agentId} className="size-3.5" />,
+          },
+        ]
+      : undefined,
     onSelect: () => palette.run(() => palette.newThread()),
   })
   if (projects.length > 1) {
@@ -273,6 +280,7 @@ export function RootPage() {
     title: "Import threads…",
     keywords: "sessions claude codex opencode existing resume adopt",
     icon: <DownloadIcon />,
+    subtitle: "Adopt sessions an agent already holds — Claude Code, Codex, OpenCode",
     onSelect: () => palette.run(palette.importThreads),
   })
   /* Under Create because that is what a routine makes: threads, without you.
@@ -283,6 +291,7 @@ export function RootPage() {
     title: "New routine",
     keywords: "automation schedule cron webhook git trigger unattended fires on its own",
     icon: <Zap />,
+    subtitle: "A thread that starts itself — on a schedule, a webhook or a push",
     onSelect: () => palette.run(() => void navigate(newRoutinePath())),
   })
   if (routines.length > 0) {
@@ -292,11 +301,7 @@ export function RootPage() {
       title: "Run routine…",
       keywords: "automation fire now start trigger",
       icon: <Zap />,
-      trailing: (
-        <span className="ml-auto shrink-0 text-[11px] text-muted-foreground tabular-nums">
-          {routines.length}
-        </span>
-      ),
+      meta: [{ label: `${routines.length} routine${routines.length === 1 ? "" : "s"}`, dim: true }],
       onSelect: () => palette.descend("routines"),
     })
   }
@@ -308,6 +313,15 @@ export function RootPage() {
     icon: <SquareKanban />,
     onSelect: () => palette.run(() => void navigate(boardPath())),
   })
+  items.push({
+    id: "create:build",
+    group: "Create",
+    title: "Build an app",
+    keywords: "app template starter scaffold preview website lovable bolt new project",
+    icon: <Hammer />,
+    subtitle: "Scaffold a starter, run its dev server, preview it beside the thread",
+    onSelect: () => palette.run(() => void navigate(buildPath())),
+  })
 
   /* ── This thread ── */
   if (meta) {
@@ -318,11 +332,7 @@ export function RootPage() {
         title: "Change model…",
         keywords: "llm switch",
         icon: <Cpu />,
-        trailing: (
-          <span className="ml-auto shrink-0 truncate text-[11px] text-muted-foreground">
-            {currentChoiceLabel(options.model)}
-          </span>
-        ),
+        meta: [{ label: currentChoiceLabel(options.model) }],
         onSelect: () => palette.descend("model"),
       })
     }
@@ -333,11 +343,7 @@ export function RootPage() {
         title: "Change reasoning effort…",
         keywords: "thinking budget",
         icon: <Gauge />,
-        trailing: (
-          <span className="ml-auto shrink-0 text-[11px] text-muted-foreground capitalize">
-            {currentChoiceLabel(options.effort)}
-          </span>
-        ),
+        meta: [{ label: capitalize(currentChoiceLabel(options.effort)) }],
         onSelect: () => palette.descend("effort"),
       })
     }
@@ -353,11 +359,7 @@ export function RootPage() {
         title: "Change persona…",
         keywords: "style think more less chat quick fix lazy instructions prompt",
         icon: <Drama />,
-        trailing: (
-          <span className="ml-auto shrink-0 truncate text-[11px] text-muted-foreground">
-            {persona?.name ?? "None"}
-          </span>
-        ),
+        meta: [{ label: persona?.name ?? "None" }],
         onSelect: () => palette.descend("persona"),
       })
     }
@@ -368,11 +370,12 @@ export function RootPage() {
         title: "Change permission mode…",
         keywords: "approval auto accept plan",
         icon: <ShieldCheck />,
-        trailing: (
-          <span className="ml-auto shrink-0 truncate text-[11px] text-muted-foreground">
-            {modes.availableModes.find((mode) => mode.id === modes.currentModeId)?.name}
-          </span>
-        ),
+        meta: [
+          {
+            label:
+              modes.availableModes.find((mode) => mode.id === modes.currentModeId)?.name ?? "",
+          },
+        ],
         onSelect: () => palette.descend("mode"),
       })
     }
@@ -429,6 +432,7 @@ export function RootPage() {
       title: "Move this thread to Trash",
       keywords: "delete remove kill close",
       icon: <Trash2 />,
+      subtitle: "Stops the agent; restorable from Trash",
       /* The sidebar's row menu asks the same question. A palette entry is
          easier to hit by accident than a menu item, not harder, so it cannot be
          the one path that skips it. */
@@ -468,6 +472,18 @@ export function RootPage() {
      cannot be typed — and the two presets are the only way to get an
      arrangement back once it has been dragged into a shape nobody wanted. */
   if (meta) {
+    if (projects.find((project) => project.id === meta.projectId)?.devCommand) {
+      items.push({
+        id: "dock:preview",
+        group: "Workspace",
+        title: "Open the preview",
+        keywords: "app dev server live running build",
+        icon: <AppWindowIcon />,
+        chord: binds.preview.chords[0],
+        onSelect: () =>
+          palette.run(() => palette.dock.openPanel(previewPanel(meta.projectId), { direction: "right" })),
+      })
+    }
     items.push({
       id: "dock:web",
       group: "Workspace",
@@ -532,6 +548,7 @@ export function RootPage() {
       title: "Layout: IDE",
       keywords: "preset terminal arrangement",
       icon: <Rows3 />,
+      subtitle: "Chat beside a terminal, editor above",
       onSelect: () => palette.run(() => palette.dock.applyPreset("ide")),
     },
     {
@@ -540,6 +557,7 @@ export function RootPage() {
       title: "Layout: Focus",
       keywords: "preset single maximized arrangement",
       icon: <Square />,
+      subtitle: "One panel, maximised",
       onSelect: () => palette.run(() => palette.dock.applyPreset("focus")),
     }
   )
@@ -564,6 +582,14 @@ export function RootPage() {
   })
 
   /* ── Settings ── */
+  items.push({
+    id: "settings:overview",
+    group: "Go to",
+    title: "Settings",
+    keywords: "settings preferences overview all",
+    icon: <Settings2 />,
+    onSelect: () => palette.run(() => void navigate(settingsRootPath())),
+  })
   for (const section of SETTINGS_SECTIONS) {
     const Icon = section.icon
     items.push({
@@ -572,7 +598,7 @@ export function RootPage() {
       title: section.label,
       keywords: `settings ${section.title}`,
       icon: <Icon />,
-      trailing: <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">Settings</span>,
+      meta: [{ label: "Settings", dim: true }],
       onSelect: () => palette.run(() => void navigate(settingsPath(section.id))),
     })
   }
@@ -597,11 +623,7 @@ export function RootPage() {
       onSelect: () => palette.run(() => setTheme(value)),
     })
   }
-  const size = (
-    <span className="ml-auto shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
-      {fontSize}px
-    </span>
-  )
+  const size = [{ label: `${fontSize}px`, mono: true }]
   // Size stays open: nudging is iterative, and closing after every step would
   // make you reopen the palette to reach the next one.
   items.push(
@@ -611,7 +633,7 @@ export function RootPage() {
       title: "Bigger text",
       keywords: "increase font size zoom in",
       icon: <Plus />,
-      trailing: size,
+      meta: size,
       onSelect: () => setFontSize(fontSize + 1),
     },
     {
@@ -620,7 +642,7 @@ export function RootPage() {
       title: "Smaller text",
       keywords: "decrease font size zoom out",
       icon: <Minus />,
-      trailing: size,
+      meta: size,
       onSelect: () => setFontSize(fontSize - 1),
     }
   )
@@ -662,11 +684,7 @@ export function RootPage() {
       title: `Switch to ${server.name}`,
       keywords: `server ${server.url}`,
       icon: <ServerIcon />,
-      trailing: (
-        <span className="ml-auto shrink-0 truncate font-mono text-[11px] text-muted-foreground">
-          {server.url}
-        </span>
-      ),
+      meta: [{ label: server.url, mono: true }],
       onSelect: () =>
         palette.run(() => {
           setActiveServer(server.id)
@@ -680,6 +698,7 @@ export function RootPage() {
     title: "Disconnect from this server",
     keywords: "sign out log out forget token",
     icon: <LogOut />,
+    subtitle: "Forgets the token on this device",
     onSelect: () =>
       palette.run(() => {
         clearSettings()
@@ -692,7 +711,8 @@ export function RootPage() {
     items.push({
       id: "fallback:search",
       group: `“${query}”`,
-      title: `Search threads and messages for “${query}”`,
+      title: `Search for “${query}”`,
+      subtitle: "Thread titles and full transcripts",
       always: true,
       rank: "bottom",
       icon: <SearchIcon />,
@@ -702,6 +722,9 @@ export function RootPage() {
       id: "fallback:ask",
       group: `“${query}”`,
       title: `Ask a new thread — “${query}”`,
+      subtitle: startTarget
+        ? `In ${startTarget.project.name} with ${agentName(startTarget.agentId)}`
+        : undefined,
       always: true,
       rank: "bottom",
       icon: <MessageSquarePlusIcon />,

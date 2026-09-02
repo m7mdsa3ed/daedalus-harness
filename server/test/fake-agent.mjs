@@ -82,6 +82,8 @@ const FALLBACK_WARNING = process.env.FAKE_FALLBACK_WARNING || "";
     the AskUserQuestion tool call carrying what was picked — which is a
     different view from the form the reader just filled in. */
 const parkedTurns = new Map();
+/** The harness's pause flag, as the daedalus agent keeps it. */
+let paused = false;
 let permCounter = 0;
 
 /** Park `promptId` on the request `id`, optionally with a follow-up. */
@@ -563,6 +565,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         agentCapabilities: {
           loadSession: true,
           promptCapabilities: { image: true, audio: false, embeddedContext: true },
+          /* The harness's pause pair (the daedalus agent's): answered below
+             with a flag and nothing else — a parked turn here is parked on a
+             question, not on a step, so the flag is all the bridge test needs. */
+          _meta: { "daedalus/pause": true },
         },
       },
     });
@@ -964,7 +970,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         usage: { totalTokens: 10_500, inputTokens: 1000, outputTokens: 500, cachedReadTokens: 9000 },
       },
     });
+  } else if (msg.method === "_daedalus/session/pause" || msg.method === "_daedalus/session/resume") {
+    paused = msg.method.endsWith("pause");
+    out({ jsonrpc: "2.0", id: msg.id, result: { paused, turnActive: parkedTurns.size > 0 } });
   } else if (msg.method === "session/cancel") {
+    paused = false;
     /* A cancel is a notification, and the spec's answer to it is a SUCCESS:
        every prompt still open is answered with `stopReason: "cancelled"`. Only
        a parked turn can be open here — an ordinary prompt answers itself in

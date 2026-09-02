@@ -14,6 +14,7 @@ import { defaultProfileFor, getProfile, listProfiles, profileSupports } from "..
 import { getProject } from "../projects.js";
 import type { Push } from "../push.js";
 import { clearNotifications, listNotifications, markNotificationsRead, unreadNotifications } from "../notifications.js";
+import { addComposerHistory, clearComposerHistory, listComposerHistory } from "../composer-history.js";
 import type { SessionManager } from "../sessions.js";
 import { bearerToken, workspace } from "./helpers.js";
 
@@ -35,6 +36,15 @@ const webSearchResponse = (ws: { searchApiBaseUrl: string; searchModel: string; 
   searchModel: ws.searchModel,
   fetchModel: ws.fetchModel,
   hasToken: Boolean(ws.searchApiToken),
+});
+
+/* What the composer posts after a send has reached the server. `text` is the
+   prompt as typed; the rest is provenance the history panel prints and is
+   optional because not every surface that sends has a thread behind it. */
+const ComposerHistorySchema = z.object({
+  text: z.string().min(1),
+  sessionId: z.string().nullish(),
+  threadTitle: z.string().nullish(),
 });
 
 /** Everything server-wide with no bigger home: health, the web-search backend
@@ -266,5 +276,35 @@ export function miscRoutes(
     const before = Number.parseInt(c.req.query("before") ?? "", 10);
     clearNotifications(Number.isFinite(before) ? before : undefined);
     return c.json({ ok: true });
+  });
+
+  /* ── the composer's prompt history (composer-history.ts) ──
+     Global across every thread, which is the point: recall used to be the
+     transcript of the thread you were standing in. Newest first, the order the
+     panel lists and Up walks. */
+  app.get("/api/composer-history", (c) => {
+    const limit = Number.parseInt(c.req.query("limit") ?? "", 10);
+    return c.json({ items: listComposerHistory(Number.isFinite(limit) && limit > 0 ? limit : undefined) });
+  });
+
+  /* Written by the composer once a send has actually left. An exact repeat is
+     moved to the top rather than added again (see `addComposerHistory`), so
+     this is safe to call on every send. A prompt that is only an attachment
+     records nothing and answers `{ entry: null }`. */
+  app.post("/api/composer-history", async (c) => {
+    const parsed = ComposerHistorySchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    const { text, sessionId, threadTitle } = parsed.data;
+    return c.json({ entry: addComposerHistory({ text, sessionId, threadTitle }) });
+  });
+
+  /* Forget one line (`?id=`), everything older than `?before=` (ms), or the
+     whole history. Like the inbox's delete, this is only ever an explicit
+     gesture — history is lossy to remove and nothing implies it. */
+  app.delete("/api/composer-history", (c) => {
+    const id = c.req.query("id");
+    const before = Number.parseInt(c.req.query("before") ?? "", 10);
+    const removed = clearComposerHistory({ id: id || undefined, before: Number.isFinite(before) ? before : undefined });
+    return c.json({ ok: true, removed });
   });
 }

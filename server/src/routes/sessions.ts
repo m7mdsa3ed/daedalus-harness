@@ -4,6 +4,8 @@ import { getProfile, profileSupports, resolveProfileAgent } from "../profiles.js
 import { getProject } from "../projects.js";
 import { listAgentSessions } from "../session-list.js";
 import type { SessionManager } from "../sessions.js";
+import type { Scope } from "../turn-changes.js";
+import { workspace } from "./helpers.js";
 
 const UUID_RE =/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -321,6 +323,41 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     const session = sessions.get(c.req.param("id"));
     if (!session) return c.json({ error: "not found" }, 404);
     return c.json({ lines: sessions.stderrTail(session.id) });
+  });
+
+  /* What each turn did to the worktree (turn-changes.ts). The list is the
+     per-turn summary the transcript chips draw; `files` and `patch` read a
+     scope live — a finished turn's two trees, a running turn's start tree
+     against the disk, or `uncommitted` for HEAD against the disk. Staging,
+     discarding and committing go through the project's git routes: the
+     review panel is a view over one repository, and those already exist. */
+  app.get("/api/sessions/:id/changes", (c) => {
+    const id = c.req.param("id");
+    if (!sessions.get(id)) return c.json({ error: "not found" }, 404);
+    return c.json({ turns: sessions.turnChanges.list(id) });
+  });
+
+  const scopeOf = (raw: string | undefined): Scope | null => {
+    if (!raw || raw === "uncommitted") return { kind: "uncommitted" };
+    if (raw.startsWith("turn:") && raw.length > 5) return { kind: "turn", turnId: raw.slice(5) };
+    return null;
+  };
+
+  app.get("/api/sessions/:id/changes/files", (c) => {
+    const id = c.req.param("id");
+    if (!sessions.get(id)) return c.json({ error: "not found" }, 404);
+    const scope = scopeOf(c.req.query("scope"));
+    if (!scope) return c.json({ error: "scope must be `uncommitted` or `turn:<id>`" }, 400);
+    return workspace(c, () => sessions.turnChanges.files(id, scope));
+  });
+
+  app.get("/api/sessions/:id/changes/patch", (c) => {
+    const id = c.req.param("id");
+    if (!sessions.get(id)) return c.json({ error: "not found" }, 404);
+    const scope = scopeOf(c.req.query("scope"));
+    if (!scope) return c.json({ error: "scope must be `uncommitted` or `turn:<id>`" }, 400);
+    const path = c.req.query("path") || undefined;
+    return workspace(c, () => sessions.turnChanges.patch(id, scope, path));
   });
 
   // Delete is reversible by default: the process dies, the thread stays in the

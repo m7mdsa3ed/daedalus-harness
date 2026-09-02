@@ -286,6 +286,40 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `pnpm test:workflow-schema` is the pure half; `pnpm test:workflow` drives the engine
   against the fake agent (`echo:` prompts).
 
+## Pausing a run
+
+- **A run pauses as a state of the run, never as a cancel-and-restart.** The Codex
+  app-server issue asking for "non-destructive pause/resume for multi-agent thread trees"
+  names the failure exactly: a root held on a question while its collaborators keep
+  spending, and the only tool being an interrupt that throws their progress away. ACP has
+  nothing better — `session/cancel` is its one interruption — so the engine keeps the hold
+  itself. `WorkflowRunner.pause(runId)` moves the run to `status: "paused"`, which is a
+  live state like `running` (`terminal()` is false for both, `recoverAtBoot` closes both):
+  `pump` starts nothing while paused but still lets a run whose last step just finished
+  complete; a step between its prompts (the JSON repair turn) waits on `whenRunning`; every
+  running step whose thread's agent advertises the harness's pause (`bridge.canPause` — our
+  own runtime, see docs/protocol.md) is told to hold at its next step boundary, and one
+  that cannot runs to its end while its dependents wait. **Both clocks stand still**: the
+  run's total timeout and each step's own are `PausableTimer`s, which keep the remaining
+  time and re-arm once on resume — a deadline that kept advancing through a hold would
+  fail the run for the minutes the user spent thinking, which is precisely the wall-clock
+  complaint in that issue. `resume` re-arms them, releases the children, and pumps. Cancel
+  works on a held run exactly as on a running one: the abort reaches every step's race,
+  and a held child's cancel releases its pause with the turn.
+  The hold is said on the parent as **`_daedalus/workflow_state {runId, paused}`** — the
+  harness's own update variant beside `_daedalus/subagent_usage`, journaled for the same
+  reason (the card is drawn from the parent's log alone, and a replayed run has to stand
+  where it stood). A run has no item of its own — it is folded at view time from its
+  steps — so the reducer stamps `paused` onto the `workflow` info of every step carrying
+  the run's id, and `WorkflowRun` reads it off any head, prefixes the caption with
+  "paused", and shows the hold toggle (`WorkflowHold`) while the run is live. The toggle
+  needs the run's thread, which a row drawn from a log does not have in hand, so the
+  spawn's `_meta.daedalus.workflow` also carries the parent `sessionId`; the routes are
+  `POST /api/sessions/:id/workflows/:runId/pause|resume` (`statusFor` refuses a run of
+  another thread — a run id is not a credential) and, for the agent that started it,
+  `/wf/<key>/<sessionId>/runs/:id/pause|resume` behind `pause_workflow`/`resume_workflow`.
+  `wait_workflow` must be re-called while the status is `paused` as it is while `running`.
+
 ## Two owners: profile and thread
 
 - **MCP servers, skills and commands have two owners, and the agent gets the union.**
