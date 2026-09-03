@@ -149,6 +149,26 @@ function withTurnUsage(
   return after
 }
 
+/** What each finished turn took, keyed by the row it ends on — the same walk
+    as `withTurnUsage`, the denominator the footer's tok/s is drawn against. A
+    turn that ended before the server measured durations simply has no entry,
+    and the footer draws tokens with no speed. */
+function withTurnDuration(
+  items: ThreadItem[],
+  turnActive: boolean,
+  turnDuration: Record<string, number>,
+  answersOnly: boolean
+): Map<string, number> {
+  const after = new Map<string, number>()
+  for (const { turn, tailId } of finishedTurns(items, turnActive, answersOnly)) {
+    const head = turn[0]
+    const turnId = head.kind === "user" ? head.turnId : undefined
+    const durationMs = turnId ? turnDuration[turnId] : undefined
+    if (durationMs !== undefined) after.set(tailId, durationMs)
+  }
+  return after
+}
+
 /** What each finished turn did to the worktree, keyed by the row it ends on
     — same walk as `withTurnUsage`, same footer slot. A turn that changed
     nothing (or was not measured) draws nothing. */
@@ -406,6 +426,11 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
     [thread.items, thread.turnActive, thread.turnUsage, options.answersOnly]
   )
   const usageFor = (row: Row): acp.Usage | undefined => usageAfter.get(rowTailId(row))
+  const durationAfter = React.useMemo(
+    () => withTurnDuration(thread.items, thread.turnActive, thread.turnDuration, options.answersOnly),
+    [thread.items, thread.turnActive, thread.turnDuration, options.answersOnly]
+  )
+  const durationFor = (row: Row): number | undefined => durationAfter.get(rowTailId(row))
   const changesAfter = React.useMemo(
     () => withTurnChanges(thread.items, thread.turnActive, thread.turnChanges, options.answersOnly),
     [thread.items, thread.turnActive, thread.turnChanges, options.answersOnly]
@@ -614,7 +639,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   )}
                   {options.showTokens && usageFor(row) && (
                     <div className="harness-item-in -ml-1">
-                      <TokenSummary usage={usageFor(row)!} label="This turn" />
+                      <TokenSummary usage={usageFor(row)!} label="This turn" durationMs={durationFor(row)} />
                     </div>
                   )}
                   {changesFor(row) && (

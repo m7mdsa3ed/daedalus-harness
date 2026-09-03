@@ -1,7 +1,7 @@
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
 import { BotIcon } from "lucide-react"
-import { AgentIcon, EntityIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
+import { AgentIcon, EntityIcon, ModelIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
 import { AvatarGroup } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import {
@@ -351,23 +351,23 @@ export function DraftConfigPopover({
                 would have shown anyway. */}
             {resolvedModel?.iconUrl ? (
               <AvatarGroup className="-space-x-1">
-                <AgentIcon agentId={agent?.id ?? meta.agentId} className="size-4 ring-2 ring-composer" />
+                <AgentIcon agentId={agent?.id ?? meta.agentId} className="size-4 ring-2 ring-surface" />
                 <EntityIcon
                   src={resolvedModel.iconUrl}
                   fallback={
                     <ProfileIcon
                       profile={profile}
                       agentId={agent?.id ?? meta.agentId}
-                      className="size-4 ring-2 ring-composer"
+                      className="size-4 ring-2 ring-surface"
                     />
                   }
-                  className="size-4 ring-2 ring-composer"
+                  className="size-4 ring-2 ring-surface"
                 />
               </AvatarGroup>
             ) : profile?.logoUrl ? (
               <AvatarGroup className="-space-x-1">
-                <AgentIcon agentId={agent?.id ?? meta.agentId} className="size-4 ring-2 ring-composer" />
-                <ProfileIcon profile={profile} agentId={agent?.id ?? meta.agentId} className="size-4 ring-2 ring-composer" />
+                <AgentIcon agentId={agent?.id ?? meta.agentId} className="size-4 ring-2 ring-surface" />
+                <ProfileIcon profile={profile} agentId={agent?.id ?? meta.agentId} className="size-4 ring-2 ring-surface" />
               </AvatarGroup>
             ) : (
               <ProfileIcon profile={profile} agentId={agent?.id ?? meta.agentId} className="size-4" />
@@ -430,19 +430,10 @@ export function DraftConfigPopover({
                 ...models.map((m) => ({
                   value: m.id,
                   name: m.label,
-                  /* The model's own icon when it has one — a placeholder keeps
-                     rows without art aligned with those that have it. */
-                  ...(m.iconUrl
-                    ? {
-                        icon: (
-                          <EntityIcon
-                            src={m.iconUrl}
-                            fallback={<span className="size-4" />}
-                            className="size-4"
-                          />
-                        ),
-                      }
-                    : {}),
+                  /* Every row carries a mark: the model's own icon when it
+                     has one, a neutral glyph otherwise, so rows without art
+                     align with those that have it. */
+                  icon: <ModelIcon iconUrl={m.iconUrl} className="size-4" />,
                 })),
               ]}
               onSelect={(value) =>
@@ -454,7 +445,12 @@ export function DraftConfigPopover({
               <MenuRow
                 label="Model"
                 value={optionValue(agentOptions.model)}
-                choices={selectChoices(agentOptions.model)}
+                /* Agent-driven options carry no art — every row gets the
+                   neutral glyph so the submenu reads like the catalog one. */
+                choices={selectChoices(agentOptions.model).map((c) => ({
+                  ...c,
+                  icon: <BotIcon className="size-4 text-muted-foreground" />,
+                }))}
                 onSelect={(value) => choose(agentOptions.model!.id, value)}
               />
             )

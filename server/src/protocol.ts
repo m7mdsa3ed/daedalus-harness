@@ -567,11 +567,11 @@ export type ThreadCommand =
 
 // ---- server -> client ----
 
-/** The four event kinds that are written to `session_events` and replayed on
+/** The five event kinds that are written to `session_events` and replayed on
     attach. Everything else is fan-out only. */
 export type JournaledEvent = Extract<
   ThreadEvent,
-  { ev: "update" | "session_config" | "turn_started" | "turn_ended" }
+  { ev: "update" | "session_config" | "config_notice" | "turn_started" | "turn_ended" }
 >;
 
 export type ThreadEventKind = JournaledEvent["ev"];
@@ -631,6 +631,7 @@ export interface EarlierPage {
 export const JOURNALED_EVENTS: readonly ThreadEventKind[] = [
   "update",
   "session_config",
+  "config_notice",
   "turn_started",
   "turn_ended",
 ];
@@ -738,6 +739,17 @@ export type ThreadEvent =
           service of rewind rather than pause. */
       canRewind?: boolean;
     }
+  /** A mode, model or reasoning-effort change that landed while a turn was
+      running (`AcpBridge.setMode`/`setConfigOption` with a prompt in flight).
+      Held for the step boundary like a steer and journaled on flush — at the
+      latest the turn's own settle — so a late joiner reads it inline where it
+      happened rather than finding the menus moved with no account of when,
+      and it stays logged after the turn as well as drawn during it. One event
+      per accepted change, in arrival order; a change made while idle journals
+      only the `session_config` above and draws no row. The client renders it
+      as a `notice` rule (`Mode: Plan → Build`). Absolute text, replayed
+      verbatim — never a delta to resolve. */
+  | { ev: "config_notice"; seq: number; text: string }
   /** The turn is held at a step boundary, or no longer is. Absolute and
       live-only, like `queue`: it is current state rather than history, so
       `caught_up` carries it on attach and a replay never redraws an old hold.
@@ -770,6 +782,13 @@ export type ThreadEvent =
       error?: WireError;
       promptText?: string;
       continued?: boolean;
+      /** Wall-clock length of the whole logical turn, ms, measured
+          server-side from the prompt that opened it to the settle — the
+          denominator output tokens/sec is drawn against. Steering joins a
+          turn rather than opening one, so a steered turn's duration covers
+          every prompt in it. Absent on turns that ended before this field
+          existed, which simply draw no speed. */
+      durationMs?: number;
       /** The ACP `messageId` of the last content chunk this turn produced —
           absent when the runtime never sent one, or the turn produced no
           assistant chunks at all. Rewind reads this off the turn *before* the

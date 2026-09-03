@@ -70,9 +70,9 @@ export function messageItem(hit: SearchResult, onSelect: () => void): PaletteIte
     icon: <MessageSquareIcon />,
     subtitle: snippetParts(hit.snippet).map((part, i) =>
       part.match ? (
-        <span key={i} className="font-semibold text-foreground">
+        <mark key={i} className="bg-accent text-accent-foreground">
           {part.text}
-        </span>
+        </mark>
       ) : (
         <React.Fragment key={i}>{part.text}</React.Fragment>
       )

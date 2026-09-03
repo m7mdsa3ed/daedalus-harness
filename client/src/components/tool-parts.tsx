@@ -69,6 +69,18 @@ export const KIND_ICONS: Record<string, React.ComponentType<{ className?: string
   switch_mode: ToggleLeftIcon,
 }
 
+/* One colour language for the transcript's work marks, shared by the step-row
+   icons and the group-row avatar stack: a shell command is the quiet terminal
+   grey, a thought the thinking blue, and everything else a tool does the
+   violet of work on the files. Keyed by the same kinds KIND_ICONS is, so a
+   row and its icon never disagree. The hues come from the `--step-*` tokens
+   in index.css, so a custom theme can move all three at once. */
+export const KIND_COLORS: Record<string, string> = {
+  think: "text-step-think",
+  execute: "text-step-command",
+  other: "text-step-tool",
+}
+
 /* Prose palette + code/table styling live in index.css, so both themes come
    from the app tokens — no prose-invert needed. */
 /* `detect: false` — highlight.js only colours a fence that declares its

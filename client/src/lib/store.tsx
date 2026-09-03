@@ -423,6 +423,11 @@ export interface ThreadState {
       tags it later, and a replay builds it from `turn_started`) and the usage
       arrives after everything else in the turn. Journaled, so it replays. */
   turnUsage: Record<string, acp.Usage>
+  /** Server-measured wall clock per turn, ms, keyed by `turnId` — the same
+      `turn_ended` the usage above is folded from. Kept beside it rather than
+      inside it because `acp.Usage` is the SDK's shape and gains nothing by
+      carrying harness timing. Journaled via the event, so it replays. */
+  turnDuration: Record<string, number>
   /** Context window occupancy from usage_update. */
   context: acp.UsageUpdate | null
   /** What the model request that produced a step cost, keyed by item id — the
@@ -481,6 +486,7 @@ export const emptyThread: ThreadState = {
   availableCommands: [],
   usage: null,
   turnUsage: {},
+  turnDuration: {},
   context: null,
   stepUsage: {},
   usageMark: null,
@@ -1269,7 +1275,7 @@ export type Action =
     }
   | { type: "mode"; id: string; modeId: string }
   | { type: "config-options"; id: string; configOptions: acp.SessionConfigOption[] }
-  | { type: "usage"; id: string; usage: acp.Usage; turnId?: string }
+  | { type: "usage"; id: string; usage: acp.Usage; turnId?: string; durationMs?: number }
   | { type: "ttft"; id: string; ms: number }
   | { type: "turn-changes"; id: string; turn: TurnChanges }
   | { type: "turn-changes-all"; id: string; turns: TurnChanges[] }
@@ -1487,10 +1493,12 @@ export function reducer(state: State, action: Action): State {
     case "queue":
       return withThread(state, action.id, { queue: action.items })
     case "notice": {
-      // Never two rules in a row: cancelling an already-cancelled turn is one
-      // interruption, and the transcript should say so once.
+      // An identical rule twice in a row is one interruption, and the
+      // transcript should say so once — but distinct consecutive rules stay
+      // distinct, so rapid mid-turn mode/model/effort changes each draw a line.
       const items = thread(state, action.id).items
-      if (items[items.length - 1]?.kind === "notice") return state
+      const last = items[items.length - 1]
+      if (last?.kind === "notice" && last.text === action.text) return state
       return withThread(state, action.id, {
         items: [...items, { kind: "notice", id: mintItemId("notice"), text: action.text, at: Date.now() }],
       })
@@ -1582,8 +1590,13 @@ export function reducer(state: State, action: Action): State {
         /* The same reading, kept twice: summed for the thread's own total and
            filed under its turn for the footer that prints what this answer
            cost. One `turn_ended` per turn, journaled once, so neither can
-           double-count on a replay. */
+           double-count on a replay. The duration rides the same event and is
+           filed the same way — absent on turns that ended before the server
+           measured it. */
         ...(action.turnId ? { turnUsage: { ...current.turnUsage, [action.turnId]: action.usage } } : null),
+        ...(action.turnId && action.durationMs !== undefined
+          ? { turnDuration: { ...current.turnDuration, [action.turnId]: action.durationMs } }
+          : null),
       })
     }
     case "ttft":

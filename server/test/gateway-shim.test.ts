@@ -172,6 +172,113 @@ await test("namespace tools flatten to prefixed functions; a request without any
   assert.equal(flattenNamespaces("nope"), null);
 });
 
+/* Codex ≥ 0.150's built-in app servers, as captured off the wire: namespaces
+   whose member names carry a leading underscore, so the flat form runs past
+   the 64-character function-name cap every OpenAI-compatible provider
+   enforces (`mcp__codex_apps__codex_document_control___execute_document_command`
+   is 66) and the very first turn is rejected — tools are declared whether
+   used or not. */
+const longNamespaced = {
+  model: "m",
+  tools: [
+    { type: "function", name: "exec_command", parameters: {} },
+    {
+      type: "namespace",
+      name: "mcp__codex_apps__codex_document_control",
+      description: "docs",
+      tools: [
+        { type: "function", name: "_execute_document_command", parameters: { type: "object" } },
+        { type: "function", name: "_list_document_sessions", parameters: { type: "object" } },
+      ],
+    },
+  ],
+  input: [
+    { type: "message", role: "user", content: "hi" },
+    {
+      type: "function_call",
+      name: "_execute_document_command",
+      namespace: "mcp__codex_apps__codex_document_control",
+      call_id: "c9",
+      arguments: "{}",
+    },
+  ],
+};
+
+await test("a flat name over the 64-character cap is shortened, deterministically, and the transcript follows", () => {
+  const flat = flattenNamespaces(longNamespaced)!;
+  const names = (flat.body.tools as { name: string }[]).map((t) => t.name);
+  assert.ok(names.every((n) => n.length <= 64), `every outgoing name fits: ${names.join(", ")}`);
+  // The 66-character one is the only one shortened; the 64-character one and
+  // the untouched built-in keep their names exactly.
+  assert.equal(names[0], "exec_command");
+  assert.equal(names[2], "mcp__codex_apps__codex_document_control___list_document_sessions");
+  assert.equal(names[1]!.length, 64);
+  assert.match(names[1]!, /^mcp__codex_apps__codex_document_control___execute_[A-Za-z0-9_-]{1,}_[A-Za-z0-9_-]{8}$/);
+  assert.deepEqual(flat.renames[names[1]!], {
+    name: "_execute_document_command",
+    namespace: "mcp__codex_apps__codex_document_control",
+  });
+  // The member keeps its schema through the rename.
+  assert.deepEqual((flat.body.tools as Record<string, unknown>[])[1]!.parameters, { type: "object" });
+  // The earlier call flattens to the very name its tool was declared with —
+  // the model cannot be asked to recognize two names for one tool.
+  assert.equal((flat.body.input as { name: string }[])[1]!.name, names[1]);
+  // No state, no clock: the same request shortens to the same names, so a
+  // replayed conversation keeps referring to the tool it called.
+  assert.deepEqual(flattenNamespaces(longNamespaced)!.body, flat.body);
+  // A name the agent itself wrote over-long is the agent's, not the
+  // flattening's — it travels untouched.
+  const ownLong = flattenNamespaces({
+    model: "m",
+    tools: [{ type: "function", name: "x".repeat(80), parameters: {} }],
+    input: [],
+  });
+  assert.equal(ownLong, null);
+});
+
+await test("a shortened call comes back under its real member name, ahead of the prefix match", async () => {
+  const flat = flattenNamespaces(longNamespaced)!;
+  const short = (flat.body.tools as { name: string }[])[1]!.name;
+  // The prefix match alone would find the namespace but leave the hash tail
+  // on the member name — codex answers that "unsupported call".
+  const fixed = renamespaceCalls(
+    {
+      type: "response.completed",
+      response: {
+        output: [
+          { type: "function_call", name: short, call_id: "c9", arguments: "{}" },
+          { type: "function_call", name: "mcp__codex_apps__codex_document_control___list_document_sessions", call_id: "c10", arguments: "{}" },
+        ],
+      },
+    },
+    flat.namespaces,
+    flat.renames,
+  ) as Record<string, any>;
+  assert.deepEqual(
+    fixed.response.output.map((o: Record<string, unknown>) => [o.name, o.namespace]),
+    [
+      ["_execute_document_command", "mcp__codex_apps__codex_document_control"],
+      ["_list_document_sessions", "mcp__codex_apps__codex_document_control"],
+    ],
+  );
+  // …in the SSE stream as well, across a chunk boundary.
+  const sse =
+    `event: response.output_item.done\ndata: ${JSON.stringify({ type: "response.output_item.done", item: { type: "function_call", name: short, call_id: "c9", arguments: "{}" } })}\n\n` +
+    "data: [DONE]\n\n";
+  const cut = 60;
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      const enc = new TextEncoder();
+      c.enqueue(enc.encode(sse.slice(0, cut)));
+      c.enqueue(enc.encode(sse.slice(cut)));
+      c.close();
+    },
+  }).pipeThrough(renamespaceSse(flat.namespaces, flat.renames));
+  const out = await new Response(stream).text();
+  const item = JSON.parse(out.split("\ndata: ")[1]!).item;
+  assert.deepEqual([item.name, item.namespace], ["_execute_document_command", "mcp__codex_apps__codex_document_control"]);
+});
+
 await test("a flat call is put back under its namespace wherever it appears; longest prefix wins", () => {
   const ns = ["mcp__web_search", "mcp__web"];
   const fixed = renamespaceCalls(
@@ -400,6 +507,34 @@ await test("…and in a buffered JSON reply; a request with no namespace is forw
   const res2 = await fetch(`${codexBase}/v1/responses`, { method: "POST", headers: { "content-type": "application/json" }, body: plain });
   assert.equal(seen.at(-1)!.body, plain);
   assert.equal(((await res2.json()) as { output: { type: string }[] }).output[0]!.type, "message");
+});
+
+await test("a name the flattening made over-long reaches the gateway fitting, and its call comes back whole (SSE)", async () => {
+  const res = await fetch(`${codexBase}/v1/responses`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: "Bearer sk" },
+    body: JSON.stringify({ ...longNamespaced, stream: true }),
+  });
+  assert.equal(res.headers.get("content-type"), "text/event-stream");
+  const sent = JSON.parse(seen.at(-1)!.body) as typeof longNamespaced;
+  // What the gateway saw: nothing over the cap, nowhere — not in the
+  // declarations, not in the transcript's earlier call.
+  const sentNames = (sent.tools as { name: string }[]).map((t) => t.name).concat((sent.input as { name: string }[])[1]!.name);
+  assert.ok(sentNames.every((n) => n.length <= 64), sentNames.join(", "));
+  assert.equal(sentNames[1], sentNames[3]);
+  // What Codex sees: the gateway's flat call — by the shortened name — put
+  // back under the real member name and namespace.
+  const text = await res.text();
+  const events = text.split("\n\n").filter(Boolean).map((b) => JSON.parse(b.split("\ndata: ")[1]!));
+  assert.deepEqual(events[0].item, {
+    type: "function_call",
+    name: "_execute_document_command",
+    call_id: "c1",
+    arguments: "{}",
+    namespace: "mcp__codex_apps__codex_document_control",
+  });
+  assert.equal(events[1].response.output[0].namespace, "mcp__codex_apps__codex_document_control");
+  assert.equal(events[1].response.output[0].name, "_execute_document_command");
 });
 
 await test("an error keeps its status and body; other paths pass through", async () => {

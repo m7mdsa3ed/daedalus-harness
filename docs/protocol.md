@@ -11,8 +11,8 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   SessionManager, not of the agent, which is why there is no id arbitration left: the server
   mints one ACP request and answers the one peer that asked. Commands carry a per-socket
   `id` and get exactly one `reply`; events fan out, minus the peer whose own action caused
-  them. Four are journaled and replayed on attach — `update`, `session_config`,
-  `turn_started`, `turn_ended` — and the rest are live-only. A permission or elicitation is
+  them. Five are journaled and replayed on attach — `update`, `session_config`,
+  `config_notice`, `turn_started`, `turn_ended` — and the rest are live-only. A permission or elicitation is
   **not** journaled: it lives in `bridge.pending` for exactly as long as the agent is blocked
   on it, so a peer attaching mid-question is handed what is still open and an answered
   request simply is not there. First answer wins; a loser is told directly so its card still
@@ -165,7 +165,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   streamed `update`s: a frame is self-similar JSON that deflates five to ten times over, so
   this buys window back rather than trimming it, while a few hundred bytes of streamed text
   arriving thousands of times a turn would pay more for zlib than it saves.
-  It is a container, not a fifth journaled kind: `attached`/`caught_up` still bracket it and
+  It is a container, not a sixth journaled kind: `attached`/`caught_up` still bracket it and
   `thread-socket.ts` unrolls it back through the same switch, so there is still one parser.
   It is **opt-in** (`?batch=1`, which `wsUrl` sets): a client that predates the shape would
   drop the frame, and with it the `caught_up` inside, leaving a thread that never finishes

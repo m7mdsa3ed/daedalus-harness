@@ -2,10 +2,12 @@ import * as React from "react"
 import {
   ArrowUpRightIcon,
   BotIcon,
+  BrainIcon,
   PlayIcon,
+  SquareTerminalIcon,
   WrenchIcon,
 } from "lucide-react"
-import { ChevronRightIcon, CopyIcon } from "lucide-react"
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon } from "lucide-react"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import { ItemContextMenu } from "@/components/item-context-menu"
@@ -25,6 +27,7 @@ import { loadSettings } from "@/lib/settings"
 import {
   DetailSection,
   FileBadge,
+  KIND_COLORS,
   KIND_ICONS,
   KIND_LABELS,
   PANE_MAX_H,
@@ -84,7 +87,7 @@ import { Link } from "react-router"
 
 /* Re-exported so the approval card and the editor panel keep importing the
    transcript's vocabulary from the transcript, not from its internals. */
-export { FileBadge, KIND_ICONS, KIND_LABELS, Prose, Timestamp, ToolCallContent }
+export { FileBadge, KIND_COLORS, KIND_ICONS, KIND_LABELS, Prose, Timestamp, ToolCallContent }
 export { SourcesStrip }
 
 /* The row shapes are `lib/transcript-rows`' — the transform that builds them
@@ -156,6 +159,88 @@ function summarise(items: ToolItem[]): { verb: string; noun: string; count: numb
 
 /** How much of a running group stays on screen without being expanded. */
 const PEEK = 3
+
+/** The three acts a folded run can hold, as the avatar stack below draws them:
+    shell commands, thoughts, and everything else a tool call does. Each avatar
+    is one act that is in the run, not one call — "12 reads" is one wrench, the
+    way a people stack is one face per person rather than a face per message.
+    Each carries the app's accent for that act — a thought is the same blue a
+    thinking step row shimmers with, a failed shell command the same red the
+    row would claim — so a glance at the stack reads the run's shape. */
+const RUN_BUCKETS = {
+  command: {
+    icon: SquareTerminalIcon,
+    noun: "shell command",
+    className: "text-step-command",
+    chip: "bg-step-command/15",
+  },
+  thought: {
+    icon: BrainIcon,
+    noun: "thought",
+    className: "text-step-think",
+    chip: "bg-step-think/15",
+  },
+  tool: {
+    icon: WrenchIcon,
+    noun: "tool",
+    className: "text-step-tool",
+    chip: "bg-step-tool/15",
+  },
+} as const
+type RunBucket = keyof typeof RUN_BUCKETS
+
+function bucketOf(item: ToolItem | TextItem): RunBucket {
+  if (item.kind === "thought") return "thought"
+  if (item.kind === "tool") {
+    /* A `think` call is a thought in this vocabulary everywhere else — the
+       summary line counts it as "thinking N thoughts" — so it stacks with the
+       thoughts rather than with the tools. */
+    if (toolKindOf(item) === "think") return "thought"
+    if (toolKindOf(item) === "execute") return "command"
+  }
+  return "tool"
+}
+
+/** What a folded run contains, as a stack of overlapping marks: one avatar per
+    act present — commands, thoughts, tools — in the order they first happened,
+    each telling its count on hover. The at-a-glance reading of the run; the
+    sentence next to it is the same fact in words ("running 8 shell commands"). */
+function RunAvatarStack({ items }: { items: Array<ToolItem | TextItem> }) {
+  const slots = React.useMemo(() => {
+    const order: RunBucket[] = []
+    const counts = new Map<RunBucket, number>()
+    for (const item of items) {
+      const bucket = bucketOf(item)
+      if (!counts.has(bucket)) order.push(bucket)
+      counts.set(bucket, (counts.get(bucket) ?? 0) + 1)
+    }
+    return order.map((bucket) => ({ bucket, count: counts.get(bucket)! }))
+  }, [items])
+  if (slots.length === 0) return null
+  return (
+    /* Decorative on purpose: the sentence beside it says the same thing for a
+       screen reader, so the marks are not read twice. Hover still tells each
+       count, because the sentence groups by kind only for the tools. */
+    <span aria-hidden className="flex shrink-0 items-center -space-x-1.5">
+      {slots.map(({ bucket, count }) => {
+        const { icon: Icon, noun, className, chip } = RUN_BUCKETS[bucket]
+        return (
+          <span
+            key={bucket}
+            title={`${count} ${count === 1 ? noun : `${noun}s`}`}
+            className={cn(
+              "grid size-4 shrink-0 place-items-center rounded-full ring-2 ring-background",
+              chip,
+              className
+            )}
+          >
+            <Icon className="size-2.5" />
+          </span>
+        )
+      })}
+    </span>
+  )
+}
 
 /** The group's title as a sentence: "Reading 10 files · Running 28 shell
     commands". The verbs stay in the row's muted voice and the counts take the
@@ -308,6 +393,7 @@ export const ToolRun = React.memo(function ToolRun({
             open && "rotate-90"
           )}
         />
+        <RunAvatarStack items={items} />
         <span
           className={cn(
             "min-w-0 flex-1 truncate text-xs leading-6 text-muted-foreground",
@@ -760,7 +846,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
                   {item.attachments && item.attachments.length > 0 && (
                     <MessageAttachments attachments={item.attachments} />
                   )}
-                  {item.text && <Prose text={item.text} />}
+                  {item.text && <UserMessageText text={item.text} />}
                 </BubbleContent>
               </Bubble>
             </MessageContent>
@@ -843,6 +929,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
       return (
         <StepRow
           icon={KIND_ICONS.think}
+          iconAccent={KIND_COLORS.think}
           status={streaming ? "in_progress" : null}
           label={streaming ? "thinking" : undefined}
           startedAt={streaming ? item.at : undefined}
@@ -923,6 +1010,7 @@ const ToolStep = React.memo(function ToolStep({
     <StepRow
       status={item.status}
       icon={KindIcon}
+      iconAccent={KIND_COLORS[kind] ?? KIND_COLORS.other}
       target={heading.title}
       /* "Show the command" off leaves the sentence alone on the row. What was
          typed is still in the body, which is where it is read once the line
@@ -964,3 +1052,120 @@ const ToolStep = React.memo(function ToolStep({
   )
 })
 ToolStep.displayName = "ToolStep"
+
+/**
+ * Renders user message text, collapsing any pasted text blocks into interactive
+ * toggles that can be opened/closed to view the pasted content.
+ */
+function UserMessageText({ text }: { text: string }) {
+  const parts = React.useMemo(() => parseUserMessageParts(text), [text])
+  if (parts.length === 1 && parts[0].type === "prose") {
+    return <Prose text={parts[0].text} />
+  }
+  return (
+    <div className="space-y-2">
+      {parts.map((part, index) =>
+        part.type === "prose" ? (
+          <Prose key={index} text={part.text} />
+        ) : (
+          <PastedTextItem key={index} n={part.n} content={part.content} />
+        )
+      )}
+    </div>
+  )
+}
+
+function parseUserMessageParts(text: string): Array<
+  | { type: "prose"; text: string }
+  | { type: "paste"; n?: string; content: string }
+> {
+  const regex = /(?:^|\n)(`{3,})pasted-text(?: #?(\d+))?[^\n]*\n([\s\S]*?)\n\1(?=\n|$)/g
+  const parts: Array<{ type: "prose"; text: string } | { type: "paste"; n?: string; content: string }> = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = regex.exec(text)) !== null) {
+    const before = text.slice(lastIndex, match.index)
+    if (before.trim()) {
+      parts.push({ type: "prose", text: before.trim() })
+    }
+    parts.push({
+      type: "paste",
+      n: match[2],
+      content: match[3],
+    })
+    lastIndex = match.index + match[0].length
+  }
+
+  const after = text.slice(lastIndex)
+  if (after.trim()) {
+    parts.push({ type: "prose", text: after.trim() })
+  }
+
+  return parts.length > 0 ? parts : [{ type: "prose", text }]
+}
+
+function PastedTextItem({
+  n,
+  content,
+}: {
+  n?: string
+  content: string
+}) {
+  const [open, setOpen] = React.useState(false)
+  const [copied, setCopied] = React.useState(false)
+  const lines = content.split("\n").length
+  const chars = content.length
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    void copyText(content)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
+  return (
+    <div className="my-1.5 overflow-hidden rounded-xl border border-border/50 bg-background/50 text-foreground">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-start text-xs transition-colors hover:bg-muted/50"
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <ClipboardListIcon className="size-4 shrink-0 text-muted-foreground" />
+          <span className="font-medium truncate">
+            {n ? `Pasted text #${n}` : "Pasted text"}
+          </span>
+          <span className="text-[11px] text-muted-foreground shrink-0">
+            ({lines.toLocaleString()} line{lines === 1 ? "" : "s"} · {chars.toLocaleString()} chars)
+          </span>
+        </div>
+        <div className="flex items-center gap-1 shrink-0 text-muted-foreground">
+          <span className="text-[11px]">{open ? "Hide" : "Show"}</span>
+          <ChevronDownIcon
+            className={cn("size-3.5 transition-transform duration-200", open && "rotate-180")}
+          />
+        </div>
+      </button>
+      {open && (
+        <div className="border-t border-border/40 bg-muted/20 p-2.5">
+          <div className="mb-1.5 flex justify-end">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={handleCopy}
+              className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+              title="Copy pasted text"
+            >
+              {copied ? <CheckIcon className="size-3 text-emerald-500" /> : <CopyIcon className="size-3" />}
+              <span>{copied ? "Copied" : "Copy"}</span>
+            </Button>
+          </div>
+          <pre className="max-h-72 overflow-auto text-xs whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-muted-foreground">
+            {content}
+          </pre>
+        </div>
+      )}
+    </div>
+  )
+}

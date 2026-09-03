@@ -79,6 +79,17 @@ function segments(script: string): string[] {
       continue
     }
     if (depth === 0 && (char === ";" || char === "|" || char === "\n" || char === "&")) {
+      /* A `&` inside a redirection (`2>&1`, `&>file`) is plumbing, not a job
+         separator — splitting there left `2>`/`1` as segments and the
+         unreadable tail vetoed the phrase (`pnpm build 2>&1` → null). */
+      if (char === "&") {
+        const prev = script[i - 1] ?? ""
+        const next = script[i + 1] ?? ""
+        if (prev === ">" || prev === "<" || next === ">" || /\d/.test(prev) || /\d/.test(next)) {
+          current += char
+          continue
+        }
+      }
       out.push(current)
       current = ""
       continue
@@ -107,7 +118,7 @@ function programOf(segment: string): { name: string; args: string[] } | null {
   /* Redirections are the shell's plumbing, not arguments: `cat <<PY` and
      `node x.js > out.log` are a read and a run, and the `<<PY`/`>` tokens would
      otherwise be picked up as the thing acted on. */
-  let words = tokenize(segment).filter((word) => !/^[0-9]*[<>]/.test(word))
+  let words = tokenize(segment).filter((word) => !/^[0-9]*[<>]/.test(word) && !/^&?>/.test(word) && !/^[0-9]*>&/.test(word))
   for (;;) {
     while (words.length && /^[A-Za-z_][\w]*=/.test(words[0])) words = words.slice(1)
     if (words.length && WRAPPERS.has(words[0])) {
@@ -296,8 +307,12 @@ function packagePhrase(name: string, args: string[]): string | null {
   if (["exec", "dlx", "run"].includes(sub) || name === "npx" || name === "pnpx" || name === "bunx") {
     const rest = args.slice(args.indexOf(sub) + (["exec", "dlx", "run"].includes(sub) ? 1 : 0))
     const inner = rest.length ? phraseFor(rest[0].split("/").pop()!.toLowerCase(), rest.slice(1)) : null
-    return inner ?? (rest.length ? `run the ${rest[0]} script` : null)
+    return inner ?? (rest.length ? `run ${rest[0]}` : null)
   }
+  /* `pnpm eslint src` / `pnpm vite build` run the binary directly, not through
+     `exec` and not as an npm script — read the subcommand as the tool it is. */
+  const asTool = phraseFor(sub, args.slice(args.indexOf(sub) + 1))
+  if (asTool) return asTool
   return `run ${name} ${sub}`
 }
 
@@ -405,6 +420,22 @@ function phraseFor(name: string, args: string[]): string | null {
       return "read some JSON"
     case "sqlite3": case "psql": case "mysql":
       return "query the database"
+
+    // Dev tools: reached directly or through `pnpm exec`/`npx`, whose branch
+    // above re-enters here with the inner program. Without these the fallback
+    // names them as npm scripts ("run the tsc script"), which they are not.
+    case "tsc": case "vue-tsc":
+      return "typecheck the project"
+    case "vite": case "webpack": case "esbuild": case "rollup": case "next": {
+      const sub = firstArg(args)
+      if (sub === "build" || sub === "build-ssr" || sub === "optimize") return "build the project"
+      if (sub === "dev" || sub === "serve" || sub === "preview") return "start the dev server"
+      return "build the project"
+    }
+    case "vitest": case "jest": case "mocha": case "playwright": case "cypress":
+      return "run the tests"
+    case "eslint": case "biome": case "prettier": case "stylelint": case "oxlint":
+      return "lint the project"
     default:
       return null
   }

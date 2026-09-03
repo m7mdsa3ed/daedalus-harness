@@ -26,7 +26,7 @@ import { getConfig, loadConfig } from "./config.js";
 import { WEB_SEARCH_SERVER_NAME, toMcpServerEnv } from "./websearch.js";
 import { pruneWebSearchUsage, recordWebSearchUsage } from "./websearch-usage.js";
 import { KNOWLEDGE_SERVER_NAME, toKnowledgeServerEnv } from "./knowledge-db.js";
-import { AcpBridge, agentStream, spawnAgent, type BridgeHost } from "./acp-bridge.js";
+import { AcpBridge, agentStream, configNoticeText, spawnAgent, type BridgeHost } from "./acp-bridge.js";
 import { makeBridgeHost } from "./bridge-host.js";
 import { enrichError, pushStderr, resetStderr } from "./stderr-ring.js";
 import { SessionQueue } from "./session-queue.js";
@@ -1484,7 +1484,23 @@ export class SessionManager {
        model, and the respawn silently puts it back on high. Picking is a
        statement about how to work; the effort row underneath stays theirs. */
     const effort = (changed ? personaEffort(next.personaId) : undefined) ?? next.effort;
+    /* Named before the respawn: it moves the row, and the journal is cleared
+       under it. */
+    const movingProfile = next.profile.id !== session.profileId;
+    const fromProfileName = session.profile?.name;
     await this.respawn(id, next.profile, next.agentId, next.project, next.model, effort);
+    /* …and said after it, once the restored conversation is journaled again:
+       a profile move draws the same transcript row a mode/model change does
+       (`Profile: Old → New`), journaled so it replays and reaches every peer
+       on reattach. `respawn` is also the revive path, where no profile changed
+       and there is nothing to say. */
+    if (movingProfile) {
+      this.emit(session, {
+        ev: "config_notice",
+        seq: 0,
+        text: configNoticeText("Profile", fromProfileName, next.profile.name),
+      });
+    }
     return { live: false };
   }
 
@@ -1573,6 +1589,10 @@ export class SessionManager {
       effort,
       personaId: session.personaId,
     });
+    /* A move that landed mid-turn draws the same transcript row a mode/model
+       change does (`Profile: Old → New`), held for the step boundary; an idle
+       move stays silent — the menu already says where the thread is. */
+    if (moving) bridge.noteProfileChange(previous.profile?.name, next.profile.name);
     return true;
   }
 

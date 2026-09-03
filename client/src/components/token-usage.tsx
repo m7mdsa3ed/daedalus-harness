@@ -24,7 +24,7 @@ import { CoinsIcon } from "lucide-react"
 import type * as acp from "@daedalus/acp"
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { formatTokens, promptTokens } from "@/lib/tokens"
+import { formatDuration, formatRate, formatTokens, promptTokens } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 
 /** The headline number: everything the turn or step burned, both directions.
@@ -203,17 +203,22 @@ export function TokenSummary({
   usage,
   context,
   label = "Tokens",
+  durationMs,
   className,
 }: {
   usage: acp.Usage
   context?: acp.UsageUpdate
   /** What the popover calls this reading — "This turn", "This step". */
   label?: string
+  /** Server-measured wall clock for the turn, ms — what tok/s is drawn
+      against. Absent on turns that ended before the server measured it. */
+  durationMs?: number
   className?: string
 }) {
   const prompt = promptTokens(usage)
   const cached = usage.cachedReadTokens ?? 0
   const cacheRate = prompt > 0 ? Math.round((cached / prompt) * 100) : null
+  const rate = durationMs !== undefined ? formatRate(usage.outputTokens, durationMs) : null
   return (
     <Popover>
       <PopoverTrigger
@@ -232,6 +237,7 @@ export function TokenSummary({
           >
             <CoinsIcon aria-hidden className="size-3 shrink-0" />
             <TokenFigure usage={usage} />
+            {rate && <span className="text-muted-foreground/80">· {rate}</span>}
           </button>
         }
       />
@@ -248,6 +254,10 @@ export function TokenSummary({
           ) : null}
           {cacheRate !== null && <Stat label="Cache rate" value={`${cacheRate}%`} />}
           <Stat label="Total" value={formatTokens(usage.totalTokens)} />
+          {durationMs !== undefined && (
+            <Stat label="Duration" value={formatDuration(durationMs)} />
+          )}
+          {rate && <Stat label="Speed" value={rate} />}
           {context && (
             <Stat label="Context" value={`${formatTokens(context.used)} / ${formatTokens(context.size)}`} />
           )}

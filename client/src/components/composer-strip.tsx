@@ -148,6 +148,10 @@ export function ComposerStrip({ className, children, ...props }: React.Component
         className={cn(
           // -mb-4/pb-4: the bottom four units sit behind the composer, which is
           // what makes the seam disappear. Keep the two in step.
+          // The shelf wears the `--surface` token against the composer's
+          // `--composer`, so the two read as separate objects with a visible
+          // seam rather than one flat band, and the tucked bottom edge sits
+          // behind the card.
           // Width follows the composer: minus whatever the composer actually is
           // (capped when there is room, 100% of the container when there is not)
           // the strip stays narrower, so it reads as tucked behind rather than
@@ -158,7 +162,7 @@ export function ComposerStrip({ className, children, ...props }: React.Component
           // squeezed beside a terminal gets the narrow inset the same way a
           // phone does.
           "mx-auto -mb-4 w-full max-w-[calc(min(100%,var(--harness-composer-width))_-_1rem)] @panel-sm:max-w-[calc(min(100%,var(--harness-composer-width))_-_3rem)]",
-          "overflow-hidden rounded-t-xl bg-muted/70 pb-4 backdrop-blur-[14px]",
+          "overflow-hidden rounded-t-xl bg-surface pb-4 ring-1 ring-foreground/5 dark:ring-foreground/10",
           // Nothing registered means nothing rendered: no summary line, no shelf.
           summaries.length === 0 && "hidden",
           className

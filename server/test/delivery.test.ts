@@ -138,13 +138,13 @@ test("a body is expanded where its token sits", () => {
   const paste = mintPaste([], "hello\nworld");
   const text = `look at ${pasteToken(paste.n)} please`;
   const out = expandPastes(text, [paste]);
-  assert.equal(out, "look at \n```\nhello\nworld\n```\n please");
+  assert.equal(out, "look at \n```pasted-text #1\nhello\nworld\n```\n please");
 });
 
 test("the fence is computed so a pasted fence cannot close it early", () => {
   const paste = mintPaste([], "```\ncode\n```");
   const out = expandPastes(pasteToken(paste.n), [paste]);
-  assert.match(out, /````\n```\ncode\n```\n````/);
+  assert.match(out, /````pasted-text #1\n```\ncode\n```\n````/);
 });
 
 test("a token the user deleted drops its body", () => {

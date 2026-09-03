@@ -95,9 +95,9 @@ export function AgentIcon({ agentId, className }: { agentId?: string; className?
       className={className}
       fallback={
         agentId === DAEDALUS_AGENT_ID ? (
-          <Logo className={cn("shrink-0 text-primary", className)} />
+          <Logo className={cn("shrink-0 rounded-full text-primary", className)} />
         ) : (
-          <BotIcon aria-hidden="true" className={cn("shrink-0 text-muted-foreground", className)} />
+          <BotIcon aria-hidden="true" className={cn("shrink-0 rounded-full text-muted-foreground", className)} />
         )
       }
     />
@@ -126,6 +126,24 @@ export function ProfileIcon({
       fallback={
         <AgentIcon agentId={agentId ?? Object.keys(profile?.agents ?? {})[0]} className={className} />
       }
+    />
+  )
+}
+
+/** A model's logo when it has one; a neutral glyph otherwise, so rows with
+    and without art stay aligned. */
+export function ModelIcon({
+  iconUrl,
+  className,
+}: {
+  iconUrl?: string | null
+  className?: string
+}) {
+  return (
+    <EntityIcon
+      src={iconUrl}
+      className={className}
+      fallback={<BotIcon aria-hidden="true" className={cn("shrink-0 rounded-full text-muted-foreground", className)} />}
     />
   )
 }

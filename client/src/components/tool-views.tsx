@@ -178,7 +178,7 @@ function MarkedLine({ text, pattern }: { text: string; pattern: string | null })
     <>
       {text.split(re).map((part, index) =>
         index % 2 === 1 ? (
-          <mark key={index} className="bg-primary/20 text-foreground">
+          <mark key={index} className="bg-accent text-accent-foreground">
             {part}
           </mark>
         ) : (

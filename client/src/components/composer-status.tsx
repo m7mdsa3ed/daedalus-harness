@@ -26,7 +26,7 @@ import { extractSubagent, extractTodos, toolHeading, toolViewOf } from "@/lib/to
 import { activeSubagents, buildRows } from "@/lib/transcript-rows"
 import { useAgents, useProfiles } from "@/lib/queries/catalog"
 import { useStoreSelect, type PlanItem, type ThreadState, type ToolItem } from "@/lib/store"
-import { formatTokens } from "@/lib/tokens"
+import { formatRate, formatTokens } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 
 /** Above this the agent is about to compact, so the popover says so. */
@@ -218,6 +218,12 @@ export function ContextIndicator({
   const cached = usage?.cachedReadTokens ?? 0
   const prompt = usage ? usage.inputTokens + cached + (usage.cachedWriteTokens ?? 0) : 0
   const cacheRate = prompt > 0 ? Math.round((cached / prompt) * 100) : null
+  /* Session-average output speed: summed only over turns the server timed, so
+     turns that ended before durations existed dilute neither side. */
+  const measured = Object.entries(thread.turnUsage).filter(([id]) => thread.turnDuration[id] !== undefined)
+  const measuredOutput = measured.reduce((n, [, u]) => n + u.outputTokens, 0)
+  const measuredMs = measured.reduce((n, [id]) => n + (thread.turnDuration[id] ?? 0), 0)
+  const avgRate = formatRate(measuredOutput, measuredMs)
   const tone = context ? contextTone(percent) : null
 
   return (
@@ -298,6 +304,7 @@ export function ContextIndicator({
             />
           )}
           {usage && <Stat label="Total" value={formatTokens(usage.totalTokens)} />}
+          {avgRate && <Stat label="Output avg" value={avgRate} />}
           {ttftMs !== null && <Stat label="TTFT" value={`${ttftMs}ms`} />}
           {/* Cost is cumulative for the session; agents that don't price turns omit it. */}
           {context?.cost && (

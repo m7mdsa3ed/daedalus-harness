@@ -84,7 +84,7 @@ export function expandPastes(text: string, pastes: Paste[]): string {
     const token = pasteToken(paste.n)
     if (!out.includes(token)) continue
     const fence = fenceFor(paste.text)
-    out = out.split(token).join(`\n${fence}\n${paste.text}\n${fence}\n`)
+    out = out.split(token).join(`\n${fence}pasted-text #${paste.n}\n${paste.text}\n${fence}\n`)
   }
   return out
 }

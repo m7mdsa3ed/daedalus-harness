@@ -47,9 +47,26 @@
  * for the model — and on the way back re-namespaces any `function_call` whose
  * name starts with a namespace it flattened, in the SSE events and in a
  * buffered JSON reply alike. Verified against codex-acp 1.7 / codex 0.148:
- * the namespaced shape runs the MCP tool, the flat one does not. Reading a
- * `/responses` body is the cost, and only that path pays it — a request with
- * no namespace tool is forwarded exactly as it arrived.
+ * the namespaced shape runs the MCP tool, the flat one does not.
+ *
+ * The flat name can be too long to send. The OpenAI contract every
+ * compatible backend enforces caps a function name at 64 characters
+ * (`name must be at most 64 characters, got 66`), and Codex ≥ 0.150 declares
+ * built-in app servers as namespaces whose member names carry a leading
+ * underscore — `mcp__codex_apps__codex_document_control` +
+ * `__` + `_execute_document_command` is 66 — so the flattening itself
+ * manufactures names the provider rejects, on the very first turn, with every
+ * tool declared whether used or not. A flat name over the cap is shortened to
+ * fit: truncated, with a hash tail of the full name for uniqueness (members
+ * of one namespace share their prefix, so truncation alone collides). The
+ * shortening is deterministic — no state, the hash is of the full name —
+ * because a replayed `function_call` must flatten to the very name the model
+ * called, and the map travels with the request's namespaces to put the call
+ * back under its real member name on the way home. A function name the agent
+ * itself wrote over-long is left alone: the flattening broke this one, and
+ * only what it breaks is its to fix. Reading a `/responses` body is the cost,
+ * and only that path pays it — a request with no namespace tool is forwarded
+ * exactly as it arrived.
  *
  * The key in the path is the credential, exactly as `/ide/<key>/` is: the
  * route is unauthenticated because the CLI sends its own `x-api-key` for the
@@ -59,7 +76,7 @@
  * kills those anyway. `{gatewayUrl}` in an agent's env template
  * (`registry.ts`) is where it is handed out.
  */
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 import { getProfile, profileBaseUrl } from "./profiles.js";
 
@@ -306,17 +323,68 @@ const NS_SEP = "__";
 
 const isObject = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.isArray(v);
 
+/** The most characters a provider accepts in a function name. OpenAI's own
+    validation, inherited by every compatible backend and gateways alike. */
+const MAX_TOOL_NAME = 64;
+
+/** A member a shortened flat name stands for, for putting a call back. */
+export interface RenamedTool {
+  name: string;
+  namespace: string;
+}
+
+/** A flat name over `MAX_TOOL_NAME`, shortened to fit. The tail is a hash of
+    the *full* name: members of one namespace share their prefix, so
+    truncation alone would collide, and the hash keeps two long names apart.
+    `used` holds the names already going out in this request, so a shortened
+    name cannot collide with one of those either; a longer tail is taken until
+    it doesn't, which in practice is never (an 8-character base64url tail is
+    48 bits against a handful of names). Deterministic for a given request
+    body either way — nothing here is state the shim keeps. */
+function shortToolName(flat: string, used: Set<string>): string {
+  const digest = createHash("sha256").update(flat).digest("base64url");
+  for (let take = 8; take < digest.length; take++) {
+    const short = `${flat.slice(0, MAX_TOOL_NAME - take - 1)}_${digest.slice(0, take)}`;
+    if (!used.has(short)) return short;
+  }
+  /* Unreachable in practice: a 64-character name carrying 42 hash characters
+     that still collides with one already going out. */
+  return flat;
+}
+
 /**
  * A Responses request with its `namespace` tools flattened into their member
  * functions (`<namespace>__<name>`), and any namespaced `function_call` input
- * item flattened to match. Null when there is nothing to flatten — the
- * common case for everything but Codex, and the signal to forward the
- * original bytes untouched. `namespaces` is what the reply must be checked
- * against.
+ * item flattened to match. A flat name over the provider's 64-character cap
+ * is shortened (`shortToolName`) — the flattening made it, so the flattening
+ * fits it — with the mapping returned as `renames`. Null when there is
+ * nothing to flatten — the common case for everything but Codex, and the
+ * signal to forward the original bytes untouched. `namespaces` is what the
+ * reply must be checked against.
  */
-export function flattenNamespaces(body: unknown): { body: Json; namespaces: string[] } | null {
+export function flattenNamespaces(
+  body: unknown,
+): { body: Json; namespaces: string[]; renames: Record<string, RenamedTool> } | null {
   if (!isObject(body)) return null;
   const namespaces = new Set<string>();
+  const renames: Record<string, RenamedTool> = {};
+  /** Every name going out in this request, so a shortened one cannot land on
+      one of them; and the shortening already handed out for a full name, so
+      an input item flattens to exactly the name its tool was declared with. */
+  const used = new Set<string>();
+  const shorts = new Map<string, string>();
+  const flatName = (namespace: string, member: string): string => {
+    const flat = `${namespace}${NS_SEP}${member}`;
+    const known = shorts.get(flat);
+    if (known !== undefined) return known;
+    /* A flat name that is over the cap, or that another namespace already
+       claimed (`a__b` + `c` and `a` + `b__c` flatten alike), is shortened. */
+    const name = flat.length <= MAX_TOOL_NAME && !used.has(flat) ? flat : shortToolName(flat, used);
+    used.add(name);
+    shorts.set(flat, name);
+    if (name !== flat) renames[name] = { name: member, namespace };
+    return name;
+  };
   let changed = false;
   const out: Json = { ...body };
   if (Array.isArray(body.tools)) {
@@ -326,9 +394,16 @@ export function flattenNamespaces(body: unknown): { body: Json; namespaces: stri
         namespaces.add(tool.name);
         changed = true;
         for (const member of tool.tools) {
-          if (isObject(member) && typeof member.name === "string") flat.push({ ...member, name: `${tool.name}${NS_SEP}${member.name}` });
+          if (isObject(member) && typeof member.name === "string") flat.push({ ...member, name: flatName(tool.name, member.name) });
         }
-      } else flat.push(tool);
+      } else {
+        /* A name the agent itself chose goes out as it came, over-long or not
+           — the flattening did not break it, and rewriting what a request
+           never asked to have rewritten is how a proxy breaks an endpoint it
+           does not know. */
+        if (isObject(tool) && typeof tool.name === "string") used.add(tool.name);
+        flat.push(tool);
+      }
     }
     out.tools = flat;
   }
@@ -338,12 +413,12 @@ export function flattenNamespaces(body: unknown): { body: Json; namespaces: stri
         namespaces.add(item.namespace);
         changed = true;
         const { namespace, ...rest } = item;
-        return { ...rest, name: `${namespace}${NS_SEP}${item.name}` };
+        return { ...rest, name: flatName(item.namespace, item.name) };
       }
       return item;
     });
   }
-  return changed ? { body: out, namespaces: [...namespaces] } : null;
+  return changed ? { body: out, namespaces: [...namespaces], renames } : null;
 }
 
 /**
@@ -353,19 +428,28 @@ export function flattenNamespaces(body: unknown): { body: Json; namespaces: stri
  * `output_item.added`, an `output_item.done`, the `output[]` inside
  * `response.completed` and a buffered non-streaming reply. Longest namespace
  * wins, since one may be a prefix of another. A call that already names its
- * namespace is left alone.
+ * namespace is left alone. A shortened name (`renames`, from the request this
+ * replies to) is resolved *before* the prefix match — truncation kept the
+ * namespace prefix, so the match would fire and leave the hash tail on the
+ * member name codex then cannot run.
  */
-export function renamespaceCalls(value: unknown, namespaces: string[]): unknown {
-  if (Array.isArray(value)) return value.map((v) => renamespaceCalls(v, namespaces));
+export function renamespaceCalls(value: unknown, namespaces: string[], renames: Record<string, RenamedTool> = {}): unknown {
+  if (Array.isArray(value)) return value.map((v) => renamespaceCalls(v, namespaces, renames));
   if (!isObject(value)) return value;
   const out: Json = {};
-  for (const [k, v] of Object.entries(value)) out[k] = renamespaceCalls(v, namespaces);
+  for (const [k, v] of Object.entries(value)) out[k] = renamespaceCalls(v, namespaces, renames);
   if (out.type === "function_call" && typeof out.name === "string" && out.namespace == null) {
     const name = out.name;
-    const ns = namespaces.filter((n) => name.startsWith(n + NS_SEP)).sort((a, b) => b.length - a.length)[0];
-    if (ns) {
-      out.name = name.slice(ns.length + NS_SEP.length);
-      out.namespace = ns;
+    const renamed = renames[name];
+    if (renamed) {
+      out.name = renamed.name;
+      out.namespace = renamed.namespace;
+    } else {
+      const ns = namespaces.filter((n) => name.startsWith(n + NS_SEP)).sort((a, b) => b.length - a.length)[0];
+      if (ns) {
+        out.name = name.slice(ns.length + NS_SEP.length);
+        out.namespace = ns;
+      }
     }
   }
   return out;
@@ -373,7 +457,7 @@ export function renamespaceCalls(value: unknown, namespaces: string[]): unknown 
 
 /** One SSE event block with its `data:` payload re-namespaced; a block whose
     data is not JSON (a comment, a `[DONE]`) is returned as it was. */
-function renamespaceSseBlock(block: string, namespaces: string[]): string {
+function renamespaceSseBlock(block: string, namespaces: string[], renames: Record<string, RenamedTool>): string {
   const lines = block.split(/\r?\n/);
   const dataAt = lines.flatMap((line, i) => (line.startsWith("data:") ? [i] : []));
   if (!dataAt.length) return block;
@@ -385,7 +469,7 @@ function renamespaceSseBlock(block: string, namespaces: string[]): string {
     return block;
   }
   const head = lines.filter((_, i) => !dataAt.includes(i));
-  return [...head, `data: ${JSON.stringify(renamespaceCalls(parsed, namespaces))}`].join("\n");
+  return [...head, `data: ${JSON.stringify(renamespaceCalls(parsed, namespaces, renames))}`].join("\n");
 }
 
 /**
@@ -394,7 +478,7 @@ function renamespaceSseBlock(block: string, namespaces: string[]): string {
  * a chunk boundary inside an event is buffered, never mis-parsed; whatever is
  * left at the end is flushed as-is.
  */
-export function renamespaceSse(namespaces: string[]): TransformStream<Uint8Array, Uint8Array> {
+export function renamespaceSse(namespaces: string[], renames: Record<string, RenamedTool> = {}): TransformStream<Uint8Array, Uint8Array> {
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   let buffer = "";
@@ -406,12 +490,12 @@ export function renamespaceSse(namespaces: string[]): TransformStream<Uint8Array
         if (!m) break;
         const block = buffer.slice(0, m.index);
         buffer = buffer.slice(m.index + m[0].length);
-        controller.enqueue(encoder.encode(renamespaceSseBlock(block, namespaces) + m[0]));
+        controller.enqueue(encoder.encode(renamespaceSseBlock(block, namespaces, renames) + m[0]));
       }
     },
     flush(controller) {
       buffer += decoder.decode();
-      if (buffer) controller.enqueue(encoder.encode(renamespaceSseBlock(buffer, namespaces)));
+      if (buffer) controller.enqueue(encoder.encode(renamespaceSseBlock(buffer, namespaces, renames)));
     },
   });
 }
@@ -508,6 +592,7 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
   const rewriting = thread?.rewriteModel === true && (isResponses || /\/messages\/?$/.test(parsed.rest));
   let body: BodyInit | null = req.body;
   let namespaces: string[] = [];
+  let renames: Record<string, RenamedTool> = {};
   if (
     req.method === "POST" &&
     (isResponses || rewriting) &&
@@ -521,6 +606,7 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
       const flat = isResponses ? flattenNamespaces(parsedBody) : null;
       if (flat) {
         namespaces = flat.namespaces;
+        renames = flat.renames;
         edited = true;
         const tag = `${agentId}:${namespaces.join(",")}`;
         if (!loggedNamespaces.has(tag)) {
@@ -528,7 +614,11 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
           // this; a cleared set costs one repeated line.
           if (loggedNamespaces.size > 200) loggedNamespaces.clear();
           loggedNamespaces.add(tag);
-          console.log(`[gateway-shim] flattening tool namespace(s) ${namespaces.join(", ")} for ${agentId} towards ${baseUrl}`);
+          const shortened = Object.keys(renames).length;
+          console.log(
+            `[gateway-shim] flattening tool namespace(s) ${namespaces.join(", ")} for ${agentId} towards ${baseUrl}` +
+              (shortened ? `, ${shortened} name(s) shortened to fit the ${MAX_TOOL_NAME}-character limit` : ""),
+          );
         }
       }
       if (edited) body = JSON.stringify(flat ? flat.body : parsedBody);
@@ -587,12 +677,12 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
   }
   if (namespaces.length && upstream.ok && upstream.body) {
     if (/text\/event-stream/i.test(contentType)) {
-      return new Response(upstream.body.pipeThrough(renamespaceSse(namespaces)), { status: upstream.status, headers: out });
+      return new Response(upstream.body.pipeThrough(renamespaceSse(namespaces, renames)), { status: upstream.status, headers: out });
     }
     if (/application\/json/i.test(contentType)) {
       const text = await upstream.text();
       try {
-        return new Response(JSON.stringify(renamespaceCalls(JSON.parse(text), namespaces)), { status: upstream.status, headers: out });
+        return new Response(JSON.stringify(renamespaceCalls(JSON.parse(text), namespaces, renames)), { status: upstream.status, headers: out });
       } catch {
         return new Response(text, { status: upstream.status, headers: out });
       }

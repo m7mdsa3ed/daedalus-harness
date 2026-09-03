@@ -463,9 +463,10 @@ export class AcpBridge {
       waits on this being empty — see `announceSteer`. Cleared with the turn,
       because a turn that ended has no step left to finish. */
   private readonly openToolCalls = new Set<string>();
-  /** Steers whose `turn_started` has not been emitted yet: the words are
-      already on the wire, but the transcript does not show them until the step
-      that was running lets go. Drained by `flushSteers`. */
+  /** Steers whose `turn_started` has not been emitted yet — and mid-turn
+      mode/model/effort notices (`config_notice`, via `holdConfigNotice`): the
+      words are already on the wire, but the transcript does not show them
+      until the step that was running lets go. Drained by `flushSteers`. */
   private pendingSteers: { id: string; createdAt: number; event: ThreadEvent; origin: Peer | undefined }[] = [];
   /** Callers of `whenIdle()` waiting for `inflight` to reach zero. */
   private idleWaiters: (() => void)[] = [];
@@ -990,7 +991,9 @@ export class AcpBridge {
             createdAt,
             steer: true as const,
           }
-        : { id, text: "", createdAt, steer: true as const },
+        : event.ev === "config_notice"
+          ? { id, text: event.text, createdAt, steer: true as const }
+          : { id, text: "", createdAt, steer: true as const },
     );
   }
 
@@ -1270,6 +1273,11 @@ export class AcpBridge {
        rather than never. Ahead of the emit below for exactly that ordering. */
     this.openToolCalls.clear();
     this.flushSteers();
+    /* Server-measured wall clock for the whole logical turn — the denominator
+       output tokens/sec is drawn against. Read before clearing: steering joins
+       a turn rather than opening one, so this covers every prompt in it. */
+    const durationMs =
+      this.turnStartedAt !== null ? Math.round(performance.now() - this.turnStartedAt) : undefined;
     this.turnStartedAt = null;
     /* The session has content now, so the agent has written it down and a later
        `session/load` can find it. Before this point its id is unloadable, and
@@ -1296,6 +1304,7 @@ export class AcpBridge {
       promptText,
       ...(continued ? { continued: true } : {}),
       ...(this.lastSeenMessageId ? { lastMessageId: this.lastSeenMessageId } : {}),
+      ...(durationMs !== undefined ? { durationMs } : {}),
     });
     this.releaseIdle();
     this.host.onTurnSettled({ error, interrupted, continued, turnId });
@@ -1303,8 +1312,18 @@ export class AcpBridge {
 
   async setMode(modeId: string, origin?: Peer): Promise<void> {
     const sessionId = this.requireSession();
+    const wasActive = this.promptActive;
+    const oldId = this.modes?.currentModeId;
     await this.connection.agent.request(acp.methods.agent.session.setMode, { sessionId, modeId });
     if (this.modes) this.modes = { ...this.modes, currentModeId: modeId };
+    /* A mode switched mid-turn is part of what happened in this thread, so it
+       gets a transcript row of its own — held for the step boundary like a
+       steer (see `holdConfigNotice`), so the row lands where the replay will
+       agree with rather than in the middle of the running step. Idle changes
+       stay silent. */
+    if (wasActive && oldId !== undefined && oldId !== modeId) {
+      this.holdConfigNotice(configNoticeText("Mode", this.modeName(oldId), this.modeName(modeId)));
+    }
     this.emitConfig(origin);
   }
 
@@ -1314,6 +1333,9 @@ export class AcpBridge {
     origin?: Peer,
   ): Promise<acp.SessionConfigOption[]> {
     const sessionId = this.requireSession();
+    const wasActive = this.promptActive;
+    const before = this.configOptions.find((o) => o.id === configId);
+    const beforeValue = before?.type === "select" ? before.currentValue : undefined;
     const response = await this.connection.agent.request(
       acp.methods.agent.session.setConfigOption,
       {
@@ -1330,10 +1352,30 @@ export class AcpBridge {
        the session record every time it revives a retired thread. A change made
        over ACP never touches that record, so without this the thread comes back
        on the model the user switched away from. */
-    const category = this.configOptions.find((o) => o.id === configId)?.category;
+    const after = this.configOptions.find((o) => o.id === configId);
+    const category = after?.category ?? before?.category;
     if (typeof value === "string") {
       if (category === "model") this.host.onSpawnStateChange({ model: value });
       else if (category === "thought_level") this.host.onSpawnStateChange({ effort: value });
+    }
+    /* Like `setMode` above: a model/effort switch that lands mid-turn draws
+       its own row (`Model: Fast → Smart`), held for the step boundary;
+       anything else — an idle change, a boolean toggle, an uncategorised
+       option — stays a silent state update. */
+    const newValue =
+      after?.type === "select" ? after.currentValue : typeof value === "string" ? value : undefined;
+    if (
+      wasActive &&
+      typeof newValue === "string" &&
+      (category === "model" || category === "thought_level") &&
+      (beforeValue === undefined || beforeValue !== newValue)
+    ) {
+      const label = category === "model" ? "Model" : "Effort";
+      const picker =
+        after?.type === "select" ? after : before?.type === "select" ? before : undefined;
+      const from = beforeValue !== undefined ? selectValueName(picker, beforeValue) : undefined;
+      const to = selectValueName(picker, newValue);
+      this.holdConfigNotice(configNoticeText(label, from, to));
     }
     this.emitConfig(origin);
     return this.configOptions;
@@ -1547,6 +1589,34 @@ export class AcpBridge {
 
   // ---- helpers ----
 
+  /** Human name for a mode id, falling back to the id itself. */
+  private modeName(id: string): string {
+    return this.modes?.availableModes.find((m) => m.id === id)?.name ?? id;
+  }
+
+  /** A mid-turn mode/model/effort change joins `pendingSteers`: like a steered
+      prompt it is already in effect, but its transcript row waits for the
+      running step to end (`flushSteers`, at the latest the turn's own settle),
+      and meanwhile it reads as a held `steer` row in the queue — to every peer
+      including the one that asked. Journaled on flush, so it is logged after
+      the turn as well as drawn during it. */
+  private holdConfigNotice(text: string): void {
+    this.pendingSteers.push({
+      id: randomUUID(),
+      createdAt: Date.now(),
+      event: { ev: "config_notice", seq: 0, text },
+      origin: undefined,
+    });
+    this.host.onHeldSteersChanged();
+  }
+
+  /** A live profile move that landed mid-turn draws its own row, held for the
+      step boundary like a mode/model change; an idle move stays silent — the
+      menu already says where the thread is. */
+  noteProfileChange(from: string | undefined, to: string): void {
+    if (this.promptActive) this.holdConfigNotice(configNoticeText("Profile", from, to));
+  }
+
   private emitConfig(except?: Peer): void {
     this.host.emit(
       {
@@ -1576,6 +1646,28 @@ export class AcpBridge {
     if (!this.acpSessionId) throw new Error("the agent never opened a session on this thread");
     return this.acpSessionId;
   }
+}
+
+/** One transcript line for a mid-turn setting change (`Mode: Plan → Build`).
+    Exported for tests. */
+export function configNoticeText(
+  label: "Mode" | "Model" | "Effort" | "Profile",
+  from: string | undefined,
+  to: string,
+): string {
+  return from !== undefined ? `${label}: ${from} → ${to}` : `${label}: ${to}`;
+}
+
+/** Human name for a select-option value, across grouped or flat option
+    lists. Falls back to the raw value when the option or the value is
+    unknown. */
+function selectValueName(
+  option: acp.SessionConfigOption | undefined,
+  value: string,
+): string {
+  if (!option || option.type !== "select") return value;
+  const flat = option.options.flatMap((entry) => ("options" in entry ? entry.options : [entry]));
+  return flat.find((choice) => choice.value === value)?.name ?? value;
 }
 
 /** Flatten anything thrown into the wire shape. The code matters: `errors.ts`

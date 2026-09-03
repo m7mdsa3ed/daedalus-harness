@@ -25,6 +25,21 @@ export function promptTokens(usage: acp.Usage): number {
   return usage.inputTokens + (usage.cachedReadTokens ?? 0) + (usage.cachedWriteTokens ?? 0)
 }
 
+/** `42.1 tok/s`, `842 tok/s` — one decimal below a hundred, whole above it,
+    so a column of them stays readable. `null` when there is nothing to divide
+    by: no output tokens, or no measured duration. */
+export function formatRate(outputTokens: number, durationMs: number): string | null {
+  if (!(outputTokens > 0) || !(durationMs > 0)) return null
+  const perSec = (outputTokens * 1000) / durationMs
+  return `${perSec >= 100 ? Math.round(perSec).toString() : perSec.toFixed(1)} tok/s`
+}
+
+/** `12s`, `2m 3s` — how long a turn took, for the footer beside its speed. */
+export function formatDuration(ms: number): string {
+  if (ms < 60_000) return `${Math.max(1, Math.round(ms / 1000))}s`
+  return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
+}
+
 /** Total across several readings — a workflow run's steps, say. `null` when
     none of them reported anything, which is not the same as zero: an agent
     that does not meter tokens must not be drawn as having spent none. */

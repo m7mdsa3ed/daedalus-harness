@@ -56,6 +56,9 @@ export function extractSearchText(kind: string, payload: unknown): string | null
   if (kind === "turn_started") {
     return asText(event.text);
   }
+  if (kind === "config_notice") {
+    return asText(event.text);
+  }
   if (kind !== "update") return null;
   const update = event.update as Record<string, unknown> | undefined;
   if (!update || typeof update !== "object") return null;

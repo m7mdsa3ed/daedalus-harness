@@ -177,6 +177,13 @@ export class ThreadConnection {
     this.apply({ type: "create-begin" })
   }
 
+  /** A config change the server answered `live: false` to — the process is
+      being replaced under this thread, so the rebuild reads as a restart
+      ("Restarting the agent…") rather than a plain read. */
+  markReviving(): void {
+    this.apply({ type: "revive-begin" })
+  }
+
   /** The create never happened — put the thread back to "never opened", which
       is what a draft whose first message failed actually is. */
   markIdle(): void {
@@ -1015,6 +1022,7 @@ export class ThreadConnection {
          restarted. Live-only, so it never arrives inside a replay — and it
          carries the row's own state rather than the agent's, which is why it
          patches the session and not the thread. */
+      onConfigNotice: (text) => send({ type: "notice", id, text }),
       onSpawnConfig: (profileId, model, effort, personaId) =>
         send({ type: "spawn-config", id, profileId, model, effort, personaId }),
       onTtft: (ms) => send({ type: "ttft", id, ms }),
@@ -1023,9 +1031,9 @@ export class ThreadConnection {
       /* The catalog is TanStack Query's; the row is refetched, not patched
          in from a socket frame (docs/client.md, "one owner per slice"). */
       onProjectChanged: () => void this.deps.refreshProjects(),
-      onTurnEnded: (usage, error, promptText, catchingUp, continued, turnId) => {
+      onTurnEnded: (usage, error, promptText, catchingUp, continued, turnId, durationMs) => {
         send({ type: "turn-active", id, active: false })
-        if (usage) send({ type: "usage", id, usage, turnId })
+        if (usage) send({ type: "usage", id, usage, turnId, durationMs })
         if (error) {
           // Recorded in the transcript either way — a failure that survived a
           // reload is still the answer to the message above it, and carries the

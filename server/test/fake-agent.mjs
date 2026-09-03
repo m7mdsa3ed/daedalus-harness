@@ -33,6 +33,7 @@ const recordSessionMeta = (method, params) => {
 // the reasoning level, so those two get promoted out of the generic "Agent
 // options" list. The third option deliberately carries no category: unknown and
 // missing categories must still render, and this is what proves it.
+let currentModeId = "default";
 let configOptions = [
   {
     id: "model",
@@ -614,7 +615,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       result: {
         sessionId: "acp-123",
         modes: {
-          currentModeId: "default",
+          currentModeId,
           availableModes: [
             { id: "default", name: "Always ask" },
             { id: "acceptEdits", name: "Accept edits" },
@@ -673,7 +674,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       jsonrpc: "2.0",
       id: msg.id,
       result: {
-        modes: { currentModeId: "default", availableModes: [{ id: "default", name: "Always ask" }, { id: "acceptEdits", name: "Accept edits" }] },
+        modes: { currentModeId, availableModes: [{ id: "default", name: "Always ask" }, { id: "acceptEdits", name: "Accept edits" }] },
         configOptions,
       },
     });
@@ -689,6 +690,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       ? `acp-123-fork-${point}`
       : `acp-123-fork-unpointed-${(forkCounter += 1)}`;
     out({ jsonrpc: "2.0", id: msg.id, result: { sessionId } });
+  } else if (msg.method === "session/set_mode") {
+    currentModeId = msg.params.modeId;
+    out({ jsonrpc: "2.0", id: msg.id, result: {} });
   } else if (msg.method === "session/set_config_option") {
     configOptions = configOptions.map((o) =>
       o.id === msg.params.configId ? { ...o, currentValue: msg.params.value } : o

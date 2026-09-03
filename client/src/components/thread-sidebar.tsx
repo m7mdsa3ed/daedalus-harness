@@ -2,8 +2,8 @@
    Laid out the way the Codex and Claude desktop apps lay theirs out, because
    that is the shape people arrive already knowing:
 
-     ┌ brand row · New thread · Search
-     │ Build · Tasks · …                  fixed nav, icon + label, always there
+     ┌ brand row · Search
+     │ New thread · Build · Tasks · …                  fixed nav, icon + label, always there
       ├ Pinned                             the ones you said matter
       │ Recents                            the newest few, flat — a shortcut,
       │                                    running turns first
@@ -42,13 +42,14 @@
 import * as React from "react"
 import {
   CalendarClock,
+  ExternalLink,
   Clock,
   FolderIcon,
   HammerIcon,
   ListFilter,
-  Loader2,
   Pin,
   SquareKanban,
+  SquarePen,
   Trash2,
   Zap,
 } from "lucide-react"
@@ -77,6 +78,10 @@ import { Badge } from "@/components/ui/badge"
 import { FoldableGroup, ProjectFolder } from "@/components/sidebar/groups"
 import { GROUP, GROUP_LABEL, MENU, PROJECT_PAGE_SIZE, ROW, TIER } from "@/components/sidebar/scale"
 import { ThreadList } from "@/components/sidebar/thread-list"
+import { ItemContextMenu } from "@/components/item-context-menu"
+import { useChord } from "@/lib/keybindings"
+import { formatChord, type ShortcutId } from "@/lib/shortcuts"
+import { Shortcut } from "@/components/shortcut"
 import type { ThreadStatus } from "@/components/sidebar/thread-row"
 import { IDLE_PHASE, markFor } from "@/lib/thread/phase"
 import type { Actions } from "@/lib/actions"
@@ -106,8 +111,8 @@ const RECENT_COUNT = 8
 
 /* ── Fixed nav ──
    The rows every screen of the app is one click from, above the list rather
-   than in it. New thread and Search are the two icon buttons beside the brand
-   in the header (`app-shell.tsx`), stacked under it in the collapsed rail.
+   than in it. New thread is the first menu row; Search is the icon button
+   beside the brand in the header (`app-shell.tsx`).
 
    Deliberately only the rows that start something. Plan usage used to sit here
    too, as a peak-percentage badge that polled `GET /api/quota` every ten
@@ -115,7 +120,13 @@ const RECENT_COUNT = 8
    worked rather than navigated — it made the sidebar ask the server a question
    nobody had posed, on a timer, for a number that is only ever acted on by
    going to the page that shows it properly. */
-export function SidebarNav() {
+export function SidebarNav({
+  onNewThread,
+  onNewThreadInTab,
+}: {
+  onNewThread?: () => void
+  onNewThreadInTab?: () => void
+} = {}) {
   const location = useLocation()
   const navigate = useNavigate()
   const inBoard = location.pathname.startsWith("/board")
@@ -126,10 +137,39 @@ export function SidebarNav() {
   // queries), so the rows can say how much is armed without asking again.
   const routineCount = useRoutines().data?.length ?? 0
   const scheduledCount = useScheduled().data?.length ?? 0
+  const newThreadChord = useChord("newThread") ?? ""
   return (
     <SidebarGroup className={GROUP}>
       <SidebarGroupContent>
         <SidebarMenu className={MENU}>
+          {onNewThread && (
+            <SidebarMenuItem>
+              <ItemContextMenu
+                items={
+                  onNewThreadInTab
+                    ? [{ label: "New thread in new tab", icon: <ExternalLink />, onClick: onNewThreadInTab }]
+                    : []
+                }
+              >
+                <SidebarMenuButton
+                  size="sm"
+                  tooltip={newThreadChord ? `New thread (${formatChord(newThreadChord)})` : "New thread"}
+                  onClick={(event) => {
+                    if ((event.metaKey || event.ctrlKey) && onNewThreadInTab) {
+                      onNewThreadInTab()
+                    } else {
+                      onNewThread()
+                    }
+                  }}
+                  className={ROW}
+                >
+                  <SquarePen />
+                  <span>New thread</span>
+                  <Kbd id="newThread" />
+                </SidebarMenuButton>
+              </ItemContextMenu>
+            </SidebarMenuItem>
+          )}
           {/* The builder is a way to start work, like New thread — so it sits
               with it, above the places. */}
           <SidebarMenuItem>
@@ -207,6 +247,18 @@ function NavCount({ count }: { count: number }) {
     <span className="ml-auto text-[10px] tabular-nums text-muted-foreground group-data-[collapsible=icon]:hidden">
       {count}
     </span>
+  )
+}
+
+/** The chord, at the row's trailing edge, only while the row is hovered — a
+    hint, not a label. Hidden in the icon rail, where the tooltip carries it. */
+function Kbd({ id }: { id: ShortcutId }) {
+  return (
+    <Shortcut
+      id={id}
+      className="ml-auto hidden opacity-0 transition-opacity group-hover/menu-button:opacity-100 sm:inline-flex group-data-[collapsible=icon]:hidden"
+      keyClassName="h-4 min-w-4 bg-transparent px-0.5 text-[10px] text-muted-foreground/70"
+    />
   )
 }
 
@@ -368,7 +420,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
      streamed token changes (statuses is identity-stable, see above), so a
      token costs this component a render but no re-sorting and — through the
      memoized rows — no row re-renders. */
-  const { live, trashed, pinned, running, recent, filed } = React.useMemo(() => {
+  const { live, trashed, pinned, recent, filed } = React.useMemo(() => {
     // Deleting is reversible, so a deleted thread leaves the tiers above but
     // not the sidebar: it drops into Trash until it is restored or purged.
     const live = sessions
@@ -408,19 +460,18 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
        most likely to be looked for — was the one missing from where it lives.
        By project: no Recents at all, which is the view for someone who thinks
        in projects rather than in time. */
-    /* Running is its own group, above Recents. A turn in progress is the one
-       thing in this list that is happening *now*; folding it into Recents
-       either buried it under whatever was typed most recently or ate the
-       slots the recent-but-idle threads needed. Every running thread is
-       listed whatever its age; Recents is the newest few idle ones, and the
-       folders below still hold every thread either way. */
+    /* Running first, always. A turn in progress is the one thing in this list
+       that is happening *now*, and by-activity order buried it under whatever
+       was typed most recently. Every running thread is in the list whatever its
+       age, and the rest fill the remaining slots. */
     const isRunning = (session: SessionMeta) => statuses.get(session.id) === "running"
-    const byRecency = view.sort === "recent"
-    const running = byRecency ? rest.filter(isRunning) : []
-    const recent = byRecency
-      ? rest.filter((session) => !isRunning(session)).slice(0, RECENT_COUNT)
-      : []
-    return { live, trashed, pinned, running, recent, filed: newestFirst }
+    const running = rest.filter(isRunning)
+    const idle = rest.filter((session) => !isRunning(session))
+    const recent =
+      view.sort === "recent"
+        ? [...running, ...idle.slice(0, Math.max(RECENT_COUNT - running.length, 0))]
+        : []
+    return { live, trashed, pinned, recent, filed: newestFirst }
   }, [sessions, statuses, pins, view.filter, view.sort])
 
   const { byProject, orphans } = React.useMemo(() => {
@@ -472,16 +523,6 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
       {pinned.length > 0 && (
         <FoldableGroup groupKey="__pinned" label="Pinned" icon={<Pin className="size-3 shrink-0" />}>
           <ThreadList sessions={pinned} {...listProps} />
-        </FoldableGroup>
-      )}
-
-      {running.length > 0 && (
-        <FoldableGroup
-          groupKey="__running"
-          label="Running"
-          icon={<Loader2 className="size-3 shrink-0 animate-spin" />}
-        >
-          <ThreadList sessions={running} {...listProps} />
         </FoldableGroup>
       )}
 

@@ -1,6 +1,7 @@
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
-import { AgentIcon, EntityIcon, ProfileIcon } from "@/components/entity-icon"
+import { BotIcon } from "lucide-react"
+import { AgentIcon, EntityIcon, ModelIcon, ProfileIcon } from "@/components/entity-icon"
 import { AvatarGroup } from "@/components/ui/avatar"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Button } from "@/components/ui/button"
@@ -187,20 +188,25 @@ export function SessionConfigPopover({
      not carry over to it. That is worth confirming whatever it costs. */
   const changeProfile = async (profileId: string) => {
     const next = profiles.find((p) => p.id === profileId)
+    const name = next?.name ?? "another profile"
     const restarts = !liveReconfig || !profile.baseUrl
     if (
       !(await confirm({
-        title: `Move this thread to "${next?.name ?? "another profile"}"?`,
+        title: `Move this thread to "${name}"?`,
         description: restarts
           ? thread.turnActive
-            ? "The agent restarts on the new profile's credentials and default model — the running turn stops, then the conversation is restored."
-            : "The agent restarts on the new profile's credentials and default model. The conversation is restored, but the model you are on now does not carry over."
-          : "The thread continues on the new profile's credentials and default model. Nothing restarts, but the model you are on now does not carry over.",
+            ? `From "${profile.name}" to "${name}". The agent restarts on the new profile's credentials and default model — the running turn stops, then the conversation is restored.`
+            : `From "${profile.name}" to "${name}". The agent restarts on the new profile's credentials and default model. The conversation is restored, but the model you are on now does not carry over.`
+          : `From "${profile.name}" to "${name}". The thread continues on the new profile's credentials and default model. Nothing restarts, but the model you are on now does not carry over.`,
         confirmLabel: "Switch profile",
       }))
     )
       return
-    actions
+    /* The switch reports itself in the thread, the same way a new thread or a
+       restart does: the `reviving` phase drives the transcript footer
+       ("Restarting the agent…" → "Loading this conversation…" →
+       "Connecting…") and the composer note, so no toast frames it. */
+    await actions
       .changeProfile(meta, profileId)
       .catch((err) => reportError(err, "Couldn't switch profile"))
   }
@@ -321,17 +327,7 @@ export function SessionConfigPopover({
                 ...profile.models.map((m) => ({
                   value: m.id,
                   name: m.label,
-                  ...(m.iconUrl
-                    ? {
-                        icon: (
-                          <EntityIcon
-                            src={m.iconUrl}
-                            fallback={<span className="size-4" />}
-                            className="size-4"
-                          />
-                        ),
-                      }
-                    : {}),
+                  icon: <ModelIcon iconUrl={m.iconUrl} className="size-4" />,
                 })),
               ]}
               /* A new model brings its own effort list, and the one you were on
@@ -346,7 +342,12 @@ export function SessionConfigPopover({
               <MenuRow
                 label="Model"
                 value={options.model.type === "select" ? options.model.currentValue : ""}
-                choices={selectChoices(options.model)}
+                /* Agent-driven options carry no art — every row gets the
+                   neutral glyph so the submenu reads like the catalog one. */
+                choices={selectChoices(options.model).map((c) => ({
+                  ...c,
+                  icon: <BotIcon className="size-4 text-muted-foreground" />,
+                }))}
                 onSelect={(value) => set(options.model!, value)}
               />
             )

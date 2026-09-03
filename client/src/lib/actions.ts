@@ -160,7 +160,7 @@ export function useActions(settings: ServerSettings) {
       meta: SessionMeta,
       next: { profileId?: string; model?: string; effort?: string; personaId?: string },
       context: string
-    ) => {
+    ): Promise<boolean> => {
       let live = false
       try {
         const reply = await api<{ live: boolean }>(settings, `/api/sessions/${meta.id}/config`, {
@@ -183,13 +183,17 @@ export function useActions(settings: ServerSettings) {
         throw error
       }
       const listed = await refreshSessions()
-      if (live) return
+      if (live) return true
       /* The server fell back to a respawn, so the event log was cleared under
          this socket: the saved cursor is past its end and the thread has to be
          attached again from 0. `forgetJournal` drops the socket and the cursor
          with it, which is what makes the open below a clean rebuild. */
       const conn = threads.for(meta.id)
       conn.forgetJournal()
+      /* …and the rebuild is a restart, so say that before the open says the
+         read: without this the phase falls to `idle` and the whole respawn
+         reads as a plain "Reading this conversation…". */
+      conn.markReviving()
       try {
         /* Through the connection's own open chain, for the reason
            `createSession` is: the refresh above re-fires the panel's open, and
@@ -199,13 +203,19 @@ export function useActions(settings: ServerSettings) {
            `getState()` here would answer with the row as it was before the
            refresh landed. */
         const respawned = listed.find((session) => session.id === meta.id) ?? meta
-        await conn.open(respawned)
+        /* …and as a revive, not a read: the new process is already up, so the
+           open attaches a socket rather than stopping at the document. Without
+           this the thread ended in `read` — no live connection, and the
+           `reviving` phase above never resolved into the replay/connecting
+           lines that say what is happening. */
+        await conn.open(respawned, { revive: true })
       } catch (error) {
         // The old process is gone by now, so a failure here leaves a thread
         // that needs reviving — say that, in the thread.
         recordError(meta.id, error, context)
         throw error
       }
+      return false
     }
 
     /** Bring a draft into existence: tell the server (which spawns the agent
@@ -782,10 +792,10 @@ export function useActions(settings: ServerSettings) {
        * all, so the new profile's own default is the honest starting point —
        * and the server is what resolves "none" into it.
        */
-      async changeProfile(meta: SessionMeta, profileId: string) {
+      async changeProfile(meta: SessionMeta, profileId: string): Promise<boolean> {
         // Same agent, new provider: the menu only offers profiles that serve
         // this thread's agent, and the server refuses one that does not.
-        await changeThreadConfig(
+        return changeThreadConfig(
           meta,
           { profileId, model: "", effort: "" },
           "Couldn't move this thread to that profile"

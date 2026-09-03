@@ -147,10 +147,9 @@ export function ThreadRail({ items, wide }: { items: ThreadItem[]; wide?: boolea
        than stranded at the far edge with a hand-span of empty between them.
        The `min()` is the fallback for when the window is narrower than the
        column plus its gaps — then the rail pins to the pane's own edge, which
-       EDGE_GAP keeps clear of the scrollbar.
-
-       Hidden below `md`: there is no margin to float in on a phone, and a rail
-       overlapping the prose is worse than no rail.
+       EDGE_GAP keeps clear of the scrollbar. That fallback is also the mobile
+       position: narrow panels have no margin to float in, so the rail sits at
+       the edge over the gutter rather than beside the column.
 
        The gutter is pointer-transparent — a strip that ate clicks over the
        transcript would make the text under it unselectable. Only the scrollport
@@ -161,7 +160,7 @@ export function ThreadRail({ items, wide }: { items: ThreadItem[]; wide?: boolea
       style={{
         insetInlineStart: `min(calc(50% + ${wide ? "41rem" : "var(--harness-chat-width) / 2"} + ${COLUMN_GAP}), calc(100% - ${EDGE_GAP}))`,
       }}
-      className="pointer-events-none absolute inset-y-0 z-20 hidden items-center @panel-md:flex"
+      className="pointer-events-none absolute inset-y-0 z-20 flex items-center @panel-md:flex"
     >
       <div
         /* no-scrollbar (shadcn/tailwind.css), not scrollbar-thin: a scrollbar

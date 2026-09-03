@@ -1,5 +1,5 @@
 import * as React from "react"
-import { AppWindowIcon, Check, ChevronDown, ChevronLeft, ExternalLink, Plus, SearchIcon, ServerIcon, Settings2, SquarePen } from "lucide-react"
+import { AppWindowIcon, Check, ChevronDown, ChevronLeft, Plus, SearchIcon, ServerIcon, Settings2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -11,7 +11,6 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { CommandPalette, useCommandPalette } from "@/components/command-palette"
 import { ImportThreadsDialog } from "@/components/import-threads"
-import { ItemContextMenu } from "@/components/item-context-menu"
 import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
 import { Logo } from "@/components/ui/logo"
 import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
@@ -179,9 +178,8 @@ export function AppShell({
   )
   const [resizing, setResizing] = React.useState(false)
   const palette = useCommandPalette()
-  // Whatever these two are bound to on this device — the tooltip has to say the
+  // Whatever this is bound to on this device — the tooltip has to say the
   // key that actually works, not the one the release shipped.
-  const newThreadChord = useChord("newThread") ?? ""
   const paletteChord = useChord("palette") ?? ""
   const shortcuts = useShortcutsHelp()
   const [importing, setImporting] = React.useState(false)
@@ -417,7 +415,10 @@ export function AppShell({
       // the way the Codex and Claude desktop sidebars open. `New project`
       // stays reachable from /settings/projects and the command palette.
       action: (
-        <SidebarNav />
+        <SidebarNav
+          onNewThread={() => startThreadRef.current()}
+          onNewThreadInTab={newThreadInTab}
+        />
       ),
       body: loading ? <SidebarGroupsSkeleton /> : <ThreadSidebar actions={actions} />,
     },
@@ -494,23 +495,8 @@ export function AppShell({
                 Daedalus
               </span>
             </button>
-            {/* New thread and Search sit beside the brand; in the icon rail
-                they stack under it so the rail still has a create affordance. */}
+            {/* Search sits beside the brand; in the icon rail it stacks under it. */}
             <div className="ml-auto flex items-center gap-0.5 group-data-[collapsible=icon]:ml-0 group-data-[collapsible=icon]:flex-col">
-              <ItemContextMenu
-                items={[{ label: "New thread in new tab", icon: <ExternalLink />, onClick: newThreadInTab }]}
-              >
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  className="text-muted-foreground hover:text-foreground"
-                  title={`New thread (${formatChord(newThreadChord)})`}
-                  aria-label="New thread"
-                  onClick={() => startThreadRef.current()}
-                >
-                  <SquarePen />
-                </Button>
-              </ItemContextMenu>
               <Button
                 variant="ghost"
                 size="icon-xs"

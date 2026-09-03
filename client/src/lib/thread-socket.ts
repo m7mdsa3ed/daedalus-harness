@@ -116,6 +116,9 @@ export interface ThreadCallbacks {
     /** Whether the runtime takes pause. Absent means unchanged. */
     canPause: boolean | undefined
   ) => void
+  /** A mode, model or effort change that landed mid-turn. Journaled, so replays
+      redraw it inline where it happened; rendered as a `notice` rule. */
+  onConfigNotice: (text: string) => void
   /** The thread moved to another profile, model or effort without restarting.
       Fanned out to every device, this one included — the server resolves what
       a cleared value means, so the answer is what to draw. */
@@ -153,7 +156,11 @@ export interface ThreadCallbacks {
     continued: boolean,
     /** Which turn's numbers those are — what lets a turn print its own cost
         where it sits, rather than only feeding the thread's running total. */
-    turnId: string
+    turnId: string,
+    /** Server-measured wall clock for the whole logical turn, ms — the
+        denominator output tok/s is drawn against. Absent on turns that ended
+        before the server measured it. */
+    durationMs?: number
   ) => void
   /** The thread's queue, whole. Every change to it arrives this way — this
       device's own included, since the ids are the server's. */
@@ -554,6 +561,7 @@ export class ThreadSocket {
         return
       case "update":
       case "session_config":
+      case "config_notice":
       case "turn_started":
       case "turn_ended":
         // Monotonic: a re-attach mid-flight must never walk the cursor back to
@@ -621,6 +629,9 @@ export class ThreadSocket {
           event.canPause
         )
         return
+      case "config_notice":
+        this.callbacks.onConfigNotice(event.text)
+        return
       case "turn_started":
         this.callbacks.onTurnStarted(event.turnId, event.text, this.catchingUp, event.attachments)
         return
@@ -631,7 +642,8 @@ export class ThreadSocket {
           event.promptText,
           this.catchingUp,
           event.continued ?? false,
-          event.turnId
+          event.turnId,
+          event.durationMs
         )
         return
     }

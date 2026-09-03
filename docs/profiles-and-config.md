@@ -195,12 +195,29 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `http://127.0.0.1:<port>/gw/<key>/<profileId>/<agentId>` — or with the raw `{baseUrl}`
   when no shim is configured, and with nothing at all for the Default profile, so the key
   still prunes. `proxyGatewayRequest` resolves `profileBaseUrl(profile, agent)` per request
-  and forwards everything byte for byte — request bodies are never read, streaming replies
-  are piped — and makes exactly one repair: a `2xx` `application/json` reply to a path
-  ending in `/messages` that parses as a chat completion is rewritten into an Anthropic
-  `message` (`chatCompletionToMessage`: thinking/text/tool_use blocks, `stop_reason`, usage
-  with the cache counters split back out). The decision is made on the *response* content
-  type so a multi-megabyte prompt costs the shim nothing. The key in the path is the
+  and forwards everything byte for byte — streaming replies are piped — and reads a body
+  only for one of two repairs. The Claude Code one is on the *response* only: a `2xx`
+  `application/json` reply to a path ending in `/messages` that parses as a chat completion
+  is rewritten into an Anthropic `message` (`chatCompletionToMessage`: thinking/text/
+  tool_use blocks, `stop_reason`, usage with the cache counters split back out), decided on
+  the response content type so a multi-megabyte prompt costs the shim nothing. The Codex one
+  is on `/responses`, and it is the mirror image: Codex ≥ 0.148 declares every MCP server
+  as a `type: "namespace"` tool that no translating gateway keeps (it collapses or drops
+  it), so the request's namespaces are flattened into bare member functions
+  (`<namespace>__<tool>`) and every `function_call` in the reply is put back under its
+  namespace, in the SSE events and in a buffered JSON reply alike. **The flat name can
+  outgrow the 64-character function-name cap every OpenAI-compatible provider enforces** —
+  Codex 0.150's built-in app servers alone flatten to 66
+  (`mcp__codex_apps__codex_document_control___execute_document_command`), declared on the
+  very first turn
+  whether used or not, so an unshortened flattening is a first turn that dies with
+  `name must be at most 64 characters, got 66` before a token streams. An over-long flat
+  name is shortened to fit — truncated, with a hash tail of the full name for uniqueness
+  (members of one namespace share their prefix) and for determinism (a replayed call must
+  flatten to the name the model already called) — and the map travels with the request to
+  expand the call back under its real member name on the way home; a function name the
+  agent itself wrote over-long is the agent's, not the flattening's, and travels untouched.
+  The key in the path is the
   credential, exactly as `/ide/<key>/` — the route is unauthenticated because the CLI
   carries its own `x-api-key` for the gateway, and a bare `/gw/<profileId>/` would be an
   open relay to whatever URL a profile names; it is minted per boot and never stored, since

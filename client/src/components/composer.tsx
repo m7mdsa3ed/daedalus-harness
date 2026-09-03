@@ -65,7 +65,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { Shortcut } from "@/components/shortcut"
 import { ComposerAgents, ComposerTodo } from "@/components/composer-status"
-import { ComposerAttachments, type AttachmentDelivery } from "@/components/composer-attachments"
+import { ComposerAttachments, PasteChip, type AttachmentDelivery } from "@/components/composer-attachments"
 import { ComposerHistoryDialog } from "@/components/composer-history-dialog"
 import { ComposerQueue } from "@/components/composer-queue"
 import { ComposerStrip, ComposerStripItem } from "@/components/composer-strip"
@@ -587,13 +587,10 @@ export function Composer({
         {/* What is waiting for this turn to end. The user's own words, so
             they are editable in place until the moment they go. */}
         <ComposerQueue sessionId={sessionId} thread={thread} actions={actions} />
-        {/* What is riding along with the message but is not in the box: a long
-            paste parked behind a token, a file. */}
+        {/* What is riding along with the message but is not in the box: a file. */}
         <ComposerAttachments
-          pastes={shownPastes}
           attachments={files.attachments}
           delivery={delivery}
-          onRemovePaste={removePaste}
           onRemoveAttachment={files.remove}
           onRetryAttachment={files.retry}
         />
@@ -623,9 +620,11 @@ export function Composer({
         <FileMentionMenu state={mentions} />
       </ComposerStrip>
       {/* relative/z-10: the composer paints over the strip's tucked bottom edge.
-          Deliberately no focus ring: the caret in the textarea is the "you are
-          typing here" signal, and the card stays quiet otherwise. The one ring
-          it wears is destructive, and only while voice is listening.
+          It wears the same soft shadow and hairline ring as the app's floating
+          menus, with the ring in the accent rather than plain foreground, so
+          the card reads as the raised, accent-framed top of the composer unit. Deliberately no focus
+          ring: the caret in the textarea is the "you are typing here" signal.
+          The only ring change is destructive, while voice is listening.
 
           It is also the drop target, and deliberately the whole card rather
           than the textarea: a file aimed at "the composer" lands on the button
@@ -633,9 +632,10 @@ export function Composer({
           the overlay stable — `dragleave` fires as the pointer crosses into a
           child, so a boolean would flicker the whole way across. */}
       <div
+        data-slot="composer-card"
         className={cn(
-          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl bg-composer p-2 shadow-lg",
-          "ring-1 ring-transparent transition-[ring-color] duration-200",
+          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl bg-composer p-2 shadow-2xl",
+          "ring-1 ring-foreground/5 transition-[ring-color] duration-200 dark:ring-foreground/10",
           voice.listening && "ring-destructive/40"
         )}
         onDragOver={(e) => {
@@ -664,6 +664,17 @@ export function Composer({
         {dragging && (
           <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-2xl border-2 border-dashed border-primary bg-composer/80 text-xs font-medium text-primary">
             Drop to attach
+          </div>
+        )}
+        {shownPastes.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 px-2 pt-1 pb-1.5">
+            {shownPastes.map((paste) => (
+              <PasteChip
+                key={paste.n}
+                paste={paste}
+                onRemove={() => removePaste(paste.n)}
+              />
+            ))}
           </div>
         )}
         <Textarea
@@ -715,6 +726,10 @@ export function Composer({
           rows={1}
           className={cn(
             "min-h-9 w-full resize-none border-0 bg-transparent px-2 py-1.5 leading-relaxed shadow-none focus-visible:ring-0 dark:bg-transparent",
+            /* Same reading size as the transcript's messages: the card carries
+               the `--text-xs` bump `.thread-transcript` sets, so `text-xs`
+               here is 0.875rem and typing matches what is being answered. */
+            "text-xs md:text-xs",
             /* The box grows to ten lines and then scrolls. */
             "max-h-40",
             /* Roomier under a thumb: the caret row leading its 32px buttons

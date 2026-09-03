@@ -107,35 +107,24 @@ export function wentInline(
 }
 
 export function ComposerAttachments({
-  pastes,
   attachments,
   delivery,
-  onRemovePaste,
   onRemoveAttachment,
   onRetryAttachment,
 }: {
-  pastes: Paste[]
   attachments: DraftAttachment[]
   delivery: AttachmentDelivery
-  onRemovePaste: (n: number) => void
   onRemoveAttachment: (id: string) => void
   onRetryAttachment: (id: string) => void
 }) {
-  if (pastes.length === 0 && attachments.length === 0) return null
-  const parts = [
-    attachments.length > 0
-      ? `${attachments.length} file${attachments.length === 1 ? "" : "s"}`
-      : null,
-    pastes.length > 0
-      ? `${pastes.length} pasted block${pastes.length === 1 ? "" : "s"}`
-      : null,
-  ].filter(Boolean)
+  if (attachments.length === 0) return null
+  const label = `${attachments.length} file${attachments.length === 1 ? "" : "s"}`
   return (
     <ComposerStripItem
       summary={{
         id: "attachments",
-        icon: attachments.length > 0 ? PaperclipIcon : ClipboardListIcon,
-        label: parts.join(" · "),
+        icon: PaperclipIcon,
+        label,
       }}
       className="px-2 py-1.5"
     >
@@ -148,9 +137,6 @@ export function ComposerAttachments({
             onRemove={() => onRemoveAttachment(entry.id)}
             onRetry={() => onRetryAttachment(entry.id)}
           />
-        ))}
-        {pastes.map((paste) => (
-          <PasteChip key={paste.n} paste={paste} onRemove={() => onRemovePaste(paste.n)} />
         ))}
       </AttachmentGroup>
     </ComposerStripItem>
@@ -236,7 +222,7 @@ function FileChip({
 /** The token's face. Clicking it shows what is parked behind it; the ✕ takes
     both the chip and its token, because a chip is a *view* of a token and one
     without the other is a claim the composer cannot honour. */
-function PasteChip({ paste, onRemove }: { paste: Paste; onRemove: () => void }) {
+export function PasteChip({ paste, onRemove }: { paste: Paste; onRemove: () => void }) {
   const [open, setOpen] = React.useState(false)
   return (
     <Popover open={open} onOpenChange={setOpen}>

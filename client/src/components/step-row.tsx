@@ -86,6 +86,7 @@ export const StepRow = React.memo(function StepRow({
   defaultOpen = false,
   openSetting,
   icon: Icon,
+  iconAccent,
 }: {
   target: React.ReactNode
   /** A second, quieter line under the target — the literal thing invoked when
@@ -124,6 +125,11 @@ export const StepRow = React.memo(function StepRow({
       the disclosure affordance appears where the eye already is instead of at
       the far end of the line. */
   icon?: React.ComponentType<{ className?: string }>
+  /** The mark's own colour — a kind accent ("a shell command is zinc, a
+      thought is sky, a tool is violet"). When absent the mark keeps the
+      neutral voice, so the rows that are not work-bearing steps (a plan, a
+      compaction) stay quiet; a failure still claims the column. */
+  iconAccent?: string
 }) {
   const [open, setOpen] = React.useState(defaultOpen)
   /* `useState` reads its argument once, so a `defaultOpen` that later changes
@@ -190,7 +196,9 @@ export const StepRow = React.memo(function StepRow({
                 // h-6, not size-3.5: the mark has to occupy a whole line box, or
                 // `items-start` would hang it off the top of the text it marks.
                 "relative flex h-6 w-3.5 shrink-0 items-center justify-center",
-                failed ? "text-destructive" : active ? "text-primary" : "text-muted-foreground/60"
+                failed
+                  ? "text-destructive"
+                  : (iconAccent ?? (active ? "text-primary" : "text-muted-foreground/60"))
               )}
             >
               <Icon
