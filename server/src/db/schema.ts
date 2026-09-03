@@ -102,6 +102,10 @@ export const agents = sqliteTable("agents", {
       server subscribes to its event bus for the children ACP drops. Null =
       whatever arrives over ACP is all there is. */
   subagentFeed: text("subagent_feed").$type<"opencode-http">(),
+  /** Which door this runtime opens for a rewind's conversation half
+      (`registry.ts › AgentDef.rewindVia`): `"acp-fork-point"` = `session/fork`
+      with the jetbrains.air fork point. Null = rewind is not offered. */
+  rewindVia: text("rewind_via").$type<"acp-fork-point">(),
   /** Which release of DEFAULT_AGENTS seeded this row. A later release can add
       an agent to an install that already has rows without touching user edits —
       the old seed-if-the-file-is-empty rule could never do that. */

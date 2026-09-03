@@ -41,7 +41,6 @@
    layout that stacks them (and the stable import path for the scale). */
 import * as React from "react"
 import {
-  BellIcon,
   CalendarClock,
   Clock,
   FolderIcon,
@@ -78,14 +77,12 @@ import { Badge } from "@/components/ui/badge"
 import { FoldableGroup, ProjectFolder } from "@/components/sidebar/groups"
 import { GROUP, GROUP_LABEL, MENU, PROJECT_PAGE_SIZE, ROW, TIER } from "@/components/sidebar/scale"
 import { ThreadList } from "@/components/sidebar/thread-list"
-import { UnreadCount } from "@/components/notifications/items"
 import type { ThreadStatus } from "@/components/sidebar/thread-row"
 import { IDLE_PHASE, markFor } from "@/lib/thread/phase"
 import type { Actions } from "@/lib/actions"
 import {
   boardPath,
   buildPath,
-  notificationsPath,
   projectPath,
   routinesPath,
   schedulesPath,
@@ -95,7 +92,6 @@ import {
 import { usePins } from "@/lib/pins"
 import { useProfiles, useProjects } from "@/lib/queries/catalog"
 import { useRoutines, useScheduled } from "@/lib/queries/routines"
-import { useInbox } from "@/lib/queries/surfaces"
 import { activityAt, isTopLevel, type Project, type SessionMeta } from "@/lib/settings"
 import { defaultsForProfile, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import { useStoreSelect, type ThreadState as LiveThreadState } from "@/lib/store"
@@ -124,10 +120,8 @@ export function SidebarNav() {
   const navigate = useNavigate()
   const inBoard = location.pathname.startsWith("/board")
   const inBuild = location.pathname.startsWith("/build")
-  const inNotifications = location.pathname.startsWith("/notifications")
   const inRoutines = location.pathname.startsWith("/routines")
   const inSchedules = location.pathname.startsWith("/schedules")
-  const unread = useInbox().inbox?.unread ?? 0
   // Both lists are loaded at boot (the palette and the pages read the same
   // queries), so the rows can say how much is armed without asking again.
   const routineCount = useRoutines().data?.length ?? 0
@@ -196,29 +190,6 @@ export function SidebarNav() {
               <CalendarClock />
               <span>Scheduled</span>
               <NavCount count={scheduledCount} />
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          {/* A row, not the badge itself: the count capsule lives on the
-              header's bell now, where it is visible on every route and does not
-              have to be flung into a corner to survive the icon rail. This row
-              is the way to the whole inbox, and it carries the count only as
-              the reason to press it. */}
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              size="sm"
-              tooltip="Notifications"
-              isActive={inNotifications}
-              onClick={() => void navigate(notificationsPath())}
-              className={ROW}
-            >
-              <BellIcon />
-              <span>Notifications</span>
-              {unread > 0 && (
-                <UnreadCount
-                  count={unread}
-                  className="ml-auto group-data-[collapsible=icon]:absolute group-data-[collapsible=icon]:top-0.5 group-data-[collapsible=icon]:right-0.5 group-data-[collapsible=icon]:ml-0"
-                />
-              )}
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

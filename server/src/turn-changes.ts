@@ -26,7 +26,7 @@
  * failure — see CLAUDE.md, "An error a surface could render as emptiness
  * must be rendered as an error".
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, gte } from "drizzle-orm";
 
 import { db, sessionTurnChanges } from "./db/index.js";
 import * as git from "./git.js";
@@ -187,6 +187,33 @@ export class TurnChangesRecorder {
       .where(and(eq(sessionTurnChanges.sessionId, sessionId), eq(sessionTurnChanges.turnId, turnId)))
       .get();
   }
+
+  /** The tree the worktree was photographed as when `turnId` began — a
+      rewind's file half restores to it. Null when the turn was never
+      measured (no repository at the time, or the row is gone); the caller
+      refuses on that rather than guessing. */
+  startTreeOf(sessionId: string, turnId: string): string | null {
+    return this.row(sessionId, turnId)?.startTree ?? null;
+  }
+
+  /**
+   * Drop every turn-changes row from `turnId` onward (inclusive) — called
+   * once a rewind to `turnId` has committed, because those rows describe
+   * turns the journal no longer holds.
+   *
+   * `startedAt` is stamped per `begin()`, so within a session it orders the
+   * turns exactly as their seqs do, and the sweep is one range delete on it.
+   * A missing target row is a no-op, not an error: the turn may never have
+   * been measured, or an earlier rewind may already have taken it.
+   */
+  pruneFrom(sessionId: string, turnId: string): void {
+    const target = this.row(sessionId, turnId);
+    if (!target) return;
+    db.delete(sessionTurnChanges)
+      .where(and(eq(sessionTurnChanges.sessionId, sessionId), gte(sessionTurnChanges.startedAt, target.startedAt)))
+      .run();
+  }
+
 
   private async repoDirOf(sessionId: string): Promise<string | null> {
     const cwd = this.deps.cwdOf(sessionId);

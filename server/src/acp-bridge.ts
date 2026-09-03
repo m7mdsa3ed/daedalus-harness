@@ -428,6 +428,12 @@ export class AcpBridge {
   /** The session's working directory — kept because an `@mention` in a prompt
       is resolved against it (see `mentions.ts`). */
   private readonly cwd: string;
+  /** The session's MCP servers — kept for the same reason as `cwd`, and for a
+      second one: `forkAt` opens a request of its own (`session/fork` is not
+      `session/new`, so it cannot read `BridgeOptions` off the call site the
+      way `newSession` does) and the forked session needs the same server list
+      the original got, since ACP does not say a fork inherits it. */
+  private readonly mcpServers: acp.McpServer[];
   /** Prompts the agent has not answered yet. A turn is over when this hits
       zero — NOT when the first prompt returns, or steering (a second prompt
       sent mid-turn) would clear the indicator while the agent is still
@@ -446,6 +452,13 @@ export class AcpBridge {
   /** Id of the logical turn in flight, null between turns. Steering joins it. */
   currentTurnId: string | null = null;
   private currentTurnPrompt: string | null = null;
+  /** The `messageId` of the last content chunk seen so far in the turn
+      currently in flight — reset to null at `prompt()`'s `currentTurnId`
+      assignment and read at `settleTurn` for `turn_ended.lastMessageId`. A
+      chunk with no `messageId` (or `null`) leaves the previous value alone,
+      so a turn's last REAL id survives chunks that do not carry one, rather
+      than being clobbered back to nothing at the end. */
+  private lastSeenMessageId: string | null = null;
   /** Tool calls this turn has announced and not yet settled. A steer's bubble
       waits on this being empty — see `announceSteer`. Cleared with the turn,
       because a turn that ended has no step left to finish. */
@@ -466,6 +479,7 @@ export class AcpBridge {
   constructor(host: BridgeHost, stream: acp.Stream, opts: BridgeOptions) {
     this.host = host;
     this.cwd = opts.cwd;
+    this.mcpServers = opts.mcpServers;
     this.suppressModelMetadataWarning = opts.suppressModelMetadataWarning === true;
     this.connection = acp
       .client({ name: "daedalus" })
@@ -909,6 +923,19 @@ export class AcpBridge {
        parent's step and are not what the parent's steer is waiting on. A
        replay is history and moves nothing. */
     const settled = own && !this.historyReplay ? this.trackToolCall(update) : false;
+    /* The fork point a rewind to the NEXT turn will cut at (`turn_ended`'s
+       `lastMessageId`) is the last messageId this turn actually produced —
+       only the two content-chunk variants carry one, and a chunk that omits
+       it (or sends it null) is mid-message continuation, not evidence the
+       message ended, so the previous id is left standing rather than cleared. */
+    if (
+      own &&
+      !this.historyReplay &&
+      (update.sessionUpdate === "agent_message_chunk" || update.sessionUpdate === "agent_thought_chunk") &&
+      update.messageId
+    ) {
+      this.lastSeenMessageId = update.messageId;
+    }
     this.host.emit({
       ev: "update",
       seq: 0,
@@ -1160,6 +1187,7 @@ export class AcpBridge {
     if (this.inflight === 0) {
       this.currentTurnId = turnId;
       this.currentTurnPrompt = text;
+      this.lastSeenMessageId = null;
       this.host.markTurnStderr();
       this.turnStartedAt = performance.now();
       this.ttftSent = false;
@@ -1267,6 +1295,7 @@ export class AcpBridge {
       error,
       promptText,
       ...(continued ? { continued: true } : {}),
+      ...(this.lastSeenMessageId ? { lastMessageId: this.lastSeenMessageId } : {}),
     });
     this.releaseIdle();
     this.host.onTurnSettled({ error, interrupted, continued, turnId });
@@ -1314,6 +1343,49 @@ export class AcpBridge {
   get canPause(): boolean {
     const meta = this.agentCapabilities._meta as Record<string, unknown> | null | undefined;
     return Boolean(meta?.[PAUSE_CAPABILITY]);
+  }
+
+  /** Whether the runtime answers ACP's own `session/fork` — the spec
+      capability, not the jetbrains.air fork-point extension (`AgentDef.rewindVia`
+      is what says whether this runtime honors *that*). `forkAt` throws rather
+      than asking the agent when this is false, so a caller mistake fails here
+      instead of round-tripping to a process that will refuse the request. */
+  get canFork(): boolean {
+    return Boolean(this.agentCapabilities.sessionCapabilities?.fork);
+  }
+
+  /**
+   * Fork this session at `messageId` — the jetbrains.air extension both
+   * claude-code and codex honor (`AgentDef.rewindVia === "acp-fork-point"`),
+   * carried as `_meta` on the spec's own `session/fork` since ACP itself has
+   * no notion of a fork *point*, only a fork. Claude Code forks up to and
+   * including that message; Codex resolves it to a turn and forks up to and
+   * including that turn — either way, the id a caller wants here is the last
+   * one the turn *before* the one being discarded produced (`turn_ended.lastMessageId`).
+   *
+   * Modeled on `newSession`/`loadSession` for how the request is built, but
+   * unlike either this is not called from `BridgeOptions` — there is no
+   * persona or config choice to fold in, only the session already open on
+   * this process, so `cwd` and `mcpServers` are this bridge's own rather than
+   * read off a fresh set of options.
+   *
+   * Returns a new, unloaded, unproven session id on the agent's side — same
+   * as any other id this bridge has never itself adopted. The caller (outside
+   * this file) owns deciding what happens with it: nothing here calls
+   * `adoptSession` or otherwise touches this bridge's state, because the
+   * intended use is a fresh bridge against the returned id, exactly like any
+   * other fork-and-load.
+   */
+  async forkAt(messageId: string): Promise<{ sessionId: string }> {
+    if (!this.canFork) throw new Error("this agent cannot fork sessions");
+    const sessionId = this.requireSession();
+    const response = await this.connection.agent.request(acp.methods.agent.session.fork, {
+      sessionId,
+      cwd: this.cwd,
+      mcpServers: this.mcpServers,
+      _meta: { jetbrains: { air: { fork: { version: 1, messageId } } } },
+    });
+    return { sessionId: response.sessionId };
   }
 
   /**
@@ -1493,6 +1565,7 @@ export class AcpBridge {
           ? { promptCapabilities: this.agentCapabilities.promptCapabilities }
           : {}),
         ...(this.canPause ? { canPause: true } : {}),
+        ...(this.canFork ? { canRewind: true } : {}),
       },
       except,
     );

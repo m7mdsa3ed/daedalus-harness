@@ -17,6 +17,8 @@ import type { Project } from "./projects.js";
 import { getProfile, listProfiles, profileBaseUrl, profileSupports } from "./profiles.js";
 import { agentModelId, bareModelId, getAgent, modelAllowlistFor } from "./registry.js";
 import { gatewayUrlFor, setGatewaySessionResolver, type GatewaySession } from "./gateway-shim.js";
+import { HttpError } from "./http-error.js";
+import * as git from "./git.js";
 import { getProject, updateProject } from "./projects.js";
 import { SCRATCH_TEMPLATE_ID, detectDevCommand } from "./templates.js";
 import { startDevServer } from "./dev-server.js";
@@ -1656,6 +1658,114 @@ export class SessionManager {
       throw error;
     }
     return session;
+  }
+
+  /**
+   * Roll the thread back to before `turnId`, in place — same session row,
+   * same thread id, same links. Two independent halves, taken by `scope`:
+   *
+   *  - the **conversation**: the agent's own context, which only the runtime
+   *    holds (the journal is a cache for reading, never a source for
+   *    resuming). The live process is forked at the turn before the one being
+   *    discarded — `bridge.forkAt` on the messageId that turn's `turn_ended`
+   *    recorded — and the row's `acpSessionId` moves to the fork. Everything
+   *    after that point is then dropped by the ordinary revive path: the
+   *    respawn below clears the journal and a `session/load` of the fork
+   *    refills it with only what is left, which is why this method adds no
+   *    truncation machinery of its own.
+   *  - the **files**: the worktree as it was when `turnId` began — the git
+   *    tree `TurnChangesRecorder` photographed at its `turn_started`,
+   *    restored by `git.restoreToTree` as a new commit, never a reset.
+   *
+   * A `before === null` rewind point — `turnId` is the thread's very first
+   * turn — has nothing to fork *from*, so the conversation half starts the
+   * agent over: `acpSessionId` is cleared and the respawn runs a plain
+   * `session/new`. That is a deliberate, user-asked discard, not the
+   * accidental-overwrite case "only another proven id may replace a proven
+   * one" exists for — the rule guards a fallback that *guesses* the old
+   * conversation is gone; here the user has said so.
+   *
+   * The turn-changes rows of the discarded turns are pruned once the
+   * conversation has actually been cut (a files-only rewind discards no
+   * turns — it moves the worktree under a transcript that stays whole, the
+   * way the History drawer's restore does).
+   *
+   * Refusals are `HttpError`s with the status they deserve: a running turn is
+   * a 409 (a rewind is never queued and never steered — there is no honest
+   * answer to "rewind to before the turn that is streaming"), a workflow step
+   * cannot be rewound at all (its history is the run's, not the reader's), an
+   * agent with no rewind door or a boundary with no fork point is a 400, and
+   * an unknown turn or a turn with no file snapshot is a 404.
+   */
+  async rewind(
+    id: string,
+    turnId: string,
+    scope: "conversation" | "files" | "both",
+  ): Promise<{ ok: true; acpSessionId: string | null | undefined; restored?: boolean; historyLost?: HistoryLost }> {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error("unknown session");
+    if (session.deletedAt !== null) throw new Error("session deleted");
+    if (session.parentSessionId) throw new HttpError("a workflow step cannot be rewound — rewind the thread that started the run", 409);
+    if (session.bridge?.promptActive) throw new HttpError("a turn is running — cancel it before rewinding", 409);
+
+    const profile = session.profile ?? getProfile(session.profileId);
+    if (!profile) throw new HttpError("unknown profile", 404);
+    const project = session.project ?? getProject(session.projectId);
+    if (!project) throw new HttpError("unknown project", 404);
+
+    const point = this.log.rewindPoint(session.id, turnId);
+    if (!point) throw new HttpError("unknown turn", 404);
+
+    const conversational = scope === "conversation" || scope === "both";
+    const physical = scope === "files" || scope === "both";
+    let cut = false;
+
+    if (conversational) {
+      if (getAgent(session.agentId)?.rewindVia !== "acp-fork-point") {
+        throw new HttpError("this agent cannot rewind its conversation — files can still be restored", 400);
+      }
+      if (point.before === null) {
+        session.acpSessionId = undefined;
+        session.acpSessionProvisional = false;
+        cut = true;
+      } else if (point.before.messageId === null) {
+        throw new HttpError("the turn before this one has no recorded fork point, so the conversation cannot be cut there", 400);
+      } else {
+        const bridge = await this.whenSpawnable(session);
+        if (bridge.promptActive) throw new HttpError("a turn is running — cancel it before rewinding", 409);
+        const { sessionId } = await bridge.forkAt(point.before.messageId);
+        // Adopted provisionally — no turn has settled on a fork — and the
+        // respawn's `session/load` answers it, which is what proves an id.
+        // That proof doubles as the check that the fork is loadable at all:
+        // a runtime that refused it lands in history-lost, loudly, like any
+        // other load that never came back.
+        session.acpSessionId = sessionId;
+        session.acpSessionProvisional = true;
+        cut = true;
+      }
+    }
+
+    let restored: boolean | undefined;
+    if (physical) {
+      const tree = this.turnChanges.startTreeOf(session.id, turnId);
+      if (!tree) throw new HttpError("no file snapshot for this turn", 404);
+      restored = (await git.restoreToTree(session.projectId, tree)).restored;
+    }
+
+    if (cut) {
+      // Configuration unchanged on every axis — only the conversation moved —
+      // so the respawn gets the row's own values back, exactly as a revive of
+      // an untouched thread would.
+      await this.respawn(session.id, profile, session.agentId, project, session.model || undefined, session.effort || undefined);
+      this.turnChanges.pruneFrom(session.id, turnId);
+    }
+
+    return {
+      ok: true,
+      acpSessionId: session.liveAcpSessionId ?? session.acpSessionId,
+      ...(physical ? { restored } : {}),
+      ...(session.historyLost ? { historyLost: session.historyLost } : {}),
+    };
   }
 
   get(id: string): Session | undefined {

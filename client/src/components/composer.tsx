@@ -7,10 +7,11 @@
    toolbar that reads left to right as *what goes in → where it goes → what
    happens*: the "+" menu (attach, photo, mention, command, code block), the
    model/config cluster, then the counters and the actions, ending on a filled
-   Send. Every control on the row is the same shape — 24px (`icon-xs`), on a
-   mouse and a finger alike (`useIsMobile` is the width's and decides only
-   what Enter means) — and chrome-less except the two
-   that carry meaning by colour: Send is primary, Stop is destructive.
+   Send. Every control on the row is the same shape and chrome-less except the
+   two that carry meaning by colour: Send is primary, Stop is destructive.
+   The scale follows the pointer — 24px (`icon-xs`) under a mouse, 32px
+   (`icon-sm`) under a finger, where the same row had to double as a touch
+   target (`useCoarsePointer`, see below).
 
    What used to be five separate buttons (attach, voice, pause, stop, send)
    competing for a row that is 300px wide on a phone is now a menu on the left
@@ -63,7 +64,7 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { Shortcut } from "@/components/shortcut"
-import { ComposerAgents, ComposerTodo, ContextIndicator } from "@/components/composer-status"
+import { ComposerAgents, ComposerTodo } from "@/components/composer-status"
 import { ComposerAttachments, type AttachmentDelivery } from "@/components/composer-attachments"
 import { ComposerHistoryDialog } from "@/components/composer-history-dialog"
 import { ComposerQueue } from "@/components/composer-queue"
@@ -507,7 +508,11 @@ export function Composer({
     lock.submittable &&
     !files.uploading &&
     (text.trim().length > 0 || files.ready.length > 0)
-  const iconSize = "icon-xs"
+  /* Touch targets: the row was written at the 24px xs scale, which is a small
+     target to hold a thumb on. Under a coarse pointer every control grows to
+     the 32px icon-sm scale — still one language across the row, still inside
+     the composer card where the filled Send keeps the eye. */
+  const iconSize = coarse ? "icon-sm" : "icon-xs"
   const steerChord = formatChord(steerChords[0] ?? "")
 
   const sendTitle = gated
@@ -711,7 +716,10 @@ export function Composer({
           className={cn(
             "min-h-9 w-full resize-none border-0 bg-transparent px-2 py-1.5 leading-relaxed shadow-none focus-visible:ring-0 dark:bg-transparent",
             /* The box grows to ten lines and then scrolls. */
-            "max-h-40"
+            "max-h-40",
+            /* Roomier under a thumb: the caret row leading its 32px buttons
+               is how the row stays visually centred while the targets grow. */
+            coarse && "min-h-11"
           )}
         />
         {/* One control language across the row: every button is the same
@@ -721,7 +729,10 @@ export function Composer({
             box inside a box; colour carries the meaning instead, and only on
             the two that act on the message as a whole: Send is a filled
             primary disc, Stop a destructive one. */}
-        <div className="flex items-center gap-1 pt-1">
+        <div
+          data-slot="composer-toolbar"
+          className={cn("flex items-center gap-1 pt-1", coarse && "gap-1.5 pt-1.5")}
+        >
           {/* What goes in. One menu holds every way of adding to the message
               — the row used to give each its own button, and on a phone that
               row was the first thing to overflow. */}
@@ -860,7 +871,6 @@ export function Composer({
               {formatTokens(chars)} · ~{formatTokens(Math.ceil(chars / 4))} tok
             </span>
           )}
-          <ContextIndicator thread={thread} meta={meta} actions={actions} />
           {voice.supported && (voice.listening || (!hasContent && !gated)) && (
             <Button
               variant="ghost"

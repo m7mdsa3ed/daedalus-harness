@@ -731,6 +731,12 @@ export type ThreadEvent =
           carrier and same rules as `promptCapabilities`: absolute, optional,
           a statement of what this session can be asked to do. */
       canPause?: boolean;
+      /** Whether this session's process can be forked — ACP's own
+          `session/fork`, advertised as `agentCapabilities.sessionCapabilities.fork`.
+          Same carrier and same rules as `canPause`: absolute, optional, a
+          statement of what this session can be asked to do, this time in
+          service of rewind rather than pause. */
+      canRewind?: boolean;
     }
   /** The turn is held at a step boundary, or no longer is. Absolute and
       live-only, like `queue`: it is current state rather than history, so
@@ -764,6 +770,14 @@ export type ThreadEvent =
       error?: WireError;
       promptText?: string;
       continued?: boolean;
+      /** The ACP `messageId` of the last content chunk this turn produced —
+          absent when the runtime never sent one, or the turn produced no
+          assistant chunks at all. Rewind reads this off the turn *before* the
+          one being discarded: forking "up to and including" this id is what
+          cuts a session cleanly at the boundary between two turns, since ACP
+          has no notion of a turn to fork at, only a message. Optional like
+          every field added to an event that already had journaled rows. */
+      lastMessageId?: string;
     }
 
   /* ---- fan-out only ----

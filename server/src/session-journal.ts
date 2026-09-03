@@ -245,6 +245,78 @@ export class SessionJournal {
     return Number(row?.count ?? 0);
   }
 
+  /* ---- rewind ---- */
+
+  /**
+   * What a rewind TO `turnId` needs: the seq where that turn's own
+   * `turn_started` sits, and — from the turn immediately before it, if any —
+   * the ACP messageId a conversation fork should cut at.
+   *
+   * The messageId is read off the earlier turn's `turn_ended`
+   * (`lastMessageId`, the last content chunk that turn produced), because the
+   * two fork-point dialects this serves both cut *inclusive* of the id they
+   * are given — Claude up to the message, Codex up to its turn — so forking at
+   * the previous turn's last id is what leaves the previous turn in and the
+   * target turn out. `before: null` means `turnId` is the thread's very first
+   * turn: there is nothing to fork from, and a rewind there means starting
+   * over, not forking. A `before` whose `messageId` is null is a real answer
+   * too — the earlier turn predates the field, or never produced an assistant
+   * chunk — and the caller refuses on it rather than forking at nothing.
+   *
+   * Null on the whole call: no such turn in this log (the route answers 404).
+   * The `turnId` is inside the payload, not a column, so the lookups go
+   * through `json_extract` — turn boundaries are the one place a value other
+   * than `seq`/`kind` has to be queried, and the table has no index worth
+   * adding a generated column for at a rate of one rewind per click.
+   */
+  rewindPoint(
+    sessionId: string,
+    turnId: string,
+  ): { turnSeq: number; before: { messageId: string | null } | null } | null {
+    this.flush();
+    const turnSeq = this.db
+      .select({ seq: eventsTable.seq })
+      .from(eventsTable)
+      .where(
+        and(
+          eq(eventsTable.sessionId, sessionId),
+          eq(eventsTable.kind, "turn_started"),
+          sql`json_extract(${eventsTable.payload}, '$.turnId') = ${turnId}`,
+        ),
+      )
+      .get()?.seq;
+    if (turnSeq === undefined) return null;
+    const prev = this.db
+      .select({ payload: eventsTable.payload })
+      .from(eventsTable)
+      .where(
+        and(
+          eq(eventsTable.sessionId, sessionId),
+          eq(eventsTable.kind, "turn_started"),
+          lt(eventsTable.seq, turnSeq),
+        ),
+      )
+      .orderBy(desc(eventsTable.seq))
+      .limit(1)
+      .get();
+    if (!prev) return { turnSeq, before: null };
+    const prevTurnId = (prev.payload as { turnId?: string } | null)?.turnId;
+    if (!prevTurnId) return { turnSeq, before: { messageId: null } };
+    const ended = this.db
+      .select({ payload: eventsTable.payload })
+      .from(eventsTable)
+      .where(
+        and(
+          eq(eventsTable.sessionId, sessionId),
+          eq(eventsTable.kind, "turn_ended"),
+          sql`json_extract(${eventsTable.payload}, '$.turnId') = ${prevTurnId}`,
+        ),
+      )
+      .get();
+    const lastMessageId = (ended?.payload as { lastMessageId?: string } | null)?.lastMessageId;
+    return { turnSeq, before: { messageId: lastMessageId ?? null } };
+  }
+
   /** How many turns lie before `before`. */
   countTurnsBefore(sessionId: string, before: number): number {
     this.flush();

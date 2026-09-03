@@ -27,6 +27,7 @@ import { PanelNotice, PanelToolbar } from "@/components/workspace/primitives"
 import { TerminalKeyRow } from "@/components/workspace/terminal-keys"
 import { describeError, reportError } from "@/lib/errors"
 import { loadSettings, serverName } from "@/lib/settings"
+import { useTheme } from "@/lib/theme"
 import { useProjects } from "@/lib/queries/catalog"
 import { Logo } from "@/components/ui/logo"
 import { cn } from "@/lib/utils"
@@ -35,18 +36,65 @@ import { panelId } from "@/lib/workspace/panels"
 
 type Status = "connecting" | "ready" | "exited" | "failed"
 
-/** Colours from the app tokens, resolved at mount. xterm paints to a canvas, so
-    it cannot read CSS variables the way the rest of the UI does — the theme has
-    to be handed over as literal values, and re-read when the palette changes. */
-function themeFrom(element: HTMLElement) {
+/* The 16 ANSI slots are the one part xterm cannot borrow from CSS variables:
+   each is a literal hex. The dark row is exactly the palette xterm ships by
+   default, so an existing dark-mode terminal does not change. Light needs the
+   dark-on-paper convention a light terminal lives by — normal colours dark
+   enough to read on white, `white` a readable grey instead of glare — which is
+   the ramp VS Code's light terminal converges on. */
+const ANSI = {
+  dark: {
+    black: "#2e3436",
+    red: "#cc0000",
+    green: "#4e9a06",
+    yellow: "#c4a000",
+    blue: "#3465a4",
+    magenta: "#75507b",
+    cyan: "#06989a",
+    white: "#d3d7cf",
+    brightBlack: "#555753",
+    brightRed: "#ef2929",
+    brightGreen: "#8ae234",
+    brightYellow: "#fce94f",
+    brightBlue: "#729fcf",
+    brightMagenta: "#ad7fa8",
+    brightCyan: "#34e2e2",
+    brightWhite: "#eeeeec",
+  },
+  light: {
+    black: "#333333",
+    red: "#cd3131",
+    green: "#00bc00",
+    yellow: "#949800",
+    blue: "#0451a5",
+    magenta: "#bc05bc",
+    cyan: "#0598bc",
+    white: "#555555",
+    brightBlack: "#666666",
+    brightRed: "#f14c4c",
+    brightGreen: "#23d18b",
+    brightYellow: "#f5f543",
+    brightBlue: "#3b8eea",
+    brightMagenta: "#d670d6",
+    brightCyan: "#29b8db",
+    brightWhite: "#a5a5a5",
+  },
+} as const
+
+/** Colours from the app tokens plus the ANSI ramp above, resolved at mount and
+    re-read whenever the mode flips. xterm paints to a canvas, so it cannot read
+    CSS variables the way the rest of the UI does — the theme has to be handed
+    over as literal values. */
+function themeFrom(element: HTMLElement, dark: boolean) {
   const style = getComputedStyle(element)
   const token = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback
   return {
+    ...ANSI[dark ? "dark" : "light"],
     background: "transparent",
-    foreground: token("--foreground", "#e5e5e5"),
-    cursor: token("--foreground", "#e5e5e5"),
-    cursorAccent: token("--background", "#000000"),
-    selectionBackground: token("--muted", "#333333"),
+    foreground: token("--foreground", dark ? "#e5e5e5" : "#1a1a1a"),
+    cursor: token("--foreground", dark ? "#e5e5e5" : "#1a1a1a"),
+    cursorAccent: token("--background", dark ? "#000000" : "#ffffff"),
+    selectionBackground: token("--muted", dark ? "#333333" : "#f4f4f5"),
   }
 }
 
@@ -61,6 +109,7 @@ export function TerminalPanel({
      reaches this panel; only a projects refresh (rare, and its own clock)
      re-renders it. */
   const project = useProjects().find((candidate) => candidate.id === projectId)
+  const { resolved } = useTheme()
 
   const host = React.useRef<HTMLDivElement | null>(null)
   const term = React.useRef<Terminal | null>(null)
@@ -90,7 +139,7 @@ export function TerminalPanel({
         "ui-monospace, monospace",
       fontSize: 12,
       scrollback: 5000,
-      theme: themeFrom(container),
+      theme: themeFrom(container, document.documentElement.classList.contains("dark")),
     })
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
@@ -186,6 +235,17 @@ export function TerminalPanel({
       fit.current = null
     }
   }, [projectId, terminalId, generation])
+
+  /* The palette is read again when the app flips light↔dark. xterm cannot see
+     CSS variables, but it does accept a fresh theme object at any time — the
+     buffer is re-rendered in place, no reconnect, no lost scrollback. A custom
+     palette change lands the same way: themeFrom reads the live tokens. */
+  React.useEffect(() => {
+    const terminal = term.current
+    const container = host.current
+    if (!terminal || !container) return
+    terminal.options.theme = themeFrom(container, resolved === "dark")
+  }, [resolved])
 
   /* A terminal is a running process; closing its panel must not silently end
      it, and must not silently leave it either. The guard says which. */

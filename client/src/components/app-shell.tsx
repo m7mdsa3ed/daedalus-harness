@@ -16,6 +16,7 @@ import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
 import { Logo } from "@/components/ui/logo"
 import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
 import { ThreadHeaderMenu } from "@/components/thread-menu"
+import { ContextIndicator } from "@/components/composer-status"
 import { NotificationBell } from "@/components/notifications/bell"
 import { NotificationsInboxPage } from "@/components/notifications/page"
 import { panelId, type PanelKind } from "@/lib/workspace/panels"
@@ -68,7 +69,7 @@ import {
 } from "@/lib/settings"
 import { useCatalogLoaded, useProfiles, useProjects } from "@/lib/queries/catalog"
 import { useRoutines } from "@/lib/queries/routines"
-import { useStoreSelect } from "@/lib/store"
+import { useStoreSelect, useSessionMeta, useThread } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { ProjectFormPage, ProjectsPage } from "@/components/settings/projects"
 import { ProjectPage } from "@/components/project-page"
@@ -769,6 +770,14 @@ export function AppShell({
                 nothing else on a phone can reach these panels or this thread's
                 own actions. */}
             <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+              {/* The context ring, moved up from the composer's toolbar: it is
+                  a status to consult while reading, not a control for what is
+                  being typed, and on a phone the composer row gave it the last
+                  slot the Send button needed. Beside the bell it is one glance
+                  on every thread route. */}
+              {sessionId && (
+                <HeaderContextIndicator sessionId={sessionId} actions={actions} />
+              )}
               {/* The bell is on every route, which is the whole reason it moved
                   off the sidebar's nav: a count is only useful where it is
                   always in view, and in the collapsed rail it was a capsule
@@ -953,6 +962,31 @@ export function AppShell({
   )
 }
 
+/** The context ring in the header, as its own leaf component. The shell reads
+    only `sessions` — a streamed token would re-run its layout effects if the
+    whole header subscribed to the thread's — so the ring's own narrow
+    `useThread` subscription keeps a token's re-render to this 32px button. */
+function HeaderContextIndicator({
+  sessionId,
+  actions,
+}: {
+  sessionId: string
+  actions: Actions
+}) {
+  const thread = useThread(sessionId)
+  const meta = useSessionMeta(sessionId)
+  return (
+    <ContextIndicator
+      thread={thread}
+      meta={meta}
+      actions={actions}
+      side="bottom"
+      size="icon-sm"
+      triggerClassName="rounded-4xl"
+    />
+  )
+}
+
 /** Settings sections as sidebar nav — the app has no horizontal tabs. The
     first row is the overview (`/settings`), lit when no section is. */
 function SettingsNav({
@@ -1117,4 +1151,3 @@ function EmptyState({
     </div>
   )
 }
-

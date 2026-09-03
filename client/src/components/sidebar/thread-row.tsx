@@ -154,7 +154,12 @@ export const ThreadRow = React.memo(function ThreadRow({
         />
         {/* The ⋯ opens the reading above the actions: the card with the
             thread's status and where it runs, then what to do with it. */}
-        <DropdownMenuContent side="right" align="start" className="w-72">
+        <DropdownMenuContent
+          side={isMobile ? "bottom" : "right"}
+          align={isMobile ? "end" : "start"}
+          sideOffset={isMobile ? 8 : 4}
+          className="w-72 max-w-[calc(100vw-1rem)]"
+        >
           <div className="px-2 pt-1.5 pb-1">{card}</div>
           <DropdownMenuSeparator />
           {renderMenuItems(items, { Item: DropdownMenuItem, Separator: DropdownMenuSeparator })}

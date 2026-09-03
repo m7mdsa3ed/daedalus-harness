@@ -265,6 +265,27 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     });
   });
 
+  /* Roll the thread back to before a turn — the conversation forked at the
+     boundary (where the runtime can), the files restored to the turn's own
+     tree (where git can), either or both by `scope`. Like `/config`, one call
+     does the whole job: fork, restore, respawn and journal clear happen
+     server-side, because split across round trips a tab closing in the middle
+     would leave a half-rewound thread. The journal ends up cleared and
+     refilled from the fork, so the caller reattaches from 0 exactly as it
+     does after a non-live config change. Refusals are HttpErrors with their
+     statuses (`SessionManager.rewind`), which app.onError shapes. */
+  app.post("/api/sessions/:id/rewind", async (c) => {
+    const session = sessions.get(c.req.param("id"));
+    if (!session) return c.json({ error: "not found" }, 404);
+    if (session.deletedAt !== null) return c.json({ error: "session deleted" }, 409);
+    const { turnId, scope } = await c.req.json().catch(() => ({}));
+    if (typeof turnId !== "string" || !turnId) return c.json({ error: "turnId is required" }, 400);
+    if (scope !== "conversation" && scope !== "files" && scope !== "both") {
+      return c.json({ error: "scope must be conversation, files, or both" }, 400);
+    }
+    return c.json(await sessions.rewind(session.id, turnId, scope));
+  });
+
   /* The transcript, read over HTTP.
 
      Opening a thread is a read, and a read does not need a socket: this is the

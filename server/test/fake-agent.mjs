@@ -85,6 +85,12 @@ const parkedTurns = new Map();
 /** The harness's pause flag, as the daedalus agent keeps it. */
 let paused = false;
 let permCounter = 0;
+/** Per-prompt counters — one names an unpointed fork, the other the turn a
+    fork point names (real runtimes stamp message ids on their chunks; one
+    id per turn is all a fork point needs, and deterministic enough to
+    assert on). */
+let forkCounter = 0;
+let turnCounter = 0;
 
 /** Park `promptId` on the request `id`, optionally with a follow-up. */
 const park = (id, promptId, after) => parkedTurns.set(id, { promptId, after });
@@ -586,6 +592,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
            to report all four branches. */
         agentCapabilities: {
           loadSession: true,
+          /* `session/fork`, with the jetbrains.air fork point (`_meta`), is
+             what a rewind's conversation half is built on — see
+             `AcpBridge.forkAt`. The fork handler below answers a derived id
+             that `session/load` accepts. */
+          sessionCapabilities: { fork: {} },
           promptCapabilities: { image: true, audio: false, embeddedContext: true },
           /* The harness's pause pair (the daedalus agent's): answered below
              with a flag and nothing else — a parked turn here is parked on a
@@ -616,18 +627,23 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   }
   else if (msg.method === "session/load") {
     recordSessionMeta("session/load", msg.params);
+    const sid = msg.params?.sessionId;
+    /* A fork answers a derived id (`session/fork` below); it loads as a short
+       stub conversation, observably different from the original so a test can
+       tell a rewound thread from an untouched one. */
+    const forked = typeof sid === "string" && sid.startsWith("acp-123-fork-");
     /* A session this agent has no record of. Real agents answer exactly like
        this — codex says "no rollout found for thread id …" — and it is the
        failure that used to cost a thread its history, because the client's
        fallback `session/new` overwrote the id it had just failed to load. */
-    if (msg.params?.sessionId !== "acp-123") {
+    if (sid !== "acp-123" && !forked) {
       out({
         jsonrpc: "2.0",
         id: msg.id,
         error: {
           code: -32603,
           message: "Internal error",
-          data: { details: `no rollout found for thread id ${msg.params?.sessionId}` },
+          data: { details: `no rollout found for thread id ${sid}` },
         },
       });
       return;
@@ -636,12 +652,12 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     out({
       jsonrpc: "2.0",
       method: "session/update",
-      params: { sessionId: "acp-123", update: { sessionUpdate: "user_message_chunk", content: { type: "text", text: "hello fake agent" } } },
+      params: { sessionId: sid, update: { sessionUpdate: "user_message_chunk", content: { type: "text", text: forked ? "(forked conversation)" : "hello fake agent" } } },
     });
     out({
       jsonrpc: "2.0",
       method: "session/update",
-      params: { sessionId: "acp-123", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "hi" } } },
+      params: { sessionId: sid, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: forked ? "(forked reply)" : "hi" } } },
     });
     // The RFD's replay: the child tree comes back inside the parent's load, in
     // its original order and under its original ids, with an orphan (no
@@ -661,6 +677,18 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         configOptions,
       },
     });
+  } else if (msg.method === "session/fork") {
+    recordSessionMeta("session/fork", msg.params);
+    /* The id says where it was cut, deterministically, so a test can assert
+       the fork landed. A request with no readable fork point still answers —
+       a numbered fork rather than an error — because the spec's response is
+       only ever a session id, and a malformed `_meta` is the caller's mistake
+       to notice, not the stub's to crash on. */
+    const point = msg.params?._meta?.jetbrains?.air?.fork?.messageId;
+    const sessionId = typeof point === "string" && point.trim()
+      ? `acp-123-fork-${point}`
+      : `acp-123-fork-unpointed-${(forkCounter += 1)}`;
+    out({ jsonrpc: "2.0", id: msg.id, result: { sessionId } });
   } else if (msg.method === "session/set_config_option") {
     configOptions = configOptions.map((o) =>
       o.id === msg.params.configId ? { ...o, currentValue: msg.params.value } : o
@@ -975,9 +1003,15 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     }
     // One of every step kind, in order — this is what the transcript UI is
     // developed against, so every branch of the step row has a live sample.
+    const turnMessageId = `msg-${(turnCounter += 1)}`;
     for (const entry of promptUpdates()) {
       const { sessionId, update } = "update" in entry ? entry : { sessionId: "acp-123", update: entry };
-      out({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update } });
+      /* Every assistant chunk of the turn shares one messageId — the ACP
+         contract, and the fork point a rewind to the NEXT turn cuts at. */
+      const stamped = sessionId === "acp-123" && update.sessionUpdate === "agent_message_chunk"
+        ? { ...update, messageId: turnMessageId }
+        : update;
+      out({ jsonrpc: "2.0", method: "session/update", params: { sessionId, update: stamped } });
     }
     out({
       jsonrpc: "2.0",

@@ -181,12 +181,24 @@ export function ContextIndicator({
   thread,
   meta,
   actions,
+  side = "top",
+  size = "icon-xs",
+  triggerClassName,
 }: {
   thread: ThreadState
   /** The thread's row, for the (profile, agent) pair the quota is read under.
       Absent for a draft, which has no server-side thread to ask about yet. */
   meta?: SessionMeta
   actions: Actions
+  /** Where the popover opens. The composer's ring opens upward; the header's
+      rides at the top of the screen, so it opens downward. */
+  side?: "top" | "bottom"
+  /** The trigger's scale: 24px on the composer's toolbar, 32px in the header
+      beside the bell, which is the header's other silent-size control. */
+  size?: "icon-xs" | "icon-sm"
+  /** Extra trigger classes. The header rounds its controls like the bell's
+      pill rather than the composer's `rounded-lg`. */
+  triggerClassName?: string
 }) {
   const { context, usage, ttftMs } = thread
   if (!context && !usage && ttftMs === null) return null
@@ -214,10 +226,11 @@ export function ContextIndicator({
         render={
           <Button
             variant="ghost"
-            size="icon-xs"
+            size={size}
             className={cn(
               "relative shrink-0 rounded-lg hover:text-foreground",
               tone ? tone.text : "text-muted-foreground",
+              triggerClassName,
             )}
             title={context ? `Context window — ${percent}% used` : "Turn stats"}
           >
@@ -228,7 +241,7 @@ export function ContextIndicator({
           </Button>
         }
       />
-      <PopoverContent align="end" side="top" className="w-60 gap-2">
+      <PopoverContent align="end" side={side} className="w-60 gap-2">
         <div>
           <p className="font-medium">Context window</p>
           <p className="text-xs text-muted-foreground">

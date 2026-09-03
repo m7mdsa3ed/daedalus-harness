@@ -26,6 +26,7 @@
     "test:opencode-subagents": "tsx test/opencode-subagents.test.ts",
     "test:templates": "DAEDALUS_DATA_DIR=/tmp/daedalus-test-templates tsx test/templates.test.ts",
     "test:history": "DAEDALUS_DATA_DIR=/tmp/daedalus-test-history tsx test/history.test.ts",
+    "test:rewind": "DAEDALUS_DATA_DIR=/tmp/daedalus-test-rewind tsx test/rewind.test.ts",
     "test:mcp-oauth": "DAEDALUS_DATA_DIR=/tmp/daedalus-test-mcp-oauth tsx test/mcp-oauth.test.ts",
     "test:workflow-script": "tsx test/workflow-script.test.ts",
     "test:workflow-schema": "tsx test/workflow-schema.test.ts",

@@ -460,6 +460,17 @@
   }
 }
 
+/* The composer's toolbar under a finger. The icon buttons get their 32px
+   (`icon-sm`) scale from `useCoarsePointer` in composer.tsx; this rule carries
+   the text-carrying config cluster with them, so nothing on the row is a
+   smaller target than anything else. Unlayered, so it overrides the Button's
+   own `h-6`/`size-*` utilities. */
+@media (pointer: coarse) {
+  [data-slot="composer-toolbar"] [data-slot="button"] {
+    height: 2rem;
+  }
+}
+
 /* Fix laggy/flickering mobile sidebar slide on Chrome: translate3d keyframes
    force GPU compositing for the sheet. */
 @keyframes sheet-slide-in-left {
@@ -1336,4 +1347,45 @@ html .dv-tab {
   align-items: center;
   gap: calc(var(--spacing) * 1);
   letter-spacing: var(--tracking-normal);
+}
+
+/* ── scroll-fade: the transcript's two seams ──
+   shadcn's message-scroller viewport carries `scroll-fade-y`: the top of the
+   transcript dissolves under the header and the bottom dissolves over the
+   composer while the reader is scrolled into the middle of a long thread,
+   and each edge comes back whole once it is the edge being read. The dist
+   stylesheet drives that from scroll-timeline animations (separate
+   `animation` and `animation-timeline` longhands), and the production CSS
+   pipeline folds the two into the `animation` shorthand, which no Chromium
+   parses — the fades it declares never run. So the two variables are pinned
+   to the actual scroll state instead: ui/message-scroller.tsx renders
+   data-at-start / data-at-end from the scroller's own "more above / more
+   below" state (the same state that shows the scroll-to-end button), and the
+   rules below pick each mask depth from it. The element's own animation is
+   disabled so a browser that can parse the shorthand cannot fight the
+   attributes. */
+[data-slot="message-scroller-viewport"] {
+  animation: none;
+}
+
+[data-slot="message-scroller-viewport"][data-at-start="true"] {
+  --scroll-fade-t: 0px;
+}
+
+[data-slot="message-scroller-viewport"][data-at-start="false"] {
+  --scroll-fade-t: var(
+    --_scroll-fade-size-t,
+    var(--scroll-fade-size, min(12%, calc(var(--spacing) * 10)))
+  );
+}
+
+[data-slot="message-scroller-viewport"][data-at-end="true"] {
+  --scroll-fade-b: 0px;
+}
+
+[data-slot="message-scroller-viewport"][data-at-end="false"] {
+  --scroll-fade-b: var(
+    --_scroll-fade-size-b,
+    var(--scroll-fade-size, min(12%, calc(var(--spacing) * 10)))
+  );
 }

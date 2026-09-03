@@ -105,6 +105,32 @@ export interface AgentDef {
    * `command`, and not offered on `PUT /api/agents/:id` for the same reason.
    */
   subagentFeed?: "opencode-http" | null;
+  /**
+   * How a rewind (roll the conversation back to before a turn, in place)
+   * reaches this runtime, or null/absent when nothing is known to work and
+   * rewind is simply not offered for the thread.
+   *
+   * Declared here for the same reason as the four above it: which door a
+   * runtime opens is a fact about the runtime, not about the harness, and a
+   * user who repoints `command` at a fork has to be able to repoint this too.
+   *
+   *  - `"acp-fork-point"` (claude-code, codex): both adapters honor
+   *    `session/fork` gated on `agentCapabilities.sessionCapabilities.fork`,
+   *    and both accept the same de-facto extension for *where* to cut —
+   *    `_meta.jetbrains.air.fork = {version: 1, messageId}` — rather than
+   *    forking at the tip. Claude Code forks up to and including that
+   *    message; Codex resolves it to a turn and forks up to and including
+   *    that turn. Neither is part of the ACP spec proper, which is why this
+   *    is a fact worth naming per agent rather than assuming from `fork`
+   *    capability alone: an agent that forks but ignores the fork point can
+   *    only ever fork at the tip, which is not what a rewind needs.
+   *
+   * Null (opencode, daedalus, and any agent someone adds) means rewind is not
+   * offered for the conversation half of the thread — opencode has its own
+   * `/session/{id}/revert` and the harness's own runtime could grow a native
+   * path, but neither is implemented here.
+   */
+  rewindVia?: "acp-fork-point" | null;
 }
 
 /** A default agent, plus the seed releases that bear on it. Give a new default
@@ -449,21 +475,24 @@ const SPAWN_CATEGORIES: Record<string, "model" | "effort"> = {
  */
 const DEFAULT_AGENTS: SeedAgent[] = [
   {
-    since: 12,
+    since: 17,
     introduced: 1,
     // Seed 4 moved the haiku keys to {smallModel}; seed 5 added the alias keys;
     // seed 6 appends the 1M conditional to all of them; seed 8 routes the
     // endpoint through the gateway shim; seed 10 adds the quota probe; seed 11
     // says the model can be changed without a restart; seed 12 says a persona
     // reaches this agent through ACP `_meta` (nothing in the env changes, so
-    // the probe cache is untouched — see `seedAgents`). One backfill applies all
-    // of them, because an install stamped below 4 jumps straight here and never
-    // sees the earlier rules on its own.
+    // the probe cache is untouched — see `seedAgents`); seed 17 says rewind
+    // reaches this agent through `session/fork` and the jetbrains.air fork
+    // point (nothing in the env changes here either — see `rewindVia`). One
+    // backfill applies all of them, because an install stamped below 4 jumps
+    // straight here and never sees the earlier rules on its own.
     backfill: (existing) => ({
       env: withGatewayUrl(withLongContextSuffix(withAliasModelKeys(withSmallModelVar(existing.env)))),
       quotaProbe: existing.quotaProbe ?? QUOTA_PROBES["claude-code"],
       liveConfig: existing.liveConfig ?? "acp",
       personaVia: existing.personaVia ?? "acp-meta",
+      rewindVia: existing.rewindVia ?? "acp-fork-point",
     }),
     id: "claude-code",
     name: "Claude Code",
@@ -480,6 +509,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     quotaProbe: QUOTA_PROBES["claude-code"],
     liveConfig: "acp",
     personaVia: "acp-meta",
+    rewindVia: "acp-fork-point",
   },
   {
     // Official ACP adapter for OpenAI Codex. Auth: CODEX_API_KEY, or ChatGPT
@@ -508,13 +538,18 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // instruction slot, and the door a persona reaches it through. Not
     // `base_instructions`: that replaces codex's entire system prompt and is
     // not a ConfigToml key at all.
-    since: 12,
+    // Seed 17 says rewind reaches this agent through `session/fork` and the
+    // jetbrains.air fork point (codex-acp resolves the messageId to a turn
+    // and forks up to and including it) — see `rewindVia`. Nothing in the env
+    // changes, so the probe cache is untouched.
+    since: 17,
     introduced: 2,
     backfill: (existing) => ({
       env: withCodexPersonaKey(withCodexGatewayUrl(withCodexCatalogKey(existing.env))),
       quotaProbe: existing.quotaProbe ?? QUOTA_PROBES.codex,
       liveConfig: existing.liveConfig ?? "gateway",
       personaVia: existing.personaVia ?? "env",
+      rewindVia: existing.rewindVia ?? "acp-fork-point",
     }),
     id: "codex",
     name: "Codex",
@@ -524,6 +559,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     quotaProbe: QUOTA_PROBES.codex,
     liveConfig: "gateway",
     personaVia: "env",
+    rewindVia: "acp-fork-point",
     env: {
       CODEX_API_KEY: "{apiKey}",
       MODEL_PROVIDER: "{baseUrl?daedalus}",
@@ -657,6 +693,7 @@ export function seedAgents(): void {
           liveConfig: agent.liveConfig ?? null,
           personaVia: agent.personaVia ?? null,
           subagentFeed: agent.subagentFeed ?? null,
+          rewindVia: agent.rewindVia ?? null,
           seededVersion: since,
         })
         .run();
@@ -677,6 +714,7 @@ export function seedAgents(): void {
         liveConfig: existing.liveConfig ?? agent.liveConfig ?? null,
         personaVia: existing.personaVia ?? agent.personaVia ?? null,
         subagentFeed: existing.subagentFeed ?? agent.subagentFeed ?? null,
+        rewindVia: existing.rewindVia ?? agent.rewindVia ?? null,
         ...added,
       })
       .where(eq(agentsTable.id, agent.id))

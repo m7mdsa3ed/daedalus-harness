@@ -75,12 +75,17 @@ export function Row({
   children?: React.ReactNode
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 sm:flex-nowrap">
-      {Icon &&
-        (React.isValidElement(Icon) ? Icon : <Icon className="size-4 shrink-0 text-muted-foreground" />)}
-      <div className="min-w-0 grow basis-48">
-        <div className="truncate text-sm font-medium">{title}</div>
-        {subtitle && <div className="mt-0.5 text-xs break-all text-muted-foreground">{subtitle}</div>}
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2.5 px-3.5 py-3 sm:flex-nowrap sm:px-4">
+      <div className="flex items-start gap-3 min-w-0 flex-1">
+        {Icon && (
+          <div className="shrink-0 mt-0.5">
+            {React.isValidElement(Icon) ? Icon : <Icon className="size-4 text-muted-foreground" />}
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium">{title}</div>
+          {subtitle && <div className="mt-0.5 text-xs break-words text-muted-foreground">{subtitle}</div>}
+        </div>
       </div>
       {children && (
         <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1.5">{children}</div>
@@ -168,6 +173,7 @@ export function Picker<T extends { id: string; name: string }>({
   selected,
   onToggle,
   subtitle,
+  icon,
   empty,
   searchable = false,
   searchText = (item) => `${item.name} ${item.id}`,
@@ -177,6 +183,7 @@ export function Picker<T extends { id: string; name: string }>({
   selected: string[]
   onToggle: (ids: string[]) => void
   subtitle: (item: T) => React.ReactNode
+  icon?: (item: T) => React.ReactNode
   empty: string
   searchable?: boolean
   searchText?: (item: T) => string
@@ -210,12 +217,13 @@ export function Picker<T extends { id: string; name: string }>({
         {shown.map((item) => (
           <label key={item.id} className="flex cursor-pointer items-start gap-3 px-3 py-2 hover:bg-accent/50">
             <Checkbox
-              className="mt-0.5"
+              className="mt-0.5 shrink-0"
               checked={selected.includes(item.id)}
               onCheckedChange={(checked) =>
                 onToggle(checked ? [...selected, item.id] : selected.filter((id) => id !== item.id))
               }
             />
+            {icon && <div className="mt-0.5 shrink-0">{icon(item)}</div>}
             <span className="min-w-0 flex-1">
               <span className="block text-sm break-words">{item.name}</span>
               <span className="mt-0.5 block font-mono text-[11px] break-all text-muted-foreground">
@@ -238,7 +246,7 @@ export function Picker<T extends { id: string; name: string }>({
         placeholder={searchPlaceholder}
         className="h-8"
       />
-      <div className="flex items-center gap-2 px-0.5 text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-0.5 text-xs text-muted-foreground">
         <span>
           {selectedShown} of {shown.length} selected
           {shown.length !== items.length ? ` · ${items.length} total` : ""}

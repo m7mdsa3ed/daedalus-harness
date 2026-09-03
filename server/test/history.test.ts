@@ -2,8 +2,9 @@
 // checkpoint on a clean and a dirty tree, and restore — which is a new commit
 // with the old tree, checkpoints uncommitted work first, removes files the
 // target did not have, and is a no-op onto HEAD's own tree. Against a real
-// repository under DATA_DIR. Also `taskCommand`: the template's script wins,
-// then package.json's, then nothing.
+// repository under DATA_DIR. Also `restoreToTree`, the same restore taken
+// from a bare tree object (a thread rewind's file half), and `taskCommand`:
+// the template's script wins, then package.json's, then nothing.
 // Run: pnpm test:history
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -12,7 +13,7 @@ import { join } from "node:path";
 
 import { DATA_DIR } from "../src/config.js";
 import { createProject, deleteProject } from "../src/projects.js";
-import { checkpoint, log, restoreTo } from "../src/git.js";
+import { checkpoint, log, restoreTo, restoreToTree } from "../src/git.js";
 import { taskCommand } from "../src/dev-server.js";
 import { WorkspaceError } from "../src/workspace-fs.js";
 
@@ -118,6 +119,43 @@ await test("restore onto HEAD's own tree is a no-op", async () => {
 await test("restore refuses a non-hash and an unknown commit", async () => {
   await assert.rejects(restoreTo(project.id, "--force"), (e) => e instanceof WorkspaceError && e.status === 400);
   await assert.rejects(restoreTo(project.id, "deadbeef"), (e) => e instanceof WorkspaceError && e.status === 404);
+});
+
+await test("restoreToTree restores a bare tree as a new commit", async () => {
+  const commits = await log(project.id);
+  const scaffold = commits.find((c) => c.subject === "Scaffold")!;
+  const scaffoldTree = git("rev-parse", `${scaffold.hash}^{tree}`);
+  const result = await restoreToTree(project.id, scaffoldTree);
+  assert.equal(result.restored, true);
+  assert.match(result.commit!.subject, /^Rewind:/);
+  assert.equal(existsSync(join(root, "b.txt")), false);
+  assert.equal(git("show", "HEAD:a.txt"), "one");
+  assert.equal(git("status", "--porcelain"), "");
+});
+
+await test("restoreToTree onto the current tree is a no-op", async () => {
+  const headTree = git("rev-parse", "HEAD^{tree}");
+  const result = await restoreToTree(project.id, headTree);
+  assert.equal(result.restored, false);
+  assert.equal(result.commit, null);
+});
+
+await test("restoreToTree checkpoints uncommitted work first", async () => {
+  writeFileSync(join(root, "e.txt"), "e\n");
+  const commits = await log(project.id);
+  const scaffold = commits.find((c) => c.subject === "Scaffold")!;
+  const scaffoldTree = git("rev-parse", `${scaffold.hash}^{tree}`);
+  await restoreToTree(project.id, scaffoldTree);
+  const after = await log(project.id);
+  assert.equal(after[1]!.subject, "Checkpoint before restore");
+  // e.txt is not lost — it is in the checkpoint commit.
+  assert.equal(git("show", `${after[1]!.hash}:e.txt`), "e");
+  assert.equal(existsSync(join(root, "e.txt")), false);
+});
+
+await test("restoreToTree refuses a non-hash and an unknown tree", async () => {
+  await assert.rejects(restoreToTree(project.id, "--force"), (e) => e instanceof WorkspaceError && e.status === 400);
+  await assert.rejects(restoreToTree(project.id, "deadbeef"), (e) => e instanceof WorkspaceError && e.status === 404);
 });
 
 await test("taskCommand reads package.json scripts with the lockfile's package manager", () => {

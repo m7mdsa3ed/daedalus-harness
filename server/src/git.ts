@@ -638,6 +638,32 @@ export async function checkpoint(
 const HASH = /^[0-9a-f]{7,40}$/;
 
 /**
+ * The shared body of the two restores below. Anything uncommitted is
+ * committed first ("Checkpoint before restore"), then the index and worktree
+ * are put at `tree` (`read-tree -u --reset` removes what the target does not
+ * have, which `checkout <hash> -- .` would not) and the result is committed
+ * as `message`. Answers whether anything was committed: a worktree already at
+ * `tree` is a no-op, not a commit — but the checkpoint has already run by
+ * then, on purpose, because a dirty tree that happens to match the target is
+ * still the only place that work exists.
+ */
+async function applyTree(dir: string, tree: string, message: string): Promise<boolean> {
+  if (await isDirty(dir)) await commitAll(dir, "Checkpoint before restore");
+  const { stdout: headTree } = await run(dir, ["rev-parse", "HEAD^{tree}"]);
+  if (headTree.trim() === tree) return false;
+  await run(dir, ["read-tree", "-u", "--reset", tree]);
+  await commitAll(dir, message);
+  return true;
+}
+
+/** The new HEAD after one of the restores, or null when git answered before
+    one was made. */
+async function lastCommit(projectId: string, repo?: string): Promise<GitCommit | null> {
+  const [commit = null] = await log(projectId, { limit: 1, repo });
+  return commit;
+}
+
+/**
  * Make the working tree what it was at `hash`, as a new commit on top.
  *
  * Uncommitted work is committed first ("Checkpoint before restore"), then the
@@ -664,14 +690,42 @@ export async function restoreTo(
     throw fail(404, `no such commit: ${target}`);
   }
   full = full.trim();
-  if (await isDirty(dir)) await commitAll(dir, "Checkpoint before restore");
-  const { stdout: headTree } = await run(dir, ["rev-parse", "HEAD^{tree}"]);
   const { stdout: targetTree } = await run(dir, ["rev-parse", `${full}^{tree}`]);
-  if (headTree.trim() === targetTree.trim()) return { restored: false, commit: null };
-  await run(dir, ["read-tree", "-u", "--reset", full]);
-  await commitAll(dir, `Restore to ${full.slice(0, 7)}: ${subject.trim()}`.slice(0, 200));
-  const [commit = null] = await log(projectId, { limit: 1, repo: options.repo });
-  return { restored: true, commit };
+  const applied = await applyTree(
+    dir,
+    targetTree.trim(),
+    `Restore to ${full.slice(0, 7)}: ${subject.trim()}`.slice(0, 200),
+  );
+  if (!applied) return { restored: false, commit: null };
+  return { restored: true, commit: await lastCommit(projectId, options.repo) };
+}
+
+/**
+ * Make the working tree match a bare tree object — a thread rewind's file
+ * half. The tree it is handed is one `git.snapshotTree` wrote at a turn's
+ * start (`session_turn_changes.start_tree`): an object with no commit behind
+ * it, and no ref holding it, so it is dangling and git's gc prunes it after
+ * its grace period — a refusal (the same 404 an unknown commit gets) is the
+ * honest answer once that has happened, not a silent no-op. There is no
+ * commit to quote in the message, so the rewind names what it is instead.
+ */
+export async function restoreToTree(
+  projectId: string,
+  tree: string,
+  options: { repo?: string } = {},
+): Promise<{ restored: boolean; commit: GitCommit | null }> {
+  const { dir } = await repoOrThrow(projectId, options.repo);
+  const target = tree.trim();
+  if (!HASH.test(target)) throw fail(400, "a rewind needs a tree hash");
+  let full: string;
+  try {
+    ({ stdout: full } = await run(dir, ["rev-parse", "--verify", `${target}^{tree}`]));
+  } catch {
+    throw fail(404, `no such tree: ${target}`);
+  }
+  const applied = await applyTree(dir, full.trim(), "Rewind: restore files to an earlier turn");
+  if (!applied) return { restored: false, commit: null };
+  return { restored: true, commit: await lastCommit(projectId, options.repo) };
 }
 
 export type Comparison = "worktree" | "staged" | "head";

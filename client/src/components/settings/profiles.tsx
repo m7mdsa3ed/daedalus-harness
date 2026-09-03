@@ -36,6 +36,7 @@ import {
   useProfiles,
   useSkills,
 } from "@/lib/queries/catalog"
+import { cn } from "@/lib/utils"
 import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions, FormSection, Picker } from "./primitives"
 import {
   ModelsSection,
@@ -155,43 +156,54 @@ export function ProfilesPage() {
       ) : (
         <Group>
           {stored.map((profile) => (
-              <Row
-                key={profile.id}
-                /* The profile's own logo when it has one; the agent's mark
-                   otherwise (which is what every virtual Default shows). */
-                icon={<ProfileIcon profile={profile} className="size-4 shrink-0" />}
-                title={profile.name}
-                subtitle={
-                  <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    {/* Every agent this profile serves. One the server no
-                        longer registers is shown by id, in mono, so a broken
-                        profile is visible rather than silently narrowed. */}
+            <div key={profile.id} className="flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-4 sm:py-3">
+              <div className="flex items-start gap-3 min-w-0 flex-1">
+                <ProfileIcon profile={profile} className="size-5 shrink-0 mt-0.5" />
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="truncate text-sm font-semibold">{profile.name}</span>
+                    {!profile.hasApiKey && (
+                      <Badge variant="outline" className="text-muted-foreground text-[10px] font-normal px-1.5 py-0">
+                        no key
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                     {profileAgentIds(profile).map((id) => (
-                      <span key={id} className="flex items-center gap-1">
-                        <AgentIcon agentId={id} className="size-3" />
-                        {agentName(id) ?? <span className="font-mono">{id}</span>}
+                      <span key={id} className="inline-flex items-center gap-1 rounded bg-muted/60 px-1.5 py-0.5 text-[11px]">
+                        <AgentIcon agentId={id} className="size-3 shrink-0" />
+                        <span className="truncate">{agentName(id) ?? id}</span>
                       </span>
                     ))}
-                    {profile.defaultModel && <span className="font-mono">· {profile.defaultModel}</span>}
-                    {profile.models.length > 1 && <span>· {profile.models.length} models</span>}
-                    {profile.mcpServerIds.length > 0 && <span>· {profile.mcpServerIds.length} MCP</span>}
-                    {profile.skillIds.length > 0 && <span>· {profile.skillIds.length} skills</span>}
-                    {profile.commandIds.length > 0 && <span>· {profile.commandIds.length} commands</span>}
-                  </span>
-                }
-              >
-                {!profile.hasApiKey && (
-                  <Badge variant="outline" className="text-muted-foreground">
-                    no key
-                  </Badge>
-                )}
+                    {profile.defaultModel && (
+                      <span className="inline-flex items-center rounded bg-muted/60 px-1.5 py-0.5 font-mono text-[11px] break-all">
+                        {profile.defaultModel}
+                      </span>
+                    )}
+                    {profile.models.length > 1 && (
+                      <span className="text-[11px]">· {profile.models.length} models</span>
+                    )}
+                    {profile.mcpServerIds.length > 0 && (
+                      <span className="text-[11px]">· {profile.mcpServerIds.length} MCP</span>
+                    )}
+                    {profile.skillIds.length > 0 && (
+                      <span className="text-[11px]">· {profile.skillIds.length} skills</span>
+                    )}
+                    {profile.commandIds.length > 0 && (
+                      <span className="text-[11px]">· {profile.commandIds.length} commands</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-1 shrink-0 pt-2 border-t border-border/40 sm:border-t-0 sm:pt-0">
                 <Button variant="ghost" size="icon-lg" title="Edit" onClick={() => void navigate(settingsFormPath("profiles", profile.id))}>
                   <Pencil />
                 </Button>
                 <Button variant="ghost" size="icon-lg" title="Delete" onClick={() => remove(profile)}>
                   <Trash2 />
                 </Button>
-              </Row>
+              </div>
+            </div>
           ))}
         </Group>
       )}
@@ -419,7 +431,7 @@ function ProfileForm({
               href={preset.keyUrl}
               target="_blank"
               rel="noreferrer"
-              className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:underline"
+              className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:underline break-words max-w-full"
             >
               Get a {preset.name} key <ExternalLink className="size-3" />
             </a>
@@ -435,13 +447,13 @@ function ProfileForm({
                 the agent's own mark. */}
             <ProfileIcon
               profile={{ logoUrl: form.logoUrl, agents: links }}
-              className="size-5"
+              className="size-5 shrink-0"
             />
             <Input
               value={form.logoUrl}
               onChange={(e) => set({ logoUrl: e.target.value })}
               placeholder="https://models.dev/logos/openrouter.svg"
-              className="font-mono text-xs"
+              className="font-mono text-xs min-w-0 flex-1"
             />
           </div>
         </Field>
@@ -460,10 +472,10 @@ function ProfileForm({
             const link = links[agent.id]
             return (
               <div key={agent.id} className="grid gap-2 rounded-md border border-border/60 p-2 sm:grid-cols-[minmax(10rem,auto)_1fr] sm:items-center">
-                <label className="flex items-center gap-2 text-sm">
-                  <Switch checked={!!link} onCheckedChange={(on) => toggleAgent(agent.id, on)} />
-                  <AgentIcon agentId={agent.id} className="size-4" />
-                  <span className={"unregistered" in agent ? "font-mono text-muted-foreground" : ""}>
+                <label className="flex items-center gap-2 text-sm min-w-0 cursor-pointer">
+                  <Switch className="shrink-0" checked={!!link} onCheckedChange={(on) => toggleAgent(agent.id, on)} />
+                  <AgentIcon agentId={agent.id} className="size-4 shrink-0" />
+                  <span className={cn("truncate min-w-0", "unregistered" in agent ? "font-mono text-muted-foreground" : "")}>
                     {agent.name}
                   </span>
                 </label>
@@ -473,7 +485,7 @@ function ProfileForm({
                     onChange={(e) => setAgentBaseUrl(agent.id, e.target.value)}
                     placeholder={form.baseUrl || "Base URL override (optional)"}
                     aria-label={`${agent.name} base URL override`}
-                    className="font-mono text-xs"
+                    className="font-mono text-xs w-full min-w-0"
                   />
                 )}
               </div>
@@ -555,12 +567,13 @@ function ProfileForm({
         label="Quiet Codex's model-metadata notice"
         hint="Codex warns when a custom model id has no built-in metadata and falls back to a made-up context window. On, this profile drops that notice before it reaches the transcript: the profile already carries the model's numbers, and the warning only appears when the written catalog did not reach the running codex build."
       >
-        <label className="flex items-center gap-2 text-sm">
+        <label className="flex items-start gap-2.5 text-sm cursor-pointer">
           <Switch
+            className="mt-0.5 shrink-0"
             checked={form.suppressModelMetadataWarning}
             onCheckedChange={(on) => set({ suppressModelMetadataWarning: on })}
           />
-          <span>Hide "Model metadata … not found. Defaulting to fallback metadata"</span>
+          <span className="min-w-0 flex-1 leading-snug">Hide "Model metadata … not found. Defaulting to fallback metadata"</span>
         </label>
       </Field>
       {/* The same three a project links. A project's say what the workspace
@@ -627,12 +640,12 @@ function PresetPicker({ value, onPick }: { value: ProfilePreset | null; onPick: 
   return (
     <Field label="Start from a plan" hint={hint}>
       <Select value={value?.id ?? BLANK} onValueChange={(id) => onPick(presets.find((p) => p.id === id) ?? null)}>
-        <SelectTrigger className="w-full" disabled={loading}>
+        <SelectTrigger className="w-full min-w-0" disabled={loading}>
           <SelectValue>
             {value ? (
-              <span className="flex items-center gap-2">
-                <ProfileIcon profile={{ logoUrl: value.logoUrl, agents: value.agents }} className="size-4" />
-                {value.name}
+              <span className="flex items-center gap-2 min-w-0">
+                <ProfileIcon profile={{ logoUrl: value.logoUrl, agents: value.agents }} className="size-4 shrink-0" />
+                <span className="truncate">{value.name}</span>
               </span>
             ) : loading ? (
               "Loading plans…"
@@ -645,9 +658,9 @@ function PresetPicker({ value, onPick }: { value: ProfilePreset | null; onPick: 
           <SelectItem value={BLANK}>Blank profile</SelectItem>
           {presets.map((p) => (
             <SelectItem key={p.id} value={p.id}>
-              <span className="flex items-center gap-2">
-                <ProfileIcon profile={{ logoUrl: p.logoUrl, agents: p.agents }} className="size-4" />
-                {p.name}
+              <span className="flex items-center gap-2 min-w-0">
+                <ProfileIcon profile={{ logoUrl: p.logoUrl, agents: p.agents }} className="size-4 shrink-0" />
+                <span className="truncate">{p.name}</span>
               </span>
             </SelectItem>
           ))}
