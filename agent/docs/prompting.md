@@ -6,29 +6,65 @@ question. Knowing the layers is most of knowing where to put an instruction.
 
 ## The layers, in order
 
-1. **Identity.** One paragraph: it is Daedalus Agent, an interactive coding
-   agent, it should use tools rather than guess, and it should keep working
-   until the task is done. A subagent gets a different first paragraph instead —
-   it is on a delegated task and its final message is the whole report the
-   caller sees.
+1. **Identity and the base prompt.** One opening line — it is Daedalus Agent, a
+   coding agent running in the Daedalus harness — followed by the sections that
+   shape a turn, written in the Codex idiom: short `##` sections of terse
+   bullets rather than shouted `IMPORTANT:` paragraphs. In order: *General*,
+   *Personality*, *Responsiveness* (a one-line preamble before a batch of tool
+   calls, which is not the same thing as preamble on a final answer),
+   *Planning*, *Task execution*, *Testing your work*, *Ambition vs. precision*,
+   *Working from what you already have*, *Tool usage*, *Editing constraints*
+   and *Git and workspace hygiene*, *Frontend tasks*, *Sharing progress
+   updates*, *Presenting your work and final message*, and *Final answer
+   structure and style guidelines*. A subagent gets a different first paragraph
+   and none of this — it is on a delegated task and its final message is the
+   whole report the caller sees.
+
+   Two of those sections are calibrations rather than rules, and they are the
+   ones to read before editing. **Planning** says to *skip* the todo list for
+   the easiest quarter of tasks and never to write a single-step plan, where the
+   text it replaced asked for one "VERY frequently"; a plan drawn for a
+   one-line fix is noise in the transcript. **Ambition vs. precision** is the
+   split between a greenfield task, where the agent should build the whole
+   thing, and an existing codebase, where a drive-by refactor is a cost the
+   user has to review.
 2. **Situation.** Working directory, platform and host, today's date. Written
    fresh each turn, so a long conversation never argues about what day it is.
-3. **Plan-mode addendum.** Only in `plan` mode: everything that writes is
-   disabled, explore and propose, ask before changing anything. It is belt and
-   braces — the write tools are genuinely absent in that mode, and this explains
-   the absence rather than letting the model discover it by failing.
-4. **Persona** — the whole contents of `DAEDALUS_AGENT_PERSONA_FILE`. This is
+3. **The tool inventory and the rules for calling one.** The names of the
+   tools this turn actually built, stated as exhaustive, followed by the four
+   rules the transcripts say are worth stating: one complete arguments object
+   per call, every required argument every time (`path` above all), prefer a
+   path you have seen over one you reconstruct, and re-issue a call whose
+   arguments came back unparseable rather than assuming it half-ran. The list
+   is `Object.keys(tools)` at the call site, never a literal — see below.
+4. **Plan-mode addendum.** Only in `plan` mode: everything that writes is
+   *absent*, and the addendum names what is left rather than forbidding uses of
+   what is gone. This is not belt and braces. The prompt this replaced listed
+   read-only *policy* over a tool set with no shell in it — "use Bash ONLY for
+   ls, git status, cat" — and the model that followed it called a tool that was
+   never built and got a `NoSuchToolError` for its trouble.
+5. **Persona** — the whole contents of `DAEDALUS_AGENT_PERSONA_FILE`. This is
    the intended door for your own instructions, and it comes *after* the
    project's own files: the repo's rules are the ground, the persona is the
    choice made for this thread on top of them.
-5. **Project instructions** — every `AGENTS.md`, `CLAUDE.md` and
+6. **Project instructions** — every `AGENTS.md`, `CLAUDE.md` and
    `CLAUDE.local.md` found from the cwd up to the repo root, plus
    `~/.claude/CLAUDE.md`. See below.
-6. **Skills index.** One line per `.claude/skills/<name>/SKILL.md` found in the
+7. **Skills index.** One line per `.claude/skills/<name>/SKILL.md` found in the
    cwd: name, description, path, and a standing instruction to read the SKILL.md
    before relying on one. The bodies are not inlined — that is the point.
-7. **MCP failures.** Any server that would not start, named, so the model knows
+8. **MCP failures.** Any server that would not start, named, so the model knows
    why a tool it expected is missing instead of inventing a reason.
+
+**The prompt may not name a tool the turn did not build.** `buildTools` is the
+only thing that decides what exists — plan mode strips everything that writes,
+a subagent loop strips `task`, a client that never claimed `elicitation.form`
+strips `ask_user` — so `systemPrompt` is handed `Object.keys(tools)` and every
+sentence that sends the model to a specific tool is written against it. That is
+why the shell advice, the "run lint and typecheck" line, the editing
+constraints and the "delegate the search" example are all conditional: a prompt
+that recommends an absent tool is a `NoSuchToolError` the model cannot see
+coming, and it was one of the failures this agent's own transcripts recorded.
 
 Nothing is prepended to the user's message. What you type is exactly what is
 sent and exactly what is journaled — every instruction here rides in the system
@@ -40,14 +76,14 @@ In the harness, **Settings › Personas** is a library of prompt appends, and ea
 thread names one from its config menu (or the `⌘K` palette). The server writes
 the chosen persona to `data/persona-prompts/<sessionId>.md` and passes the path
 in `DAEDALUS_AGENT_PERSONA_FILE`; the agent reads it at session start and drops
-it into layer 4. Changing a thread's persona respawns the agent, which is why it
+it into the persona layer. Changing a thread's persona respawns the agent, which is why it
 lands on the existing conversation rather than a fresh one.
 
 A persona carries three things, and this agent uses two of them:
 
 | Field | Effect here |
 | --- | --- |
-| **Prompt** | appended to the system prompt — the whole of layer 4 |
+| **Prompt** | appended to the system prompt — the whole of the persona layer |
 | **Effort** | applied when the persona is picked, then it is yours to change |
 | **Thinking budget** | **ignored** — it is Claude Code's extended-thinking axis, and this agent has no equivalent; use Effort |
 
@@ -190,16 +226,32 @@ and only reports what is genuinely ambiguous.
   harness's parameter name (`file_path`, `old_str`, `cmd`, `regex`), arguments
   encoded twice or wrapped in `{input: …}` or a markdown fence, and a scalar
   where the schema wants a number, a boolean or an array. A repair that cannot
-  satisfy the schema returns null and stays an ordinary tool error — never a
-  silent guess at a *missing* argument.
-- **Two calls merged into one arguments buffer keep the first.** A provider
-  that streams a second tool call into the first one's argument deltas produces
+  satisfy the schema returns null and stays an ordinary tool error.
+- **Merged arguments are one failure with two halves, and salvage is scoped to
+  the step.** A provider that streams parallel tool calls into one argument
+  buffer produces two symptoms at once: a call that arrives as
   `{"path":"a"}{"path":"b"}` — valid JSON followed by more valid JSON, which
-  `JSON.parse` rejects whole and which used to cost an `AI_InvalidToolInputError`
-  per occurrence. The parse is a string-aware scan for the *first* complete
-  value, so trailing prose or a second object is dropped rather than fatal, and
-  what was dropped is written to stderr. The second call is the model's to
-  reissue: it sees only the first one answered.
+  `JSON.parse` rejects whole — and a *sibling* that arrives as `{}` or as a
+  tail with its head missing. Together they were the largest single class of
+  failed tool call in this agent's threads. So the buffer is **drained, not
+  parsed**: every complete value comes out, this call takes the first one that
+  satisfies its schema, and **what is left is held for the sibling that is
+  about to ask for it**. A value is never carried across a step boundary — the
+  calls whose arguments were merged were emitted together, and the step is
+  identified by the message list it was prepared from.
+- **A missing `path` is placed by evidence, never guessed.** `path` is the
+  argument a model actually drops: it is writing the two long strings for an
+  `edit_file` and forgets the short one, and the round trip that costs buys
+  nothing, because the transcript already says which file. Resolution is
+  ordered by how much it proves. Exactly one candidate — from the paths this
+  attempt has named, or the session's read set — whose text *holds*
+  `old_string` is not a guess but the only file the edit could have meant.
+  Several hold it and it stays a plain error, because an edit landing in the
+  wrong file is damage. None hold it and the most recently named file is used
+  for `edit_file` and `read_file` only, where a wrong answer cannot succeed
+  quietly: the edit refuses and says which file it looked in, which is the
+  answer the model needed and the schema dump was not. `write_file` is never
+  given a path it did not name.
 - **`read_file` numbers its lines** (`cat -n`), states the range it showed and
   the offset to continue from, and answers a binary or empty file in a sentence
   rather than with nothing. The numbering is what makes an edit copyable; the
@@ -226,7 +278,7 @@ advice and the tool is the thing that happens.
 
 ## What is still a source edit
 
-The base prompt (layer 1) and the tool descriptions are not editable from the
+The base prompt (the identity layer) and the tool descriptions are not editable from the
 UI, and deliberately so — they are what the runtime *is*, and a persona can
 already say anything a preference needs to say. See [managing.md](./managing.md)
 for the rest of what the harness can and cannot change about this agent.

@@ -20,7 +20,14 @@
    3. **A grant is not given before a run.** `default: "allow"` is refused until
       the routine has completed one run (`dryRunCompleted`, set by the engine and
       not patchable). The difference between an informed grant and a dismissed
-      dialog is having watched the thing work once. */
+      dialog is having watched the thing work once.
+
+   Two exports, one policy object: `AutonomyPermissions` is the grant and
+   `AutonomyLimits` the guard rails around it (what an unanswered Ask falls
+   through to, and the three ceilings a run spends against). They are two
+   sections of the form because ten selects and six number fields read as one
+   wall was how the guard rails went unread — but they stay in one file,
+   because the shape they both write should have one owner. */
 import * as React from "react"
 import { AlertTriangleIcon, ShieldCheckIcon } from "lucide-react"
 import type * as acp from "@daedalus/acp"
@@ -92,7 +99,7 @@ function policySentence(policy: AutonomyPolicy): string {
   return `This routine's agent ${parts.join("; ")}.`
 }
 
-export function AutonomyControl({
+export function AutonomyPermissions({
   policy,
   onChange,
   /** The directory a grant applies to, printed verbatim in the confirm dialog.
@@ -210,7 +217,25 @@ export function AutonomyControl({
       </div>
 
       <p className="px-1 text-xs text-pretty text-muted-foreground">{policySentence(policy)}</p>
+    </div>
+  )
+}
 
+/** The other half of the policy: what happens when an `Ask` above goes
+    unanswered, and the three ceilings a run spends against. Split from the
+    rows so the two live in their own sections of the form — the rows are the
+    grant, and these are the guard rails around it, and reading ten selects and
+    six number fields as one wall was how the guard rails went unread. Same
+    file, because the policy is one object and its shape should have one owner. */
+export function AutonomyLimits({
+  policy,
+  onChange,
+}: {
+  policy: AutonomyPolicy
+  onChange: (next: AutonomyPolicy) => void
+}) {
+  return (
+    <div className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field
           label="Questions the agent asks outright"

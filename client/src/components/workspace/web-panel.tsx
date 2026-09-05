@@ -32,32 +32,47 @@ import {
   RefreshCwIcon,
   ShieldAlertIcon,
   SmartphoneIcon,
-  StarIcon,
   TabletIcon,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { PreviewPanel } from "@/components/workspace/preview-panel"
 import { PanelEmptyState, PanelNotice, PanelToolbar } from "@/components/workspace/primitives"
-import type { Actions } from "@/lib/actions"
 import { reportError } from "@/lib/errors"
 import { useProjects } from "@/lib/queries/catalog"
 import { cn } from "@/lib/utils"
-import {
-  createPreview,
-  deletePreview,
-  listPreviews,
-  normalizeUrl,
-  type Preview,
-} from "@/lib/workspace/previews"
+
+/**
+ * A typed address → a URL this panel will open, or a throw.
+ *
+ * http and https only. A `javascript:` or `data:` URL in an iframe runs with
+ * the framing document's privileges in some browsers, which for a page the
+ * app framed would be XSS with the app's own origin behind it. Nothing
+ * legitimate is lost: what this panel opens is a web page.
+ */
+function normalizeUrl(raw: string): string {
+  const trimmed = raw.trim()
+  if (!trimmed) throw new Error("Enter an address")
+
+  /* "Contains a colon" reads `localhost:5173` — what people actually type — as
+     the scheme `localhost:`. So: a `scheme://` is parsed as given; a bare
+     `scheme:` not followed by a digit is a real non-http scheme and is refused
+     by name; anything else is a host with a port. */
+  const hasAuthority = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed)
+  const schemeOnly = /^[a-zA-Z][a-zA-Z0-9+.-]*:(?!\d)/.test(trimmed)
+  if (!hasAuthority && schemeOnly)
+    throw new Error("This has to be an http or https address")
+
+  let url: URL
+  try {
+    url = new URL(hasAuthority ? trimmed : `http://${trimmed}`)
+  } catch {
+    throw new Error(`"${raw}" is not a valid address`)
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:")
+    throw new Error("This has to be an http or https address")
+  return url.toString()
+}
 
 /** What an external page may do inside the frame. Deliberately the same set a
     project preview gets, minus nothing and plus nothing: the isolation that
@@ -78,22 +93,8 @@ type ViewportId = (typeof VIEWPORTS)[number]["id"]
 
 type WebPanelParams = { trust: "project" | "external"; viewId: string; projectId?: string; url?: string }
 
-/** The Browser panel. `viewId: "preview"` on a project is the one view whose
-    address is not typed but derived from the project's managed dev server —
-    that whole surface is `preview-panel.tsx`; everything else (a typed URL,
-    a source followed out of a transcript) is the browser below. */
-export function WebPanel({
-  actions,
-  ...props
-}: IDockviewPanelProps<WebPanelParams> & { actions: Actions }) {
-  const { api, params } = props
-  if (params.viewId === "preview" && params.trust === "project" && params.projectId) {
-    return <PreviewPanel api={api} projectId={params.projectId} actions={actions} />
-  }
-  return <BrowserPanel {...props} />
-}
-
-function BrowserPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
+/** The Browser panel: a typed URL, or a source followed out of a transcript. */
+export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
   const { trust, projectId, url: initialUrl } = params
   /* The catalog lives in the query cache now, so a streamed token never
      reaches this panel; only a projects refresh (rare, and its own clock)
@@ -103,7 +104,6 @@ function BrowserPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
   const [url, setUrl] = React.useState(initialUrl ?? "")
   const [typed, setTyped] = React.useState(initialUrl ?? "")
   const [viewport, setViewport] = React.useState<ViewportId>("desktop")
-  const [previews, setPreviews] = React.useState<Preview[]>([])
   /* Bumped to force the iframe to remount. There is no other way to reload a
      cross-origin frame: `contentWindow.location.reload()` is a same-origin
      operation and throws, which is the sandbox working as intended. */
@@ -133,15 +133,6 @@ function BrowserPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.url])
 
-  React.useEffect(() => {
-    if (!projectId) return
-    listPreviews(projectId)
-      .then(setPreviews)
-      .catch(() => {
-        /* An empty list is a fine starting state; the URL bar still works. */
-      })
-  }, [projectId])
-
   const go = (next: string) => {
     try {
       const normalized = normalizeUrl(next)
@@ -150,26 +141,6 @@ function BrowserPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
       setReloadKey((current) => current + 1)
     } catch (err) {
       reportError(err, "That isn't a URL this can open")
-    }
-  }
-
-  const save = async () => {
-    if (!projectId || !url) return
-    try {
-      const saved = await createPreview(projectId, new URL(url).host, url)
-      setPreviews((current) => [...current, saved])
-    } catch (err) {
-      reportError(err, "Couldn't save that page")
-    }
-  }
-
-  const forget = async (preview: Preview) => {
-    if (!projectId) return
-    try {
-      await deletePreview(projectId, preview.id)
-      setPreviews((current) => current.filter((entry) => entry.id !== preview.id))
-    } catch (err) {
-      reportError(err, "Couldn't remove that page")
     }
   }
 
@@ -231,43 +202,6 @@ function BrowserPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           />
         </form>
 
-        {previews.length > 0 && (
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button size="icon-xs" variant="ghost" aria-label="Saved pages" className="size-6">
-                  <StarIcon className="size-3.5" />
-                </Button>
-              }
-            />
-            <DropdownMenuContent align="end">
-              {previews.map((preview) => (
-                <DropdownMenuItem key={preview.id} onClick={() => go(preview.url)}>
-                  <span className="truncate">{preview.label}</span>
-                </DropdownMenuItem>
-              ))}
-              <DropdownMenuSeparator />
-              {previews.map((preview) => (
-                <DropdownMenuItem key={`x:${preview.id}`} onClick={() => void forget(preview)}>
-                  <span className="truncate text-muted-foreground">Forget {preview.label}</span>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-
-        {url && projectId && !previews.some((preview) => preview.url === url) && (
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label="Save this page"
-            title="Save this page"
-            className="size-6"
-            onClick={() => void save()}
-          >
-            <StarIcon className="size-3.5" />
-          </Button>
-        )}
 
         {VIEWPORTS.map((entry) => (
           <Button

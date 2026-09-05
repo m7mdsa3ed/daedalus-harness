@@ -170,7 +170,7 @@ export function CommandPalette({
       open={open}
       onOpenChange={onOpenChange}
       className={cn(
-        "top-1/2 -translate-y-1/2 sm:max-w-xl",
+        "top-1/2 sm:max-w-xl",
         /* The rows are drawn by `list.tsx`, which sets its own padding — the
            dialog's roomier `[cmdk-item]`/`[cmdk-group]` rules are turned back
            off here so one row is one shape on every page. */
@@ -203,7 +203,11 @@ export function CommandPalette({
               ) : undefined
             }
           />
-          <CommandList className="max-h-[60vh]">
+          {/* 60% of the viewport, or all that is left above the soft keyboard —
+              whichever is smaller. The input is the row above this one, so a
+              list that ignored the keyboard would push it back under it.
+              (~9rem: the input row, the dialog's own padding and a margin.) */}
+          <CommandList className="max-h-[min(60vh,calc(100dvh-var(--keyboard-inset,0px)-9rem))]">
             {/* The search page says its own "nothing found", per section and per
                 clock — a single global one cannot tell "no messages" from
                 "still asking". */}

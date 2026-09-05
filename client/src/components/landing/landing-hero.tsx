@@ -1,7 +1,7 @@
 /* The hero: the mark, a headline, the two ways in (a thread, an app) and the
    live numbers of the workspace behind them. All data, no invented figures —
    the four counts come straight from the store and the catalogs. */
-import { AppWindowIcon, Plus, Settings2 } from "lucide-react"
+import { Plus, Settings2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Logo } from "@/components/ui/logo"
@@ -24,13 +24,11 @@ export function LandingHero({
   ready,
   stats,
   onNewThread,
-  onBuild,
   onOpenSettings,
 }: {
   ready: boolean
   stats: LandingStats
   onNewThread: () => void
-  onBuild: () => void
   onOpenSettings: () => void
 }) {
   return (
@@ -53,14 +51,9 @@ export function LandingHero({
 
       <div className="mt-8 flex flex-wrap items-center justify-center gap-2.5">
         {ready ? (
-          <>
-            <Button size="lg" onClick={onNewThread}>
-              <Plus /> New thread
-            </Button>
-            <Button size="lg" variant="outline" onClick={onBuild}>
-              <AppWindowIcon /> Build an app
-            </Button>
-          </>
+          <Button size="lg" onClick={onNewThread}>
+            <Plus /> New thread
+          </Button>
         ) : (
           <Button size="lg" onClick={onOpenSettings}>
             <Settings2 /> Finish the setup

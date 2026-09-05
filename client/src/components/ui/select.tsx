@@ -4,6 +4,7 @@ import * as React from "react"
 import { Select as SelectPrimitive } from "@base-ui/react/select"
 
 import { cn } from "@/lib/utils"
+import { useKeyboardCollisionPadding } from "@/hooks/use-keyboard-inset"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { UnfoldMoreIcon, Tick02Icon, ArrowUp01Icon, ArrowDown01Icon } from "@hugeicons/core-free-icons"
 
@@ -71,6 +72,7 @@ function SelectContent({
     SelectPrimitive.Positioner.Props,
     "align" | "alignOffset" | "side" | "sideOffset" | "alignItemWithTrigger"
   >) {
+  const collisionPadding = useKeyboardCollisionPadding()
   return (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Positioner
@@ -80,6 +82,12 @@ function SelectContent({
         alignOffset={alignOffset}
         alignItemWithTrigger={alignItemWithTrigger}
         className="isolate z-50"
+        /* The keyboard is a rect floating-ui cannot see under
+           `overlaysContent` (`hooks/use-keyboard-inset.ts`): padding the
+           collision boundary by it is what makes this flip above the caret
+           instead of opening behind the keys, and what `--available-height`
+           is then measured against. */
+        collisionPadding={collisionPadding}
       >
         <SelectPrimitive.Popup
           data-slot="select-content"

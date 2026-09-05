@@ -4,6 +4,7 @@
 //
 // Runs against a real (temp) database — importing db/index.js migrates
 // whatever DAEDALUS_DATA_DIR points at. Run: pnpm test:backup
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { eq } from "drizzle-orm";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";

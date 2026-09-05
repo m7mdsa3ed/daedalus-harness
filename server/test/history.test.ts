@@ -1,10 +1,8 @@
-// Self-check for Build mode's history: the log's parse (shortstat included),
-// checkpoint on a clean and a dirty tree, and restore — which is a new commit
-// with the old tree, checkpoints uncommitted work first, removes files the
-// target did not have, and is a no-op onto HEAD's own tree. Against a real
-// repository under DATA_DIR. Also `restoreToTree`, the same restore taken
-// from a bare tree object (a thread rewind's file half), and `taskCommand`:
-// the template's script wins, then package.json's, then nothing.
+// Self-check for the git log's parse (shortstat included) and `restoreToTree`
+// — a restore taken from a bare tree object, which is a thread rewind's file
+// half: a new commit carrying the old tree, checkpointing uncommitted work
+// first, removing files the target did not have, and a no-op onto HEAD's own
+// tree. Against a real repository under DATA_DIR.
 // Run: pnpm test:history
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -13,8 +11,7 @@ import { join } from "node:path";
 
 import { DATA_DIR } from "../src/config.js";
 import { createProject, deleteProject } from "../src/projects.js";
-import { checkpoint, log, restoreTo, restoreToTree } from "../src/git.js";
-import { taskCommand } from "../src/dev-server.js";
+import { log, restoreToTree } from "../src/git.js";
 import { WorkspaceError } from "../src/workspace-fs.js";
 
 let passed = 0;
@@ -47,7 +44,7 @@ writeFileSync(join(root, "b.txt"), "b\n");
 git("add", "-A");
 git("commit", "-q", "-m", "Add b and a line");
 
-const project = createProject({ name: "history", cwd: root, description: null, logoUrl: "", devCommand: "true", templateId: null });
+const project = createProject({ name: "history", cwd: root, description: null, logoUrl: "" });
 
 await test("log lists newest first with shortstat", async () => {
   const commits = await log(project.id);
@@ -64,61 +61,6 @@ await test("log lists newest first with shortstat", async () => {
 await test("log honours the limit", async () => {
   const commits = await log(project.id, { limit: 1 });
   assert.equal(commits.length, 1);
-});
-
-await test("checkpoint on a clean tree commits nothing", async () => {
-  const result = await checkpoint(project.id, "nothing");
-  assert.equal(result.committed, false);
-  assert.equal(result.commit, null);
-  assert.equal((await log(project.id)).length, 2);
-});
-
-await test("checkpoint on a dirty tree commits everything, untracked included", async () => {
-  writeFileSync(join(root, "c.txt"), "c\n");
-  writeFileSync(join(root, "a.txt"), "changed\n");
-  const result = await checkpoint(project.id, "  Before the big change  ");
-  assert.equal(result.committed, true);
-  assert.equal(result.commit?.subject, "Before the big change");
-  assert.equal(git("status", "--porcelain"), "");
-  assert.equal((await log(project.id)).length, 3);
-});
-
-await test("restore makes a new commit with the old tree and drops later files", async () => {
-  const commits = await log(project.id);
-  const scaffold = commits.find((c) => c.subject === "Scaffold")!;
-  const result = await restoreTo(project.id, scaffold.hash);
-  assert.equal(result.restored, true);
-  assert.match(result.commit!.subject, /^Restore to [0-9a-f]{7}: Scaffold$/);
-  assert.equal(existsSync(join(root, "b.txt")), false);
-  assert.equal(existsSync(join(root, "c.txt")), false);
-  assert.equal(git("show", "HEAD:a.txt"), "one");
-  // History is whole: four commits now, not one.
-  assert.equal((await log(project.id)).length, 4);
-  assert.equal(git("status", "--porcelain"), "");
-});
-
-await test("restore checkpoints uncommitted work first", async () => {
-  writeFileSync(join(root, "d.txt"), "d\n");
-  const commits = await log(project.id);
-  const target = commits.find((c) => c.subject === "Add b and a line")!;
-  await restoreTo(project.id, target.hash);
-  const after = await log(project.id);
-  assert.equal(after[1]!.subject, "Checkpoint before restore");
-  assert.equal(existsSync(join(root, "b.txt")), true);
-  assert.equal(existsSync(join(root, "d.txt")), false);
-  // d.txt is not lost — it is in the checkpoint commit.
-  assert.equal(git("show", `${after[1]!.hash}:d.txt`), "d");
-});
-
-await test("restore onto HEAD's own tree is a no-op", async () => {
-  const [head] = await log(project.id);
-  const result = await restoreTo(project.id, head!.hash);
-  assert.equal(result.restored, false);
-});
-
-await test("restore refuses a non-hash and an unknown commit", async () => {
-  await assert.rejects(restoreTo(project.id, "--force"), (e) => e instanceof WorkspaceError && e.status === 400);
-  await assert.rejects(restoreTo(project.id, "deadbeef"), (e) => e instanceof WorkspaceError && e.status === 404);
 });
 
 await test("restoreToTree restores a bare tree as a new commit", async () => {
@@ -158,19 +100,12 @@ await test("restoreToTree refuses a non-hash and an unknown tree", async () => {
   await assert.rejects(restoreToTree(project.id, "deadbeef"), (e) => e instanceof WorkspaceError && e.status === 404);
 });
 
-await test("taskCommand reads package.json scripts with the lockfile's package manager", () => {
-  assert.equal(taskCommand(project.id, "check"), "npm run check");
-  assert.equal(taskCommand(project.id, "build"), null);
-  writeFileSync(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
-  assert.equal(taskCommand(project.id, "check"), "pnpm run check");
-});
-
 await test("log on a repository with no commits is empty", async () => {
   const bare = join(DATA_DIR, "history-empty");
   rmSync(bare, { recursive: true, force: true });
   mkdirSync(bare, { recursive: true });
   execFileSync("git", ["init", "-q"], { cwd: bare });
-  const p = createProject({ name: "empty", cwd: bare, description: null, logoUrl: "", devCommand: null, templateId: null });
+  const p = createProject({ name: "empty", cwd: bare, description: null, logoUrl: "" });
   try {
     assert.deepEqual(await log(p.id), []);
   } finally {

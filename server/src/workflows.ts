@@ -693,7 +693,10 @@ export class WorkflowRunner {
       if (!project) throw new WorkflowError("this thread's project no longer exists", 409);
       // A step inherits how its parent was configured — the permission mode
       // above all, so a step does not ask what the parent would not.
-      const restore = run.parent.bridge?.captureRestoreState();
+      const restore = run.parent.bridge?.captureRestoreState() ?? {
+        modeId: run.parent.modeId ?? undefined,
+        configOptions: [],
+      };
       child = this.manager.create(profile, run.parent.agentId, project, step.model ?? run.parent.model, step.effort ?? run.parent.effort, undefined, undefined, run.parent.links, {
         parentSessionId: run.parent.id,
         title: `${run.def.name} · ${step.name}`,

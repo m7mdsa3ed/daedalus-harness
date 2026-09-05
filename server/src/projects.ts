@@ -17,11 +17,6 @@ export const ProjectInputSchema = z.object({
   /** Optional — a URL. Empty means "no logo of its own"; the client draws
       the project's initial instead. */
   logoUrl: z.string().optional().default(""),
-  /** The dev-server command (`dev-server.ts`). Null means the project cannot
-      run one; a project need not come from a template to have one. */
-  devCommand: z.string().nullable().optional().default(null),
-  /** Which `templates/<id>/` it was scaffolded from, if any. */
-  templateId: z.string().nullable().optional().default(null),
 });
 
 /** The *input* shape, so `logoUrl` is optional to callers — routes parse it
@@ -36,8 +31,6 @@ export type Project = ProjectInput & { id: string; helpers?: HelperCommand[] };
 const rowToProject = (row: typeof projectsTable.$inferSelect, helpers: HelperCommand[]): Project => ({
   ...row,
   logoUrl: row.logoUrl ?? "",
-  devCommand: row.devCommand ?? null,
-  templateId: row.templateId ?? null,
   helpers,
 });
 
@@ -47,8 +40,6 @@ const columns = (input: ProjectInput) => ({
   cwd: input.cwd,
   description: input.description ?? null,
   logoUrl: input.logoUrl ?? "",
-  devCommand: input.devCommand?.trim() || null,
-  templateId: input.templateId || null,
 });
 
 export function listProjects(): Project[] {
@@ -79,8 +70,8 @@ export function updateProject(id: string, input: ProjectInput): Project | undefi
   return changed > 0 ? getProject(id) : undefined;
 }
 
-/** Everything keyed to the project (knowledge, previews, sessions' rows) goes
-    with it — that is the cascades' job, not this function's. */
+/** Everything keyed to the project (knowledge, sessions' rows) goes with it —
+    that is the cascades' job, not this function's. */
 export function deleteProject(id: string): boolean {
   return db.delete(projectsTable).where(eq(projectsTable.id, id)).run().changes > 0;
 }

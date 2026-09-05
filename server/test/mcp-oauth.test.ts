@@ -7,6 +7,7 @@
 // 8414 + 7591 + the two token grants, and a protected MCP server that answers
 // 401 without a bearer and JSON-RPC with one.
 // Run: pnpm test:mcp-oauth
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { Hono } from "hono";

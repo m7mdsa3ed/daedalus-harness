@@ -27,7 +27,6 @@ export interface ProjectStats {
   byAgent: { id: string; threads: number }[]
   byProfile: { id: string; threads: number }[]
   knowledge: number
-  previews: number
   webSearch: { searches: number; fetches: number }
   scheduled: { total: number; enabled: number }
   workflows: { total: number; running: number; failed: number }

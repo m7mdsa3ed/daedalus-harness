@@ -340,6 +340,8 @@ export interface BridgeHost {
   /** Push hooks. Fired only when nobody is attached to see the thread. */
   onPermissionRequest(): void;
   onElicitationRequest(): void;
+  /** Apply an agent-authored session title to the thread row. */
+  onSessionTitle(title: string): void;
   /** How this session answers a permission or an elicitation for the user, or
       null for the ordinary park-and-wait (`autonomy.ts`).
 
@@ -397,7 +399,7 @@ export interface BridgeHost {
   /** `session/load` was refused. The thread runs on a fresh session from here,
       but the id it failed on stays the thread's record of itself. */
   onHistoryLost(lost: HistoryLost): void;
-  onSpawnStateChange(next: { model?: string; effort?: string }): void;
+  onSpawnStateChange(next: { model?: string; effort?: string; modeId?: string | null }): void;
 }
 
 export interface BridgeOptions {
@@ -786,6 +788,11 @@ export class AcpBridge {
     this.acpSessionId = acpSessionId;
     this.modes = modes;
     this.configOptions = configOptions;
+    /* What the agent says it is running as — `session/set_mode` (above)
+       overwrites this again when a restore or a draft pick is applied next.
+       Recorded so the row always names the last mode the agent confirmed,
+       which is what a revive with no live process restores from. */
+    this.host.onSpawnStateChange({ modeId: modes?.currentModeId ?? null });
     this.host.onAcpSessionId(acpSessionId, proven);
     this.emitConfig();
   }
@@ -968,8 +975,16 @@ export class AcpBridge {
     // mode/config are its own affair and must not overwrite the thread's.
     if (own && update.sessionUpdate === "current_mode_update" && this.modes) {
       this.modes = { ...this.modes, currentModeId: update.currentModeId };
+      /* Whoever moved it — the user or the agent itself — this is the last
+         confirmed mode, and the row is what a revive with no live process
+         restores from. */
+      this.host.onSpawnStateChange({ modeId: update.currentModeId });
     } else if (own && update.sessionUpdate === "config_option_update") {
       this.configOptions = update.configOptions;
+    }
+    if (own && update.sessionUpdate === "session_info_update") {
+      const title = (update as { title?: unknown }).title;
+      if (typeof title === "string" && title.trim()) this.host.onSessionTitle(title);
     }
     if (this.turnStartedAt !== null && !this.ttftSent) {
       this.ttftSent = true;
@@ -1378,6 +1393,11 @@ export class AcpBridge {
     const oldId = this.modes?.currentModeId;
     await this.connection.agent.request(acp.methods.agent.session.setMode, { sessionId, modeId });
     if (this.modes) this.modes = { ...this.modes, currentModeId: modeId };
+    /* Model and effort are process env the respawn rebuilds from the session
+       record; the mode is the same kind of spawn input — a revive with no live
+       process to copy from (idle-retired, pre-restart) puts it back from the
+       row instead of coming back on the agent's default. */
+    this.host.onSpawnStateChange({ modeId });
     /* A mode switched mid-turn is part of what happened in this thread, so it
        gets a transcript row of its own — held for the step boundary like a
        steer (see `holdConfigNotice`), so the row lands where the replay will

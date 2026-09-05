@@ -57,62 +57,6 @@ export type QuotaStatus =
   /** The probe could not be run, or could not be understood. */
   | "error";
 
-/* ── Dev server ──
-   The managed dev server of a project (`dev-server.ts`), as the builder panel
-   sees it. Read over `GET /api/projects/:id/dev` and streamed line by line
-   over `/dev/events`; never on the thread socket, because it belongs to a
-   project, not a conversation. Mirrored in client/src/lib/settings.ts. */
-export type DevState = "off" | "installing" | "starting" | "ready" | "failed" | "exited";
-
-export interface DevError {
-  id: string;
-  at: number;
-  /** Which process said it: the dev server, or a build/check task. */
-  source: "terminal" | "build" | "check";
-  text: string;
-}
-
-/** What `POST /dev {action: "build" | "check"}` runs: the project's build or
-    check script, in its own terminal, one at a time. Absolute like the rest
-    of the status; `null` once nothing has been run this boot. */
-export type DevTaskKind = "build" | "check";
-
-export interface DevTask {
-  kind: DevTaskKind;
-  state: "running" | "passed" | "failed";
-  command: string;
-  terminalId: string;
-  /** Exit summary on failure — code and last line. */
-  message: string | null;
-  startedAt: number;
-  endedAt: number | null;
-}
-
-export interface DevStatus {
-  projectId: string;
-  state: DevState;
-  /** Server-relative preview root, e.g. "/preview/<key>/<projectId>/"; set
-      while starting/ready, else null. */
-  url: string | null;
-  port: number | null;
-  /** The dev process's terminal (attachable through the existing /terminal
-      socket); null when off. */
-  terminalId: string | null;
-  installTerminalId: string | null;
-  command: string | null;
-  /** Why it failed/exited: exit code, last output line, "no dev command". */
-  message: string | null;
-  /** Recent errors parsed from process output, newest last, max 20, cleared
-      on (re)start. */
-  errors: DevError[];
-  /** ms timestamp of the last state change. */
-  since: number;
-  /** When the server last answered on its base path; null unless `ready`. */
-  readyAt: number | null;
-  /** The last build/check run this boot, if any. */
-  task: DevTask | null;
-}
-
 export interface QuotaSnapshot {
   /** Empty for a `source: "profile"` reading: a provider's plan is one account
       whatever runtime spends it, and the reading is shared across every agent
@@ -436,6 +380,7 @@ export interface TurnChanges {
 
 export type SessionUpdate =
   | acp.SessionUpdate
+  | SessionInfoUpdate
   | SubagentSpawned
   | SubagentStateUpdate
   | SubagentUsage
@@ -444,6 +389,12 @@ export type SessionUpdate =
   | AsyncTaskStateUpdate
   | WorkflowStateUpdate
   | AutonomyAnswer;
+
+export interface SessionInfoUpdate {
+  sessionUpdate: "session_info_update";
+  title?: string;
+  updatedAt?: string;
+}
 
 /** What a respawn has to put back: the agent's configuration minus the two
     settings the profile owns. See AcpBridge.captureRestoreState. */
@@ -673,6 +624,7 @@ export const JOURNALED_EVENTS: readonly ThreadEventKind[] = [
 ];
 
 export type ThreadEvent =
+  | { ev: "session_title"; title: string }
   /* ---- attach lifecycle ----
      These two bracket the replay. Without the bracket a client cannot tell a
      replayed `turn_ended` from a live one, and every reload would re-fire a
@@ -883,14 +835,6 @@ export type ThreadEvent =
       Sent once when the turn's start snapshot exists (`files` empty, `ended`
       false) and once more with the diff when it has ended. */
   | { ev: "turn_changes"; turn: TurnChanges }
-  /** The thread's project row changed under it on the server's own
-      initiative — today, one thing: a from-scratch build whose first turn
-      gave the directory a dev command, which the manager sensed at
-      `turn_ended` and wrote onto the row (templates.ts › detectDevCommand).
-      Live-only and absolute (the whole row): the catalog is TanStack Query's
-      and this is only the nudge that a routed answer moved, so the client
-      invalidates the projects list rather than patching from it. */
-  | { ev: "project_changed"; project: import("./projects.js").Project }
   /** What is left of the subscription this thread's (profile, agent) pair is
       spending — see quota.ts. Only a profile that names a plan of its own has
       one to report: a thread on an API-key profile is billed per token, and the

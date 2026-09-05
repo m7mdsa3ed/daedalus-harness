@@ -33,18 +33,28 @@ interface UpdateRecord {
   t: "update";
   u: UpdateParams;
 }
+/* The permission mode a `session/set_mode` confirmed. State, not transcript:
+   it survives compaction and is what a `session/load` answers as the current
+   mode, so a revived thread comes back on the mode it was left in rather than
+   the default a fresh session starts on. */
+interface ModeRecord {
+  t: "mode";
+  mode: string;
+}
 /* A compaction barrier: on read, messages before it are dropped — the summary
    message that follows it is what the model sees, while the update records
    (the human-readable transcript) are all kept for replay. */
 interface CompactRecord {
   t: "compact";
 }
-type Record_ = MetaRecord | MsgRecord | UpdateRecord | CompactRecord;
+type Record_ = MetaRecord | MsgRecord | UpdateRecord | CompactRecord | ModeRecord;
 
 export interface SessionHistory {
   cwd: string;
   messages: ModelMessage[];
   updates: UpdateParams[];
+  /** The last confirmed mode, or null when the session never left default. */
+  mode: string | null;
 }
 
 const LIST_PAGE = 100;
@@ -141,6 +151,10 @@ export class SessionStore {
     this.append(sessionId, { t: "update", u });
   }
 
+  setMode(sessionId: string, mode: string): void {
+    this.append(sessionId, { t: "mode", mode });
+  }
+
   appendCompaction(sessionId: string): void {
     this.append(sessionId, { t: "compact" });
   }
@@ -159,7 +173,7 @@ export class SessionStore {
 
   read(sessionId: string): SessionHistory | null {
     const path = this.file(sessionId);
-    const history: SessionHistory = { cwd: "", messages: [], updates: [] };
+    const history: SessionHistory = { cwd: "", messages: [], updates: [], mode: null };
     const applyLine = (line: string): void => {
       if (!line.trim()) return;
       let record: Record_;
@@ -171,6 +185,7 @@ export class SessionStore {
       if (record.t === "meta") history.cwd = record.cwd;
       else if (record.t === "msg") history.messages.push(record.m);
       else if (record.t === "compact") history.messages = [];
+      else if (record.t === "mode") history.mode = record.mode;
       else history.updates.push(record.u);
     };
     /* Streamed a chunk at a time — a long session's file is never held whole

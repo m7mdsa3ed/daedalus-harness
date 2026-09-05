@@ -26,7 +26,6 @@ const fs = await import("../src/workspace-fs.js");
 const { watchProject, stopWatching, watchedProjects } = await import("../src/workspace-watch.js");
 const terminals = await import("../src/terminals.js");
 const git = await import("../src/git.js");
-const previews = await import("../src/previews.js");
 
 let passed = 0;
 const failures: string[] = [];
@@ -311,36 +310,6 @@ await test("the watcher batches events and refcounts its handle", async () => {
 
 await test("watching an unknown project refuses instead of watching nothing", async () => {
   assert.equal(await status(() => watchProject("no-such-project", () => {})), 404);
-});
-
-// ── Previews ─────────────────────────────────────────────────────────────────
-await test("a preview URL is validated before it is ever stored", async () => {
-  // The panel puts a stored URL straight into an iframe, so a `javascript:` or
-  // `data:` one would be stored XSS with the app's own origin behind it.
-  assert.equal(await status(() => previews.createPreview(project.id, null, "javascript:alert(1)")), 400);
-  assert.equal(await status(() => previews.createPreview(project.id, null, "data:text/html,<script>")), 400);
-  assert.equal(await status(() => previews.createPreview(project.id, null, "file:///etc/passwd")), 400);
-  assert.equal(await status(() => previews.createPreview(project.id, null, "")), 400);
-  assert.equal(await status(() => previews.createPreview("no-such-project", null, "http://x")), 404);
-});
-
-await test("a bare host:port is assumed http rather than rejected", () => {
-  // "localhost:5173" is what people type, and the URL parser reads "localhost"
-  // as the scheme unless something puts one in front.
-  assert.equal(previews.normalizePreviewUrl("localhost:5173"), "http://localhost:5173/");
-  assert.equal(previews.normalizePreviewUrl("https://example.test/x"), "https://example.test/x");
-});
-
-await test("previews round-trip and go with their project", () => {
-  const made = previews.createPreview(project.id, "Dev", "localhost:3000");
-  assert.equal(made.url, "http://localhost:3000/");
-  assert.equal(made.label, "Dev");
-  const unlabelled = previews.createPreview(project.id, null, "http://example.test:8080/app");
-  assert.equal(unlabelled.label, "example.test:8080", "the host is the fallback label");
-  assert.equal(previews.listPreviews(project.id).length, 2);
-  assert.equal(previews.deletePreview(made.id), true);
-  assert.equal(previews.deletePreview(made.id), false);
-  assert.equal(previews.listPreviews(project.id).length, 1);
 });
 
 // ── Git ─────────────────────────────────────────────────────────────────────

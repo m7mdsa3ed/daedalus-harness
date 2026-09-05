@@ -820,11 +820,7 @@ export function WorkspaceDock({
     map.ide = contained(IdePanel as React.FC<IDockviewPanelProps>)
     map.terminal = contained(TerminalPanel as React.FC<IDockviewPanelProps>)
     map.tasks = contained(TasksPanel as React.FC<IDockviewPanelProps>)
-    /* The preview mode hands errors and picked elements to a thread, which
-       is a send — so the web panel takes `actions` the way the chat does. */
-    map.web = contained((props) => (
-      <WebPanel {...(props as React.ComponentProps<typeof WebPanel>)} actions={actions} />
-    ))
+    map.web = contained(WebPanel as React.FC<IDockviewPanelProps>)
     return map
   }, [actions])
 

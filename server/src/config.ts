@@ -1,6 +1,5 @@
 import { randomBytes } from "node:crypto";
 import { copyFileSync, mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -66,9 +65,6 @@ export interface ServerConfig {
    * the client is re-registered rather than reused.
    */
   mcpOauthRedirectBase?: string;
-  /** Where `POST /api/projects/from-template` puts a new app when the request
-      names no parent. Absent means `~/daedalus-apps` — see `appsDir()`. */
-  appsDir?: string;
   fcm?: FcmConfig;
   webSearch?: WebSearchConfig;
 }
@@ -124,7 +120,6 @@ export function loadConfig(): ServerConfig {
     sessionIdleMinutes: existing.sessionIdleMinutes ?? 30,
     sessionJournalRetentionDays: existing.sessionJournalRetentionDays ?? 30,
     ...(existing.mcpOauthRedirectBase ? { mcpOauthRedirectBase: existing.mcpOauthRedirectBase } : {}),
-    ...(existing.appsDir ? { appsDir: existing.appsDir } : {}),
     ...(existing.fcm ? { fcm: existing.fcm as FcmConfig } : {}),
     ...(existing.webSearch ? { webSearch: existing.webSearch as WebSearchConfig } : {}),
   };
@@ -142,14 +137,6 @@ export function loadConfig(): ServerConfig {
 let cachedConfig: ServerConfig | null = null;
 export function getConfig(): ServerConfig {
   return (cachedConfig ??= loadConfig());
-}
-
-/** The directory new apps are scaffolded into by default. A function rather
-    than a resolved field so the file keeps carrying only what the user wrote —
-    the token-seeding write on first boot would otherwise pin this machine's
-    home directory into `config.json`. */
-export function appsDir(): string {
-  return getConfig().appsDir?.trim() || join(homedir(), "daedalus-apps");
 }
 
 /** The stored server-global webSearch block, or undefined. Read without the

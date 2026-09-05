@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db, projectHelpers as helpersTable } from "./db/index.js";
@@ -9,14 +8,32 @@ import { db, projectHelpers as helpersTable } from "./db/index.js";
  * this workspace from its page's header ("Restart server", "Run migrations").
  * They are the user's own buttons, not the library's: nothing here reaches an
  * agent, nothing is materialised into the cwd, and the rows die with the
- * project (`ON DELETE CASCADE`). Run is a bounded one-shot shell in the
- * project's cwd — the same trust level as the project's terminals, with the
- * output capped so a chatty command cannot flood the browser.
+ * project (`ON DELETE CASCADE`).
+ *
+ * **This module stores helpers; it does not run them.** A helper runs in a
+ * terminal (`terminals.ts`) — a PTY in a dock panel, opened by
+ * `POST /api/projects/:id/helpers/:helperId/terminal`. It used to be a
+ * one-shot `spawn` whose captured output was posted back to a dialog, which
+ * meant a command that asked anything — a `select an environment` prompt, a
+ * password, a `[y/N]` — hung against a stdin that was never coming and then
+ * died at the two-minute timeout with the question as its last line. A PTY is
+ * the thing that can be answered, and the terminal panel is where the harness
+ * already knows how to draw one, so a helper is now a terminal that starts
+ * with its command typed in. That is why there is no timeout here either: the
+ * terminal's own detach grace and idle sweep bound it, and a countdown that
+ * kills a program *while it is waiting for the user's answer* is not a
+ * setting, it is a bug.
  */
 
 export const HelperInputSchema = z.object({
   name: z.string().min(1),
   command: z.string().min(1),
+  /** Project-relative directory to run in; absent/empty = the project's cwd. */
+  cwd: z.string().nullish(),
+  /** Extra environment variables layered over the server's own. */
+  env: z.record(z.string(), z.string()).nullish(),
+  description: z.string().nullish(),
+  confirm: z.boolean().nullish(),
 });
 export type HelperInput = z.infer<typeof HelperInputSchema>;
 
@@ -25,15 +42,56 @@ export interface HelperCommand {
   projectId: string;
   name: string;
   command: string;
+  cwd: string | null;
+  env: Record<string, string> | null;
+  description: string | null;
+  confirm: boolean;
   createdAt: number;
 }
+
+/** The row stores `env` as JSON text; a row a hand or an old bundle mangled
+    degrades to "no extra env" rather than taking the read down. */
+const parseEnv = (text: string | null): Record<string, string> | null => {
+  if (text === null) return null;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed)) if (typeof v === "string") out[k] = v;
+    return Object.keys(out).length > 0 ? out : null;
+  } catch {
+    return null;
+  }
+};
 
 const rowToHelper = (row: typeof helpersTable.$inferSelect): HelperCommand => ({
   id: row.id,
   projectId: row.projectId,
   name: row.name,
   command: row.command,
+  cwd: row.cwd,
+  env: parseEnv(row.env),
+  description: row.description,
+  confirm: row.confirm,
   createdAt: row.createdAt,
+});
+
+/** Trim and fold the wire input into the stored shape — one place, so add and
+    update cannot drift. An empty cwd/description/env means null, not "". */
+const toColumns = (input: HelperInput) => ({
+  name: input.name.trim(),
+  command: input.command.trim(),
+  cwd: input.cwd?.trim() || null,
+  env:
+    input.env && Object.keys(input.env).length > 0
+      ? JSON.stringify(
+          Object.fromEntries(
+            Object.entries(input.env).filter(([k]) => k.trim().length > 0),
+          ),
+        )
+      : null,
+  description: input.description?.trim() || null,
+  confirm: input.confirm === true,
 });
 
 export function listHelpers(projectId: string): HelperCommand[] {
@@ -72,15 +130,11 @@ export function getHelper(projectId: string, helperId: string): HelperCommand | 
 }
 
 export function addHelper(projectId: string, input: HelperInput): HelperCommand {
-  const row = {
-    id: randomUUID(),
-    projectId,
-    name: input.name.trim(),
-    command: input.command.trim(),
-    createdAt: Date.now(),
-  };
-  db.insert(helpersTable).values(row).run();
-  return row;
+  const id = randomUUID();
+  db.insert(helpersTable)
+    .values({ id, projectId, ...toColumns(input), createdAt: Date.now() })
+    .run();
+  return getHelper(projectId, id)!;
 }
 
 export function updateHelper(
@@ -90,7 +144,7 @@ export function updateHelper(
 ): HelperCommand | undefined {
   const changed = db
     .update(helpersTable)
-    .set({ name: input.name.trim(), command: input.command.trim() })
+    .set(toColumns(input))
     .where(and(eq(helpersTable.projectId, projectId), eq(helpersTable.id, helperId)))
     .run().changes;
   return changed > 0 ? getHelper(projectId, helperId) : undefined;
@@ -103,78 +157,4 @@ export function deleteHelper(projectId: string, helperId: string): boolean {
       .where(and(eq(helpersTable.projectId, projectId), eq(helpersTable.id, helperId)))
       .run().changes > 0
   );
-}
-
-export interface HelperRunResult {
-  ok: boolean;
-  exitCode: number | null;
-  timedOut: boolean;
-  durationMs: number;
-  output: string;
-}
-
-/** Longest a helper may run before its process group is killed. A helper is a
-    quick action — a restart, a migration — not a place to host a server; the
-    dev server the harness itself manages has its own controls. */
-const RUN_TIMEOUT_MS = 120_000;
-/** Tail kept of the combined output; the head is dropped with a marker, since
-    what a failed command said last is what explains it. */
-const MAX_OUTPUT = 16_000;
-
-/** Run a helper's command in the project's cwd. A non-zero exit is a *result*
-    (the route answers it 200 with `ok: false`), not a thrown error — the
-    output is the answer, and the browser has the dialog to show it in. */
-export function runHelperCommand(cwd: string, command: string): Promise<HelperRunResult> {
-  return new Promise((resolve) => {
-    const started = Date.now();
-    // A group leader, so the timeout can take down the shell *and* whatever it
-    // started — a helper that hangs usually has a grandchild holding the pipe.
-    const child = spawn(command, { cwd, shell: true, detached: true });
-
-    let chunks: Buffer[] = [];
-    let bytes = 0;
-    let timedOut = false;
-    const collect = (chunk: Buffer) => {
-      chunks.push(chunk);
-      bytes += chunk.length;
-      // Keep the tail: drop whole chunks off the head once over the ceiling.
-      while (bytes > MAX_OUTPUT && chunks.length > 1) {
-        bytes -= chunks[0].length;
-        chunks = chunks.slice(1);
-      }
-    };
-    child.stdout.on("data", collect);
-    child.stderr.on("data", collect);
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      if (child.pid !== undefined) {
-        try {
-          process.kill(-child.pid, "SIGKILL");
-        } catch {
-          child.kill("SIGKILL");
-        }
-      }
-    }, RUN_TIMEOUT_MS);
-
-    const finish = (exitCode: number | null) => {
-      clearTimeout(timer);
-      let output = Buffer.concat(chunks).toString("utf8").trimEnd();
-      if (bytes > MAX_OUTPUT) output = `… output truncated …\n${output.slice(-MAX_OUTPUT)}`;
-      if (timedOut) output += `\n\n[killed after ${Math.round(RUN_TIMEOUT_MS / 1000)}s]`;
-      resolve({
-        ok: !timedOut && exitCode === 0,
-        exitCode,
-        timedOut,
-        durationMs: Date.now() - started,
-        output,
-      });
-    };
-
-    child.on("error", (err) => {
-      chunks.push(Buffer.from(`\n[failed to start: ${err.message}]`));
-      finish(null);
-    });
-    child.on("close", (code) => finish(code));
-  });
 }

@@ -17,6 +17,7 @@ import {
 import { useHotkey } from "@/hooks/use-hotkey"
 import type { Actions } from "@/lib/actions"
 import { reportError } from "@/lib/errors"
+import { KEYBOARD_LIFT } from "@/lib/keyboard-inset"
 import { holdOf } from "@/lib/thread/hold"
 import { slowLine, startingLine, type ConnPhase } from "@/lib/thread/phase"
 import { currentThreadId } from "@/lib/router"
@@ -40,6 +41,8 @@ import { buildRows, isAnswerItem, rowTailId, type Row } from "@/lib/transcript-r
 import { PromptSuggestions } from "./prompt-suggestions"
 import { turnSuggestions } from "@/lib/suggestions"
 import { Composer, type ComposerHandle } from "./composer"
+import { RewindDialog, type RewindScope } from "./rewind-dialog"
+import { useAgents } from "@/lib/queries/catalog"
 
 /**
  * Append a Sources row to every finished turn that has any. Computed on the
@@ -479,6 +482,21 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
   /* Hoisted out of the map below: `findIndex` inside `rows.map` was O(n²) per
      render, re-scanned on every streamed token. */
   const firstUserIndex = React.useMemo(() => rows.findIndex((r) => r.kind === "user"), [rows])
+  /* Turn ordinals for the rewind dialog ("Turn 4"): the journal's list when
+     present — it names withheld turns too — else the order on screen. The
+     same numbering the rail shows. */
+  const turnNumber = React.useMemo(() => {
+    const byId = new Map<string, number>()
+    if (thread.turns.length > 0) {
+      thread.turns.forEach((t, i) => byId.set(t.turnId, i + 1))
+    } else {
+      let n = 0
+      for (const item of thread.items) {
+        if (item.kind === "user" && item.turnId && !byId.has(item.turnId)) byId.set(item.turnId, ++n)
+      }
+    }
+    return byId
+  }, [thread.turns, thread.items])
   /* The thread's true tail, not the filtered one: it is what "is this row the
      one still being written" is asked against, and under `answersOnly` the
      newest item is usually a step that is not on screen — measured against the
@@ -507,7 +525,33 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
       })
       .catch(() => {})
 
+  /* ── Rewind ──
+     Which finished turn the dialog is open for. The dialog confirms the scope
+     and the action rebuilds from 0 after the server clears the journal. */
+  const [rewindTarget, setRewindTarget] = React.useState<{
+    turnId: string
+    n: number
+    text: string
+  } | null>(null)
+  const [rewindBusy, setRewindBusy] = React.useState(false)
+  const agents = useAgents()
   const meta = useSessionMeta(sessionId)
+  /* The agent's rewind door: absent/false = the conversation half is not
+     offered on this thread, and files are restored on their own. Read off the
+     catalog like every other agent capability — the server still refuses what
+     it cannot do. */
+  const canRewindConversation =
+    agents.find((a) => a.id === meta?.agentId)?.rewindVia === "acp-fork-point"
+  const confirmRewind = (scope: RewindScope) => {
+    const target = rewindTarget
+    if (!target) return
+    setRewindBusy(true)
+    actions
+      .rewindThread(sessionId, target.turnId, scope)
+      .then(() => setRewindTarget(null))
+      .catch(() => {})
+      .finally(() => setRewindBusy(false))
+  }
   /* What an attachment on this thread would actually do — read once here
      because two surfaces need the same answer: the composer's chips forecast
      it, and an error row uses it to decide whether "Retry as file paths" would
@@ -700,6 +744,20 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                     <RowView
                       row={row}
                       onContinue={resumable === row.id ? resume : undefined}
+                      onRewind={
+                        row.kind === "user" &&
+                        row.turnId &&
+                        !row.local &&
+                        !thread.turnActive &&
+                        !meta?.parentSessionId
+                          ? () =>
+                              setRewindTarget({
+                                turnId: row.turnId!,
+                                n: turnNumber.get(row.turnId!) ?? 0,
+                                text: row.text,
+                              })
+                          : undefined
+                      }
                       onRetry={
                         row.kind === "error" && row.retryText
                           ? () => retry(row.retryText!)
@@ -889,7 +947,8 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
       <div
         ref={composerRef}
         className={cn(
-          "min-w-0 translate-y-[calc(var(--keyboard-inset,0px)*-1)] transition-[translate] duration-[285ms] ease-[cubic-bezier(0.2,0,0,1)] will-change-transform motion-reduce:transition-none",
+          "min-w-0",
+          KEYBOARD_LIFT,
           empty
             ? "relative"
             : "pointer-events-none absolute inset-x-0 bottom-0 z-20",
@@ -913,6 +972,32 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
           be the bottom half of the centring while the thread is empty. */}
       <span aria-hidden />
     </div>
+    {rewindTarget && (
+      <RewindDialog
+        open={rewindTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !rewindBusy) setRewindTarget(null)
+        }}
+        turnLabel={rewindTarget.n > 0 ? `Turn ${rewindTarget.n}` : "this turn"}
+        turnPreview={rewindTarget.text}
+        canRewindConversation={canRewindConversation}
+        /* A files restore needs a start snapshot: the chip the transcript
+           draws for reviewed changes reads the same store slice
+           (`turnChanges`). Measured files prove a snapshot exists; an unknown
+           turn reads as available, with the server's 404 as the honest
+           fallback — a wrongly-disabled row blocks a rewind that works, while
+           a wrongly-enabled one just surfaces the refusal in-thread. */
+        hasFiles={(() => {
+          const changes = thread.turnChanges[rewindTarget.turnId]
+          if (!changes) return true
+          if (changes.files.length > 0) return true
+          return !changes.unavailable
+        })()}
+        defaultScope={canRewindConversation ? "both" : "files"}
+        busy={rewindBusy}
+        onConfirm={confirmRewind}
+      />
+    )}
     </MessageScrollerProvider>
   )
 }

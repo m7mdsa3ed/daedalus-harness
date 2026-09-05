@@ -275,6 +275,32 @@ export function reduceConn(phase: ConnPhase, event: ConnEvent): ConnPhase {
  * process exited", which named a cause the client had no evidence for and sent
  * people looking at the agent when the server had just rebooted.
  */
+/**
+ * Close codes that say something about the *thread*, not about the path to it.
+ *
+ * A socket dying for any other reason — a bare 1006, no code at all, or this
+ * client's own watchdog giving up on a silent path — is the connection's
+ * problem and the connection's to solve: `ThreadConnection` books the ladder
+ * rather than leaving a dead banner in front of a thread that is very likely
+ * still there. These four are the ones a retry cannot help with, because the
+ * process is gone (4000, 4001), the thread is not the server's any more (4004),
+ * or another device is deliberately holding it (4002) — reattaching to that one
+ * is a fight between two tabs, and the user says who wins.
+ */
+const NON_RECONNECTABLE_CLOSE_CODES = new Set([4000, 4001, 4002, 4004])
+
+/**
+ * Whether a close is one this device should answer by reattaching, on its own.
+ *
+ * The rule this narrows still holds: nothing *respawns* an idle-retired agent
+ * behind the reader's back. An automatic attempt asks for the thread as it is —
+ * a live process gets a socket, a retired one reads its journal — and only a
+ * send (or the button) puts a process back.
+ */
+export function isRecoverableClose(code: number | undefined): boolean {
+  return code === undefined || !NON_RECONNECTABLE_CLOSE_CODES.has(code)
+}
+
 export function failureFor(code: number | undefined, reason?: string): ConnPhase {
   if (code === 4002) {
     return {

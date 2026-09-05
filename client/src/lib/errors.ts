@@ -219,6 +219,7 @@ export function errorText(err: unknown, context?: string): string {
     is not a new event worth logging, and nothing here is unhandled. Returns
     null while the last failure was a cancel (the caller's own refetch). */
 export function inlineFromQuery(err: unknown, context?: string): InlineError | null {
+  if (!err) return null
   const info = describeError(err)
   if (info.kind === "cancelled") return null
   return { ...info, context, text: errorText(err, context) }

@@ -64,7 +64,13 @@ import { toast } from "@/lib/toast"
 import { useProjects } from "@/lib/queries/catalog"
 import { Logo } from "@/components/ui/logo"
 import { cn } from "@/lib/utils"
-import { createTerminal, killTerminal, terminalSocketUrl } from "@/lib/workspace/terminals"
+import {
+  createTerminal,
+  killTerminal,
+  startHelperTerminal,
+  terminalSocketUrl,
+} from "@/lib/workspace/terminals"
+import { queuePanel } from "@/lib/workspace/pending-panels"
 import { panelId } from "@/lib/workspace/panels"
 import { usePublishPanelStatus } from "@/lib/workspace/panel-status"
 import {
@@ -225,6 +231,11 @@ export function TerminalPanel({
      *what is running* in a tab you are not looking at — "npm run build" beats
      "daedalus — shell" on a strip of five terminals. */
   const [shellTitle, setShellTitle] = React.useState<string | null>(null)
+  /* The name the terminal was *created* with, off the `ready` frame: a helper
+     command's name, so its tab says "Deploy" and not "shell". Below the OSC
+     title, because a command that names itself while running is saying
+     something newer than the button that started it. */
+  const [givenTitle, setGivenTitle] = React.useState<string | null>(null)
   /* The bell, held until the panel is looked at again. A `\x07` is the shell
      asking for attention (a finished build, a prompt from a program), and in a
      dock it is invariably rung by the panel nobody has in front of them. */
@@ -238,9 +249,10 @@ export function TerminalPanel({
   prefsRef.current = prefs
 
   React.useEffect(() => {
+    const named = shellTitle ?? givenTitle
     const name = project ? `${project.name} — shell` : "Terminal"
-    api.setTitle(shellTitle ? `${shellTitle} — ${project?.name ?? "shell"}` : name)
-  }, [api, project, shellTitle])
+    api.setTitle(named ? `${named} — ${project?.name ?? "shell"}` : name)
+  }, [api, project, shellTitle, givenTitle])
 
   /* A shell that has stopped is the whole reason a terminal needs a tab mark:
      the panel says so plainly, but a terminal is normally the tab you are NOT
@@ -347,7 +359,14 @@ export function TerminalPanel({
     }
 
     ws.onmessage = (event) => {
-      let frame: { t?: string; data?: string; scrollback?: string; exitCode?: number; message?: string }
+      let frame: {
+        t?: string
+        data?: string
+        scrollback?: string
+        exitCode?: number
+        message?: string
+        terminal?: { title?: string | null }
+      }
       try {
         frame = JSON.parse(String(event.data)) as typeof frame
       } catch {
@@ -356,6 +375,9 @@ export function TerminalPanel({
       if (frame.t === "ready") {
         setStatus("ready")
         setDetail(null)
+        /* The name it was created under, when it has one — a helper command's.
+           A plain shell has none and keeps the project's name below. */
+        setGivenTitle(frame.terminal?.title?.trim() || null)
         if (frame.scrollback) terminal.write(frame.scrollback)
         terminal.focus()
       } else if (frame.t === "data" && frame.data) {
@@ -927,5 +949,38 @@ export async function openTerminal(
   } catch (err) {
     const { title } = describeError(err)
     reportError(err, title === "The request failed" ? "Couldn't open a terminal" : undefined)
+  }
+}
+
+/**
+ * Run a project helper: a terminal, opened on the helper's own command.
+ *
+ * A helper is a shell line somebody saved, and a shell line asks things —
+ * "which environment?", a password, `[y/N]`. The old run captured stdout into
+ * a dialog with no stdin behind it, so any of those hung until the timeout
+ * killed it with the question as the final line. Here the same command gets a
+ * PTY, and the panel it lands in is the one the harness already knows how to
+ * draw a PTY in.
+ *
+ * `dock` is null on a route that has no dock — the project page — where the
+ * panel is *queued* for the next thread instead, the same trade `openRules`
+ * makes there. The terminal itself is already running by then either way: it
+ * is the server's, and it survives the trip.
+ */
+export async function openHelperTerminal(
+  projectId: string,
+  helper: { id: string; name: string },
+  dock: ReturnType<typeof useDock> | null
+): Promise<boolean> {
+  try {
+    const created = await startHelperTerminal(projectId, helper.id)
+    const panel = { kind: "terminal", projectId, terminalId: created.id } as const
+    if (dock) dock.openPanel(panel, { direction: "below" })
+    else queuePanel(panel, { direction: "below" })
+    return true
+  } catch (err) {
+    const { title } = describeError(err)
+    reportError(err, title === "The request failed" ? `Couldn't run ${helper.name}` : undefined)
+    return false
   }
 }

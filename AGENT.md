@@ -60,9 +60,12 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   it lives in `bridge.pending` while the agent blocks. First answer wins.
 - **A thread is opened over HTTP, and a socket is opened by an outgoing message and by
   nothing else.** Replay and the socket are one code path through the same `handle` switch —
-  one parser, one set of callbacks. `ready()` is the one door to a live socket. A dropped
-  socket is reported once and never answered by a reconnect ladder: nothing reattaches, or
-  respawns an idle-retired agent, behind the reader's back.
+  one parser, one set of callbacks. `ready()` is the one door to a live socket. **A dropped
+  socket reattaches on its own, and never respawns**: a close that says nothing about the
+  thread (no code, 1006, the client's own watchdog) books the ladder, which asks for the
+  thread *as it is* — a live process gets its socket, a retired one is read from its
+  journal. Only a send or the button puts a process back. The four codes that mean the
+  thread is gone or taken over (4000/4001/4002/4004) are still said once, with a button.
 - **The ACP SDK is named in one file per half** — `server/src/acp.ts`, `agent/src/acp.ts`,
   the client's `@daedalus/acp`. Import `acp` from there, never from the package. The version
   is pinned exactly in all three manifests.
@@ -181,6 +184,14 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **A slash command is either the agent's or the harness's and the composer draws one list**;
   the agent's shadows the harness's, and a draft is offered no harness commands. An `@`
   mention is text *and* a `resource_link`, added server-side only when it resolves inside cwd.
+- **Every surface a caret can land in clears the soft keyboard.** The page does not resize
+  when one opens (`overlays-content`), so a fixed surface at the bottom is a surface
+  *behind* the keys. Ride it with a named recipe from `lib/keyboard-inset.ts` —
+  `KEYBOARD_LIFT`, `KEYBOARD_CENTER`, `KEYBOARD_RISE`, `cn`'d last — never a fresh calc. A
+  Base UI positioner is **padded, not moved** (`useKeyboardCollisionPadding`), and only
+  where the visual viewport did not already shrink, or a flyout rises by two keyboards. A
+  field on an ordinary form is `lib/keyboard-caret.ts`'s, because the browser's own
+  scroll-into-view is the thing `overlays-content` turned off.
 - **"Mobile" is two questions: width is the panel's, the pointer is the device's.** Layout
   uses the `@panel-*` container queries; touch targets and centred surfaces stay on media
   queries.
@@ -239,8 +250,11 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   the worktree as it is now and not on a scope.
 - A project's own page reads its settled half from one `/stats` call, on mount and by Refresh
   and **never on a timer**. **Turns, not events**, are counted; a tile skeletons rather than
-  zeroes. **Header carries a "Run" dropdown** for the dev server's Restart and the project's
-  custom helper commands (`project_helpers`).
+  zeroes. **Header carries a "Run" dropdown** for the project's custom helper commands
+  (`project_helpers`). **A helper runs in a terminal panel, never in a dialog** — a saved
+  shell line asks things, and only a PTY can be answered — so it has no timeout, its stored
+  `cwd`/`env` are read server-side and never sent up, and `confirm` asks before the terminal
+  exists.
 
 ## Tasks → `docs/tasks.md`
 
@@ -252,32 +266,6 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   diffed**. **No foreign keys**; every cascade is by hand.
 - `lib/tasks-view.ts` is the pure half; how a board is *read* is device-local, a *saved* view
   is the server's. Every view takes the one `ViewProps` contract and never touches the cache.
-
-## Build mode → `docs/build-mode.md`
-
-- **Build mode is composition, and a template is a directory.** The harness scaffolds, records
-  the project and starts the dev server — **never the agent's first turn**. Scaffolding is the
-  **one write outside a project root** and follows `plans/project-studio.md`'s rules. Every
-  template honours `PORT` and `BASE_PATH`.
-- **The dev server is a pinned terminal**, one per project, its status absolute and never
-  persisted client-side. **Never kill a dev server by command pattern** — this host runs other
-  Vite servers under pm2. Any project with `devCommand` gets a preview, template or not.
-- **The preview proxy keeps the prefix and the key is the credential** (an iframe cannot send
-  a bearer). The iframe stays sandboxed **without `allow-same-origin`**, so the bridge speaks
-  only `postMessage` and the panel checks `event.source`.
-- **`/build`'s prompt box is the thread composer on a real draft** — never a lookalike
-  textarea.
-- **The stack is sensed from the prompt, never defaulted** (`lib/stack-sense.ts`, pure); an
-  explicit card click outranks the sensing. From scratch means no dev command until the agent
-  has scaffolded and the manager reads one off `daedalus.json` or `package.json` — **written
-  onto the row once**.
-- **Every opener names the panel through `previewPanel(projectId)`**, gated on
-  `project.devCommand`. The panel **starts the server on mount, from `off` only** — never from
-  `failed`/`exited`.
-- **Auto-fix sends an error at most twice** (`AUTO_FIX_ROUNDS`, keyed by `errorSignature`) and
-  only to an idle thread.
-- **Restore is a new commit with the old tree, never a reset.** The persona commits after each
-  change in the user's words, because each commit is a restore point.
 
 ## PWA and notifications → `docs/pwa-and-notifications.md`
 
@@ -326,6 +314,5 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 | `docs/client.md` | state ownership, theming, palette, sidebar, tool views, shortcuts, errors, toasts, dock, project page |
 | `docs/pwa-and-notifications.md` | service worker, FCM, notification shape, backgrounded pages |
 | `docs/tasks.md` | boards, keys, columns and categories, the parent tree, activity, sprints, links, custom fields, views |
-| `docs/build-mode.md` | templates, scaffolding, the managed dev server, the preview proxy and bridge, the build flow |
 | `docs/ops.md` | git, backup/import, agent quota, provider plan usage |
 | `agent/docs/` | the Daedalus Agent runtime: prompting, managing it from the harness, standalone use |

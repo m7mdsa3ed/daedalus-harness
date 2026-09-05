@@ -546,6 +546,54 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   resolve without guessing, and dropping the text would make the transcript stop saying what
   the user typed.
 
+## The soft keyboard
+
+- **The page does not resize when a soft keyboard opens, so nothing moves out from under
+  it by itself.** `index.html` asks for `interactive-widget=overlays-content` and
+  `lib/keyboard-inset.ts` asks the same of the VirtualKeyboard API, because a transcript
+  that jumps half a screen on focus has lost the reader's place. The price of that trade is
+  paid here: the keyboard is drawn *over* the bottom of the page, so every fixed surface —
+  and the browser's own scroll-into-view — behaves as if it were not there. Each surface
+  that a caret can land in is moved by hand, from the one number that module publishes as
+  `--keyboard-inset`. It is measured two ways because the two overlay regimes contradict
+  each other: Chromium's `virtualKeyboard.boundingRect` (asking for the overlay is what
+  turns the geometry on), and `innerHeight - visualViewport.height` everywhere else, where
+  the viewport still shrinks. Whichever reports more wins.
+- **A surface rides the keyboard by a *named recipe*, never a fresh calc** — the three in
+  `lib/keyboard-inset.ts`, and which one is not a preference:
+  - `KEYBOARD_LIFT` (a transform) for a surface whose reserved height must not move with
+    it: the composer, whose docked height the transcript pads by (`--composer-dock-h`,
+    measured from offsetHeight), so a `bottom` change would drag the transcript with it.
+  - `KEYBOARD_CENTER` for a centred popup — `ui/dialog.tsx` and the desktop half of
+    `ui/responsive-dialog.tsx` — which stays centred in what is *left* above the keyboard,
+    and caps its height there too. A dialog is opened to be typed into more often than not.
+  - `KEYBOARD_RISE` (a `bottom`) for a bottom-anchored surface that owns its box: the
+    mobile sheet, `ui/sheet.tsx`, `ui/drawer.tsx`, the toast viewport. It has to be the
+    edge and not a transform, because the height cap is measured from that edge — a sheet
+    that only translated would push its own footer off the top.
+  Only `KEYBOARD_LIFT` carries a duration; the other two inherit the surface's own, because
+  a duration in a shared string is a `duration-*` fight decided by class order. All three
+  are `cn`'d **after** the surface's classes: each overrides a `translate-y-*` or
+  `bottom-*` already set, so a caller that sets one itself is the escape hatch, not a bug.
+  The 285ms on `cubic-bezier(0.2, 0, 0, 1)` is Android's own IME animation, copied because
+  it cannot be followed — the per-frame position lives in `WindowInsetsAnimation.Callback`,
+  which Chromium never plumbs into the renderer, so the number arrives once, whole.
+- **A Base UI positioner is padded, not moved** (`hooks/use-keyboard-inset.ts`). A dropdown,
+  select, combobox or popover collides against a rect floating-ui computes in script, so the
+  fix is `collisionPadding` — which is also what `--available-height` is then measured
+  against, so a long list shortens instead of opening behind the keys. **Only under
+  `overlaysContent`**: where the keyboard shrinks the visual viewport instead, floating-ui
+  is already colliding above it and padding by the same number again would lift a flyout by
+  two keyboards. That is the whole reason the module is a store and not a
+  `getComputedStyle` call — the hook has to know *which* measurement answered.
+- **A field on an ordinary scrolling form is the caret keeper's** (`lib/keyboard-caret.ts`,
+  started in `main.tsx` beside the inset itself). The scroll-into-view a browser performs on
+  focus is driven by the visual viewport shrinking, so `overlays-content` turns it off and a
+  field near the bottom of a settings form is simply drawn under the keys. It scrolls the
+  nearest ancestor that can actually scroll, by the overlap plus a line, and it measures
+  **after** the surfaces above have ridden (320ms > 285ms) — so a composer or a dialog that
+  has already moved reports no overlap and nothing scrolls twice.
+
 ## Panel vs device width
 
 - **"Mobile" is two questions: width is the panel's, the pointer is the device's.**
@@ -945,10 +993,36 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   the cwd as a copy button, description, Edit / New thread), four tiles, a 30-day activity
   strip, the project's threads, and the rails beside them (what it is worked on with, what
   is scheduled against it, what it has accumulated). **The header carries a "Run" dropdown**:
-  the dev server's Restart (the built-in, carrying a live `DevBadge`) plus the user's
-  custom **helper commands** (`project_helpers`, `lib/workspace/project-helpers.ts`), run
-  in the project's cwd with the output rendered in `RunHelperDialog`. Helpers are edited
-  in Settings › Projects. The **live** half is the store's —
+  the user's custom **helper commands** (`project_helpers`, `lib/workspace/project-helpers.ts`),
+  repeated as one-tap chips in the page's Quick actions strip and edited in Settings ›
+  Projects. Beyond a name and a shell line a helper carries **where and how it runs** — a
+  project-relative `cwd`, extra `env` (typed `KEY=value` per line, stored as JSON), a
+  `description`, and `confirm`. **A helper's `cwd` is resolved inside the project or not at
+  all** (`containedPath`): an absolute path, a `..` that climbs out and a symlink pointing
+  away all fall back to the project's own cwd. It is clamped at the *spawn* rather than only
+  at the form, and it *clamps* rather than throwing the way `resolveInProject` does, because
+  the path comes off a stored row — which can arrive from an imported bundle — and not off a
+  request.
+- **A helper runs in a terminal panel, and that is the whole feature**
+  (`openHelperTerminal`, `lib/workspace/use-run-helper.ts`,
+  `POST /api/projects/:id/helpers/:helperId/terminal`). It used to be a one-shot `spawn`
+  whose captured output was posted back into a dialog, which meant every helper that *asked*
+  something — pick an environment, a password, `[y/N]` — hung against a stdin that was never
+  coming and then died at the two-minute timeout with the question as its last line. A PTY is
+  the thing that can be answered and the terminal panel is where the harness already knows
+  how to draw one, so a helper is now a terminal that starts with its command typed in — and
+  inherits the scrollback, the search, the key row and the detach/reattach for free. **There
+  is no run dialog and no run timeout**: the terminal's own detach grace and idle sweep bound
+  it, and a countdown that kills a program *while it waits for the user's answer* is a bug,
+  not a setting. **The command, the directory and the environment are read from the row on
+  the server**, never sent up — a helper the browser could define on the way out is an
+  arbitrary-exec route wearing a helper's name. **A `confirm` helper asks before the terminal
+  exists**, through the app's own confirm dialog, because a PTY starts the instant it is
+  created and there is no later moment to ask in; the mark that says so is drawn on both the
+  menu row and the chip. **The project page has no dock**, so its helpers *queue* the panel
+  (`pending-panels.ts`) and then navigate to a thread, the same trade `openRules` makes.
+  A terminal's `title` is the name it was created under (a helper's) or null for a plain
+  shell, which the panel keeps titling after its project. The **live** half is the store's —
   `state.sessions` already carries every thread with its process state, so the thread list,
   the running/waiting dots and the scheduled rows need no request and are right the moment a
   turn starts; the status reading is the sidebar's exactly (`turnActive` ?? `promptActive`,
@@ -1005,6 +1079,21 @@ goes to it.
   (the server's newest 50), and say "50+" rather than a total they do not know.
   Triggers and runs are read on this page and nowhere else; `trigger-summary.ts` is how a
   trigger is said in one line.
+- **The routine form is a rail of six sections, one in front at a time** — basics, how it
+  starts, what it runs, autonomy, limits and overlap, when it finishes — and the same
+  component draws the create page and the detail page's Settings tab. Stacked, it was the
+  widest thing in the harness configured in one sitting and the section that can hand an
+  agent a standing grant sat 400px below the fold. **Each rail row says what its section
+  currently holds**, read off the draft, so the whole routine is legible without opening
+  anything; **`problemOf` is the one validator and it names a section**, so the rail marks
+  what is not ready and submitting from anywhere jumps to it (`toInput` calls it — there is
+  no second copy). **Sections are hidden, never unmounted**: `DraftScopeRow` probes the
+  agent's option set on mount, and remounting it to look at the prompt would re-probe for
+  nothing. The action bar is sticky and carries the autonomy reading, so the distance from
+  changing a permission to committing it is zero from every section. `autonomy-control.tsx`
+  exports the policy in its two halves — `AutonomyPermissions` (the grant) and
+  `AutonomyLimits` (the guard rails) — in one file, because the object they write has one
+  owner.
 - **A schedule has a page too** (`/schedules/<id>`), and it has no history section on
   purpose: a delivered message is a turn in the thread it was sent to, and that
   transcript is the record. The page names the thread, says when it fires next and how

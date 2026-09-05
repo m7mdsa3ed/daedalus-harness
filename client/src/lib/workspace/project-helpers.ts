@@ -6,16 +6,25 @@
    Settings › Projects, and are run from the project page's header dropdown.
    Each function takes the connection to talk to — the query hooks in
    lib/queries supply it from the active server — so nothing here reaches for
-   a module-level active connection. The run's answer is a *result*, exit
-   code and output, not an error, unless the server itself rejected the
-   request. */
-import { api, type HelperCommand, type HelperRunResult, type ServerSettings } from "@/lib/settings"
+   a module-level active connection.
+
+   Running one is not here: it answers with a terminal rather than with output,
+   so it lives with the other terminal-creating calls in
+   `lib/workspace/terminals.ts` (`startHelperTerminal`). */
+import { api, type HelperCommand, type ServerSettings } from "@/lib/settings"
 
 const base = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}/helpers`
 
 export interface HelperInput {
   name: string
   command: string
+  /** Project-relative directory; empty/absent = the project's cwd. */
+  cwd?: string | null
+  /** Extra environment variables; empty/absent = none. */
+  env?: Record<string, string> | null
+  description?: string | null
+  /** Ask before running. */
+  confirm?: boolean
 }
 
 export function addHelper(
@@ -47,12 +56,4 @@ export function deleteHelper(
   helperId: string
 ): Promise<{ ok: boolean }> {
   return api<{ ok: boolean }>(settings, `${base(projectId)}/${helperId}`, { method: "DELETE" })
-}
-
-export function runHelper(
-  settings: ServerSettings,
-  projectId: string,
-  helperId: string
-): Promise<HelperRunResult> {
-  return api<HelperRunResult>(settings, `${base(projectId)}/${helperId}/run`, { method: "POST" })
 }

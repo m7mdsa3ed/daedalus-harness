@@ -16,13 +16,13 @@ import { Logo } from "@/components/ui/logo"
 import { LandingPage } from "@/components/landing/landing-page"
 import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
 import { ThreadHeaderMenu } from "@/components/thread-menu"
-import { RunHelperDialog } from "@/components/run-helper-dialog"
 import { ContextIndicator } from "@/components/composer-status"
 import { ProfileIcon, ProjectIcon } from "@/components/entity-icon"
 import { NotificationBell } from "@/components/notifications/bell"
 import { NotificationsInboxPage } from "@/components/notifications/page"
 import { panelId, type PanelKind } from "@/lib/workspace/panels"
 import { openTerminal } from "@/components/workspace/terminal-panel"
+import { useRunHelper } from "@/lib/workspace/use-run-helper"
 import { RoutinesPage } from "@/components/routines-page"
 import { SchedulePage } from "@/components/schedule-page"
 import { TasksWorkspace } from "@/components/tasks"
@@ -59,8 +59,6 @@ import {
 } from "@/lib/router"
 import { consumeNewTab, markNewTab } from "@/lib/session-tabs"
 import { consumeQueuedPanels } from "@/lib/workspace/pending-panels"
-import { previewPanel } from "@/lib/workspace/preview-bridge"
-import { BuildPage } from "@/components/build-page"
 import { useShortcut } from "@/hooks/use-hotkey"
 import { useChord } from "@/lib/keybindings"
 import { formatChord, KEYS } from "@/lib/shortcuts"
@@ -194,9 +192,8 @@ export function AppShell({
   const inBoard = location.pathname.startsWith("/board")
   const inProject = location.pathname.startsWith("/projects")
   const inNotifications = location.pathname.startsWith("/notifications")
-  const inBuild = location.pathname.startsWith("/build")
   const sessionId =
-    inSettings || inSchedule || inRoutines || inBoard || inProject || inNotifications || inBuild
+    inSettings || inSchedule || inRoutines || inBoard || inProject || inNotifications
       ? null
       : currentThreadId(location.pathname, location.search)
   const section = inSettings ? sectionOf(location.pathname.split("/")[2] ?? "") : null
@@ -206,18 +203,14 @@ export function AppShell({
   const active = sessions.find((s) => s.id === sessionId)
   const ready = !loading && projects.length > 0 && profiles.length > 0
   const dock = useWorkspaceDock()
-  /* The routed thread's or active project's workspace, when it can run a dev server */
   const currentProjectId = inProject ? location.pathname.split("/")[2] : undefined
   const currentProject = projects.find((p) => p.id === currentProjectId)
   const activeProject = projects.find((p) => p.id === active?.projectId)
   const activeProfile = profiles.find((p) => p.id === active?.profileId)
   const effectiveProject = inProject ? currentProject : activeProject
-  const canPreview = !!effectiveProject?.devCommand
-  const [runningHelper, setRunningHelper] = React.useState<{ helper: HelperCommand; projectId: string } | null>(null)
+  const runHelper = useRunHelper(dock)
   const routeSessionRef = React.useRef(sessionId)
   routeSessionRef.current = sessionId
-  /** Threads this page load has already opened a preview beside. */
-  const autoPreviewed = React.useRef(new Set<string>())
   // The project the workspace panels act on: the routed thread's own or current project.
   const activeProjectRef = React.useRef<string | null>(null)
   activeProjectRef.current = effectiveProject?.id ?? null
@@ -232,29 +225,9 @@ export function AppShell({
     const meta = sessions.find((s) => s.id === sessionId)
     if (meta) {
       dock.openChat(sessionId, { newTab: consumeNewTab() })
-      /* Panels a page without a dock asked to open beside this thread — the
-         build page's preview. After the chat, so they split against it. */
-      const queued = consumeQueuedPanels()
-      for (const entry of queued) dock.openPanel(entry.panel, entry.options)
-      /* A thread of an app the harness scaffolded opens with its preview
-         beside it, the first time this page visits it — the preview is what
-         Build mode is *for*, and a thread revisited after a reload would
-         otherwise come back as a bare transcript. Once per thread per page
-         load, so closing the preview is respected for the rest of the visit;
-         in the background, so the chat keeps focus. */
-      const project = projects.find((p) => p.id === meta.projectId)
-      if (
-        queued.length === 0 &&
-        project?.templateId &&
-        project.devCommand &&
-        !autoPreviewed.current.has(meta.id) &&
-        !meta.draft
-      ) {
-        autoPreviewed.current.add(meta.id)
-        const panel = previewPanel(project.id)
-        if (!dock.isPanelOpen(panelId(panel)))
-          dock.openPanel(panel, { direction: "right", background: true })
-      }
+      /* Panels a page without a dock asked to open beside this thread. After
+         the chat, so they split against it. */
+      for (const entry of consumeQueuedPanels()) dock.openPanel(entry.panel, entry.options)
       return
     }
     /* A route for a thread nobody knows about: an unsent draft after a reload
@@ -387,19 +360,6 @@ export function AppShell({
 
   useShortcut("ide", () => {
     openWorkspacePanel("ide")
-  })
-
-  /* The preview: the Browser panel on the project's managed dev server. One
-     opener for the header button, the menu row, ⌘K and the chord — beside
-     the thread, or focused if it is already open. */
-  const openPreview = React.useCallback(() => {
-    const projectId = activeProjectRef.current
-    if (!projectId) return
-    dock.openPanel(previewPanel(projectId), { direction: "right" })
-  }, [dock])
-
-  useShortcut("preview", () => {
-    if (canPreview) openPreview()
   })
 
   /* The + on the tab strip. Same thread-creation path as ⌘N and the sidebar —
@@ -762,12 +722,6 @@ export function AppShell({
                   <ChevronRight className="hidden size-3.5 shrink-0 text-muted-foreground/60 sm:inline" />
                   <h1 className="truncate text-sm font-medium">Tasks</h1>
                 </>
-              ) : inBuild ? (
-                <>
-                  <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Workspace</span>
-                  <ChevronRight className="hidden size-3.5 shrink-0 text-muted-foreground/60 sm:inline" />
-                  <h1 className="truncate text-sm font-medium">Build an app</h1>
-                </>
               ) : inNotifications ? (
                 <>
                   <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Workspace</span>
@@ -853,34 +807,18 @@ export function AppShell({
                   pinned to the corner of a row. The sidebar keeps the row —
                   it goes to the inbox page. */}
               <NotificationBell />
-              {/* The one workspace panel that gets a button of its own: for an
-                  app project the preview is the point, and a click in the header
-                  beats a submenu two levels down. Gated on the project being
-                  able to run one, so it is never a dead control. */}
-              {canPreview && !inSettings && !inSchedule && !inBoard && !inNotifications && !inBuild && (
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  title="Open the preview"
-                  aria-label="Open the preview"
-                  onClick={openPreview}
-                >
-                  <AppWindowIcon />
-                </Button>
-              )}
               {/* One menu, not three icons. It holds what the + held (new
                   thread, the workspace panels), what the eye held (view
                   settings) and what the routed thread/project can be asked to do. */}
-              {!inSettings && !inSchedule && !inRoutines && !inBoard && !inNotifications && !inBuild && (
+              {!inSettings && !inSchedule && !inRoutines && !inBoard && !inNotifications && (
                 <ThreadHeaderMenu
                   actions={actions}
                   session={active}
                   project={effectiveProject}
                   onNewTab={newThreadInTab}
                   onOpenPanel={openWorkspacePanel}
-                  onOpenPreview={canPreview ? openPreview : undefined}
                   onOpenInNewTab={(thread) => dock.openChat(thread.id, { newTab: true })}
-                  onRunHelper={(helper, pId) => setRunningHelper({ helper, projectId: pId })}
+                  onRunHelper={(helper, pId) => void runHelper(helper, pId)}
                   dock={dock}
                 />
               )}
@@ -993,10 +931,6 @@ export function AppShell({
               Outside /settings on purpose — settings holds the *form*, and a
               workspace with a history is not a settings screen. */}
           <Route path="/projects/:projectId" element={<ProjectPage actions={actions} />} />
-          {/* The app builder: a starter, a prompt, and out the other side a
-              project, a thread and a preview. Before the thread catch-alls,
-              like every other place. */}
-          <Route path="/build" element={<BuildPage actions={actions} />} />
           {/* The task workspace: one board per URL, a task's detail as a
               search param, so both survive a reload and can be shared. */}
           <Route
@@ -1031,13 +965,6 @@ export function AppShell({
       {/* Owned here rather than by the palette, which unmounts as soon as a
           command runs. The project page mounts its own, scoped to itself. */}
       <ImportThreadsDialog open={importing} onOpenChange={setImporting} actions={actions} />
-      {runningHelper && (
-        <RunHelperDialog
-          helper={runningHelper.helper}
-          projectId={runningHelper.projectId}
-          onClose={() => setRunningHelper(null)}
-        />
-      )}
     </SidebarProvider>
   )
 }

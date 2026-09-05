@@ -1286,6 +1286,7 @@ export type Action =
   | { type: "permission"; id: string; permission: PendingPermission | null }
   | { type: "elicitation"; id: string; elicitation: PendingElicitation | null }
   | { type: "session-title"; id: string; title: string }
+  | { type: "agent-session-title"; id: string; title: string }
   | { type: "rename-session"; id: string; title: string }
   /** Absolute state, with one hole: an event may carry modes and leave the
       options out, which means "unchanged" and not "none". The reducer is where
@@ -1590,6 +1591,13 @@ export function reducer(state: State, action: Action): State {
         ...state,
         sessions: state.sessions.map((s) =>
           s.id === action.id && s.title === "New thread" ? { ...s, title: action.title } : s
+        ),
+      }
+    case "agent-session-title":
+      return {
+        ...state,
+        sessions: state.sessions.map((s) =>
+          s.id === action.id && s.title !== "New thread" ? { ...s, title: action.title } : s
         ),
       }
     /* The sniff above yields to a name that was chosen; this one is that name,

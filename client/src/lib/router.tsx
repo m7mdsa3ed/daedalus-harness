@@ -45,7 +45,6 @@ export const boardPath = (boardId?: string, taskId?: string) =>
    the harness scaffolds a project, opens the thread and frames the preview.
    A place of its own — not a settings form, not a thread — because it ends
    in a thread that did not exist when the page was opened. */
-export const buildPath = () => `/build`
 /* The inbox as a place. The header's bell is the glance at it; this is the
    whole history, and it is not a settings screen — Settings › Notifications is
    where push is *configured*, which is a different question. */

@@ -23,7 +23,10 @@ function ToastViewport({ className, ...props }: ToastPrimitive.Viewport.Props) {
     <ToastPrimitive.Viewport
       data-slot="toast-viewport"
       className={cn(
-        "pointer-events-none fixed inset-x-4 bottom-4 z-50 mx-auto w-auto max-w-sm outline-none sm:right-4 sm:left-auto sm:mx-0 sm:w-full",
+        /* Above the soft keyboard, which the page does not resize for: a
+           toast is where a failure with no surface to go back to lands, and
+           the surface it failed on is usually the one being typed into. */
+        "pointer-events-none fixed inset-x-4 bottom-[calc(1rem+var(--keyboard-inset,0px))] z-50 mx-auto w-auto max-w-sm outline-none transition-[bottom] duration-[285ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none sm:right-4 sm:left-auto sm:mx-0 sm:w-full",
         className
       )}
       {...props}

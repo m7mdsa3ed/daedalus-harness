@@ -13,6 +13,7 @@ import {
   RECONNECT_MAX_ATTEMPTS,
   describePhase,
   isOpening,
+  isRecoverableClose,
   reduceConn,
   samePhase,
   type ConnEvent,
@@ -62,9 +63,6 @@ export interface ThreadDeps {
   /** The same list, or `undefined` while the first read is still in flight. */
   projectsLoaded: () => Project[] | undefined
   refreshSessions: () => Promise<void>
-  /** Invalidate the projects slice of the catalog — for `project_changed`,
-      which says a row moved without saying it is the only thing that did. */
-  refreshProjects: () => Promise<void>
   /** Told when this thread stops being reachable at all, so the registry can
       forget it. The connection cannot remove itself from a map it does not
       own. */
@@ -649,7 +647,12 @@ export class ThreadConnection {
    * `silent` is the automatic-backoff path: a failed attempt is not worth a
    * transcript row of its own — the ladder reports once, at give-up.
    */
-  async reconnect(silent = false, probe?: () => Promise<boolean>): Promise<void> {
+  async reconnect(
+    silent = false,
+    probe?: () => Promise<boolean>,
+    opts: { revive?: boolean } = {}
+  ): Promise<void> {
+    const revive = opts.revive ?? true
     /* An automatic attempt asks the cheap unauthenticated question first. Every
        rung of every thread's ladder otherwise costs a full
        `/api/sessions?deleted=1` — the whole list, deleted rows included, once
@@ -694,12 +697,37 @@ export class ThreadConnection {
       })
       return
     }
-    /* Always `revive`, on every reconnect path. Opening a thread from the UI may
-       serve its archive read-only, but a reconnect never should: the socket
-       closed because the process died (or was taken over), and the thread the
-       user is looking at was live a moment ago. Attaching to the journal instead
-       would turn a crash into a silently read-only thread. */
-    await this.open(meta, { revive: true })
+    /* `revive` on every path the *user* asked for. Opening a thread from the UI
+       may serve its archive read-only, but a reconnect the user pressed never
+       should: the socket closed because the process died (or was taken over),
+       and the thread they are looking at was live a moment ago. Attaching to
+       the journal instead would turn a crash into a silently read-only thread.
+
+       An automatic rung is the opposite reading, and deliberately: nobody asked
+       for anything, so it asks for the thread as it is. A live process gets its
+       socket back; a retired one is read from its journal and stays read, until
+       a send revives it. */
+    if (!revive && meta.exited && meta.cursor === 0) {
+      /* Retired with no journal to read and nothing this attempt may spawn.
+         Not a rung to keep climbing — the ladder is for a path that is coming
+         back, and this thread is answering. Say it once, with the button that
+         does what only a person can ask for. */
+      this.clearRecovery()
+      this.apply({
+        type: "failed",
+        title: "This thread is no longer running",
+        reason: "The conversation is restored when the agent is revived.",
+        recover: "revive",
+      })
+      return
+    }
+    await this.open(meta, { revive })
+    /* The attempt landed. A socket that came up has already cleared the ladder
+       from `onStatus`, but the other honest outcome — reattached to a thread
+       whose agent has been retired, read from its journal — never raises
+       `connected`, and leaving the counters set would let the next close start
+       halfway up a ladder that had in fact succeeded. */
+    this.clearRecovery()
   }
 
   /** Put an agent process back under a thread that has none — the ladder's
@@ -778,7 +806,7 @@ export class ThreadConnection {
   }
 
   private attemptReconnect(probe?: () => Promise<boolean>): Promise<void> {
-    return this.reconnect(true, probe).catch((error) => {
+    return this.reconnect(true, probe, { revive: false }).catch((error) => {
       console.warn(`Reconnecting thread ${this.id} failed`, error)
       this.scheduleReconnect(error, probe)
     })
@@ -904,8 +932,10 @@ export class ThreadConnection {
       dispatch({ type: "batch", actions: pending })
     }
     return {
-      onUpdate: (update, historyReplay, sessionId) =>
-        sendStream({ type: "update", id, update, allowUserChunks: historyReplay, sessionId }),
+      onUpdate: (update, historyReplay, sessionId) => {
+        sendStream({ type: "update", id, update, allowUserChunks: historyReplay, sessionId })
+      },
+      onSessionTitle: (title) => send({ type: "agent-session-title", id, title }),
       /* The agent is blocked on this question until somebody answers it. The
          server holds its promise now, so `resolve` is a message rather than a
          callback: it names the request the server minted, which is also how a
@@ -963,22 +993,45 @@ export class ThreadConnection {
            status is about a connection nobody is using — letting it through
            marks the live thread dead and, worse, books a reconnect against it. */
         if (this.socket !== owner()) return
-        /* A close is no longer answered by a ladder of its own. A socket exists
-           because a message needed one, and when it goes the honest state is
-           "not connected" — said once, with the reason and a button — rather
-           than a backoff running against a thread nobody is sending to. The
-           next send opens one (`ready`), and so does the button. */
+        /* A close that says nothing about the thread — a bare 1006, no code at
+           all, the watchdog giving up on a silent path — is the server having
+           restarted or the network having blinked, and both come back. So this
+           end comes back with them, rather than leaving a dead banner in front
+           of a thread that is still there: the ladder reattaches, and when it
+           is spent the thread parks, which the health poll un-parks the moment
+           the server answers again.
+
+           What it still does not do is put a process back. An automatic
+           attempt asks for the thread as it is (`revive: false`), so a live
+           agent gets its socket and a retired one is read from its journal —
+           nothing respawns behind the reader's back. The codes that mean the
+           thread itself is gone or taken over are the failure they always were
+           (`isRecoverableClose`), with the reason and a button. */
         if (status === "connected") {
           this.clearRecovery()
           this.apply({ type: "socket-live" })
         } else if (status === "closed") {
+          const recoverable =
+            !closeInfo?.clientInitiated &&
+            !this.disposed &&
+            isRecoverableClose(closeInfo?.code)
           this.apply({
             type: "socket-closed",
-            willReconnect: false,
+            willReconnect: recoverable,
             clientInitiated: closeInfo?.clientInitiated,
             reason: closeInfo?.reason,
             code: closeInfo?.code,
           })
+          /* After the phase, never before: `scheduleReconnect` writes
+             `retry-scheduled` (or `parked`), and that is the state the reader
+             is owed — a close landing over the top of it is the ordering bug
+             `reduceConn` was written to make impossible. */
+          if (recoverable) {
+            this.scheduleReconnect(
+              new Error(closeInfo?.reason || "the connection to the thread closed"),
+              this.probe
+            )
+          }
           /* A dead socket ends any turn it was carrying, and settles it: the
              turn is the server's and it runs on with nobody attached, but
              nothing here is going to hear the end of it, so leaving the tools
@@ -1032,7 +1085,6 @@ export class ThreadConnection {
       onTurnChanges: (turn) => send({ type: "turn-changes", id, turn }),
       /* The catalog is TanStack Query's; the row is refetched, not patched
          in from a socket frame (docs/client.md, "one owner per slice"). */
-      onProjectChanged: () => void this.deps.refreshProjects(),
       onTurnEnded: (usage, error, promptText, catchingUp, continued, turnId, durationMs) => {
         send({ type: "turn-active", id, active: false })
         if (usage) send({ type: "usage", id, usage, turnId, durationMs })

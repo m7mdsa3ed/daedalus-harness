@@ -17,6 +17,7 @@ import { ProjectIcon } from "@/components/entity-icon"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import { Switch } from "@/components/ui/switch"
 import { PathInput } from "@/components/ui/suggesting-input"
 import { api, type HelperCommand, type Project, type ServerSettings } from "@/lib/settings"
 import { useInvalidateCatalog, useProjects } from "@/lib/queries/catalog"
@@ -32,6 +33,7 @@ import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, For
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { projectPath, settingsFormPath, settingsPath } from "@/lib/router"
+import { type HelperInput } from "@/lib/workspace/project-helpers"
 
 export function ProjectsPage() {
   const { settings } = useSettingsPage()
@@ -144,7 +146,6 @@ export function ProjectForm({
     cwd: project?.cwd ?? "",
     description: project?.description ?? "",
     logoUrl: project?.logoUrl ?? "",
-    devCommand: project?.devCommand ?? "",
   }))
   const [busy, setBusy] = React.useState(false)
   const [saveError, setSaveError] = React.useState<InlineError | null>(null)
@@ -161,10 +162,6 @@ export function ProjectForm({
         cwd: form.cwd === "/" ? form.cwd : form.cwd.replace(/\/+$/, ""),
         description: form.description.trim() || null,
         logoUrl: form.logoUrl.trim(),
-        devCommand: form.devCommand.trim() || null,
-        /* Round-tripped, not edited: the template a project came from is a
-           record, and a PUT that left it out would null it. */
-        templateId: project?.templateId ?? null,
       }
       if (project) {
         await api(settings, `/api/projects/${project.id}`, { method: "PUT", body: JSON.stringify(payload) })
@@ -205,18 +202,6 @@ export function ProjectForm({
             onChange={(e) => set({ description: e.target.value })}
             rows={2}
             placeholder="What runs here, and why."
-          />
-        </Field>
-        <Field
-          label="Dev command"
-          hint="Optional — what the harness runs to serve the app in the preview panel. It gets PORT and BASE_PATH in its environment; empty means no preview."
-        >
-          <Input
-            value={form.devCommand}
-            onChange={(e) => set({ devCommand: e.target.value })}
-            placeholder="pnpm dev"
-            className="font-mono text-xs"
-            spellCheck={false}
           />
         </Field>
         <Field label="Logo URL" hint="Optional — shown next to this project in the sidebar and pickers. Empty shows the project's initial.">
@@ -260,17 +245,48 @@ function HelpersSection({ project }: { project: Project | null }) {
   const [editingId, setEditingId] = React.useState<string | null>(null)
   const [name, setName] = React.useState("")
   const [command, setCommand] = React.useState("")
+  const [description, setDescription] = React.useState("")
+  const [cwd, setCwd] = React.useState("")
+  const [envText, setEnvText] = React.useState("")
+  const [confirm, setConfirm] = React.useState(false)
+  const [envProblem, setEnvProblem] = React.useState<string | null>(null)
+
+  /** `KEY=value` per line — friendlier to type than JSON, lossless to parse. */
+  const parseEnvText = (text: string): Record<string, string> | null => {
+    const out: Record<string, string> = {}
+    for (const raw of text.split("\n")) {
+      const line = raw.trim()
+      if (!line || line.startsWith("#")) continue
+      const eq = line.indexOf("=")
+      const key = eq === -1 ? "" : line.slice(0, eq).trim()
+      if (!key) return null
+      out[key] = line.slice(eq + 1).trim()
+    }
+    return out
+  }
 
   const startEdit = (helper: HelperCommand) => {
     setEditingId(helper.id)
     setName(helper.name)
     setCommand(helper.command)
+    setDescription(helper.description ?? "")
+    setCwd(helper.cwd ?? "")
+    setEnvText(
+      helper.env ? Object.entries(helper.env).map(([k, v]) => `${k}=${v}`).join("\n") : ""
+    )
+    setConfirm(helper.confirm)
+    setEnvProblem(null)
   }
 
   const cancelEdit = () => {
     setEditingId(null)
     setName("")
     setCommand("")
+    setDescription("")
+    setCwd("")
+    setEnvText("")
+    setConfirm(false)
+    setEnvProblem(null)
   }
 
   const save = async (e: React.FormEvent) => {
@@ -280,18 +296,34 @@ function HelpersSection({ project }: { project: Project | null }) {
     const trimmedCmd = command.trim()
     if (!trimmedName || !trimmedCmd) return
 
+    const env = parseEnvText(envText)
+    if (env === null) {
+      setEnvProblem("Some lines aren't KEY=value — fix them to save.")
+      return
+    }
+    setEnvProblem(null)
+
+    const input: HelperInput = {
+      name: trimmedName,
+      command: trimmedCmd,
+      description: description.trim() || null,
+      cwd: cwd.trim() || null,
+      env: env && Object.keys(env).length > 0 ? env : null,
+      confirm,
+    }
+
     setSaving(true)
     try {
       if (editingId) {
         await updateHelperMutation.mutateAsync({
           projectId,
           helperId: editingId,
-          input: { name: trimmedName, command: trimmedCmd },
+          input,
         })
       } else {
         await addHelperMutation.mutateAsync({
           projectId,
-          input: { name: trimmedName, command: trimmedCmd },
+          input,
         })
       }
       cancelEdit()
@@ -332,9 +364,20 @@ function HelpersSection({ project }: { project: Project | null }) {
                   <SquareTerminal className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium break-words">{h.name}</div>
+                    {h.description && (
+                      <div className="mt-0.5 text-xs break-words text-muted-foreground">
+                        {h.description}
+                      </div>
+                    )}
                     <div className="mt-0.5 font-mono text-xs break-all text-muted-foreground">
                       {h.command}
                     </div>
+                    {(h.cwd || h.confirm) && (
+                      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+                        {h.cwd && <span className="font-mono">cwd: {h.cwd}</span>}
+                        {h.confirm && <span>asks first</span>}
+                      </div>
+                    )}
                   </div>
                   <Button
                     type="button"
@@ -372,7 +415,10 @@ function HelpersSection({ project }: { project: Project | null }) {
                 required
               />
             </Field>
-            <Field label="Command" hint="Run with the shell in the project's cwd. Up to 2 minutes.">
+            <Field
+              label="Command"
+              hint="Runs in a terminal panel, so a command that asks something can be answered."
+            >
               <Input
                 value={command}
                 onChange={(e) => setCommand(e.target.value)}
@@ -382,6 +428,42 @@ function HelpersSection({ project }: { project: Project | null }) {
                 required
               />
             </Field>
+            <Field label="Description" hint="Shown in the Run menu and before the command runs.">
+              <Input
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="What this command does, if the name isn't enough"
+              />
+            </Field>
+            <Field label="Working directory" hint="Project-relative. Empty = the project root.">
+              <Input
+                value={cwd}
+                onChange={(e) => setCwd(e.target.value)}
+                placeholder="packages/server"
+                className="font-mono text-xs"
+                spellCheck={false}
+              />
+            </Field>
+            <Field label="Environment" hint="One variable per line, KEY=value.">
+              <Textarea
+                value={envText}
+                onChange={(e) => setEnvText(e.target.value)}
+                placeholder={"DATABASE_URL=postgres://localhost/app\nNODE_ENV=development"}
+                rows={2}
+                className="min-h-0 font-mono text-xs"
+                spellCheck={false}
+              />
+              {envProblem && <p className="text-xs text-destructive">{envProblem}</p>}
+            </Field>
+            <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+              <div className="min-w-0">
+                <div className="text-xs font-medium">Ask before running</div>
+                <div className="text-[11px] text-muted-foreground">
+                  Confirm the command before its terminal opens — for the destructive ones.
+                </div>
+              </div>
+              <Switch checked={confirm} onCheckedChange={setConfirm} aria-label="Ask before running" />
+            </div>
             <div className="flex justify-end gap-2">
               {editingId && (
                 <Button type="button" variant="ghost" size="sm" onClick={cancelEdit} disabled={saving}>

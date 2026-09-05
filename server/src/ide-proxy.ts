@@ -10,7 +10,7 @@
  * every one of them without code-server needing to know it exists.
  *
  * The transport — header rules, the raw-socket upgrade pipe — is
- * `reverse-proxy.ts`, shared with `preview-proxy.ts`. What is this file's:
+ * `reverse-proxy.ts`. What is this file's:
  *
  * - *`location` is re-prefixed.* A redirect to `/?folder=…` is code-server
  *   speaking in its own root, which is not the browser's; left alone it walks

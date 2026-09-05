@@ -240,14 +240,6 @@ export const projects = sqliteTable("projects", {
       folder, pickers, the projects list. Null/empty means "no logo", which
       falls back to the project's initial in the client. */
   logoUrl: text("logo_url"),
-  /** The command that runs this project's dev server (`dev-server.ts`), e.g.
-      `pnpm dev`. Null for a project that has none — most of them; set by the
-      template scaffold and editable in the project form. */
-  devCommand: text("dev_command"),
-  /** The template (`templates/<id>/`) this project was scaffolded from, or null.
-      Provenance only — nothing is re-read from the template afterwards except
-      its install command, when a dev start finds no `node_modules`. */
-  templateId: text("template_id"),
 });
 
 /** The harness's own MCP servers, as library rows. `builtin` names which; the
@@ -465,6 +457,13 @@ export const projectHelpers = sqliteTable(
       .references(() => projects.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     command: text("command").notNull(),
+    /** Project-relative directory to run in; null = the project's own cwd. */
+    cwd: text("cwd"),
+    /** Extra environment variables, stored as a JSON object; null = none. */
+    env: text("env"),
+    description: text("description"),
+    /** Ask before running — for the destructive ones. */
+    confirm: integer("confirm", { mode: "boolean" }).notNull().default(false),
     createdAt: integer("created_at").notNull(),
   },
   (t) => [index("project_helpers_project").on(t.projectId)],
@@ -483,6 +482,13 @@ export const sessions = sqliteTable(
     agentId: text("agent_id").notNull(),
     model: text("model").notNull(),
     effort: text("effort").notNull(),
+    /** The permission mode picked for this thread, or null for the agent's
+        default. A spawn input like model and effort — and unlike them it is
+        applied over `session/set_mode` right after the session exists, so a
+        revive without a live process to copy from (idle-retired, pre-restart)
+        puts it back from the row instead of coming back on default. Written on
+        every accepted `set_mode`, not just the draft pick. */
+    modeId: text("mode_id"),
     /** The persona this thread runs under, or null for none. Not a foreign key
         either, and for the same reason `parent_session_id` below is not: a row
         vanishing out from under a live thread is the manager's business, not
@@ -1355,31 +1361,6 @@ export const attachments = sqliteTable(
     claimedAt: integer("claimed_at"),
   },
   (t) => [index("attachments_session").on(t.sessionId), index("attachments_sha").on(t.sha256)],
-);
-
-/**
- * Saved preview URLs, per project.
- *
- * A dev server's address is a property of the project, not of a browser tab —
- * you want the same `localhost:5173` back on the phone that you saved on the
- * laptop, and a panel that forgets it on every reload is one you stop using.
- * So it lives here rather than in localStorage like the device-local stores.
- *
- * Only project-trust previews are stored. An external-trust page is not a
- * project resource and must not gain one by being bookmarked.
- */
-export const projectPreviews = sqliteTable(
-  "project_previews",
-  {
-    id: text("id").primaryKey(),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
-    label: text("label").notNull(),
-    url: text("url").notNull(),
-    createdAt: integer("created_at").notNull(),
-  },
-  (t) => [index("preview_project").on(t.projectId)],
 );
 
 /**

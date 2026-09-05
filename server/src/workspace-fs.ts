@@ -167,6 +167,32 @@ export function resolveInProject(root: string, rawPath: string | undefined | nul
   return target;
 }
 
+/**
+ * A *stored* relative path → an absolute one inside the project, clamped.
+ *
+ * `resolveInProject` above throws, because there the path came off a request
+ * and a client that sent a bad one is confused. This one is for a path that
+ * was saved earlier — a helper's working directory — where the reader is a
+ * spawn, not a route, and where the row can arrive from an imported bundle or
+ * an edited database. Refusing to run at all is worse than running where the
+ * label promised, so an absolute path, a `..` that climbs out, and a symlink
+ * pointing away all fall back to the root instead of throwing.
+ */
+export function containedPath(root: string, relative: string | undefined | null): string {
+  const raw = (relative ?? "").trim();
+  if (raw === "" || raw === "." || raw.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(raw)) return root;
+  const target = resolve(root, normalize(raw));
+  if (!within(root, target)) return root;
+  try {
+    // Only when it exists: a helper naming a directory its own command creates
+    // is asked for by name, and the spawn's own ENOENT is the honest answer.
+    if (existsSync(target) && !within(root, realpathSync(target))) return root;
+  } catch {
+    return root;
+  }
+  return target;
+}
+
 /** Absolute → the project-relative form the client speaks. */
 export function relativePath(root: string, absolute: string): string {
   const rel = relative(root, absolute);

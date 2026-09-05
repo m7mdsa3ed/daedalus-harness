@@ -30,11 +30,10 @@ import { fetchProjectStats, type ProjectStats } from "@/lib/workspace/project-st
 import {
   addHelper,
   deleteHelper,
-  runHelper,
   updateHelper,
   type HelperInput,
 } from "@/lib/workspace/project-helpers"
-import type { HelperCommand, HelperRunResult } from "@/lib/settings"
+import type { HelperCommand } from "@/lib/settings"
 import {
   agentQuotaKey,
   allKnowledgeKey,
@@ -359,8 +358,8 @@ export function useClearComposerHistory() {
 /* The rows ride on `Project.helpers` (folded into `useProjects` by the
    server's list), so nothing here reads them — only the writes exist, and
    each invalidates the projects list, which is where the next header read
-   comes from. Running is the one side-effect-free-on-the-list call, so it is
-   a bare mutation that returns the result for the dialog to draw. */
+   comes from. Running one is not here at all: it opens a terminal rather than
+   returning anything the cache holds (`openHelperTerminal`). */
 export function useAddHelper() {
   const settings = useServer()
   return useApiMutation<{ projectId: string; input: HelperInput }, HelperCommand>(
@@ -385,13 +384,5 @@ export function useDeleteHelper() {
   return useApiMutation<{ projectId: string; helperId: string }, { ok: boolean }>(
     () => [projectsKey(settings)],
     (s, input) => deleteHelper(s, input.projectId, input.helperId)
-  )
-}
-
-export function useRunHelper() {
-  const settings = useServer()
-  return useApiMutation<{ projectId: string; helperId: string }, HelperRunResult>(
-    [],
-    (s, input) => runHelper(s, input.projectId, input.helperId)
   )
 }

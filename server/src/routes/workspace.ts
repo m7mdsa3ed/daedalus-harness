@@ -25,23 +25,19 @@ import {
 } from "../workspace-fs.js";
 import { stopWatching, watchProject, type WatchBatch } from "../workspace-watch.js";
 import * as git from "../git.js";
-import { createPreview, deletePreview, listPreviews } from "../previews.js";
 import { createTerminal, killProjectTerminals, killTerminal, listTerminals } from "../terminals.js";
-import { forgetDevServer } from "../dev-server.js";
 import {
   HelperInputSchema,
   addHelper,
   deleteHelper,
   getHelper,
   listHelpers,
-  runHelperCommand,
   updateHelper,
 } from "../project-helpers.js";
 import { crud, flag, workspace } from "./helpers.js";
 
 /** Projects and everything scoped to a project's directory: the workspace
-    filesystem, saved previews, source control, the file watcher and the
-    terminals' JSON half. */
+    filesystem, source control, the file watcher and the terminals' JSON half. */
 export function workspaceRoutes(app: Hono): void {
   app.get("/api/projects", (c) => c.json(listProjects()));
   const projectCrud = crud(ProjectInputSchema);
@@ -54,9 +50,6 @@ export function workspaceRoutes(app: Hono): void {
     // this project any more — and a watcher nobody can unsubscribe from is a
     // handle held until the process exits.
     stopWatching(id);
-    // The manager's state first, so the pty's exit below is not reported as
-    // a dev server crashing; the terminals themselves go with the rest.
-    forgetDevServer(id);
     killProjectTerminals(id);
     return c.json({ ok: true });
   });
@@ -87,16 +80,32 @@ export function workspaceRoutes(app: Hono): void {
       : c.json({ error: "no such helper" }, 404),
   );
 
-  /* Running a helper is the one long one: the shell gets up to two minutes in
-     the project's cwd, and a non-zero exit is the *answer* (`ok: false` with
-     the output), not an HTTP error — the browser's dialog has a result to
-     draw either way. */
-  app.post("/api/projects/:id/helpers/:helperId/run", async (c) => {
+  /* Running a helper *is* opening a terminal on it. The route answers with the
+     `TerminalInfo` the browser then attaches a panel to, exactly as a plain
+     new terminal does — so a helper gets the terminal's whole chrome (a PTY it
+     can be answered through, scrollback, search, detach and reattach) instead
+     of a captured-output dialog that could never answer a prompt.
+
+     The command, the directory and the environment are read from the row here
+     rather than sent up: they are the *stored* definition, and a client that
+     could post its own would have turned a helper into an arbitrary-exec
+     endpoint wearing a helper's name. */
+  app.post("/api/projects/:id/helpers/:helperId/terminal", async (c) => {
     const id = c.req.param("id");
     const helper = getHelper(id, c.req.param("helperId"));
-    const project = helper ? getProject(id) : undefined;
-    if (!project || !helper) return c.json({ error: "no such helper" }, 404);
-    return c.json(await runHelperCommand(project.cwd, helper.command));
+    if (!helper) return c.json({ error: "no such helper" }, 404);
+    const body = await c.req.json().catch(() => ({}));
+    const { cols, rows } = body as { cols?: number; rows?: number };
+    return workspace(c, () =>
+      createTerminal(id, {
+        title: helper.name,
+        command: helper.command,
+        cwd: helper.cwd,
+        env: helper.env ?? undefined,
+        cols,
+        rows,
+      }),
+    );
   });
 
   /* The project overview's numbers — the half the browser cannot derive from
@@ -207,24 +216,6 @@ export function workspaceRoutes(app: Hono): void {
     if (typeof body.path !== "string") return c.json({ error: "path is required" }, 400);
     return workspace(c, () => deleteEntry(c.req.param("projectId"), body.path as string));
   });
-
-  /* Saved preview URLs. A project's dev-server address belongs to the project,
-     not to a browser tab — you want the same one back on the phone that you saved
-     on the laptop, which is why this is SQLite and not localStorage. */
-  app.get("/api/projects/:projectId/previews", (c) =>
-    workspace(c, () => listPreviews(c.req.param("projectId"))),
-  );
-
-  app.post("/api/projects/:projectId/previews", async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as { label?: unknown; url?: unknown };
-    return workspace(c, () => createPreview(c.req.param("projectId"), body.label, body.url));
-  });
-
-  app.delete("/api/projects/:projectId/previews/:previewId", (c) =>
-    deletePreview(c.req.param("previewId"))
-      ? c.json({ ok: true })
-      : c.json({ error: "no such preview" }, 404),
-  );
 
   /* Source control. Every write names its paths explicitly — there is no
      "everything" shortcut on discard, because the one destructive operation here

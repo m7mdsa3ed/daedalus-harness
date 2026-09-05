@@ -88,7 +88,6 @@ export function useActions(settings: ServerSettings) {
         refreshSessions: async () => {
           await refreshSessions()
         },
-        refreshProjects: () => queryClient.invalidateQueries({ queryKey: projectsKey(settings) }),
       },
       probe: serverReachable,
       onParked: startHealthPoll,
@@ -1091,6 +1090,54 @@ export function useActions(settings: ServerSettings) {
         threads.destroy(sessionId)
         await api(settings, `/api/sessions/${sessionId}?purge=1`, { method: "DELETE" })
         await refreshSessions()
+      },
+
+      /**
+       * Roll the thread back to before `turnId`, discarding that turn and
+       * everything after it. The server does fork, restore, respawn and
+       * journal clear in one call, so a tab closing mid-rewind cannot leave a
+       * half-rewound thread — and the journal ends up cleared and refilled
+       * from the fork, so the caller reattaches from 0 exactly as it does
+       * after a non-live config change (see `changeThreadConfig` above).
+       *
+       * - `conversation` = fork the agent session at the previous turn's last
+       *   message and respawn onto it. Needs the agent's rewind door
+       *   (`rewindVia`), otherwise the server answers 400.
+       * - `files` = restore the worktree to the turn's start tree, leaving the
+       *   transcript whole. Needs a file snapshot (404 without one).
+       * - `both` = the usual pick: cut the conversation AND restore the files.
+       *
+       * Refusals land in the thread, next to the turn that asked: a running
+       * turn is a 409 (cancel it first), a workflow step cannot be rewound at
+       * all, and an unknown turn is a 404.
+       */
+      async rewindThread(
+        sessionId: string,
+        turnId: string,
+        scope: "conversation" | "files" | "both"
+      ): Promise<void> {
+        try {
+          await postJson(settings, `/api/sessions/${sessionId}/rewind`, { turnId, scope })
+        } catch (error) {
+          recordError(sessionId, error, "Couldn't rewind this thread")
+          throw error
+        }
+        const listed = await refreshSessions()
+        /* The journal was cleared under this socket, so the saved cursor is
+           past the end of a log that has just started again — drop the socket
+           and the cursor with it, exactly as the respawn tail above does, and
+           rebuild from 0. */
+        const conn = threads.for(sessionId)
+        conn.forgetJournal()
+        conn.markReviving()
+        try {
+          const rewound = listed.find((session) => session.id === sessionId)
+          if (rewound) await conn.open(rewound, { revive: true })
+          else await reconnectThread(sessionId)
+        } catch (error) {
+          recordError(sessionId, error, "Rewound, but the thread couldn't be reopened — revive it")
+          throw error
+        }
       },
     }
   }, [settings, dispatch, getState])

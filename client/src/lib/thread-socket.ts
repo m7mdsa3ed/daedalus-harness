@@ -104,6 +104,7 @@ export interface ThreadCallbacks {
       the reducer takes user chunks only then. `sessionId` is set when the
       update is a subagent's (see the `update` event in the protocol). */
   onUpdate: (update: SessionUpdate, historyReplay: boolean, sessionId?: string) => void
+  onSessionTitle: (title: string) => void
   /** The agent is asking something. Answer with `answerPermission`. */
   onPermission: (requestId: string, request: acp.RequestPermissionRequest) => void
   onElicitation: (requestId: string, request: acp.CreateElicitationRequest) => void
@@ -139,10 +140,6 @@ export interface ThreadCallbacks {
   /** What a turn did to the worktree, as git measured it — live-only; the
       list on open comes from `GET /api/sessions/:id/changes`. */
   onTurnChanges: (turn: TurnChanges) => void
-  /** The thread's project row moved on the server's own initiative (a
-      from-scratch build that earned its dev command). Live-only; the row is
-      refetched, not read off the frame. */
-  onProjectChanged: () => void
   /** A turn began. Only ever seen for a prompt this device did NOT send — its
       own message is already on screen. `catchingUp` marks the replay. */
   onTurnStarted: (
@@ -601,6 +598,9 @@ export class ThreadSocket {
         this.raw?.push(event)
         this.fold(event)
         return
+      case "session_title":
+        this.callbacks.onSessionTitle(event.title)
+        return
       case "permission":
         this.callbacks.onPermission(event.requestId, event.request)
         return
@@ -624,9 +624,6 @@ export class ThreadSocket {
         return
       case "turn_changes":
         this.callbacks.onTurnChanges(event.turn)
-        return
-      case "project_changed":
-        this.callbacks.onProjectChanged()
         return
       case "task_event":
         this.callbacks.onTaskEvent(event.transcriptDir, event.event)

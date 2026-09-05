@@ -40,6 +40,14 @@ export function makeBridgeHost(session: Session, owner: BridgeHostOwner): Bridge
     onElicitationRequest: () => {
       if (!session.parentSessionId) owner.events.onElicitationRequest?.(session);
     },
+    onSessionTitle: (title) => {
+      const next = title.trim().slice(0, 200);
+      if (!next || (session.title !== "New thread" && session.titleFromPrompt !== session.title)) return;
+      session.title = next;
+      session.titleFromPrompt = null;
+      owner.persist(session);
+      owner.emit(session, { ev: "session_title", title: next });
+    },
     /* The model's half of the attachment decision (delivery.ts). Read per
        prompt rather than captured at spawn, and that is the point: the model
        and the profile both change on a running agent now, so a queued message
@@ -142,6 +150,10 @@ export function makeBridgeHost(session: Session, owner: BridgeHostOwner): Bridge
         session.model = session.profile ? bareModelId(session.profile, next.model) : next.model;
       }
       if (next.effort !== undefined) session.effort = next.effort;
+      /* The permission mode a `session/set_mode` just confirmed, or what the
+         handshake answered: the row is what a revive with no live process
+         restores from, so it always names the last confirmed mode. */
+      if (next.modeId !== undefined) session.modeId = next.modeId;
       owner.persist(session);
     },
   };

@@ -24,7 +24,6 @@ import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import {
   db,
   knowledge as knowledgeTable,
-  projectPreviews,
   scheduledMessages,
   sessionEvents,
   sessions as sessionsTable,
@@ -71,7 +70,6 @@ export interface ProjectStats {
   byAgent: { id: string; threads: number }[];
   byProfile: { id: string; threads: number }[];
   knowledge: number;
-  previews: number;
   /** Harness web-search MCP calls made from this project's threads. */
   webSearch: { searches: number; fetches: number };
   scheduled: { total: number; enabled: number };
@@ -163,13 +161,6 @@ export function projectStats(projectId: string, now = Date.now()): ProjectStats 
         .select({ n: sql<number>`count(*)` })
         .from(knowledgeTable)
         .where(eq(knowledgeTable.projectId, projectId))
-        .all(),
-    ),
-    previews: countOf(
-      db
-        .select({ n: sql<number>`count(*)` })
-        .from(projectPreviews)
-        .where(eq(projectPreviews.projectId, projectId))
         .all(),
     ),
     /* `web_search_usage` snapshots its own project id (it has to outlive the

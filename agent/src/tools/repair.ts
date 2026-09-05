@@ -323,6 +323,8 @@ function recentPaths(messages: unknown): string[] {
 }
 
 const CONTENT_PROBE_LIMIT = 4_000_000;
+/** How much unfinished argument text is worth holding for the next call. */
+const CARRY_LIMIT = 200_000;
 
 /** Does `path` hold `needle`? Silent on anything unreadable or huge — a probe
     that throws must not turn a repairable call into a crashed one. */
@@ -414,8 +416,13 @@ export function makeRepairToolCall(opts: RepairOptions | ((note: string) => void
       const schema = (await inputSchema({ toolName })) as JsonSchemaish;
       /* This call's own text first, behind anything a previous call in the
          step could not finish — a head and its tail are only whole together. */
-      const drained = harvest(carry ? `${carry} ${toolCall.input ?? ""}` : (toolCall.input ?? ""));
-      carry = drained.rest;
+      const drained = harvest(`${carry}${toolCall.input ?? ""}`);
+      /* Joined with nothing between them: a head and its tail were one buffer
+         before the stream split them, and a separator inserted here lands
+         inside whatever string the split fell in the middle of. Only an
+         unfinished value is worth carrying, and only so much of one — prose
+         and punctuation are noise that would otherwise accumulate all step. */
+      carry = /[{[]/.test(drained.rest) ? drained.rest.slice(-CARRY_LIMIT) : "";
       const mine = drained.values.length ? drained.values : [parseLoose(toolCall.input ?? "")];
       const candidates = [...mine, ...pending];
 

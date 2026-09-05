@@ -63,7 +63,6 @@ import { projectPath, settingsFormPath, threadPath } from "@/lib/router"
 import { type HelperCommand, type Project, type SessionMeta } from "@/lib/settings"
 import { useProjects } from "@/lib/queries/catalog"
 import { useServer } from "@/lib/server-context"
-import { devAction } from "@/lib/workspace/dev-server"
 import { useStoreSelect } from "@/lib/store"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -298,7 +297,6 @@ export function ThreadHeaderMenu({
   project: projectProp,
   onNewTab,
   onOpenPanel,
-  onOpenPreview,
   onOpenInNewTab,
   onRunHelper,
   dock,
@@ -308,8 +306,6 @@ export function ThreadHeaderMenu({
   project?: Project
   onNewTab: () => void
   onOpenPanel: (kind: PanelKind) => void
-  /** The preview row — only when the thread's project can run one. */
-  onOpenPreview?: () => void
   /** Open the routed thread in a second dock tab — the sidebar row's action,
       which needs the dock and so is handed down rather than done here. */
   onOpenInNewTab?: (session: SessionMeta) => void
@@ -323,22 +319,11 @@ export function ThreadHeaderMenu({
   const settings = useServer()
   const [viewSettings, setViewSettings] = React.useState(false)
   const [refreshing, setRefreshing] = React.useState(false)
-  const [restartingServer, setRestartingServer] = React.useState(false)
   const sessionId = session?.id
   const pins = usePins()
   const projects = useProjects()
   const project = projectProp ?? projects.find((p) => p.id === session?.projectId)
   const helpers = project?.helpers ?? []
-  const hasServer = !!project?.devCommand
-
-  const restartServer = React.useCallback(() => {
-    if (!project?.id || restartingServer) return
-    setRestartingServer(true)
-    devAction(settings, project.id, "restart")
-      .then(() => toast.success("Server restart initiated"))
-      .catch((err) => reportError(err, "Couldn't restart dev server"))
-      .finally(() => setRestartingServer(false))
-  }, [project?.id, restartingServer, settings])
   /* One boolean off one thread. This menu is drawn beside a live transcript,
      so reading the whole state here re-opened the question on every streamed
      token of every thread. Undefined = no live thread, which is what the
@@ -486,11 +471,10 @@ export function ThreadHeaderMenu({
           <WorkspacePanelItems
             onNewTab={onNewTab}
             onOpen={onOpenPanel}
-            onOpenPreview={onOpenPreview}
             canOpenPanels={!!session}
           />
           {dock && <WorkspaceLayoutItems dock={dock} />}
-          {project && (hasServer || helpers.length > 0) && (
+          {project && helpers.length > 0 && (
             <>
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
@@ -500,13 +484,6 @@ export function ThreadHeaderMenu({
                     <span className="truncate">Project commands</span>
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent className="w-56">
-                    {hasServer && (
-                      <DropdownMenuItem onClick={restartServer} disabled={restartingServer}>
-                        <RefreshCw className={cn("size-4 text-muted-foreground", restartingServer && "animate-spin")} />
-                        <span className="min-w-0 flex-1 truncate">Restart server</span>
-                      </DropdownMenuItem>
-                    )}
-                    {hasServer && helpers.length > 0 && <DropdownMenuSeparator />}
                     {helpers.map((h) => (
                       <DropdownMenuItem
                         key={h.id}

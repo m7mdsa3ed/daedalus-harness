@@ -45,7 +45,6 @@ import {
   ExternalLink,
   Clock,
   FolderIcon,
-  HammerIcon,
   ListFilter,
   Pin,
   SquareKanban,
@@ -87,7 +86,6 @@ import { IDLE_PHASE, markFor } from "@/lib/thread/phase"
 import type { Actions } from "@/lib/actions"
 import {
   boardPath,
-  buildPath,
   projectPath,
   routinesPath,
   schedulesPath,
@@ -130,7 +128,6 @@ export function SidebarNav({
   const location = useLocation()
   const navigate = useNavigate()
   const inBoard = location.pathname.startsWith("/board")
-  const inBuild = location.pathname.startsWith("/build")
   const inRoutines = location.pathname.startsWith("/routines")
   const inSchedules = location.pathname.startsWith("/schedules")
   // Both lists are loaded at boot (the palette and the pages read the same
@@ -170,23 +167,6 @@ export function SidebarNav({
               </ItemContextMenu>
             </SidebarMenuItem>
           )}
-          {/* The builder is a way to start work, like New thread — so it sits
-              with it, above the places. */}
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              size="sm"
-              tooltip="Build an app from a starter"
-              isActive={inBuild}
-              onClick={() => void navigate(buildPath())}
-              className={ROW}
-            >
-              <HammerIcon />
-              <span>Build an app</span>
-              <Badge variant="outline" className="ml-auto text-[10px] px-1.5 h-4 font-medium">
-                Experimental
-              </Badge>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               size="sm"

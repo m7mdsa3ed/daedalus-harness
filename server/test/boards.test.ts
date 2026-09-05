@@ -6,6 +6,7 @@
 //
 // Runs against a real (temp) database — importing db/index.js pushes the schema
 // into whatever DAEDALUS_DATA_DIR points at. Run: pnpm test:boards
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { asc, eq } from "drizzle-orm";
 import {

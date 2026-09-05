@@ -70,15 +70,3 @@ export const composerHistoryKey = (s: ServerSettings) => scope(s).concat(["compo
 export const agentOptionsKey = (s: ServerSettings, profileId: string, agentId: string, projectId?: string | null) =>
   scope(s).concat(["agent-options", profileId, agentId, projectId ?? ""])
 
-/* App builder (the starters, and each project's dev server). The dev status
-   is the one key in this file that must never be persisted: it carries a
-   per-boot preview key, and it is a process state that is wrong the moment
-   the page is closed — see `meta.persist` in `queries/dev-server.ts`. */
-export const templatesKey = (s: ServerSettings) => scope(s).concat(["templates"])
-export const devStatusKey = (s: ServerSettings, projectId: string) =>
-  scope(s).concat(["dev-status", projectId])
-/** The project's commits — the preview's History drawer. Refetched on the
-    file watcher's say-so and after every checkpoint/restore, never persisted:
-    a list of restore points that is a day stale is worse than a spinner. */
-export const projectHistoryKey = (s: ServerSettings, projectId: string) =>
-  scope(s).concat(["project-history", projectId])

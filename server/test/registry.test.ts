@@ -8,6 +8,7 @@
 // Runs against a real (temp) database, because seeding is a database rule —
 // importing db/index.js migrates whatever DAEDALUS_DATA_DIR points at.
 // Run: pnpm test:registry
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { eq } from "drizzle-orm";
 import { agentOptions as agentOptionsTable, agents as agentsTable, db } from "../src/db/index.js";

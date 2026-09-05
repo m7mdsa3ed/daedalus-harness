@@ -96,8 +96,8 @@ git("commit", "-q", "-m", "Scaffold");
 /* Real rows: the git half resolves the repository through the project row
    (`projectRoot`), so an in-memory object like the bridge test's would read
    as "no such project" the moment a restore was asked for. */
-const gitProject = createProject({ name: "rewind-git", cwd: gitRoot, description: null, logoUrl: "", devCommand: null, templateId: null });
-const plainProject = createProject({ name: "test-ws", cwd: "/tmp/daedalus-test-data/ws", description: null, logoUrl: "", devCommand: null, templateId: null });
+const gitProject = createProject({ name: "rewind-git", cwd: gitRoot, description: null, logoUrl: "" });
+const plainProject = createProject({ name: "test-ws", cwd: "/tmp/daedalus-test-data/ws", description: null, logoUrl: "" });
 
 // --- two turns, then rewind the second ---
 

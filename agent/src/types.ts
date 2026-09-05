@@ -19,7 +19,17 @@ export interface SubagentStateUpdate {
   _meta?: Record<string, unknown>;
 }
 
-export type AnySessionUpdate = acp.SessionUpdate | SubagentSpawned | SubagentStateUpdate;
+export interface SessionInfoUpdate {
+  sessionUpdate: "session_info_update";
+  title?: string;
+  updatedAt?: string;
+}
+
+export type AnySessionUpdate =
+  | acp.SessionUpdate
+  | SubagentSpawned
+  | SubagentStateUpdate
+  | SessionInfoUpdate;
 
 /** The `session/update` params shape, widened to carry the RFD kinds. */
 export interface UpdateParams {

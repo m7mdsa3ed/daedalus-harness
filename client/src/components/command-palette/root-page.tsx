@@ -32,7 +32,6 @@ import {
   FolderIcon,
   FolderPlus,
   Gauge,
-  Hammer,
   Keyboard,
   LogOut,
   MessageSquarePlusIcon,
@@ -73,8 +72,7 @@ import { reportError } from "@/lib/errors"
 import { currentChoiceLabel } from "@/lib/session-options"
 import { useKeybindings } from "@/lib/keybindings"
 import { KEYS } from "@/lib/shortcuts"
-import { boardPath, buildPath, newRoutinePath, settingsPath, settingsRootPath, threadPath } from "@/lib/router"
-import { previewPanel } from "@/lib/workspace/preview-bridge"
+import { boardPath, newRoutinePath, settingsPath, settingsRootPath, threadPath } from "@/lib/router"
 import {
   activityAt,
   clearSettings,
@@ -321,15 +319,6 @@ export function RootPage() {
     icon: <SquareKanban />,
     onSelect: () => palette.run(() => void navigate(boardPath())),
   })
-  items.push({
-    id: "create:build",
-    group: "Create",
-    title: "Build an app",
-    keywords: "app template starter scaffold preview website lovable bolt new project",
-    icon: <Hammer />,
-    subtitle: "Scaffold a starter, run its dev server, preview it beside the thread",
-    onSelect: () => palette.run(() => void navigate(buildPath())),
-  })
 
   /* ── This thread ── */
   if (meta) {
@@ -480,18 +469,6 @@ export function RootPage() {
      cannot be typed — and the two presets are the only way to get an
      arrangement back once it has been dragged into a shape nobody wanted. */
   if (meta) {
-    if (projects.find((project) => project.id === meta.projectId)?.devCommand) {
-      items.push({
-        id: "dock:preview",
-        group: "Workspace",
-        title: "Open the preview",
-        keywords: "app dev server live running build",
-        icon: <AppWindowIcon />,
-        chord: binds.preview.chords[0],
-        onSelect: () =>
-          palette.run(() => palette.dock.openPanel(previewPanel(meta.projectId), { direction: "right" })),
-      })
-    }
     items.push({
       id: "dock:web",
       group: "Workspace",

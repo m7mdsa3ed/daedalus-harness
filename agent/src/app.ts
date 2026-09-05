@@ -143,6 +143,14 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
         params.mcpServers,
       );
       session.messages = history.messages;
+      /* The mode the thread was left in — a load that answers default for a
+         thread running in plan mode is the reset this record exists to stop.
+         Guarded on the known ids, so a record written by a newer runtime
+         cannot smuggle an unknown mode into this one. */
+      if (history.mode && history.mode !== session.mode) {
+        const known = ["default", "acceptEdits", "bypassPermissions", "plan"];
+        if (known.includes(history.mode)) session.mode = history.mode as Session["mode"];
+      }
       /* The whole prior conversation streams back as ordinary updates before
          the response — the contract the harness's revive path is built on. */
       for (const u of history.updates) {
@@ -164,6 +172,9 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
         throw acp.RequestError.invalidParams(`unknown mode: ${params.modeId}`);
       }
       session.mode = params.modeId as Session["mode"];
+      /* Durable, so a `session/load` after a process restart answers the mode
+         the thread was left in rather than the default a fresh session gets. */
+      store.setMode(session.id, session.mode);
       await client.notify("session/update", {
         sessionId: session.id,
         update: { sessionUpdate: "current_mode_update", currentModeId: session.mode },

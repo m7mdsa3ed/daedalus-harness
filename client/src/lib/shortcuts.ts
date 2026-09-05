@@ -191,7 +191,6 @@ export type ShortcutId =
   | "splitRight"
   | "reopenPanel"
   | "terminal"
-  | "preview"
   | "ide"
   | "send"
   | "steer"
@@ -250,10 +249,6 @@ export const KEYS = {
       is not part of the vocabulary — and ⌘` is macOS's own "cycle windows",
       which this app should not be taking. */
   terminal: "mod+j",
-  /** The project's live preview, beside the thread. ⇧ on the terminal's
-      chord: the two are the same gesture — "show me the thing running" —
-      and nothing in Chromium or Electron claims ⌘⇧J's neighbour. */
-  preview: "mod+shift+e",
   /** The IDE, beside the thread. Not ⌘⇧E (VS Code's explorer chord): inside
       the panel Monaco binds its own keys, and a chord the app claims first is
       one the editor can never see. */
@@ -294,14 +289,6 @@ export const SHORTCUTS: ShortcutDef[] = [
     chords: [KEYS.ide],
     rebindable: true,
     note: "The editor, files, search and source control for the current thread's project.",
-  },
-  {
-    id: "preview",
-    scope: "Global",
-    label: "Open the preview",
-    chords: [KEYS.preview],
-    rebindable: true,
-    note: "The current thread's project, running in its managed dev server. Only for a project with a dev command.",
   },
   {
     id: "reopenPanel",

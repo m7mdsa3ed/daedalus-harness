@@ -526,13 +526,14 @@ export async function checkout(
   await run(dir, options.create ? ["checkout", "-b", branch, "--"] : ["checkout", branch, "--"]);
 }
 
-/* ── History: the checkpoints Build mode restores to ──
-   The App builder persona commits after every completed change, so the log
-   is a list of restore points in the user's own words. Restoring is a *new
-   commit* whose tree is the old one, never a reset: the history stays whole,
-   the dev server's watcher sees an ordinary write, and a restore can itself
-   be restored from. Anything uncommitted is committed first under its own
-   name, so the one thing a restore never does is lose work. */
+/* ── History ──
+   A wrapper over `git log` for the source-control panel, and the two
+   tree-arithmetic restores `session_turn_changes` and a thread rewind use:
+   putting the worktree at a tree is a *new commit* whose tree is the old one,
+   never a reset — the history stays whole, a watcher sees an ordinary write,
+   and the restore can itself be restored from. Anything uncommitted is
+   committed first under its own name, so the one thing a restore never does
+   is lose work. */
 
 export interface GitCommit {
   hash: string;
@@ -605,7 +606,7 @@ async function isDirty(dir: string): Promise<boolean> {
 }
 
 /** Commit under the harness's own identity when the machine has none — the
-    same fallback `templates.ts` uses for the scaffold commit. */
+    same fallback the checkpoint and rewind commits use. */
 async function commitAll(dir: string, message: string): Promise<void> {
   await run(dir, ["add", "--all"]);
   try {
@@ -619,33 +620,17 @@ async function commitAll(dir: string, message: string): Promise<void> {
   }
 }
 
-/** Commit everything as a named checkpoint. Answers whether there was
-    anything to commit — a clean tree is not a failure, it is "already
-    checkpointed". */
-export async function checkpoint(
-  projectId: string,
-  message: string,
-  options: { repo?: string } = {},
-): Promise<{ committed: boolean; commit: GitCommit | null }> {
-  const { dir } = await repoOrThrow(projectId, options.repo);
-  const text = message.trim() || "Checkpoint";
-  if (!(await isDirty(dir))) return { committed: false, commit: null };
-  await commitAll(dir, text);
-  const [commit = null] = await log(projectId, { limit: 1, repo: options.repo });
-  return { committed: true, commit };
-}
-
 const HASH = /^[0-9a-f]{7,40}$/;
 
 /**
- * The shared body of the two restores below. Anything uncommitted is
- * committed first ("Checkpoint before restore"), then the index and worktree
- * are put at `tree` (`read-tree -u --reset` removes what the target does not
- * have, which `checkout <hash> -- .` would not) and the result is committed
- * as `message`. Answers whether anything was committed: a worktree already at
- * `tree` is a no-op, not a commit — but the checkpoint has already run by
- * then, on purpose, because a dirty tree that happens to match the target is
- * still the only place that work exists.
+ * The shared body of the restore below. Anything uncommitted is committed
+ * first ("Checkpoint before restore"), then the index and worktree are put at
+ * `tree` (`read-tree -u --reset` removes what the target does not have, which
+ * `checkout <hash> -- .` would not) and the result is committed as `message`.
+ * Answers whether anything was committed: a worktree already at `tree` is a
+ * no-op, not a commit — but the checkpoint has already run by then, on
+ * purpose, because a dirty tree that happens to match the target is still
+ * the only place that work exists.
  */
 async function applyTree(dir: string, tree: string, message: string): Promise<boolean> {
   if (await isDirty(dir)) await commitAll(dir, "Checkpoint before restore");
@@ -661,43 +646,6 @@ async function applyTree(dir: string, tree: string, message: string): Promise<bo
 async function lastCommit(projectId: string, repo?: string): Promise<GitCommit | null> {
   const [commit = null] = await log(projectId, { limit: 1, repo });
   return commit;
-}
-
-/**
- * Make the working tree what it was at `hash`, as a new commit on top.
- *
- * Uncommitted work is committed first ("Checkpoint before restore"), then the
- * index and worktree are read from the target tree (`read-tree -u --reset`
- * removes what the target does not have, which `checkout <hash> -- .` would
- * not) and committed. Untracked, ignored files — `node_modules`, `.env` —
- * are not the tree's and are left alone. Restoring to HEAD's own tree is a
- * no-op answered as such.
- */
-export async function restoreTo(
-  projectId: string,
-  hash: string,
-  options: { repo?: string } = {},
-): Promise<{ restored: boolean; commit: GitCommit | null }> {
-  const { dir } = await repoOrThrow(projectId, options.repo);
-  const target = hash.trim();
-  if (!HASH.test(target)) throw fail(400, "a restore needs a commit hash");
-  let full: string;
-  let subject: string;
-  try {
-    ({ stdout: full } = await run(dir, ["rev-parse", "--verify", `${target}^{commit}`]));
-    ({ stdout: subject } = await run(dir, ["log", "-1", "--format=%s", full.trim()]));
-  } catch {
-    throw fail(404, `no such commit: ${target}`);
-  }
-  full = full.trim();
-  const { stdout: targetTree } = await run(dir, ["rev-parse", `${full}^{tree}`]);
-  const applied = await applyTree(
-    dir,
-    targetTree.trim(),
-    `Restore to ${full.slice(0, 7)}: ${subject.trim()}`.slice(0, 200),
-  );
-  if (!applied) return { restored: false, commit: null };
-  return { restored: true, commit: await lastCommit(projectId, options.repo) };
 }
 
 /**

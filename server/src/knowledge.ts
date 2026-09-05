@@ -1,6 +1,6 @@
 /* Knowledge-base entries for a project, served as a REST resource.
  *
- * This is the harness's own Drizzle path (mirrors previews.ts). The agent reaches
+ * This is the harness's own Drizzle path. The agent reaches
  * the SAME table through the `knowledge` MCP server subprocess, which opens the
  * DB directly via knowledge-db.ts (raw better-sqlite3, no harness internals).
  * Two code paths, one table — safe under WAL, and each stays consistent with its

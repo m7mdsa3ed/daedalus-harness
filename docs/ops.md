@@ -64,7 +64,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 
 - **Backup is one JSON document, and import is one transaction.** `server/src/backup.ts`
   exports every user-data table in `db/schema.ts` (agents, profiles with their links,
-  the library, projects, knowledge, previews, sessions with their links, queue,
+  the library, projects, knowledge, sessions with their links, queue,
   schedules, the event log, tasks, web-search usage, push tokens) plus config.json's
   `webSearch` block — never the server's token/host/port, the `agent_options` probe
   cache, or the `history_*` rows (meaningless without the snapshot files). Two opt-outs:

@@ -43,7 +43,7 @@ import { inlineFromQuery, reportError } from "@/lib/errors"
 import { api, profileSupports, type AgentDef, type AgentStatus } from "@/lib/settings"
 import { useAgentsStatus, useInvalidateProfileCatalog, useAgents, useProfiles } from "@/lib/queries/catalog"
 import { toast } from "@/lib/toast"
-import { PageHeader, Group, Row, EmptyCard, Field, lines } from "./primitives"
+import { PageHeader, Group, EmptyCard, Field, lines } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 
@@ -142,28 +142,40 @@ export function AgentsPage() {
             const uses = profiles.filter((p) => profileSupports(p, agent.id)).length
             const st = byAgent.get(agent.id)
             return (
-              <Row
+              <div
                 key={agent.id}
-                icon={<AgentIcon agentId={agent.id} className="size-5" />}
-                title={agent.name}
-                subtitle={
-                  <>
-                    <span className="font-mono">
-                      {agent.id}
-                      {agent.command ? ` · ${[agent.command, ...(agent.args ?? [])].join(" ")}` : ""}
-                    </span>
-                    {st && <StatusLine status={st} />}
-                  </>
-                }
+                className="flex flex-col gap-3 px-3.5 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-x-4 sm:px-4"
               >
-                <StatusBadges status={st} pending={loading || checking} />
-                <Badge variant="secondary">
-                  {uses} profile{uses === 1 ? "" : "s"}
-                </Badge>
-                <Button variant="ghost" size="sm" onClick={() => setEditing(agent)}>
-                  <PencilIcon className="size-4" /> Edit
-                </Button>
-              </Row>
+                <div className="flex min-w-0 flex-1 items-start gap-3">
+                  <AgentIcon agentId={agent.id} className="mt-0.5 size-5 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="min-w-0 max-w-full truncate text-sm font-medium">{agent.name}</span>
+                      <StatusBadges status={st} pending={loading || checking} />
+                    </div>
+                    <div className="mt-0.5 text-xs break-words text-muted-foreground">
+                      <span className="font-mono break-all">
+                        {agent.id}
+                        {agent.command ? ` · ${[agent.command, ...(agent.args ?? [])].join(" ")}` : ""}
+                      </span>
+                      {st && <StatusLine status={st} />}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5 max-sm:pl-8 sm:justify-end">
+                  <Badge variant="secondary">
+                    {uses} profile{uses === 1 ? "" : "s"}
+                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="max-sm:h-9 max-sm:flex-1"
+                    onClick={() => setEditing(agent)}
+                  >
+                    <PencilIcon className="size-4" /> Edit
+                  </Button>
+                </div>
+              </div>
             )
           })}
         </Group>
@@ -222,8 +234,8 @@ function StatusLine({ status }: { status: AgentStatus }) {
       )}
       {status.error && <div className="text-destructive">{status.error}</div>}
       {!status.installed && status.install && (
-        <div className="flex items-center gap-1.5">
-          <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-foreground">{status.install}</code>
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <code className="rounded bg-muted px-1.5 py-0.5 font-mono break-all text-foreground">{status.install}</code>
           <Button
             type="button"
             variant="ghost"

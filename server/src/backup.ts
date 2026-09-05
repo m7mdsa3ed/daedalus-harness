@@ -15,7 +15,6 @@ import {
   personas as personasTable,
   profiles as profilesTable,
   projectHelpers as projectHelpersTable,
-  projectPreviews as previewsTable,
   projects as projectsTable,
   pushTokens as pushTokensTable,
   routineRuns as routineRunsTable,
@@ -225,17 +224,20 @@ const ProjectRow = z.object({
   cwd: str,
   description: optStr,
   logoUrl: optStr,
-  devCommand: optStr,
-  templateId: optStr,
 });
 
 /** A project's helper command — a whole row, never a link: the command is the
-    payload, so the bundle carries it rather than pointing at a library row. */
+    payload, so the bundle carries it rather than pointing at a library row.
+    `env` rides as the row's JSON text, so export/import is lossless. */
 const HelperRow = z.object({
   id: str.min(1),
   projectId: str.min(1),
   name: str,
   command: str,
+  cwd: optStr,
+  env: optStr,
+  description: optStr,
+  confirm: z.boolean().nullish(),
   createdAt: int,
 });
 
@@ -249,14 +251,6 @@ const KnowledgeRow = z.object({
   updatedAt: int,
 });
 
-const PreviewRow = z.object({
-  id: str.min(1),
-  projectId: str.min(1),
-  label: str,
-  url: str,
-  createdAt: int,
-});
-
 const SessionRow = z.object({
   id: str.min(1),
   profileId: str,
@@ -264,6 +258,9 @@ const SessionRow = z.object({
   agentId: str,
   model: str.default(""),
   effort: str.default(""),
+  /* Absent in a bundle written before modes were persisted, which reads as
+     the agent's default — which is exactly what the thread ran on. */
+  modeId: optStr,
   /* Absent in a bundle written before personas existed, which reads as the
      thread having none — which is exactly what it had. */
   personaId: optStr,
@@ -629,7 +626,6 @@ export const BundleSchema = z.object({
   projects: z.array(ProjectRow).default([]),
   projectHelpers: z.array(HelperRow).default([]),
   knowledge: z.array(KnowledgeRow).default([]),
-  previews: z.array(PreviewRow).default([]),
   sessions: z.array(SessionRow).default([]),
   queue: z.array(QueueRow).default([]),
   scheduled: z.array(ScheduledRow).default([]),
@@ -707,7 +703,6 @@ export function exportBundle(opts: ExportOptions): Bundle {
     projects: db.select().from(projectsTable).all(),
     projectHelpers: db.select().from(projectHelpersTable).all(),
     knowledge: db.select().from(knowledgeTable).all(),
-    previews: db.select().from(previewsTable).all(),
     sessions: withLinks(sessions, readLinks(SESSION_LINKS, sessions.map((s) => s.id))),
     queue: db.select().from(queueTable).all(),
     scheduled: db.select().from(scheduledTable).all(),
@@ -752,7 +747,7 @@ export function exportBundle(opts: ExportOptions): Bundle {
 export type ImportMode = "merge" | "replace";
 
 export type ImportSummary = Record<
-  | "agents" | "profiles" | "mcpServers" | "mcpOauth" | "skills" | "commands" | "personas" | "projects" | "projectHelpers" | "knowledge" | "previews"
+  | "agents" | "profiles" | "mcpServers" | "mcpOauth" | "skills" | "commands" | "personas" | "projects" | "projectHelpers" | "knowledge"
   | "sessions" | "queue" | "scheduled" | "workflowRuns" | "events" | "boards" | "boardStatuses" | "sprints" | "boardViews" | "tasks" | "taskComments" | "taskActivity" | "taskLinks"
   | "routines" | "routineTriggers" | "routineRuns"
   | "webSearchUsage" | "pushTokens" | "notifications" | "composerHistory",
@@ -838,7 +833,7 @@ function keepPairs(incoming: NameValue[] | null | undefined, existing: NameValue
  */
 export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
   const summary: ImportSummary = {
-    agents: 0, profiles: 0, mcpServers: 0, mcpOauth: 0, skills: 0, commands: 0, personas: 0, projects: 0, projectHelpers: 0, knowledge: 0, previews: 0,
+    agents: 0, profiles: 0, mcpServers: 0, mcpOauth: 0, skills: 0, commands: 0, personas: 0, projects: 0, projectHelpers: 0, knowledge: 0,
     sessions: 0, queue: 0, scheduled: 0, workflowRuns: 0, events: 0, boards: 0, boardStatuses: 0, sprints: 0, boardViews: 0, tasks: 0, taskComments: 0, taskActivity: 0, taskLinks: 0,
     routines: 0, routineTriggers: 0, routineRuns: 0,
     webSearchUsage: 0, pushTokens: 0, notifications: 0, composerHistory: 0,
@@ -966,16 +961,24 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
     summary.orphaned += bundle.knowledge.length - knowledge.length;
     upsertChunked(tx, knowledgeTable, "id", knowledge.map((k) => ({ ...k, tags: k.tags ?? null })));
     summary.knowledge = knowledge.length;
-    const previews = bundle.previews.filter((p) => projectIds.has(p.projectId));
-    summary.orphaned += bundle.previews.length - previews.length;
-    upsertChunked(tx, previewsTable, "id", previews);
-    summary.previews = previews.length;
     /* The helpers ride with their project: a bundle naming a project this
        install dropped is orphaned, exactly like a knowledge entry would be.
-       `createdAt` is defaulted so older bundles sort stably after import. */
+       Older bundles predate the option columns, so each is defaulted here. */
     const helpers = bundle.projectHelpers.filter((h) => projectIds.has(h.projectId));
     summary.orphaned += bundle.projectHelpers.length - helpers.length;
-    upsertChunked(tx, projectHelpersTable, "id", helpers.map((h) => ({ ...h, createdAt: h.createdAt ?? 0 })));
+    upsertChunked(
+      tx,
+      projectHelpersTable,
+      "id",
+      helpers.map((h) => ({
+        ...h,
+        cwd: h.cwd ?? null,
+        env: h.env ?? null,
+        description: h.description ?? null,
+        confirm: h.confirm === true,
+        createdAt: h.createdAt ?? 0,
+      })),
+    );
     summary.projectHelpers = helpers.length;
 
     // Sessions and everything hanging off them.
@@ -987,6 +990,7 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
         const { mcpServerIds: _m, skillIds: _s, commandIds: _c, ...columns } = s;
         return {
           ...columns,
+          modeId: columns.modeId ?? null,
           acpSessionId: columns.acpSessionId ?? null,
           deletedAt: columns.deletedAt ?? null,
           parentSessionId: columns.parentSessionId ?? null,

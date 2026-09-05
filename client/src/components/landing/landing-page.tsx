@@ -17,7 +17,6 @@ import { useProfiles, useProjects } from "@/lib/queries/catalog"
 import { useRoutines } from "@/lib/queries/routines"
 import {
   boardPath,
-  buildPath,
   routinesPath,
   schedulesPath,
   threadPath,
@@ -86,7 +85,6 @@ export function LandingPage({
           ready={ready}
           stats={stats}
           onNewThread={onNewThread}
-          onBuild={() => void navigate(buildPath())}
           onOpenSettings={() => onOpenSettings("projects")}
         />
 
@@ -138,9 +136,6 @@ export function LandingPage({
             </button>
             <button type="button" onClick={() => void navigate(boardPath())} className="rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               Tasks
-            </button>
-            <button type="button" onClick={() => void navigate(buildPath())} className="rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              Build an app
             </button>
           </nav>
         </footer>

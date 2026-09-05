@@ -19,9 +19,7 @@ import { agentModelId, bareModelId, getAgent, modelAllowlistFor } from "./regist
 import { gatewayUrlFor, setGatewaySessionResolver, type GatewaySession } from "./gateway-shim.js";
 import { HttpError } from "./http-error.js";
 import * as git from "./git.js";
-import { getProject, updateProject } from "./projects.js";
-import { SCRATCH_TEMPLATE_ID, detectDevCommand } from "./templates.js";
-import { startDevServer } from "./dev-server.js";
+import { getProject } from "./projects.js";
 import { getConfig, loadConfig } from "./config.js";
 import { WEB_SEARCH_SERVER_NAME, toMcpServerEnv } from "./websearch.js";
 import { pruneWebSearchUsage, recordWebSearchUsage } from "./websearch-usage.js";
@@ -142,6 +140,13 @@ export interface Session {
   project: Project | null;
   model: string;
   effort: string;
+  /** The permission mode picked for this thread, or null for the agent's
+      default. A spawn input like model and effort — and unlike them it is
+      applied over `session/set_mode` right after the session exists, so a
+      revive without a live process to copy from (idle-retired, pre-restart)
+      puts it back from the row instead of coming back on default. Written on
+      every accepted `set_mode`, not just the draft pick. */
+  modeId: string | null;
   /** How this thread wants to be worked on (`personas.ts`), or "" for no
       persona. A spawn input like model and effort — and unlike them it can
       never be applied live, because every runtime reads it only when a session
@@ -153,6 +158,9 @@ export interface Session {
       it costs a respawn. */
   suggestFollowups: boolean;
   title: string;
+  /** The current title came from the first-prompt fallback, so an ACP
+      `session_info_update` may replace it with the agent's better title. */
+  titleFromPrompt: string | null;
   /** What this thread was started with, on top of its profile's links —
       picked on the draft, persisted with the row (db/links.ts), and what a
       revive spawns with again. The agent sees the union of both:
@@ -583,9 +591,13 @@ export class SessionManager {
         // Null in the column, "" in memory: every other spawn input on the
         // session is a string, and "no persona" is not a third state.
         personaId: row.personaId ?? "",
+        // Rows written before the mode column existed never picked one —
+        // null is the agent's default, which is exactly what they had.
+        modeId: row.modeId ?? null,
         // Absent on rows written before the toggle existed — which never asked
         // either way — so missing reads as the default: on.
         suggestFollowups: row.suggestFollowups ?? true,
+        titleFromPrompt: null,
         profile: null,
         project: null,
         liveAcpSessionId: null,
@@ -678,6 +690,7 @@ export class SessionManager {
         agentId: s.agentId,
         model: s.model,
         effort: s.effort,
+        modeId: s.modeId,
         personaId: s.personaId || null,
         suggestFollowups: s.suggestFollowups,
         title: s.title,
@@ -1105,6 +1118,7 @@ export class SessionManager {
       id,
       model,
       effort,
+      modeId: opts.modeId,
       personaId: opts.personaId,
       suggestFollowups: opts.suggestFollowups,
       title: opts.title,
@@ -1183,6 +1197,7 @@ export class SessionManager {
       id?: string;
       model?: string;
       effort?: string;
+      modeId?: string | null;
       personaId?: string;
       suggestFollowups?: boolean;
       title?: string;
@@ -1207,9 +1222,11 @@ export class SessionManager {
       project,
       model: opts.model || profile.defaultModel || "",
       effort: opts.effort ?? "",
+      modeId: opts.modeId ?? null,
       personaId: opts.personaId ?? "",
       suggestFollowups: opts.suggestFollowups ?? true,
       title: opts.title ?? "New thread",
+      titleFromPrompt: null,
       acpSessionProvisional: false,
       liveAcpSessionId: null,
       historyLost: null,
@@ -1269,6 +1286,7 @@ export class SessionManager {
       createdAt: Number.isNaN(updatedAt) ? undefined : updatedAt,
     });
     session.acpSessionId = info.acpSessionId;
+    session.titleFromPrompt = null;
     // No process, and none until someone opens it. `exited` is what every path
     // that asks "is this thread live" reads, including the client's own
     // openThread — which is the one that revives it.
@@ -1711,8 +1729,14 @@ export class SessionManager {
     if (this.sessions.get(session.id) !== session) throw new Error("unknown session");
     if (session.deletedAt !== null) throw new Error("session deleted");
     // Captured while the old process is still up — it is the only thing that
-    // knows how the agent was configured.
-    const restore = session.bridge?.captureRestoreState();
+    // knows how the agent was configured. A thread with no live process
+    // (idle-retired, pre-restart) has nothing to capture from, so the row's
+    // own recorded mode stands in — otherwise the revive comes back on the
+    // agent's default and the pick is silently lost.
+    const restore = session.bridge?.captureRestoreState() ?? {
+      modeId: session.modeId ?? undefined,
+      configOptions: [],
+    };
     const oldProc = session.proc;
     const oldBridge = session.bridge;
     session.bridge = null; // stale generation from here on
@@ -1923,6 +1947,7 @@ export class SessionManager {
     const { deferred } = bridge.prompt(text, peer, turnId, opts);
     if (text && session.title === "New thread") {
       session.title = text.slice(0, TITLE_SNIFF_MAX);
+      session.titleFromPrompt = session.title;
       this.persist(session);
     }
     return deferred ? { turnId, deferred } : { turnId };
@@ -1944,45 +1969,8 @@ export class SessionManager {
       const session = this.sessions.get(id);
       if (!session) return;
       this.emit(session, { ev: "turn_changes", turn });
-      if (turn.ended) this.senseDevCommand(session);
     },
   });
-
-  /**
-   * A project built from scratch has no dev command until the agent has
-   * chosen a stack; the end of a turn is when the directory can be asked.
-   * Reads `daedalus.json` / `package.json` (templates.ts › detectDevCommand),
-   * writes the answer onto the row, points every session of the project at
-   * the fresh row, tells the peers (`project_changed`) and starts the server
-   * — the same thing the scaffold route does for a template, one turn later.
-   * Only a project that Build mode made and that still has no command: a
-   * plain project the user never gave one is left alone, and a command once
-   * written is the user's (Settings › Projects) and never re-sensed.
-   */
-  private senseDevCommand(session: Session): void {
-    const project = session.project;
-    if (!project || project.devCommand || project.templateId !== SCRATCH_TEMPLATE_ID) return;
-    let command: string | null;
-    try {
-      command = detectDevCommand(project.cwd);
-    } catch {
-      return;
-    }
-    if (!command) return;
-    const current = getProject(project.id);
-    if (!current || current.devCommand) return;
-    const updated = updateProject(project.id, { ...current, devCommand: command });
-    if (!updated) return;
-    for (const other of this.sessions.values()) {
-      if (other.project?.id === updated.id) {
-        other.project = updated;
-        this.emit(other, { ev: "project_changed", project: updated });
-      }
-    }
-    startDevServer(updated.id).catch((error) =>
-      console.error(`[dev-server] start after sensing ${command} for ${updated.id} failed`, error),
-    );
-  }
 
   private queue = new SessionQueue({
     emit: (session, event) => this.emit(session, event),
@@ -2065,6 +2053,7 @@ export class SessionManager {
       agentId: s.agentId,
       model: s.model,
       effort: s.effort,
+      modeId: s.modeId,
       personaId: s.personaId,
       suggestFollowups: s.suggestFollowups,
       title: s.title,
@@ -2104,6 +2093,7 @@ export class SessionManager {
     const next = title.trim().slice(0, TITLE_MAX);
     if (!next) return null;
     session.title = next;
+    session.titleFromPrompt = null;
     this.persist(session);
     return next;
   }

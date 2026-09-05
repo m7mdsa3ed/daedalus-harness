@@ -5,6 +5,7 @@
 // gateway that answers `/v1/messages` the way 9router does for a
 // forced-streaming provider — with `choices[]` — and streams SSE untouched.
 // Run: pnpm test:gateway
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { Hono } from "hono";

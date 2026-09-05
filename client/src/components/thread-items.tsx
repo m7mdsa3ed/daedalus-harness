@@ -7,7 +7,7 @@ import {
   SquareTerminalIcon,
   WrenchIcon,
 } from "lucide-react"
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon } from "lucide-react"
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, History as HistoryIcon } from "lucide-react"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import { ItemContextMenu } from "@/components/item-context-menu"
@@ -463,6 +463,7 @@ export const RowView = React.memo(function RowView({
   onRetry,
   onRetryAsPaths,
   onDismiss,
+  onRewind,
   showTimestamps,
   streaming,
 }: {
@@ -471,6 +472,8 @@ export const RowView = React.memo(function RowView({
   onRetry?: () => void
   onRetryAsPaths?: () => void
   onDismiss?: () => void
+  /** Present on a finished user turn that can be rewound — see ThreadItemView. */
+  onRewind?: () => void
   showTimestamps?: boolean
   /** This row is the transcript's tail and the turn is still open — it is the
       one thing still being written. Only a thought draws differently for it
@@ -491,6 +494,7 @@ export const RowView = React.memo(function RowView({
       onRetry={onRetry}
       onRetryAsPaths={onRetryAsPaths}
       onDismiss={onDismiss}
+      onRewind={onRewind}
       showTimestamps={showTimestamps}
       streaming={streaming}
     />
@@ -797,6 +801,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
   onRetry,
   onRetryAsPaths,
   onDismiss,
+  onRewind,
   showTimestamps = false,
   streaming = false,
 }: {
@@ -808,6 +813,10 @@ export const ThreadItemView = React.memo(function ThreadItemView({
   /** Present when that prompt's attachments were delivered inline — see ErrorRow. */
   onRetryAsPaths?: () => void
   onDismiss?: () => void
+  /** Present on a finished user turn: rewind the thread to before it. Absent
+      while the turn runs, on untagged bubbles, and off the transcript's own
+      turns (a subagent's prose is its report, not a turn to cut at). */
+  onRewind?: () => void
   showTimestamps?: boolean
   /** See RowView. */
   streaming?: boolean
@@ -831,7 +840,18 @@ export const ThreadItemView = React.memo(function ThreadItemView({
     case "user":
       return (
         <ItemContextMenu
-          items={[{ label: "Copy text", icon: <CopyIcon />, onClick: () => copyText(item.text) }]}
+          items={[
+            { label: "Copy text", icon: <CopyIcon />, onClick: () => copyText(item.text) },
+            ...(onRewind
+              ? [
+                  {
+                    label: "Rewind to here",
+                    icon: <HistoryIcon />,
+                    onClick: onRewind,
+                  } as const,
+                ]
+              : []),
+          ]}
           className="select-text"
           onContextMenu={yieldToTextSelection}
         >

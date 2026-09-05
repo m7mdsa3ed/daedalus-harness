@@ -61,12 +61,23 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   config pick — opens one lazily inside `ThreadSocket.request` (`ensureSocket`), which is
   the archived thread's old queue path, now the general one; it still refuses to reopen a
   socket that *died*, because that is a failure to report rather than a peer nobody asked
-  for. **A dropped socket is no longer answered by the reconnect ladder**: `onStatus` says
-  the close once, with the server's own reason and a Revive/Reconnect button, and the
-  ladder is only ever re-entered by an attempt the user asked for (`ready`'s `parked` /
-  `reconnecting` cases), which is what the health poll and the `online` listener still
-  un-park. Nothing reattaches — or respawns an idle-retired agent — behind the reader's
-  back. The two things a reader does to a socketless thread are still
+  for. **A dropped socket is answered by the ladder, and never by a
+  respawn.** The close code is what splits it (`isRecoverableClose`, beside `failureFor`
+  in `lib/thread/phase.ts`): 4000, 4001, 4002 and 4004 say something about the *thread* —
+  it is gone, its process exited, another device took it — and those are still said once,
+  with the server's own reason and a Revive/Reconnect button. Anything else (no code at
+  all, a bare 1006, the client's own watchdog code 4100) says only that the path died,
+  which is a server restart or a network blink, and both come back — so `onStatus` books
+  the ladder, and when the five rungs are spent the thread *parks*, which the health poll
+  and the `online` listener un-park the moment the server answers. What an automatic rung
+  does NOT do is put a process back: it opens with `revive: false`, so a live agent gets
+  its socket and an idle-retired one is read from its journal and left `read`, sendable,
+  with the revive still the user's to ask for. (A retired thread with no journal to read
+  is the one rung that stops: there is nothing to reattach to, so it reports the failure
+  with a Revive button rather than climbing.) A rung that succeeds clears the ladder even
+  when no socket came up, since the `read` outcome never raises `connected`. `revive()` —
+  the button, and `ready`'s `parked`/`reconnecting` cases — is unchanged: it clears the
+  counters and asks for the process. The two things a reader does to a socketless thread are still
   answered without it — paging back over `GET /api/sessions/:id/earlier`
   (`requestEarlier` picks the transport it already has), and editing a queue parked on it
   through a socket `ensureSocket` opens lazily at that moment. `openNow`'s short-circuit reads
@@ -352,6 +363,21 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   defaults its scan to the agent's **virtual Default profile**: a listing is about the
   machine's own login, and codex filters its thread list by the spawned profile's model
   provider, so a gateway profile can answer with none of the CLI's work.
+- **The import dialog is also the recovery surface, which is what its filters are for.** The
+  agent's own store outlives the harness's rows, so a thread deleted here — or lost to a
+  database restored from an older backup — is still in the runtime and comes back through
+  this dialog. A machine-wide listing runs to hundreds of rows, so finding the window that
+  went missing is a matter of narrowing: **status** (`Not here yet` is the default, because
+  the dialog exists to add what is missing), a **time window** measured against each row's
+  `updatedAt`, an order, and the search over title *and* cwd. **A row with no date is never
+  filtered out by a window** — the runtimes may answer without one, and "we don't know when"
+  is not "older than that". Filters survive a rescan and a change of agent (they are how the
+  user is reading, not what was read); the scan's *answer* never does. **A conversation
+  already in Trash is restored, never imported**: the row naming it still exists, and a
+  second import would be two threads on one conversation — so that row offers
+  `actions.restoreThread`, and the dialog remembers what it restored rather than making the
+  user pay for another scan to see it. "Select all" spans every group on screen, because the
+  question a recovery asks ("everything from Tuesday") is rarely one directory.
 
 ## Capabilities we advertise
 

@@ -56,7 +56,9 @@ function CommandDialog({
              roomier rows than the inline Command. Only the spacing half is
              kept — the upstream `svg:h-5 w-5` rules would also resize the
              deliberately small icons the palette's rows draw. */
-          "top-1/3 translate-y-0 overflow-hidden p-0",
+          /* `translate-y` is the dialog's: it is what keeps the popup above the
+             soft keyboard, and a palette is opened to be typed into. */
+          "top-1/3 overflow-hidden p-0",
           "**:data-[slot=command-input-wrapper]:h-12 **:[[cmdk-input]]:h-12",
           "**:[[cmdk-item]]:px-2 **:[[cmdk-item]]:py-3",
           "**:[[cmdk-group]]:px-2 **:[[cmdk-group-heading]]:px-2 **:[[cmdk-group-heading]]:font-medium",

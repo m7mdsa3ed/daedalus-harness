@@ -32,6 +32,89 @@
    other. */
 export const KEYBOARD_INSET = "--keyboard-inset"
 
+/* ── Riding it ──
+   Every surface that must clear the keyboard is `position: fixed`, or absolute
+   against something that does not scroll, so the browser's own scroll-into-view
+   has nothing to move and each one is moved by hand from the number above.
+   These are the three ways to do it, named once so a new surface copies a name
+   and not a calc:
+
+   - `KEYBOARD_LIFT` for a surface whose *reserved height* must not move with it
+     (the composer: the transcript pads by `--composer-dock-h`, measured from
+     offsetHeight, and a `bottom` change would drag that with it). A transform,
+     so it stays on the compositor and changes no layout.
+   - `KEYBOARD_CENTER` for a centred popup, which stays centred in what is left
+     above the keyboard rather than in a viewport a third of which is covered.
+   - `KEYBOARD_RISE` for a bottom-anchored surface that owns its own box (a
+     sheet, a drawer): moving its `bottom` also moves the edge its height is
+     capped against, which is what a sheet wants — so it is a `bottom` and not a
+     transform, and the surface must name `bottom` in its own transition.
+
+   Only `KEYBOARD_LIFT` carries a duration, because the composer has no other:
+   the two that ride an existing surface inherit that surface's transition, and
+   a duration here would be a `duration-*` fight decided by class order. Its
+   285ms on cubic-bezier(0.2, 0, 0, 1) is Android's own IME animation
+   (ANIMATION_DURATION_SYNC_IME_MS and SYNC_IME_INTERPOLATOR, AOSP
+   `InsetsController`), copied because it cannot be followed — see
+   thread-view.tsx for why the per-frame position never reaches the renderer.
+
+   All three are `cn`'d *after* the surface's own classes: each one overrides a
+   `translate-y-*` or `bottom-*` the surface already sets. */
+
+/** Move a surface up by the keyboard's height without changing its layout. */
+export const KEYBOARD_LIFT =
+  "translate-y-[calc(var(--keyboard-inset,0px)*-1)] transition-[translate] duration-[285ms] ease-[cubic-bezier(0.2,0,0,1)] will-change-transform motion-reduce:transition-none"
+
+/** Keep a centred surface centred in what is left above the keyboard. */
+export const KEYBOARD_CENTER =
+  "translate-y-[calc(-50%-var(--keyboard-inset,0px)/2)] transition-[translate] motion-reduce:transition-none"
+
+/** Lift a bottom-anchored surface, and the edge its height is capped against. */
+export const KEYBOARD_RISE = "bottom-[var(--keyboard-inset,0px)]"
+
+/* ── Reading it from script ──
+   The variable is the answer for anything CSS can place. Two things it cannot:
+   a Base UI positioner, which collides against a rect it computes in JS, and
+   anything that needs to know *which* of the two measurements answered.
+
+   That second question is the whole reason this is a store and not a
+   `getComputedStyle` call. Under the visual-viewport regime (iOS) the viewport
+   floating-ui measures against has *already* shrunk, so it collides above the
+   keyboard on its own and padding by the same number again would push a
+   flyout up by twice the keyboard. Under `overlaysContent` (Android) the
+   viewport deliberately does not shrink, floating-ui sees the full page, and
+   the padding is the only thing that keeps a dropdown off the keyboard. So the
+   padding is the inset in one regime and 0 in the other. */
+export type KeyboardState = {
+  /** Pixels of the layout viewport the keyboard covers; 0 when closed. */
+  height: number
+  /** Whether the visual viewport has already lost that height. */
+  shrinksViewport: boolean
+}
+
+const CLOSED: KeyboardState = { height: 0, shrinksViewport: false }
+
+let state: KeyboardState = CLOSED
+const listeners = new Set<() => void>()
+
+/** The current keyboard. A stable object between changes: `useSyncExternalStore`. */
+export function keyboardState(): KeyboardState {
+  return state
+}
+
+export function subscribeKeyboard(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
+}
+
+function setState(next: KeyboardState) {
+  if (next.height === state.height && next.shrinksViewport === state.shrinksViewport) return
+  state = next
+  for (const listener of listeners) listener()
+}
+
 /* Below this, it is not a keyboard: a retracting URL bar and sub-pixel
    rounding both move the visual viewport by a few px, and reacting to those
    would twitch the composer on every scroll. */
@@ -65,6 +148,7 @@ export function startKeyboardInset(): () => void {
   }
   if (!keyboard && !viewport) {
     root.style.setProperty(KEYBOARD_INSET, "0px")
+    setState(CLOSED)
     return () => root.style.removeProperty(KEYBOARD_INSET)
   }
 
@@ -81,6 +165,12 @@ export function startKeyboardInset(): () => void {
       : 0
     const covered = Math.max(fromKeyboard, fromViewport)
     const inset = covered > MIN_KEYBOARD_PX ? Math.round(covered) : 0
+    // Which path answered, for the readers that must not double-count it.
+    setState(
+      inset === 0
+        ? CLOSED
+        : { height: inset, shrinksViewport: fromViewport >= fromKeyboard }
+    )
     if (inset === last) return
     last = inset
     root.style.setProperty(KEYBOARD_INSET, `${inset}px`)
@@ -99,5 +189,6 @@ export function startKeyboardInset(): () => void {
     viewport?.removeEventListener("resize", schedule)
     viewport?.removeEventListener("scroll", schedule)
     root.style.removeProperty(KEYBOARD_INSET)
+    setState(CLOSED)
   }
 }

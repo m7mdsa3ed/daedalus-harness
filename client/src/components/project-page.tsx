@@ -32,12 +32,14 @@ import {
   FolderIcon,
   MessagesSquareIcon,
   MoreHorizontal,
+  RocketIcon,
   Pencil,
   Play,
   PlayIcon,
   Plus,
   RefreshCwIcon,
   SquareTerminal,
+  TriangleAlert,
   Trash2,
   WorkflowIcon,
   XIcon,
@@ -54,7 +56,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { RunHelperDialog } from "@/components/run-helper-dialog"
 import { AgentIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
 import { useConfirm } from "@/components/confirm-dialog"
 import { ImportThreadsDialog } from "@/components/import-threads"
@@ -73,11 +74,9 @@ import { shortAge } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { activityDays, type ProjectStats } from "@/lib/workspace/project-stats"
 import { useProjectStats } from "@/lib/queries/surfaces"
-import { useDevStatus } from "@/lib/queries/dev-server"
-import { DEV_STATE_LABEL, devAction } from "@/lib/workspace/dev-server"
-import { Spinner } from "@/components/ui/spinner"
 import { queuePanel } from "@/lib/workspace/pending-panels"
-import { previewPanel } from "@/lib/workspace/preview-bridge"
+import { useRunHelper } from "@/lib/workspace/use-run-helper"
+import { openTab } from "@/lib/ide/editors"
 import { useScheduled } from "@/lib/queries/routines"
 
 /** Matches the server's `ACTIVITY_DAYS`. The strip is drawn as a fixed run of
@@ -110,7 +109,15 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
   const startIn = useStartThreadIn(actions)
   const { stats, error, loading, refresh } = useProjectStats(project.id)
   const [importing, setImporting] = React.useState(false)
-  const [runningHelper, setRunningHelper] = React.useState<HelperCommand | null>(null)
+  /* No dock on this route, so the helper's terminal is queued for the thread
+     we then go to — the same trade `openRules` below makes for the editor. */
+  const startHelper = useRunHelper(null)
+  const runHelper = async (helper: HelperCommand) => {
+    if (!(await startHelper(helper, project.id))) return
+    const latest = threads[0]
+    if (latest) void navigate(threadPath(latest.id))
+    else startIn(project)
+  }
 
   /* The live half. Steps are excluded exactly as they are everywhere else —
      they are reached from their parent's transcript, never listed — and the
@@ -129,14 +136,13 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
     }
   }, [sessions, liveThreads, project.id])
 
-  /* The preview lives beside a thread, and this page has no dock — so the
-     panel is queued for the next thread to open: the project's latest, or a
-     fresh one when it has none yet. */
-  const openPreview = () => {
-    queuePanel(
-      previewPanel(project.id),
-      { direction: "right" }
-    )
+  /* The project's standing instructions to the agent — Lovable calls this the
+     knowledge base; here it is a file the agent already reads every turn, so
+     the honest surface is the editor open on it rather than a second store
+     that would have to be kept in step with the file. */
+  const openRules = () => {
+    openTab(project.id, { kind: "file", path: "AGENTS.md" })
+    queuePanel({ kind: "ide", projectId: project.id }, { direction: "right" })
     const latest = threads[0]
     if (latest) void navigate(threadPath(latest.id))
     else startIn(project)
@@ -157,20 +163,13 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
         <ProjectHeader
           project={project}
           onNewThread={() => startIn(project)}
-          onOpenPreview={project.devCommand ? openPreview : undefined}
+          onOpenRules={openRules}
           onImport={() => setImporting(true)}
           onEdit={() => void navigate(settingsFormPath("projects", project.id))}
           onRefresh={refresh}
           refreshing={loading}
-          onRunHelper={setRunningHelper}
+          onRunHelper={(helper) => void runHelper(helper)}
         />
-        {runningHelper && (
-          <RunHelperDialog
-            helper={runningHelper}
-            projectId={project.id}
-            onClose={() => setRunningHelper(null)}
-          />
-        )}
         <ImportThreadsDialog
           open={importing}
           onOpenChange={setImporting}
@@ -179,7 +178,7 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
         />
 
         {/* Quick helpers bar: 1-click execution chips right below the header */}
-        <QuickHelpersBar project={project} onRunHelper={setRunningHelper} />
+        <QuickHelpersBar project={project} onRunHelper={(helper) => void runHelper(helper)} />
 
         {/* The one health answer the page can give. A project whose directory
             has moved or is not mounted spawns nothing, and the failure it
@@ -293,14 +292,9 @@ function threadStatus(session: SessionMeta, thread: ThreadState | undefined): Th
 
 /* ── Pieces ── */
 
-/** The dev server's state, on the Open preview button: a dot and a word,
-    from the same stream the panel reads, so the page says "Live" before the
-    panel is even open. Stopped is drawn quietly — most projects are. */
-/* The header's "Run" dropdown — the project's own commands. The server's
-   restart is offered when there is a dev command to run (it is the built-in,
-   and the badge beside it keeps the state honest); the user's helpers follow;
-   and the last item is the way back to Settings › Projects to edit them, so
-   the dropdown is self-contained even for a project with none yet. */
+/* The header's "Run" dropdown — the project's own commands, and the way back
+   to Settings › Projects to edit them, so the dropdown is self-contained even
+   for a project with none yet. */
 function HelpersMenu({
   project,
   onRunHelper,
@@ -308,40 +302,15 @@ function HelpersMenu({
   project: Project
   onRunHelper: (helper: HelperCommand) => void
 }) {
-  const settings = useServer()
   const navigate = useNavigate()
-  const [restarting, setRestarting] = React.useState(false)
   const helpers = project.helpers ?? []
-  const hasServer = !!project.devCommand
-
-  /* Restart is the one built-in: keystroke for the single thing a preview
-     user does by hand, answered by the dev server's own restart (stop + start
-     atomically). Failures go to a toast — that page has a status badge, which
-     is the surface an error belongs to. */
-  const restart = () => {
-    if (!hasServer || restarting) return
-    setRestarting(true)
-    devAction(settings, project.id, "restart")
-      .then(() => toast.success("Server restart initiated"))
-      .catch((err) => reportError(err, "Couldn't restart the dev server"))
-      .finally(() => setRestarting(false))
-  }
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button
-            variant="outline"
-            title="Run a command for this project"
-            disabled={restarting}
-            className="gap-1.5"
-          >
-            {restarting ? (
-              <Spinner className="size-3.5" />
-            ) : (
-              <SquareTerminal className="size-3.5" />
-            )}
+          <Button variant="outline" title="Run a command for this project" className="gap-1.5">
+            <SquareTerminal className="size-3.5" />
             <span>Run</span>
             {helpers.length > 0 && (
               <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-mono leading-none text-muted-foreground">
@@ -358,18 +327,17 @@ function HelpersMenu({
             <span className="font-mono text-[10px]">{helpers.length} configured</span>
           )}
         </DropdownMenuLabel>
-        {hasServer && (
-          <DropdownMenuItem onClick={restart} disabled={restarting}>
-            <RefreshCwIcon className={cn("size-4 text-muted-foreground", restarting && "animate-spin")} />
-            <span className="min-w-0 flex-1 truncate">Restart server</span>
-            <DevBadge projectId={project.id} />
-          </DropdownMenuItem>
-        )}
-        {hasServer && helpers.length > 0 && <DropdownMenuSeparator />}
         {helpers.map((helper) => (
-          <DropdownMenuItem key={helper.id} onClick={() => onRunHelper(helper)}>
+          <DropdownMenuItem
+            key={helper.id}
+            onClick={() => onRunHelper(helper)}
+            title={helper.description ?? undefined}
+          >
             <Play className="size-3.5 text-muted-foreground" />
             <span className="min-w-0 flex-1 truncate">{helper.name}</span>
+            {helper.confirm && (
+              <TriangleAlert className="size-3 shrink-0 text-amber-500" aria-hidden />
+            )}
           </DropdownMenuItem>
         ))}
         <DropdownMenuSeparator />
@@ -384,7 +352,7 @@ function HelpersMenu({
 
 /**
  * A horizontal interactive strip of quick helper chips shown below the header
- * whenever the workspace has dev commands or helpers configured.
+ * whenever the workspace has helpers configured.
  */
 function QuickHelpersBar({
   project,
@@ -393,22 +361,10 @@ function QuickHelpersBar({
   project: Project
   onRunHelper: (helper: HelperCommand) => void
 }) {
-  const settings = useServer()
   const navigate = useNavigate()
-  const [restarting, setRestarting] = React.useState(false)
   const helpers = project.helpers ?? []
-  const hasServer = !!project.devCommand
 
-  if (!hasServer && helpers.length === 0) return null
-
-  const restart = () => {
-    if (!hasServer || restarting) return
-    setRestarting(true)
-    devAction(settings, project.id, "restart")
-      .then(() => toast.success("Server restart initiated"))
-      .catch((err) => reportError(err, "Couldn't restart the dev server"))
-      .finally(() => setRestarting(false))
-  }
+  if (helpers.length === 0) return null
 
   return (
     <div className="mt-4 flex items-center gap-2 overflow-x-auto py-1 no-scrollbar text-xs">
@@ -416,27 +372,19 @@ function QuickHelpersBar({
         <SquareTerminal className="size-3 text-muted-foreground" />
         Quick actions
       </span>
-      {hasServer && (
-        <button
-          type="button"
-          disabled={restarting}
-          onClick={restart}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-pill border bg-card px-2.5 py-1 text-xs font-medium transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
-        >
-          <RefreshCwIcon className={cn("size-3 text-muted-foreground", restarting && "animate-spin")} />
-          <span>Restart server</span>
-          <DevBadge projectId={project.id} />
-        </button>
-      )}
       {helpers.map((helper) => (
         <button
           key={helper.id}
           type="button"
           onClick={() => onRunHelper(helper)}
+          title={helper.description ?? helper.command}
           className="inline-flex shrink-0 items-center gap-1.5 rounded-pill border bg-card px-2.5 py-1 text-xs font-medium transition-colors hover:border-primary/40 hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <Play className="size-2.5 text-primary" />
           <span>{helper.name}</span>
+          {/* The same mark the Run menu carries: a chip is one tap from a
+              destructive command, so "asks first" has to be visible before it. */}
+          {helper.confirm && <TriangleAlert className="size-2.5 text-amber-500" aria-hidden />}
         </button>
       ))}
       <button
@@ -452,55 +400,22 @@ function QuickHelpersBar({
   )
 }
 
-function DevBadge({ projectId }: { projectId: string }) {
-  const { data } = useDevStatus(projectId)
-  const state = data?.state ?? "off"
-  const live = state === "installing" || state === "starting"
-  return (
-    <span
-      className={cn(
-        "ml-1 inline-flex items-center gap-1 rounded-pill px-1.5 py-px text-[10px] font-medium",
-        state === "ready"
-          ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-          : state === "failed"
-            ? "bg-destructive/10 text-destructive"
-            : live
-              ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
-              : "bg-muted text-muted-foreground"
-      )}
-      title={data?.message ?? undefined}
-    >
-      {live ? (
-        <Spinner className="size-2.5" />
-      ) : (
-        <span
-          aria-hidden
-          className={cn(
-            "size-1.5 rounded-full",
-            state === "ready" ? "bg-emerald-500" : state === "failed" ? "bg-destructive" : "bg-muted-foreground/60"
-          )}
-        />
-      )}
-      {DEV_STATE_LABEL[state]}
-    </span>
-  )
-}
-
 function ProjectHeader({
   project,
   onNewThread,
-  onOpenPreview,
   onImport,
   onEdit,
+  onOpenRules,
   onRefresh,
   refreshing,
   onRunHelper,
 }: {
   project: Project
   onNewThread: () => void
-  /** Present only when the project has a dev command to run. */
-  onOpenPreview?: () => void
   onImport: () => void
+  /** Opens AGENTS.md — the project's own rules, which the agent reads on
+      every turn. */
+  onOpenRules: () => void
   onEdit: () => void
   onRefresh: () => void
   refreshing: boolean
@@ -530,7 +445,6 @@ function ProjectHeader({
             <h1 className="truncate text-xl sm:text-2xl font-bold tracking-tight text-foreground">
               {project.name}
             </h1>
-            <DevBadge projectId={project.id} />
           </div>
 
           <button
@@ -568,11 +482,21 @@ function ProjectHeader({
         <Button variant="outline" onClick={onEdit} size="sm">
           <Pencil className="size-3.5" /> Edit
         </Button>
-        {onOpenPreview && (
-          <Button variant="outline" onClick={onOpenPreview} size="sm">
-            <AppWindowIcon className="size-3.5" /> Preview
-          </Button>
-        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button variant="ghost" size="icon" title="More options" aria-label="More options">
+                <MoreHorizontal className="size-4" />
+              </Button>
+            }
+          />
+          <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuItem onClick={onOpenRules}>
+              <BookOpenIcon className="size-4 text-muted-foreground" />
+              <span>Project rules (AGENTS.md)</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Button onClick={onNewThread} size="sm">
           <Plus className="size-4" /> New thread
         </Button>
@@ -593,12 +517,10 @@ function ProjectHeader({
             }
           />
           <DropdownMenuContent align="end" className="w-48">
-            {onOpenPreview && (
-              <DropdownMenuItem onClick={onOpenPreview}>
-                <AppWindowIcon className="size-4 text-muted-foreground" />
-                <span>Open preview</span>
-              </DropdownMenuItem>
-            )}
+            <DropdownMenuItem onClick={onOpenRules}>
+              <BookOpenIcon className="size-4 text-muted-foreground" />
+              <span>Project rules</span>
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={onImport}>
               <DownloadIcon className="size-4 text-muted-foreground" />
               <span>Import threads</span>
@@ -1142,12 +1064,6 @@ function GlanceCard({ stats, trashed }: { stats: ProjectStats | null; trashed: n
       icon: <ActivityIcon className="size-4 text-muted-foreground" />,
       label: "Web search",
       value: `${stats.webSearch.searches} · ${stats.webSearch.fetches} fetched`,
-    })
-  if (stats.previews)
-    rows.push({
-      icon: <ActivityIcon className="size-4 text-muted-foreground" />,
-      label: "Saved previews",
-      value: stats.previews,
     })
   if (trashed)
     rows.push({

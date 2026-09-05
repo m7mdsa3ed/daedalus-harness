@@ -5,6 +5,7 @@ import { Drawer as DrawerPrimitive } from "@base-ui/react/drawer"
 import { Button } from "@/components/ui/button"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
+import { KEYBOARD_CENTER, KEYBOARD_RISE } from "@/lib/keyboard-inset"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { Cancel01Icon } from "@hugeicons/core-free-icons"
 
@@ -159,10 +160,20 @@ function ResponsiveDialogContent({ className, bodyClassName, children, ...props 
               SHEET_INSET,
               // A sheet floating off the bottom edge, following the finger.
               "fixed inset-x-0 bottom-0 z-50 m-(--drawer-inset) flex min-h-0 origin-bottom flex-col rounded-4xl select-none",
-              tall ? "max-h-[calc(100dvh-1.5rem)]" : "max-h-[calc(100dvh-6rem)]",
+              /* A sheet is opened to be typed into as often as a dialog is, and
+                 the page does not resize when the soft keyboard opens — so it
+                 sits on top of one and its height is capped against it, or the
+                 body scrolls the field the caret is in back under the keyboard.
+                 A `bottom` rather than a transform, because the swipe already
+                 owns the transform and it is the *edge* that has to move: the
+                 cap below is measured from it. */
+              KEYBOARD_RISE,
+              tall
+                ? "max-h-[calc(100dvh-1.5rem-var(--keyboard-inset,0px))]"
+                : "max-h-[calc(100dvh-6rem-var(--keyboard-inset,0px))]",
               "transform-[translate3d(0,var(--drawer-swipe-movement-y),0)] will-change-transform",
               "[--closed-transform:translate3d(0,calc(100%+var(--drawer-inset)+2px),0)]",
-              "transition-[transform,opacity] duration-450 ease-[cubic-bezier(0.22,1,0.36,1)]",
+              "transition-[transform,opacity,bottom,max-height] duration-450 ease-[cubic-bezier(0.22,1,0.36,1)]",
               "data-starting-style:transform-(--closed-transform) data-ending-style:transform-(--closed-transform) data-ending-style:duration-[calc(var(--drawer-swipe-strength)*400ms)] data-swiping:duration-0",
               className
             )}
@@ -206,8 +217,13 @@ function ResponsiveDialogContent({ className, bodyClassName, children, ...props 
         className={cn(
           SURFACE,
           "fixed top-1/2 left-1/2 z-50 flex w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-4xl sm:max-w-lg",
-          tall ? "max-h-[92svh]" : "max-h-[85svh]",
+          /* The keyboard is a phone's, but a laptop in tablet mode raises one
+             over this half too, and the cap costs nothing when there is none. */
+          tall
+            ? "max-h-[min(92svh,calc(100dvh-var(--keyboard-inset,0px)-2rem))]"
+            : "max-h-[min(85svh,calc(100dvh-var(--keyboard-inset,0px)-2rem))]",
           "duration-100 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          KEYBOARD_CENTER,
           className
         )}
         {...props}

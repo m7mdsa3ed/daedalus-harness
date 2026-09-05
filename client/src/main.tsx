@@ -9,6 +9,7 @@ import { installDesktopNotifications, installNotificationTestHelper } from './li
 import { registerPwa } from './lib/pwa'
 import { watchInstallability } from './lib/install.ts'
 import { startKeyboardInset } from './lib/keyboard-inset.ts'
+import { startCaretKeeper } from './lib/keyboard-caret.ts'
 import { installWindowControlsOverlay } from './hooks/use-windows-controls-overlay.ts'
 
 // The floor under everything else: a promise nobody caught, or a listener that
@@ -30,6 +31,11 @@ registerPwa()
 // has to stay above it reads how tall it is from here. Installed before render
 // because the variable is read on the first paint of a focused composer.
 startKeyboardInset()
+// The other half of the same trade: the browser's own scroll-into-view on focus
+// is driven by the visual viewport shrinking, which `overlays-content` stops,
+// so a field on an ordinary scrolling form is left under the keys. This scrolls
+// the one that is covered, after the surfaces that ride the keyboard have moved.
+startCaretKeeper()
 // `html[data-window-controls-overlay]`: the PWA's equivalent of Electron's
 // frameless window. In `window-controls-overlay` mode (installed Chromium on
 // Windows) the OS title bar is gone and the app's top strip is draggable; the

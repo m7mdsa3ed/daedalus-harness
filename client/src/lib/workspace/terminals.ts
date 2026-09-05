@@ -35,6 +35,20 @@ export function createTerminal(
   })
 }
 
+/** Start a terminal running one of the project's helper commands.
+    Here rather than in `project-helpers.ts` because what it answers with is a
+    terminal, not a result: running a helper *is* opening one. The command, the
+    working directory and the environment are read from the stored row on the
+    server and are deliberately not sendable — a helper the browser could
+    define on the way out would be an arbitrary-exec route wearing its name. */
+export function startHelperTerminal(projectId: string, helperId: string): Promise<TerminalInfo> {
+  return api<TerminalInfo>(
+    server(),
+    `/api/projects/${encodeURIComponent(projectId)}/helpers/${encodeURIComponent(helperId)}/terminal`,
+    { method: "POST" }
+  )
+}
+
 /** Ends the process. Closing a panel does not come through here. */
 export function killTerminal(projectId: string, terminalId: string): Promise<{ ok: true }> {
   return api<{ ok: true }>(

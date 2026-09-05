@@ -302,6 +302,12 @@ export interface AgentDef {
       thing only: whether a thread on this agent's Default profile — the
       machine's own login — has a plan reading to draw at all. */
   quotaProbe?: { kind: string; command: string; args: string[] } | null
+  /** Which door this runtime opens for a rewind's conversation half
+      (server/src/registry.ts). `"acp-fork-point"` = the agent honors the
+      fork point `session/fork` needs; null/absent = the conversation half is
+      not offered (files can still be restored). The server still refuses what
+      it cannot do — this only decides what the client offers. */
+  rewindVia?: "acp-fork-point" | null
 }
 
 export interface McpServerStdio {
@@ -597,149 +603,28 @@ export interface Project {
   /** Logo shown wherever the project is named — a URL. Empty means "no logo",
       and `ProjectIcon` draws the project's initial instead. */
   logoUrl?: string
-  /** The command the harness runs as this project's dev server (`pnpm dev`).
-      Null on rows that were never scaffolded and never given one — such a
-      project has no preview to open. */
-  devCommand?: string | null
-  /** The starter it was scaffolded from, if any. A record, not a link: the
-      template is copied, and nothing about the project depends on it after. */
-  templateId?: string | null
   /** The helper commands a person runs against this workspace by hand, from
-      the project page's header ("Restart server", "Run migrations"). Absent
-      on stubs, like the other optional fields. */
+      the project page's header ("Run migrations"). Absent on stubs, like the
+      other optional fields. */
   helpers?: HelperCommand[]
 }
 
-/** One of a project's helper commands: a name and a shell line run in the
-    project's cwd. `server/src/project-helpers.ts` owns the rows and the run. */
+/** One of a project's helper commands: a shell line run on the project's
+    behalf, with where and how it runs. `server/src/project-helpers.ts` owns
+    the rows and the run. */
 export interface HelperCommand {
   id: string
   projectId: string
   name: string
   command: string
+  /** Project-relative directory to run in; null = the project's cwd. */
+  cwd: string | null
+  /** Extra environment variables layered over the server's own. */
+  env: Record<string, string> | null
+  description: string | null
+  /** Ask before running — the dialog shows a confirm step first. */
+  confirm: boolean
   createdAt: number
-}
-
-/** The answer to a helper run — a non-zero exit is `ok: false` with the
-    output, not an HTTP error, because the browser's dialog shows it either
-    way. Mirrors `HelperRunResult` in `server/src/project-helpers.ts`. */
-export interface HelperRunResult {
-  ok: boolean
-  exitCode: number | null
-  timedOut: boolean
-  durationMs: number
-  output: string
-}
-
-/* ── App builder ──
-   A starter template and the dev server the harness runs for a project. The
-   shapes mirror `server/src/protocol.ts` (`DevStatus`) and the manifest in
-   `templates/<id>/template.json`; declared here rather than imported so the
-   client compiles against the contract, not against a server checkout. */
-
-/** One entry of `GET /api/templates` — the manifest, minus nothing. */
-export interface Template {
-  id: string
-  name: string
-  description: string
-  tags: string[]
-  /** Run once after scaffolding; null when the starter needs no install. */
-  install: string | null
-  /** The managed dev server command. Becomes the project's `devCommand`. */
-  dev: string
-  /** Typecheck/lint the agent runs before finishing; null when there is none. */
-  check: string | null
-  /** The production build, runnable from the preview panel; null when none. */
-  build: string | null
-  /** Prompt words that point at this starter — what `lib/stack-sense.ts`
-      scores. Empty means "picked by hand or as the fallback only". */
-  signals: string[]
-  sortOrder: number
-}
-
-/** The `templateId` of a project built from scratch: no starter was copied,
-    the agent chose the stack, and the dev command was sensed off the
-    directory after its first turn. Mirrors `server/src/templates.ts`. */
-export const SCRATCH_TEMPLATE_ID = "scratch"
-
-export type DevState = "off" | "installing" | "starting" | "ready" | "failed" | "exited"
-
-/** One error the server parsed out of a process's output — the dev server's
-    or a build/check task's. */
-export interface DevError {
-  id: string
-  at: number
-  source: "terminal" | "build" | "check"
-  text: string
-}
-
-export type DevTaskKind = "build" | "check"
-
-/** The last build or check run this boot: the project's own script in a
-    terminal of its own, one at a time. */
-export interface DevTask {
-  kind: DevTaskKind
-  state: "running" | "passed" | "failed"
-  command: string
-  terminalId: string
-  message: string | null
-  startedAt: number
-  endedAt: number | null
-}
-
-/** The dev server as the harness sees it. Absolute — every line of the
-    events stream is the whole thing again, never a delta. */
-export interface DevStatus {
-  projectId: string
-  state: DevState
-  /** Server-relative preview root, e.g. "/preview/<key>/<projectId>/"; set
-      while starting/ready, else null. The key in it is minted per boot, which
-      is why this is never written anywhere that outlives the page. */
-  url: string | null
-  port: number | null
-  /** The dev process's terminal (attachable through the terminal socket);
-      null when off. */
-  terminalId: string | null
-  installTerminalId: string | null
-  command: string | null
-  /** Why it failed/exited: exit code, last stderr line, "no dev command". */
-  message: string | null
-  /** Recent errors parsed from process output, newest last, max 20, cleared
-      on (re)start. */
-  errors: DevError[]
-  /** ms timestamp of the last state change. */
-  since: number
-  /** When the server last answered on its base path; null unless `ready`. */
-  readyAt: number | null
-  /** The last build/check run this boot, if any. */
-  task: DevTask | null
-}
-
-export type DevAction = "start" | "stop" | "restart" | "build" | "check"
-
-/** One commit of the project's repository, as `GET /api/projects/:id/history`
-    lists them — a restore point in Build mode. */
-export interface GitCommit {
-  hash: string
-  short: string
-  subject: string
-  author: string
-  /** Unix seconds. */
-  at: number
-  filesChanged: number
-  insertions: number
-  deletions: number
-}
-
-export type HistoryAction =
-  | { action: "checkpoint"; message?: string }
-  | { action: "restore"; hash: string }
-
-export interface HistoryResult {
-  commits: GitCommit[]
-  committed?: boolean
-  restored?: boolean
-  commit: GitCommit | null
 }
 
 /** One directory on the server, as `GET /api/fs/list` reports it. */
