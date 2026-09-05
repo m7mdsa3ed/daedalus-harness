@@ -1,5 +1,5 @@
 import * as React from "react"
-import { AppWindowIcon, Check, ChevronDown, ChevronLeft, ChevronRight, Plus, SearchIcon, ServerIcon, Settings2 } from "lucide-react"
+import { AppWindowIcon, Check, ChevronDown, ChevronLeft, ChevronRight, SearchIcon, ServerIcon, Settings2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -13,6 +13,7 @@ import { CommandPalette, useCommandPalette } from "@/components/command-palette"
 import { ImportThreadsDialog } from "@/components/import-threads"
 import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
 import { Logo } from "@/components/ui/logo"
+import { LandingPage } from "@/components/landing/landing-page"
 import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
 import { ThreadHeaderMenu } from "@/components/thread-menu"
 import { RunHelperDialog } from "@/components/run-helper-dialog"
@@ -26,7 +27,7 @@ import { RoutinesPage } from "@/components/routines-page"
 import { SchedulePage } from "@/components/schedule-page"
 import { TasksWorkspace } from "@/components/tasks"
 import type { DockviewApi } from "dockview-react"
-import { SetupCardsSkeleton, SidebarGroupsSkeleton } from "@/components/ui/skeletons"
+import { SidebarGroupsSkeleton } from "@/components/ui/skeletons"
 import { ProgressiveBlur } from "@/components/ui/progressive-blur"
 import {
   Sidebar,
@@ -467,7 +468,7 @@ export function AppShell({
       <WorkspaceDock actions={actions} dock={dock} onReady={handleDockReady} />
     </div>
   ) : (
-    <EmptyState
+    <LandingPage
       loading={loading}
       ready={ready}
       onNewThread={startThread}
@@ -1135,98 +1136,7 @@ function SettingsNav({
 }
 
 
-/** No thread open: a short "what now" with the two setup paths. */
-function EmptyState({
-  loading,
-  ready,
-  onNewThread,
-  onOpenSettings,
-}: {
-  loading: boolean
-  ready: boolean
-  onNewThread: () => void
-  onOpenSettings: (section?: SettingsSectionId) => void
-}) {
-  const projects = useProjects()
-  const profiles = useProfiles()
-  const steps = [
-    {
-      id: "projects" as const,
-      title: "Projects",
-      description: "Where a thread runs: directory, MCPs, skills.",
-      count: projects.length,
-    },
-    {
-      id: "profiles" as const,
-      title: "Profiles",
-      description: "What a thread runs: agent runtime, credentials, models.",
-      count: profiles.length,
-    },
-  ]
-
-  if (loading) {
-    return (
-      <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6 pt-[calc(var(--app-header-h)+1.5rem)]">
-        <div aria-busy="true" className="w-full max-w-md text-center">
-          <Skeleton className="mx-auto size-11 rounded-lg" />
-          <Skeleton className="mx-auto mt-4 h-5 w-40" />
-          <Skeleton className="mx-auto mt-2 h-3 w-72" />
-          <Skeleton className="mx-auto mt-6 h-7 w-28 rounded-md" />
-          <SetupCardsSkeleton />
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6 pt-[calc(var(--app-header-h)+1.5rem)]">
-      <div className="w-full max-w-md text-center">
-        <Logo className="mx-auto size-11" />
-        <h2 className="mt-4 text-lg font-semibold tracking-tight">
-          {ready ? "Start a thread" : "Finish the setup"}
-        </h2>
-        <p className="mt-1.5 text-sm text-balance text-muted-foreground">
-          {ready
-            ? "Pick a project and a profile — the harness spawns the agent and streams it here."
-            : "A thread needs one project and one profile before it can run."}
-        </p>
-        <div className="mt-5 flex justify-center">
-          <Button onClick={ready ? () => onNewThread() : () => onOpenSettings("projects")}>
-            {ready ? (
-              <>
-                <Plus className="size-4" /> New thread
-              </>
-            ) : (
-              <>
-                <Settings2 className="size-4" /> Open settings
-              </>
-            )}
-          </Button>
-        </div>
-        <div className="mt-8 grid gap-2 text-left sm:grid-cols-2">
-          {steps.map((step) => (
-            <button
-              key={step.id}
-              type="button"
-              onClick={() => onOpenSettings(step.id)}
-              className="rounded-xl border bg-card p-3 text-left transition-colors hover:border-ring/50 hover:bg-accent/40"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-sm font-medium">{step.title}</span>
-                <span
-                  className={cn(
-                    "rounded-md px-1.5 py-0.5 font-mono text-[11px] tabular-nums",
-                    step.count ? "bg-muted text-muted-foreground" : "bg-destructive/10 text-destructive"
-                  )}
-                >
-                  {step.count}
-                </span>
-              </div>
-              <p className="mt-1 text-xs text-pretty text-muted-foreground">{step.description}</p>
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
+/** No thread open: a short "what now" with the two setup paths. This is the
+    landing page now — see components/landing/landing-page.tsx. The shell's
+    contract with it is exactly the one EmptyState had: the loading gate, the
+    "ready" flag, a thread starter and a settings opener. */
