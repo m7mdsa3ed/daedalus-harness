@@ -36,7 +36,7 @@ export function SettingsLayout({
   // Coming back to a section lands where you left it, not at the top.
   const scrollRef = useScrollRestoration<HTMLDivElement>(location.pathname)
   return (
-    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto pt-[var(--app-header-h)]">
       <div
         className={cn(
           "mx-auto w-full px-4 pt-6 pb-16 sm:px-8",

@@ -26,7 +26,13 @@ export type TerminalKeyKind = "text" | "csi" | "seq"
 
 export interface TerminalKeyDef {
   id: string
+  /** What the cap shows. Short by design — the row is read on a phone, and a
+      cap wide enough for "↑ Up" is a cap that pushes two others onto a second
+      line. */
   label: string
+  /** The whole name, for the title and the accessible label, where a symbol
+      alone says nothing. Falls back to `label` when they are the same word. */
+  name?: string
   kind: TerminalKeyKind
   /** "text" → the character. "csi" → the base sequence (e.g. "\x1b[A").
       "seq" → the bytes sent verbatim. */
@@ -75,26 +81,29 @@ export function resolveKey(def: TerminalKeyDef, mods: TerminalModifiers): string
     soft keyboard cannot reach: Tab, the modifiers, the control chords, and the
     navigation cluster. Custom keys (see terminal-keys.ts) append after these.
 
-    `label` is what the keycap shows. For a modifier it names itself; for a chord
-    it names the combination; for a nav key it shows the symbol and the word, so
-    a reader knows the ↑ is Up without guessing. */
+    `label` is what the keycap shows and is kept as short as it can be read at —
+    a symbol where there is a conventional one (↑, ⏎, ^C), a word where there is
+    not (Tab, Esc, Home). `name` carries the whole thing for the title and the
+    accessible label, so a cap that shows "↑" is still announced as "Up". */
 export const BUILTIN_KEYS: TerminalKeyDef[] = [
   { id: "ctrl", label: "Ctrl", kind: "text", value: "c" },
   { id: "alt", label: "Alt", kind: "text", value: "m" },
-  { id: "shift", label: "Shift", kind: "text", value: "a" },
+  { id: "shift", label: "⇧", name: "Shift", kind: "text", value: "a" },
   { id: "tab", label: "Tab", kind: "seq", value: "\t" },
   { id: "esc", label: "Esc", kind: "seq", value: "\x1b" },
-  { id: "up", label: "↑ Up", kind: "csi", value: "\x1b[A" },
-  { id: "down", label: "↓ Down", kind: "csi", value: "\x1b[B" },
-  { id: "right", label: "→ Right", kind: "csi", value: "\x1b[C" },
-  { id: "left", label: "← Left", kind: "csi", value: "\x1b[D" },
+  { id: "up", label: "↑", name: "Up", kind: "csi", value: "\x1b[A" },
+  { id: "down", label: "↓", name: "Down", kind: "csi", value: "\x1b[B" },
+  { id: "left", label: "←", name: "Left", kind: "csi", value: "\x1b[D" },
+  { id: "right", label: "→", name: "Right", kind: "csi", value: "\x1b[C" },
   { id: "home", label: "Home", kind: "csi", value: "\x1b[H" },
   { id: "end", label: "End", kind: "csi", value: "\x1b[F" },
-  { id: "enter", label: "Enter", kind: "seq", value: "\r" },
-  { id: "space", label: "Space", kind: "text", value: " " },
-  { id: "ctrl-c", label: "Ctrl+C", kind: "seq", value: "\x03" },
-  { id: "ctrl-d", label: "Ctrl+D", kind: "seq", value: "\x04" },
-  { id: "ctrl-z", label: "Ctrl+Z", kind: "seq", value: "\x1a" },
+  { id: "enter", label: "⏎", name: "Enter", kind: "seq", value: "\r" },
+  { id: "space", label: "␣", name: "Space", kind: "text", value: " " },
+  /* `^C` rather than "Ctrl+C": it is what the shell echoes, it is half the
+     width, and on a row of thirty-pixel caps that is a whole extra key. */
+  { id: "ctrl-c", label: "^C", name: "Ctrl+C", kind: "seq", value: "\x03" },
+  { id: "ctrl-d", label: "^D", name: "Ctrl+D", kind: "seq", value: "\x04" },
+  { id: "ctrl-z", label: "^Z", name: "Ctrl+Z", kind: "seq", value: "\x1a" },
 ]
 
 /** A custom key (raw {label, send}) can always be sent verbatim; it is a "seq". */

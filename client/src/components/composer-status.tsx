@@ -26,6 +26,7 @@ import { extractSubagent, extractTodos, toolHeading, toolViewOf } from "@/lib/to
 import { activeSubagents, buildRows } from "@/lib/transcript-rows"
 import { useAgents, useProfiles } from "@/lib/queries/catalog"
 import { useStoreSelect, type PlanItem, type ThreadState, type ToolItem } from "@/lib/store"
+import { holdOf } from "@/lib/thread/hold"
 import { formatRate, formatTokens } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 
@@ -665,6 +666,13 @@ export function ComposerAgents({ thread }: { thread: ThreadState }) {
  * which is what keeps a parallel batch of calls reading as the call still out.
  */
 export function workingMessage(thread: ThreadState): string {
+  /* Before everything else: a held turn is not doing any of it. Read off the
+     hold rather than the transcript, whose newest item is whatever the turn
+     managed before it stopped. What it says is the hold's own (`holdOf`): a
+     turn held on a failure is named as a state — the provider's sentence,
+     which is what tells the reader which model to reach for — never as the
+     failure an `ErrorRow` would draw. */
+  if (thread.paused) return holdOf(thread).message
   if (thread.permission) return "Waiting for your approval"
   if (thread.elicitation) return "Waiting for your answer"
   const agents = runningAgents(thread)
@@ -707,27 +715,39 @@ export function workingMessage(thread: ThreadState): string {
 
 export function ActivityIndicator({ thread }: { thread: ThreadState }) {
   const message = workingMessage(thread)
+  /* A held turn is stopped, so it does not shimmer and the mark does not
+     glint: motion here would say the agent is working when it is waiting for
+     the reader. The line stays in the same slot, which is the point — the turn
+     is still open and the composer still belongs to it. */
+  const held = thread.paused
 
   return (
     <div
-      aria-label="Agent working"
+      aria-label={held ? "Turn held" : "Agent working"}
       // flex, not inline-flex: an inline-flex box is sized by its content, so
       // the `truncate` below had nothing to truncate against and a long tool
       // heading (a whole bash command, a long path) ran off the transcript.
-      className="flex min-w-0 max-w-full items-center gap-2 text-primary"
+      className={cn(
+        "flex min-w-0 max-w-full items-center gap-2",
+        held ? "text-muted-foreground" : "text-primary",
+      )}
       role="status"
     >
       {/* The mark glints for as long as the turn runs — the same sweep the
           sidebar's mark makes every few seconds, run continuously here — so
           starting a turn rhymes with the mark that is always on screen.
           size-4 sits on the step row's 1.5rem line box. */}
-      <Logo working className="size-4 shrink-0" />
+      <Logo working={!held} className="size-4 shrink-0" />
       {/* ponytail: one flat text node — the shimmer paints a background clipped to
           text, and background-image doesn't inherit, so a nested span goes blank. */}
       {/* leading-6 matches a step row's line box, so the working line keeps the
           transcript's vertical rhythm. */}
-      <span aria-hidden className="harness-shimmer min-w-0 truncate text-xs leading-6">
-        {message}…
+      <span
+        aria-hidden
+        className={cn("min-w-0 truncate text-xs leading-6", !held && "harness-shimmer")}
+        title={held ? message : undefined}
+      >
+        {held ? message : `${message}…`}
       </span>
     </div>
   )

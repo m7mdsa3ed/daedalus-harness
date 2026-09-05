@@ -4,6 +4,7 @@ import {
   ProjectInputSchema,
   createProject,
   deleteProject,
+  getProject,
   updateProject,
   listProjects,
 } from "../projects.js";
@@ -27,6 +28,15 @@ import * as git from "../git.js";
 import { createPreview, deletePreview, listPreviews } from "../previews.js";
 import { createTerminal, killProjectTerminals, killTerminal, listTerminals } from "../terminals.js";
 import { forgetDevServer } from "../dev-server.js";
+import {
+  HelperInputSchema,
+  addHelper,
+  deleteHelper,
+  getHelper,
+  listHelpers,
+  runHelperCommand,
+  updateHelper,
+} from "../project-helpers.js";
 import { crud, flag, workspace } from "./helpers.js";
 
 /** Projects and everything scoped to a project's directory: the workspace
@@ -49,6 +59,44 @@ export function workspaceRoutes(app: Hono): void {
     forgetDevServer(id);
     killProjectTerminals(id);
     return c.json({ ok: true });
+  });
+
+  /* Helper commands: the small shell actions a person runs against this
+     workspace from its page's header. The rows are read back embedded on the
+     project itself; these are the writes and the one async run. */
+  app.get("/api/projects/:id/helpers", (c) => workspace(c, () => listHelpers(c.req.param("id"))));
+
+  app.post("/api/projects/:id/helpers", async (c) => {
+    const parsed = HelperInputSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    return workspace(c, () => addHelper(c.req.param("id"), parsed.data));
+  });
+
+  app.put("/api/projects/:id/helpers/:helperId", async (c) => {
+    const parsed = HelperInputSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    const updated = await workspace(c, () =>
+      updateHelper(c.req.param("id"), c.req.param("helperId"), parsed.data),
+    );
+    return updated ? c.json(updated) : c.json({ error: "no such helper" }, 404);
+  });
+
+  app.delete("/api/projects/:id/helpers/:helperId", async (c) =>
+    (await workspace(c, () => deleteHelper(c.req.param("id"), c.req.param("helperId"))))
+      ? c.json({ ok: true })
+      : c.json({ error: "no such helper" }, 404),
+  );
+
+  /* Running a helper is the one long one: the shell gets up to two minutes in
+     the project's cwd, and a non-zero exit is the *answer* (`ok: false` with
+     the output), not an HTTP error — the browser's dialog has a result to
+     draw either way. */
+  app.post("/api/projects/:id/helpers/:helperId/run", async (c) => {
+    const id = c.req.param("id");
+    const helper = getHelper(id, c.req.param("helperId"));
+    const project = helper ? getProject(id) : undefined;
+    if (!project || !helper) return c.json({ error: "no such helper" }, 404);
+    return c.json(await runHelperCommand(project.cwd, helper.command));
   });
 
   /* The project overview's numbers — the half the browser cannot derive from

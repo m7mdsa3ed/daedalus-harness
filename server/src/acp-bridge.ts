@@ -18,6 +18,7 @@ import type {
   RestoreState,
   SessionUpdate,
   ThreadEvent,
+  ThreadHold,
   WireError,
 } from "./protocol.js";
 import { optionFor, stanceFor, type AutonomyPolicy } from "./autonomy.js";
@@ -71,6 +72,13 @@ export function spawnAgent(
       the resolved args and env here so the registry's own `args` — the
       user's — are never edited. */
   sidecar?: { port: number; password: string },
+  /** No human in front of this thread — a workflow step, a scheduled run. The
+      harness's own runtime holds a failed turn at its step boundary and waits
+      to be told what model to try instead; with nobody at a config menu that
+      wait never ends, and a run that would have failed and reported blocks
+      forever instead. Fail fast there. Meaningless to every other runtime,
+      which reads none of these vars. */
+  unattended?: boolean,
 ): ChildProcessWithoutNullStreams {
   const agent = getAgent(agentId);
   if (!agent) throw new Error(`unknown agent: ${agentId}`);
@@ -93,6 +101,7 @@ export function spawnAgent(
     args.push("--port", String(sidecar.port), "--hostname", "127.0.0.1");
     env.OPENCODE_SERVER_PASSWORD = sidecar.password;
   }
+  if (unattended) env.DAEDALUS_AGENT_HOLD_ON_ERROR = "0";
   return spawn(command, args, {
     cwd,
     env: { ...process.env, ...env },
@@ -147,6 +156,22 @@ const AIR_ASYNC_TASKS_META = {
 const PAUSE_METHOD = "_daedalus/session/pause";
 const RESUME_METHOD = "_daedalus/session/resume";
 const PAUSE_CAPABILITY = "daedalus/pause";
+/* The one direction the pair never had. A pause is asked for from this end and
+   answered in the same reply; a *hold* is taken at the other end — a turn that
+   failed and is waiting to be told what model to try instead — so it can only
+   arrive as a notification. Same capability, because the same runtimes can do
+   both, and the same `paused` event out to the browser, carrying the reason. */
+const PAUSED_NOTIFICATION = "_daedalus/session/paused";
+
+interface PausedParams {
+  sessionId?: string;
+  paused?: boolean;
+  reason?: "user" | "error";
+  message?: string;
+  detail?: string;
+}
+
+const parsePausedParams = (params: unknown): PausedParams => (params ?? {}) as PausedParams;
 
 /**
  * The subagent RFD's two updates are ahead of the SDK, and the SDK is not
@@ -385,6 +410,12 @@ export interface BridgeOptions {
   /** Settings chosen on a draft, against the option set the agent last
       advertised. Applied right after `session/new`. */
   configChoices?: Record<string, string | boolean>;
+  /** The permission mode chosen on a draft, out of the agent's probed `modes`.
+      Applied after `session/new` through the same `session/set_mode` a live
+      change uses — so `captureRestoreState` picks it up from the process and a
+      later respawn puts it back, exactly as if the user had clicked it. An
+      agent with no modes, or without the one asked for, ignores it. */
+  modeId?: string;
   /** The model and effort of a thread whose profile carries no catalog, to be
       put back over ACP rather than through the process env — see
       `applyAgentOwned`. Empty for a profile that owns the catalog: there these
@@ -421,6 +452,17 @@ export class AcpBridge {
       `cancel()` (the agent drops its pause with the turn), and with the
       process. Stated on `caught_up`, so an attaching peer draws the hold. */
   paused = false;
+  /** Why it is held. `"user"` is the toggle; `"error"` is a turn that failed
+      and is waiting for a model change — the turn is still open, so this is
+      not a failure the transcript records, it is a state it draws. Null
+      exactly when `paused` is false. */
+  pausedReason: "user" | "error" | null = null;
+  /** The failure a `"error"` hold is waiting on, in the `turn_ended` shape the
+      client already knows how to draw and fold. */
+  pausedError: WireError | null = null;
+  /** When the current hold began — the clock the idle sweep reads, so a thread
+      held with nobody reading it does not pin its process forever. */
+  heldSince: number | null = null;
   readonly pending = new Map<string, PendingRequest>();
 
   private readonly host: BridgeHost;
@@ -506,6 +548,12 @@ export class AcpBridge {
       )
       .onNotification(acp.methods.client.elicitation.complete, (ctx) =>
         this.onElicitationComplete(ctx.params.elicitationId),
+      )
+      /* A hold the agent took on its own. Nothing is asked of us and nothing
+         is answered: the state is absolute, and saying it is the whole of the
+         contract. */
+      .onNotification(PAUSED_NOTIFICATION, parsePausedParams, (ctx) =>
+        this.onAgentPaused(ctx.params),
       )
       .connect(stream);
     this.ready = this.handshake(opts);
@@ -598,6 +646,7 @@ export class AcpBridge {
 
     // Only now is there something to apply settings to.
     if (opts.restore) await this.applyRestore(opts.restore);
+    if (opts.modeId) await this.applyDraftMode(opts.modeId);
     if (opts.agentOwned) await this.applyAgentOwned(opts.agentOwned);
     if (opts.configChoices) await this.applyChoices(opts.configChoices);
   }
@@ -852,6 +901,19 @@ export class AcpBridge {
       }
     }
     return placed;
+  }
+
+  /** A draft's mode pick. Guarded on the agent's own advertised list, so a
+      stale pick against an agent that renamed its modes costs a warning and
+      nothing else — the same bargain `applyChoices` makes for config ids. */
+  private async applyDraftMode(modeId: string): Promise<void> {
+    if (!this.modes || !this.modes.availableModes.some((m) => m.id === modeId)) return;
+    if (this.modes.currentModeId === modeId) return;
+    try {
+      await this.setMode(modeId);
+    } catch (error) {
+      console.warn(`couldn't apply the draft's mode ${modeId}`, error);
+    }
   }
 
   private async applyChoices(choices: Record<string, string | boolean>): Promise<void> {
@@ -1448,9 +1510,72 @@ export class AcpBridge {
     if (!this.canPause) throw new Error("this agent cannot be paused — only cancelled");
     const sessionId = this.requireSession();
     const reply = await this.connection.agent.request<{ paused?: boolean }>(paused ? PAUSE_METHOD : RESUME_METHOD, { sessionId });
-    this.paused = reply?.paused ?? paused;
-    this.host.emit({ ev: "paused", paused: this.paused });
+    /* A resume lets go of both reasons, so it clears the error with the hold;
+       a pause the user asked for never overwrites a failure that is already
+       waiting — the reason the turn stopped is the more useful of the two. */
+    this.setHold(reply?.paused ?? paused, this.pausedReason ?? "user", this.pausedError);
     return { paused: this.paused };
+  }
+
+  /** A hold the agent took on its own — a turn that failed rather than ended.
+      The turn is still open (`inflight` is unchanged), so nothing settles and
+      nothing is journaled: this is state, like the pause it rides on. */
+  private onAgentPaused(params: PausedParams): void {
+    const paused = params.paused !== false;
+    const error: WireError | null =
+      paused && params.reason === "error"
+        ? this.host.enrichError({
+            code: -32603,
+            message: params.message || "the model provider returned an error",
+            ...(params.detail ? { data: { details: params.detail } } : {}),
+          })
+        : null;
+    this.setHold(paused, params.reason ?? "user", error);
+  }
+
+  private setHold(paused: boolean, reason: "user" | "error", error: WireError | null): void {
+    const was = this.paused;
+    const nextReason = paused ? reason : null;
+    const nextError = paused ? error : null;
+    /* Absolute, so saying it twice is harmless — but a release is answered in
+       the resume's own reply AND announced by the agent's `paused: false`
+       notification, and the second of those used to emit the same event
+       again. Nothing changed, nothing to say. */
+    if (was === paused && this.pausedReason === nextReason && this.pausedError === nextError) return;
+    const wasErrorHold = was && this.pausedReason === "error";
+    this.paused = paused;
+    this.pausedReason = nextReason;
+    this.pausedError = nextError;
+    if (paused && !was) this.heldSince = Date.now();
+    if (!paused) this.heldSince = null;
+    this.host.emit(this.pausedEvent());
+    /* A hold taken on a failure IS a step boundary: the step that failed was
+       rolled back, and the first thing the released turn does is read its
+       messages — the steers typed while it waited among them. Nothing else
+       announces that boundary (the tool calls of the dropped step never
+       settle), so without this the bubble waited for the NEXT tool call, and
+       a text-only answer put the user's words after the reply they shaped.
+       Not for a user's pause: that one may lift mid-stream, and its boundary
+       is still the tool call that ends the step. */
+    if (wasErrorHold && !paused) {
+      this.openToolCalls.clear();
+      this.flushSteers();
+    }
+  }
+
+  /** The hold as every peer draws it — the one shape `caught_up` carries and
+      the `paused` event is built from, so an attaching reader and a live one
+      agree. */
+  hold(): ThreadHold {
+    return {
+      paused: this.paused,
+      ...(this.pausedReason ? { reason: this.pausedReason } : {}),
+      ...(this.pausedError ? { error: this.pausedError } : {}),
+    };
+  }
+
+  pausedEvent(): ThreadEvent {
+    return { ev: "paused", ...this.hold() };
   }
 
   async cancel(): Promise<void> {
@@ -1461,8 +1586,7 @@ export class AcpBridge {
     /* The agent's cancel abandons its pause with the turn (agent/src/session.ts);
        said here too, so the peers' toggle follows. */
     if (this.paused) {
-      this.paused = false;
-      this.host.emit({ ev: "paused", paused: false });
+      this.setHold(false, "user", null);
     }
     /* ACP asks the cancelling client to answer whatever it is still being asked
        with `cancelled` — and a question left open here would be handed to every
@@ -1569,6 +1693,15 @@ export class AcpBridge {
   close(reason?: unknown): void {
     if (this.closed) return;
     this.closed = true;
+    /* Nothing is held by a process that is gone. Said before the turn below is
+       settled, so a reader sees the hold lift and then the failure, rather than
+       an error row under a card still offering to continue. A turn that was
+       held on a failure is remembered past the lift: the row it ends on has to
+       say that the restart ended it, not offer the re-send the card existed to
+       avoid — its settled steps are in the transcript, and the next message
+       goes on from them. */
+    const heldTurn = this.pausedReason === "error";
+    if (this.paused) this.setHold(false, "user", null);
     /* A steer held for a step boundary that will never come. The words did
        reach the agent, so the transcript has to show them — a dying process
        must not also swallow the last thing the user said. Before `settleAll`,
@@ -1579,7 +1712,13 @@ export class AcpBridge {
     // Whatever was held for want of an explanation now has one.
     if (this.held.length > 0) {
       const error = this.host.enrichError(
-        toWireError(reason ?? new Error("the agent process is gone")),
+        toWireError(
+          heldTurn
+            ? new Error(
+                "The held turn ended with the restart. Every step it finished is kept above; send the next message to go on from there.",
+              )
+            : (reason ?? new Error("the agent process is gone")),
+        ),
       );
       for (const text of this.held.splice(0)) this.settleTurn(null, error, text);
     }
@@ -1599,14 +1738,23 @@ export class AcpBridge {
       running step to end (`flushSteers`, at the latest the turn's own settle),
       and meanwhile it reads as a held `steer` row in the queue — to every peer
       including the one that asked. Journaled on flush, so it is logged after
-      the turn as well as drawn during it. */
+      the turn as well as drawn during it.
+
+      **Unless the turn is already held**, which is the whole of the exception:
+      the wait exists so a row does not land in the middle of a running step,
+      and a held turn is not in the middle of one — it is stopped *at* the
+      boundary the wait is waiting for. Held anyway, the row was stranded until
+      the user pressed Continue, so changing the model looked like it had done
+      nothing; and worse, `heldSteers` renders a pending notice as a `steer`
+      row, so the change the user had just made appeared in the queue as a
+      message they had not sent. Emit it now: the boundary is here. */
   private holdConfigNotice(text: string): void {
-    this.pendingSteers.push({
-      id: randomUUID(),
-      createdAt: Date.now(),
-      event: { ev: "config_notice", seq: 0, text },
-      origin: undefined,
-    });
+    const event: ThreadEvent = { ev: "config_notice", seq: 0, text };
+    if (this.paused) {
+      this.host.emit(event);
+      return;
+    }
+    this.pendingSteers.push({ id: randomUUID(), createdAt: Date.now(), event, origin: undefined });
     this.host.onHeldSteersChanged();
   }
 

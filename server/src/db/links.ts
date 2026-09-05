@@ -14,14 +14,14 @@ import {
 } from "./index.js";
 
 /**
- * The three library links — MCP servers, skills, slash commands — that a
- * profile and a session each carry.
+ * The library links — MCP servers, skills, slash commands — that a profile
+ * and a session each carry.
  *
  * They used to be id arrays on the owning record, which nothing kept honest:
  * deleting an MCP server left its id behind in every owner that referenced
  * it, and the readers filtered the corpses out at spawn time. They are join
  * tables with `ON DELETE CASCADE` now, so a dangling id is not a thing that
- * can exist — which is why nothing downstream filters any more. Both owners
+ * can exist — which is why nothing downstream filters any more. All owners
  * share one shape and one reader/writer here. (Projects were a third owner
  * once; a project is a directory now and links nothing. Routines carry MCP
  * links too, but only the one kind, so theirs live beside the routines code

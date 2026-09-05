@@ -158,7 +158,7 @@ export function useActions(settings: ServerSettings) {
      */
     const changeThreadConfig = async (
       meta: SessionMeta,
-      next: { profileId?: string; model?: string; effort?: string; personaId?: string },
+      next: { profileId?: string; model?: string; effort?: string; personaId?: string; suggestFollowups?: boolean },
       context: string
     ): Promise<boolean> => {
       let live = false
@@ -175,6 +175,10 @@ export function useActions(settings: ServerSettings) {
                server reads a *changed* persona as "apply its effort too". Only
                a real pick travels. */
             personaId: next.personaId,
+            /* Unlike the persona, a boolean has no "unchanged" sentinel of its
+               own — so only a real flip travels, and the server's respawn
+               answers for every peer. */
+            suggestFollowups: next.suggestFollowups,
           }),
         })
         live = reply.live
@@ -245,10 +249,19 @@ export function useActions(settings: ServerSettings) {
           projectId: project.id,
           model: meta.model || undefined,
           effort: meta.effort || undefined,
+          /* The permission mode picked against the agent's remembered `modes` —
+             applied by the server right after session/new, and replaced by the
+             live thread's own mode state from then on. */
+          modeId: meta.modeId || undefined,
           /* How this thread should be worked on. Picked on the draft like the
              rest of this, and — unlike a started thread's — free: nothing is
              running yet, so there is no respawn to pay for. */
           personaId: meta.personaId || undefined,
+          /* Whether answers should close with follow-up suggestions. Picked on
+             the draft like the persona, and free for the same reason. On
+             unless the draft turned it off — `??` rather than `||`, so an
+             explicit off survives the trip instead of reading as unset. */
+          suggestFollowups: meta.suggestFollowups ?? true,
           /* Settings picked on the draft, against the option set the agent last
              advertised. The server applies them the moment session/new answers,
              best-effort: a remembered option the agent no longer offers must not
@@ -459,6 +472,7 @@ export function useActions(settings: ServerSettings) {
                reason: a reload that re-adopts an unsent draft has to get back
                the way it was going to be worked on, not just its profile. */
             personaId: defaults.personaId ?? "",
+            suggestFollowups: defaults.suggestFollowups ?? true,
             title: "New thread",
             createdAt: Date.now(),
             deletedAt: null,
@@ -492,6 +506,7 @@ export function useActions(settings: ServerSettings) {
           const probed = await api<{
             configOptions: acp.SessionConfigOption[]
             byModel: AgentOptionSet["byModel"]
+            modes?: acp.SessionModeState | null
           }>(settings, `/api/profiles/${profileId}/options`, {
             method: "POST",
             body: JSON.stringify({ projectId, agentId }),
@@ -499,6 +514,7 @@ export function useActions(settings: ServerSettings) {
           saveProbedOptions(key, {
             base: probed.configOptions ?? [],
             byModel: probed.byModel ?? {},
+            ...(probed.modes ? { modes: probed.modes } : {}),
           })
         } catch (error) {
           console.warn(`Couldn't ask ${agentId} on ${profileId} what it supports`, error)
@@ -524,7 +540,9 @@ export function useActions(settings: ServerSettings) {
             | "agentId"
             | "model"
             | "effort"
+            | "modeId"
             | "personaId"
+            | "suggestFollowups"
             | "mcpServerIds"
             | "skillIds"
             | "commandIds"
@@ -569,6 +587,33 @@ export function useActions(settings: ServerSettings) {
        */
       prefetchEarlier(sessionId: string) {
         known(sessionId)?.live?.prefetchEarlier()
+      },
+
+      /**
+       * Page history back until the turn named by `turnId` is folded, so a
+       * jump to a tick whose messages are still withheld lands on the turn
+       * instead of falling off the top of the transcript. `seq` is that
+       * turn's `turn_started` seq from the journal's turn list; the item id
+       * returned is the user bubble's row id after the fold — or null when
+       * the turn never made it on screen (the jump then stays where it is).
+       * Shares `loadEarlier`'s busy guard, so the earlier-steps button says
+       * so while this runs.
+       */
+      async loadUntilTurn(sessionId: string, turnId: string, seq: number): Promise<string | null> {
+        const thread = known(sessionId)?.live
+        if (!thread || getState().threads[sessionId]?.loadingEarlier) return null
+        dispatch({ type: "thread-window", id: sessionId, loadingEarlier: true })
+        try {
+          await thread.loadUntil(seq)
+        } catch (error) {
+          dispatch({ type: "thread-window", id: sessionId, loadingEarlier: false })
+          reportError(error, "Couldn't load earlier messages")
+          return null
+        }
+        const item = getState().threads[sessionId]?.items.find(
+          (entry) => entry.kind === "user" && entry.turnId === turnId
+        )
+        return item?.id ?? null
       },
 
       /**
@@ -699,12 +744,19 @@ export function useActions(settings: ServerSettings) {
           }
           return
         }
-        /* A draft already dispatched its optimistic bubble and turn-active
-           above — only emit them for threads that were already live. */
+        /* A draft already dispatched its optimistic bubble above — only emit
+           it for threads that were already live. */
         if (!draft) {
           dispatch({ type: "user-message", id: sessionId, text, local: true, attachments })
-          if (text) dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
         }
+        /* Re-asserted for a draft rather than skipped, like the indicator
+           below: the create's refresh swapped the draft row — the one carrying
+           the optimistic title dispatched above — for the server's, whose
+           title is still "New thread" until the server's own first-prompt
+           sniff persists it, and that sniff reaches every peer but this one
+           (`turn_started` fans out minus the origin). The reducer's guard
+           ("New thread" only) keeps a name the user chose safe from this. */
+        if (text) dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
         /* This device is the one peer that does not get a `turn_started` — it
            already put the message on screen — so it lights its own indicator.
            `turn_ended` is what clears it, here and everywhere else.
@@ -824,6 +876,22 @@ export function useActions(settings: ServerSettings) {
           meta,
           { personaId },
           "Couldn't change how this thread works"
+        )
+      },
+
+      /**
+       * Flip whether answers close with follow-up prompt suggestions.
+       *
+       * Always a respawn, like the persona: the suggestions trailer is spawn
+       * text no runtime takes on a running process. The conversation is
+       * restored over `session/load`; only the turn in flight does not come
+       * back.
+       */
+      async changeThreadSuggestions(meta: SessionMeta, suggestFollowups: boolean) {
+        await changeThreadConfig(
+          meta,
+          { suggestFollowups },
+          "Couldn't change this thread's suggestions"
         )
       },
 

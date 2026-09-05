@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { hostname, platform } from "node:os";
 import type * as acp from "./acp.js";
+import type { SharedV4ProviderOptions } from "@ai-sdk/provider";
 import {
   stepCountIs,
   streamText,
@@ -9,12 +10,19 @@ import {
   type StreamTextResult,
   type ToolSet,
 } from "ai";
+import { makeRepairToolCall } from "./tools/repair.js";
 import { expandCommand } from "./commands.js";
 import { compact, needsCompaction, windowSize } from "./compaction.js";
 import type { AgentEnv } from "./env.js";
 import { findInstructionFiles, readInstructions } from "./instructions.js";
 import type { SessionStore } from "./persistence.js";
-import type { ModelFactory } from "./provider.js";
+import { PROVIDER_OPTIONS_KEY, type ModelFactory } from "./provider.js";
+import {
+  PAUSED_NOTIFICATION,
+  type ErrorHold,
+  type PausedNotification,
+  type Release,
+} from "./hold.js";
 import type { Session } from "./session.js";
 import { buildTools, metaFor, type ToolMeta, type ToolRuntime } from "./tools/index.js";
 import { Emitter } from "./updates.js";
@@ -95,100 +103,203 @@ export async function handlePrompt(
       messageId: randomUUID(),
     });
 
-    let lastError: unknown;
-    for (let attempt = 0; attempt <= MAX_STREAM_RETRIES; attempt++) {
-      if (attempt > 0) {
-        process.stderr.write(`stream retry ${attempt}/${MAX_STREAM_RETRIES}\n`);
-        session.messages.length = session.messages.length - 1;
-        session.messages.push(userMessage);
-        await new Promise((r) => setTimeout(r, STREAM_RETRY_BASE_MS * 2 ** (attempt - 1)));
-      }
+    /* Every attempt's tokens, not the last attempt's. A turn that burned 60k
+       reading a repo, hit a quota wall, held while the model was changed and
+       finished on another one is still one turn, and reporting only the second
+       model's tokens would under-count exactly the expensive turns — the ones
+       `refreshQuota` is drawn against. */
+    let turnUsage: LanguageModelUsage | null = null;
+    let attempt = 0;
 
+    for (;;) {
       const msgsBefore = session.messages.length;
-      const rt: ToolRuntime = {
-        ctx,
-        session,
-        emit,
-        clientCaps: deps.clientCaps(),
-        runSubagent: (name, prompt) => runSubagent(deps, session, ctx, emit, name, prompt),
+      /* Words steered into *this* attempt. They are persisted and journaled as
+         they arrive (`prepareStep` below), so rolling the attempt back has to
+         put them back rather than drop them: the user said them once, they are
+         already on disk, and truncating past them left memory and the file
+         disagreeing and a duplicate bubble in the replay. */
+      const steered: ModelMessage[] = [];
+      /* The part of a failed attempt that is worth keeping: every step whose
+         tool calls all came back. Filled from the outcome below. */
+      let settled: ModelMessage[] = [];
+      /* Undo the attempt, keeping the two things that are not the attempt's to
+         throw away — the user's steered words, which are already on disk, and
+         the steps that finished. Everything after them is the half-written
+         remainder that failed, and it is dropped before it is ever persisted. */
+      const rollback = () => {
+        session.messages.length = msgsBefore;
+        session.messages.push(...steered, ...settled);
+        if (settled.length > 0) deps.store.appendMessages(session.id, settled);
       };
-      const { tools, meta } = buildTools(rt);
 
-      const result = streamText({
-        model: deps.makeModel(deps.env, session.modelId || failNoModel()),
-        system: systemPrompt(session, deps.env),
-        messages: session.messages,
-        tools,
-        abortSignal: abort.signal,
-        stopWhen: stepCountIs(MAX_STEPS),
-        reasoning: session.effort ?? undefined,
-        maxOutputTokens: deps.env.maxOutputTokens ?? undefined,
-        onError: () => {
-          /* Surfaced through the fullStream 'error' part below; without this
-             handler streamText also logs the error, which is fine on stderr. */
-        },
-        prepareStep: async ({ messages }) => {
-          /* The pause gate, first: a paused session holds here, between one
-             step's tool results and the next model call, until the harness
-             resumes it — and only then reads the steering that may have
-             arrived while it waited. */
-          await session.gate(abort.signal);
-          if (session.steerQueue.length === 0) return {};
-          const injected = session.steerQueue.flatMap((s) => s.messages);
-          session.steerQueue = [];
-          session.messages.push(...injected);
-          deps.store.appendMessages(session.id, injected);
-          for (const m of injected) {
-            emit.record({
-              sessionUpdate: "user_message_chunk",
-              content: { type: "text", text: contentText(m) },
-              messageId: randomUUID(),
-            });
-          }
-          return { messages: [...messages, ...injected] };
-        },
-      });
-
+      /* Set when this attempt produced no answer. Collected in one variable
+         rather than handled twice, because the two ways an attempt can fail
+         land in different places: `makeModel`/`failNoModel` throw while the
+         arguments are still being built, and a provider error arrives as a
+         part in the stream. */
+      let failure: unknown;
       try {
-        const outcome = await pumpStream(result, emit, meta, deps.env, session, undefined);
-
-        try {
-          const response = await result.response;
-          session.messages.push(...response.messages);
-          deps.store.appendMessages(session.id, response.messages);
-        } catch {
-          // An aborted or failed stream has no response messages to keep.
-        }
-        deps.store.touch(session.id);
-
-        if (outcome.error !== undefined) {
-          if (isRetriableStreamError(outcome.error) && attempt < MAX_STREAM_RETRIES && !abort.signal.aborted) {
-            lastError = outcome.error;
-            session.messages.length = msgsBefore;
-            continue;
-          }
-          throw outcome.error;
-        }
-
-        const stopReason: acp.StopReason = outcome.aborted
-          ? "cancelled"
-          : mapFinishReason(outcome.finishReason);
-        const promptResponse: acp.PromptResponse = {
-          stopReason,
-          usage: toAcpUsage(outcome.totalUsage),
+        const model = deps.makeModel(deps.env, session.modelId || failNoModel());
+        const rt: ToolRuntime = {
+          ctx,
+          session,
+          emit,
+          clientCaps: deps.clientCaps(),
+          runSubagent: (name, prompt) => runSubagent(deps, session, ctx, emit, name, prompt),
         };
-        settleParked(session, (p) => p.resolve(promptResponse));
-        return promptResponse;
-      } catch (err) {
-        if (isRetriableStreamError(err) && attempt < MAX_STREAM_RETRIES && !abort.signal.aborted) {
-          lastError = err;
-          session.messages.length = msgsBefore;
-          continue;
+        const { tools, meta } = buildTools(rt);
+
+        const result = streamText({
+          model,
+          system: systemPrompt(session, deps.env, { toolNames: Object.keys(tools) }),
+          messages: session.messages,
+          tools,
+          abortSignal: abort.signal,
+          stopWhen: stepCountIs(MAX_STEPS),
+          reasoning: session.effort ?? undefined,
+          maxOutputTokens: deps.env.maxOutputTokens ?? undefined,
+          /* A tool call the model got slightly wrong — another harness's tool
+             name, another harness's parameter name, arguments encoded twice —
+             is repaired in place instead of costing a failed step. */
+          repairToolCall: makeRepairToolCall({
+            onRepair: (note) => process.stderr.write(`${note}\n`),
+            readFiles: session.readFiles,
+          }),
+          providerOptions: cacheAffinity(deps.env, session.id),
+          onError: () => {
+            /* Surfaced through the fullStream 'error' part below; without this
+               handler streamText also logs the error, which is fine on stderr. */
+          },
+          prepareStep: async ({ messages }) => {
+            /* The gate, first: a held session waits here, between one step's
+               tool results and the next model call, until the harness lets it
+               go — and only then reads the steering that may have arrived
+               while it waited. Both reasons a session holds are one wait: the
+               user's pause, and a turn that failed and is waiting to be told
+               what to try instead. */
+            await session.gate(abort.signal);
+            if (session.steerQueue.length === 0) return {};
+            const injected = session.steerQueue.flatMap((s) => s.messages);
+            session.steerQueue = [];
+            session.messages.push(...injected);
+            steered.push(...injected);
+            deps.store.appendMessages(session.id, injected);
+            for (const m of injected) {
+              emit.record({
+                sessionUpdate: "user_message_chunk",
+                content: { type: "text", text: contentText(m) },
+                messageId: randomUUID(),
+              });
+            }
+            return { messages: [...messages, ...injected] };
+          },
+        });
+
+        const outcome = await pumpStream(result, emit, meta, deps.env, session, undefined);
+        if (outcome.totalUsage) turnUsage = addUsage(turnUsage, outcome.totalUsage);
+
+        /* `result.response` is the *last step's* metadata — its `messages` are
+           that step's alone. A tool-using turn is many steps, so keeping them
+           threw away every tool call and every tool result the turn made, and
+           the next turn started again from system+tools: the model forgot what
+           it had just read, and the 40-70k of prefix the turn had built was
+           re-sent uncached instead of re-read from the provider's cache.
+           `responseMessages` is the accumulated list across all steps. */
+        let generated: ModelMessage[] = [];
+        try {
+          generated = await result.responseMessages;
+          if (generated.length === 0 && !outcome.aborted && outcome.error === undefined) {
+            process.stderr.write("warning: turn produced no response messages to keep\n");
+          }
+        } catch (err) {
+          /* An aborted or failed stream has no response messages to keep — but
+             a *shape* change in the SDK is history loss, so it is not silent. */
+          if (!abort.signal.aborted) {
+            process.stderr.write(`could not keep response messages: ${errorText(err)}\n`);
+          }
         }
-        throw err;
+
+        /* A step can fail without ever producing an error part: a provider
+           that reports `finishReason: "error"` and nothing else used to end
+           the turn as a clean `end_turn` with a truncated answer — a failure
+           reported as a success. `content-filter` and `length` are the same
+           kind of thing from the other side: the answer is not the one that
+           was asked for, and both are fixed by moving off the model.
+
+           Only where a hold can be taken. With nobody to release it,
+           `max_tokens` and `refusal` are legitimate endings and stay the stop
+           reasons they have always been — a run must not fail on them. */
+        const finishFailure =
+          outcome.error === undefined && session.holdOnError
+            ? failedFinish(outcome.finishReason)
+            : undefined;
+        if (outcome.error !== undefined || finishFailure) {
+          failure = outcome.error ?? finishFailure;
+          /* Twenty tool calls into a turn, a rate limit must not cost twenty
+             tool calls. What the model already did and saw is kept; only the
+             step it was in the middle of is lost, because a tool call with no
+             result is a message most providers refuse outright. */
+          settled = settledPrefix(generated);
+        } else {
+          /* Persisted only now that the attempt is known to have produced an
+             answer — and on the failing path, only down to the last settled
+             step (`rollback`). Written before the check, a failed attempt left
+             its own half of a step in the JSONL for good: an assistant message
+             carrying tool calls with no matching results, which the next
+             `session/load` hands straight back to a provider that rejects it. */
+          session.messages.push(...generated);
+          deps.store.appendMessages(session.id, generated);
+          deps.store.touch(session.id);
+
+          const stopReason: acp.StopReason = outcome.aborted
+            ? "cancelled"
+            : mapFinishReason(outcome.finishReason);
+          const promptResponse: acp.PromptResponse = {
+            stopReason,
+            usage: toAcpUsage(turnUsage),
+          };
+          settleParked(session, (p) => p.resolve(promptResponse));
+          return promptResponse;
+        }
+      } catch (err) {
+        failure = err;
       }
+
+      /* From here the attempt is over. What finished is kept and written; the
+         unfinished remainder is dropped, and was never written — the JSONL is
+         append-only, so not writing is the only undo it has. */
+      rollback();
+      deps.store.touch(session.id);
+
+      if (abort.signal.aborted) throw failure;
+
+      if (isRetriableStreamError(failure) && attempt < MAX_STREAM_RETRIES) {
+        attempt++;
+        process.stderr.write(`stream retry ${attempt}/${MAX_STREAM_RETRIES}\n`);
+        await new Promise((r) => setTimeout(r, STREAM_RETRY_BASE_MS * 2 ** (attempt - 1)));
+        continue;
+      }
+
+      /* Out of retries. Rather than throw the turn away — with every tool call
+         it has already made — hold it here and let the user change the model
+         or the profile, which the harness can do on the running process. The
+         next pass re-reads `session.modelId`, so the change is the whole of
+         what makes the retry different. */
+      if (!session.holdOnError) throw failure;
+      const release = await holdForFailure(ctx, session, failure, abort.signal);
+      if (release === "released") {
+        attempt = 0;
+        continue;
+      }
+      /* Cancelled while held. A Stop ends a turn cleanly — the same
+         `stopReason` it has always ended with — never as a failure. */
+      const cancelled: acp.PromptResponse = {
+        stopReason: "cancelled",
+        usage: toAcpUsage(turnUsage),
+      };
+      settleParked(session, (p) => p.resolve(cancelled));
+      return cancelled;
     }
-    throw lastError;
   } catch (err) {
     process.stderr.write(`turn failed: ${(err as Error)?.stack ?? String(err)}\n`);
     settleParked(session, (p) => p.reject(err));
@@ -205,6 +316,105 @@ export async function handlePrompt(
       deps.store.appendMessages(session.id, leftover);
     }
   }
+}
+
+/**
+ * Hold a turn that failed, tell the harness why, and answer how the wait ended.
+ *
+ * The notification is the one direction the pause pair never had. A pause is
+ * something the harness asks for and learns the answer to in the same reply;
+ * a hold is taken at this end, on the turn's own initiative, and the harness
+ * has no other way to find out — so it travels as `_daedalus/session/paused`,
+ * absolute and live-only, the way the state it describes is.
+ */
+async function holdForFailure(
+  ctx: acp.AgentContext,
+  session: Session,
+  failure: unknown,
+  signal: AbortSignal,
+): Promise<Release> {
+  const hold = describeHold(failure);
+  process.stderr.write(`turn held: ${hold.message}\n`);
+  await notifyPaused(ctx, { sessionId: session.id, paused: true, reason: "error", ...hold });
+  const release = await session.holdError(hold, signal);
+  /* Said again on the way out, whichever way it ended: the harness learns a
+     resume from its own reply, but a cancel reaches this end as a notification
+     and would otherwise leave the toggle drawn as held. */
+  await notifyPaused(ctx, { sessionId: session.id, paused: false });
+  return release;
+}
+
+/** Best-effort: a hold that could not be announced is still a hold, and
+    failing here would end the turn for the wrong reason. */
+async function notifyPaused(ctx: acp.AgentContext, params: PausedNotification): Promise<void> {
+  try {
+    await ctx.notify(PAUSED_NOTIFICATION, params as unknown as never);
+  } catch {
+    // The connection is going away; `close()` on the other side settles the turn.
+  }
+}
+
+/* The sentence to show and the provider's own account of it, folded. Split on
+   the first line because an OpenAI-compatible error is usually one readable
+   sentence followed by a JSON body nobody wants unbidden. */
+function describeHold(failure: unknown): ErrorHold {
+  const text = errorText(failure).trim() || "the model provider returned an error";
+  const [first = text, ...rest] = text.split("\n");
+  const detail = rest.join("\n").trim();
+  return {
+    message: first.length > 200 ? `${first.slice(0, 200)}…` : first,
+    ...(detail ? { detail } : {}),
+  };
+}
+
+/**
+ * The longest prefix of a step's messages in which every tool call has its
+ * result — what survives an attempt that died partway through.
+ *
+ * A turn is a sequence of assistant messages and the tool messages answering
+ * them, and it is only cuttable where nothing is outstanding. Cut anywhere
+ * else and the history carries a call with no result, which is not merely
+ * untidy: most providers reject the request outright, so the next attempt
+ * fails for a reason that has nothing to do with the one that started it.
+ */
+function settledPrefix(messages: ModelMessage[]): ModelMessage[] {
+  const outstanding = new Set<string>();
+  let keep = 0;
+  messages.forEach((message, index) => {
+    if (Array.isArray(message.content)) {
+      for (const part of message.content as { type?: string; toolCallId?: string }[]) {
+        if (!part.toolCallId) continue;
+        if (part.type === "tool-call") outstanding.add(part.toolCallId);
+        else if (part.type === "tool-result") outstanding.delete(part.toolCallId);
+      }
+    }
+    if (outstanding.size === 0) keep = index + 1;
+  });
+  return messages.slice(0, keep);
+}
+
+/* One turn, one usage figure, however many attempts it took. Summed field by
+   field rather than by `totalTokens` alone, because every one of them is drawn
+   separately — the cache rate above all (`toAcpUsage`). */
+function addUsage(a: LanguageModelUsage | null, b: LanguageModelUsage): LanguageModelUsage {
+  if (!a) return b;
+  const sum = (x: number | undefined, y: number | undefined): number | undefined =>
+    x === undefined && y === undefined ? undefined : (x ?? 0) + (y ?? 0);
+  return {
+    ...a,
+    inputTokens: sum(a.inputTokens, b.inputTokens),
+    outputTokens: sum(a.outputTokens, b.outputTokens),
+    totalTokens: sum(a.totalTokens, b.totalTokens),
+    inputTokenDetails: {
+      ...a.inputTokenDetails,
+      cacheReadTokens: sum(a.inputTokenDetails?.cacheReadTokens, b.inputTokenDetails?.cacheReadTokens),
+      cacheWriteTokens: sum(a.inputTokenDetails?.cacheWriteTokens, b.inputTokenDetails?.cacheWriteTokens),
+    },
+    outputTokenDetails: {
+      ...a.outputTokenDetails,
+      reasoningTokens: sum(a.outputTokenDetails?.reasoningTokens, b.outputTokenDetails?.reasoningTokens),
+    },
+  };
 }
 
 function failNoModel(): never {
@@ -345,10 +555,28 @@ async function pumpStream(
           const used = totalOf(part.usage);
           session.lastTokens = used;
           onUsage?.(part.usage);
+          /* Per-step, because a turn's total hides where the cache was lost:
+             a run that misses on one step of thirteen and a run that misses on
+             all thirteen add up to different totals but to the same story, and
+             only the step series says which happened. ACP has no field for it,
+             so it rides `_meta` — journaled with the event, which is what makes
+             a cold step answerable by a query instead of a reconstruction. */
+          const cacheRead = part.usage.inputTokenDetails?.cacheReadTokens ?? null;
+          const cacheWrite = part.usage.inputTokenDetails?.cacheWriteTokens ?? null;
           await emit.update({
             sessionUpdate: "usage_update",
             used,
             size: windowSize(env),
+            _meta:
+              cacheRead === null && cacheWrite === null
+                ? undefined
+                : {
+                    cache: {
+                      read: cacheRead,
+                      write: cacheWrite,
+                      prompt: part.usage.inputTokens ?? null,
+                    },
+                  },
           });
           break;
         }
@@ -427,13 +655,15 @@ async function runSubagent(
 
       const result = streamText({
         model: deps.makeModel(deps.env, session.modelId),
-        system: systemPrompt(session, deps.env, { subagent: true }),
+        system: systemPrompt(session, deps.env, { subagent: true, toolNames: Object.keys(tools) }),
         messages: [{ role: "user", content: prompt }],
         tools,
         abortSignal: session.abort?.signal,
         stopWhen: stepCountIs(MAX_STEPS),
         reasoning: session.effort ?? undefined,
         maxOutputTokens: deps.env.maxOutputTokens ?? undefined,
+        repairToolCall: makeRepairToolCall({ readFiles: session.readFiles }),
+        providerOptions: cacheAffinity(deps.env, session.id),
         onError: () => {},
         /* A subagent pauses with its parent: the Codex thread-tree issue's
            complaint is exactly a root held while its collaborators keep
@@ -496,9 +726,16 @@ async function runSubagent(
 export function systemPrompt(
   session: Session,
   env: AgentEnv,
-  opts: { subagent?: boolean } = {},
+  opts: { subagent?: boolean; toolNames?: string[] } = {},
 ): string {
   const parts: string[] = [];
+  /* What is actually built for this turn, not what the prompt remembers being
+     built. Plan mode strips every writing tool and a subagent strips `task`,
+     and a prompt that names a tool the loop did not offer is a NoSuchToolError
+     the model cannot see coming: "use bash for read-only commands" in plan
+     mode, where bash is not there at all, is exactly how that failed. */
+  const toolNames = opts.toolNames ?? [];
+  const has = (name: string) => toolNames.length === 0 || toolNames.includes(name);
   parts.push(
     opts.subagent
       ? "You are Daedalus Agent, running as a subagent on a delegated task. Complete the task and end with a concise report of what you did and found — your final message is all the caller sees."
@@ -506,11 +743,7 @@ export function systemPrompt(
 
 IMPORTANT: You must NEVER generate or guess URLs for the user unless you are confident that the URLs are for helping the user with programming. You may use URLs provided by the user in their messages or local files.
 
-If the user asks for help or wants to give feedback inform them of the following:
-- /help: Get help with using Daedalus Agent
-- To give feedback, users should report the issue at https://github.com/anomalyco/opencode
-
-When the user directly asks about Daedalus Agent (eg 'can Daedalus Agent do...', 'does Daedalus Agent have...') or asks in second person (eg 'are you able...', 'can you do...'), first use the WebFetch tool to gather information to answer the question from opencode docs at https://opencode.ai
+You run inside the Daedalus harness, which draws your tool calls, diffs and todos in a live transcript. When the user asks what you can do, answer from the tools you actually have rather than guessing at product documentation.
 
 # Tone and style
 - You should be concise, direct, and to the point. When you run a non-trivial bash command, you should explain what the command does and why you are running it, to make sure the user understands what you are doing (this is especially important when you are running a command that will make changes to the user's system).
@@ -520,7 +753,7 @@ When the user directly asks about Daedalus Agent (eg 'can Daedalus Agent do...',
 - Only use emojis if the user explicitly requests it. Avoid using emojis in all communication unless asked.
 - IMPORTANT: You should minimize output tokens as much as possible while maintaining helpfulness, quality, and accuracy. Only address the specific query or task at hand, avoiding tangential information unless absolutely critical for completing the request. If you can answer in 1-3 sentences or a short paragraph, please do.
 - IMPORTANT: You should NOT answer with unnecessary preamble or postamble (such as explaining your code or summarizing your action), unless the user asks you to.
-- IMPORTANT: Keep your responses short, since they will be displayed on a command line interface. You MUST answer concisely with fewer than 4 lines of text (not including tool use or code generation), unless user asks for detail. Answer the user's question directly, without elaboration, explanation, or details. One word answers are best. Avoid introductions, conclusions, and explanations. You MUST avoid text before/after your response, such as "The answer is <answer>.", "Here is the content of the file..." or "Based on the information provided, the answer is..." or "Here is what I will do next...".
+- IMPORTANT: Keep your responses short. A question with a short answer gets a short answer — one word where one word is the answer — and never an introduction, a conclusion or a restatement of the question. Avoid text before/after your response, such as "The answer is <answer>.", "Here is the content of the file..." or "Based on the information provided, the answer is..." or "Here is what I will do next...". Work you actually performed is the exception: report what changed and why, to the length the change deserves, following "Presenting your work" below.
 
 # Professional objectivity
 Prioritize technical accuracy and truthfulness over validating the user's beliefs. Focus on facts and problem-solving, providing direct, objective technical info without any unnecessary superlatives, praise, or emotional validation. It is best for the user if Daedalus Agent honestly applies the same rigorous standards to all ideas and disagrees when necessary, even if it may not be what the user wants to hear. Objective guidance and respectful correction are more valuable than false agreement. Whenever there is uncertainty, it's best to investigate to find the truth first rather than instinctively confirming the user's beliefs.
@@ -568,29 +801,49 @@ The user will primarily request you perform software engineering tasks. This inc
 - Use the available search tools to understand the codebase and the user's query. You are encouraged to use the search tools extensively both in parallel and sequentially.
 - Implement the solution using all tools available to you
 - Verify the solution if possible with tests. NEVER assume specific test framework or test script. Check the README or search codebase to determine the testing approach.
-- VERY IMPORTANT: When you have completed a task, you MUST run the lint and typecheck commands (e.g. npm run lint, npm run typecheck, ruff, etc.) with Bash if they were provided to you to ensure your code is correct. If you are unable to find the correct command, ask the user for the command to run and if they supply it, proactively suggest writing it to AGENTS.md so that you will know to run it next time.
+${has("bash") ? "- VERY IMPORTANT: When you have completed a task, you MUST run the lint and typecheck commands (e.g. npm run lint, npm run typecheck, ruff, etc.) with bash if they were provided to you to ensure your code is correct." : "- VERY IMPORTANT: When you have completed a task, say which lint and typecheck commands should be run to check it — you cannot run them yourself this turn."} If you are unable to find the correct command, ask the user for the command to run and if they supply it, proactively suggest writing it to AGENTS.md so that you will know to run it next time.
 NEVER commit changes unless the user explicitly asks you to. It is VERY IMPORTANT to only commit when explicitly asked, otherwise the user will feel that you are being too proactive.
 
 - Tool results and user messages may include <system-reminder> tags. <system-reminder> tags contain useful information and reminders. They are NOT part of the user's provided input or the tool result.
 
 # Tool usage policy
-- When doing file search, prefer to use the Task tool in order to reduce context usage.
 - You have the capability to call multiple tools in a single response. When multiple independent pieces of information are requested, batch your tool calls together for optimal performance. When making multiple bash tool calls, you MUST send a single message with multiple tools calls to run the calls in parallel. For example, if you need to run "git status" and "git diff", send a single message with two tool calls to run the calls in parallel.
-- Use specialized tools instead of bash commands when possible, as this provides a better user experience. For file operations, use dedicated tools: Read for reading files instead of cat/head/tail, Edit for editing instead of sed/awk, and Write for creating files instead of cat with heredoc or echo redirection. Reserve bash tools exclusively for actual system commands and terminal operations that require shell execution. NEVER use bash echo or other command-line tools to communicate thoughts, explanations, or instructions to the user. Output all communication directly in your response text instead.
-- VERY IMPORTANT: When exploring the codebase to gather context or to answer a question that is not a needle query for a specific file/class/function, it is CRITICAL that you use the Task tool instead of running search commands directly.
+${
+  has("bash")
+    ? `- Use specialized tools instead of bash commands when possible, as this provides a better user experience. For file operations, use dedicated tools: read_file instead of cat/head/tail, edit_file instead of sed/awk, write_file instead of a heredoc or echo redirection, and glob/grep instead of find/grep. Reserve bash exclusively for actual system commands and terminal operations that require shell execution. NEVER use bash echo or other command-line tools to communicate thoughts, explanations, or instructions to the user. Output all communication directly in your response text instead.`
+    : `- Read with read_file and search with glob and grep. There is no shell this turn, so anything you would have reached for a command line to learn has to come from those three.`
+}
+${
+  has("task")
+    ? `- VERY IMPORTANT: When exploring the codebase to gather context or to answer a question that is not a needle query for a specific file/class/function, it is CRITICAL that you use the task tool instead of running search commands directly — it keeps the search out of your context.
 <example>
 user: Where are errors from the client handled?
-assistant: [Uses the Task tool to find the files that handle client errors instead of using Glob or Grep directly]
+assistant: [Uses the task tool to find the files that handle client errors instead of using glob or grep directly]
 </example>
 <example>
 user: What is the codebase structure?
-assistant: [Uses the Task tool]
-</example>
+assistant: [Uses the task tool]
+</example>`
+    : `- There is no subagent tool this turn, so broad exploration is yours to do: narrow it with glob and grep first and read only the ranges you need, rather than pulling whole files in.`
+}
 
-# Editing constraints
+# Working from what you already have
+The conversation above is your memory of this session, and it is authoritative. Before you reach for a tool, check whether the answer is already in it.
+- Do NOT re-read a file whose contents are already in this conversation, and do NOT re-run a search you have already run. The earlier result is still true unless something changed it.
+- Something changed it means: you edited or wrote the file, a bash command you ran touched it, or the user says it changed. Then re-read only the part that moved — use \`offset\`/\`limit\` rather than pulling the whole file back.
+- Your own edits are recorded above. After an edit_file succeeds, the file is what you just made it; do not read it back to confirm the tool did what it said.
+- Read the range you need, not the file. When you are looking for one function, grep for it and read around the hit; a whole-file read to answer a one-line question is wasted context for the rest of the session.
+- When the user follows up on work you just did, continue from what you already know instead of re-exploring the codebase from scratch. Re-establish context only for the parts of the repo this session has genuinely not seen.
+- This is not a licence to guess. If a fact was never established here, or it was compacted away and you cannot see it, go and read it — the rule is "don't fetch twice", never "answer from memory you don't have".
+
+${
+  has("edit_file")
+    ? `# Editing constraints
 - Default to ASCII when editing or creating files. Only introduce non-ASCII or other Unicode characters when there is a clear justification and the file already uses them.
 - Only add comments if they are necessary to make a non-obvious block easier to understand.
-- Try to use apply_patch for single file edits, but it is fine to explore other options to make the edit if it does not work well. Do not use apply_patch for changes that are auto-generated (i.e. generating package.json or running a lint or format command like gofmt) or when scripting is more efficient (such as search and replacing a string across a codebase).
+- Use edit_file for a change to part of a file and write_file only for a whole file. Read a file before you edit or overwrite it, and copy old_string out of what read_file returned — without its line-number prefix — rather than retyping it from memory: an edit fails when the text is not byte-for-byte what is on disk.
+- Make old_string unique by including a line or two of surrounding context. Reach for replace_all only when you mean every occurrence.
+- Scripting a mechanical change across many files (a rename, a codemod) through bash is fine and often better than a long run of edits.
 
 # Git and workspace hygiene
 - You may be in a dirty git worktree.
@@ -599,7 +852,9 @@ assistant: [Uses the Task tool]
     * If the changes are in files you've touched recently, you should read carefully and understand how you can work with the changes rather than reverting them.
     * If the changes are in unrelated files, just ignore them and don't revert them.
 - Do not amend commits unless explicitly requested.
-- **NEVER** use destructive commands like \`git reset --hard\` or \`git checkout --\` unless specifically requested or approved by the user.
+- **NEVER** use destructive commands like \`git reset --hard\` or \`git checkout --\` unless specifically requested or approved by the user.`
+    : "# Editing constraints\nNothing writes this turn. Do not describe an edit as made, and do not promise one you cannot make here."
+}
 
 # Frontend tasks
 When doing frontend design tasks, avoid collapsing into bland, generic layouts.
@@ -634,7 +889,7 @@ You are producing plain text that will later be styled by the CLI. Follow these 
   * Lead with a quick explanation of the change, and then give more details on the context covering where and why a change was made. Do not start this explanation with "summary", just jump right in.
   * If there are natural next steps the user may want to take, suggest them at the end of your response. Do not make suggestions if there are no natural next steps.
   * When suggesting multiple options, use numeric lists for the suggestions so the user can quickly respond with a single number.
-- The user does not command execution outputs. When asked to show the output of a command (e.g. \`git show\`), relay the important details in your answer or summarize the key lines so the user understands the result.
+- The user does not see command execution outputs. When asked to show the output of a command (e.g. \`git show\`), relay the important details in your answer or summarize the key lines so the user understands the result.
 
 # Final answer structure and style guidelines
 
@@ -663,56 +918,45 @@ user: Where are errors from the client handled?
 assistant: Clients are marked as failed in the \`connectToServer\` function in src/services/process.ts:712.
 </example>`,
   );
-  if (session.mode === "plan") {
+  /* Its own block, and pushed for a subagent as well as for a root turn.
+     Every failure this section exists to stop — a call to a tool the turn did
+     not build, two calls' arguments run into one buffer, an `edit_file` that
+     forgot its `path` — is a failure a subagent makes in exactly the same way,
+     and it was only ever told the short brief. */
+  if (toolNames.length) {
     parts.push(
-      `You are in PLAN MODE: everything that writes is disabled. Explore with the read-only tools, then present a concrete implementation plan and ask the user to approve it before any change is made.
+      `# Tools available to you
+${toolNames.map((n) => `- ${n}`).join("\n")}
 
-=== CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===
-This is a READ-ONLY planning task. You are STRICTLY PROHIBITED from:
-- Creating new files (no Write, touch, or file creation of any kind)
-- Modifying existing files (no Edit operations)
-- Deleting files (no rm or deletion)
-- Moving or copying files (no mv or cp)
-- Creating temporary files anywhere, including /tmp
-- Using redirect operators (>, >>, |) or heredocs to write to files
-- Running ANY commands that change system state
+That list is exhaustive for this turn. A tool that is not on it does not exist here — do not call it, and do not tell the user you will. If something you need is missing, say so and use what you have.
 
-Your role is EXCLUSIVELY to explore the codebase and design implementation plans. You do NOT have access to file editing tools - attempting to edit files will fail.
+# Calling tools correctly
+- Every call carries its own complete JSON arguments object. Never run two calls' arguments together into one, and never leave one of them empty — parallel calls are independent messages, not one message split up.
+- Send every required argument, every time. In particular \`edit_file\` and \`write_file\` need \`path\` alongside the strings; the path is the argument that gets dropped when the other arguments are long, so write it first.
+- Paths may be absolute or relative to the working directory. Prefer the exact path you saw in an earlier result over one you reconstruct.
+- If a call comes back saying its arguments could not be parsed or an argument was missing, that call did not run. Re-issue it once, on its own, with the whole arguments object — do not assume it half-happened and do not change your plan because of it.`,
+    );
+  }
+  if (session.mode === "plan") {
+    /* The old text here described a read-only *policy* — "use bash only for
+       read-only operations", "never use mkdir/touch/rm" — over a tool set that
+       does not contain bash at all. Plan mode is enforced by `buildTools`,
+       which never builds a tool that writes, so the model that followed those
+       words called a tool that was not there and got a NoSuchToolError back
+       for its trouble. What plan mode has to say is which tools exist, not
+       which uses of a missing one are forbidden. */
+    parts.push(
+      `You are in PLAN MODE. Every tool that can change anything — writing files, editing them, running shell commands, MCP tools — is not built for this turn: it is absent, not merely discouraged. ${
+        toolNames.length ? `The only tools you have are: ${toolNames.join(", ")}.` : ""
+      } Calling anything else fails outright and wastes a step, so do not reach for bash to "just check something".
 
-## Your Process
+Explore with the tools you have, then write the plan:
+- Read what you were pointed at, and find the existing patterns and conventions around it with glob, grep and read_file.
+- Trace the code paths the change would touch, and name the similar feature you are following.
+- Then give a concrete, ordered implementation plan: what changes in which file, in what sequence, and what each step depends on. Call out the trade-offs you chose between and the parts you are unsure about.
+- Close with the 3-5 files most critical to the change, one path per line.
 
-1. **Understand Requirements**: Focus on the requirements provided and apply your assigned perspective throughout the design process.
-
-2. **Explore Thoroughly**:
-   - Read any files provided to you in the initial prompt
-   - Find existing patterns and conventions using Glob, Grep, and Read
-   - Understand the current architecture
-   - Identify similar features as reference
-   - Trace through relevant code paths
-   - Use Bash ONLY for read-only operations (ls, git status, git log, git diff, find, grep, cat, head, tail)
-   - NEVER use Bash for: mkdir, touch, rm, cp, mv, git add, git commit, npm install, pip install, or any file creation/modification
-
-3. **Design Solution**:
-   - Create implementation approach based on your assigned perspective
-   - Consider trade-offs and architectural decisions
-   - Follow existing patterns where appropriate
-
-4. **Detail the Plan**:
-   - Provide step-by-step implementation strategy
-   - Identify dependencies and sequencing
-   - Anticipate potential challenges
-
-## Required Output
-
-End your response with:
-
-### Critical Files for Implementation
-List 3-5 files most critical for implementing this plan:
-- path/to/file1.ts
-- path/to/file2.ts
-- path/to/file3.ts
-
-REMEMBER: You can ONLY explore and plan. You CANNOT and MUST NOT write, edit, or modify any files. You do NOT have access to file editing tools.`,
+Nothing is implemented in plan mode. End by asking the user to approve the plan or tell you what to change.`,
     );
   }
   /* Before the persona, because a persona is the choice made for *this*
@@ -762,6 +1006,19 @@ REMEMBER: You can ONLY explore and plan. You CANNOT and MUST NOT write, edit, or
   return parts.join("\n\n");
 }
 
+/* A prefix cache lives on the machine that built it, so a router free to pick
+   a different backend per request answers a warm prompt from a cold one. The
+   key is the affinity hint that keeps a thread's steps together: OpenAI routes
+   on it explicitly, and a gateway that has never heard of it ignores an
+   unknown body field. The session id — stable across every step of every turn,
+   distinct between threads that share a model — is exactly the grain the cache
+   is built at. Env-gated for the strict upstream that rejects what it cannot
+   parse rather than ignoring it. */
+function cacheAffinity(env: AgentEnv, sessionId: string): SharedV4ProviderOptions | undefined {
+  if (!env.promptCacheKey) return undefined;
+  return { [PROVIDER_OPTIONS_KEY]: { prompt_cache_key: sessionId } };
+}
+
 function settleParked(session: Session, settle: (p: Parked) => void): void {
   const parked = parkedBySession.get(session);
   if (!parked) return;
@@ -794,6 +1051,32 @@ function firstLine(text: string): string | null {
   return line.length > 80 ? `${line.slice(0, 80)}…` : line;
 }
 
+/**
+ * The finish reasons that mean the step did not do what was asked, as an error
+ * to hold on — or `undefined` for the ones that mean it did.
+ *
+ * `"error"` is the one that was silently wrong: a provider that reports it and
+ * sends no error part left `mapFinishReason` to fall through to `end_turn`, so
+ * a step that failed was reported as one that succeeded and the answer simply
+ * stopped mid-sentence. The other two are not errors in the transport sense —
+ * they are ACP stop reasons, and honest ones — but they are both "this model
+ * would not finish this", which is a thing a reader can fix by moving off it.
+ */
+function failedFinish(reason: string): Error | undefined {
+  switch (reason) {
+    case "error":
+      return new Error("the model provider ended the step with an error");
+    case "content-filter":
+      return new Error("the model refused to answer (content filter)");
+    case "length":
+      return new Error("the model hit its output limit before finishing");
+    default:
+      /* `other` and `unknown` are not claims of failure — a provider that has
+         said nothing has not said something went wrong. */
+      return undefined;
+  }
+}
+
 function mapFinishReason(reason: string): acp.StopReason {
   switch (reason) {
     case "length":
@@ -811,14 +1094,24 @@ function totalOf(usage: LanguageModelUsage): number {
   return usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
 }
 
+/* `inputTokens` in this protocol is the part of the prompt the provider had to
+   read *fresh* — the client adds the cache figures back to it to draw "the
+   prompt" and divides by that sum to draw the cache rate (`lib/tokens.ts`).
+   OpenAI-compatible `prompt_tokens`, which is all this runtime ever speaks,
+   means the opposite: it is the whole prompt with `cached_tokens` counted
+   inside it. Reported raw, every cached token was counted twice — a turn that
+   really hit cache on 89% of its prompt was drawn as 47%, and no amount of
+   caching could ever have moved it past 50%. Subtract the hit, floor at zero
+   for a provider that ever reports more cache than prompt. */
 function toAcpUsage(usage: LanguageModelUsage | null): acp.Usage | null {
   if (!usage) return null;
+  const cacheRead = usage.inputTokenDetails?.cacheReadTokens ?? null;
   return {
     totalTokens: totalOf(usage),
-    inputTokens: usage.inputTokens ?? 0,
+    inputTokens: Math.max(0, (usage.inputTokens ?? 0) - (cacheRead ?? 0)),
     outputTokens: usage.outputTokens ?? 0,
     thoughtTokens: usage.outputTokenDetails?.reasoningTokens ?? null,
-    cachedReadTokens: usage.inputTokenDetails?.cacheReadTokens ?? null,
+    cachedReadTokens: cacheRead,
     cachedWriteTokens: usage.inputTokenDetails?.cacheWriteTokens ?? null,
   };
 }
@@ -840,7 +1133,15 @@ function clampRaw(text: string): string {
 }
 
 function errorText(error: unknown): string {
-  if (error instanceof Error) return error.message;
+  if (error instanceof Error) {
+    /* The SDK's own tool errors carry the cause that explains them — a Zod
+       report, or the arguments that would not parse. Without it the model
+       reads "invalid input" and guesses at what was invalid. */
+    const cause = (error as { cause?: unknown }).cause;
+    const detail =
+      cause instanceof Error && cause.message && !error.message.includes(cause.message) ? `\n${cause.message}` : "";
+    return `${error.message}${detail}`;
+  }
   return typeof error === "string" ? error : JSON.stringify(error);
 }
 

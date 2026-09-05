@@ -123,7 +123,10 @@ registerRoute(
     allowlist: import.meta.env.DEV ? [/^\/$/] : undefined,
     // The API and the thread socket live on another origin in the usual setup,
     // but a same-origin deployment must not have its API swallowed by the shell.
-    denylist: [/^\/api\//, /^\/ws(\/|$)/],
+    // `popout.html` is the empty room a popped-out dock panel is moved into
+    // (client/public/popout.html): answering it with the shell would boot a
+    // second copy of the whole app inside that window.
+    denylist: [/^\/api\//, /^\/ws(\/|$)/, /^\/popout\.html$/],
   })
 )
 

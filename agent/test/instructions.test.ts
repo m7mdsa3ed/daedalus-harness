@@ -49,6 +49,30 @@ process.env.HOME = home;
   console.log("instructions: walk ok");
 }
 
+// --- AGENT.md, opencode's singular, is read too ---
+{
+  const singular = join(outside, "singular");
+  mkdirSync(join(singular, ".git"), { recursive: true });
+  writeFileSync(join(singular, "AGENT.md"), "SINGULAR RULE: tabs");
+  writeFileSync(join(singular, "CLAUDE.md"), "CLAUDE RULE: spaces");
+  const found = findInstructionFiles(singular, home).filter((p) => p.startsWith(singular));
+  assert.deepEqual(found, [join(singular, "AGENT.md"), join(singular, "CLAUDE.md")]);
+  const blocks = readInstructions(found).join("\n");
+  assert.ok(blocks.includes("SINGULAR RULE: tabs"));
+  console.log("instructions: AGENT.md ok");
+}
+
+// --- a file over the per-file cap says what is missing ---
+{
+  const big = join(outside, "big");
+  mkdirSync(join(big, ".git"), { recursive: true });
+  writeFileSync(join(big, "AGENTS.md"), "x".repeat(60_000));
+  const [block] = readInstructions([join(big, "AGENTS.md")]);
+  assert.ok(block.includes("more characters in"), "names what was dropped");
+  assert.ok(block.includes(join(big, "AGENTS.md")), "and the file to read for it");
+  console.log("instructions: clip notice ok");
+}
+
 // --- a symlinked AGENTS.md -> CLAUDE.md is one file, not two ---
 {
   const linked = join(outside, "linked");
@@ -89,6 +113,37 @@ process.env.HOME = home;
   assert.ok(prompt.indexOf("REPO RULE") < prompt.indexOf("PACKAGE RULE"));
   assert.ok(prompt.indexOf("PACKAGE RULE") < prompt.indexOf("PERSONA:"));
   console.log("instructions: prompt layer ok");
+}
+
+/* --- the prompt names the tools the turn actually built ---
+
+   The failure this is written against: plan mode strips every writing tool,
+   and the prompt went on telling the model to "use Bash ONLY for read-only
+   operations" over a tool set with no bash in it. The model obeyed and got a
+   NoSuchToolError. A prompt may not name a tool the loop did not build. */
+{
+  const env = testEnv({ projectInstructions: false });
+  const planning = new Session("plan-1", pkg, env);
+  planning.mode = "plan";
+  const readOnly = ["read_file", "glob", "grep", "write_todos"];
+  const prompt = systemPrompt(planning, env, { toolNames: readOnly });
+  for (const name of readOnly) assert.ok(prompt.includes(`- ${name}`), `plan prompt lists ${name}`);
+  for (const gone of ["bash", "edit_file", "write_file"]) {
+    assert.ok(!prompt.includes(`- ${gone}\n`), `plan prompt does not offer ${gone}`);
+  }
+  assert.ok(prompt.includes("PLAN MODE"), "plan mode is stated");
+  assert.ok(!/use Bash/i.test(prompt), "plan mode never sends the model to a tool it does not have");
+
+  // A full turn gets the whole set, and the rules that keep its arguments whole.
+  const working = new Session("plan-2", pkg, env);
+  const full = systemPrompt(working, env, { toolNames: [...readOnly, "bash", "edit_file", "write_file", "task"] });
+  assert.ok(full.includes("- bash"), "a default turn lists bash");
+  assert.ok(full.includes("use the task tool"), "the task tool is recommended when it exists");
+  assert.ok(!systemPrompt(working, env, { toolNames: readOnly }).includes("use the task tool"));
+  assert.ok(full.includes("its own complete JSON arguments object"), "argument discipline is stated");
+  // Cruft from another product: a tool that has never existed here.
+  assert.ok(!full.includes("WebFetch"), "no tool from another harness is named");
+  console.log("instructions: prompt names the live tool set ok");
 }
 
 // --- off by env, and edits land without a respawn ---

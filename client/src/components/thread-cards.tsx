@@ -27,6 +27,7 @@ import type { StreamEffect } from "@/lib/stream-words"
 import { resolveStreamEffect, useViewOptionsContext } from "@/lib/view-options"
 import { shortPath, type TaskNotification, type TodoEntry } from "@/lib/tools"
 import type { TurnSources } from "@/lib/sources"
+import { stripPromptSuggestions } from "@/lib/suggestions"
 import { cn } from "@/lib/utils"
 import { autonomyLine } from "@/lib/autonomy-text"
 import type { AutonomyItem, CompactionItem, PlanItem, ThreadItem } from "@/lib/store"
@@ -151,8 +152,14 @@ export function StreamedProse({
 }
 
 export function AgentText({ text, stream }: { text: string; stream?: StreamEffect }) {
+  /* The suggestions fence never paints: its prompts live on the suggestion
+     card under the answer (`prompt-suggestions.tsx`), and a raw fence in the
+     painted answer is the machinery showing. Stripped for paint only —
+     `item.text` is still whole everywhere it is read (copy, search, the
+     journal). */
+  const painted = stripPromptSuggestions(text)
   const blocks = AGENT_BLOCKS.flatMap(({ re, label, mark, accent }) =>
-    [...text.matchAll(re)].map((m) => ({
+    [...painted.matchAll(re)].map((m) => ({
       start: m.index,
       end: m.index + m[0].length,
       body: m[1],
@@ -161,21 +168,21 @@ export function AgentText({ text, stream }: { text: string; stream?: StreamEffec
       accent,
     }))
   ).sort((a, b) => a.start - b.start)
-  if (blocks.length === 0) return <Prose text={text} stream={stream} />
+  if (blocks.length === 0) return <Prose text={painted} stream={stream} />
 
   const parts: React.ReactNode[] = []
   let cut = 0
   for (const block of blocks) {
     // Two conventions claiming the same span: the earlier one already took it.
     if (block.start < cut) continue
-    if (block.start > cut) parts.push(<Prose key={cut} text={text.slice(cut, block.start)} />)
+    if (block.start > cut) parts.push(<Prose key={cut} text={painted.slice(cut, block.start)} />)
     parts.push(<AgentBlock key={block.start} {...block} />)
     cut = block.end
   }
   /* The tail is the *message's* tail, so only the last run of prose asks for a
      reveal — handing it to every part would give each one a ramp of its own and
      soften text that was settled paragraphs ago. */
-  if (cut < text.length) parts.push(<Prose key={cut} text={text.slice(cut)} stream={stream} />)
+  if (cut < painted.length) parts.push(<Prose key={cut} text={painted.slice(cut)} stream={stream} />)
 
   return <div className="space-y-3">{parts}</div>
 }

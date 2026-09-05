@@ -604,6 +604,31 @@ export interface Project {
   /** The starter it was scaffolded from, if any. A record, not a link: the
       template is copied, and nothing about the project depends on it after. */
   templateId?: string | null
+  /** The helper commands a person runs against this workspace by hand, from
+      the project page's header ("Restart server", "Run migrations"). Absent
+      on stubs, like the other optional fields. */
+  helpers?: HelperCommand[]
+}
+
+/** One of a project's helper commands: a name and a shell line run in the
+    project's cwd. `server/src/project-helpers.ts` owns the rows and the run. */
+export interface HelperCommand {
+  id: string
+  projectId: string
+  name: string
+  command: string
+  createdAt: number
+}
+
+/** The answer to a helper run — a non-zero exit is `ok: false` with the
+    output, not an HTTP error, because the browser's dialog shows it either
+    way. Mirrors `HelperRunResult` in `server/src/project-helpers.ts`. */
+export interface HelperRunResult {
+  ok: boolean
+  exitCode: number | null
+  timedOut: boolean
+  durationMs: number
+  output: string
 }
 
 /* ── App builder ──
@@ -734,6 +759,9 @@ export interface SessionMeta {
   effort: string
   /** The thread's persona (`Persona`), or "" for none. */
   personaId?: string
+  /** Whether the agent closes answers with follow-up prompt suggestions.
+      Absent from a server that predates the toggle, which reads as off. */
+  suggestFollowups?: boolean
   title: string
   acpSessionId?: string
   createdAt: number
@@ -769,6 +797,11 @@ export interface SessionMeta {
   /** Client-only, draft-only: settings picked against the option set the agent
       last advertised (`lib/agent-options`), replayed once session/new answers. */
   configChoices?: Record<string, string | boolean>
+  /** Client-only, draft-only: the permission mode picked before the thread
+      exists, from the agent's remembered `modes` (`lib/agent-options`). Applied
+      by the server right after session/new; once the thread runs, its own
+      `modes` state is the only truth and this is dead weight the merge drops. */
+  modeId?: string
   /** This thread's own library picks, on top of what its project and profile
       link. Chosen on the draft, sent with `POST /api/sessions`, and reported
       back by the server for the thread's life. */
@@ -820,6 +853,7 @@ export function sameRow(a: SessionMeta, b: SessionMeta): boolean {
     a.model === b.model &&
     a.effort === b.effort &&
     a.personaId === b.personaId &&
+    (a.suggestFollowups ?? false) === (b.suggestFollowups ?? false) &&
     a.title === b.title &&
     a.acpSessionId === b.acpSessionId &&
     a.createdAt === b.createdAt &&

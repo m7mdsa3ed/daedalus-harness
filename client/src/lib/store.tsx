@@ -9,6 +9,8 @@ import type {
   SessionUpdate,
   SubagentState,
   TurnChanges,
+  TurnTick,
+  WireError,
   WorkflowProgressEntry,
 } from "@daedalus/protocol"
 // Value import, but tools.ts imports only *types* from here — erased at build,
@@ -393,6 +395,17 @@ export interface ThreadState {
       Independent of `turnActive`: a paused session with no turn open holds
       its next prompt at its first step, and the toggle has to say so. */
   paused: boolean
+  /** Why it is held. `"user"` is the toggle. `"error"` is a turn that **failed
+      and did not end** — a rate limit, a spent quota, a key that stopped
+      working — waiting at its step boundary with every tool call it already
+      made intact, for a model change and a Continue. So it is drawn as an open
+      turn in a stopped state, never as an `ErrorRow`: nothing failed for good,
+      and re-sending the prompt would be the wrong offer. */
+  pausedReason: "user" | "error" | null
+  /** The failure an `"error"` hold is waiting on, in the same shape a failed
+      turn carries — so the held card folds its detail through `describeError`
+      exactly as `ErrorRow` does. */
+  pausedError: WireError | null
   /** Whether the runtime takes pause at all (`session_config.canPause`) —
       the harness's own agent; every other runtime has only Stop. */
   canPause: boolean
@@ -463,6 +476,12 @@ export interface ThreadState {
   earlier: number
   /** A `load_earlier` is in flight — the button says so and does not stack. */
   loadingEarlier: boolean
+  /** The thread's whole table of contents from the journal — one entry per
+      turn, oldest first, including the ones still withheld behind `earlier`.
+      Set from `attached` (see `thread-turns`), so the turn rail draws every
+      tick without paging history in. A resume carries none and leaves this
+      alone; the reset on a fresh attach takes it back to empty first. */
+  turns: TurnTick[]
 }
 
 export interface State {
@@ -476,6 +495,8 @@ export const emptyThread: ThreadState = {
   phase: IDLE_PHASE,
   turnActive: false,
   paused: false,
+  pausedReason: null,
+  pausedError: null,
   canPause: false,
   permission: null,
   elicitation: null,
@@ -496,6 +517,7 @@ export const emptyThread: ThreadState = {
   archived: false,
   earlier: 0,
   loadingEarlier: false,
+  turns: [],
 }
 
 /**
@@ -1198,10 +1220,11 @@ export type Action =
       model: string
       effort: string
       personaId?: string
+      suggestFollowups?: boolean
     }
   | { type: "thread-reset"; id: string; thread: ThreadState }
   | { type: "turn-active"; id: string; active: boolean; settle?: boolean }
-  | { type: "paused"; id: string; paused: boolean }
+  | { type: "paused"; id: string; paused: boolean; reason?: "user" | "error"; error?: WireError }
   /** How the turn that just ended went, onto the *session* row rather than the
       thread: it is what a list draws about a thread nothing is looking at, and
       the server records the same verdict on its own row. `error` is the
@@ -1217,6 +1240,10 @@ export type Action =
       earlier?: number
       loadingEarlier?: boolean
     }
+  /** The journal's whole turn list, from `attached` — see `ThreadState.turns`.
+      Absolute, never accumulated: a fresh attach replaces, a resume sends
+      nothing and leaves it alone. */
+  | { type: "thread-turns"; id: string; turns: TurnTick[] }
   /** The connection moved. One writer, one action — see `ThreadState.phase`. */
   | { type: "thread-phase"; id: string; phase: ConnPhase }
   /** Put back the rows a replaced transcript took with it — this device's own
@@ -1347,6 +1374,8 @@ export function reducer(state: State, action: Action): State {
                 // Omitted by a server that predates personas — leave whatever
                 // the row already carries rather than blanking it.
                 ...(action.personaId === undefined ? {} : { personaId: action.personaId }),
+                // Omitted by a server that predates the toggle — same bargain.
+                ...(action.suggestFollowups === undefined ? {} : { suggestFollowups: action.suggestFollowups }),
               }
             : session
         ),
@@ -1369,10 +1398,15 @@ export function reducer(state: State, action: Action): State {
           if (s.id !== action.id || !s.draft) return s
           /* A different agent or profile is a different set of settings, so the
              picks made against the old one are meaningless — carrying them over
-             would replay a config id the new agent has never heard of. */
+             would replay a config id the new agent has never heard of. The mode
+             ids are the agent's own, so they go with the config choices. */
           const rescoped =
             action.next.agentId !== undefined || action.next.profileId !== undefined
-          return { ...s, ...action.next, ...(rescoped ? { configChoices: undefined } : null) }
+          return {
+            ...s,
+            ...action.next,
+            ...(rescoped ? { configChoices: undefined, modeId: undefined } : null),
+          }
         }),
       }
     case "draft-config-option":
@@ -1392,6 +1426,8 @@ export function reducer(state: State, action: Action): State {
         ...(action.earlier !== undefined ? { earlier: action.earlier } : {}),
         ...(action.loadingEarlier !== undefined ? { loadingEarlier: action.loadingEarlier } : {}),
       })
+    case "thread-turns":
+      return withThread(state, action.id, { turns: action.turns })
     case "thread-phase":
       return withThread(state, action.id, { phase: action.phase })
     case "thread-carry": {
@@ -1574,7 +1610,13 @@ export function reducer(state: State, action: Action): State {
         canPause: action.canPause ?? thread(state, action.id).canPause,
       })
     case "paused":
-      return withThread(state, action.id, { paused: action.paused })
+      return withThread(state, action.id, {
+        paused: action.paused,
+        /* Absolute: a release clears the reason with the hold, so a card can
+           never outlive the state that drew it. */
+        pausedReason: action.paused ? action.reason ?? "user" : null,
+        pausedError: action.paused ? action.error ?? null : null,
+      })
     case "mode": {
       const t = thread(state, action.id)
       return t.modes

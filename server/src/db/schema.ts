@@ -451,6 +451,25 @@ export const profileCommands = sqliteTable(
   (t) => [primaryKey({ columns: [t.profileId, t.commandId] })],
 );
 
+/* A project's helper commands — the small shell actions a person runs against
+   this workspace from its page's header ("Restart server", "Run migrations").
+   Not links into the library and never seen by an agent: they are the user's
+   own buttons, run in the project's cwd by `project-helpers.ts` and surfaced
+   by `ProjectHeader`'s dropdown. */
+export const projectHelpers = sqliteTable(
+  "project_helpers",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    command: text("command").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("project_helpers_project").on(t.projectId)],
+);
+
 export const sessions = sqliteTable(
   "sessions",
   {
@@ -470,6 +489,14 @@ export const sessions = sqliteTable(
         SQL's. A deleted persona simply reads as "none" on the next spawn, which
         is exactly what it is. */
     personaId: text("persona_id"),
+    /** True when the agent should close each answer with follow-up prompt
+        suggestions in a `suggest-prompts` fenced block (`personas.ts`). On
+        unless turned off. A spawn input like the persona: every runtime reads
+        its instructions only when a session is created or loaded, so toggling
+        it costs a respawn — see `applyConfigLive`. */
+    suggestFollowups: integer("suggest_followups", { mode: "boolean" })
+      .notNull()
+      .default(true),
     title: text("title").notNull(),
     /** The agent's own session id — what `session/load` is called with. */
     acpSessionId: text("acp_session_id"),
@@ -517,6 +544,17 @@ export const sessions = sqliteTable(
   (t) => [
     index("sessions_live").on(t.deletedAt, t.createdAt),
     index("sessions_parent").on(t.parentSessionId),
+    /* Every project-scoped read starts here — the stats page asks for "the
+       threads of this project" twice per call, and each of the journal, queue,
+       schedule and workflow readings is keyed by the ids it returns. Without
+       this the answer is a scan of the whole table before any of them begins. */
+    index("sessions_project").on(t.projectId),
+    /* The import dialog's "do we already hold this conversation?" is a lookup
+       by the *agent's* id, not ours (`markExisting`), and it asks for a whole
+       page of them at once. Not unique: two threads may legitimately point at
+       one conversation (an import, then a rewind that forked it), so this
+       orders the lookup without asserting anything the data does not. */
+    index("sessions_acp").on(t.acpSessionId),
   ],
 );
 
@@ -986,6 +1024,27 @@ export const sessionEvents = sqliteTable(
     index("session_events_turns")
       .on(t.sessionId, t.seq)
       .where(sql`kind = 'turn_started'`),
+    /**
+     * `at`, beside the session it belongs to.
+     *
+     * "When was this log last written to" is asked by three separate readers —
+     * the boot backfill in `reload`, the retention sweep's `prune`, and the
+     * project page's `lastActivityAt` — and `at` was in no index at all, so
+     * every one of them was `max(at)`: a walk of the (session_id, seq) index
+     * that had to fetch each row from the table to read the one integer it
+     * wanted. On this install that is 1.08M row lookups across 550MB of
+     * payloads to answer a question about 466 numbers — 480ms warm, and a
+     * project page pays it on every open and every Refresh.
+     *
+     * With `at` in the index the same questions are index-only and never touch
+     * a payload: the per-project read drops to ~2ms and the grouped scans read
+     * a 54MB index instead of the whole table. It does not disturb the replay
+     * plan, which still takes (session_id, seq) — the two are checked together
+     * because a second index on a hot table is only free if the planner keeps
+     * choosing right, and `PRAGMA optimize` in `db/index.ts` is what keeps it
+     * choosing on stats rather than on guesses.
+     */
+    index("session_events_activity").on(t.sessionId, t.at),
   ],
 );
 

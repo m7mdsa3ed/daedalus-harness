@@ -38,6 +38,21 @@ function firstLine(value: string): string {
   return more ? `${head} …` : head
 }
 
+/** Whether a title is the command back again rather than a sentence about it.
+    Full equality is not enough: a runtime that titles a call with its own
+    command elides a long one (ours at 80 characters, `codex` at its own
+    width), and the stub then failed the test and was printed as prose the
+    agent had written — the derived phrase was dropped for exactly the long
+    commands that needed it most. A stem is required to be substantial before
+    it counts, so a title of "ls …" beside a different command stays prose. */
+function echoesCommand(description: string, command: string): boolean {
+  const said = firstLine(description)
+  const ran = firstLine(command)
+  if (said === ran) return true
+  const stem = said.replace(/(\s*(?:…|\.\.\.))+$/, "").trim()
+  return stem.length >= 12 && ran.startsWith(stem)
+}
+
 /** Keys that carry "the thing acted on", in the order worth showing. */
 const TARGET_KEYS = [
   "command",
@@ -285,7 +300,7 @@ export function toolHeading(
      command is not a description of it, whichever field it arrived in. */
   const command = str(asRecord(item.rawInput)?.command)
   const derived = command ? describeCommand(command) : null
-  if (derived && (!description || firstLine(description) === firstLine(command!))) {
+  if (derived && (!description || echoesCommand(description, command!))) {
     return { title: derived, detail: target, prose: true }
   }
 

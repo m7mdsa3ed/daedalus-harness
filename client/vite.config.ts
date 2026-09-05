@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
@@ -10,22 +10,6 @@ import pkg from "./package.json" with { type: "json" };
 // https on port 443, but Vite's HMR client derives its socket from the dev
 // server's own port — it would try wss://<tunnel host>:5173 and never connect.
 const tunnelled = !!process.env.DAEDALUS_TUNNEL;
-
-/** Substitutes the boot colours into index.html, which is static and cannot
-    import them. Placeholders rather than literals so the file holds no guess of
-    its own — see src/lib/boot-colors.ts for why there is exactly one. */
-function bootColors(): Plugin {
-  return {
-    name: "daedalus-boot-colors",
-    transformIndexHtml: {
-      order: "pre",
-      handler: (html) =>
-        html
-          .replaceAll("%BOOT_LIGHT%", BOOT_COLORS.light)
-          .replaceAll("%BOOT_DARK%", BOOT_COLORS.dark),
-    },
-  };
-}
 
 // https://vite.dev/config/
 /* The persisted query cache's buster (see src/lib/queries/persist.ts): a
@@ -48,7 +32,6 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
-    bootColors(),
     VitePWA({
       strategies: "injectManifest",
       srcDir: "src",
@@ -109,7 +92,11 @@ export default defineConfig({
         display: "standalone",
         // Browsers that don't do `standalone` fall to `minimal-ui` (a back
         // button and a URL bar) rather than all the way back to a browser tab.
-        display_override: ["standalone", "minimal-ui"],
+        // `window-controls-overlay` lets a Windows install draw its title bar
+        // over the window controls, but only takes effect once the app reserves
+        // the space with env(titlebar-area-*) and declares drag regions (it
+        // does neither yet, so it currently changes nothing visible).
+        display_override: ["window-controls-overlay", "standalone", "minimal-ui"],
         orientation: "any",
         scope: "/",
         start_url: "/",

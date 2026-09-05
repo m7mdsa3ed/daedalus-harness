@@ -1,5 +1,5 @@
 import * as React from "react"
-import { AppWindowIcon, Check, ChevronDown, ChevronLeft, Plus, SearchIcon, ServerIcon, Settings2 } from "lucide-react"
+import { AppWindowIcon, Check, ChevronDown, ChevronLeft, ChevronRight, Plus, SearchIcon, ServerIcon, Settings2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -15,7 +15,9 @@ import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
 import { Logo } from "@/components/ui/logo"
 import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
 import { ThreadHeaderMenu } from "@/components/thread-menu"
+import { RunHelperDialog } from "@/components/run-helper-dialog"
 import { ContextIndicator } from "@/components/composer-status"
+import { ProfileIcon, ProjectIcon } from "@/components/entity-icon"
 import { NotificationBell } from "@/components/notifications/bell"
 import { NotificationsInboxPage } from "@/components/notifications/page"
 import { panelId, type PanelKind } from "@/lib/workspace/panels"
@@ -25,6 +27,7 @@ import { SchedulePage } from "@/components/schedule-page"
 import { TasksWorkspace } from "@/components/tasks"
 import type { DockviewApi } from "dockview-react"
 import { SetupCardsSkeleton, SidebarGroupsSkeleton } from "@/components/ui/skeletons"
+import { ProgressiveBlur } from "@/components/ui/progressive-blur"
 import {
   Sidebar,
   SidebarContent,
@@ -64,6 +67,7 @@ import { defaultsForProfile, loadThreadDefaults, resolveThreadStart } from "@/li
 import {
   loadServers,
   setActiveServer,
+  type HelperCommand,
   type ServerSettings,
 } from "@/lib/settings"
 import { useCatalogLoaded, useProfiles, useProjects } from "@/lib/queries/catalog"
@@ -201,17 +205,21 @@ export function AppShell({
   const active = sessions.find((s) => s.id === sessionId)
   const ready = !loading && projects.length > 0 && profiles.length > 0
   const dock = useWorkspaceDock()
-  /* The routed thread's project, when it can run a dev server: what gates the
-     Preview button, the menu row, the chord and the auto-open below. */
+  /* The routed thread's or active project's workspace, when it can run a dev server */
+  const currentProjectId = inProject ? location.pathname.split("/")[2] : undefined
+  const currentProject = projects.find((p) => p.id === currentProjectId)
   const activeProject = projects.find((p) => p.id === active?.projectId)
-  const canPreview = !!activeProject?.devCommand
+  const activeProfile = profiles.find((p) => p.id === active?.profileId)
+  const effectiveProject = inProject ? currentProject : activeProject
+  const canPreview = !!effectiveProject?.devCommand
+  const [runningHelper, setRunningHelper] = React.useState<{ helper: HelperCommand; projectId: string } | null>(null)
   const routeSessionRef = React.useRef(sessionId)
   routeSessionRef.current = sessionId
   /** Threads this page load has already opened a preview beside. */
   const autoPreviewed = React.useRef(new Set<string>())
-  // The project the workspace panels act on: the routed thread's own.
+  // The project the workspace panels act on: the routed thread's own or current project.
   const activeProjectRef = React.useRef<string | null>(null)
-  activeProjectRef.current = active?.projectId ?? null
+  activeProjectRef.current = effectiveProject?.id ?? null
   const activeSessionRef = React.useRef<string | null>(null)
   activeSessionRef.current = active?.id ?? null
 
@@ -337,6 +345,18 @@ export function AppShell({
      is what names one. */
   const openWorkspacePanel = React.useCallback(
     (kind: PanelKind) => {
+      /* Boards are the server's, not a project's, so this one opens with no
+         project at all — the only kind that does, and the reason the check
+         below comes after it rather than at the top. */
+      if (kind === "tasks") {
+        /* Reopened with the board it was left on, not reset to "no board": the
+           descriptor is where a tasks panel keeps its place, so opening it
+           again with a bare one would point it at nothing. Same shape as the
+           terminal case below — ask the dock what is already there. */
+        const existing = dock.listPanels().find((entry) => entry.panel.kind === "tasks")
+        dock.openPanel(existing?.panel ?? { kind: "tasks" }, { direction: "right" })
+        return
+      }
       const projectId = activeProjectRef.current
       if (!projectId) return
       if (kind === "terminal") {
@@ -461,7 +481,6 @@ export function AppShell({
       style={{
         "--sidebar-width": sidebarWidth,
         height: "100dvh",
-        paddingTop: "env(safe-area-inset-top, 0px)",
         paddingLeft: "env(safe-area-inset-left, 0px)",
       } as React.CSSProperties}
     >
@@ -674,80 +693,143 @@ export function AppShell({
       {/* The main surface: --surface (index.css) — the card colour, white on a
           light palette, over the sidebar's tinted ground the way both desktop
           apps separate the two; the darker --background in dark mode, where
-          the card tone is the lighter one. The header below has no colour of
-          its own, so it takes this one. */}
+          the card tone is the lighter one. It is the ground *under* the
+          floating header too: what scrolls beneath the header's blur shows
+          this colour wherever no content has scrolled up into it yet. */}
       <SidebarInset className="relative flex h-full min-h-0 flex-col overflow-hidden bg-surface text-card-foreground">
-        {/* ponytail: no bg/blur/border — the header shares the inset surface, so
-            under Electron vibrancy it shows the OS blur instead of its own band. */}
+        {/* Edge-to-edge: the header is an overlay spanning the whole top —
+            the status bar's inset above its own row — transparent, with the
+            same progressive blur the OS bar gets running down through it, so
+            whatever scrolls up the column goes out of focus beneath it the
+            way a native top bar does. The inset is padding *inside* it (the
+            full inset, no hair — the blur owns the cutout), so its controls
+            sit below the status bar while the blur spans both. Everything
+            below pads by --app-header-h (the inset plus this row) at the
+            point it owns its own scrolling, which is what lets content pass
+            under: the padding sits inside each scroller and scrolls away
+            with it. */}
         <header
+          /* Named so the dock can *measure* it: how much of a panel this
+             floating header actually covers is a question about where that
+             panel is, and a constant answered it wrongly for every group that
+             is not at the top (see `headerOverlap` in workspace/dock.tsx). */
+          data-app-header
           data-drag-region
-          className="relative z-30 flex h-12 shrink-0 items-center gap-1 bg-transparent px-2 sm:gap-2 sm:px-4"
+          className="absolute inset-x-0 top-0 z-30 flex h-[var(--app-header-h)] items-center gap-1 bg-transparent px-2 pt-[max(0px,env(safe-area-inset-top,0px))] sm:gap-2 sm:px-4"
         >
+          <ProgressiveBlur side="top" className="absolute inset-0 -z-10" />
           <SidebarTrigger className="-ml-1 shrink-0" />
           <div className="flex min-w-0 flex-1 items-center justify-between gap-2 sm:gap-3">
-            <div className="flex min-w-0 items-baseline gap-2">
+            <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
               {loading ? (
                 <Skeleton className="h-4 w-32" />
-              ) : (
-                <h1 className="truncate text-sm font-medium">
-                  {inSettings
-                    ? (SETTINGS_SECTIONS.find((s) => s.id === section)?.label ?? "Settings")
-                    : inSchedule
-                      ? (location.pathname.endsWith("/new")
-                          ? "New schedule"
-                          : location.pathname.split("/")[2]
-                            ? "Schedule"
-                            : "Schedules")
-                    : inRoutines
-                      ? (location.pathname.endsWith("/new")
-                          ? "New routine"
-                          : location.pathname.split("/")[2]
-                            ? (routines.find((r) => r.id === location.pathname.split("/")[2])?.name ?? "Routine")
-                            : "Routines")
-                      : inBoard
-                        ? "Tasks"
-                        : inBuild
-                          ? "Build an app"
-                        : inNotifications
-                          ? "Notifications"
-                        : inProject
-                          ? (projects.find(
-                              (p) => p.id === location.pathname.split("/")[2]
-                            )?.name ?? "Project")
-                          : (active?.title ?? "Daedalus")}
-                </h1>
-              )}
-              {inSettings && section ? (
-                <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Settings</span>
+              ) : inSettings ? (
+                <>
+                  <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Settings</span>
+                  {section && <ChevronRight className="hidden size-3.5 shrink-0 text-muted-foreground/60 sm:inline" />}
+                  <h1 className="truncate text-sm font-medium">
+                    {SETTINGS_SECTIONS.find((s) => s.id === section)?.label ?? "Settings"}
+                  </h1>
+                </>
               ) : inSchedule ? (
-                <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Scheduled messages</span>
+                <>
+                  <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Schedules</span>
+                  <ChevronRight className="hidden size-3.5 shrink-0 text-muted-foreground/60 sm:inline" />
+                  <h1 className="truncate text-sm font-medium">
+                    {location.pathname.endsWith("/new")
+                      ? "New schedule"
+                      : location.pathname.split("/")[2]
+                        ? "Schedule"
+                        : "All schedules"}
+                  </h1>
+                </>
               ) : inRoutines ? (
-                <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Routines</span>
+                <>
+                  <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Routines</span>
+                  <ChevronRight className="hidden size-3.5 shrink-0 text-muted-foreground/60 sm:inline" />
+                  <h1 className="truncate text-sm font-medium">
+                    {location.pathname.endsWith("/new")
+                      ? "New routine"
+                      : location.pathname.split("/")[2]
+                        ? (routines.find((r) => r.id === location.pathname.split("/")[2])?.name ?? "Routine")
+                        : "All routines"}
+                  </h1>
+                </>
               ) : inBoard ? (
-                <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Board</span>
+                <>
+                  <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Workspace</span>
+                  <ChevronRight className="hidden size-3.5 shrink-0 text-muted-foreground/60 sm:inline" />
+                  <h1 className="truncate text-sm font-medium">Tasks</h1>
+                </>
               ) : inBuild ? (
-                <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Builder</span>
+                <>
+                  <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Workspace</span>
+                  <ChevronRight className="hidden size-3.5 shrink-0 text-muted-foreground/60 sm:inline" />
+                  <h1 className="truncate text-sm font-medium">Build an app</h1>
+                </>
               ) : inNotifications ? (
-                <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Inbox</span>
+                <>
+                  <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Workspace</span>
+                  <ChevronRight className="hidden size-3.5 shrink-0 text-muted-foreground/60 sm:inline" />
+                  <h1 className="truncate text-sm font-medium">Inbox</h1>
+                </>
               ) : inProject ? (
-                <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Project</span>
+                <>
+                  <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">Projects</span>
+                  <ChevronRight className="hidden size-3.5 shrink-0 text-muted-foreground/60 sm:inline" />
+                  <h1 className="truncate text-sm font-medium">
+                    {projects.find((p) => p.id === location.pathname.split("/")[2])?.name ?? "Project"}
+                  </h1>
+                </>
               ) : (
-                active && (
-                  <span className="hidden shrink-0 truncate text-xs text-muted-foreground sm:inline">
-                    {/* The project name is the way to its page: the thread
-                        header already names the workspace, so the name is the
-                        link rather than one more control beside it. */}
-                    <button
-                      type="button"
-                      className="rounded-sm underline-offset-2 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      onClick={() => void navigate(projectPath(active.projectId))}
-                    >
-                      {projects.find((p) => p.id === active.projectId)?.name}
-                    </button>
-                    {" · "}
-                    {profiles.find((p) => p.id === active.profileId)?.name}
-                  </span>
-                )
+                <>
+                  {/* Breadcrumb path: Project > Profile > Title */}
+                  {active && (activeProject || activeProfile) && (
+                    <div className="flex min-w-0 shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                      {activeProject && (
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button
+                            type="button"
+                            title={activeProject.name}
+                            aria-label={`Open project ${activeProject.name}`}
+                            className="flex shrink-0 items-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            onClick={() => void navigate(projectPath(active.projectId))}
+                          >
+                            <ProjectIcon project={activeProject} className="size-4 ring-1 ring-surface" />
+                          </button>
+                          <button
+                            type="button"
+                            className="hidden max-w-[120px] truncate underline-offset-2 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:inline md:max-w-[180px]"
+                            onClick={() => void navigate(projectPath(active.projectId))}
+                          >
+                            {activeProject.name}
+                          </button>
+                        </div>
+                      )}
+                      {activeProject && (activeProfile || active?.title) && (
+                        <ChevronRight className="size-3.5 shrink-0 text-muted-foreground/50" />
+                      )}
+                      {activeProfile && (
+                        <div className="flex shrink-0 items-center gap-1">
+                          <ProfileIcon
+                            profile={activeProfile}
+                            agentId={active.agentId}
+                            className="size-4 ring-1 ring-surface"
+                          />
+                          <span className="hidden max-w-[100px] truncate sm:inline md:max-w-[140px]">
+                            {activeProfile.name}
+                          </span>
+                        </div>
+                      )}
+                      {activeProfile && active?.title && (
+                        <ChevronRight className="size-3.5 shrink-0 text-muted-foreground/50" />
+                      )}
+                    </div>
+                  )}
+                  <h1 className="truncate text-sm font-medium text-foreground">
+                    {active?.title ?? "Daedalus"}
+                  </h1>
+                </>
               )}
             </div>
             {/* The workspace's one entry point. In the header rather than on the
@@ -774,7 +856,7 @@ export function AppShell({
                   app project the preview is the point, and a click in the header
                   beats a submenu two levels down. Gated on the project being
                   able to run one, so it is never a dead control. */}
-              {canPreview && !inSettings && !inSchedule && !inBoard && !inProject && !inNotifications && !inBuild && (
+              {canPreview && !inSettings && !inSchedule && !inBoard && !inNotifications && !inBuild && (
                 <Button
                   variant="ghost"
                   size="icon-sm"
@@ -787,18 +869,18 @@ export function AppShell({
               )}
               {/* One menu, not three icons. It holds what the + held (new
                   thread, the workspace panels), what the eye held (view
-                  settings) and what the routed thread can be asked to do —
-                  Refresh first. Three targets in a 12px header is a row you
-                  have to learn rather than read, and on a phone it is three
-                  targets in the space of one. */}
-              {!inSettings && !inSchedule && !inRoutines && !inBoard && !inProject && !inNotifications && !inBuild && (
+                  settings) and what the routed thread/project can be asked to do. */}
+              {!inSettings && !inSchedule && !inRoutines && !inBoard && !inNotifications && !inBuild && (
                 <ThreadHeaderMenu
                   actions={actions}
                   session={active}
+                  project={effectiveProject}
                   onNewTab={newThreadInTab}
                   onOpenPanel={openWorkspacePanel}
                   onOpenPreview={canPreview ? openPreview : undefined}
                   onOpenInNewTab={(thread) => dock.openChat(thread.id, { newTab: true })}
+                  onRunHelper={(helper, pId) => setRunningHelper({ helper, projectId: pId })}
+                  dock={dock}
                 />
               )}
             </div>
@@ -919,7 +1001,11 @@ export function AppShell({
           <Route
             path="/board/:boardId?"
             element={
-              <div className="flex min-h-0 flex-1 flex-col">
+              /* No scroll-under here: the board's scrollers are each view's
+                 own, so the wrapper pads and the views start below the header
+                 — under its tint the flat surface reads exactly as a solid
+                 band would. */
+              <div className="flex min-h-0 flex-1 flex-col pt-[var(--app-header-h)]">
                 <TasksWorkspace />
               </div>
             }
@@ -944,6 +1030,13 @@ export function AppShell({
       {/* Owned here rather than by the palette, which unmounts as soon as a
           command runs. The project page mounts its own, scoped to itself. */}
       <ImportThreadsDialog open={importing} onOpenChange={setImporting} actions={actions} />
+      {runningHelper && (
+        <RunHelperDialog
+          helper={runningHelper.helper}
+          projectId={runningHelper.projectId}
+          onClose={() => setRunningHelper(null)}
+        />
+      )}
     </SidebarProvider>
   )
 }
@@ -1073,7 +1166,7 @@ function EmptyState({
 
   if (loading) {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6">
+      <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6 pt-[calc(var(--app-header-h)+1.5rem)]">
         <div aria-busy="true" className="w-full max-w-md text-center">
           <Skeleton className="mx-auto size-11 rounded-lg" />
           <Skeleton className="mx-auto mt-4 h-5 w-40" />
@@ -1086,7 +1179,7 @@ function EmptyState({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6">
+    <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6 pt-[calc(var(--app-header-h)+1.5rem)]">
       <div className="w-full max-w-md text-center">
         <Logo className="mx-auto size-11" />
         <h2 className="mt-4 text-lg font-semibold tracking-tight">

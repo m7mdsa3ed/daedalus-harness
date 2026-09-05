@@ -1273,14 +1273,19 @@ const metaLog = (): { method: string; meta: Record<string, any> | null }[] =>
 // A thread with no persona says nothing about one: `_meta` carries no
 // systemPrompt at all, rather than an empty append the agent would still apply.
 const beforePlain = metaLog().length;
-const plain = manager.create(profile, "fake", project);
+const plain = manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, {
+  suggestFollowups: false,
+});
 await plain.bridge!.ready;
 const plainMeta = metaLog().slice(beforePlain).find((e) => e.method === "session/new");
 assert.ok(plainMeta, "session/new was recorded");
 assert.equal(plainMeta!.meta?.systemPrompt, undefined, "no persona means no systemPrompt");
 assert.equal(plainMeta!.meta?.claudeCode?.options?.thinking, undefined, "…and no thinking budget");
 
-// Picked at create time, before any process exists.
+// Picked at create time, before any process exists. Suggestions are off so
+// this asserts the persona alone — the trailer is a separate statement and
+// the plain thread above already turns it off; this one must too, or the
+// append below is persona + trailer and says nothing about either.
 const mark = metaLog().length;
 const styled = manager.create(
   profile,
@@ -1291,7 +1296,7 @@ const styled = manager.create(
   undefined,
   undefined,
   { mcpServerIds: [], skillIds: [], commandIds: [] },
-  { personaId: persona.id },
+  { personaId: persona.id, suggestFollowups: false },
 );
 await styled.bridge!.ready;
 const newMeta = metaLog().slice(mark).find((e) => e.method === "session/new");

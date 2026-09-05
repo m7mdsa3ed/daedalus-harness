@@ -12,7 +12,11 @@ const DELTA_THROTTLE_MS = 100;
 
 export const bashMeta: ToolMeta = {
   kind: "execute",
+  /* The model's own sentence when it wrote one, and the command itself when it
+     did not — a reader gets prose or the thing that ran, never "Bash" twice. */
   title: (input) => {
+    const said = String(inputOf(input).description ?? "").trim();
+    if (said) return said;
     const command = String(inputOf(input).command ?? "");
     return command.length > 80 ? `${command.slice(0, 80)}…` : command || "Run command";
   },
@@ -21,9 +25,15 @@ export const bashMeta: ToolMeta = {
 export function makeBashTool(rt: ToolRuntime) {
   return tool({
     description:
-      "Execute a shell command in the working directory. stdout and stderr stream back combined; the command is killed at the timeout.",
+      "Execute a shell command. Each call is a fresh `bash -c` in the session's working directory, so `cd` does not carry over between calls — use absolute paths or chain with `&&`. stdout and stderr stream back combined, the command is killed at the timeout, and a non-zero exit is reported rather than thrown. stdin is closed, so never run an interactive command; prefer the read_file, glob and grep tools over cat, find and grep.",
     inputSchema: z.object({
       command: z.string().describe("The shell command to run"),
+      description: z
+        .string()
+        .optional()
+        .describe(
+          "Clear, concise description of what this command does in 5-10 words, in active voice (`ls` → \"List files in current directory\"). It is the line a reader sees beside the call.",
+        ),
       timeout_ms: z
         .number()
         .int()
@@ -32,13 +42,13 @@ export function makeBashTool(rt: ToolRuntime) {
         .optional()
         .describe(`Timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}, max ${MAX_TIMEOUT_MS})`),
     }),
-    execute: async ({ command, timeout_ms }, options) => {
+    execute: async ({ command, description, timeout_ms }, options) => {
       await checkPermission(rt.ctx, rt.session, "execute", {
         toolCallId: options.toolCallId,
         toolName: "bash",
-        title: bashMeta.title({ command }),
+        title: bashMeta.title({ command, description }),
         kind: "execute",
-        rawInput: { command },
+        rawInput: { command, ...(description ? { description } : {}) },
       });
       return runCommand(rt, command, timeout_ms ?? DEFAULT_TIMEOUT_MS, options.toolCallId, options.abortSignal);
     },
@@ -132,10 +142,11 @@ function runCommand(
       cleanup();
       let result = output;
       if (truncated) result += "\n[output truncated]";
-      if (timedOut) result += `\n[command timed out after ${timeoutMs}ms]`;
-      else if (signal) result += `\n[killed by ${signal}]`;
-      else if (code !== 0) result += `\n[exit code ${code}]`;
-      resolvePromise(result || "[no output]");
+      if (timedOut) {
+        result += `\n[command timed out after ${timeoutMs}ms and was killed. Re-run a longer job with a bigger timeout_ms, or in the background writing to a log file.]`;
+      } else if (signal) result += `\n[killed by ${signal}]`;
+      else if (code !== 0) result += `\n[exit code ${code}${output.trim() ? "" : " — the command printed nothing"}]`;
+      resolvePromise(result || "[the command produced no output and exited 0]");
     });
 
     function cleanup() {

@@ -36,6 +36,7 @@
    panel, which is why the callers can be shared. */
 import * as React from "react"
 
+import { applyContentOverlap, subscribeDockLayout } from "@/lib/workspace/panel-overlap"
 import { cn } from "@/lib/utils"
 
 export function PanelContainer({
@@ -50,15 +51,43 @@ export function PanelContainer({
   React.useLayoutEffect(() => {
     const node = ref.current
     if (!node) return
+
+    /* How much of *this* panel the floating app header covers
+       (`lib/workspace/panel-overlap.ts`). It is measured here rather than set by
+       the dock because the dock renders panels into one overlay container at
+       its root — a variable set on the group element never reaches them. */
+    let frame: number | undefined
+    const measure = () => {
+      if (frame !== undefined) cancelAnimationFrame(frame)
+      /* A frame late, always: the box this reads is the one the browser has
+         laid out, and inside the event that moved it that is still the old one. */
+      frame = requestAnimationFrame(() => {
+        frame = undefined
+        applyContentOverlap(node)
+      })
+    }
+
     const observer = new ResizeObserver(([entry]) => {
       const height = entry?.contentRect.height ?? 0
       /* A hidden tab measures 0×0 — dockview keeps every panel mounted. Writing
          that would cap the panes of a thread nobody is looking at to nothing,
          and the observer fires again on the way back in anyway. */
       if (height > 0) node.style.setProperty("--panel-h", `${Math.round(height)}px`)
+      measure()
     })
     observer.observe(node)
-    return () => observer.disconnect()
+    /* The two ways this panel can move without changing size: the dock
+       rearranging around it, and the window (a rotation, a resized titlebar). */
+    const unsubscribe = subscribeDockLayout(measure)
+    window.addEventListener("resize", measure)
+    measure()
+
+    return () => {
+      if (frame !== undefined) cancelAnimationFrame(frame)
+      window.removeEventListener("resize", measure)
+      unsubscribe()
+      observer.disconnect()
+    }
   }, [])
 
   return (

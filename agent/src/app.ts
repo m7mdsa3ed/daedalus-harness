@@ -5,23 +5,27 @@ import type { AgentEnv } from "./env.js";
 import { connectMcpServers } from "./mcp.js";
 import { SessionStore } from "./persistence.js";
 import { makeModel as defaultMakeModel, type ModelFactory } from "./provider.js";
+import {
+  PAUSE_CAPABILITY,
+  PAUSE_METHOD,
+  RESUME_METHOD,
+  type PauseResponse,
+} from "./hold.js";
 import { Session } from "./session.js";
 import { handlePrompt, type TurnDeps } from "./turn.js";
 
 export const VERSION = "0.1.0";
 
-/** The pause pair's names and the capability key that advertises them — the
-    server's `acp-bridge.ts` spells the same three strings. */
-export const PAUSE_METHOD = "_daedalus/session/pause";
-export const RESUME_METHOD = "_daedalus/session/resume";
-export const PAUSE_CAPABILITY = "daedalus/pause";
-
-export interface PauseResponse {
-  paused: boolean;
-  /** Whether a turn is open — what the pause is holding, or what the next
-      prompt will meet at its first step. */
-  turnActive: boolean;
-}
+/* The pause/hold protocol lives in `hold.ts` (turn.ts sends the outbound half,
+   so naming it here would be a cycle); re-exported because this module is the
+   package's public face. */
+export {
+  PAUSE_CAPABILITY,
+  PAUSE_METHOD,
+  PAUSED_NOTIFICATION,
+  RESUME_METHOD,
+  type PauseResponse,
+} from "./hold.js";
 
 const sessionRef = (params: unknown): { sessionId: string } => {
   const sessionId = (params as { sessionId?: unknown } | null)?.sessionId;
@@ -204,6 +208,10 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
       session.pause();
       return { paused: true, turnActive: session.turnActive } satisfies PauseResponse;
     })
+    /* Resume takes an options bag from the start. Context length is the one
+       hold a model change often cannot fix — the window is read from the
+       spawn env, not from the model — so "compact and continue" has to be a
+       second button later rather than a second method. */
     .onRequest(RESUME_METHOD, sessionRef, ({ params }) => {
       const session = get(params.sessionId);
       session.resume();

@@ -21,6 +21,7 @@ prompt and its tool descriptions.
 | **The spawn command and env** | Settings › Agents → Edit | applies at the thread's next spawn |
 | **Who answers permission prompts** | the autonomy policy | live |
 | **Pause / resume the turn** | the composer's pause toggle (beside Stop), a workflow's hold toggle | live (`_daedalus/session/pause`) |
+| **Continue a turn that failed** | the same toggle, after changing the model | live (`_daedalus/session/resume`) |
 
 Three of those are worth expanding.
 
@@ -34,6 +35,16 @@ included. Subagents hold with their parent. A cancel while held ends the turn
 as cancelled and drops the pause; a session paused with no turn open holds its
 next prompt at its first step. A workflow run pauses the same way one level
 up: no further step starts, steps on this runtime hold, and the clocks stop.
+
+**A turn that fails waits instead of ending.** A rate limit, a spent quota or a key that
+stopped working used to throw the whole turn away — twenty tool calls included — and leave
+a Retry that paid for all of it again. Now the turn holds at the same step boundary a pause
+holds it at, keeping every step whose tool calls came back, and says why. Change the model
+(live, on the running process) and press the same toggle: the next model step goes out
+against the new model and the turn carries on. Nothing recovers by itself — there is no
+fallback model and no long backoff, because which model to move to is the one thing the
+harness cannot guess. A thread with nobody in front of it — a workflow step, a scheduled
+run — never holds; it fails fast, because the run is waiting on the turn to settle.
 
 **The model list is live and it is not magic.** Because the agent is declared
 `liveConfig: "acp"`, the server materializes the union of every profile's
@@ -81,6 +92,25 @@ Two consequences worth stating:
 Routes: `PUT /api/agents/:id` and `POST /api/agents/:id/reset`. The listing
 reports a computed `builtIn` flag, which is only ever the question "is there
 something to reset to".
+
+## What a turn reports about tokens
+
+The ACP `usage` a turn ends with says `inputTokens` for the part of the prompt
+the provider had to read **fresh**, with `cachedReadTokens` beside it as a
+separate figure — that is the convention every surface in the harness draws
+from: the prompt is `inputTokens + cachedReadTokens + cachedWriteTokens`, and
+the cache rate is the hit divided by that sum (`client/src/lib/tokens.ts`).
+
+OpenAI-compatible `prompt_tokens`, which is the only dialect this runtime
+speaks, means the whole prompt with `cached_tokens` counted *inside* it. So
+`toAcpUsage` (`src/turn.ts`) subtracts the hit before reporting. Passed through
+raw, every cached token was counted twice and the drawn cache rate was roughly
+half the real one — a turn hitting cache on 89% of its prompt read as 47%, and
+no amount of caching could have moved the figure past 50%.
+
+The context-window reading (`usage_update`'s `used`) is a different number and
+deliberately untouched: it is the provider's own total for the last step, cache
+hits included, because a cached token still occupies the window.
 
 ## What is still not editable
 

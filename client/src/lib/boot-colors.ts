@@ -13,8 +13,8 @@
    the app behind it.
 
    So this is the one definition. `vite.config.ts` imports it for the manifest
-   and substitutes it into index.html (which is static and cannot import
-   anything); `lib/theme.tsx` imports it for its fallback.
+   and `lib/theme.tsx` for its fallback; index.html (static, cannot import)
+   repeats the two values as literals and must be kept equal by hand.
 
    The values are `oklch(1 0 0)` and `oklch(0.147 0.004 49.25)` from
    `[data-color-theme="default"]` in `src/styles/themes.css`, in hex because
@@ -27,10 +27,10 @@
    precisely so this pair stays true. Every other theme's background moves when
    its hue does, and none of them is ever the boot colour.
 
-   Only the Default palette lives here, and only as a floor: it is what shows on
-   a first-ever load and behind a blocked script. Every load after one paints
-   from the real palette, which ThemeProvider caches per `<palette>:<mode>`
-   (see THEME_COLOR_KEY in lib/theme.tsx). */
+   Only the Default palette lives here, and only as a floor: it is what the
+   pre-paint script writes to the theme-color meta and what shows behind a
+   blocked script. ThemeProvider replaces it with the rendered body background
+   once it mounts (see applyThemeColor in lib/theme.tsx). */
 export const BOOT_COLORS = {
   light: "#ffffff",
   dark: "#0c0a09",

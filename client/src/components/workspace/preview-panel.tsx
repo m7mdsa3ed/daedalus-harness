@@ -99,6 +99,7 @@ import { toast } from "@/lib/toast"
 import { Logo } from "@/components/ui/logo"
 import { cn } from "@/lib/utils"
 import { DEV_STATE_LABEL, previewUrl } from "@/lib/workspace/dev-server"
+import { usePublishPanelStatus } from "@/lib/workspace/panel-status"
 import {
   consolePrompt,
   errorSignature,
@@ -206,6 +207,15 @@ export function PreviewPanel({
   React.useEffect(() => {
     api.setTitle(project ? `Preview — ${project.name}` : "Preview")
   }, [api, project])
+
+  /* The dev server, on the tab. This is the panel most likely to be the one
+     nobody is looking at — you start it, dock it beside the thread and read the
+     transcript — so a server that died, or a page throwing, has to be able to
+     say so from the strip. A build in progress is `running`; anything the user
+     has to act on is `warn`.
+
+     `errorCount` is read below, after the ledger is built; the publish itself
+     sits with the rest of the panel's effects. */
 
   const post = React.useCallback((message: ParentMessage) => {
     /* "*" is the only target that reaches an opaque origin; what makes it
@@ -410,6 +420,26 @@ export function PreviewPanel({
       return true
     })
   }, [status?.errors, bridgeErrors, hidden])
+
+  /* What the tab says (see the note beside `setTitle` above). The dev server's
+     own state first, because a server that is not running is why the page is
+     blank; errors from a running one after that. */
+  const devState = status?.state
+  usePublishPanelStatus(
+    api.id,
+    devState === "failed"
+      ? { tone: "warn", label: "The dev server failed" }
+      : devState === "exited"
+        ? { tone: "warn", label: "The dev server stopped" }
+        : devState === "installing" || devState === "starting"
+          ? { tone: "running", label: DEV_STATE_LABEL[devState] }
+          : errors.length > 0
+            ? {
+                tone: "warn",
+                label: errors.length === 1 ? "1 error in the preview" : `${errors.length} errors in the preview`,
+              }
+            : null
+  )
 
   const clearErrors = () => {
     setHidden((current) => {

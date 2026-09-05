@@ -30,6 +30,7 @@ import { forgetProjectEditors } from "@/lib/ide/editors"
 import { IdePanel } from "@/components/workspace/ide-panel"
 import { PanelContainer } from "@/components/workspace/panel-container"
 import { PanelTab } from "@/components/workspace/panel-tab"
+import { TasksPanel } from "@/components/workspace/tasks-panel"
 import { TerminalPanel } from "@/components/workspace/terminal-panel"
 import { WebPanel } from "@/components/workspace/web-panel"
 import { UnsupportedPanel } from "@/components/workspace/unsupported-panel"
@@ -37,10 +38,20 @@ import { makeTabActions } from "@/components/workspace/tab-actions"
 import type { Actions } from "@/lib/actions"
 import { navigateTo, threadPath } from "@/lib/router"
 import { loadSettings } from "@/lib/settings"
+import { notifyDockLayout } from "@/lib/workspace/panel-overlap"
 import { useHotkey, useShortcut } from "@/hooks/use-hotkey"
 import { KEYS } from "@/lib/shortcuts"
 import { useTheme } from "@/lib/theme"
-import { loadLayout, saveLayout } from "@/lib/workspace/layout"
+import {
+  deleteSavedLayout as forgetSavedLayout,
+  listSavedLayouts,
+  loadLayout,
+  readSavedLayout,
+  saveLayout,
+  saveNamedLayout,
+  type SavedLayout,
+} from "@/lib/workspace/layout"
+import { forgetPanelPin, isPanelPinned, pinnedPanels, togglePanelPin } from "@/lib/workspace/panel-pins"
 import {
   PANEL_KINDS,
   PANEL_SPECS,
@@ -51,6 +62,45 @@ import {
 } from "@/lib/workspace/panels"
 
 const SAVE_DEBOUNCE_MS = 300
+
+/* ── The floating header, as a measurement ──
+   The app header is an overlay across the top of the whole column
+   (`app-shell.tsx`), so whatever is under it has to hold its own content clear
+   of it. Every panel did that with a constant — `pt-[var(--app-header-h)]` —
+   and so did the tab strip, which was right for the group at the top and wrong
+   for every other one: a terminal docked *below* a thread reserved three rems
+   for a header that is nowhere near it, twice over (the strip's margin and the
+   panel's own padding), which is the band of nothing that used to sit above
+   every bottom-docked terminal.
+
+   So it is measured. This half is the **tab strip's** offset
+   (`--dock-header-overlap`, read by `index.css`): how much of the group's own
+   box the header covers, zero for every group that is not at the top.
+
+   The other half — what a *panel's content* pads by — is deliberately not set
+   here, even though it looks like the same sum. Panels are rendered with
+   `defaultRenderer="always"`, which attaches their content to one overlay
+   container at the dockview root rather than nesting it in the group, so a
+   variable set on a group element reaches its strip and nothing else. Each
+   panel measures its own box instead (`lib/workspace/panel-overlap.ts`); all
+   this side owes it is a nudge whenever the layout moves. */
+const HEADER_OVERLAP = "--dock-header-overlap"
+
+function syncHeaderOverlap(api: DockviewApi): void {
+  const header = document.querySelector<HTMLElement>("[data-app-header]")
+  const bottom = header ? header.getBoundingClientRect().bottom : 0
+  for (const group of api.groups) {
+    const element = group.element
+    /* A popped-out group is in another window, where this document's header
+       covers nothing. Measuring it against a rect from a different viewport is
+       how a second monitor would inherit a phone's notch. */
+    const detached = element.ownerDocument !== document
+    const top = element.getBoundingClientRect().top
+    const overlap = detached ? 0 : Math.max(0, Math.min(bottom - top, bottom))
+    element.style.setProperty(HEADER_OVERLAP, `${Math.round(overlap)}px`)
+  }
+  notifyDockLayout()
+}
 /** How many closed panels ⌘⇧T can walk back through. */
 const REOPEN_DEPTH = 10
 
@@ -106,6 +156,22 @@ export interface WorkspaceDock {
   resetLayout: () => void
   reopenClosed: () => void
   applyPreset: (preset: PresetId) => void
+  /** Move a panel into a window of its own. Resolves false when the browser
+      refused the window — a popup blocker, or a runtime with no `window.open`. */
+  popoutPanel: (id?: string) => Promise<boolean>
+  /** Move a panel into a floating group over the dock, or back into the grid
+      if it is already floating. */
+  toggleFloat: (id?: string) => void
+  /** Keep a tab: it goes to the front of its group, loses its close button and
+      is stepped over by every bulk close. */
+  togglePin: (id: string) => void
+  isPinned: (id: string) => boolean
+  /** Keep the dock as it stands, contents and all, under a name. Unlike a
+      preset, applying one opens and closes panels — see `lib/workspace/layout`. */
+  saveLayoutAs: (name: string) => SavedLayout | null
+  applySavedLayout: (id: string) => void
+  deleteSavedLayout: (id: string) => void
+  savedLayouts: () => SavedLayout[]
   /** A panel's veto on its own closing — live terminals. The IDE keeps its
       own dirty buffers across a close, so it never vetoes one. */
   registerCloseGuard: (id: string, guard: CloseGuard) => () => void
@@ -255,6 +321,10 @@ export function useWorkspaceDock(): DockController {
     if (!api) return false
     const guard = guardsRef.current.get(panel.id)
     if (guard && !(await guard())) return false
+    /* A pin belongs to a panel, not to an id: leaving it behind would pin
+       whatever next earns that name — a new terminal in the same project, a
+       thread restored from Trash. */
+    forgetPanelPin(panel.id)
     const descriptor = descriptorOf(panel)
     if (descriptor && silentRef.current === 0) {
       closedRef.current = [
@@ -291,6 +361,10 @@ export function useWorkspaceDock(): DockController {
     async (panels: IDockviewPanel[]) => {
       for (const panel of panels) {
         if (!isClosable(panel)) continue
+        /* A pinned tab is the one thing "close others" is for: you pinned it so
+           that the tidy-up would go around it. Closing it stays possible — its
+           own Close, which names it. */
+        if (isPanelPinned(panel.id)) continue
         if (!(await removeWithGuard(panel))) return
       }
     },
@@ -400,6 +474,95 @@ export function useWorkspaceDock(): DockController {
     openPanel(next.panel, { newTab: true })
   }, [openPanel])
 
+  /* ── Pinning ──
+     The set is `lib/workspace/panel-pins`; what the dock adds is the one thing
+     a store cannot do — putting the tab where a pinned tab belongs. Pinned
+     panels keep their relative order at the front of the group, so pinning a
+     second one does not jump it in front of the first. */
+  const togglePin = React.useCallback((id: string) => {
+    const api = apiRef.current
+    const panel = api?.getPanel(id)
+    if (!panel) return
+    const pinned = togglePanelPin(id)
+    if (!pinned) return
+    const pins = pinnedPanels()
+    const ahead = panel.group.panels.filter(
+      (candidate) => candidate.id !== id && pins.has(candidate.id)
+    ).length
+    if (panel.group.panels.indexOf(panel) !== ahead)
+      panel.api.moveTo({ group: panel.group, index: ahead, skipSetActive: true })
+  }, [])
+
+  const isPinned = React.useCallback((id: string) => isPanelPinned(id), [])
+
+  /* ── Its own window ──
+     A popout is a real browser window holding this panel, rendered by the same
+     React tree (Dockview reparents the DOM), so a terminal or a preview can sit
+     on a second monitor. It is a *user gesture* only: `window.open` off one is a
+     popup, and a browser blocks it — which is also why a popped-out panel comes
+     home rather than reopening on the next load (see `dockPopouts`). */
+  const popoutPanel = React.useCallback(async (id?: string) => {
+    const api = apiRef.current
+    const panel = id ? api?.getPanel(id) : api?.activeGroup?.activePanel
+    if (!api || !panel) return false
+    try {
+      return await api.addPopoutGroup(panel, {
+        popoutUrl: `${import.meta.env.BASE_URL}popout.html`,
+      })
+    } catch (error) {
+      console.warn("Could not open the panel in its own window", error)
+      return false
+    }
+  }, [])
+
+  /* Floating is the same move without a window: a group over the dock, dragged
+     and resized in the page. Toggling back docks it into the grid, which is the
+     only way out that does not close the panel. */
+  const toggleFloat = React.useCallback((id?: string) => {
+    const api = apiRef.current
+    const panel = id ? api?.getPanel(id) : api?.activeGroup?.activePanel
+    if (!api || !panel) return
+    if (panel.group.api.location.type === "floating") {
+      panel.api.moveTo({ group: api.addGroup() })
+      return
+    }
+    api.addFloatingGroup(panel)
+  }, [])
+
+  /* ── Named layouts ──
+     `toJSON` is the whole dock — contents, arrangement and the floats — so a
+     saved layout is taken and given back in one piece. Applying one is
+     `fromJSON`, done silently: every panel it replaces is the dock rebuilding
+     itself, not the user closing anything, so none of it lands on ⌘⇧T. */
+  const saveLayoutAs = React.useCallback((name: string) => {
+    const api = apiRef.current
+    if (!api) return null
+    return saveNamedLayout(serverIdRef.current ?? "none", name, api.toJSON())
+  }, [])
+
+  const applySavedLayout = React.useCallback(
+    (id: string) => {
+      const api = apiRef.current
+      const saved = readSavedLayout(serverIdRef.current ?? "none", id)
+      if (!api || !saved) return
+      try {
+        silently(() => api.fromJSON(saved))
+      } catch (error) {
+        /* The panels were pruned on the way out, so a throw here is the grid
+           itself. The dock the user is looking at is the one that works —
+           leave it alone rather than clearing it out from under them. */
+        console.warn("Could not apply the saved layout", error)
+      }
+    },
+    [silently]
+  )
+
+  const deleteSavedLayout = React.useCallback((id: string) => {
+    forgetSavedLayout(serverIdRef.current ?? "none", id)
+  }, [])
+
+  const savedLayouts = React.useCallback(() => listSavedLayouts(serverIdRef.current ?? "none"), [])
+
   const registerCloseGuard = React.useCallback((id: string, guard: CloseGuard) => {
     guardsRef.current.set(id, guard)
     return () => {
@@ -441,13 +604,19 @@ export function useWorkspaceDock(): DockController {
           const gone =
             descriptor.kind === "chat"
               ? !sessions.has(descriptor.sessionId)
-              : !pruneProjects
+              : /* Boards belong to the server, not to a project, so nothing in
+                   a prune of sessions and projects can say a tasks panel is
+                   stale — a deleted board resolves to another one from inside
+                   the panel (`lib/tasks-location.ts`). */
+                descriptor.kind === "tasks"
                 ? false
-                : descriptor.kind === "web"
-                  ? descriptor.trust === "project" &&
-                    !!descriptor.projectId &&
-                    !projects.has(descriptor.projectId)
-                  : !projects.has(descriptor.projectId)
+                : !pruneProjects
+                  ? false
+                  : descriptor.kind === "web"
+                    ? descriptor.trust === "project" &&
+                      !!descriptor.projectId &&
+                      !projects.has(descriptor.projectId)
+                    : !projects.has(descriptor.projectId)
           /* A pruned panel takes its guard with it — the panel is gone, so
              there is nothing left to ask, and a stale entry would veto a future
              panel that happens to reuse the id. An IDE panel takes its open
@@ -456,6 +625,7 @@ export function useWorkspaceDock(): DockController {
              pointing at a directory the server will not read. */
           if (gone) {
             guardsRef.current.delete(panel.id)
+            forgetPanelPin(panel.id)
             if (descriptor.kind === "ide") forgetProjectEditors(descriptor.projectId)
             api.removePanel(panel)
           }
@@ -566,6 +736,14 @@ export function useWorkspaceDock(): DockController {
       resetLayout,
       reopenClosed,
       applyPreset,
+      popoutPanel,
+      toggleFloat,
+      togglePin,
+      isPinned,
+      saveLayoutAs,
+      applySavedLayout,
+      deleteSavedLayout,
+      savedLayouts,
       registerCloseGuard,
       listPanels,
       isPanelOpen,
@@ -586,6 +764,14 @@ export function useWorkspaceDock(): DockController {
       resetLayout,
       reopenClosed,
       applyPreset,
+      popoutPanel,
+      toggleFloat,
+      togglePin,
+      isPinned,
+      saveLayoutAs,
+      applySavedLayout,
+      deleteSavedLayout,
+      savedLayouts,
       registerCloseGuard,
       listPanels,
       isPanelOpen,
@@ -633,6 +819,7 @@ export function WorkspaceDock({
     ))
     map.ide = contained(IdePanel as React.FC<IDockviewPanelProps>)
     map.terminal = contained(TerminalPanel as React.FC<IDockviewPanelProps>)
+    map.tasks = contained(TasksPanel as React.FC<IDockviewPanelProps>)
     /* The preview mode hands errors and picked elements to a thread, which
        is a send — so the web panel takes `actions` the way the chat does. */
     map.web = contained((props) => (
@@ -654,11 +841,26 @@ export function WorkspaceDock({
      all, and an empty 36px band above every thread is worse than no band. */
   const handleReady = React.useCallback(
     (api: DockviewApi) => {
+      /* Measured after the frame that changed the layout: a group's box is not
+         its new one until the browser has laid it out, and a rect read inside
+         the event that moved it is the rect it is leaving. Coalesced, because a
+         sash drag fires a layout change per pointer frame. */
+      let overlapFrame: number | undefined
+      const syncOverlap = () => {
+        if (overlapFrame !== undefined) cancelAnimationFrame(overlapFrame)
+        overlapFrame = requestAnimationFrame(() => {
+          overlapFrame = undefined
+          syncHeaderOverlap(api)
+        })
+      }
       const sync = () => {
         const single = api.groups.length === 1 && api.panels.length === 1
         for (const group of api.groups) {
           if (group.header.hidden !== single) group.header.hidden = single
         }
+        /* After the strip's own visibility, never before: what a panel has to
+           pad by depends on whether there is a strip above it. */
+        syncOverlap()
       }
       const disposables = [
         api.onDidAddPanel(sync),
@@ -676,13 +878,22 @@ export function WorkspaceDock({
            is raised once the move has settled, which is the only point where the
            counts describe the dock the user is actually looking at. */
         api.onDidMovePanel(sync),
+        /* Every other way a group's top can move: a sash drag, a maximize, a
+           float, the window itself. The strip's visibility has not changed in
+           any of them, so this is the overlap alone. */
+        api.onDidLayoutChange(syncOverlap),
       ]
+      window.addEventListener("resize", syncOverlap)
       queueMicrotask(sync)
       onReady(api)
       /* Dockview does not tell us when it tears the component down, and
          `onReady` runs again on a theme remount — the dock's own cleanup path
          disposes its listeners the same way. */
-      return () => disposables.forEach((disposable) => disposable.dispose())
+      return () => {
+        if (overlapFrame !== undefined) cancelAnimationFrame(overlapFrame)
+        window.removeEventListener("resize", syncOverlap)
+        disposables.forEach((disposable) => disposable.dispose())
+      }
     },
     [onReady]
   )
@@ -694,7 +905,11 @@ export function WorkspaceDock({
         components={components}
         defaultRenderer="always"
         defaultTabComponent={PanelTab}
-        disableFloatingGroups
+        /* Floating groups are on: a panel over the dock, and — through
+           `popoutPanel` — one in a window of its own. `floatingGroupBounds`
+           keeps a float from being dragged off-screen, which on a laptop is a
+           panel the user cannot get back without clearing the layout. */
+        floatingGroupBounds="boundedWithinViewport"
         onReady={(event) => handleReady(event.api)}
         rightHeaderActionsComponent={tabActions}
         theme={theme}

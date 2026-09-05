@@ -1006,10 +1006,12 @@ export class ThreadConnection {
         }
         /* Remember what this profile's agent offers. A draft has no process to
            ask, so without this a new thread cannot show a single setting until
-           it has already started — see lib/agent-options. */
+           it has already started — see lib/agent-options. The modes ride along:
+           an agent that advertises them only on the `modes` channel (daedalus)
+           would otherwise stay modeless in every draft menu. */
         const meta = getState().sessions.find((s) => s.id === id)
         if (meta?.profileId && meta.agentId && configOptions && configOptions.length > 0) {
-          saveAgentOptions(optionKey(meta.profileId, meta.agentId), configOptions)
+          saveAgentOptions(optionKey(meta.profileId, meta.agentId), configOptions, modes ?? undefined)
         }
         /* And what it can carry, on the same store and for the same reason:
            the next draft on this pair has to know whether an image will reach
@@ -1023,8 +1025,8 @@ export class ThreadConnection {
          carries the row's own state rather than the agent's, which is why it
          patches the session and not the thread. */
       onConfigNotice: (text) => send({ type: "notice", id, text }),
-      onSpawnConfig: (profileId, model, effort, personaId) =>
-        send({ type: "spawn-config", id, profileId, model, effort, personaId }),
+      onSpawnConfig: (profileId, model, effort, personaId, suggestFollowups) =>
+        send({ type: "spawn-config", id, profileId, model, effort, personaId, suggestFollowups }),
       onTtft: (ms) => send({ type: "ttft", id, ms }),
       onQuota: (quota) => send({ type: "quota", id, quota }),
       onTurnChanges: (turn) => send({ type: "turn-changes", id, turn }),
@@ -1095,7 +1097,7 @@ export class ThreadConnection {
          be read off `from > 0`, which stopped being enough once the server could
          pick a `from` of its own for a windowed attach — a case where `from` is
          large and the transcript must still be replaced. */
-      onAttached: ({ from, to, resumed, earlier, archived }, historyLost) => {
+      onAttached: ({ from, to, resumed, earlier, archived, turns }, historyLost) => {
         attachedArchived = archived
         buffer = []
         /* How long this is going to be, before any of it arrives. Zero total
@@ -1131,8 +1133,17 @@ export class ThreadConnection {
               ...emptyThread,
               phase: this.phase,
               turnChanges: getState().threads[id]?.turnChanges ?? {},
+              /* The journal's turn list survives the reset like `turnChanges`:
+                 it is the server's own measurement and the replay that follows
+                 only rebuilds what the window sent. Replaced below by this
+                 attach's own list when the server sent one. */
+              turns: getState().threads[id]?.turns ?? [],
             },
           })
+          /* This attach's own table of contents, replacing what the reset
+             carried over. Absent on an older server — which keeps the old list
+             — and on no path but this one. */
+          if (turns !== undefined) send({ type: "thread-turns", id, turns })
         }
         send({ type: "thread-window", id, archived, earlier })
         /* The agent would not reload this conversation, so the replay about to
@@ -1164,10 +1175,10 @@ export class ThreadConnection {
       onCursor: (cursor) => {
         this.cursor = cursor
       },
-      onPaused: (paused) => {
-        send({ type: "paused", id, paused })
+      onPaused: (hold) => {
+        send({ type: "paused", id, ...hold })
       },
-      onCaughtUp: (cursor, promptActive, queue, paused) => {
+      onCaughtUp: (cursor, promptActive, queue, hold) => {
         this.cursor = cursor
         if (this.socket === owner()) this.promptActiveAtLoad = promptActive
         /* The document (or the socket) reached the end of what it had. An
@@ -1185,7 +1196,7 @@ export class ThreadConnection {
         // Not journaled, so it rides here — the way an open permission is handed
         // over after the replay rather than replayed.
         send({ type: "queue", id, items: queue })
-        send({ type: "paused", id, paused })
+        send({ type: "paused", id, ...hold })
         flush()
       },
       /* A page of older history arrived and the socket is about to fold the

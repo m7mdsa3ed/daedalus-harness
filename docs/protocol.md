@@ -109,7 +109,11 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   (`SessionManager.turnStartAt`/`earlierPage`), so `attached.from` is always a turn's
   opening event and a page is whole turns — an event-counted cut landed mid-turn and the
   re-fold opened a half turn the reducer had never seen begin. `earlier` counts withheld
-  turns. **A log does not have to begin with a `turn_started`, and that is the case the
+  turns. **The turn rail never pages for its ticks**: `attached` also carries `turns`, the
+  journal's whole turn list (one `turn_started` + excerpt per turn, oldest first, including
+  the turns withheld behind `earlier` — `SessionJournal.turnTicks`), so the rail draws
+  every tick up front and a jump to a withheld turn pages back to its seq first. Omitted
+  on a resume, where the client already holds the thread. **A log does not have to begin with a `turn_started`, and that is the case the
   cut has to be written around**: a revive clears the journal and refills it from the
   `session/load` replay, which is the entire prior conversation with no turn boundaries in
   it, so the first `turn_started` is the turn taken *after* the revive. So the window is
@@ -490,6 +494,72 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   carrier and by the same rules as `promptCapabilities`. The fake agent takes the pair with
   a flag and nothing else, which is what `test:workflow` exercises the bridge path with;
   the gate itself is `agent/test/turn.test.ts`.
+
+## Held turns — a failure waits at the same boundary
+
+- **A turn that fails does not end; it holds — and "fails" is every way it can.** An error
+  part, a call that threw before the stream (`makeModel`, `failNoModel`), and — this is the
+  part that was silently wrong — a **finish reason** that says the step did not do what was
+  asked. `failedFinish` covers `error`, `content-filter` and `length`; `mapFinishReason` used
+  to send an unrecognised reason to `end_turn`, so a provider reporting `finishReason: "error"`
+  with no error part ended the turn as a *success* with the answer stopped mid-sentence.
+  `other`/`unknown` are still not failures: a provider that has said nothing has not said
+  something went wrong. These three are read only when a hold can actually be taken —
+  unattended, `max_tokens` and `refusal` stay the legitimate ACP stop reasons they are, so a
+  run does not start failing on them.
+- **A failed tool call does not hold.** It is drawn as a failed `tool_call_update` and handed
+  back to the model, which is the whole point of the `tool-error` path and of `repair.ts`
+  beside it: the runtime already recovers from its own bad calls, and stopping the turn to ask
+  a human would take that away. The same rule sends a subagent's failure to the parent as an
+  ordinary tool error rather than holding anything.
+- A provider error — a rate limit, a spent quota, a key that stopped working — used to throw
+  the whole turn away, and with it every tool call it had already made. The runtime already owns a step boundary and already knows
+  how to wait at it, so a failure holds there instead, and the user changes the model or the
+  profile (which the harness does *on the running process*, `applyConfigLive`) and lets it go
+  on. `turn.ts` re-reads `session.modelId` on every pass, so the change is the whole of what
+  makes the next attempt different. Nothing recovers on its own: no model fallback, no
+  Retry-After backoff. The two auto-retries for a transient stream error are unchanged and
+  come first; the hold is what happens when they are spent.
+- **One wait, two reasons.** `Session.held` is `paused || errorHold !== null` and `gate()`
+  loops on it, so a new reason to hold never needs a new gate. `holdError()` **resolves**
+  with `"released" | "cancelled"` and never throws — a throw would reach the turn's outer
+  catch and end a Stop as a red failure instead of the clean `stopReason: "cancelled"` a
+  cancel has always had. A resume lets go of both reasons; a user pause never overwrites a
+  failure already waiting, because the failure is the more useful of the two to read.
+- **The pair grew its one missing direction.** A pause is asked for from the server and
+  answered in the same reply; a hold is taken at the agent's end, so it can only arrive as
+  `_daedalus/session/paused` — a notification, same capability, handled beside the others in
+  `acp-bridge.ts`. It widens the existing event rather than adding one:
+  `paused { paused, reason?: "user" | "error", error? }`, still absolute, still live-only,
+  still carried on `caught_up` (`session-socket.ts` › `pausedFields`). `RESUME_METHOD` takes
+  an options bag from the start (`{ compact? }`) because context length is the one hold a
+  model change often cannot fix, and "compact and continue" must not need a second method.
+- **A held turn is still `turnActive`.** There is no `turn_ended`, `lastTurnError` stays
+  null, no "turn failed" push fires, and the client draws it as an open turn in a stopped
+  state — the working line reads `Held — <the provider's own sentence>` and the composer's
+  Play button is the Continue. An `ErrorRow` would be the wrong offer: re-sending the prompt
+  is exactly what the hold exists to avoid.
+- **Nobody in front of the thread means no hold.** `whenTurnSettled` is what workflows
+  (`workflows.ts`) and routines (`routines.ts`) await, and a held turn never settles — a
+  scheduled run would block forever where it used to fail and report. `spawnAgent` passes
+  `DAEDALUS_AGENT_HOLD_ON_ERROR=0` for a session with a `parentSessionId` or an autonomy
+  policy, which is exactly the set with no human at a config menu. The idle sweep is the
+  backstop: a hold older than `HELD_TURN_MAX_MS` with no peers is cancelled, because a held
+  turn keeps `promptActive` true and would otherwise pin its process for good.
+- **Subagents do not hold.** `runSubagent` re-sends its whole prompt on every attempt and
+  keeps no accumulated messages, so a held-then-continued child would re-run every tool it
+  had already run — the opposite of the guarantee. Its failure stays a thrown error, which
+  becomes a `tool-error` part, which the parent carries on from. One `errorHold` slot per
+  session is the other reason: a step's parallel children would freeze each other.
+- **A failed attempt persists only what it finished.** The write of `responseMessages` now
+  happens *after* the outcome is known, and on the failing path only down to
+  `settledPrefix` — the longest run of messages in which every tool call has its result.
+  Written before the check (as it was), a failed attempt left an assistant message carrying
+  a call with no result in an append-only file for good, and the next `session/load` handed
+  it straight to a provider that rejects it. Steered words are the other exception: they are
+  persisted and journaled as they arrive, so a rollback puts them back rather than dropping
+  them. Usage is summed across attempts, since a hold makes a multi-attempt turn ordinary
+  and the last attempt's tokens would under-report exactly the expensive turns.
 
 ## stderr in errors
 

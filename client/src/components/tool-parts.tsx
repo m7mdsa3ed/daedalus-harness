@@ -81,6 +81,16 @@ export const KIND_COLORS: Record<string, string> = {
   other: "text-step-tool",
 }
 
+/* The same map as the tinted tile a step row's mark sits on — the `/15` of
+   the avatar stack, so a coloured icon wears its own background instead of
+   floating transparent. Keyed by the same kinds, so a row's mark and its
+   tile never disagree. */
+export const KIND_CHIPS: Record<string, string> = {
+  think: "bg-step-think/15",
+  execute: "bg-step-command/15",
+  other: "bg-step-tool/15",
+}
+
 /* Prose palette + code/table styling live in index.css, so both themes come
    from the app tokens — no prose-invert needed. */
 /* `detect: false` — highlight.js only colours a fence that declares its

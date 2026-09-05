@@ -5,6 +5,7 @@ import {
   CodeIcon,
   GlobeIcon,
   MessageSquareIcon,
+  SquareKanbanIcon,
   SquareTerminalIcon,
   type LucideIcon,
 } from "lucide-react"
@@ -16,4 +17,5 @@ export const PANEL_ICONS: Record<PanelKind, LucideIcon> = {
   ide: CodeIcon,
   terminal: SquareTerminalIcon,
   web: GlobeIcon,
+  tasks: SquareKanbanIcon,
 }

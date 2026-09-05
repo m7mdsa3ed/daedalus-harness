@@ -397,14 +397,19 @@ export function resolvePersonaSpawn(
   sessionId: string,
   id: string | null | undefined,
   agent: AgentDef | undefined,
+  suggestFollowups?: boolean | null,
 ): PersonaSpawn | undefined {
   const persona = id ? personas.get(id) : undefined;
   // A persona deleted under a live thread reads as none — see the schema's note
   // on why `sessions.persona_id` is not a foreign key.
-  const spawn: PersonaSpawn | undefined = persona?.prompt
+  const base: PersonaSpawn | undefined = persona?.prompt
     ? { id: persona.id, prompt: persona.prompt, thinking: persona.thinking }
     : undefined;
-  // Called even when there is no persona, so a thread that has just had one
+  // Folded here rather than at the call site so the file below holds the same
+  // text the inline doors carry — an agent that reads instructions off disk
+  // must see the trailer too.
+  const spawn = withFollowupSuggestions(base, suggestFollowups);
+  // Called even when there is no spawn, so a thread that has just had one
   // taken away does not leave the old text on disk for the next spawn to point
   // at — see `writePersonaPrompt`.
   if (agent && usesPersonaFile(agent)) {
@@ -412,6 +417,50 @@ export function resolvePersonaSpawn(
     if (spawn && file) spawn.file = file;
   }
   return spawn;
+}
+
+/* ── Follow-up suggestions ──
+ *
+ * A thread-level toggle rather than a persona: "offer me next prompts" is
+ * orthogonal to "how to work". When on, the spawn's instruction text gains a
+ * trailer asking the model to close each answer with 2–3 follow-up prompts in
+ * one fenced block. The fence name is deliberately distinctive so the
+ * client's parser never mistakes a real code block for suggestions — and the
+ * client strips the block from the painted transcript, so the trailer must
+ * say the block carries no prose, only the prompts.
+ *
+ * Applied by folding the trailer into the persona text (see
+ * `withFollowupSuggestions`), so every runtime door — ACP `_meta` append,
+ * `{personaPrompt}` inline, `{personaFile}` on disk — carries it with no
+ * per-door change. */
+
+/** Fence the model must wrap follow-up prompts in. Mirrored by the client's parser (`lib/suggestions.ts`). */
+export const SUGGEST_FOLLOWUPS_FENCE = "suggest-prompts";
+
+/** Trailer appended to the spawn instructions while a thread wants suggestions. */
+export const SUGGEST_FOLLOWUPS_INSTRUCTIONS = `After your final answer, suggest 2-3 natural follow-up prompts the user may want to ask next. Emit them as one fenced block named \`${SUGGEST_FOLLOWUPS_FENCE}\`, one prompt per line, with no other text inside the fence:
+
+\`\`\`${SUGGEST_FOLLOWUPS_FENCE}
+<first follow-up prompt>
+<second follow-up prompt>
+\`\`\`
+
+Omit the block when no follow-up makes sense. Never put anything but follow-up prompts in it.`;
+
+/**
+ * The spawn instructions for a thread: its persona, plus the suggestions
+ * trailer when the thread asked for it. Returns undefined when there is
+ * nothing to instruct — the caller's placeholders resolve empty exactly as
+ * they do for a thread with no persona.
+ */
+export function withFollowupSuggestions(
+  persona: PersonaSpawn | undefined,
+  enabled: boolean | null | undefined,
+): PersonaSpawn | undefined {
+  if (!enabled) return persona;
+  if (!persona) return { id: "suggestions", prompt: SUGGEST_FOLLOWUPS_INSTRUCTIONS, thinking: null };
+  if (persona.prompt.includes(SUGGEST_FOLLOWUPS_INSTRUCTIONS)) return persona;
+  return { ...persona, prompt: `${persona.prompt}\n\n${SUGGEST_FOLLOWUPS_INSTRUCTIONS}` };
 }
 
 /** The effort a persona asks for, if it asks for one. Separate from

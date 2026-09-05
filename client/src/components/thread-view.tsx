@@ -17,6 +17,7 @@ import {
 import { useHotkey } from "@/hooks/use-hotkey"
 import type { Actions } from "@/lib/actions"
 import { reportError } from "@/lib/errors"
+import { holdOf } from "@/lib/thread/hold"
 import { slowLine, startingLine, type ConnPhase } from "@/lib/thread/phase"
 import { currentThreadId } from "@/lib/router"
 import { KEYS, isInteractiveTarget, isTypingTarget, overlayOpen } from "@/lib/shortcuts"
@@ -32,11 +33,13 @@ import { useServer } from "@/lib/server-context"
 import { sessionChanges, type TurnChanges } from "@/lib/workspace/git-api"
 import { InlineElicitation } from "./elicitation-form"
 import { InlineApproval, primaryPermissionOption } from "./tool-approval"
+import { InlineHeldTurn } from "./held-turn"
 import { RowView, SourcesStrip } from "./thread-items"
 import { splitTurns, turnSources, type TurnSources } from "@/lib/sources"
 import { buildRows, isAnswerItem, rowTailId, type Row } from "@/lib/transcript-rows"
-import { ThreadRail } from "./thread-rail"
-import { Composer } from "./composer"
+import { PromptSuggestions } from "./prompt-suggestions"
+import { turnSuggestions } from "@/lib/suggestions"
+import { Composer, type ComposerHandle } from "./composer"
 
 /**
  * Append a Sources row to every finished turn that has any. Computed on the
@@ -184,6 +187,27 @@ function withTurnChanges(
     const turnId = head.kind === "user" ? head.turnId : undefined
     const changes = turnId ? turnChanges[turnId] : undefined
     if (changes && changes.ended && changes.files.length > 0) after.set(tailId, changes)
+  }
+  return after
+}
+
+/** Each finished turn's suggestion card, keyed by the id of the answer that
+    carries it — the same walk and the same finished-turn gating as the footers
+    above: the last turn only qualifies once it has ended, so a card never
+    grows under the cursor mid-answer. Off when the thread's suggestions toggle
+    is off (`meta.suggestFollowups`) — the toggle is the thread's ask, and the
+    model's willingness to deliver the fence is read per answer by
+    `turnSuggestions`. */
+function withTurnSuggestions(
+  items: ThreadItem[],
+  turnActive: boolean,
+  enabled: boolean
+): Map<string, { itemId: string; prompts: string[] }> {
+  const after = new Map<string, { itemId: string; prompts: string[] }>()
+  if (!enabled) return after
+  for (const { turn } of finishedTurns(items, turnActive)) {
+    const entry = turnSuggestions(turn)
+    if (entry) after.set(entry.itemId, entry)
   }
   return after
 }
@@ -349,6 +373,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
      re-render exactly when this thread's own objects are replaced. */
   const dispatch = useDispatch()
   const thread = useThread(sessionId)
+  const hold = holdOf(thread)
   /* An interrupt is resumable only while it is the last thing that happened:
      the turn is over, the agent is still there, and nothing has been said
      since. Anything older is history, and history does not get a button. */
@@ -502,6 +527,45 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
   // two must agree about when this thread counts as empty. See lib/store.
   const empty = threadIsEmpty(thread, meta?.draft)
 
+  /* Which finished answers get a suggestion card, keyed by the answer's own id
+     — the same per-turn slot the sources and token footers occupy. The thread's
+     toggle (a spawn bargain with the model, see lib/actions) is read here, so
+     turning suggestions off takes every card away at once. */
+  const suggestionsAfter = React.useMemo(
+    () => withTurnSuggestions(thread.items, thread.turnActive, meta?.suggestFollowups === true),
+    [thread.items, thread.turnActive, meta?.suggestFollowups]
+  )
+  const suggestionsFor = (row: Row): { itemId: string; prompts: string[] } | undefined =>
+    suggestionsAfter.get(rowTailId(row))
+
+  const rootRef = React.useRef<HTMLDivElement>(null)
+  const composerRef = React.useRef<HTMLDivElement>(null)
+  /* The suggestion card's one way back into the box: it lives in the
+     transcript, the box is a sibling — the fill goes through the composer's
+     imperative handle rather than a shared "composer text" store. */
+  const composerApiRef = React.useRef<ComposerHandle>(null)
+  /* The docked composer is an overlay of unknown height — shelf rows, the
+     queue, attachments and textarea growth all move it — so its pixel height
+     is measured and published as `--composer-dock-h` on the grid root for the
+     transcript to respect (content reserve, scroll-padding, button lift).
+     Cleared while empty, where the composer is back in flow and no reserve
+     is needed. */
+  React.useLayoutEffect(() => {
+    const root = rootRef.current
+    const composer = composerRef.current
+    if (!root || !composer || empty) {
+      root?.style.removeProperty("--composer-dock-h")
+      return
+    }
+    const publish = () => {
+      root.style.setProperty("--composer-dock-h", `${composer.offsetHeight}px`)
+    }
+    publish()
+    const observer = new ResizeObserver(publish)
+    observer.observe(composer)
+    return () => observer.disconnect()
+  }, [empty])
+
   return (
     /* Rows: transcript | composer | spacer. The spacer is 1fr while the thread
        is empty and 0fr once it is not, which centres the composer and then
@@ -510,7 +574,14 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
        minmax(0,…) on both flexible tracks, never a bare `1fr`: that is shorthand
        for minmax(auto,1fr), whose auto minimum lets a long transcript push the
        row taller than the thread and scroll the whole pane. */
+    <MessageScrollerProvider autoScroll={options.autoScroll}>
+    {/* The Provider sits at the grid root rather than around the transcript:
+        the rail lives in the composer card now, and it needs the scroller's
+        `scrollToMessage`/`currentAnchorId` as much as the transcript does.
+        The provider renders no DOM of its own — context only — so this
+        changes nothing about the layout. */}
     <div
+      ref={rootRef}
       data-empty={empty || undefined}
       className="relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto_minmax(0,0fr)] transition-[grid-template-rows] duration-500 ease-out data-empty:grid-rows-[minmax(0,1fr)_auto_minmax(0,1fr)]"
     >
@@ -521,9 +592,27 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
            The primitive's own follow is kept (it is what hides the
            scroll-to-bottom button while following) but it is not trusted on its
            own — `useFollowStream` owns the pin. See hooks/use-follow-stream. */}
-      <MessageScrollerProvider autoScroll={options.autoScroll}>
         <MessageScroller className="min-h-0 flex-1">
-          <MessageScrollerViewport ref={follow.viewportRef}>
+          <MessageScrollerViewport
+            ref={follow.viewportRef}
+            /* Measured dock height: the follow/scroll-into-view offset keeps
+               the live tail landing above the glass. Falls back while the
+               first measurement lands. The top padding is the floating app
+               header: it scrolls away with the transcript (padding inside a
+               scroller does), so the first message starts below the header
+               and everything after it passes beneath the header's blur; the
+               scroll-padding keeps a jump-to-message landing there too rather
+               than hidden under it. */
+            /* `--dock-content-overlap` is how much of *this panel* the floating
+               header actually covers, measured per group by workspace/dock.tsx
+               — zero for a thread in a group that is not at the top. The
+               constant is the fallback: outside the dock (and for the frame
+               before the first measurement) it is the whole header. */
+            className={cn(
+              "pt-[var(--dock-content-overlap,var(--app-header-h))] [scroll-padding-top:var(--dock-content-overlap,var(--app-header-h))]",
+              !empty && "[scroll-padding-bottom:var(--composer-dock-h,14rem)]"
+            )}
+          >
             <ViewOptionsContext.Provider value={options}>
             <StepTokensProvider value={{ step: thread.stepUsage, turn: stepTurnAfter }}>
             <MessageScrollerContent
@@ -533,9 +622,13 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
               data-wrap={options.codeWrap ? "on" : undefined}
               data-motion={options.calmMotion ? "calm" : undefined}
               className={cn(
-                "thread-transcript mx-auto w-full gap-0.5 px-4 py-4",
+              "thread-transcript mx-auto w-full gap-0.5 px-4 py-4",
                 options.compactDensity && "gap-0 py-2",
                 options.wideTranscript ? "max-w-[82rem]" : "max-w-[var(--harness-chat-width)]",
+                /* Scrollable reserve matching the measured dock height, plus a
+                   breath of room, so the last message rests above the glass
+                   instead of behind it. */
+                !empty && "pb-[calc(var(--composer-dock-h,13rem)+1rem)]",
               )}
             >
               {/* Nothing stands in while a thread connects. A skeleton claimed a
@@ -647,6 +740,22 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                       <TurnChangesChip sessionId={sessionId} projectId={meta?.projectId} turn={changesFor(row)!} />
                     </div>
                   )}
+                  {/* The model's closing follow-ups, under the answer that
+                      suggested them. Deliberately NOT on the composer dock: the
+                      dock is for state being typed with the turn, and next
+                      actions belong where the reader is when they arrive — in
+                      the same footer slot Sources and the token figure use. A
+                      click fills the composer (replaced, unsent, focused) via
+                      its imperative handle, so the box stays the box's own
+                      state. */}
+                  {suggestionsFor(row) && (
+                    <div className="harness-item-in mt-1">
+                      <PromptSuggestions
+                        suggestions={suggestionsFor(row)!.prompts}
+                        onPick={(prompt) => composerApiRef.current?.fill(prompt)}
+                      />
+                    </div>
+                  )}
                 </MessageScrollerItem>
                 )
               })}
@@ -665,8 +774,13 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
               {/* Suppressed while the thread is opening: the StartingLine just
                   above already owns the wait, and two animated lines over one
                   message read as "we don't know what is happening" rather than
-                  as progress. Reaching `live` hands the wait back here. */}
-              {thread.turnActive && !startingLine(thread.phase) && (
+                  as progress. Reaching `live` hands the wait back here.
+                  Suppressed again for a turn held on a failure, for the same
+                  reason from the other end: the card below says the same
+                  sentence with the buttons that act on it, and a line above it
+                  repeating the reason is the wait announced twice. A *user's*
+                  pause keeps the line, because it has no card. */}
+              {thread.turnActive && !startingLine(thread.phase) && !hold.byError && (
                 <MessageScrollerItem messageId="working">
                   <div className="harness-item-in">
                     <div className="py-0.5">
@@ -675,11 +789,22 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   </div>
                 </MessageScrollerItem>
               )}
-              {/* The two things that stop a turn dead, at the tail of the flow
-                  where the turn is: an approval and a question are the same
-                  event to a reader, and they are drawn on the same card. Both
-                  come after the working line — whatever the agent got as far as
-                  saying is above the thing it stopped on. */}
+              {/* The three things that stop a turn dead, at the tail of the
+                  flow where the turn is: an approval, a question and a turn
+                  held on a failure are the same event to a reader — the agent
+                  has got as far as it can and is waiting on you — so they are
+                  drawn on the same card. All come after the working line:
+                  whatever the agent got as far as saying is above the thing it
+                  stopped on. */}
+              {hold.byError && (
+                <MessageScrollerItem messageId="held">
+                  <div className="harness-item-in">
+                    <div className="py-1">
+                      <InlineHeldTurn sessionId={sessionId} actions={actions} thread={thread} />
+                    </div>
+                  </div>
+                </MessageScrollerItem>
+              )}
               {thread.permission && (
                 <MessageScrollerItem messageId="permission">
                   <div className="harness-item-in">
@@ -705,14 +830,19 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
           {/* The primitive's own scroll-to-end runs on click; re-pinning here as
               well is what makes the button mean "and keep up from now on"
               instead of "put me at the bottom once". */}
-          <MessageScrollerButton onClick={follow.follow} />
-          {/* Inside the Root, not the Viewport: it is an overlay on the
-              transcript, and it needs the Provider above it for
-              `scrollToMessage`/`currentAnchorId`. It draws nothing under two
-              turns, so a short thread pays for it only in a hook call. */}
-          {options.turnRail && <ThreadRail items={visible} wide={options.wideTranscript} />}
+          {/* Lifted above the docked composer while the thread is live, so the
+              button never parks behind the glass. The lift repeats the base's
+              `data-[direction=end]:` variant — an unprefixed `bottom-*` would
+              survive the merge but lose to it on specificity. `z-30` keeps it
+              painting above the composer's `z-20`. */}
+          <MessageScrollerButton
+            onClick={follow.follow}
+            className={cn(
+              !empty &&
+                "z-30 data-[direction=end]:bottom-[calc(var(--composer-dock-h,14rem)+1rem)]",
+            )}
+          />
         </MessageScroller>
-      </MessageScrollerProvider>
       {/* min-w-0, and it is load-bearing: a grid item's automatic minimum is
           `min-content`, so the composer's row was as wide as the widest
           unbreakable thing on the shelf — a queued message holding a URL or a
@@ -724,20 +854,66 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
           the rows inside truncate and wrap as they were written to. The same
           reasoning as every `min-h-0` on the rows above — the axis is the only
           difference. */}
-      <div className="relative min-w-0">
+      {/* Docked once the thread is live: the composer leaves the grid flow and
+          overlays the transcript's foot (absolute against the grid root above,
+          which is `relative`), so thread content scrolls under the frosted
+          card. The row it vacated collapses and the viewport takes the full
+          height. `pointer-events-none` keeps the full-width band from eating
+          transcript clicks — the composer's own root re-enables them. While
+          empty the composer stays in flow, centred by the grid rows above. */}
+      {/* Docked, it rides the soft keyboard: nothing else on the screen moves
+          when one opens (index.html asks for `overlays-content`), and this is
+          the surface that would otherwise be under it — absolute against a
+          panel that does not scroll, so the browser has nothing to scroll
+          into view either. A transform rather than a `bottom`, so the height
+          the transcript reserves (`--composer-dock-h`, measured from
+          offsetHeight) does not move with it and the transcript stays exactly
+          where the reader left it. An empty thread rides the same way: the
+          composer is back in flow and centred, but nothing around it scrolls
+          either, so the browser's own scroll-into-view has nothing to move
+          and the keyboard would cover it just the same.
+
+          The transition is the platform's own animation, copied: 285ms on
+          `cubic-bezier(0.2, 0, 0, 1)` are Android's ANIMATION_DURATION_SYNC_IME_MS
+          and SYNC_IME_INTERPOLATOR (AOSP `InsetsController`). It has to be
+          copied because it cannot be followed — the per-frame keyboard
+          position lives in `WindowInsetsAnimation.Callback.onProgress`, which
+          Chromium consumes for its own Java UI and never plumbs into the
+          renderer, so `--keyboard-inset` arrives once, whole, as the keyboard
+          starts moving (Android dispatches the final insets at animation
+          start once a callback is registered). Animating from that one value
+          on the same curve is as close to in step as a page can get; the
+          slower dismiss (340ms) is not matched, which would take script to
+          tell an open from a close. `translate` so it stays on the
+          compositor. */}
+      <div
+        ref={composerRef}
+        className={cn(
+          "min-w-0 translate-y-[calc(var(--keyboard-inset,0px)*-1)] transition-[translate] duration-[285ms] ease-[cubic-bezier(0.2,0,0,1)] will-change-transform motion-reduce:transition-none",
+          empty
+            ? "relative"
+            : "pointer-events-none absolute inset-x-0 bottom-0 z-20",
+        )}
+      >
         {empty && <ThreadWelcome draft={meta?.draft} />}
         <Composer
+          ref={composerApiRef}
           sessionId={sessionId}
           actions={actions}
           thread={thread}
           meta={meta}
           delivery={delivery}
+          railItems={visible}
+          railTurns={thread.turns}
+          onEnsureTurn={(turnId, seq) => actions.loadUntilTurn(sessionId, turnId, seq)}
+          showRail={options.turnRail}
         />
       </div>
       {/* The spacer that collapses. Nothing renders in it — its whole job is to
           be the bottom half of the centring while the thread is empty. */}
       <span aria-hidden />
     </div>
+    </MessageScrollerProvider>
   )
 }
 
@@ -826,5 +1002,3 @@ function StartingLine({ phase }: { phase: ConnPhase }) {
     </div>
   )
 }
-
-

@@ -183,7 +183,7 @@ function BrowserPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
   const width = VIEWPORTS.find((entry) => entry.id === viewport)?.width ?? null
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col pt-[var(--dock-content-overlap,var(--app-header-h))]">
       <PanelToolbar>
         <Button
           size="icon-xs"

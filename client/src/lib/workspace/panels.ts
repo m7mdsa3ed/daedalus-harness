@@ -11,7 +11,7 @@
    server restart. `parsePanel` is the other half of that contract — anything
    restored has to come back through it before the dock will trust it. */
 
-export type PanelKind = "chat" | "ide" | "terminal" | "web"
+export type PanelKind = "chat" | "ide" | "terminal" | "web" | "tasks"
 
 /** Whether a web panel is looking at a project's own dev server or the wider
     internet. It is carried on the descriptor so the panel cannot decide for
@@ -26,6 +26,12 @@ export type PanelDescriptor =
   | { kind: "ide"; projectId: string }
   | { kind: "terminal"; projectId: string; terminalId: string }
   | { kind: "web"; trust: WebTrust; viewId: string; projectId?: string; url?: string }
+  /** A board, beside the work it describes. One panel, not one per board: the
+      board being read is a *place inside* it (`lib/tasks-location.ts`) the way
+      a file is a place inside the IDE, so it travels in the params and moving
+      between boards is not opening a second panel. Boards are the server's,
+      not a project's, which is why this carries no `projectId`. */
+  | { kind: "tasks"; boardId?: string; taskId?: string }
 
 export interface PanelSpec {
   /** One per project — opening it again focuses what is there. */
@@ -43,6 +49,7 @@ export const PANEL_SPECS: Record<PanelKind, PanelSpec> = {
   ide: { singleton: true, defaultTitle: "IDE", implemented: true },
   terminal: { singleton: false, defaultTitle: "Terminal", implemented: true },
   web: { singleton: false, defaultTitle: "Browser", implemented: true },
+  tasks: { singleton: true, defaultTitle: "Tasks", implemented: true },
 }
 
 export const PANEL_KINDS = Object.keys(PANEL_SPECS) as PanelKind[]
@@ -67,6 +74,8 @@ export function panelId(panel: PanelDescriptor): string {
       return panel.trust === "external"
         ? `web:external:${panel.viewId}`
         : `web:${panel.projectId}:${panel.viewId}`
+    case "tasks":
+      return "tasks"
   }
 }
 
@@ -97,6 +106,17 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
     case "terminal": {
       const terminalId = str(p.terminalId)
       return projectId && terminalId ? { kind: "terminal", projectId, terminalId } : null
+    }
+    case "tasks": {
+      /* Both fields are optional and both are only ever *hints*: an unknown
+         board falls through to the remembered one, and an unknown task closes
+         its detail. Nothing here can fail to parse, so a tasks panel always
+         comes back — with an empty board if that is all that survived. */
+      return {
+        kind: "tasks",
+        ...(str(p.boardId) ? { boardId: str(p.boardId) } : {}),
+        ...(str(p.taskId) ? { taskId: str(p.taskId) } : {}),
+      }
     }
     case "web": {
       const viewId = str(p.viewId)

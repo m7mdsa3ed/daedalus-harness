@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { basename, join, relative } from "node:path";
 import { tool } from "ai";
 import { z } from "zod";
 import type { ToolMeta, ToolRuntime } from "./context.js";
@@ -96,11 +96,24 @@ export function makeGlobTool(rt: ToolRuntime) {
     }),
     execute: async ({ pattern, path }) => {
       const root = resolvePath(rt.session.cwd, path ?? ".");
+      /* `walk` swallows an unreadable directory, so a mistyped root would read
+         as "nothing matched" — an empty answer the model believes. */
+      let stats;
+      try {
+        stats = statSync(root);
+      } catch {
+        throw new Error(`No such directory: ${root}`);
+      }
+      if (!stats.isDirectory()) throw new Error(`${root} is a file, not a directory.`);
       const re = globToRegExp(pattern);
+      /* `*.ts` means "a .ts file", not "a .ts file in the root": a pattern
+         with no slash is matched against the basename as well, because the
+         empty answer it otherwise gives is the one a model retries blindly. */
+      const baseRe = pattern.includes("/") ? null : globToRegExp(pattern);
       const hits: { path: string; mtime: number }[] = [];
       for (const file of walk(root)) {
         const rel = relative(root, file);
-        if (!re.test(rel)) continue;
+        if (!re.test(rel) && !(baseRe && baseRe.test(basename(rel)))) continue;
         let mtime = 0;
         try {
           mtime = statSync(file).mtimeMs;
@@ -112,7 +125,9 @@ export function makeGlobTool(rt: ToolRuntime) {
       }
       hits.sort((a, b) => b.mtime - a.mtime);
       const shown = hits.slice(0, MAX_RESULTS);
-      if (shown.length === 0) return "No files matched.";
+      if (shown.length === 0) {
+        return `No files matched ${pattern} under ${root}. (node_modules, .git, dist, build and hidden directories are skipped; use bash \`ls -a\` to look inside one.)`;
+      }
       const listing = shown.map((h) => h.path).join("\n");
       return hits.length > shown.length ? `${listing}\n[${hits.length - shown.length} more not shown]` : listing;
     },
@@ -131,9 +146,21 @@ export function makeGrepTool(rt: ToolRuntime) {
     }),
     execute: async ({ pattern, path, glob, ignore_case }, options) => {
       const root = resolvePath(rt.session.cwd, path ?? ".");
+      if (!existsSync(root)) throw new Error(`No such path: ${root}`);
+      /* Reject a pattern neither engine can read, before it becomes an empty
+         result the model trusts. Rust-only syntax is left to ripgrep. */
+      if (!/\(\?P</.test(pattern)) {
+        try {
+          new RegExp(pattern);
+        } catch (err) {
+          throw new Error(`Invalid regular expression \`${pattern}\`: ${(err as Error).message}`);
+        }
+      }
       const viaRg = await tryRipgrep(pattern, root, glob, ignore_case, options.abortSignal);
-      if (viaRg !== null) return viaRg;
-      return grepFallback(pattern, root, glob, ignore_case, options.abortSignal);
+      const out = viaRg ?? grepFallback(pattern, root, glob, ignore_case, options.abortSignal);
+      return out === "No matches."
+        ? `No matches for ${pattern}${glob ? ` in ${glob} files` : ""} under ${root}.`
+        : out;
     },
   });
 }

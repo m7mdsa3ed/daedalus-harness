@@ -69,6 +69,7 @@ import { ComposerAttachments, PasteChip, type AttachmentDelivery } from "@/compo
 import { ComposerHistoryDialog } from "@/components/composer-history-dialog"
 import { ComposerQueue } from "@/components/composer-queue"
 import { ComposerStrip, ComposerStripItem } from "@/components/composer-strip"
+import { ThreadRail } from "@/components/thread-rail"
 import { DraftConfigPopover, DraftScopeRow } from "@/components/draft-config"
 import { SessionConfigPopover } from "@/components/session-config"
 import { ThreadToolsMenu } from "@/components/thread-tools"
@@ -105,7 +106,9 @@ import { currentThreadId, schedulePath } from "@/lib/router"
 import type { SessionMeta } from "@/lib/settings"
 import { KEYS, formatChord, matchesChord } from "@/lib/shortcuts"
 import { bannerFor, composerLock } from "@/lib/thread/phase"
+import type { TurnTick } from "@daedalus/protocol"
 import type { ThreadItem, ThreadState } from "@/lib/store"
+import { holdOf } from "@/lib/thread/hold"
 import { formatTokens } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 
@@ -129,6 +132,15 @@ function selectionOf(el: HTMLTextAreaElement | null, fallback: number): [number,
   return [start, end]
 }
 
+/** What the transcript's suggestion card can ask the composer to do. The card
+    lives next to the answer that offered the prompts, far from the box, so the
+    fill goes through a handle rather than shared state — and the handle is
+    imperative because filling is a moment, not a mode. */
+export interface ComposerHandle {
+  /** Fill the box like a history recall: replaced, unsent, caret at the end. */
+  fill(prompt: string): void
+}
+
 export function Composer({
   sessionId,
   actions,
@@ -141,6 +153,11 @@ export function Composer({
   beforeSend,
   scope,
   placeholder,
+  ref,
+  railItems,
+  railTurns,
+  onEnsureTurn,
+  showRail,
 }: {
   sessionId: string
   actions: Actions
@@ -154,6 +171,19 @@ export function Composer({
   scope?: ComposerScope
   /** Overrides the idle placeholder only; the lock and queue notes still win. */
   placeholder?: string
+  ref?: React.Ref<ComposerHandle>
+  /** The transcript rows the turn rail reads — the same list the transcript
+      renders, so the rail cannot disagree with what is on screen. Absent on
+      surfaces with no transcript (the build page), where no rail is drawn. */
+  railItems?: ThreadItem[]
+  /** The journal's whole turn list, oldest first — the rail's ticks for turns
+      still withheld behind `earlier`. See `ThreadState.turns`. */
+  railTurns?: TurnTick[]
+  /** Page history back until a withheld turn is folded; resolves to its row
+      id, or null when it never made it on screen. */
+  onEnsureTurn?: (turnId: string, seq: number) => Promise<string | null>
+  /** The reader's Turn rail toggle. */
+  showRail?: boolean
 }) {
   const navigate = useNavigate()
   const location = useLocation()
@@ -190,6 +220,11 @@ export function Composer({
   const [reviving, setReviving] = React.useState(false)
   /* `beforeSend` in flight: the box is taken, the button is busy. */
   const [gated, setGated] = React.useState(false)
+  /* The turn is held at its step boundary — by the user's pause, or because
+     it failed and is waiting rather than having ended (`lib/thread/hold.ts`).
+     It changes two things here and nothing else: what a plain send does, and
+     what the box says it will do. */
+  const hold = holdOf(thread)
   const isMobile = useIsMobile()
   const coarse = useCoarsePointer()
   const prefs = useComposerPrefs()
@@ -257,6 +292,17 @@ export function Composer({
 
   const send = async (opts: { steer?: boolean } = {}) => {
     if (gated) return
+    /* A held turn is stopped, not running — so Enter *steers* it rather than
+       queueing behind it. The queue drains when a turn ends, and a held turn
+       never ends on its own: words queued here sat there until the user
+       noticed, and a *paused* turn was the worse case, because Resume is the
+       only thing that would ever drain them and nothing said so. Steered,
+       they join the turn at the boundary it is waiting at, which is exactly
+       when they are wanted — "try the other file instead" said while it
+       waits, delivered on Continue or Resume. The steer chord still means
+       what it always did; this only changes what the plain send does, and
+       only while the turn is held. */
+    const steering = opts.steer ?? hold.paused
     const value = text.trim()
     /* The one place the empty-prompt rule lives, and it has learned about
        attachments: an image with no sentence is a real prompt. An upload still
@@ -343,7 +389,7 @@ export function Composer({
        record is not a send that failed, and there is nothing the user would do
        about it. */
     void actions
-      .send(sessionId, outgoing, { ...opts, attachments, onUnsent })
+      .send(sessionId, outgoing, { ...opts, steer: steering, attachments, onUnsent })
       .then(() => {
         if (!value) return
         recordHistory.mutate({ text: value, sessionId, threadTitle: meta?.title ?? null })
@@ -457,6 +503,23 @@ export function Composer({
     requestAnimationFrame(() => composerRef.current?.focus())
   }
 
+  /* A suggested follow-up picked from its card in the transcript: it fills the
+     box the way a history recall does — replaced, unsent, editable — and takes
+     the caret to its end. The caret goes through the mention hook's slot for
+     the reason `onPaste` gives: rewriting `text` is a render, and the wanted
+     position has to be re-applied after it. The card is a sibling of this
+     component, so the fill is exposed as the imperative handle rather than
+     shared state. */
+  const applySuggestion = React.useCallback(
+    (prompt: string) => {
+      setText(prompt)
+      mentions.requestCaret(prompt.length)
+      requestAnimationFrame(() => composerRef.current?.focus())
+    },
+    [mentions.requestCaret]
+  )
+  React.useImperativeHandle(ref, () => ({ fill: applySuggestion }), [applySuggestion])
+
   /* A long paste is parked rather than pasted: the token goes in at the caret
      and the body waits in the sidecar until send. Below the threshold nothing
      happens at all — the affordance has to be invisible for the pastes people
@@ -517,12 +580,14 @@ export function Composer({
 
   const sendTitle = gated
     ? "Working…"
-    : thread.turnActive
-      ? `Queue (${steerChord} steers the running turn instead)`
-      : "Send"
+    : hold.paused
+      ? hold.sendHint
+      : thread.turnActive
+        ? `Queue (${steerChord} steers the running turn instead)`
+        : "Send"
 
   return (
-    <div className="px-4 pt-1 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+    <div className="pointer-events-auto px-4 pt-1 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       {/* What this device's connection is doing, when it is doing something
           worth interrupting for. A *state*, not a transcript row: the ladder
           used to append an error when it gave up, and giving up is exactly the
@@ -634,7 +699,7 @@ export function Composer({
       <div
         data-slot="composer-card"
         className={cn(
-          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl bg-composer p-2 shadow-2xl",
+          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl bg-composer/70 p-2 shadow-2xl backdrop-blur-xl backdrop-saturate-150",
           "ring-1 ring-foreground/5 transition-[ring-color] duration-200 dark:ring-foreground/10",
           voice.listening && "ring-destructive/40"
         )}
@@ -677,6 +742,18 @@ export function Composer({
             ))}
           </div>
         )}
+        {/* The turn rail: one tick per turn, riding the card's right edge as
+            an absolute overlay — bottom-anchored above the Send button, so it
+            adds no size to the composer. Under the same toggle as the old
+            transcript-edge column, and the rail draws nothing under two turns,
+            so a short thread pays for it only in a hook call. */}
+        {showRail === true && railItems && railItems.length > 0 && (
+          <ThreadRail
+            items={railItems}
+            turns={railTurns}
+            onEnsureTurn={onEnsureTurn}
+          />
+        )}
         <Textarea
           ref={composerRef}
           value={text}
@@ -718,9 +795,11 @@ export function Composer({
             lock.note ??
             (voice.listening && !text
               ? "Listening…"
-              : thread.turnActive
-                ? "Queue a message for when the agent finishes…"
-                : (placeholder ?? "Message the agent…"))
+              : hold.paused
+                ? `${hold.sendHint}…`
+                : thread.turnActive
+                  ? "Queue a message for when the agent finishes…"
+                  : (placeholder ?? "Message the agent…"))
           }
           disabled={disabled || gated}
           rows={1}
@@ -908,7 +987,12 @@ export function Composer({
               at its next step boundary and carries on from there, where Stop
               throws the step away. Shown while a turn runs, and while a hold
               is on — a paused session with no turn open holds its next prompt,
-              so the toggle has to be there to take it off. */}
+              so the toggle has to be there to take it off.
+
+              The same control releases a turn the *runtime* held, because it
+              is the same hold: a turn that failed waits at the same boundary
+              for the same resume. Only the words change — after a model change
+              this is Continue, and continuing is what it does. */}
           {thread.canPause && (thread.turnActive || thread.paused) && (
             <Button
               variant="ghost"
@@ -922,7 +1006,13 @@ export function Composer({
                   reportError(err, thread.paused ? "Couldn't resume the turn" : "Couldn't pause the turn")
                 )
               }
-              title={thread.paused ? "Resume" : "Pause at the next step"}
+              title={
+                hold.byError
+                  ? "Continue — change the model first if the same one will fail again"
+                  : hold.paused
+                    ? "Resume"
+                    : "Pause at the next step"
+              }
             >
               {thread.paused ? <Play /> : <Pause />}
             </Button>

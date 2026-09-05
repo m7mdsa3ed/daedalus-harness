@@ -245,5 +245,32 @@ test("a client that did not opt into bulk gets bare events, not a replay frame",
   assert.equal((JSON.parse(rows[0]) as { ev: string }).ev, "turn_started");
 });
 
+test("turnTicks returns one entry per turn, oldest first, with excerpts", () => {
+  const s = owner();
+  for (let n = 0; n < 3; n += 1) turn(s, n, 2, 10);
+  const ticks = journal.turnTicks(s.id);
+  assert.equal(ticks.length, 3);
+  assert.deepEqual(ticks.map((t) => t.turnId), ["t0", "t1", "t2"]);
+  // Each turn is 4 events (started, 2 chunks, ended), so the seqs are the
+  // turn_started rows — what a client paging backwards walks towards.
+  assert.deepEqual(ticks.map((t) => t.seq), [0, 4, 8]);
+  assert.equal(ticks[0].reply, `${"x".repeat(10)}\n${"x".repeat(10)}`);
+});
+
+test("turnTicks skips a subagent's chunks and caps a build-log turn", () => {
+  const s = owner();
+  journal.append(s, { ev: "turn_started", turnId: "t0" } as unknown as ThreadEvent);
+  journal.append(s, update("plain"));
+  journal.append(
+    s,
+    { ev: "update", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "child" } }, sessionId: "sub-1" } as unknown as ThreadEvent,
+  );
+  journal.append(s, update("y".repeat(REPLAY_CHUNK_BYTES)));
+  const ticks = journal.turnTicks(s.id);
+  assert.equal(ticks.length, 1);
+  assert.ok(!ticks[0].reply.includes("child"), "the child's prose is its report, not the answer");
+  assert.ok(ticks[0].reply.length <= 240, "a build-log turn costs its prefix, not its megabytes");
+});
+
 console.log(`\n${passed} passed${failures.length ? `, ${failures.length} failed: ${failures.join(", ")}` : ""}`);
 process.exit(failures.length ? 1 : 0);

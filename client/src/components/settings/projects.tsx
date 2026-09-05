@@ -4,8 +4,10 @@ import {
   FolderIcon,
   PanelsTopLeft,
   Pencil,
+  PlayIcon,
   Plus,
   RefreshCwIcon,
+  SquareTerminal,
   Trash2,
 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
@@ -16,9 +18,16 @@ import { useConfirm } from "@/components/confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { PathInput } from "@/components/ui/suggesting-input"
-import { api, type Project, type ServerSettings } from "@/lib/settings"
+import { api, type HelperCommand, type Project, type ServerSettings } from "@/lib/settings"
 import { useInvalidateCatalog, useProjects } from "@/lib/queries/catalog"
-import { useAddKnowledge, useDeleteKnowledge, useProjectKnowledge } from "@/lib/queries/surfaces"
+import {
+  useAddHelper,
+  useAddKnowledge,
+  useDeleteHelper,
+  useDeleteKnowledge,
+  useProjectKnowledge,
+  useUpdateHelper,
+} from "@/lib/queries/surfaces"
 import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions, FormSection } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
@@ -225,10 +234,168 @@ export function ProjectForm({
       </FormSection>
       <FormActions busy={busy} onCancel={() => onDone(false)} error={saveError} />
       </PageForm>
-      <div className="mt-8 border-t pt-6">
+      <div className="mt-8 border-t pt-6 space-y-8">
+        <HelpersSection project={project} />
         <KnowledgeSection project={project} />
       </div>
     </>
+  )
+}
+
+/**
+ * Helper commands a person runs against this workspace from the header
+ * dropdown ("Restart server", "Run migrations", "Seed database").
+ *
+ * Each is a name and a shell command run in the project's cwd. Only for an
+ * existing project — a new form has no id yet, so there is nowhere to attach.
+ */
+function HelpersSection({ project }: { project: Project | null }) {
+  const projectId = project?.id ?? null
+  const helpers = project?.helpers ?? []
+  const addHelperMutation = useAddHelper()
+  const updateHelperMutation = useUpdateHelper()
+  const deleteHelperMutation = useDeleteHelper()
+
+  const [saving, setSaving] = React.useState(false)
+  const [editingId, setEditingId] = React.useState<string | null>(null)
+  const [name, setName] = React.useState("")
+  const [command, setCommand] = React.useState("")
+
+  const startEdit = (helper: HelperCommand) => {
+    setEditingId(helper.id)
+    setName(helper.name)
+    setCommand(helper.command)
+  }
+
+  const cancelEdit = () => {
+    setEditingId(null)
+    setName("")
+    setCommand("")
+  }
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!projectId || saving) return
+    const trimmedName = name.trim()
+    const trimmedCmd = command.trim()
+    if (!trimmedName || !trimmedCmd) return
+
+    setSaving(true)
+    try {
+      if (editingId) {
+        await updateHelperMutation.mutateAsync({
+          projectId,
+          helperId: editingId,
+          input: { name: trimmedName, command: trimmedCmd },
+        })
+      } else {
+        await addHelperMutation.mutateAsync({
+          projectId,
+          input: { name: trimmedName, command: trimmedCmd },
+        })
+      }
+      cancelEdit()
+    } catch (err) {
+      reportError(err, editingId ? "Couldn't update helper command" : "Couldn't add helper command")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const remove = async (helperId: string) => {
+    if (!projectId) return
+    try {
+      await deleteHelperMutation.mutateAsync({ projectId, helperId })
+      if (editingId === helperId) cancelEdit()
+    } catch (err) {
+      reportError(err, "Couldn't delete helper command")
+    }
+  }
+
+  return (
+    <FormSection label="Helper commands">
+      {!projectId ? (
+        <p className="text-xs text-muted-foreground">Save the project first to manage helper commands.</p>
+      ) : (
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Commands you can run from the project page&rsquo;s header dropdown. Run in the project&rsquo;s working directory.
+          </p>
+          {helpers.length === 0 ? (
+            <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
+              No helper commands yet — add one below.
+            </p>
+          ) : (
+            <ul className="max-h-64 divide-y overflow-y-auto rounded-lg border">
+              {helpers.map((h) => (
+                <li key={h.id} className="flex items-start gap-3 px-3 py-2">
+                  <SquareTerminal className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium break-words">{h.name}</div>
+                    <div className="mt-0.5 font-mono text-xs break-all text-muted-foreground">
+                      {h.command}
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    title="Edit"
+                    disabled={saving}
+                    onClick={() => startEdit(h)}
+                  >
+                    <Pencil />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    title="Delete"
+                    disabled={saving}
+                    onClick={() => void remove(h.id)}
+                  >
+                    <Trash2 />
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <form onSubmit={save} className="space-y-3 rounded-lg border p-3">
+            <div className="text-xs font-medium">
+              {editingId ? "Edit helper command" : "New helper command"}
+            </div>
+            <Field label="Name">
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Restart server, Run migrations, Seed database"
+                required
+              />
+            </Field>
+            <Field label="Command" hint="Run with the shell in the project's cwd. Up to 2 minutes.">
+              <Input
+                value={command}
+                onChange={(e) => setCommand(e.target.value)}
+                placeholder="npm run db:migrate"
+                className="font-mono text-xs"
+                spellCheck={false}
+                required
+              />
+            </Field>
+            <div className="flex justify-end gap-2">
+              {editingId && (
+                <Button type="button" variant="ghost" size="sm" onClick={cancelEdit} disabled={saving}>
+                  Cancel
+                </Button>
+              )}
+              <Button type="submit" size="sm" disabled={saving}>
+                <Plus /> {saving ? "Saving…" : editingId ? "Save changes" : "Add command"}
+              </Button>
+            </div>
+          </form>
+        </div>
+      )}
+    </FormSection>
   )
 }
 

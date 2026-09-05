@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils"
 import { reportError } from "@/lib/errors"
 import { toast } from "@/lib/toast"
 import { boardPath } from "@/lib/router"
+import type { BoardLocation } from "@/lib/tasks-location"
 import { useProjects } from "@/lib/queries/catalog"
 import {
   DropdownMenu,
@@ -247,10 +248,40 @@ function BulkBar({ count, statuses, sprints, facets, onPatch, onDelete, onClear 
   )
 }
 
+/** The board as a page: the location is the URL, so a board and a task are
+    both things that can be linked to and reloaded. The dock's own host is
+    `components/workspace/tasks-panel.tsx`; both render the workspace below. */
 export function TasksWorkspace() {
+  return <BoardWorkspace location={useRouteBoardLocation()} />
+}
+
+/** The route's answer to "where am I": `/board/:boardId`, with the open task
+    as `?task=`. Replaces the three router hooks the workspace used to call
+    itself — see `lib/tasks-location.ts` for why that had to stop. */
+function useRouteBoardLocation(): BoardLocation {
   const navigate = useNavigate()
   const params = useParams<{ boardId?: string }>()
   const [search, setSearch] = useSearchParams()
+  return {
+    boardId: params.boardId ?? "",
+    taskId: search.get("task"),
+    openBoard: (boardId, taskId, options) =>
+      void navigate(boardPath(boardId, taskId), { replace: options?.replace }),
+    openTask: (taskId) =>
+      setSearch(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          if (taskId) next.set("task", taskId)
+          else next.delete("task")
+          return next
+        },
+        { replace: true }
+      ),
+  }
+}
+
+/** One board, however it is being hosted. */
+export function BoardWorkspace({ location }: { location: BoardLocation }) {
   const projects = useProjects()
 
   const tasksQuery = useTasksQuery()
@@ -266,8 +297,8 @@ export function TasksWorkspace() {
   const deleteSprintMut = useDeleteSprint()
   const deleteViewMut = useDeleteView()
 
-  /* ── which board ── the URL's, else the remembered one, else the first. */
-  const boardId = params.boardId ?? ""
+  /* ── which board ── the host's, else the remembered one, else the first. */
+  const { boardId, openBoard, openTask: setOpenTask } = location
   React.useEffect(() => {
     if (!loaded || boards.length === 0) return
     if (boards.some((b) => b.id === boardId)) {
@@ -276,8 +307,8 @@ export function TasksWorkspace() {
     }
     const remembered = localStorage.getItem(LAST_BOARD_KEY)
     const target = boards.find((b) => b.id === remembered) ?? boards[0]
-    void navigate(boardPath(target.id), { replace: true })
-  }, [loaded, boards, boardId, navigate])
+    openBoard(target.id, undefined, { replace: true })
+  }, [loaded, boards, boardId, openBoard])
 
   const board = boards.find((b) => b.id === boardId) ?? null
   const statuses = React.useMemo(() => (board ? statusesOf(allStatuses, board.id) : []), [allStatuses, board])
@@ -367,26 +398,17 @@ export function TasksWorkspace() {
     })
   }
 
-  /* ── the open task ── a search param, so it survives reload and can be shared. */
-  const openTaskId = search.get("task")
-  const openTask = (task: Task | string | null) => {
-    const id = typeof task === "string" ? task : task?.id
-    setSearch(
-      (prev) => {
-        const next = new URLSearchParams(prev)
-        if (id) next.set("task", id)
-        else next.delete("task")
-        return next
-      },
-      { replace: true },
-    )
-  }
+  /* ── the open task ── part of the location, so on the page it survives a
+     reload and can be shared, and in a panel it survives the layout. */
+  const openTaskId = location.taskId
+  const openTask = (task: Task | string | null) =>
+    setOpenTask(typeof task === "string" ? task : (task?.id ?? null))
   // A task on another board opens that board.
   React.useEffect(() => {
     if (!openTaskId || !loaded) return
     const t = tasks.find((x) => x.id === openTaskId)
-    if (t && t.boardId !== boardId) void navigate(boardPath(t.boardId, t.id), { replace: true })
-  }, [openTaskId, tasks, boardId, loaded, navigate])
+    if (t && t.boardId !== boardId) openBoard(t.boardId, t.id, { replace: true })
+  }, [openTaskId, tasks, boardId, loaded, openBoard])
 
   /* ── verbs ── */
   const onCreate = async (input: TaskInput & { title: string }) =>
@@ -482,7 +504,7 @@ export function TasksWorkspace() {
         activeViewId={activeViewId}
         allTasks={boardTasks}
         statuses={statuses}
-        onPick={(b) => void navigate(boardPath(b.id))}
+        onPick={(b) => openBoard(b.id)}
         onPickView={pickView}
         onNewBoard={() => setBoardDialog({ open: true, board: null })}
         onSprints={() => setMode("sprints")}
@@ -503,7 +525,7 @@ export function TasksWorkspace() {
             />
             <DropdownMenuContent align="start" className="w-56 @panel-md:hidden">
               {boards.map((b) => (
-                <DropdownMenuItem key={b.id} onClick={() => void navigate(boardPath(b.id))}>
+                <DropdownMenuItem key={b.id} onClick={() => openBoard(b.id)}>
                   <span className={cn("size-2 rounded-full", b.color ? COLOR_DOT[b.color] : "bg-muted-foreground/40")} />
                   <span className="flex-1 truncate">{b.name}</span>
                   <span className="font-mono text-[10px] text-muted-foreground">{b.key}</span>
@@ -677,10 +699,10 @@ export function TasksWorkspace() {
         board={boardDialog.board}
         statuses={boardDialog.board ? statuses : []}
         projects={projects}
-        onCreated={(b) => void navigate(boardPath(b.id))}
+        onCreated={(b) => openBoard(b.id)}
         onDeleteStatus={setDeletingStatus}
       />
-      <DeleteBoardDialog open={deletingBoard} onOpenChange={setDeletingBoard} board={board} taskCount={boardTasks.length} onDeleted={() => void navigate(boardPath())} />
+      <DeleteBoardDialog open={deletingBoard} onOpenChange={setDeletingBoard} board={board} taskCount={boardTasks.length} onDeleted={() => openBoard()} />
       <ColumnDialog open={columnDialog} onOpenChange={setColumnDialog} boardId={board.id} />
       <DeleteStatusDialog
         open={deletingStatus !== null}

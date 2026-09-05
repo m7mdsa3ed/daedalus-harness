@@ -6,6 +6,7 @@ import type { LanguageModelV4StreamPart, LanguageModelV4Usage } from "@ai-sdk/pr
 import { MockLanguageModelV4, convertArrayToReadableStream } from "ai/test";
 import type { AgentEnv } from "../../src/env.js";
 import type { ModelFactory } from "../../src/provider.js";
+import { PAUSED_NOTIFICATION, type PausedNotification } from "../../src/hold.js";
 import type { UpdateParams } from "../../src/types.js";
 
 export function testEnv(overrides: Partial<AgentEnv> = {}): AgentEnv {
@@ -23,6 +24,11 @@ export function testEnv(overrides: Partial<AgentEnv> = {}): AgentEnv {
        assertion depend on the machine. instructions.test.ts turns it on
        against a home and a tree it controls. */
     projectInstructions: false,
+    promptCacheKey: true,
+    /* Off by default: a held turn is a turn that has not answered yet, so a
+       test that did not ask for one would hang rather than fail. The hold
+       tests turn it on. */
+    holdOnError: false,
     home: mkdtempSync(join(tmpdir(), "daedalus-agent-test-")),
     ...overrides,
   };
@@ -81,8 +87,36 @@ export function scriptedModel(scripts: LanguageModelV4StreamPart[][]): ModelFact
     });
 }
 
+/**
+ * A ModelFactory with a queue *per model id* — the factory's second argument,
+ * which `scriptedModel` ignores.
+ *
+ * It is what lets a test say "this model fails, that one succeeds", which is
+ * the whole of a held turn: the hold is only interesting because the model can
+ * change while the turn waits, and a factory that answers the same script
+ * whatever it is asked for cannot express that.
+ */
+export function scriptedModelsById(
+  scripts: Record<string, LanguageModelV4StreamPart[][]>,
+): ModelFactory {
+  const queues = new Map(Object.entries(scripts).map(([id, list]) => [id, [...list]]));
+  return (_env, modelId) =>
+    new MockLanguageModelV4({
+      doStream: async () => {
+        const queue = queues.get(modelId);
+        if (!queue) throw new Error(`scripted model has no scripts for ${modelId}`);
+        const script = queue.shift();
+        if (!script) throw new Error(`scripted model ran out of scripts for ${modelId}`);
+        return { stream: convertArrayToReadableStream(script) };
+      },
+    });
+}
+
 export interface Harness {
   updates: UpdateParams[];
+  /** `_daedalus/session/paused` — the hold the runtime took on its own, which
+      is the only way a test can see a failed turn waiting rather than ending. */
+  holds: PausedNotification[];
   permissionRequests: acp.RequestPermissionRequest[];
   elicitations: acp.CreateElicitationRequest[];
   answerPermission: (optionId: string) => void;
@@ -111,6 +145,7 @@ export const FULL_CAPS = {
 export function makeClient(options: ClientOptions = {}): { app: acp.ClientApp; harness: Harness } {
   const harness: Harness = {
     updates: [],
+    holds: [],
     permissionRequests: [],
     elicitations: [],
     answerPermission: () => {},
@@ -142,6 +177,13 @@ export function makeClient(options: ClientOptions = {}): { app: acp.ClientApp; h
       (params: unknown) => params as UpdateParams,
       ({ params }) => {
         harness.updates.push(params);
+      },
+    )
+    .onNotification(
+      PAUSED_NOTIFICATION,
+      (params: unknown) => params as PausedNotification,
+      ({ params }) => {
+        harness.holds.push(params);
       },
     )
     .onRequest("session/request_permission", ({ params }) => {

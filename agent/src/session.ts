@@ -6,6 +6,7 @@ import type { ModelMessage } from "ai";
 import { EFFORTS, type AgentEnv, type Effort } from "./env.js";
 import type { McpHandle } from "./mcp.js";
 import type { CommandDef, SkillDef } from "./commands.js";
+import type { ErrorHold, Release } from "./hold.js";
 
 export type ModeId = "default" | "acceptEdits" | "bypassPermissions" | "plan";
 
@@ -48,7 +49,18 @@ export class Session {
       prompt waits at its first step. Cleared by `resume()` and by `cancel()`:
       a cancel abandons the turn, and a pause is part of what it abandons. */
   paused: boolean;
-  private resumeWaiters: (() => void)[];
+  /** A turn that failed and is waiting to be told what to try instead, rather
+      than ending and throwing its tool calls away (`hold.ts`). The second
+      thing that holds the loop, and deliberately independent of `paused`: one
+      is the user's toggle and the other is the turn's own state, so neither
+      can silently clear the other. `held` is what the gate reads. */
+  errorHold: ErrorHold | null;
+  /** Whether a failed turn holds at all. False for a thread with nobody in
+      front of it — a workflow step, a scheduled run — where a hold would wait
+      forever for a model change no one is going to make, and failing fast is
+      the answer the run needs. */
+  holdOnError: boolean;
+  private resumeWaiters: ((release: Release) => void)[];
   /** Sticky per-tool permission answers ("always allow/reject" for this session). */
   alwaysAllow: Set<string>;
   alwaysReject: Set<string>;
@@ -66,6 +78,11 @@ export class Session {
   title: string | null;
   /** Last request's total token reading — what compaction thresholds against. */
   lastTokens: number;
+  /** Files this session has read, and the mtime it read them at. An edit that
+      cannot find its `old_string` is usually an edit written from memory, so
+      the fs tools use this to say *why* — never read, or read before someone
+      else changed it — instead of "not found". */
+  readFiles: Map<string, number>;
 
   constructor(id: string, cwd: string, env: AgentEnv) {
     this.id = id;
@@ -80,6 +97,8 @@ export class Session {
     this.abort = null;
     this.turnActive = false;
     this.paused = false;
+    this.errorHold = null;
+    this.holdOnError = env.holdOnError;
     this.resumeWaiters = [];
     this.alwaysAllow = new Set();
     this.alwaysReject = new Set();
@@ -91,6 +110,7 @@ export class Session {
     this.personaText = env.personaFile ? readOptional(env.personaFile) : null;
     this.title = null;
     this.lastTokens = 0;
+    this.readFiles = new Map();
   }
 
   modeState(): acp.SessionModeState {
@@ -155,24 +175,55 @@ export class Session {
     return false;
   }
 
+  /** Whether anything is holding the loop — the user's pause, a failed turn,
+      or both. One question, so a new reason to hold never needs a new gate. */
+  get held(): boolean {
+    return this.paused || this.errorHold !== null;
+  }
+
   cancel(): void {
     this.paused = false;
+    this.errorHold = null;
     this.abort?.abort();
-    this.release();
+    this.release("cancelled");
   }
 
   pause(): void {
     this.paused = true;
   }
 
+  /** Lets go of both reasons. A resume is the user saying "carry on", and they
+      are not asked which of the two holds they meant. */
   resume(): void {
     this.paused = false;
-    this.release();
+    this.errorHold = null;
+    this.release("released");
+  }
+
+  /**
+   * Hold a turn that failed, and answer how the wait ended.
+   *
+   * **It resolves; it never throws.** A cancel here has to end the turn as
+   * `stopReason: "cancelled"` — the same clean ending a cancel has always had —
+   * and an exception would travel to the turn's outer catch and end it as a
+   * failure instead, which is a red card for a Stop the user pressed.
+   */
+  async holdError(hold: ErrorHold, signal?: AbortSignal): Promise<Release> {
+    if (signal?.aborted) return "cancelled";
+    this.errorHold = hold;
+    while (this.errorHold !== null) {
+      const release = await this.waitForRelease(signal);
+      if (release === "cancelled" || signal?.aborted) {
+        this.errorHold = null;
+        return "cancelled";
+      }
+    }
+    return "released";
   }
 
   /**
    * The step boundary. Returns at once while the session is running; while it
-   * is paused, waits for `resume()` — or for the turn's abort, which ends the
+   * is held, waits for `resume()` — or for the turn's abort, which ends the
    * wait as a cancellation (the SDK's own abort shape, so the stream reads it
    * as `aborted` rather than as a failure). Nothing is retried or replayed
    * around it: the step before it finished whole, and the one after it has not
@@ -180,20 +231,28 @@ export class Session {
    */
   async gate(signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) throw abortError();
-    if (!this.paused) return;
-    await new Promise<void>((resolve) => {
-      const done = () => {
-        signal?.removeEventListener("abort", done);
-        resolve();
-      };
-      this.resumeWaiters.push(done);
-      signal?.addEventListener("abort", done, { once: true });
-    });
-    if (signal?.aborted) throw abortError();
+    /* A loop, not an `if`: two things can hold this, so being let go of once
+       does not mean being let go of. */
+    while (this.held) {
+      await this.waitForRelease(signal);
+      if (signal?.aborted) throw abortError();
+    }
   }
 
-  private release(): void {
-    for (const w of this.resumeWaiters.splice(0)) w();
+  private waitForRelease(signal?: AbortSignal): Promise<Release> {
+    return new Promise<Release>((resolve) => {
+      const done = (release: Release) => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve(release);
+      };
+      const onAbort = () => done("cancelled");
+      this.resumeWaiters.push(done);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  private release(release: Release): void {
+    for (const w of this.resumeWaiters.splice(0)) w(release);
   }
 }
 

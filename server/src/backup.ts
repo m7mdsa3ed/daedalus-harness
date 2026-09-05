@@ -14,6 +14,7 @@ import {
   composerHistory as composerHistoryTable,
   personas as personasTable,
   profiles as profilesTable,
+  projectHelpers as projectHelpersTable,
   projectPreviews as previewsTable,
   projects as projectsTable,
   pushTokens as pushTokensTable,
@@ -228,6 +229,16 @@ const ProjectRow = z.object({
   templateId: optStr,
 });
 
+/** A project's helper command — a whole row, never a link: the command is the
+    payload, so the bundle carries it rather than pointing at a library row. */
+const HelperRow = z.object({
+  id: str.min(1),
+  projectId: str.min(1),
+  name: str,
+  command: str,
+  createdAt: int,
+});
+
 const KnowledgeRow = z.object({
   id: str.min(1),
   projectId: str.min(1),
@@ -256,6 +267,9 @@ const SessionRow = z.object({
   /* Absent in a bundle written before personas existed, which reads as the
      thread having none — which is exactly what it had. */
   personaId: optStr,
+  /* Absent in a bundle written before suggestion toggles existed, which
+     reads as on — suggestions default on, like every new thread. */
+  suggestFollowups: z.boolean().default(true),
   title: str.default("New thread"),
   acpSessionId: optStr,
   acpSessionProvisional: z.boolean().default(false),
@@ -613,6 +627,7 @@ export const BundleSchema = z.object({
   commands: z.array(CommandRow).default([]),
   personas: z.array(PersonaRow).default([]),
   projects: z.array(ProjectRow).default([]),
+  projectHelpers: z.array(HelperRow).default([]),
   knowledge: z.array(KnowledgeRow).default([]),
   previews: z.array(PreviewRow).default([]),
   sessions: z.array(SessionRow).default([]),
@@ -690,6 +705,7 @@ export function exportBundle(opts: ExportOptions): Bundle {
     commands: db.select().from(commandsTable).all(),
     personas: db.select().from(personasTable).all(),
     projects: db.select().from(projectsTable).all(),
+    projectHelpers: db.select().from(projectHelpersTable).all(),
     knowledge: db.select().from(knowledgeTable).all(),
     previews: db.select().from(previewsTable).all(),
     sessions: withLinks(sessions, readLinks(SESSION_LINKS, sessions.map((s) => s.id))),
@@ -736,7 +752,7 @@ export function exportBundle(opts: ExportOptions): Bundle {
 export type ImportMode = "merge" | "replace";
 
 export type ImportSummary = Record<
-  | "agents" | "profiles" | "mcpServers" | "mcpOauth" | "skills" | "commands" | "personas" | "projects" | "knowledge" | "previews"
+  | "agents" | "profiles" | "mcpServers" | "mcpOauth" | "skills" | "commands" | "personas" | "projects" | "projectHelpers" | "knowledge" | "previews"
   | "sessions" | "queue" | "scheduled" | "workflowRuns" | "events" | "boards" | "boardStatuses" | "sprints" | "boardViews" | "tasks" | "taskComments" | "taskActivity" | "taskLinks"
   | "routines" | "routineTriggers" | "routineRuns"
   | "webSearchUsage" | "pushTokens" | "notifications" | "composerHistory",
@@ -822,7 +838,7 @@ function keepPairs(incoming: NameValue[] | null | undefined, existing: NameValue
  */
 export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
   const summary: ImportSummary = {
-    agents: 0, profiles: 0, mcpServers: 0, mcpOauth: 0, skills: 0, commands: 0, personas: 0, projects: 0, knowledge: 0, previews: 0,
+    agents: 0, profiles: 0, mcpServers: 0, mcpOauth: 0, skills: 0, commands: 0, personas: 0, projects: 0, projectHelpers: 0, knowledge: 0, previews: 0,
     sessions: 0, queue: 0, scheduled: 0, workflowRuns: 0, events: 0, boards: 0, boardStatuses: 0, sprints: 0, boardViews: 0, tasks: 0, taskComments: 0, taskActivity: 0, taskLinks: 0,
     routines: 0, routineTriggers: 0, routineRuns: 0,
     webSearchUsage: 0, pushTokens: 0, notifications: 0, composerHistory: 0,
@@ -954,6 +970,13 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
     summary.orphaned += bundle.previews.length - previews.length;
     upsertChunked(tx, previewsTable, "id", previews);
     summary.previews = previews.length;
+    /* The helpers ride with their project: a bundle naming a project this
+       install dropped is orphaned, exactly like a knowledge entry would be.
+       `createdAt` is defaulted so older bundles sort stably after import. */
+    const helpers = bundle.projectHelpers.filter((h) => projectIds.has(h.projectId));
+    summary.orphaned += bundle.projectHelpers.length - helpers.length;
+    upsertChunked(tx, projectHelpersTable, "id", helpers.map((h) => ({ ...h, createdAt: h.createdAt ?? 0 })));
+    summary.projectHelpers = helpers.length;
 
     // Sessions and everything hanging off them.
     upsertChunked(

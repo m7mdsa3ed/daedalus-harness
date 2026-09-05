@@ -31,9 +31,13 @@ import {
   DownloadIcon,
   FolderIcon,
   MessagesSquareIcon,
+  MoreHorizontal,
   Pencil,
+  Play,
+  PlayIcon,
   Plus,
   RefreshCwIcon,
+  SquareTerminal,
   Trash2,
   WorkflowIcon,
   XIcon,
@@ -42,17 +46,27 @@ import { Navigate, useNavigate, useParams } from "react-router"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Skeleton } from "@/components/ui/skeleton"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { RunHelperDialog } from "@/components/run-helper-dialog"
 import { AgentIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
 import { useConfirm } from "@/components/confirm-dialog"
 import { ImportThreadsDialog } from "@/components/import-threads"
 import { useStartThreadIn } from "@/components/thread-sidebar"
 import type { Actions } from "@/lib/actions"
-import { reportError } from "@/lib/errors"
+import { errorText, reportError } from "@/lib/errors"
 import { toast } from "@/lib/toast"
 import { settingsFormPath, settingsPath, schedulesPath, threadPath } from "@/lib/router"
 import { scheduleWhen } from "@/lib/schedule"
-import { activityAt, isTopLevel, type Project, type ScheduledMessage, type SessionMeta } from "@/lib/settings"
+import { activityAt, isTopLevel, type HelperCommand, type Project, type ScheduledMessage, type SessionMeta } from "@/lib/settings"
 import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
+import { useServer } from "@/lib/server-context"
 import { useStoreSelect, type ThreadState } from "@/lib/store"
 import { IDLE_PHASE, markFor, type ThreadActivity } from "@/lib/thread/phase"
 import { shortAge } from "@/lib/time"
@@ -60,7 +74,7 @@ import { cn } from "@/lib/utils"
 import { activityDays, type ProjectStats } from "@/lib/workspace/project-stats"
 import { useProjectStats } from "@/lib/queries/surfaces"
 import { useDevStatus } from "@/lib/queries/dev-server"
-import { DEV_STATE_LABEL } from "@/lib/workspace/dev-server"
+import { DEV_STATE_LABEL, devAction } from "@/lib/workspace/dev-server"
 import { Spinner } from "@/components/ui/spinner"
 import { queuePanel } from "@/lib/workspace/pending-panels"
 import { previewPanel } from "@/lib/workspace/preview-bridge"
@@ -96,6 +110,7 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
   const startIn = useStartThreadIn(actions)
   const { stats, error, loading, refresh } = useProjectStats(project.id)
   const [importing, setImporting] = React.useState(false)
+  const [runningHelper, setRunningHelper] = React.useState<HelperCommand | null>(null)
 
   /* The live half. Steps are excluded exactly as they are everywhere else —
      they are reached from their parent's transcript, never listed — and the
@@ -137,7 +152,7 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
   }, [allScheduled, sessions, project.id])
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
+    <div className="min-h-0 flex-1 overflow-y-auto pt-[var(--app-header-h)]">
       <div className="mx-auto w-full max-w-5xl px-4 pt-6 pb-16 sm:px-8">
         <ProjectHeader
           project={project}
@@ -147,13 +162,24 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
           onEdit={() => void navigate(settingsFormPath("projects", project.id))}
           onRefresh={refresh}
           refreshing={loading}
+          onRunHelper={setRunningHelper}
         />
+        {runningHelper && (
+          <RunHelperDialog
+            helper={runningHelper}
+            projectId={project.id}
+            onClose={() => setRunningHelper(null)}
+          />
+        )}
         <ImportThreadsDialog
           open={importing}
           onOpenChange={setImporting}
           actions={actions}
           projectId={project.id}
         />
+
+        {/* Quick helpers bar: 1-click execution chips right below the header */}
+        <QuickHelpersBar project={project} onRunHelper={setRunningHelper} />
 
         {/* The one health answer the page can give. A project whose directory
             has moved or is not mounted spawns nothing, and the failure it
@@ -173,11 +199,21 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
           </Banner>
         )}
 
-        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-6 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
           <Tile
             icon={MessagesSquareIcon}
             label="Threads"
             value={threads.length}
+            statusIndicator={
+              running > 0 ? (
+                <span className="relative flex size-2">
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+                </span>
+              ) : waiting > 0 ? (
+                <span className="size-2 rounded-full bg-amber-500" />
+              ) : null
+            }
             hint={
               running > 0
                 ? `${running} running now`
@@ -260,6 +296,162 @@ function threadStatus(session: SessionMeta, thread: ThreadState | undefined): Th
 /** The dev server's state, on the Open preview button: a dot and a word,
     from the same stream the panel reads, so the page says "Live" before the
     panel is even open. Stopped is drawn quietly — most projects are. */
+/* The header's "Run" dropdown — the project's own commands. The server's
+   restart is offered when there is a dev command to run (it is the built-in,
+   and the badge beside it keeps the state honest); the user's helpers follow;
+   and the last item is the way back to Settings › Projects to edit them, so
+   the dropdown is self-contained even for a project with none yet. */
+function HelpersMenu({
+  project,
+  onRunHelper,
+}: {
+  project: Project
+  onRunHelper: (helper: HelperCommand) => void
+}) {
+  const settings = useServer()
+  const navigate = useNavigate()
+  const [restarting, setRestarting] = React.useState(false)
+  const helpers = project.helpers ?? []
+  const hasServer = !!project.devCommand
+
+  /* Restart is the one built-in: keystroke for the single thing a preview
+     user does by hand, answered by the dev server's own restart (stop + start
+     atomically). Failures go to a toast — that page has a status badge, which
+     is the surface an error belongs to. */
+  const restart = () => {
+    if (!hasServer || restarting) return
+    setRestarting(true)
+    devAction(settings, project.id, "restart")
+      .then(() => toast.success("Server restart initiated"))
+      .catch((err) => reportError(err, "Couldn't restart the dev server"))
+      .finally(() => setRestarting(false))
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="outline"
+            title="Run a command for this project"
+            disabled={restarting}
+            className="gap-1.5"
+          >
+            {restarting ? (
+              <Spinner className="size-3.5" />
+            ) : (
+              <SquareTerminal className="size-3.5" />
+            )}
+            <span>Run</span>
+            {helpers.length > 0 && (
+              <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-mono leading-none text-muted-foreground">
+                {helpers.length}
+              </span>
+            )}
+          </Button>
+        }
+      />
+      <DropdownMenuContent align="end" className="w-64">
+        <DropdownMenuLabel className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>Project commands</span>
+          {helpers.length > 0 && (
+            <span className="font-mono text-[10px]">{helpers.length} configured</span>
+          )}
+        </DropdownMenuLabel>
+        {hasServer && (
+          <DropdownMenuItem onClick={restart} disabled={restarting}>
+            <RefreshCwIcon className={cn("size-4 text-muted-foreground", restarting && "animate-spin")} />
+            <span className="min-w-0 flex-1 truncate">Restart server</span>
+            <DevBadge projectId={project.id} />
+          </DropdownMenuItem>
+        )}
+        {hasServer && helpers.length > 0 && <DropdownMenuSeparator />}
+        {helpers.map((helper) => (
+          <DropdownMenuItem key={helper.id} onClick={() => onRunHelper(helper)}>
+            <Play className="size-3.5 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate">{helper.name}</span>
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => void navigate(settingsFormPath("projects", project.id))}>
+          <Pencil className="size-4 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate">Manage helpers…</span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/**
+ * A horizontal interactive strip of quick helper chips shown below the header
+ * whenever the workspace has dev commands or helpers configured.
+ */
+function QuickHelpersBar({
+  project,
+  onRunHelper,
+}: {
+  project: Project
+  onRunHelper: (helper: HelperCommand) => void
+}) {
+  const settings = useServer()
+  const navigate = useNavigate()
+  const [restarting, setRestarting] = React.useState(false)
+  const helpers = project.helpers ?? []
+  const hasServer = !!project.devCommand
+
+  if (!hasServer && helpers.length === 0) return null
+
+  const restart = () => {
+    if (!hasServer || restarting) return
+    setRestarting(true)
+    devAction(settings, project.id, "restart")
+      .then(() => toast.success("Server restart initiated"))
+      .catch((err) => reportError(err, "Couldn't restart the dev server"))
+      .finally(() => setRestarting(false))
+  }
+
+  return (
+    <div className="mt-4 flex items-center gap-2 overflow-x-auto py-1 no-scrollbar text-xs">
+      <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+        <SquareTerminal className="size-3 text-muted-foreground" />
+        Quick actions
+      </span>
+      {hasServer && (
+        <button
+          type="button"
+          disabled={restarting}
+          onClick={restart}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-pill border bg-card px-2.5 py-1 text-xs font-medium transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+        >
+          <RefreshCwIcon className={cn("size-3 text-muted-foreground", restarting && "animate-spin")} />
+          <span>Restart server</span>
+          <DevBadge projectId={project.id} />
+        </button>
+      )}
+      {helpers.map((helper) => (
+        <button
+          key={helper.id}
+          type="button"
+          onClick={() => onRunHelper(helper)}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-pill border bg-card px-2.5 py-1 text-xs font-medium transition-colors hover:border-primary/40 hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Play className="size-2.5 text-primary" />
+          <span>{helper.name}</span>
+        </button>
+      ))}
+      <button
+        type="button"
+        onClick={() => void navigate(settingsFormPath("projects", project.id))}
+        className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground px-1 py-1"
+        title="Configure helper commands"
+      >
+        <Pencil className="size-3" />
+        <span>Edit</span>
+      </button>
+    </div>
+  )
+}
+
 function DevBadge({ projectId }: { projectId: string }) {
   const { data } = useDevStatus(projectId)
   const state = data?.state ?? "off"
@@ -302,6 +494,7 @@ function ProjectHeader({
   onEdit,
   onRefresh,
   refreshing,
+  onRunHelper,
 }: {
   project: Project
   onNewThread: () => void
@@ -311,6 +504,7 @@ function ProjectHeader({
   onEdit: () => void
   onRefresh: () => void
   refreshing: boolean
+  onRunHelper: (helper: HelperCommand) => void
 }) {
   const [copied, setCopied] = React.useState(false)
   const copy = async () => {
@@ -325,51 +519,101 @@ function ProjectHeader({
   }
 
   return (
-    <div className="flex flex-wrap items-start gap-4">
-      <ProjectIcon project={project} className="size-11 shrink-0" />
-      <div className="min-w-0 flex-1">
-        <h1 className="truncate text-xl font-semibold tracking-tight">{project.name}</h1>
-        <button
-          type="button"
-          onClick={() => void copy()}
-          title="Copy the working directory"
-          className="mt-1 flex max-w-full items-center gap-1.5 rounded-sm text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <span className="truncate font-mono">{project.cwd}</span>
-          {copied ? (
-            <CheckIcon className="size-3 shrink-0" />
-          ) : (
-            <CopyIcon className="size-3 shrink-0 opacity-60" />
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      {/* Identity block: avatar, title, directory breadcrumb, description */}
+      <div className="flex items-start gap-3.5 min-w-0 flex-1">
+        <div className="rounded-xl border bg-muted/30 p-1.5 shrink-0 shadow-xs">
+          <ProjectIcon project={project} className="size-10" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="truncate text-xl sm:text-2xl font-bold tracking-tight text-foreground">
+              {project.name}
+            </h1>
+            <DevBadge projectId={project.id} />
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void copy()}
+            title="Copy working directory"
+            className="mt-1.5 inline-flex max-w-full items-center gap-1.5 rounded-md border border-border/70 bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:border-border hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <span className="truncate font-mono text-[11px]">{project.cwd}</span>
+            {copied ? (
+              <CheckIcon className="size-3 shrink-0 text-emerald-600 dark:text-emerald-400" />
+            ) : (
+              <CopyIcon className="size-3 shrink-0 opacity-60" />
+            )}
+          </button>
+
+          {project.description && (
+            <p className="mt-2 max-w-2xl text-xs sm:text-sm text-pretty text-muted-foreground leading-relaxed">
+              {project.description}
+            </p>
           )}
-        </button>
-        {project.description && (
-          <p className="mt-2 max-w-prose text-sm text-pretty text-muted-foreground">
-            {project.description}
-          </p>
-        )}
+        </div>
       </div>
-      <div className="flex shrink-0 items-center gap-2">
+
+      {/* Desktop action toolbar */}
+      <div className="hidden sm:flex shrink-0 items-center gap-2">
         <Button variant="ghost" size="icon" title="Refresh" onClick={onRefresh}>
-          <RefreshCwIcon className={cn(refreshing && "animate-spin")} />
+          <RefreshCwIcon className={cn("size-4", refreshing && "animate-spin")} />
           <span className="sr-only">Refresh</span>
         </Button>
-        {/* Work started in a terminal is still work in this project — the way
-            in is beside the way to start new work. */}
-        <Button variant="outline" onClick={onImport}>
-          <DownloadIcon /> Import
+        <HelpersMenu project={project} onRunHelper={onRunHelper} />
+        <Button variant="outline" onClick={onImport} size="sm">
+          <DownloadIcon className="size-3.5" /> Import
         </Button>
-        <Button variant="outline" onClick={onEdit}>
-          <Pencil /> Edit
+        <Button variant="outline" onClick={onEdit} size="sm">
+          <Pencil className="size-3.5" /> Edit
         </Button>
         {onOpenPreview && (
-          <Button variant="outline" onClick={onOpenPreview}>
-            <AppWindowIcon /> Open preview
-            <DevBadge projectId={project.id} />
+          <Button variant="outline" onClick={onOpenPreview} size="sm">
+            <AppWindowIcon className="size-3.5" /> Preview
           </Button>
         )}
-        <Button onClick={onNewThread}>
-          <Plus /> New thread
+        <Button onClick={onNewThread} size="sm">
+          <Plus className="size-4" /> New thread
         </Button>
+      </div>
+
+      {/* Mobile action bar: full-width, clean primary CTA + Run dropdown + overflow */}
+      <div className="flex sm:hidden items-center gap-2 pt-1 border-t border-border/50">
+        <Button onClick={onNewThread} className="flex-1 font-medium" size="sm">
+          <Plus className="size-4" /> New thread
+        </Button>
+        <HelpersMenu project={project} onRunHelper={onRunHelper} />
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button variant="outline" size="icon" title="More options" aria-label="More options">
+                <MoreHorizontal className="size-4" />
+              </Button>
+            }
+          />
+          <DropdownMenuContent align="end" className="w-48">
+            {onOpenPreview && (
+              <DropdownMenuItem onClick={onOpenPreview}>
+                <AppWindowIcon className="size-4 text-muted-foreground" />
+                <span>Open preview</span>
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onClick={onImport}>
+              <DownloadIcon className="size-4 text-muted-foreground" />
+              <span>Import threads</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onEdit}>
+              <Pencil className="size-4 text-muted-foreground" />
+              <span>Edit project</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onRefresh} disabled={refreshing}>
+              <RefreshCwIcon className={cn("size-4 text-muted-foreground", refreshing && "animate-spin")} />
+              <span>Refresh data</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   )
@@ -408,25 +652,32 @@ function Tile({
   value,
   hint,
   loading,
+  statusIndicator,
 }: {
   icon: typeof ActivityIcon
   label: string
   value: React.ReactNode
   hint: string
   loading?: boolean
+  statusIndicator?: React.ReactNode
 }) {
   return (
-    <div className="rounded-xl border bg-card p-3">
-      <div className="flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-        <Icon className="size-3.5" />
-        {label}
+    <div className="group relative rounded-xl border bg-card p-3.5 sm:p-4 transition-all hover:border-border/90 hover:shadow-xs">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+          {label}
+        </span>
+        <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted/60 text-muted-foreground group-hover:text-foreground transition-colors">
+          <Icon className="size-3.5" />
+        </div>
       </div>
-      <div className="mt-1.5 text-2xl font-semibold tabular-nums">
-        {loading ? <Skeleton className="h-7 w-16" /> : value}
+      <div className="mt-2 text-2xl sm:text-3xl font-bold tracking-tight tabular-nums text-foreground">
+        {loading ? <Skeleton className="h-8 w-20" /> : value}
       </div>
-      <p className="mt-0.5 truncate text-xs text-muted-foreground" title={hint}>
-        {hint}
-      </p>
+      <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground truncate" title={hint}>
+        {statusIndicator}
+        <span className="truncate">{hint}</span>
+      </div>
     </div>
   )
 }
@@ -443,31 +694,40 @@ function ActivityStrip({ stats }: { stats: ProjectStats | null }) {
   const total = days.reduce((sum, d) => sum + d.turns, 0)
 
   return (
-    <section className="mt-4 rounded-xl border bg-card p-4">
-      <div className="flex items-baseline justify-between gap-3">
-        <h2 className="text-sm font-medium">Activity</h2>
+    <section className="mt-4 rounded-xl border bg-card p-4 transition-all hover:border-border/80">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold tracking-tight">Activity</h2>
+          {stats && (
+            <span className="rounded-full bg-muted/70 px-2 py-0.5 text-[11px] font-mono text-muted-foreground tabular-nums">
+              {total} {total === 1 ? "turn" : "turns"}
+            </span>
+          )}
+        </div>
         <span className="text-xs text-muted-foreground tabular-nums">
-          {stats ? `${total} turns · last ${ACTIVITY_DAYS} days` : "…"}
+          last {ACTIVITY_DAYS} days
         </span>
       </div>
-      <div className="mt-3 flex h-16 items-end gap-[3px]">
+      <div className="mt-3.5 flex h-14 sm:h-16 items-end gap-[3px] sm:gap-1">
         {(stats ? days : Array.from({ length: ACTIVITY_DAYS }, () => null)).map((day, i) =>
           day ? (
             <div
               key={day.day}
               title={`${day.day} · ${day.turns} ${day.turns === 1 ? "turn" : "turns"}`}
               className={cn(
-                "min-h-[2px] flex-1 rounded-sm transition-colors",
-                day.turns > 0 ? "bg-primary/70 hover:bg-primary" : "bg-muted"
+                "min-h-[3px] flex-1 rounded-t-[3px] transition-all duration-150",
+                day.turns > 0
+                  ? "bg-primary/75 hover:bg-primary hover:brightness-110"
+                  : "bg-muted/60 hover:bg-muted"
               )}
-              style={{ height: `${day.turns > 0 ? Math.max(8, (day.turns / peak) * 100) : 2}%` }}
+              style={{ height: `${day.turns > 0 ? Math.max(8, (day.turns / peak) * 100) : 3}%` }}
             />
           ) : (
-            <div key={i} className="h-[2px] flex-1 rounded-sm bg-muted" />
+            <div key={i} className="h-[3px] flex-1 rounded-t-[3px] bg-muted/40" />
           )
         )}
       </div>
-      <div className="mt-1.5 flex justify-between text-[11px] text-muted-foreground">
+      <div className="mt-2 flex justify-between text-[11px] text-muted-foreground">
         <span>{ACTIVITY_DAYS} days ago</span>
         <span>today</span>
       </div>
@@ -569,20 +829,29 @@ function ThreadsCard({
       }
     >
       {threads.length === 0 ? (
-        <p className="px-4 py-8 text-center text-xs text-muted-foreground">
-          No threads in this project yet.
-        </p>
+        <div className="flex flex-col items-center justify-center px-4 py-12 text-center">
+          <div className="flex size-10 items-center justify-center rounded-xl bg-muted/60 text-muted-foreground mb-3">
+            <MessagesSquareIcon className="size-5" />
+          </div>
+          <p className="text-sm font-medium text-foreground">No threads in this project yet</p>
+          <p className="mt-1 text-xs text-muted-foreground max-w-sm">
+            Start a new thread to begin working on this workspace with your AI agents.
+          </p>
+          <Button size="sm" onClick={onNewThread} className="mt-4 gap-1.5">
+            <Plus className="size-4" /> Start thread
+          </Button>
+        </div>
       ) : (
-        <ul className="divide-y">
+        <ul className="divide-y divide-border/60">
           {shown.map((session) => {
             const status = threadStatus(session, liveThreads[session.id])
             const checked = selected.has(session.id)
             return (
-              <li key={session.id}>
+              <li key={session.id} className="group transition-colors hover:bg-accent/30">
                 <div
                   className={cn(
-                    "flex w-full items-center gap-3 px-4 transition-colors",
-                    selecting && checked && "bg-accent/30"
+                    "flex w-full items-center gap-3 px-3.5 sm:px-4 transition-colors",
+                    selecting && checked && "bg-accent/40"
                   )}
                 >
                   {selecting && (
@@ -597,25 +866,27 @@ function ThreadsCard({
                     type="button"
                     onClick={() => (selecting ? toggle(session.id) : onOpen(session.id))}
                     disabled={busy}
-                    className="flex min-w-0 flex-1 items-center gap-3 py-2 text-left transition-colors hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:outline-none disabled:opacity-60"
+                    className="flex min-w-0 flex-1 items-center gap-3 py-2.5 text-left focus-visible:outline-none disabled:opacity-60"
                   >
                     {!selecting && <StatusDot status={status} />}
                     <span className="min-w-0 flex-1">
                       <span
                         className={cn(
-                          "block truncate text-sm",
+                          "block break-words text-sm font-medium text-foreground group-hover:text-primary transition-colors sm:truncate",
                           status === "running" && !selecting && "harness-shimmer"
                         )}
                       >
                         {session.title || "Untitled thread"}
                       </span>
-                      <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                        <AgentIcon agentId={session.agentId} className="size-3" />
-                        <span className="truncate">{session.model || session.agentId}</span>
+                      <span className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+                        <span className="inline-flex items-center gap-1">
+                          <AgentIcon agentId={session.agentId} className="size-3" />
+                          <span className="truncate">{session.model || session.agentId}</span>
+                        </span>
                       </span>
                     </span>
                     <span
-                      className="shrink-0 text-[11px] text-muted-foreground tabular-nums"
+                      className="shrink-0 text-[11px] text-muted-foreground/80 tabular-nums"
                       title={new Date(activityAt(session)).toLocaleString()}
                     >
                       {shortAge(activityAt(session))}
@@ -739,20 +1010,27 @@ function useThreadSelection(threads: SessionMeta[], shown: SessionMeta[], action
     not say at all before — a thread mid-reconnect drew the same grey dot as one
     sitting quietly, which is the reading this page exists to give. */
 function StatusDot({ status }: { status: ThreadActivity }) {
+  if (status === "running") {
+    return (
+      <span className="relative flex size-2 shrink-0 items-center justify-center">
+        <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+        <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
+        <span className="sr-only">running</span>
+      </span>
+    )
+  }
   return (
     <span
       aria-hidden
       className={cn(
         "size-1.5 shrink-0 rounded-full",
-        status === "running"
-          ? "bg-primary"
-          : status === "waiting"
-            ? "bg-amber-500"
-            : status === "failed"
-              ? "bg-destructive"
-              : status === "reconnecting" || status === "offline" || status === "gone"
-                ? "bg-muted-foreground/70 animate-pulse"
-                : "bg-muted-foreground/30"
+        status === "waiting"
+          ? "bg-amber-500 ring-2 ring-amber-500/20"
+          : status === "failed"
+            ? "bg-destructive"
+            : status === "reconnecting" || status === "offline" || status === "gone"
+              ? "bg-muted-foreground/70 animate-pulse"
+              : "bg-muted-foreground/30"
       )}
     >
       <span className="sr-only">{status}</span>

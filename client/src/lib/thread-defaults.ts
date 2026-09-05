@@ -24,6 +24,9 @@ export interface ThreadDefaults {
       fallback lands on. A persona since deleted matches nothing and the draft
       opens with none, which is the right answer either way. */
   personaId?: string
+  /** Whether new threads ask answers to close with follow-up suggestions.
+      Carried like the persona: it is instructions, not provider state. */
+  suggestFollowups?: boolean
   /** The library picks the last draft made on its composer strip — the MCP
       servers, skills and slash commands it brought on top of its profile's.
       Remembered so a reload (which rebuilds an unsent draft from these

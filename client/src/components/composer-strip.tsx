@@ -162,7 +162,7 @@ export function ComposerStrip({ className, children, ...props }: React.Component
           // squeezed beside a terminal gets the narrow inset the same way a
           // phone does.
           "mx-auto -mb-4 w-full max-w-[calc(min(100%,var(--harness-composer-width))_-_1rem)] @panel-sm:max-w-[calc(min(100%,var(--harness-composer-width))_-_3rem)]",
-          "overflow-hidden rounded-t-xl bg-surface pb-4 ring-1 ring-foreground/5 dark:ring-foreground/10",
+          "overflow-hidden rounded-t-xl bg-surface/70 pb-4 ring-1 ring-foreground/5 backdrop-blur-xl backdrop-saturate-150 dark:ring-foreground/10",
           // Nothing registered means nothing rendered: no summary line, no shelf.
           summaries.length === 0 && "hidden",
           className

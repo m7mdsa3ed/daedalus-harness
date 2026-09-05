@@ -55,10 +55,17 @@ export function SessionConfigPopover({
   sessionId,
   actions,
   thread,
+  trigger,
 }: {
   sessionId: string
   actions: Actions
   thread: ThreadState
+  /** Something other than the composer chip to open this menu with. One menu,
+      two doors: the held card needs the same model list, and a second copy of
+      the catalog resolution above is a second place for it to go wrong. The
+      chip's own styling names the composer (`ring-composer`, its type scale),
+      which is exactly why it is not reusable as-is. */
+  trigger?: React.ReactNode
 }) {
   const confirm = useConfirm()
   /* This popover lives in the composer row of a live transcript, so it reads
@@ -233,10 +240,32 @@ export function SessionConfigPopover({
       .catch((err) => reportError(err, "Couldn't change how this thread works"))
   }
 
+  /* Same restart bargain as the persona: the suggestions trailer is spawn
+     text, so flipping it restarts the agent and restores the conversation.
+     The confirmation says so, and names the turn in flight as the cost. */
+  const changeSuggestions = async (suggestFollowups: boolean) => {
+    if (
+      !(await confirm({
+        title: suggestFollowups ? "Suggest follow-up prompts?" : "Stop suggesting follow-ups?",
+        description: thread.turnActive
+          ? "The agent reads this at startup, so it restarts. The running turn stops, then the conversation is restored."
+          : "The agent reads this at startup, so it restarts. The conversation is restored.",
+        confirmLabel: suggestFollowups ? "Turn on" : "Turn off",
+      }))
+    )
+      return
+    actions
+      .changeThreadSuggestions(meta, suggestFollowups)
+      .catch((err) => reportError(err, "Couldn't change this thread's suggestions"))
+  }
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
+          trigger !== undefined ? (
+            (trigger as React.ReactElement)
+          ) : (
           <Button
             variant="ghost"
             /* Width is the row's, not the device's: this used to collapse to
@@ -287,6 +316,7 @@ export function SessionConfigPopover({
               {modeLabel && ` · ${modeLabel}`}
             </span>
           </Button>
+          )
         }
       />
       <DropdownMenuContent align="start" className="w-60">
@@ -372,6 +402,20 @@ export function SessionConfigPopover({
               />
             )
           )}
+        </DropdownMenuGroup>
+        {/* Its own group: suggestions are not about who answers (the Session
+            group above) nor the agent's own selectors below — they are how the
+            thread's answers should behave. Always drawn: there is no catalog
+            to be empty of. */}
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Session settings</DropdownMenuLabel>
+          <DropdownMenuCheckboxItem
+            checked={meta.suggestFollowups === true}
+            onCheckedChange={(checked) => void changeSuggestions(checked === true)}
+          >
+            Suggest follow-ups
+          </DropdownMenuCheckboxItem>
         </DropdownMenuGroup>
         {(modes || options.rest.length > 0) && (
           <>

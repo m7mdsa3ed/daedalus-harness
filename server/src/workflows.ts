@@ -702,6 +702,10 @@ export class WorkflowRunner {
            actor working in another thread, so a parent running "quick fix"
            must not spawn steps that refactor. */
         personaId: run.parent.personaId,
+        /* And whether it offers follow-ups, for the same reason: the step's
+           answer reads in the parent's transcript, where a missing fence
+           would be the inconsistency showing. */
+        suggestFollowups: run.parent.suggestFollowups,
       });
       this.patchStep(run, step.name, { sessionId: child.id });
       const childId = child.id;

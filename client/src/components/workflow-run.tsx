@@ -29,6 +29,7 @@ import { BotIcon, CircleDashedIcon, PauseIcon, PlayIcon, WorkflowIcon } from "lu
    because the one-way edge already points this way. */
 import { formatElapsed, RAIL_CLASS, StepRow, useElapsed } from "@/components/step-row"
 import { TokenFigure } from "@/components/token-usage"
+import { KIND_CHIPS, KIND_COLORS } from "@/components/tool-parts"
 import { extractSubagent, toolHeading } from "@/lib/tools"
 import type { Row, SubagentBatch, SubagentGroup, WorkflowGroup } from "@/lib/transcript-rows"
 import { sumUsage } from "@/lib/tokens"
@@ -337,6 +338,8 @@ function RunRow({
   return (
     <StepRow
       icon={icon}
+      iconAccent={KIND_COLORS.other}
+      iconChip={KIND_CHIPS.other}
       status={active ? "in_progress" : failedCount > 0 ? "failed" : "completed"}
       target={name}
       caption={caption}

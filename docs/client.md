@@ -204,8 +204,9 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `src/lib/boot-colors.ts`** — the address-bar tint, the inlined splash and the
   manifest all need the background named before any stylesheet is parsed, so it
   is written once there in hex and pulled in three ways: `lib/theme.tsx` imports
-  it as a fallback, `vite.config.ts` imports it for the manifest and substitutes
-  `%BOOT_LIGHT%`/`%BOOT_DARK%` into the static `index.html`. It is the *Default
+  it as a fallback, `vite.config.ts` imports it for the manifest, and the static
+  `index.html` carries the same two hex values as literals (kept equal by hand —
+  it cannot import). It is the *Default
   palette's* `--background`, not `.dark`'s from `index.css` — ThemeProvider
   always sets `data-color-theme`, so `.dark` alone is a state nothing paints —
   and it is the one theme whose background the generator does **not** derive but
@@ -695,10 +696,73 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 
 ## The dock
 
-- **The dock holds four panel kinds: chat, ide, terminal and web (the *Browser* panel).**
-  The IDE panel (`components/workspace/ide-panel.tsx`, descriptor `{kind:"ide", projectId}`)
-  holds four surfaces that are one product: the editor, the file explorer, file search and
-  source control.
+- **How much of a panel the floating app header covers is measured, never assumed.** The
+  header is an overlay across the top of the column, so the tab strip and every panel's content
+  have to clear it — and both did that with the constant `--app-header-h`, which is right for
+  the group at the top and wrong for every other one. A terminal docked *below* a thread
+  reserved three rems twice over, once in the strip's margin and once in its own padding, for a
+  header nowhere near it. `workspace/dock.tsx` measures the header's bottom against each
+  group's box and publishes `--dock-header-overlap` on the group element, which is what the tab
+  strip clears. **What a panel's own content pads by is measured by the panel**
+  (`--dock-content-overlap`, `lib/workspace/panel-overlap.ts`), and that split is not tidiness:
+  the dock renders with `defaultRenderer="always"`, which attaches panel content to one overlay
+  container at the dockview root rather than nesting it in the group — so a variable set on a
+  group element reaches its strip and nothing else, and the panels quietly kept falling back to
+  the constant. The dock's part is the *nudge*: a group can move without changing size (a sash
+  settling, a maximize, a panel dragged between groups), which an element watching only its own
+  size never hears about. A popped-out panel measures zero — `ownerDocument` is what tells the
+  two windows apart — a zero-height box keeps its last answer rather than reading a hidden tab
+  as fully covered, and the constant survives only as the fallback: one frame before the first
+  measurement, and the surfaces that are not in a dock at all.
+- **The dock holds five panel kinds: chat, ide, terminal, web (the *Browser* panel) and
+  tasks.** The IDE panel (`components/workspace/ide-panel.tsx`, descriptor
+  `{kind:"ide", projectId}`) holds four surfaces that are one product: the editor, the file
+  explorer, file search and source control.
+- **A panel kind is a surface, and a surface that reads the URL cannot be one.** The tasks
+  panel is the case that proved it: the board workspace answered "which board, which task"
+  from `useParams`/`useSearchParams`/`useNavigate`, so a panel switching board would have
+  navigated the page it is drawn on — taking the dock and every other panel with it. The
+  three questions are now one interface (`lib/tasks-location.ts`) with two answers: the
+  route's, at `/board/:boardId?task=`, still the place a board is linked from, and the
+  panel's, which keeps them **in its own descriptor** and so survives a reload the way every
+  other panel does. There is **one** tasks panel (`panelId` is the bare `"tasks"`): another
+  board is this panel moved, exactly as another file is the IDE moved, and boards belong to
+  the server rather than to a project — which is why it is the one kind that opens with no
+  project and the one the prune cannot call stale.
+- **What a panel is doing is data, published by the panel and drawn by the tab**
+  (`lib/workspace/panel-status.ts`, `components/workspace/panel-status-dot.tsx`). It used to
+  be a glyph the chat panel prefixed onto its own title, which made the reading part of the
+  *title*: no other kind could have one, it could not be coloured, and a screen reader read
+  it as a stray character. A dock keeps every panel mounted, so the strip is the only place a
+  panel nobody is looking at can speak — a turn waiting on you, a shell that exited, a dev
+  server that failed, unsaved files in the IDE. Four tones, and the whole sentence in the
+  label, because a strip has room for one dot and a pointer and a screen reader both read the
+  title. Live, per mount, and never serialized.
+- **A pinned tab is one the tidy-up goes around.** `lib/workspace/panel-pins.ts` is the set
+  (device-local, keyed by server, like every other reader's-property store); the dock adds
+  the ordering. Pinning means three things together: the tab sits at the front of its group,
+  it carries the pin that unpins it instead of a close button, and **every bulk close steps
+  over it** — `closeOthers`, `closeToTheRight`, `closeGroup`. Its own Close still names it, so
+  nothing becomes unclosable. Dockview 8 ships a pinned-tabs module and this build does not
+  have it (`api.setPinned` is inert without it), which is beside the point: "renders first"
+  was never the half that mattered.
+- **A preset rearranges; a saved layout opens and closes.** `applyPreset` moves what is open
+  and nothing else — that rule has not changed. A **named layout** (`lib/workspace/layout.ts`)
+  is the whole dock, contents and arrangement, kept under a name and given back by it, which
+  is why it is asked for rather than offered as a tidy-up. Saving under a name that exists
+  replaces that layout: "Review" saved twice is one arrangement refined, not two rows to tell
+  apart. Restored through the same `pruneLayout` as the live one, so a saved layout naming a
+  thread the server has forgotten comes back without it rather than not at all.
+- **A panel can leave the dock, and the way back is what the layout stores.** Floating groups
+  are enabled and bounded within the viewport (a float dragged off-screen is a panel with no
+  way home). A **popout** is a real browser window (`addPopoutGroup`, into
+  `public/popout.html` — an empty room, no script, no second app; the service worker's
+  navigation fallback denies it by name or it would be answered with the whole shell). It is
+  a user gesture only, and a blocked popup is *said* rather than swallowed. On the way back
+  in, a float is restored whole or not at all and a popout is **never** reopened —
+  `window.open` without a gesture is a popup — so `dockPopouts` brings its panels home to the
+  group they were torn from *before* anything is counted, because a panel in `panels` that no
+  leaf names is one the dock holds and cannot show.
 - **Monaco is the text surface and the diff, and nothing else.** The official `monaco-editor`
   package — not `@codingame/monaco-vscode-api`, which is what this replaced. That library
   gave the real VS Code workbench in the page, and with it the whole of VS Code's service
@@ -772,6 +836,65 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   returns whatever it gets without falling back to the package's own `createWorker`. The new
   chunk is `editor.worker.start-*.js`, added to the service worker's `globIgnores` beside the
   language workers — the IDE stays out of the precache.
+- **The terminal panel is chrome around a canvas, and the chrome is the product.** xterm
+  draws the buffer; everything a person needs *around* it is this panel's: search over the
+  scrollback (`@xterm/addon-search`, ⌘F / Ctrl+Shift+F — never bare Ctrl+F, which is
+  forward-a-character in readline and in vi), copy and paste, clear, the type size, and the
+  helper key row. Two buttons live in the strip (find, and reconnect/restart when the shell
+  is not running); the rest are behind ⋯, because this panel is frequently 300px wide beside
+  a transcript and a toolbar that wraps is a toolbar that eats the terminal.
+- **Ctrl+C copies when there is a selection and interrupts when there is not**, which is the
+  one place a terminal is allowed to reinterpret a key the PTY would otherwise get — no shell
+  reads that keystroke as anything else while text is selected. ⌘ takes both outright.
+  **Clear is a view, never the record**: `terminal.clear()` drops what is on screen and the
+  server's scrollback is untouched, so a reconnect brings the build log back.
+- **A shell that exited cannot be reconnected to.** The PTY is gone, so `exited` offers a
+  *new* shell in the same project — a new terminal, a new panel — while this one keeps its
+  scrollback until it is closed. Reconnect stays for a dropped socket, which is the other
+  failure and a different fix.
+- **The bell and the OSC title are what a terminal nobody is watching says.** A bell raises
+  the tab's `attention` status until the reader types into the panel or clicks it; the title
+  the shell sets becomes the tab's, so a strip of five terminals says which one is building.
+- **xterm paints its own surface, so every colour it is given has to be a hex.** The palettes
+  here are `oklch` and `getPropertyValue("--foreground")` hands that back verbatim; xterm's
+  parser knows `#rgb`, `#rrggbb` and `rgb()` and silently drops anything else for its own
+  default — which is what "the terminal has no light mode" looked like. Tokens go through
+  `colorToHex` (`lib/theme.tsx`, a 1px canvas), and the **background is resolved to the colour
+  the panel is actually painted in**: `background: "transparent"` only means transparent with
+  `allowTransparency`, which must be set before `open()` and costs performance — without it
+  xterm forces the alpha to 1 and `transparent` becomes opaque *black*. The walk up for that
+  colour reads the alpha as a number, because `rgb(0, 0, 0)` and `rgba(0, 0, 0, 0)` end in the
+  same three characters and one of them is a real theme. The palette is re-read on the mode
+  **and** on `colorTheme`, a frame late, since the provider writes the class and the
+  `data-color-theme` attribute in its own effect.
+- **A keycap's label is its content.** It was briefly a prop nothing rendered — a row of blank
+  keys, which is not a keyboard. Every icon-only control in this panel carries a `title` as
+  well as an `aria-label`: a strip of unlabelled 24px glyphs is unreadable to a pointer and to
+  a screen reader for different reasons, and both are cheap to answer.
+- **The helper key row follows the soft keyboard, and that is not a nicety.**
+  `interactive-widget=overlays-content` means the keyboard is drawn *over* the page rather
+  than resizing it (`lib/keyboard-inset.ts`), so a row anchored to the bottom of the panel sat
+  behind the keyboard — present, correct and invisible on the one device it exists for. The
+  panel pads its column by `--keyboard-inset`, which lifts the row and shortens the canvas by
+  the same amount, and the canvas's ResizeObserver tells the PTY the new size.
+- **The key row is compact, wraps, and stops at two rows.** It wraps rather than scrolling
+  sideways, because a single scrolling line put half the keyboard — the reader's own half,
+  appended after sixteen built-ins — off the right-hand edge, which is a keyboard you have to
+  swipe to type on. Two rows is the ceiling (`max-h-15`: two `h-7` caps and the gap, in the
+  spacing scale, so it follows the density setting); past that the block scrolls, and the ⌃
+  button opens it to full height. Caps are 28px and labelled with the conventional symbol
+  where there is one (↑, ⏎, ^C) with the whole name on `aria-label` and `title` — **under the
+  44px touch target the rest of the app keeps, deliberately**: these are keys, pressed in
+  sequence in sight of what they type into, and a keyboard of 44px keys covers the terminal it
+  exists to drive. Order is reach: modifiers, Tab/Esc, the reader's own keys, then the rest.
+- **Custom keys are edited, reordered and removed in place** (`lib/workspace/terminal-keys.ts`
+  keeps the id through an edit, so a key being corrected is the same key). Order is the point
+  of a keyboard — the key pressed most has to be nearest the thumb.
+- **How a terminal is drawn is the device's, not the panel's or the project's**
+  (`lib/workspace/terminal-prefs.ts`): type size, whether the key row shows, whether it is
+  wrapped open. `keyRow: "auto"` asks the *pointer* — a finger has no Ctrl key — and both
+  overrides exist because that guess is wrong in both directions: a tablet with a keyboard
+  case, and a desktop reader who defined an escape sequence they cannot otherwise type.
 - **What is open inside the IDE is the IDE's state, never the dock's.** The old editor
   descriptor carried a path and a comparison, which is why a file at a second line was a
   second panel and why `reveal.ts` existed to work around it. Now the descriptor is the
@@ -821,7 +944,11 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   happened in it". `components/project-page.tsx` is that answer: the header (mark, name,
   the cwd as a copy button, description, Edit / New thread), four tiles, a 30-day activity
   strip, the project's threads, and the rails beside them (what it is worked on with, what
-  is scheduled against it, what it has accumulated). The **live** half is the store's —
+  is scheduled against it, what it has accumulated). **The header carries a "Run" dropdown**:
+  the dev server's Restart (the built-in, carrying a live `DevBadge`) plus the user's
+  custom **helper commands** (`project_helpers`, `lib/workspace/project-helpers.ts`), run
+  in the project's cwd with the output rendered in `RunHelperDialog`. Helpers are edited
+  in Settings › Projects. The **live** half is the store's —
   `state.sessions` already carries every thread with its process state, so the thread list,
   the running/waiting dots and the scheduled rows need no request and are right the moment a
   turn starts; the status reading is the sidebar's exactly (`turnActive` ?? `promptActive`,

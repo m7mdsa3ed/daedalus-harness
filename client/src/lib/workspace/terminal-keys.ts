@@ -73,6 +73,31 @@ export function removeTerminalKey(id: string): void {
   write(cache.filter((key) => key.id !== id))
 }
 
+/** Edit a key in place. The id is kept, so the row does not lose its position
+    and a key being corrected is not a key being replaced. */
+export function updateTerminalKey(id: string, patch: Partial<Omit<TerminalKey, "id">>): void {
+  write(cache.map((key) => (key.id === id ? { ...key, ...patch } : key)))
+}
+
+/**
+ * Move a key one place along the row.
+ *
+ * Order is the whole point of a keyboard: the key pressed most has to be the
+ * one nearest the thumb, and the row is read left to right on a screen too
+ * narrow to show all of it. `delta` is ±1; a move off either end is a no-op
+ * rather than a wrap, because a key that jumped from the front to the back
+ * would read as a key that vanished.
+ */
+export function moveTerminalKey(id: string, delta: number): void {
+  const from = cache.findIndex((key) => key.id === id)
+  const to = from + delta
+  if (from < 0 || to < 0 || to >= cache.length) return
+  const next = [...cache]
+  const [moved] = next.splice(from, 1)
+  next.splice(to, 0, moved)
+  write(next)
+}
+
 /* Another tab editing the same device's keyboard is editing this one too. */
 window.addEventListener("storage", (event) => {
   if (event.key !== null && event.key !== STORAGE_KEY) return

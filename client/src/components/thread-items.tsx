@@ -27,6 +27,7 @@ import { loadSettings } from "@/lib/settings"
 import {
   DetailSection,
   FileBadge,
+  KIND_CHIPS,
   KIND_COLORS,
   KIND_ICONS,
   KIND_LABELS,
@@ -87,7 +88,7 @@ import { Link } from "react-router"
 
 /* Re-exported so the approval card and the editor panel keep importing the
    transcript's vocabulary from the transcript, not from its internals. */
-export { FileBadge, KIND_COLORS, KIND_ICONS, KIND_LABELS, Prose, Timestamp, ToolCallContent }
+export { FileBadge, KIND_CHIPS, KIND_COLORS, KIND_ICONS, KIND_LABELS, Prose, Timestamp, ToolCallContent }
 export { SourcesStrip }
 
 /* The row shapes are `lib/transcript-rows`' — the transform that builds them
@@ -172,19 +173,19 @@ const RUN_BUCKETS = {
     icon: SquareTerminalIcon,
     noun: "shell command",
     className: "text-step-command",
-    chip: "bg-step-command/15",
+    chip: "bg-step-command/25",
   },
   thought: {
     icon: BrainIcon,
     noun: "thought",
     className: "text-step-think",
-    chip: "bg-step-think/15",
+    chip: "bg-step-think/25",
   },
   tool: {
     icon: WrenchIcon,
     noun: "tool",
     className: "text-step-tool",
-    chip: "bg-step-tool/15",
+    chip: "bg-step-tool/25",
   },
 } as const
 type RunBucket = keyof typeof RUN_BUCKETS
@@ -564,6 +565,8 @@ export const SubagentStep = React.memo(function SubagentStep({
   return (
     <StepRow
       icon={BotIcon}
+      iconAccent={KIND_COLORS.other}
+      iconChip={KIND_CHIPS.other}
       status={status}
       label={label}
       target={target}
@@ -930,6 +933,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
         <StepRow
           icon={KIND_ICONS.think}
           iconAccent={KIND_COLORS.think}
+          iconChip={KIND_CHIPS.think}
           status={streaming ? "in_progress" : null}
           label={streaming ? "thinking" : undefined}
           startedAt={streaming ? item.at : undefined}
@@ -1011,6 +1015,7 @@ const ToolStep = React.memo(function ToolStep({
       status={item.status}
       icon={KindIcon}
       iconAccent={KIND_COLORS[kind] ?? KIND_COLORS.other}
+      iconChip={KIND_CHIPS[kind] ?? KIND_CHIPS.other}
       target={heading.title}
       /* "Show the command" off leaves the sentence alone on the row. What was
          typed is still in the body, which is where it is read once the line

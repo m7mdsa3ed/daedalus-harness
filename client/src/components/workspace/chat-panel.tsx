@@ -6,31 +6,37 @@ import { ThreadView } from "@/components/thread-view"
 import type { Actions } from "@/lib/actions"
 import { useSessionMeta, useThread } from "@/lib/store"
 import { markFor, type ThreadActivity } from "@/lib/thread/phase"
+import { usePublishPanelStatus, type PanelStatus } from "@/lib/workspace/panel-status"
 import { useThreadConnection } from "@/lib/thread/use-thread-connection"
 import { ThreadLinksProvider } from "@/lib/workspace/thread-links"
 import { useThreadLinksFor } from "@/lib/workspace/use-thread-links"
+
+/* What the tab says about a thread nobody is looking at.
+
+   Every reading that is not `idle` gets one; the tone is what decides how loud
+   it is drawn (`components/workspace/panel-status-dot`). `connecting` is the
+   one deliberate absence: opening a thread is not news about it, and a mark
+   that appears on every reattach is a mark nobody reads.
+
+   This used to be a glyph prefixed onto the panel's own title, back when the
+   title was the only channel a tab had. The label here is the whole sentence,
+   because a status is now data and the tab has somewhere to put it. */
+const TAB_STATUS: Record<ThreadActivity, PanelStatus | null> = {
+  waiting: { tone: "attention", label: "Waiting on you" },
+  failed: { tone: "warn", label: "The last turn failed" },
+  running: { tone: "running", label: "Working" },
+  reconnecting: { tone: "warn", label: "Reconnecting" },
+  offline: { tone: "warn", label: "Offline" },
+  stopped: { tone: "warn", label: "Stopped" },
+  gone: { tone: "warn", label: "Deleted" },
+  connecting: null,
+  idle: null,
+}
 
 /** A thread, and the one panel kind that holds an ACP connection open. Every
     other panel observes the store; this is where `useThreadConnection` is
     called, which is why two panels for one session must never exist (see
     `panelId`). */
-/** A tab strip has room for one glyph, so only the readings worth interrupting
-    for get one. `connecting` deliberately has none: opening a thread is not news
-    about it, and a mark that appears on every reattach is a mark nobody reads.
-    `reconnecting` and `offline` do, because they are the two states that used to
-    be invisible everywhere outside the thread itself. */
-const TAB_MARKS: Record<ThreadActivity, string> = {
-  waiting: "◆ ",
-  failed: "⚠ ",
-  running: "◍ ",
-  reconnecting: "◌ ",
-  offline: "◌ ",
-  stopped: "⚠ ",
-  gone: "⚠ ",
-  connecting: "",
-  idle: "",
-}
-
 export function ChatPanel({
   actions,
   api,
@@ -56,7 +62,7 @@ export function ChatPanel({
      only place a thread you are not looking at can say anything — and "waiting
      on you" is the one worth interrupting for, which is why it outranks
      "running" rather than being merged into it. */
-  const marker = TAB_MARKS[
+  const status = TAB_STATUS[
     markFor(
       thread.phase,
       thread.turnActive,
@@ -64,10 +70,11 @@ export function ChatPanel({
       !!meta?.lastTurnError
     )
   ]
+  usePublishPanelStatus(api.id, status)
 
   React.useEffect(() => {
-    api.setTitle(`${marker}${meta?.title || "Thread"}`)
-  }, [api, meta?.title, marker])
+    api.setTitle(meta?.title || "Thread")
+  }, [api, meta?.title])
 
   /* What makes a path or a source in a tool call clickable — shared with every
      other surface that renders a transcript (see lib/workspace/use-thread-links). */

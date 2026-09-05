@@ -4,7 +4,15 @@ import { queueItems } from "./session-queue.js";
 import type { SessionJournal } from "./session-journal.js";
 import type { Peer, Session } from "./sessions.js";
 import { REPLAY_WINDOW_BYTES } from "./protocol.js";
-import type { EarlierPage, PromptReply, ThreadCommand, ThreadEvent, WireError } from "./protocol.js";
+
+/* The hold, in the one shape the `paused` event carries it (`AcpBridge.hold`),
+   so an attaching peer and a live one can never disagree about why a turn is
+   stopped. A thread with no process is not held; it is archived. */
+function holdFields(session: Session): { hold?: ThreadHold } {
+  const bridge = session.bridge;
+  return bridge?.paused ? { hold: bridge.hold() } : {};
+}
+import type { EarlierPage, PromptReply, ThreadCommand, ThreadEvent, ThreadHold, WireError } from "./protocol.js";
 
 /**
  * What the socket router needs from the SessionManager — a port, so this
@@ -170,6 +178,11 @@ export class SessionSocket {
       archived: session.bridge === null,
       acpSessionId: session.liveAcpSessionId ?? session.acpSessionId ?? null,
       ...(session.historyLost ? { historyLost: session.historyLost } : {}),
+      /* The rail's whole table of contents, up front: turns whose messages are
+         still behind `earlier` need ticks too, and nothing but the journal can
+         name them. Omitted on a resume — the client already holds the thread
+         and an absent list must not clear it. */
+      ...(!resumed ? { turns: journal.turnTicks(session.id) } : {}),
     });
     /* Same events, same order, still inside the bracket — `batch` only decides
        how many frames carry them. One per event is a wake-up, a parse and a
@@ -199,7 +212,7 @@ export class SessionSocket {
       cursor: to,
       promptActive: session.bridge?.promptActive ?? false,
       queue: queueItems(session),
-      paused: session.bridge?.paused ?? false,
+      ...holdFields(session),
     });
     /* Caught up: everything held while the replay was on the wire goes out now,
        in the order it was journaled, and from here the peer is live. */
@@ -280,6 +293,8 @@ export class SessionSocket {
       archived: session.bridge === null,
       acpSessionId: session.liveAcpSessionId ?? session.acpSessionId ?? null,
       ...(session.historyLost ? { historyLost: session.historyLost } : {}),
+      // Same table of contents as the socket attach below — see there.
+      ...(!resumed ? { turns: journal.turnTicks(session.id) } : {}),
     };
     yield `{"attached":${JSON.stringify(attached)},"frames":[`;
     let first = true;
@@ -292,7 +307,7 @@ export class SessionSocket {
       cursor: to,
       promptActive: session.bridge?.promptActive ?? false,
       queue: queueItems(session),
-      paused: session.bridge?.paused ?? false,
+      ...holdFields(session),
     };
     yield `],"caughtUp":${JSON.stringify(caughtUp)}}`;
   }

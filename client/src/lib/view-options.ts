@@ -59,7 +59,7 @@ export interface ViewOptions {
   splitDiffs: boolean
   /** Hairline rule above each user turn. */
   stepDividers: boolean
-  /** Tick marks down the right edge, one per user turn, to jump between them. */
+  /** Tick marks across the top of the composer, one per user turn, to jump between them. */
   turnRail: boolean
   /** Favicon strips: the pages a step saw and the ones the answer cited. */
   showSources: boolean

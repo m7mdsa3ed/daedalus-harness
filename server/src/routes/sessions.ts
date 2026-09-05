@@ -28,7 +28,9 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       projectId,
       model,
       effort,
+      modeId,
       personaId,
+      suggestFollowups,
       configChoices,
       title,
       mcpServerIds,
@@ -69,6 +71,14 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       // persona at spawn, which is what "gone" should mean — see
       // `resolvePersonaSpawn` and the schema's note on the missing foreign key.
       personaId: typeof personaId === "string" ? personaId : undefined,
+      // Omitted reads as off — a draft that never asked is a thread that
+      // never asked, the same default the row carries.
+      suggestFollowups: typeof suggestFollowups === "boolean" ? suggestFollowups : undefined,
+      // The draft's permission mode, picked against the agent's probed `modes`.
+      // Best-effort like the config choices: a mode the agent does not offer
+      // costs the pick, not the thread. The bridge guards on the agent's own
+      // mode list, so this needs no per-agent knowledge here.
+      modeId: typeof modeId === "string" && modeId ? modeId : undefined,
       /* A draft can be renamed before it has ever been sent to, and that name
          has to survive becoming a real thread — `create` keeps it and the
          first-prompt sniff then leaves it alone. */
@@ -233,7 +243,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     const session = sessions.get(c.req.param("id"));
     if (!session) return c.json({ error: "not found" }, 404);
     if (session.deletedAt !== null) return c.json({ error: "session deleted" }, 409);
-    const { profileId, agentId: askedAgent, model, effort, personaId } = await c.req.json();
+    const { profileId, agentId: askedAgent, model, effort, personaId, suggestFollowups } = await c.req.json();
     const profile = getProfile(profileId ?? session.profileId);
     if (!profile) return c.json({ error: "unknown profile" }, 404);
     const agentId = askedAgent ?? session.agentId;
@@ -250,6 +260,9 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       effort,
       // Omitted means unchanged; "" is a real value and means no persona.
       personaId: typeof personaId === "string" ? personaId : undefined,
+      // Omitted means unchanged; a boolean flips the suggestions trailer and
+      // respawns, like a persona change.
+      suggestFollowups: typeof suggestFollowups === "boolean" ? suggestFollowups : undefined,
     });
     return c.json({
       ok: true,
@@ -260,6 +273,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       model: session.model,
       effort: session.effort,
       personaId: session.personaId,
+      suggestFollowups: session.suggestFollowups,
       acpSessionId: session.liveAcpSessionId ?? session.acpSessionId,
       ...(session.historyLost ? { historyLost: session.historyLost } : {}),
     });

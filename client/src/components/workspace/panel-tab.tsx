@@ -1,17 +1,27 @@
 /* One tab for every panel kind. It replaces Dockview's default tab, which is
    what makes `dock.closePanel` the only way a panel closes — and therefore the
-   only place a dirty editor gets asked. */
+   only place a dirty editor gets asked.
+
+   It draws three things the default cannot: the kind's icon, the panel's own
+   reading (`lib/workspace/panel-status`) and whether it is pinned
+   (`lib/workspace/panel-pins`). The reading used to be a glyph the chat panel
+   prefixed onto its own title, which meant it was part of the title — nothing
+   else could have one, it could not be coloured, and a screen reader read it as
+   a stray character. */
 import * as React from "react"
 import type { IDockviewPanelHeaderProps } from "dockview-react"
-import { XIcon } from "lucide-react"
+import { PinOffIcon, XIcon } from "lucide-react"
 import { toast } from "@/lib/toast"
 
 import { Button } from "@/components/ui/button"
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"
 import { PANEL_ICONS } from "@/components/workspace/panel-kinds"
+import { PanelStatusDot } from "@/components/workspace/panel-status-dot"
 import { useDock } from "@/components/workspace/dock"
 import { reportError } from "@/lib/errors"
 import { threadPath } from "@/lib/router"
+import { usePanelPinned } from "@/lib/workspace/panel-pins"
+import { usePanelStatus } from "@/lib/workspace/panel-status"
 import { PANEL_SPECS, isPanelKind, parsePanel } from "@/lib/workspace/panels"
 import { cn } from "@/lib/utils"
 
@@ -21,6 +31,8 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
   const [closable, setClosable] = React.useState(false)
   const [hasOthers, setHasOthers] = React.useState(false)
   const [hasRightward, setHasRightward] = React.useState(false)
+  const pinned = usePanelPinned(api.id)
+  const status = usePanelStatus(api.id)
 
   React.useEffect(() => {
     const disposable = api.onDidActiveChange((event) => setActive(event.isActive))
@@ -55,8 +67,11 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
   const descriptor = parsePanel(api.component, params)
   const Icon = isPanelKind(api.component) ? PANEL_ICONS[api.component] : null
   const fallbackTitle = isPanelKind(api.component) ? PANEL_SPECS[api.component].defaultTitle : "Panel"
+  const title = api.title ?? fallbackTitle
 
   const items: MenuItemSpec[] = [
+    /* Close comes first and names *this* tab, so a pinned panel still has a way
+       out — the bulk closes below are the ones pinning is a defence against. */
     { label: "Close", disabled: !closable, onClick: () => void dock.closePanel(api.id) },
     { label: "Close others", disabled: !hasOthers, onClick: () => void dock.closeOthers(api.id) },
     {
@@ -65,6 +80,20 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
       onClick: () => void dock.closeToTheRight(api.id),
     },
     { label: "Close group", disabled: !hasOthers, onClick: () => void dock.closeGroup(api.id) },
+    { type: "separator" },
+    { label: pinned ? "Unpin" : "Pin", onClick: () => dock.togglePin(api.id) },
+    { label: "Move to a floating window", onClick: () => dock.toggleFloat(api.id) },
+    {
+      label: "Open in a new window",
+      onClick: () => {
+        void dock.popoutPanel(api.id).then((opened) => {
+          /* A blocked popup is silent otherwise — the click appears to do
+             nothing at all, which reads as a broken menu item rather than as a
+             browser setting the user can change. */
+          if (!opened) toast.error("The browser blocked the new window")
+        })
+      },
+    },
     { type: "separator" },
     {
       label: "Copy link",
@@ -90,25 +119,47 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
           )}
         >
           {Icon && <Icon className="size-3.5 shrink-0" />}
-          <span className="max-w-40 truncate">{api.title ?? fallbackTitle}</span>
-          {closable && (
+          <span className="max-w-40 truncate">{title}</span>
+          <PanelStatusDot status={status} />
+          {/* A pinned tab trades its close button for the pin that undoes the
+              pinning — the same width, and the gesture that got you here is the
+              gesture that gets you back. It is why a pinned tab cannot be
+              closed by a stray click, which is most of the point of pinning. */}
+          {pinned ? (
             <Button
               size="icon-xs"
               variant="ghost"
-              aria-label="Close tab"
-              className="-mr-1 size-5 opacity-60 hover:opacity-100"
+              aria-label={`Unpin ${title}`}
+              className="-mr-1 size-5 opacity-70 hover:opacity-100"
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => {
                 event.stopPropagation()
-                void dock.closePanel(api.id)
+                dock.togglePin(api.id)
               }}
             >
-              <XIcon className="size-3" />
+              <PinOffIcon className="size-3" />
             </Button>
+          ) : (
+            closable && (
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Close tab"
+                className="-mr-1 size-5 opacity-60 hover:opacity-100"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  void dock.closePanel(api.id)
+                }}
+              >
+                <XIcon className="size-3" />
+              </Button>
+            )
           )}
         </div>
       </div>
     </ItemContextMenu>
   )
 }
+
 import { writeClipboard } from "@/lib/clipboard"

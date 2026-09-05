@@ -46,6 +46,12 @@ export interface AgentOptionSet {
       model as an image or as a path *before* the first send. Filled by the
       option probe and re-filled by any live session's `session_config`. */
   promptCapabilities?: acp.PromptCapabilities
+  /** The agent's permission modes, when it advertises them on the `modes`
+      channel rather than as a config option — daedalus does exactly that, and
+      an agent that does is invisible in the mode menu this store feeds. Same
+      story as every option here: the live `session_config` replaces the
+      probed set the moment a session answers. */
+  modes?: acp.SessionModeState
 }
 
 const EMPTY: AgentOptionSet = { base: [], byModel: {} }
@@ -78,23 +84,34 @@ export const loadAgentOptions = (key: string): AgentOptionSet => {
   return isSet(entry) ? entry : EMPTY
 }
 
-/** Learned from a live session: authoritative for the model it is sitting on. */
-export function saveAgentOptions(key: string, options: acp.SessionConfigOption[]): void {
-  if (options.length === 0) return
+/** Learned from a live session: authoritative for the model it is sitting on.
+    `modes` rides along when the session advertised them — it outranks a
+    probe's, being the process a prompt would actually go to. */
+export function saveAgentOptions(
+  key: string,
+  options: acp.SessionConfigOption[],
+  modes?: acp.SessionModeState
+): void {
+  if (options.length === 0 && !modes) return
   const known = loadAgentOptions(key)
-  const model = selectedModel(options)
+  /* An empty list keeps what was known — the old early-return's semantic, kept
+     now that a modes-only statement can also land here. */
+  const base = options.length > 0 ? options : known.base
+  const model = selectedModel(base)
   store.set({
     ...store.get(),
     [key]: {
-      base: options,
-      byModel: model ? { ...known.byModel, [model]: options } : known.byModel,
+      base,
+      byModel: model ? { ...known.byModel, [model]: base } : known.byModel,
+      ...(modes ? { modes } : {}),
+      ...(known.promptCapabilities ? { promptCapabilities: known.promptCapabilities } : {}),
     },
   })
 }
 
 /** Learned from a probe: the whole map in one go (see server/src/probe.ts). */
 export function saveProbedOptions(key: string, probed: AgentOptionSet): void {
-  if (probed.base.length === 0) return
+  if (probed.base.length === 0 && !probed.modes) return
   const known = loadAgentOptions(key)
   store.set({
     ...store.get(),
@@ -102,6 +119,7 @@ export function saveProbedOptions(key: string, probed: AgentOptionSet): void {
       ...known,
       base: probed.base,
       byModel: { ...known.byModel, ...probed.byModel },
+      ...(probed.modes ? { modes: probed.modes } : {}),
       ...(probed.promptCapabilities ? { promptCapabilities: probed.promptCapabilities } : {}),
     },
   })
@@ -138,10 +156,10 @@ export function useAgentOptions(
 ): AgentOptionSet {
   const known = store.use()
   const own = known[key]
-  if (isSet(own) && own.base.length > 0) return own
+  if (isSet(own) && (own.base.length > 0 || own.modes)) return own
   for (const fallback of fallbackKeys) {
     const sibling = known[fallback]
-    if (isSet(sibling) && sibling.base.length > 0) return sibling
+    if (isSet(sibling) && (sibling.base.length > 0 || sibling.modes)) return sibling
   }
   return EMPTY
 }

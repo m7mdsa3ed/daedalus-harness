@@ -66,6 +66,7 @@ function useDraft(meta: SessionMeta, actions: Actions, remember = true) {
       model: next.model ?? meta.model,
       effort: next.effort ?? meta.effort,
       personaId: next.personaId ?? meta.personaId,
+      suggestFollowups: next.suggestFollowups ?? meta.suggestFollowups,
     })
   }
 
@@ -248,7 +249,8 @@ export function PickerMenu({
 
 /**
  * The chosen agent's own configuration, in the slot the settings trigger always
- * occupies: profile, model, effort.
+ * occupies: profile, model, effort, and — from the agent's remembered `modes` —
+ * the permission mode it will start in.
  *
  * This is the *other* half of the rule in CLAUDE.md. Model and effort are
  * placeholders in the agent's env template, filled at spawn — so before the
@@ -304,6 +306,14 @@ export function DraftConfigPopover({
     )
   }, [known, meta.configChoices])
   const agentOptions = partitionSessionOptions(remembered)
+  /* The permission modes, when the agent advertises them on the `modes`
+     channel — which daedalus does, and an agent that does would otherwise be
+     the one runtime you cannot start in plan mode. Same rule as the live
+     menu: only worth a row when there is a choice to make. */
+  const modes = known.modes && known.modes.availableModes.length > 1 ? known.modes : null
+  const modeLabel = modes?.availableModes.find(
+    (m) => m.id === (meta.modeId || modes.currentModeId)
+  )?.name
 
   /* The profile owns the model list when it has one. Effort follows the model:
      the profile's efforts if that model declares any, otherwise the agent's own
@@ -331,7 +341,7 @@ export function DraftConfigPopover({
 
   const choose = (configId: string, value: string | boolean) =>
     actions.chooseDraftConfigOption(meta.id, configId, value)
-  const nothingYet = !overridden && remembered.length === 0
+  const nothingYet = !overridden && remembered.length === 0 && !modes
 
   return (
     <DropdownMenu>
@@ -343,7 +353,7 @@ export function DraftConfigPopover({
                panel — same rule as SessionConfigPopover's trigger, which
                replaces this one the moment the thread starts. */
             className="h-6 gap-1 border-0 bg-transparent px-1.5 text-[11px] shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent"
-            title={[persona?.name, modelLabel, effortLabel].filter(Boolean).join(" · ")}
+            title={[persona?.name, modelLabel, effortLabel, modeLabel].filter(Boolean).join(" · ")}
           >
             {/* The model's own icon replaces the profile's logo in the pair —
                 the two marks stay, it is only the second one that changes. A
@@ -376,6 +386,7 @@ export function DraftConfigPopover({
               {persona && <span>{persona.name} · </span>}
               {modelLabel}
               {effortLabel && <span className="capitalize"> · {effortLabel}</span>}
+              {modeLabel && ` · ${modeLabel}`}
             </span>
           </Button>
         }
@@ -483,13 +494,41 @@ export function DraftConfigPopover({
             </DropdownMenuItem>
           )}
         </DropdownMenuGroup>
+        {/* Its own group, mirroring the started thread's menu: suggestions are
+            how the thread's answers should behave, not who answers — and with
+            nothing running yet there is no restart to warn about. */}
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Session settings</DropdownMenuLabel>
+          <DropdownMenuCheckboxItem
+            checked={meta.suggestFollowups !== false}
+            onCheckedChange={(checked) => configure({ suggestFollowups: checked === true })}
+          >
+            Suggest follow-ups
+          </DropdownMenuCheckboxItem>
+        </DropdownMenuGroup>
         {/* Never touched by the profile: mode and the rest are the agent's, and
             they stay exactly where they are whichever profile is selected. */}
-        {agentOptions.rest.length > 0 && (
+        {(modes || agentOptions.rest.length > 0) && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuLabel>Agent options</DropdownMenuLabel>
+              {/* First, like the started thread's menu — and remembered on the
+                  draft rather than replayed as a config choice, because a mode
+                  travels over `session/set_mode`, not `set_config_option`. The
+                  server applies it the moment session/new answers. */}
+              {modes && (
+                <MenuRow
+                  label="Mode"
+                  value={meta.modeId || modes.currentModeId}
+                  choices={modes.availableModes.map((mode) => ({
+                    value: mode.id,
+                    name: mode.name,
+                  }))}
+                  onSelect={(modeId) => configure({ modeId })}
+                />
+              )}
               {agentOptions.rest.map((option) =>
                 option.type === "select" ? (
                   <MenuRow

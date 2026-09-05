@@ -206,6 +206,22 @@
      (At -48px the composer landed 8px right of every message.) */
   --harness-composer-width: calc(var(--harness-chat-width) - 2rem);
 
+  /* ── The device insets the shell pads by ──
+     `--app-inset-top` is the status bar's, less a hair, and is the *sidebar
+     panels'* own padding (ui/sidebar.tsx): Chrome reports the full cutout
+     height and padding by all of it leaves a visibly empty band under an
+     already-tall bar. The main column no longer uses it — its top is the
+     floating header (app-shell.tsx), which spans the *full* inset and more,
+     measured by `--app-header-h`: the inset plus the header's own 3rem row.
+     Every route that scrolls under that header pads by it, so content starts
+     where it always did and, once scrolled, passes beneath the header's
+     progressive blur. `--keyboard-inset` is published by lib/keyboard-inset.ts
+     and named here only so every reader gets a 0 before the first
+     measurement. */
+  --app-inset-top: max(0px, calc(env(safe-area-inset-top, 0px) - 0.375rem));
+  --app-header-h: calc(max(0px, env(safe-area-inset-top, 0px)) + 3rem);
+  --keyboard-inset: 0px;
+
   /* ── The transcript's three work accents ──
      One hue per act — a thought, a shell command, a tool call — worn by the
      step icon, the row it sits on and the code it produced, so a transcript
@@ -781,19 +797,27 @@
   animation: harness-node-pulse 1.6s ease-in-out infinite;
 }
 
-/* ── Electron desktop shell ──
-   Attributes are set by electron/preload.cjs before first paint. The window is
-   frameless (edge-to-edge), so the app owns the full surface and must supply
-   its own drag region and inset for the OS caption buttons. */
+/* ── Frameless window chrome ──
+   Two ways this app owns a window edge-to-edge: Electron (the attributes
+   below are set by electron/preload.cjs before first paint) and an installed
+   PWA in `window-controls-overlay` mode (Windows Chromium; the attribute is
+   published from navigator.windowControlsOverlay by
+   hooks/use-windows-controls-overlay.ts). Both drop the OS title bar, so the
+   app must supply its own drag region and keep its actions clear of the
+   caption buttons. The electron rules are the original; the WCO rules are
+   the same three, with the button clearance reading the live env() vars
+   instead of the 148px Electron assumes. */
 
 html[data-desktop="true"] {
   --desktop-titlebar-height: 36px;
 }
 
-html[data-desktop="true"] [data-drag-region] {
+html[data-desktop="true"] [data-drag-region],
+html[data-window-controls-overlay="true"] [data-drag-region] {
   -webkit-app-region: drag;
 }
-html[data-desktop="true"] [data-drag-region] :is(button, a, input, select, textarea, [role="button"], [data-no-drag]) {
+html[data-desktop="true"] [data-drag-region] :is(button, a, input, select, textarea, [role="button"], [data-no-drag]),
+html[data-window-controls-overlay="true"] [data-drag-region] :is(button, a, input, select, textarea, [role="button"], [data-no-drag]) {
   -webkit-app-region: no-drag;
 }
 
@@ -840,6 +864,24 @@ html[data-desktop-vibrancy="true"]:not(.dark) main {
    out — padding it pushed New thread and Search off the row's end. */
 html[data-desktop="true"]:not([data-desktop-platform="darwin"]) [data-drag-region]:not([data-sidebar="header"] *) {
   padding-right: 148px;
+}
+/* The PWA's overlay mode, same corner but the browser tells us exactly how
+   wide the caption buttons are: `env(titlebar-area-*)` measures the title bar
+   area, which is the window less the overlay, so the overlay's width is the
+   viewport less the area — and `titlebar-area-x` moves that gap to the left
+   when a second monitor draws its controls that way. Only live while the
+   overlay is engaged (the attribute turns off with it), so the env vars are
+   resolved, never the fallbacks. */
+html[data-window-controls-overlay="true"] [data-drag-region]:not([data-sidebar="header"] *) {
+  padding-right: calc(100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px));
+}
+/* And let the header fully cover the caption-button band: `titlebar-area-height`
+   is variable (Windows 11's "Caption height" accessibility setting changes
+   it), and a band taller than the 3rem header would poke its buttons below it
+   into the content. The header grows with it; `--app-header-h` (app-shell.tsx)
+   is read by every scroll-padding rule, so everything else follows. */
+html[data-window-controls-overlay="true"] {
+  --app-header-h: max(3rem, env(titlebar-area-height, 3rem));
 }
 /* Sidebar drag-resize (handle lives in app-shell.tsx): kill the width easing
    while dragging so the sidebar tracks the pointer, and drop the handle when
@@ -1286,6 +1328,27 @@ html .dv-tabs-and-actions-container {
   gap: 2px;
 }
 
+/* The strip sits under the floating app header (app-shell.tsx) when its group
+   is at the top of the column: without this the tabs slide under the blur and
+   vanish. A margin, not padding — dockview sizes the strip by a fixed height
+   var, and a single-panel dock hides it with display:none, which takes the
+   margin with it.
+
+   The amount is *measured*, per group (`--dock-header-overlap`, set by
+   workspace/dock.tsx), and the constant is only the fallback for the frame
+   before the first measurement. It used to be the constant outright, which
+   meant a group docked below another cleared a header that is nowhere near it
+   — and its panel then padded its own top by the same constant on top of that,
+   which is the band of nothing that sat above every bottom-docked terminal.
+   Panels pad by what is left (`--dock-content-overlap`) — which they measure
+   for themselves, since `defaultRenderer="always"` renders their content in an
+   overlay container outside the group and nothing set here would reach it (see
+   lib/workspace/panel-overlap.ts). Under a visible strip that is normally
+   zero. */
+html .dv-groupview > .dv-tabs-and-actions-container {
+  margin-top: var(--dock-header-overlap, var(--app-header-h));
+}
+
 /* The actions at the end of the strip (new tab, split). `dv-right-actions` is
    laid out after the void that absorbs the leftover width, so it stays pinned
    to the end rather than drifting along behind the last tab. */
@@ -1409,4 +1472,14 @@ html .dv-tab {
     --_scroll-fade-size-b,
     var(--scroll-fade-size, min(12%, calc(var(--spacing) * 10)))
   );
+}
+
+/* `scrollbar-none`: hide a horizontal row's scrollbar, like a touch strip.
+   Referenced by the attachment group and the prompt-suggestions row; declared
+   here once, rather than per component. */
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }

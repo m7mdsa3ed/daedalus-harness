@@ -46,6 +46,7 @@ import {
   type Tab,
 } from "@/lib/ide/editors"
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"
+import { usePublishPanelStatus } from "@/lib/workspace/panel-status"
 import { useCoarsePointer } from "@/hooks/use-mobile"
 import { idePrefs, setIdePref } from "@/lib/ide/prefs"
 import { useProjects } from "@/lib/queries/catalog"
@@ -134,6 +135,21 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
     api.setTitle(active ? `${titleOf(active)} — ${name}` : `${name} — IDE`)
   }, [api, project, active])
 
+  /* Unsaved work, on the tab. The IDE deliberately does not veto its own close
+     (the buffers outlive the panel — `lib/ide/editors.ts`), which is exactly
+     why the tab has to say so: nothing else asks, so nothing else would tell
+     you that closing this leaves edits behind. */
+  const dirtyCount = editors.dirty.size
+  usePublishPanelStatus(
+    api.id,
+    dirtyCount > 0
+      ? {
+          tone: "dirty",
+          label: dirtyCount === 1 ? "1 unsaved file" : `${dirtyCount} unsaved files`,
+        }
+      : null
+  )
+
   const openFile = React.useCallback(
     (path: string) => {
       openTab(projectId, { kind: "file", path })
@@ -180,7 +196,7 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
   if (!project) return <PanelEmptyState>This project is no longer available.</PanelEmptyState>
 
   return (
-    <div ref={root} className="flex h-full min-h-0 w-full">
+    <div ref={root} className="flex h-full min-h-0 w-full pt-[var(--dock-content-overlap,var(--app-header-h))]">
       {/* The rail: which side view is showing, and whether one is. Clicking the
           view you are on collapses the sidebar, which is the gesture every
           editor has and the only way to get the full width on a phone. */}

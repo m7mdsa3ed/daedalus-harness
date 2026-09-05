@@ -87,6 +87,7 @@ export const StepRow = React.memo(function StepRow({
   openSetting,
   icon: Icon,
   iconAccent,
+  iconChip,
 }: {
   target: React.ReactNode
   /** A second, quieter line under the target — the literal thing invoked when
@@ -130,6 +131,9 @@ export const StepRow = React.memo(function StepRow({
       neutral voice, so the rows that are not work-bearing steps (a plan, a
       compaction) stay quiet; a failure still claims the column. */
   iconAccent?: string
+  /** The accent's tinted tile behind the mark (`KIND_CHIPS`), so a coloured
+      icon wears its own background; a failure tints the tile red instead. */
+  iconChip?: string
 }) {
   const [open, setOpen] = React.useState(defaultOpen)
   /* `useState` reads its argument once, so a `defaultOpen` that later changes
@@ -201,9 +205,22 @@ export const StepRow = React.memo(function StepRow({
                   : (iconAccent ?? (active ? "text-primary" : "text-muted-foreground/60"))
               )}
             >
+              {/* The accent's tile: a coloured mark wears its own tinted
+                  background (`KIND_CHIPS`), and a failed one wears the red a
+                  failure claims everywhere else. Absolute so the column's
+                  geometry — which the rail is tuned to — does not move. */}
+              {iconChip && (
+                <span
+                  aria-hidden
+                  className={cn(
+                    "absolute size-3.5 rounded-sm",
+                    failed ? "bg-destructive/10" : iconChip
+                  )}
+                />
+              )}
               <Icon
                 className={cn(
-                  "size-3.5 transition-opacity duration-100",
+                  "relative size-3.5 transition-opacity duration-100",
                   expandable && (open ? "opacity-0" : "group-hover/step:opacity-0")
                 )}
               />

@@ -147,6 +147,11 @@ export interface Session {
       never be applied live, because every runtime reads it only when a session
       is created or loaded. See `applyConfigLive`. */
   personaId: string;
+  /** Whether the agent closes each answer with follow-up prompt suggestions
+      in a `suggest-prompts` fenced block (`personas.ts`). Same spawn-input
+      bargain as the persona: read only at session creation/load, so toggling
+      it costs a respawn. */
+  suggestFollowups: boolean;
   title: string;
   /** What this thread was started with, on top of its profile's links —
       picked on the draft, persisted with the row (db/links.ts), and what a
@@ -451,6 +456,12 @@ export interface TurnOutcome {
   interrupted: boolean;
 }
 
+/** How long a hold — a turn held on a failure, or a pause the user asked for,
+    turn or no turn — keeps its process alive with nobody attached. Long,
+    because a hold exists to be come back to — but finite, because rate limits
+    are common and a leaked process per one is not. */
+const HELD_TURN_MAX_MS = 6 * 60 * 60_000;
+
 export class SessionManager {
   private sessions = new Map<string, Session>();
   /** Server-side subscribers to a session's events (the workflow runner
@@ -499,7 +510,25 @@ export class SessionManager {
         /* Not a thread mid-turn: a parent blocked inside a workflow call with
            no browser open was being retired under it. And never a workflow
            step, which has no peers by design — its lifetime is its run's. */
-        if (s.parentSessionId || s.bridge?.promptActive) continue;
+        /* A held turn is still `promptActive`, so it would keep its process
+           alive forever with nobody reading it — whether the runtime held it
+           on a failure or the user paused it. And a pause with no turn open is
+           the other way round: nothing is active, so the ordinary sweep would
+           retire it and the revive would come back unpaused, silently. So any
+           hold is kept off the sweep, and given up on after the same long
+           while — a cancel, which lifts the hold and ends the turn cleanly,
+           parks the queue and leaves no error card — and the ordinary sweep
+           retires it next time round. Generous, because the whole point of a
+           hold is that somebody may come back to it. */
+        const bridge = s.bridge;
+        if (bridge?.paused && bridge.heldSince !== null && s.peers.size === 0) {
+          if (Date.now() - bridge.heldSince > HELD_TURN_MAX_MS) {
+            console.warn(`[${s.id.slice(0, 8)}] hold (${bridge.pausedReason}) gave up after ${Math.round(HELD_TURN_MAX_MS / 3_600_000)}h with no reader`);
+            void bridge.cancel().catch(() => {});
+          }
+          continue;
+        }
+        if (s.parentSessionId || bridge?.promptActive) continue;
         if (!s.exited && s.peers.size === 0 && s.detachedAt && Date.now() - s.detachedAt > idleMs) {
           this.retire(s);
         }
@@ -554,6 +583,9 @@ export class SessionManager {
         // Null in the column, "" in memory: every other spawn input on the
         // session is a string, and "no persona" is not a third state.
         personaId: row.personaId ?? "",
+        // Absent on rows written before the toggle existed — which never asked
+        // either way — so missing reads as the default: on.
+        suggestFollowups: row.suggestFollowups ?? true,
         profile: null,
         project: null,
         liveAcpSessionId: null,
@@ -647,6 +679,7 @@ export class SessionManager {
         model: s.model,
         effort: s.effort,
         personaId: s.personaId || null,
+        suggestFollowups: s.suggestFollowups,
         title: s.title,
         acpSessionId: s.acpSessionId ?? null,
         acpSessionProvisional: s.acpSessionProvisional,
@@ -1049,6 +1082,16 @@ export class SessionManager {
       /** How this thread should be worked on — picked on the draft, and (for a
           workflow step) inherited from the parent along with everything else. */
       personaId?: string;
+      /** Whether the agent should close answers with follow-up suggestions —
+          picked on the draft like the persona, and free there: nothing is
+          running yet, so there is no respawn to pay for. */
+      suggestFollowups?: boolean;
+      /** The permission mode picked on the draft, out of the agent's probed
+          `modes`. Applied over `session/set_mode` right after session/new —
+          the same door a live mode change uses, so a later respawn puts it
+          back through `captureRestoreState` like any mode the user picked
+          mid-conversation. Best-effort: an agent without modes ignores it. */
+      modeId?: string;
       /** Answer the agent's own questions for the user instead of parking them
           (`autonomy.ts`). Given here rather than set afterwards because the
           first question can arrive before the caller's next statement runs: the
@@ -1063,6 +1106,7 @@ export class SessionManager {
       model,
       effort,
       personaId: opts.personaId,
+      suggestFollowups: opts.suggestFollowups,
       title: opts.title,
       parentSessionId: opts.parentSessionId,
       autonomy: opts.autonomy,
@@ -1072,7 +1116,11 @@ export class SessionManager {
     // to exist by the time the agent's first update arrives.
     this.persist(session);
     this.persistLinks(session);
-    this.start(session, profile, project, model, effort, { configChoices, restore: opts.restore });
+    this.start(session, profile, project, model, effort, {
+      configChoices,
+      restore: opts.restore,
+      modeId: opts.modeId,
+    });
     this.armDeadline(session);
     return session;
   }
@@ -1136,6 +1184,7 @@ export class SessionManager {
       model?: string;
       effort?: string;
       personaId?: string;
+      suggestFollowups?: boolean;
       title?: string;
       parentSessionId?: string;
       autonomy?: AutonomyPolicy;
@@ -1159,6 +1208,7 @@ export class SessionManager {
       model: opts.model || profile.defaultModel || "",
       effort: opts.effort ?? "",
       personaId: opts.personaId ?? "",
+      suggestFollowups: opts.suggestFollowups ?? true,
       title: opts.title ?? "New thread",
       acpSessionProvisional: false,
       liveAcpSessionId: null,
@@ -1240,6 +1290,7 @@ export class SessionManager {
       load?: { acpSessionId: string };
       restore?: import("./protocol.js").RestoreState;
       configChoices?: Record<string, string | boolean>;
+      modeId?: string;
     },
   ): AcpBridge {
     session.profile = profile;
@@ -1273,7 +1324,7 @@ export class SessionManager {
        unconditionally — a thread that has just had its persona removed needs
        the stale prompt file cleared as much as one that gained a persona needs
        it written. */
-    const persona = resolvePersonaSpawn(session.id, session.personaId, agent);
+    const persona = resolvePersonaSpawn(session.id, session.personaId, agent, session.suggestFollowups);
     /* An agent whose children never reach ACP is given a port and a secret so
        the server can read them off its own event bus (opencode-subagents.ts).
        Minted here, per spawn, never stored — like the gateway key. The pool
@@ -1292,6 +1343,11 @@ export class SessionManager {
       session.id,
       persona,
       sidecar,
+      /* Nobody is going to change the model for a workflow step or a scheduled
+         run, and `whenTurnSettled` is what both wait on — so a held turn there
+         is a run that never reports. `autonomy` is null exactly for the thread
+         with a human in front of it (see `Session.autonomy`). */
+      !!session.parentSessionId || session.autonomy !== null,
     );
     const feed = sidecar
       ? new OpencodeSubagentFeed({
@@ -1456,7 +1512,8 @@ export class SessionManager {
    *  - a **persona** change, which is not a matter of conservatism at all but
    *    of where the value is read: every runtime takes a persona only as a
    *    session is created or loaded (`personas.ts`), so there is no live path
-   *    to be careful about. The respawn is cheap in the way that matters —
+   *    to be careful about. The suggestions toggle rides the same rule: its
+   *    trailer is folded into the same spawn text. The respawn is cheap in the way that matters —
    *    it ends in `session/load`, so the conversation comes back with it.
    *
    * Answers `{ live }` so the caller can tell a client whether its socket
@@ -1465,7 +1522,7 @@ export class SessionManager {
    */
   async applyConfig(
     id: string,
-    next: { profile: Profile; agentId: string; project: Project; model?: string; effort?: string; personaId?: string },
+    next: { profile: Profile; agentId: string; project: Project; model?: string; effort?: string; personaId?: string; suggestFollowups?: boolean },
   ): Promise<{ live: boolean }> {
     const session = this.sessions.get(id);
     if (!session) throw new Error("unknown session");
@@ -1478,6 +1535,7 @@ export class SessionManager {
        is the one the user asked for. */
     const changed = next.personaId !== undefined && next.personaId !== session.personaId;
     if (next.personaId !== undefined) session.personaId = next.personaId;
+    if (next.suggestFollowups !== undefined) session.suggestFollowups = next.suggestFollowups;
     /* A persona that names an effort applies it — but only at the moment it is
        *picked*, never on every later spawn. Otherwise the persona would win
        every argument: the user drops "Think more" to medium, changes their
@@ -1508,7 +1566,7 @@ export class SessionManager {
       and it is answered before anything about the thread has been changed. */
   private async applyConfigLive(
     session: Session,
-    next: { profile: Profile; agentId: string; project: Project; model?: string; effort?: string; personaId?: string },
+    next: { profile: Profile; agentId: string; project: Project; model?: string; effort?: string; personaId?: string; suggestFollowups?: boolean },
   ): Promise<boolean> {
     const agent = getAgent(session.agentId);
     if (!agent?.liveConfig) return false;
@@ -1517,6 +1575,9 @@ export class SessionManager {
        and codex's config is read at spawn, so a persona cannot be moved on a
        running process by any runtime we ship. */
     if (next.personaId !== undefined && next.personaId !== session.personaId) return false;
+    /* Same door, same rule: the suggestions trailer is spawn text, so a
+       thread that flips it needs the new process rather than a live patch. */
+    if (next.suggestFollowups !== undefined && next.suggestFollowups !== session.suggestFollowups) return false;
     // Mid-respawn, mid-revive, or no process: whatever is about to exist is
     // going to be spawned with these settings anyway.
     if (session.respawnChain || !session.bridge || session.exited) return false;
@@ -1588,6 +1649,7 @@ export class SessionManager {
       model,
       effort,
       personaId: session.personaId,
+      suggestFollowups: session.suggestFollowups,
     });
     /* A move that landed mid-turn draws the same transcript row a mode/model
        change does (`Profile: Old → New`), held for the step boundary; an idle
@@ -2004,6 +2066,7 @@ export class SessionManager {
       model: s.model,
       effort: s.effort,
       personaId: s.personaId,
+      suggestFollowups: s.suggestFollowups,
       title: s.title,
       ...s.links,
       /* The session anything asking today would mean: a task transcript's

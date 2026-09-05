@@ -1,13 +1,16 @@
-import { and, asc, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt, or, sql, type SQL } from "drizzle-orm";
 import { db as defaultDb, sessionEvents as eventsTable } from "./db/index.js";
 import { deleteSearchIndex, indexEventRow } from "./search.js";
 import {
   EARLIER_PAGE_STEPS,
   REPLAY_CHUNK_BYTES,
   REPLAY_CHUNK_SIZE,
+  TURN_TICK_REPLY,
+  TURN_TICK_TEXT,
   type EarlierPage,
   type JournaledEvent,
   type ThreadEvent,
+  type TurnTick,
 } from "./protocol.js";
 
 /** The one thing an append needs from its session: identity and the monotonic
@@ -245,6 +248,75 @@ export class SessionJournal {
     return Number(row?.count ?? 0);
   }
 
+  /**
+   * Every turn the log holds, oldest first, with preview excerpts — the
+   * thread's table of contents, carried on `attached` so the turn rail can
+   * draw all its ticks without paging history in first.
+   *
+   * One scan, and only over the rows that can contribute: the tool calls,
+   * diffs and terminal pages that make a replay heavy are refused by the SQL
+   * below and never reach this process. Reply text stops accumulating per turn
+   * once the excerpt is full, so a build-log turn costs its prefix, not its
+   * megabytes. A subagent's chunks carry the
+   * child's session id on the event and are skipped — the rail counts the
+   * thread's own answers, the way it skips `parentId` items client-side.
+   */
+  turnTicks(sessionId: string): TurnTick[] {
+    this.flush();
+    const rows = this.db
+      .select({ payload: eventsTable.payload })
+      .from(eventsTable)
+      .where(
+        and(
+          eq(eventsTable.sessionId, sessionId),
+          /* The only `update` this reads is an `agent_message_chunk`, and on a
+             long thread it is one row in a hundred — the rest are tool calls,
+             diffs and terminal pages, fetched whole and JSON.parsed here only
+             to be dropped by the loop below. The `like` is a superset of what
+             the loop keeps (every chunk names the discriminant in its payload)
+             and it is decided inside SQLite, over bytes, instead of in V8 over
+             objects: on this install's largest thread it is 1.2k rows in place
+             of 97k, and ~50ms in place of ~300ms of the attach. Everything the
+             loop refuses — a subagent's chunks, a non-text content block — it
+             still refuses, because the filter only ever removes rows the loop
+             was going to remove too. */
+          or(
+            eq(eventsTable.kind, "turn_started"),
+            and(
+              eq(eventsTable.kind, "update"),
+              sql`${eventsTable.payload} like '%agent_message_chunk%'`,
+            ),
+          ),
+        ),
+      )
+      .orderBy(asc(eventsTable.seq))
+      .all();
+    const ticks: TurnTick[] = [];
+    for (const row of rows) {
+      const event = row.payload as JournaledEvent;
+      if (event.ev === "turn_started") {
+        ticks.push({
+          turnId: event.turnId,
+          seq: event.seq,
+          text: (event.text ?? "").slice(0, TURN_TICK_TEXT),
+          reply: "",
+        });
+      } else if (event.ev === "update" && ticks.length > 0) {
+        if (event.sessionId) continue;
+        const update = event.update as {
+          sessionUpdate?: string;
+          content?: { type?: string; text?: string };
+        };
+        if (update.sessionUpdate !== "agent_message_chunk" || update.content?.type !== "text") continue;
+        const tick = ticks[ticks.length - 1];
+        if (tick.reply.length >= TURN_TICK_REPLY) continue;
+        const piece = update.content.text ?? "";
+        tick.reply = (tick.reply ? `${tick.reply}\n${piece}` : piece).slice(0, TURN_TICK_REPLY);
+      }
+    }
+    return ticks;
+  }
+
   /* ---- rewind ---- */
 
   /**
@@ -439,6 +511,32 @@ export class SessionJournal {
     session.eventCount = 0;
   }
 
+  /**
+   * One number per session, driven from the `sessions` table rather than from
+   * a GROUP BY over the events.
+   *
+   * Both callers are `reload`, which reads the answer by session row — so the
+   * only ids that can ever be looked up are the ones this drives from, and an
+   * orphaned event's group was work with no reader. The difference is what the
+   * shape costs: `group by session_id` is a walk of all 1M index entries to
+   * emit 466 rows, while a correlated `max()` over the same index's leading
+   * column is 466 seeks straight to the last entry of each range. Sub-millisecond
+   * against ~600ms for the pair, on a boot path that blocks the first spawn.
+   *
+   * `max(seq)` rides the (session_id, seq) index and `max(at)` the
+   * (session_id, at) one, both index-only.
+   */
+  private perSessionMax(agg: SQL): Map<string, number> {
+    const rows = this.db.all<{ id: string; value: number | null }>(sql`
+      select s.id as id,
+             (select ${agg} from session_events e where e.session_id = s.id) as value
+        from sessions s
+    `);
+    const out = new Map<string, number>();
+    for (const row of rows) if (row.value !== null) out.set(row.id, row.value);
+    return out;
+  }
+
   /** Where each session's log left off — `max(seq) + 1` per session, which is
       what `eventCount` restarts from on reload. Restoring it is not
       bookkeeping: `append` stamps from it and the (session_id, seq) index is
@@ -446,30 +544,17 @@ export class SessionJournal {
       of the revive. */
   nextSeqBySession(): Map<string, number> {
     this.flush();
-    return new Map(
-      this.db
-        .select({ sessionId: eventsTable.sessionId, next: sql<number>`max(${eventsTable.seq}) + 1` })
-        .from(eventsTable)
-        .groupBy(eventsTable.sessionId)
-        .all()
-        .map((row) => [row.sessionId, row.next] as const),
-    );
+    return this.perSessionMax(sql`max(seq) + 1`);
   }
 
   /** When each session's log was last written — `max(at)` per session. What
       backfills `Session.lastActivityAt` for a thread whose row predates that
       column, so ordering by activity is right for threads that existed before
-      anything recorded it. One grouped scan at boot, not per thread. */
+      anything recorded it. One query at boot, not per thread — see
+      `perSessionMax` for why it is not a GROUP BY. */
   lastActivityBySession(): Map<string, number> {
     this.flush();
-    return new Map(
-      this.db
-        .select({ sessionId: eventsTable.sessionId, at: sql<number>`max(${eventsTable.at})` })
-        .from(eventsTable)
-        .groupBy(eventsTable.sessionId)
-        .all()
-        .map((row) => [row.sessionId, row.at] as const),
-    );
+    return this.perSessionMax(sql`max(at)`);
   }
 
   /**

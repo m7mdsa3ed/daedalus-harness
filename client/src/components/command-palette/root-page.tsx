@@ -21,6 +21,10 @@
 import * as React from "react"
 import {
   AppWindowIcon,
+  LayoutGrid,
+  PictureInPicture2,
+  Save,
+  SquareKanbanIcon,
   Copy,
   Cpu,
   DownloadIcon,
@@ -86,6 +90,7 @@ import { loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import { useRoutines } from "@/lib/queries/routines"
 import { useLiveTurnActive, useStoreSelect } from "@/lib/store"
 import { toast } from "@/lib/toast"
+import { usePrompt } from "@/components/prompt-dialog"
 import { FONT_SIZE_DEFAULT, useFontSize, useTheme } from "@/lib/theme"
 import { usePalette } from "./context"
 import { ItemList, type PaletteItem } from "./list"
@@ -123,6 +128,10 @@ export function RootPage() {
   const liveTurnActive = useLiveTurnActive()
   const navigate = useNavigate()
   const confirm = useConfirm()
+  const prompt = usePrompt()
+  /* Read once per open, like the server list: a layout is saved by a command
+     that closes the palette, so nothing can change this list while it is up. */
+  const savedLayouts = React.useMemo(() => palette.dock.savedLayouts(), [palette.dock])
   const pins = usePins()
   const recents = usePaletteRecents()
   const { theme, setTheme } = useTheme()
@@ -507,6 +516,22 @@ export function RootPage() {
       onSelect: () => palette.run(() => void openTerminal(palette.dock, meta.projectId)),
     })
   }
+  /* Outside the `meta` block above: a board is the server's, not a project's,
+     so this row is offered whether or not a thread is routed. */
+  items.push({
+    id: "dock:tasks",
+    group: "Workspace",
+    title: "Open the board in a panel",
+    keywords: "tasks kanban board backlog sprint",
+    icon: <SquareKanbanIcon />,
+    subtitle: "The task board, beside the thread",
+    onSelect: () =>
+      palette.run(() => {
+        /* The board it was left on — see the same rule in app-shell. */
+        const existing = palette.dock.listPanels().find((entry) => entry.panel.kind === "tasks")
+        palette.dock.openPanel(existing?.panel ?? { kind: "tasks" }, { direction: "right" })
+      }),
+  })
   items.push(
     {
       id: "dock:split-right",
@@ -579,6 +604,73 @@ export function RootPage() {
     icon: <RotateCw />,
     onSelect: () => palette.run(() => palette.dock.resetLayout()),
   })
+
+  /* ── Windows ──
+     A panel out of the dock: floating over it, or in a window of its own. Both
+     act on the panel you are looking at, which is what makes them commands
+     rather than only tab-menu items. */
+  items.push(
+    {
+      id: "dock:popout",
+      group: "Workspace",
+      title: "Open panel in a new window",
+      keywords: "popout window monitor detach",
+      icon: <AppWindowIcon />,
+      subtitle: "The active panel, in a window of its own",
+      onSelect: () =>
+        palette.run(() => {
+          void palette.dock.popoutPanel().then((opened) => {
+            if (!opened) toast.error("The browser blocked the new window")
+          })
+        }),
+    },
+    {
+      id: "dock:float",
+      group: "Workspace",
+      title: "Float panel / dock it back",
+      keywords: "floating overlay detach dock",
+      icon: <PictureInPicture2 />,
+      onSelect: () => palette.run(() => palette.dock.toggleFloat()),
+    }
+  )
+
+  /* ── Saved layouts ──
+     A preset above is an arrangement of what is open; these carry their
+     contents. Saving asks for a name, and a name that is already taken replaces
+     that layout rather than making a second row with the same label. */
+  items.push({
+    id: "dock:layout-save",
+    group: "Workspace",
+    title: "Save this layout…",
+    keywords: "workspace arrangement store name snapshot",
+    icon: <Save />,
+    onSelect: () => {
+      /* Not through `palette.run`: the prompt is the next thing on screen, and
+         the palette has to be out of the way before it opens. */
+      palette.close()
+      void prompt({
+        title: "Save this layout",
+        description: "The panels that are open now, and where they sit.",
+        placeholder: "Review",
+        confirmLabel: "Save",
+        maxLength: 60,
+      }).then((name) => {
+        if (!name) return
+        if (palette.dock.saveLayoutAs(name)) toast.success(`Saved “${name}”`)
+      })
+    },
+  })
+  for (const layout of savedLayouts) {
+    items.push({
+      id: `dock:layout-${layout.id}`,
+      group: "Workspace",
+      title: `Layout: ${layout.name}`,
+      keywords: "saved workspace arrangement restore",
+      icon: <LayoutGrid />,
+      subtitle: "Opens and closes panels to match",
+      onSelect: () => palette.run(() => palette.dock.applySavedLayout(layout.id)),
+    })
+  }
 
   /* ── Settings ── */
   items.push({

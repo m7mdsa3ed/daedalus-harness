@@ -11,9 +11,16 @@ import type {
   ThreadCommand,
   ThreadEvent,
   TurnChanges,
+  TurnTick,
+  ThreadHold,
   WireError,
 } from "@daedalus/protocol"
 import { api, wsUrl, type ServerSettings } from "./settings"
+
+/** The hold, as both the `paused` event and `caught_up` state it — the
+    protocol's own shape, re-exported so readers of this module need not know
+    where it is spelled. */
+export type { ThreadHold }
 
 /**
  * How much of a thread's tail to ask for on a fresh attach, in **steps** (turns).
@@ -122,7 +129,7 @@ export interface ThreadCallbacks {
   /** The thread moved to another profile, model or effort without restarting.
       Fanned out to every device, this one included — the server resolves what
       a cleared value means, so the answer is what to draw. */
-  onSpawnConfig: (profileId: string, model: string, effort: string, personaId?: string) => void
+  onSpawnConfig: (profileId: string, model: string, effort: string, personaId?: string, suggestFollowups?: boolean) => void
   /** Time-to-first-update for a turn, ms, measured server-side. */
   onTtft: (ms: number) => void
   /** What is left of the subscription this thread spends, re-read after a turn
@@ -178,9 +185,20 @@ export interface ThreadCallbacks {
       is no agent process behind the thread and what follows is the journal
       alone. `historyLost` is set when the agent refused to reload this thread's
       conversation: the replay that follows is an empty transcript, and the only
-      difference between that and a brand new thread is this field. */
+      difference between that and a brand new thread is this field. `turns` is
+      the thread's whole table of contents from the journal — one entry per
+      turn, oldest first, including the ones still withheld behind `earlier`.
+      Absent on a resume (the client already holds the thread) and from a
+      server that predates it. */
   onAttached: (
-    info: { from: number; to: number; resumed: boolean; earlier: number; archived: boolean },
+    info: {
+      from: number
+      to: number
+      resumed: boolean
+      earlier: number
+      archived: boolean
+      turns?: TurnTick[]
+    },
     historyLost?: HistoryLost
   ) => void
   /** A `replay` frame landed and its events have been folded. `done`/`total`
@@ -201,10 +219,12 @@ export interface ThreadCallbacks {
   /** The replay is over; everything after this is live. `promptActive` is read
       server-side in the same tick as the log it follows, so it cannot pair a
       stale turn state with a fresh replay window. */
-  onCaughtUp: (cursor: number, promptActive: boolean, queue: QueuedMessage[], paused: boolean) => void
+  onCaughtUp: (cursor: number, promptActive: boolean, queue: QueuedMessage[], hold: ThreadHold) => void
   /** The turn is held at a step boundary, or released. Absolute, live-only,
-      to every peer — the one that asked included. */
-  onPaused: (paused: boolean) => void
+      to every peer — the one that asked included. Carries *why*: `"user"` is
+      the pause toggle, `"error"` is a turn that failed and is waiting for a
+      model change rather than ending — still an open turn, never a failure. */
+  onPaused: (hold: ThreadHold) => void
   /** The journal position this device has folded up to, as it moves — so the
       cursor a reconnect resumes from describes what is actually on screen and
       not merely what was there when this socket attached. Raised on every
@@ -523,6 +543,9 @@ export class ThreadSocket {
             resumed,
             earlier: this.earlier,
             archived: event.archived ?? false,
+            /* An absent list leaves the store's own alone — resumes and older
+               servers carry none, and neither may clear what a full attach set. */
+            ...(event.turns !== undefined ? { turns: event.turns } : {}),
           },
           event.historyLost
         )
@@ -536,11 +559,18 @@ export class ThreadSocket {
            back while the archive streams), in which case ours is ahead and the
            server's would give that event back on the next resume. */
         this.cursor = Math.max(this.cursor, event.cursor)
-        this.callbacks.onCaughtUp(this.cursor, event.promptActive, event.queue ?? [], event.paused ?? false)
+        this.callbacks.onCaughtUp(
+          this.cursor,
+          event.promptActive,
+          event.queue ?? [],
+          event.hold ?? { paused: false }
+        )
         return
-      case "paused":
-        this.callbacks.onPaused(event.paused)
+      case "paused": {
+        const { ev: _ev, ...hold } = event
+        this.callbacks.onPaused(hold)
         return
+      }
       /* The replay, arriving whole. Unrolled through this same switch so there
          is no second parser: `catchingUp` is already true (the `attached` that
          precedes it set it), the callbacks see exactly what a one-frame-per-
@@ -584,7 +614,7 @@ export class ThreadSocket {
         this.callbacks.onQueue(event.items)
         return
       case "spawn_config":
-        this.callbacks.onSpawnConfig(event.profileId, event.model, event.effort, event.personaId)
+        this.callbacks.onSpawnConfig(event.profileId, event.model, event.effort, event.personaId, event.suggestFollowups)
         return
       case "ttft":
         this.callbacks.onTtft(event.ms)
@@ -825,6 +855,25 @@ export class ThreadSocket {
     } finally {
       this.catchingUp = false
       this.callbacks.onRewound(this.earlier)
+    }
+  }
+
+  /**
+   * Page history back until `windowFrom` reaches `targetSeq` — the start (or
+   * earlier) of a `turn_started` the caller wants folded — then re-fold like
+   * `loadEarlier`. This is the rail's jump-to-unloaded path: a tick whose
+   * messages are still withheld names its `turn_started` seq, and folding
+   * until that seq is in the window is what makes the jump land instead of
+   * falling off the top of the transcript. One guard, same as `loadEarlier`:
+   * concurrent callers share the page already on its way.
+   */
+  async loadUntil(targetSeq: number): Promise<void> {
+    if (this.earlierInFlight) {
+      await this.earlierInFlight
+      if (this.windowFrom <= targetSeq || this.earlier <= 0 || !this.raw) return
+    }
+    while (this.windowFrom > targetSeq && this.earlier > 0 && this.raw) {
+      await this.loadEarlier()
     }
   }
 

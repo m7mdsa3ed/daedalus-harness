@@ -26,10 +26,12 @@ import {
   Pencil,
   Pin,
   PinOff,
+  Play,
   Plug,
   RefreshCw,
   RotateCcw,
   Square,
+  SquareTerminal,
   Trash2,
   Undo2,
 } from "lucide-react"
@@ -50,14 +52,18 @@ import {
 import { renderMenuItems, type MenuItemSpec } from "@/components/item-context-menu"
 import { useConfirm } from "@/components/confirm-dialog"
 import { SessionSettingsDialog } from "@/components/session-settings"
-import { WorkspacePanelItems } from "@/components/workspace/panel-items"
+import { WorkspaceLayoutItems, WorkspacePanelItems } from "@/components/workspace/panel-items"
+import type { WorkspaceDock } from "@/components/workspace/dock"
 import type { PanelKind } from "@/lib/workspace/panels"
 import { usePrompt } from "@/components/prompt-dialog"
 import type { Actions } from "@/lib/actions"
 import { reportError } from "@/lib/errors"
 import { togglePin, usePins } from "@/lib/pins"
-import { projectPath, threadPath } from "@/lib/router"
-import { type SessionMeta } from "@/lib/settings"
+import { projectPath, settingsFormPath, threadPath } from "@/lib/router"
+import { type HelperCommand, type Project, type SessionMeta } from "@/lib/settings"
+import { useProjects } from "@/lib/queries/catalog"
+import { useServer } from "@/lib/server-context"
+import { devAction } from "@/lib/workspace/dev-server"
 import { useStoreSelect } from "@/lib/store"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
@@ -289,13 +295,17 @@ export function useThreadRowActions(
 export function ThreadHeaderMenu({
   actions,
   session,
+  project: projectProp,
   onNewTab,
   onOpenPanel,
   onOpenPreview,
   onOpenInNewTab,
+  onRunHelper,
+  dock,
 }: {
   actions: Actions
   session?: SessionMeta
+  project?: Project
   onNewTab: () => void
   onOpenPanel: (kind: PanelKind) => void
   /** The preview row — only when the thread's project can run one. */
@@ -303,12 +313,32 @@ export function ThreadHeaderMenu({
   /** Open the routed thread in a second dock tab — the sidebar row's action,
       which needs the dock and so is handed down rather than done here. */
   onOpenInNewTab?: (session: SessionMeta) => void
+  onRunHelper?: (helper: HelperCommand, projectId: string) => void
+  /** The dock, for the arrangements submenu. Handed down rather than taken from
+      `useDock`, which only answers inside the dock's own tree — this menu is in
+      the app header, above it. */
+  dock?: WorkspaceDock
 }) {
   const navigate = useNavigate()
+  const settings = useServer()
   const [viewSettings, setViewSettings] = React.useState(false)
   const [refreshing, setRefreshing] = React.useState(false)
+  const [restartingServer, setRestartingServer] = React.useState(false)
   const sessionId = session?.id
   const pins = usePins()
+  const projects = useProjects()
+  const project = projectProp ?? projects.find((p) => p.id === session?.projectId)
+  const helpers = project?.helpers ?? []
+  const hasServer = !!project?.devCommand
+
+  const restartServer = React.useCallback(() => {
+    if (!project?.id || restartingServer) return
+    setRestartingServer(true)
+    devAction(settings, project.id, "restart")
+      .then(() => toast.success("Server restart initiated"))
+      .catch((err) => reportError(err, "Couldn't restart dev server"))
+      .finally(() => setRestartingServer(false))
+  }, [project?.id, restartingServer, settings])
   /* One boolean off one thread. This menu is drawn beside a live transcript,
      so reading the whole state here re-opened the question on every streamed
      token of every thread. Undefined = no live thread, which is what the
@@ -459,6 +489,43 @@ export function ThreadHeaderMenu({
             onOpenPreview={onOpenPreview}
             canOpenPanels={!!session}
           />
+          {dock && <WorkspaceLayoutItems dock={dock} />}
+          {project && (hasServer || helpers.length > 0) && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger className="gap-2">
+                    <SquareTerminal className="size-4 text-muted-foreground" />
+                    <span className="truncate">Project commands</span>
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="w-56">
+                    {hasServer && (
+                      <DropdownMenuItem onClick={restartServer} disabled={restartingServer}>
+                        <RefreshCw className={cn("size-4 text-muted-foreground", restartingServer && "animate-spin")} />
+                        <span className="min-w-0 flex-1 truncate">Restart server</span>
+                      </DropdownMenuItem>
+                    )}
+                    {hasServer && helpers.length > 0 && <DropdownMenuSeparator />}
+                    {helpers.map((h) => (
+                      <DropdownMenuItem
+                        key={h.id}
+                        onClick={() => onRunHelper?.(h, project.id)}
+                      >
+                        <Play className="size-4 text-muted-foreground" />
+                        <span className="min-w-0 flex-1 truncate">{h.name}</span>
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => void navigate(settingsFormPath("projects", project.id))}>
+                      <Pencil className="size-4 text-muted-foreground" />
+                      <span className="min-w-0 flex-1 truncate">Manage helpers…</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              </DropdownMenuGroup>
+            </>
+          )}
           {items.length > 0 && (
             <>
               <DropdownMenuSeparator />

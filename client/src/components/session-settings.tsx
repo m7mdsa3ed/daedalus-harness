@@ -127,7 +127,7 @@ const GROUPS: Group[] = [
         icon: Rows3,
         title: "Turn rail",
         description:
-          "Tick marks down the right edge, one per message you sent. Hover to preview, click to jump.",
+          "Tick marks along the composer's edge above Send, one per turn. Hover to preview, click to jump — or press and slide to scrub them.",
       },
     ],
   },

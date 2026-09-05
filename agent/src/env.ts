@@ -15,6 +15,13 @@ export interface AgentEnv {
   personaFile: string | null;
   /** Read AGENTS.md / CLAUDE.md from the workspace. Off with `0`/`false`. */
   projectInstructions: boolean;
+  /** Send `prompt_cache_key` so a router keeps a thread on one backend. Off with `0`/`false`. */
+  promptCacheKey: boolean;
+  /** Whether a failed turn holds at a step boundary instead of ending, waiting
+      for a model change and a resume (`hold.ts`). Off with `0`/`false` — which
+      is what the harness spawns a thread with nobody in front of it as, since
+      a hold there would wait forever. */
+  holdOnError: boolean;
   home: string;
 }
 
@@ -47,6 +54,12 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env): AgentEnv {
     personaFile: str(env.DAEDALUS_AGENT_PERSONA_FILE),
     projectInstructions: !["0", "false", "off"].includes(
       (str(env.DAEDALUS_AGENT_PROJECT_INSTRUCTIONS) ?? "").toLowerCase(),
+    ),
+    promptCacheKey: !["0", "false", "off"].includes(
+      (str(env.DAEDALUS_AGENT_PROMPT_CACHE_KEY) ?? "").toLowerCase(),
+    ),
+    holdOnError: !["0", "false", "off"].includes(
+      (str(env.DAEDALUS_AGENT_HOLD_ON_ERROR) ?? "").toLowerCase(),
     ),
     home: str(env.DAEDALUS_AGENT_HOME) ?? join(homedir(), ".daedalus-agent"),
   };

@@ -40,6 +40,7 @@ template works either way).
 | `DAEDALUS_AGENT_MAX_OUTPUT_TOKENS` | Per-response cap. | provider default |
 | `DAEDALUS_AGENT_PERSONA_FILE` | Path to a markdown file appended to the system prompt — see [prompting.md](./prompting.md). | none |
 | `DAEDALUS_AGENT_PROJECT_INSTRUCTIONS` | `0` to stop reading `AGENTS.md` / `CLAUDE.md` from the workspace. | on |
+| `DAEDALUS_AGENT_PROMPT_CACHE_KEY` | `0` to stop sending `prompt_cache_key` (the session id) — the affinity hint that keeps a thread's steps on one backend, so its prefix cache stays warm. Turn it off only for an upstream that rejects unknown body fields. | on |
 | `DAEDALUS_AGENT_HOME` | Where transcripts live. | `~/.daedalus-agent` |
 
 **Only OpenAI-compatible endpoints.** There is no Anthropic-messages path and no

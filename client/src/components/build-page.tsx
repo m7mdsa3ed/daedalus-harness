@@ -247,7 +247,7 @@ export function BuildPage({ actions }: { actions: Actions }) {
   )
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
+    <div className="min-h-0 flex-1 overflow-y-auto pt-[var(--app-header-h)]">
       <div className="relative mx-auto w-full max-w-3xl px-4 pt-10 pb-24 sm:px-8 sm:pt-16">
         <header className="mb-8">
           <p className="mb-3 flex items-center gap-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">

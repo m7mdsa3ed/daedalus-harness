@@ -117,8 +117,9 @@ export function NotificationsInboxPage() {
           {/* The toolbar: filters on the left, housekeeping on the right. It
               sticks under the header so a long history keeps its controls in
               reach; the backdrop is the page's own colour, so scrolled rows
-              vanish under it rather than showing through. */}
-          <div className="sticky top-0 z-10 -mx-1 mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 bg-background/95 px-1 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+              vanish under it rather than showing through. The offset is the
+              floating header's height, because the page scrolls beneath it. */}
+          <div className="sticky top-[var(--app-header-h)] z-10 -mx-1 mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 bg-background/95 px-1 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80">
             <ToggleGroup
               value={[filter]}
               onValueChange={(v) => {

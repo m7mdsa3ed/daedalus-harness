@@ -17,7 +17,13 @@ import { dirname, join } from "node:path";
    user-level `~/.claude/CLAUDE.md` is included deliberately and first — it is
    the weakest voice in the prompt, and it is where "how I like things" lives. */
 
-const NAMES = ["AGENTS.md", "CLAUDE.md", "CLAUDE.local.md"];
+/* Every spelling the ecosystem actually ships, weakest first within a
+   directory. `AGENT.md` is opencode's singular — this repo's own rules file is
+   one, and for months it was the file the agent standing in the repo could not
+   see while every other runtime read it. Both names are listed rather than
+   picked between: a repo that has both means both, and two files with the same
+   body dedupe below anyway. */
+const NAMES = ["AGENT.md", "AGENTS.md", "CLAUDE.md", "CLAUDE.local.md"];
 /**
  * How far up to walk when nothing stops us first.
  *
@@ -30,8 +36,16 @@ const NAMES = ["AGENTS.md", "CLAUDE.md", "CLAUDE.local.md"];
  * this file exists to serve.
  */
 const MAX_LEVELS = 24;
-const FILE_LIMIT = 16_000;
-const TOTAL_LIMIT = 32_000;
+/* Characters, not tokens, and generous on purpose. A repo that has written its
+   rules down at length is exactly the repo that meant them: at 16k this
+   harness's own `CLAUDE.md` (42k) arrived cut off at a third, which reads to
+   the model as a rulebook that simply stops — worse than none, because the
+   half it kept looked complete. The cost is bounded and it is *cached*: the
+   instruction blocks sit ahead of the one volatile line in the system prompt,
+   so a session pays for them on its first step and reads them from the
+   provider's prefix cache on every step after. */
+const FILE_LIMIT = 48_000;
+const TOTAL_LIMIT = 80_000;
 
 function isFile(path: string): boolean {
   try {
@@ -95,7 +109,13 @@ export function readInstructions(paths: string[]): string[] {
     if (!text || bodies.has(text)) continue;
     bodies.add(text);
     const limit = Math.min(FILE_LIMIT, budget);
-    const body = text.length > limit ? `${text.slice(0, limit)}\n\n[…truncated]` : text;
+    /* A clip says so in the model's own terms — which file, how much is
+       missing and that the rest can be read — because an instruction the
+       prompt silently dropped is one the model is blamed for not following. */
+    const body =
+      text.length > limit
+        ? `${text.slice(0, limit)}\n\n[…truncated: ${text.length - limit} more characters in ${path}. Read the file if you need the rest.]`
+        : text;
     budget -= body.length;
     blocks.push(`Instructions from ${path}:\n\n${body}`);
   }

@@ -170,6 +170,20 @@ export interface AttachmentRef {
 /** A JSON-RPC error flattened for the wire. The shape matters: `lib/errors.ts`
     reads `code` for its title table and `data.stderr` for the agent's own
     output, so carrying prose instead would throw both away. */
+/**
+ * The hold, as both the `paused` event and `caught_up` state it. One shape,
+ * built in one place (`AcpBridge.hold()`), so an attaching reader and a live
+ * one can never disagree about whether — or why — a turn is stopped.
+ * `reason` and `error` are present only while `paused`.
+ */
+export interface ThreadHold {
+  paused: boolean;
+  /** `"user"` is the composer's toggle; `"error"` is a turn that failed and
+      is waiting at its step boundary for a model change and a Continue. */
+  reason?: "user" | "error";
+  error?: WireError;
+}
+
 export interface WireError {
   code: number;
   message: string;
@@ -619,6 +633,28 @@ export const REPLAY_WINDOW_BYTES = 50 * 1024;
     mid-way (the old event-counted page landed wherever the count ran out). */
 export const EARLIER_PAGE_STEPS = 20;
 
+/** Preview-card excerpts on `TurnTick`: the prompt that opened the turn, and
+    the start of the answer it drew. Truncation, not content — the full
+    messages still come only from the replay. */
+export const TURN_TICK_TEXT = 160;
+export const TURN_TICK_REPLY = 240;
+
+/** One entry of the thread's table of contents: every turn the journal holds,
+    oldest first. The attach bracket carries the whole list (see `attached`),
+    so the turn rail can draw every tick — including turns whose messages are
+    still on the server behind `earlier` — without paging history in first.
+    `text` is the prompt that opened the turn and `reply` the start of what it
+    drew back, both truncated for the preview card; the full messages still
+    come only from the replay. */
+export interface TurnTick {
+  turnId: string
+  /** The seq of the turn's `turn_started` — what a client paging backwards
+      walks towards when jumping to a turn whose messages are still withheld. */
+  seq: number
+  text: string
+  reply: string
+}
+
 /** The answer to `load_earlier`: a page of history older than what the client
     has, plus how many older steps are still behind it. */
 export interface EarlierPage {
@@ -678,11 +714,27 @@ export type ThreadEvent =
       /** Set when this process came up on an empty session because the thread's
           conversation could not be loaded. Absent is the normal case. */
       historyLost?: HistoryLost;
+      /** The thread's whole table of contents — one entry per journaled turn,
+          oldest first, including the turns withheld behind `earlier`. The rail
+          draws every tick from this without paging history in; a resume omits
+          it (absent, not empty — the client already holds the thread through
+          its own window and an absent list must not clear that). */
+      turns?: TurnTick[];
     }
   /** `queue` rides here because the queue is not journaled (see the `queue`
       event): a peer attaching has to be handed it the way it is handed an
       open permission after the replay. */
-  | { ev: "caught_up"; cursor: number; promptActive: boolean; queue?: QueuedMessage[]; paused?: boolean }
+  | {
+      ev: "caught_up";
+      cursor: number;
+      promptActive: boolean;
+      queue?: QueuedMessage[];
+      /** The hold, in exactly the shape the `paused` event carries it — a
+          hold is current state, so an attaching peer is told it here rather
+          than finding it in a replay that never carried it. Absent means
+          not held. */
+      hold?: ThreadHold;
+    }
   /** The replay, in bulk. A container, not a fifth journaled kind: the events
       inside are the same events a live socket receives and the client unrolls
       them through the same dispatch, so `attached`/`caught_up` still bracket
@@ -753,8 +805,18 @@ export type ThreadEvent =
   /** The turn is held at a step boundary, or no longer is. Absolute and
       live-only, like `queue`: it is current state rather than history, so
       `caught_up` carries it on attach and a replay never redraws an old hold.
-      To every peer including the one that asked. */
-  | { ev: "paused"; paused: boolean }
+      To every peer including the one that asked.
+
+      Two things hold a turn and they are one wait. `"user"` is the composer's
+      toggle. `"error"` is a **turn that failed** — a rate limit, an exhausted
+      quota, a key that stopped working — held at the boundary instead of
+      ending, with every tool call it has already made intact, while the user
+      changes the model or the profile (which the harness can do on the running
+      process) and lets it go on. So a held turn is still `turnActive`: it has
+      not ended, there is no `turn_ended`, and `error` here is a state to draw,
+      never a failure to record. Only a runtime that owns its own loop can do
+      this — the same one `canPause` names. */
+  | ({ ev: "paused" } & ThreadHold)
   /** The thread moved to another provider, model or effort *without* being
       restarted (`SessionManager.applyConfig`). Absolute, like `session_config`,
       but live-only and not journaled: it is the session row's own state, and a
@@ -762,7 +824,7 @@ export type ThreadEvent =
       peer including the one that asked — the change may have been rewritten on
       the way (a profile's default model standing in for a cleared one), so the
       answer, not the request, is what every menu should draw. */
-  | { ev: "spawn_config"; profileId: string; model: string; effort: string; personaId?: string }
+  | { ev: "spawn_config"; profileId: string; model: string; effort: string; personaId?: string; suggestFollowups?: boolean }
   /** A turn began, and whose words began it. Fanned out to every peer except
       the sender, which already showed its own message. */
   /** `attachments` is journaled, which is the whole point of carrying refs

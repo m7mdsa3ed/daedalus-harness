@@ -8,6 +8,8 @@ import { installGlobalErrorReporting } from './lib/errors.ts'
 import { installDesktopNotifications, installNotificationTestHelper } from './lib/notifications.ts'
 import { registerPwa } from './lib/pwa'
 import { watchInstallability } from './lib/install.ts'
+import { startKeyboardInset } from './lib/keyboard-inset.ts'
+import { installWindowControlsOverlay } from './hooks/use-windows-controls-overlay.ts'
 
 // The floor under everything else: a promise nobody caught, or a listener that
 // threw outside React's tree, would otherwise vanish into the console. The
@@ -23,6 +25,16 @@ installDesktopNotifications()
 // that arrive when no tab is attached. Silent no-op off https or in a browser
 // without support.
 registerPwa()
+// `--keyboard-inset`: the page no longer resizes when the soft keyboard opens
+// (index.html's `interactive-widget=overlays-content`), so the one surface that
+// has to stay above it reads how tall it is from here. Installed before render
+// because the variable is read on the first paint of a focused composer.
+startKeyboardInset()
+// `html[data-window-controls-overlay]`: the PWA's equivalent of Electron's
+// frameless window. In `window-controls-overlay` mode (installed Chromium on
+// Windows) the OS title bar is gone and the app's top strip is draggable; the
+// attribute flips on the first read, so the drag regions are live before paint.
+installWindowControlsOverlay()
 // `beforeinstallprompt` fires within moments of load and only once, so the
 // listener has to be up before anything renders — a component that mounts later
 // has already missed it, and the app then has no way to offer an install at all.

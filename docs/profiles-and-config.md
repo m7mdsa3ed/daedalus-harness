@@ -335,7 +335,13 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   with an in-flight map so two tabs asking at once spawn one agent, not two — so it is one
   spawn ever, not one per page-load, and `?refresh=1` is the escape hatch for an upgraded
   binary or a changed gateway catalog. Picks are held on the draft, sent as `configChoices`
-  in `POST /api/sessions`, and applied by the bridge right after `session/new`.
+  in `POST /api/sessions`, and applied by the bridge right after `session/new`. The probe's
+  answer also carries the agent's **`modes`** — which daedalus advertises only on that
+  channel, so without storing it the one runtime you own would be the one you cannot start
+  in plan mode. The store keeps it beside the options, the draft renders a Mode row from it
+  (first row of Agent options, like the live menu), and the pick travels as `modeId`, not in
+  `configChoices` — a mode goes over `session/set_mode`, not `set_config_option`, and the
+  bridge applies it right after `session/new`, guarded on the agent's own advertised list.
   **Which options exist can depend on which model is selected** — opencode reveals `effort`
   only for its reasoning models, in the `set_config_option` *response*, with no
   `config_option_update` notification. So the probe does not just snapshot the current set:

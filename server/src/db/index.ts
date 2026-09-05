@@ -35,11 +35,29 @@ client.pragma("synchronous = NORMAL");
 // Off by default in SQLite, and the whole reason the join tables can be trusted.
 client.pragma("foreign_keys = ON");
 client.pragma("busy_timeout = 5000");
+/* The page cache, which defaults to 2MB — set for a database that is not this
+   one. A journal row is a whole protocol frame and the big ones are terminal
+   pages and diffs, so 2MB is a handful of them: a replay evicts the b-tree
+   interior pages it is about to need again on the next page of the same scan.
+   Negative is KiB rather than pages, so it stays 64MB whatever `page_size` is. */
+client.pragma("cache_size = -65536");
+/* Read the file through the page cache *and* mmap. The read paths that matter
+   here are payload-heavy and sequential (replay, `turnTicks`, the byte pass in
+   `windowStart`), which is exactly what mmap saves a copy on — measured at
+   roughly half the time on this install's largest thread, and more when the
+   pages are not already in the OS cache. Bounded rather than unlimited: this
+   database grows without one, and an address space reservation that tracks it
+   is not something a 32-bit build or a memory-capped container survives. */
+client.pragma("mmap_size = 268435456");
+/* GROUP BY and the window function in `windowStart` sort; sorting to a file on
+   disk to answer a question about the file is the worst of both. */
+client.pragma("temp_store = MEMORY");
 
 export const db = drizzle(client, { schema });
 
 ensureSchema();
 importLegacyJson();
+analyzeOnce();
 
 /**
  * The schema is `schema.ts`, pushed — there are no migration files.
@@ -69,6 +87,20 @@ function ensureSchema(): void {
       stdio: ["ignore", "ignore", "inherit"],
     });
   }
+  /* Additive columns the operator has not pushed yet (`pnpm db:push` is the
+     documented step, but a server booting under a process manager must not
+     come up broken for missing it): each is a no-op once the column exists,
+     and a plain default on rows written before it. */
+  for (const sql of [
+    "ALTER TABLE sessions ADD COLUMN suggest_followups INTEGER DEFAULT 1",
+  ]) {
+    try {
+      client.exec(sql);
+    } catch {
+      /* The column is already there — duplicate-column is the expected path
+         on every boot after the first. */
+    }
+  }
   client.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS session_events_fts USING fts5(
       text,
@@ -78,6 +110,33 @@ function ensureSchema(): void {
       tokenize = 'unicode61 remove_diacritics 2'
     )
   `);
+}
+
+/**
+ * Give the query planner measurements instead of guesses.
+ *
+ * SQLite plans on hardcoded estimates until an ANALYZE has run, and no install
+ * of this had ever run one. That was survivable while `session_events` carried
+ * a single usable index; it stops being survivable the moment a table has two
+ * that overlap on their leading column — (session_id, seq) and
+ * (session_id, at) — because which one a query gets is then a guess about
+ * selectivity, and the wrong guess on the replay path is the whole transcript
+ * read through the wrong b-tree.
+ *
+ * `analysis_limit` is what makes this safe to run on every boot: it caps the
+ * rows sampled per index, so the pass is bounded by the number of indexes
+ * rather than by the size of the database (milliseconds here, on 1M events).
+ * `optimize` then re-analyzes only what has drifted since the last time, and
+ * is a no-op on the boots where nothing has.
+ */
+function analyzeOnce(): void {
+  try {
+    client.pragma("analysis_limit = 400");
+    client.pragma("optimize");
+  } catch (error) {
+    // Planner statistics are an optimization, never a correctness requirement.
+    console.warn("[db] could not refresh planner statistics", error);
+  }
 }
 
 /**

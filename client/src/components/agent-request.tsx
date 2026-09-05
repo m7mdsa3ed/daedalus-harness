@@ -60,7 +60,9 @@ export function AgentRequestHeader({
   return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-2">
-        <Icon aria-hidden className="size-3.5 shrink-0 text-primary" />
+        <span className="grid size-3.5 shrink-0 place-items-center rounded-sm bg-primary/10 text-primary">
+          <Icon aria-hidden className="size-3.5" />
+        </span>
         <p className="harness-shimmer min-w-0 flex-1 truncate text-[10px] font-semibold tracking-[0.08em] text-primary uppercase">
           {label}
         </p>
