@@ -712,8 +712,18 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                — zero for a thread in a group that is not at the top. The
                constant is the fallback: outside the dock (and for the frame
                before the first measurement) it is the whole header. */
+            /* `scrollbar-gutter: stable both-edges` is what keeps the transcript
+               centred on the *panel* rather than on this viewport. The app's
+               scrollbars take layout width (`index.css`: `scrollbar-width: thin`
+               over a 6px `::-webkit-scrollbar`, not overlay), so a column
+               centred in here sits 3px left of the composer, which is centred
+               over the panel outside the scroller — and 3px is exactly the
+               alignment `--harness-composer-width` subtracts 2rem to get right.
+               `both-edges`, not plain `stable`: reserving the gutter on one
+               side keeps the offset, it only stops it appearing and vanishing
+               with the scrollbar. */
             className={cn(
-              "pt-[var(--dock-content-overlap,var(--app-header-h))] [scroll-padding-top:var(--dock-content-overlap,var(--app-header-h))]",
+              "pt-[var(--dock-content-overlap,var(--app-header-h))] [scroll-padding-top:var(--dock-content-overlap,var(--app-header-h))] [scrollbar-gutter:stable_both-edges]",
               !empty && "[scroll-padding-bottom:var(--composer-dock-h,14rem)]"
             )}
           >

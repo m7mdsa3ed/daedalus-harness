@@ -24,6 +24,7 @@ import { InstallGroup, SecurityGroup, SiteDataGroup } from "./app"
 import { PageHeader, Group, Row } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
+import { EnhanceGroup } from "./enhance"
 
 /* ── General ──
    The servers this device knows (lib/settings stores several side by side),
@@ -45,6 +46,7 @@ export function GeneralPage() {
         }
       />
       <ServersGroup active={settings} />
+      <EnhanceGroup />
       <InstallGroup />
       <SecurityGroup />
       <SiteDataGroup />

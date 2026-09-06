@@ -5,7 +5,7 @@
    the same control to look at — the difference between them is what happens on
    select, and that is the caller's business, not the row's. */
 import type * as acp from "@daedalus/acp"
-import type * as React from "react"
+import * as React from "react"
 import {
   DropdownMenuItem,
   DropdownMenuPortal,
@@ -36,8 +36,9 @@ export function MenuRow({
   onSelect: (value: string) => void
 }) {
   const current = choices.find((choice) => choice.value === value)
+  const [submenuOpen, setSubmenuOpen] = React.useState(false)
   return (
-    <DropdownMenuSub>
+    <DropdownMenuSub open={submenuOpen} onOpenChange={setSubmenuOpen}>
       <DropdownMenuSubTrigger>
         <span className="flex-1">{label}</span>
         {current?.icon}
@@ -49,7 +50,10 @@ export function MenuRow({
         <DropdownMenuSubContent>
           <DropdownMenuRadioGroup
             value={value}
-            onValueChange={(next) => next && next !== value && onSelect(next)}
+            onValueChange={(next) => {
+              setSubmenuOpen(false)
+              next && next !== value && onSelect(next)
+            }}
           >
             {choices.map((choice) => (
               <DropdownMenuRadioItem key={choice.value} value={choice.value}>

@@ -769,6 +769,14 @@ export type ThreadEvent =
           the queue, so an attaching peer is told rather than left to find the
           menus moved when the turn ends. Absent means nothing staged. */
       staged?: StagedConfig;
+      /** How full the agent says its context window is, from the newest
+          `usage_update` this thread has ever produced (`Session.context`).
+          Rides here for the same reason the three above do — it is state, not
+          history — and it lands *after* the replay on purpose: a windowed
+          replay may carry no reading at all, and a `load_earlier` page carries
+          an older one, so the last word has to be the server's. Absent means
+          this runtime has never reported one. */
+      context?: acp.UsageUpdate;
     }
   /** The replay, in bulk. A container, not a fifth journaled kind: the events
       inside are the same events a live socket receives and the client unrolls

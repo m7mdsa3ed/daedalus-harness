@@ -834,14 +834,32 @@ export class AcpBridge {
    * a reason to throw a restored thread away.
    */
   private async applyRestore(restore: RestoreState): Promise<void> {
+    /* The mode twin first: an agent that advertises the mode twice (once as
+       `modes`, once as a select config option — claude-agent-acp does) keeps
+       the two in lockstep, and whichever lands second wins. Restoring a stale
+       twin's value after the mode would move the mode back to what the old
+       process happened to be on. `captureRestoreState` already drops the twin
+       from the list, but a restore captured by an older server — or one that
+       arrives with the twin while the agent renamed its modes — must not
+       clobber the mode through the back door either. */
+    const modeIds = new Set(this.modes?.availableModes.map((m) => m.id) ?? []);
+    const twin = restore.configOptions.find((o) => isModeTwin(o, modeIds));
+    if (twin && twin.type === "select" && restore.modeId && modeIds.has(twin.currentValue)) {
+      restore = { ...restore, modeId: twin.currentValue };
+    }
     if (restore.modeId && this.modes && this.modes.currentModeId !== restore.modeId) {
-      try {
-        await this.setMode(restore.modeId);
-      } catch (error) {
-        console.warn(`couldn't restore mode ${restore.modeId} after the restart`, error);
+      if (!this.modes.availableModes.some((m) => m.id === restore.modeId)) {
+        console.warn(`couldn't restore mode ${restore.modeId} after the restart: the agent no longer offers it`);
+      } else {
+        try {
+          await this.setMode(restore.modeId);
+        } catch (error) {
+          console.warn(`couldn't restore mode ${restore.modeId} after the restart`, error);
+        }
       }
     }
     for (const option of restore.configOptions) {
+      if (isModeTwin(option, modeIds)) continue;
       const current = this.configOptions.find((o) => o.id === option.id);
       if (!current || current.currentValue === option.currentValue) continue;
       try {
@@ -951,7 +969,15 @@ export class AcpBridge {
   }
 
   private async applyChoices(choices: Record<string, string | boolean>): Promise<void> {
+    /* A draft's mode pick that also arrived as a config choice (a stale twin
+       entry, or a caller that wrote both) must not land after `applyDraftMode`
+       and move the mode back: the twin is the same knob on the other channel.
+       The draft mode wins because it was picked against the live `modes`
+       list; anything else is replayed as usual. */
+    const modeIds = new Set(this.modes?.availableModes.map((m) => m.id) ?? []);
     for (const [configId, value] of Object.entries(choices)) {
+      const option = this.configOptions.find((o) => o.id === configId);
+      if (option && isModeTwin(option, modeIds)) continue;
       try {
         await this.setConfigOption(configId, value);
       } catch (error) {
@@ -1001,13 +1027,30 @@ export class AcpBridge {
     // reducer on the other end already handles both variants. A child's
     // mode/config are its own affair and must not overwrite the thread's.
     if (own && update.sessionUpdate === "current_mode_update" && this.modes) {
-      this.modes = { ...this.modes, currentModeId: update.currentModeId };
-      /* Whoever moved it — the user or the agent itself — this is the last
-         confirmed mode, and the row is what a revive with no live process
-         restores from. */
-      this.host.onSpawnStateChange({ modeId: update.currentModeId });
+      /* Guarded on the advertised list: an id the agent never offered is a
+         stale or foreign value, and recording it is how a later revive asks
+         for a mode the agent does not have. The update is still forwarded, so
+         the transcript stays truthful about what the agent said. */
+      if (this.modes.availableModes.some((m) => m.id === update.currentModeId)) {
+        this.modes = { ...this.modes, currentModeId: update.currentModeId };
+        /* Whoever moved it — the user or the agent itself — this is the last
+           confirmed mode, and the row is what a revive with no live process
+           restores from. */
+        this.host.onSpawnStateChange({ modeId: update.currentModeId });
+      }
     } else if (own && update.sessionUpdate === "config_option_update") {
       this.configOptions = update.configOptions;
+      /* The twin is the same knob as the mode, said on the other channel: when
+         it moves, the mode moves with it, so a revive restores where the
+         thread actually is rather than where the `modes` channel last said. */
+      const modeIds = new Set(this.modes?.availableModes.map((m) => m.id) ?? []);
+      const twin = update.configOptions.find((o) => isModeTwin(o, modeIds));
+      if (twin?.type === "select" && this.modes && twin.currentValue !== this.modes.currentModeId) {
+        if (this.modes.availableModes.some((m) => m.id === twin.currentValue)) {
+          this.modes = { ...this.modes, currentModeId: twin.currentValue };
+          this.host.onSpawnStateChange({ modeId: twin.currentValue });
+        }
+      }
     }
     if (own && update.sessionUpdate === "session_info_update") {
       const title = (update as { title?: unknown }).title;

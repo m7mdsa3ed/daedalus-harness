@@ -241,7 +241,13 @@ export interface ThreadCallbacks {
     hold: ThreadHold,
     /** A change held for the running turn's boundary, like the queue and the
         hold: current state, handed over on attach rather than replayed. */
-    staged: StagedConfig | null
+    staged: StagedConfig | null,
+    /** How full the agent says its context window is, from the server's own
+        row. Null means this runtime has never reported one. The replay carries
+        `usage_update`s too, but only some of them: a window may hold none and
+        a `load_earlier` page holds older ones, so this — which arrives last —
+        is the reading to keep. */
+    context: acp.UsageUpdate | null
   ) => void
   /** The turn is held at a step boundary, or released. Absolute, live-only,
       to every peer — the one that asked included. Carries *why*: `"user"` is
@@ -587,7 +593,8 @@ export class ThreadSocket {
           event.promptActive,
           event.queue ?? [],
           event.hold ?? { paused: false },
-          event.staged ?? null
+          event.staged ?? null,
+          event.context ?? null
         )
         return
       case "paused": {

@@ -179,6 +179,9 @@ export function CommandPalette({
         showCloseButton={false}
         className={cn(
           "sm:max-w-xl",
+          /* Frosted glass: translucent + blur over the dimmed page, with a
+             solid fallback where backdrop-filter is unsupported. */
+          "bg-popover/80 backdrop-blur-[calc(var(--app-blur)*1.85)] backdrop-saturate-[1.5] supports-[backdrop-filter]:bg-popover/60",
           /* The rows are drawn by `list.tsx`, which sets its own padding — the
              dialog's roomier `[cmdk-item]`/`[cmdk-group]` rules are turned back
              off here so one row is one shape on every page. */

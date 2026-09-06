@@ -212,6 +212,21 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   and the **reducer** resolves it, because the value the callback would have read has not
   been committed yet.
 
+- **Current state is handed over on `caught_up`, never inferred from the replay.** The queue,
+  the hold and a staged config change ride there because they are not journaled at all. The
+  **context reading** rides there for a harder reason: it *is* journaled — every
+  `usage_update` the agent sends is an ordinary `update` event — and folding those was still
+  wrong, because a replay is a *window* onto the log and the reading is a fact about now. A
+  tail of short turns can contain no `usage_update` at all, and the ring drew "—" for a
+  thread the agent had just said was 80% full; a `load_earlier` page contains *older*
+  readings, so scrolling up walked the ring backwards. So the newest reading is kept on the
+  session and written to its row (`sessions.context`, set in `SessionManager.emit` at the one
+  place every event passes, persisted by the turn-boundary `persist` that already writes
+  `last_activity_at`), and `caught_up` states it after the replay, where it is the last word.
+  A subagent's reading is its own step's and never the thread's — the same line the reducer
+  draws. The one place with no `caught_up` behind it is a `load_earlier` re-fold, so
+  `onRewound` puts the carried value back the way it puts `turnActive` back.
+
 - **A replay that *replaces* a transcript commits once, not per frame** (`ConnectOpts.seamless`).
   The frame-by-frame paint above is right for an open, where there is nothing on screen and
   the alternative is a blank pane; it is wrong for a restart, where what is on screen is a

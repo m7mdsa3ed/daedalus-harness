@@ -199,6 +199,14 @@ export interface Session {
       never opened it. A cancelled turn is a success on the wire and carries no
       error, so a Stop leaves this null. */
   lastTurnError: string | null;
+  /** The newest `usage_update` this thread's own session reported — how full
+      the agent says its context window is. Kept here rather than left to the
+      client's fold of the journal, because it is current state and the journal
+      is history: a windowed replay may not contain a reading at all, and a
+      `load_earlier` page contains an older one. Handed to every attaching peer
+      on `caught_up`, and written to the row at the turn boundary. Null for a
+      runtime that reports no usage, which the ring draws as "—". */
+  context: acp.UsageUpdate | null;
   /** Events ever journaled for this session. `cursor` is an index into this,
       not into any array — the log itself is a table (see session-journal.ts),
       so nothing about a long thread is held in memory. */
@@ -711,6 +719,7 @@ export class SessionManager {
         createdAt: s.createdAt,
         lastActivityAt: s.lastActivityAt,
         lastTurnError: s.lastTurnError,
+        context: s.context,
         deletedAt: s.deletedAt,
         parentSessionId: s.parentSessionId,
         forkedFromSessionId: s.forkedFromSessionId,
@@ -878,6 +887,21 @@ export class SessionManager {
         projectId: session.projectId,
         projectName: session.project?.name ?? session.projectId,
       }, event.update, session.websearchCalls);
+    }
+    /* How full the agent says its context window is. Kept on the session
+       because it is current state rather than history — see `Session.context`:
+       the replay a client folds may carry no reading (a short window) or an
+       older one (a `load_earlier` page), and both used to be what the ring
+       drew. A child's reading is the child's step's, never the thread's, which
+       is the same line the reducer draws. Not persisted here: the turn
+       boundary below already writes this row, and until it does the live
+       session answers `caught_up` from memory. */
+    if (
+      event.ev === "update" &&
+      !event.sessionId &&
+      event.update.sessionUpdate === "usage_update"
+    ) {
+      session.context = event.update;
     }
     /* A turn is the unit of activity. Both ends of it are journaled exactly
        once, so bumping here costs one row write per turn rather than one per
@@ -1297,6 +1321,7 @@ export class SessionManager {
       createdAt: opts.createdAt ?? now,
       lastActivityAt: opts.createdAt ?? now,
       lastTurnError: null,
+      context: null,
       eventCount: 0,
       stderr: [],
       stderrCount: 0,

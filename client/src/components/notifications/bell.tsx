@@ -22,7 +22,7 @@ import {
   useMarkNotificationsRead,
 } from "@/lib/queries/surfaces"
 import { notificationsPath } from "@/lib/router"
-import { GLASS_SURFACE, HEADER_CHIP } from "@/lib/header-chrome"
+import { GLASS_SURFACE } from "@/lib/header-chrome"
 import { cn } from "@/lib/utils"
 
 /** The glance is the newest few; the page is the rest. */
@@ -59,11 +59,12 @@ export function NotificationBell() {
         render={
           <Button
             variant="ghost"
-            size="icon-sm"
-            /* The header's own capsule — see `lib/header-chrome`: this bell is
-               drawn nowhere else, and a ghost button in a transparent header
-               is a target you cannot see until you are already on it. */
-            className={cn(HEADER_CHIP, "relative shrink-0 text-muted-foreground hover:text-foreground")}
+            size="icon-xs"
+            /* A plain ghost button, because it stands in the sidebar header now
+               and not in the transparent app header: it has the sidebar's own
+               ground under it, so it needs no capsule to be visible, and it is
+               the palette trigger's twin — same size, same weight, one pair. */
+            className="relative shrink-0 text-muted-foreground hover:text-foreground"
             aria-label={unread > 0 ? `Notifications (${unread} unread)` : "Notifications"}
             title="Notifications"
           >
@@ -72,9 +73,13 @@ export function NotificationBell() {
           </Button>
         }
       />
-      {/* Frosted like the capsule that opened it — see `lib/header-chrome`. */}
+      {/* Frosted — see `lib/header-chrome`. `align="start"` and not `end`: the
+          trigger is at the sidebar's inner edge, so a 24rem card aligned to its
+          end opens off the left of the screen and gets shoved back by collision
+          handling. From the start edge it opens across the content, which is
+          the room there is. */}
       <PopoverContent
-        align="end"
+        align="start"
         side="bottom"
         sideOffset={8}
         className={cn(GLASS_SURFACE, "w-[min(24rem,calc(100vw-1rem))] p-0")}

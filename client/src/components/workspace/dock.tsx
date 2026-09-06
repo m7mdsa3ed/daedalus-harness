@@ -34,7 +34,7 @@ import { TasksPanel } from "@/components/workspace/tasks-panel"
 import { TerminalPanel } from "@/components/workspace/terminal-panel"
 import { WebPanel } from "@/components/workspace/web-panel"
 import { UnsupportedPanel } from "@/components/workspace/unsupported-panel"
-import { makeTabActions } from "@/components/workspace/tab-actions"
+import { TabActions } from "@/components/workspace/tab-actions"
 import type { Actions } from "@/lib/actions"
 import { navigateTo, threadPath } from "@/lib/router"
 import { loadSettings } from "@/lib/settings"
@@ -73,9 +73,20 @@ const SAVE_DEBOUNCE_MS = 300
    panel's own padding), which is the band of nothing that used to sit above
    every bottom-docked terminal.
 
-   So it is measured. This half is the **tab strip's** offset
-   (`--dock-header-overlap`, read by `index.css`): how much of the group's own
-   box the header covers, zero for every group that is not at the top.
+   So it is measured, and this is the **tab strip's** half of it. A group the
+   header covers does not clear it — it stands *in its row* (`data-header-band`,
+   `index.css`), which is what makes the two bars one: the app's controls and
+   this group's tabs on the same line. The overlap is then the safe-area inset
+   alone, so the tabs sit below the notch rather than behind it. A group the
+   header does not reach clears nothing and keeps its own 36px strip.
+
+   Standing in the row costs the strip the width of whatever header control is
+   above it, and that is per group for exactly the reason the vertical overlap
+   is: with three columns split across the top, the toggle is above the first
+   and the bell above the last, and a constant would have the middle one
+   reserving room for both. So both ends are measured too — the intersection of
+   this group's box with each cluster — and a group left too narrow to show a
+   tab ducks back under the header instead.
 
    The other half — what a *panel's content* pads by — is deliberately not set
    here, even though it looks like the same sum. Panels are rendered with
@@ -85,19 +96,78 @@ const SAVE_DEBOUNCE_MS = 300
    panel measures its own box instead (`lib/workspace/panel-overlap.ts`); all
    this side owes it is a nudge whenever the layout moves. */
 const HEADER_OVERLAP = "--dock-header-overlap"
+const BAND_LEFT = "--dock-band-left"
+const BAND_RIGHT = "--dock-band-right"
+
+/**
+ * Strip left over for tabs, below which a group does not join the header's band
+ * at all and takes its own row under it instead.
+ *
+ * The horizontal `SPLIT_MIN_WIDTH`, and the same judgement: a column too narrow
+ * to share the row shows a 40px sliver of one tab between two of the app's
+ * controls, which reads as broken. One group out of step reads as deliberate.
+ */
+const BAND_MIN_TABS = 120
 
 function syncHeaderOverlap(api: DockviewApi): void {
   const header = document.querySelector<HTMLElement>("[data-app-header]")
-  const bottom = header ? header.getBoundingClientRect().bottom : 0
+  const band = header?.getBoundingClientRect()
+  const bandBottom = band?.bottom ?? 0
+  /* ── The band is the header's *content box* ──
+     Not its border box, on any axis. The header's padding is where it already
+     states what the window has claimed: the safe-area inset on top (a strip
+     level with the notch is a strip behind it), and on the right the caption
+     buttons — 148px under Electron on Windows and Linux, `titlebar-area-*`
+     under the PWA's window-controls overlay (both in `index.css`, on
+     `[data-drag-region]`, which this header is).
+     Reading the padding rather than naming those numbers again is the whole
+     point: the strip stands where the header's own occupants stand, so
+     anything the header learns to make room for, the tabs make room for too.
+     It is also the only thing left holding the right end, now that every
+     control has moved to the sidebar and there is no `[data-header-right]`. */
+  const style = header ? getComputedStyle(header) : undefined
+  const pad = (side: "Top" | "Left" | "Right") =>
+    style ? parseFloat(style[`padding${side}`] || "0") || 0 : 0
+  const rowTop = band ? band.top + pad("Top") : 0
+  const contentLeft = band ? band.left + pad("Left") : 0
+  const contentRight = band ? band.right - pad("Right") : 0
+  const cluster = (selector: string) =>
+    header?.querySelector<HTMLElement>(selector)?.getBoundingClientRect()
+  /* A cluster narrows the content box further; without one the box itself is
+     the bound. `Math.max`/`min` and not a fallback, because the sidebar toggle
+     sits outside `[data-header-left]` and only the box accounts for it when the
+     cluster is empty. */
+  const leftBound = Math.max(contentLeft, cluster("[data-header-left]")?.right ?? contentLeft)
+  const rightBound = Math.min(contentRight, cluster("[data-header-right]")?.left ?? contentRight)
+
   for (const group of api.groups) {
     const element = group.element
     /* A popped-out group is in another window, where this document's header
        covers nothing. Measuring it against a rect from a different viewport is
        how a second monitor would inherit a phone's notch. */
     const detached = element.ownerDocument !== document
-    const top = element.getBoundingClientRect().top
-    const overlap = detached ? 0 : Math.max(0, Math.min(bottom - top, bottom))
-    element.style.setProperty(HEADER_OVERLAP, `${Math.round(overlap)}px`)
+    const rect = element.getBoundingClientRect()
+    const covered = !detached && bandBottom > rect.top
+    /* What reaches *into* this group, never the bound's own width: a column the
+       header's claim does not overlap owes it nothing. */
+    const reach = (overlap: number) => Math.max(0, Math.min(overlap, rect.width))
+    const padLeft = covered ? reach(leftBound - rect.left) : 0
+    const padRight = covered ? reach(rect.right - rightBound) : 0
+    const banded = covered && rect.width - padLeft - padRight >= BAND_MIN_TABS
+
+    element.toggleAttribute("data-header-band", banded)
+    element.style.setProperty(BAND_LEFT, `${Math.round(banded ? padLeft : 0)}px`)
+    element.style.setProperty(BAND_RIGHT, `${Math.round(banded ? padRight : 0)}px`)
+    element.style.setProperty(
+      HEADER_OVERLAP,
+      `${Math.round(
+        banded
+          ? Math.max(0, rowTop - rect.top)
+          : covered
+            ? Math.max(0, Math.min(bandBottom - rect.top, bandBottom))
+            : 0
+      )}px`
+    )
   }
   notifyDockLayout()
 }
@@ -187,6 +257,19 @@ export function useDock(): WorkspaceDock {
   const dock = React.useContext(DockContext)
   if (!dock) throw new Error("useDock outside the workspace dock")
   return dock
+}
+
+/* Dockview renders tabs itself, from the component named by
+   `defaultTabComponent` — so a tab is inside this tree but is handed nothing
+   except its own panel's props. A tab that draws the *thread's* own things (its
+   context reading, its actions) needs what the shell has, and a context is the
+   only way down to it. */
+const DockActionsContext = React.createContext<Actions | null>(null)
+
+export function useDockActions(): Actions {
+  const actions = React.useContext(DockActionsContext)
+  if (!actions) throw new Error("useDockActions outside the workspace dock")
+  return actions
 }
 
 /** The descriptor a live Dockview panel was opened with, or null. */
@@ -824,17 +907,18 @@ export function WorkspaceDock({
     return map
   }, [actions])
 
-  const tabActions = React.useMemo(
-    () => makeTabActions({ onSplit: () => dock.splitActive("right") }),
-    [dock]
-  )
+  /* The strip is always shown, because it now says what the panel *is*.
 
-  /* One panel in the whole dock: the entire strip goes, not just the tab chip.
+     A single-panel dock used to hide it: the app header said the thread's name
+     above it, so the row held nothing but an empty 36px band. In the header's
+     own band the tab **is** that name — icon, title and status — so there is no
+     count at which hiding it is right.
 
-     It used to stay because the + lived in it, and hiding the row left that
-     with nowhere to be. The + is in the app header now, and split hides itself
-     when there is nothing to split — so at one panel the row has no contents at
-     all, and an empty 36px band above every thread is worse than no band. */
+     A loop rather than a deletion, and it stays wired to the group events:
+     dockview serializes a hidden header (`hideHeader` in its `toJSON`), so
+     every layout saved by the build that hid it would restore headerless, with
+     nothing left in this build to turn it back on. It costs one comparison per
+     group and un-stalls those layouts the first time they are read. */
   const handleReady = React.useCallback(
     (api: DockviewApi) => {
       /* Measured after the frame that changed the layout: a group's box is not
@@ -850,9 +934,8 @@ export function WorkspaceDock({
         })
       }
       const sync = () => {
-        const single = api.groups.length === 1 && api.panels.length === 1
         for (const group of api.groups) {
-          if (group.header.hidden !== single) group.header.hidden = single
+          if (group.header.hidden) group.header.hidden = false
         }
         /* After the strip's own visibility, never before: what a panel has to
            pad by depends on whether there is a strip above it. */
@@ -863,16 +946,13 @@ export function WorkspaceDock({
         api.onDidRemovePanel(sync),
         api.onDidAddGroup(sync),
         api.onDidRemoveGroup(sync),
-        /* Dragging a tab into another group has to be listened for separately,
-           and it is the case that gets this wrong in both directions. Dockview
-           runs a move under a lock that suppresses the panel add/remove events
-           — but it removes the emptied source group *outside* that lock, at the
-           one instant when the panel has left its old group and not yet joined
-           its new one. So the counts read one group and one panel, `single` is
-           true, and the surviving group's header is hidden; the re-add is back
-           under the lock, so nothing fires again to take it back. `onDidMovePanel`
-           is raised once the move has settled, which is the only point where the
-           counts describe the dock the user is actually looking at. */
+        /* Dragging a tab into another group has to be listened for separately:
+           dockview runs a move under a lock that suppresses the panel
+           add/remove events, so nothing above fires for it. It is raised once
+           the move has settled, which is also the only point at which the
+           groups have the boxes the user is looking at — a move that empties a
+           column widens every other one, and with it what each owes the
+           header's clusters. */
         api.onDidMovePanel(sync),
         /* Every other way a group's top can move: a sash drag, a maximize, a
            float, the window itself. The strip's visibility has not changed in
@@ -880,6 +960,21 @@ export function WorkspaceDock({
         api.onDidLayoutChange(syncOverlap),
       ]
       window.addEventListener("resize", syncOverlap)
+      /* The header is the other half of the measurement and it moves on its
+         own: its left cluster is a 128px skeleton while the app is loading and
+         nothing while a thread is routed, and the dock's layout does not change
+         when that resolves. Without this the band keeps the reservation it was
+         first measured with — on a phone, half the width, which draws the tab
+         over against the right edge and never corrects itself. */
+      const headerResize = new ResizeObserver(syncOverlap)
+      const header = document.querySelector<HTMLElement>("[data-app-header]")
+      if (header) {
+        headerResize.observe(header)
+        for (const cluster of header.querySelectorAll<HTMLElement>(
+          "[data-header-left], [data-header-right]"
+        ))
+          headerResize.observe(cluster)
+      }
       queueMicrotask(sync)
       onReady(api)
       /* Dockview does not tell us when it tears the component down, and
@@ -888,6 +983,7 @@ export function WorkspaceDock({
       return () => {
         if (overlapFrame !== undefined) cancelAnimationFrame(overlapFrame)
         window.removeEventListener("resize", syncOverlap)
+        headerResize.disconnect()
         disposables.forEach((disposable) => disposable.dispose())
       }
     },
@@ -896,6 +992,7 @@ export function WorkspaceDock({
 
   return (
     <DockContext.Provider value={dock}>
+      <DockActionsContext.Provider value={actions}>
       <DockviewReact
         className="session-dock h-full min-h-0 flex-1"
         components={components}
@@ -907,9 +1004,16 @@ export function WorkspaceDock({
            panel the user cannot get back without clearing the layout. */
         floatingGroupBounds="boundedWithinViewport"
         onReady={(event) => handleReady(event.api)}
-        rightHeaderActionsComponent={tabActions}
+        /* One tab fills its strip. Dockview's own answer — the tab grows and
+           the void container beside it stops absorbing the leftover width — so
+           a lone chat tab reads as the band's title rather than as a chip
+           floating in an empty bar. Two or more stay content-sized: sharing a
+           row evenly is what a tab strip already is. */
+        singleTabMode="fullwidth"
+        rightHeaderActionsComponent={TabActions}
         theme={theme}
       />
+      </DockActionsContext.Provider>
     </DockContext.Provider>
   )
 }

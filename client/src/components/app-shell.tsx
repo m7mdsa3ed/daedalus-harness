@@ -16,13 +16,11 @@ import { Logo } from "@/components/ui/logo"
 import { LandingPage } from "@/components/landing/landing-page"
 import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
 import { ThreadHeaderMenu } from "@/components/thread-menu"
-import { ContextIndicator } from "@/components/composer-status"
 import { ProjectIcon } from "@/components/entity-icon"
 import { NotificationBell } from "@/components/notifications/bell"
 import { NotificationsInboxPage } from "@/components/notifications/page"
 import { panelId, type PanelKind } from "@/lib/workspace/panels"
 import { openTerminal } from "@/components/workspace/terminal-panel"
-import { useRunHelper } from "@/lib/workspace/use-run-helper"
 import { RoutinesPage } from "@/components/routines-page"
 import { SchedulePage } from "@/components/schedule-page"
 import { TasksWorkspace } from "@/components/tasks"
@@ -71,7 +69,7 @@ import {
 } from "@/lib/settings"
 import { useCatalogLoaded, useProfiles, useProjects } from "@/lib/queries/catalog"
 import { useRoutines } from "@/lib/queries/routines"
-import { useStoreSelect, useSessionMeta, useThread } from "@/lib/store"
+import { useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { HEADER_BADGE, HEADER_CHIP } from "@/lib/header-chrome"
 import { ProjectFormPage, ProjectsPage } from "@/components/settings/projects"
@@ -266,7 +264,6 @@ export function AppShell({
     return null
   })()
 
-  const runHelper = useRunHelper(dock)
   const routeSessionRef = React.useRef(sessionId)
   routeSessionRef.current = sessionId
   // The project the workspace panels act on: the routed thread's own or current project.
@@ -533,7 +530,11 @@ export function AppShell({
                 Daedalus
               </span>
             </button>
-            {/* Search sits beside the brand; in the icon rail it stacks under it. */}
+            {/* Search and the bell sit beside the brand; in the icon rail they
+                stack under it. Both are the app's own, not a route's and not a
+                dock group's — the sidebar is the one surface that is on every
+                route and never splits, which is the whole reason they are here
+                rather than in a header the workspace now shares with tabs. */}
             <div className="ml-auto flex items-center gap-0.5 group-data-[collapsible=icon]:ml-0 group-data-[collapsible=icon]:flex-col">
               <Button
                 variant="ghost"
@@ -545,6 +546,22 @@ export function AppShell({
               >
                 <SearchIcon />
               </Button>
+              <NotificationBell />
+              {/* The app's one menu — the workspace's panels and arrangements,
+                  and how transcripts are drawn on this device. Nothing in it is
+                  about a route or a dock group, which is why it can stand on
+                  the one surface that is neither. */}
+              {!inSettings && !inSchedule && !inRoutines && !inBoard && !inNotifications && !inTrace && (
+                <ThreadHeaderMenu
+                  actions={actions}
+                  session={active}
+                  project={effectiveProject}
+                  onNewTab={newThreadInTab}
+                  onOpenPanel={openWorkspacePanel}
+                  onOpenInNewTab={(thread) => dock.openChat(thread.id, { newTab: true })}
+                  dock={dock}
+                />
+              )}
             </div>
           </div>
         </SidebarHeader>
@@ -739,7 +756,14 @@ export function AppShell({
              the edge here, the sidebar toggle and the ⋯ menu, stand on the
              same line the conversation under them does. The badges' `px-2` is
              the capsule's, and sits inside it. */
-          className="absolute inset-x-0 top-0 z-30 flex h-[var(--app-header-h)] items-center gap-1 bg-transparent px-4 pt-[max(0px,env(safe-area-inset-top,0px))] sm:gap-2"
+          /* `pointer-events-none`, with each occupant turning it back on: the
+             header is a transparent overlay spanning the whole column, and its
+             own box is nothing but the ground its capsules stand on plus the
+             blur. Left live it swallows every press that lands between them —
+             which, once a dock group stands in this row (`data-header-band`),
+             is every tab in that group, and was already every attempt to select
+             the first line of a transcript scrolled under it. */
+          className="pointer-events-none absolute inset-x-0 top-0 z-30 flex h-[var(--app-header-h)] items-center gap-1 bg-transparent px-4 pt-[max(0px,env(safe-area-inset-top,0px))] sm:gap-2"
         >
           {/* The strip is taller than the row it sits in: the ramp's weakest
               end lands *below* the header rather than at its edge, so the line
@@ -763,9 +787,18 @@ export function AppShell({
             blurLevels={[0.4, 0.8, 1.4, 2.2, 3.4, 5.4, 8.6, 14]}
             className="absolute inset-x-0 top-0 -z-10"
           />
-          <SidebarTrigger className={cn(HEADER_CHIP, "shrink-0")} />
+          <SidebarTrigger className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")} />
           <div className="flex min-w-0 flex-1 items-center justify-between gap-2 sm:gap-3">
-            <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
+            {/* Named, like the header itself, so the dock can measure it: a tab
+                strip standing in this row has to reserve the width of whatever
+                is above it, and that is a *rect*, not a constant — see
+                `syncHeaderOverlap`. The toggle sits to the left of this box and
+                needs no mark of its own: reserving up to this cluster's right
+                edge clears it on the way. */}
+            <div
+              data-header-left
+              className="pointer-events-auto flex min-w-0 items-center gap-1.5 sm:gap-2"
+            >
               {loading ? (
                 <Skeleton className="h-4 w-32" />
               ) : routeHeading ? (
@@ -787,28 +820,15 @@ export function AppShell({
                    where that answer is acted on. Saying it twice made the
                    header a list of properties rather than a place. */
                 <HeaderHeading
-                  crumb={
-                    active &&
-                    activeProject && (
-                      /* The one crumb that opens something, so the one drawn
-                         as a button — with the project's own icon, which is
-                         how a project is named everywhere else. */
-                      <button
-                        type="button"
-                        title={activeProject.name}
-                        aria-label={`Open project ${activeProject.name}`}
-                        className={cn(
-                          HEADER_BADGE,
-                          "flex min-w-0 items-center gap-1 py-0.5 pr-2 pl-1 transition-colors hover:bg-background/80 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                        )}
-                        onClick={() => void navigate(projectPath(active.projectId))}
-                      >
-                        <ProjectIcon project={activeProject} className="size-3.5 shrink-0" />
-                        <span className="truncate">{activeProject.name}</span>
-                      </button>
-                    )
-                  }
+                  /* No crumb: the project is named on the tab now, in front of
+                     the thread's own title (`workspace/panel-tab`). It only
+                     ever appeared on this route — the landing page has no
+                     `active` — so what stood here is what moved there, rather
+                     than a second copy of it three inches away. */
                   title={active?.title ?? "Daedalus"}
+                  /* Only where the dock is mounted to say it instead — the
+                     landing page has no tab strip, so its title is drawn. */
+                  quiet={!!sessionId}
                   trailing={
                     /* A branch says where it came from, once, next to its own
                        name — the one thing provenance is for. Clicking goes to
@@ -834,42 +854,13 @@ export function AppShell({
                 />
               )}
             </div>
-            {/* The workspace's one entry point. In the header rather than on the
-                tab strip: there is exactly one of it however the dock is split,
-                and it survives a narrow screen, which is where it matters —
-                nothing else on a phone can reach these panels or this thread's
-                own actions. */}
-            <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
-              {/* The context ring, moved up from the composer's toolbar: it is
-                  a status to consult while reading, not a control for what is
-                  being typed, and on a phone the composer row gave it the last
-                  slot the Send button needed. Beside the bell it is one glance
-                  on every thread route. */}
-              {sessionId && (
-                <HeaderContextIndicator sessionId={sessionId} actions={actions} />
-              )}
-              {/* The bell is on every route, which is the whole reason it moved
-                  off the sidebar's nav: a count is only useful where it is
-                  always in view, and in the collapsed rail it was a capsule
-                  pinned to the corner of a row. The sidebar keeps the row —
-                  it goes to the inbox page. */}
-              <NotificationBell />
-              {/* One menu, not three icons. It holds what the + held (new
-                  thread, the workspace panels), what the eye held (view
-                  settings) and what the routed thread/project can be asked to do. */}
-              {!inSettings && !inSchedule && !inRoutines && !inBoard && !inNotifications && !inTrace && (
-                <ThreadHeaderMenu
-                  actions={actions}
-                  session={active}
-                  project={effectiveProject}
-                  onNewTab={newThreadInTab}
-                  onOpenPanel={openWorkspacePanel}
-                  onOpenInNewTab={(thread) => dock.openChat(thread.id, { newTab: true })}
-                  onRunHelper={(helper, pId) => void runHelper(helper, pId)}
-                  dock={dock}
-                />
-              )}
-            </div>
+            {/* Nothing on the right any more. The bell and the ⋯ menu are the
+                app's own and stand in the sidebar header, which is on every
+                route and never splits; the context ring is a reading of one
+                thread and stands on that thread's tab. What is left of this
+                row is the ground the tabs sit on — so a group in the band runs
+                to the window's edge, with no `[data-header-right]` for
+                `syncHeaderOverlap` to find and nothing to reserve. */}
           </div>
         </header>
         <Routes>
@@ -1041,20 +1032,35 @@ function HeaderHeading({
   crumb,
   title,
   trailing,
+  quiet,
 }: {
   crumb?: React.ReactNode
   title: React.ReactNode
   /** After the title — the fork badge. */
   trailing?: React.ReactNode
+  /**
+   * Something else on this line already says the title — the dock's own tab,
+   * which carries the same name with the panel's icon and its reading beside
+   * it. Said twice, three inches apart, it read as two different things.
+   *
+   * The heading is *silenced*, not dropped: it is still the document's `h1`,
+   * and a route whose only title is a `div` in a third-party tab strip has
+   * none for a screen reader or the tab-order to land on.
+   */
+  quiet?: boolean
 }) {
   return (
     <div className="flex min-w-0 items-center gap-1.5 text-[11px] leading-tight text-muted-foreground sm:gap-2">
       {crumb}
       <h1
-        className={cn(
-          HEADER_BADGE,
-          "min-w-0 truncate px-2 py-0.5 text-sm leading-tight font-medium text-foreground"
-        )}
+        className={
+          quiet
+            ? "sr-only"
+            : cn(
+                HEADER_BADGE,
+                "min-w-0 truncate px-2 py-0.5 text-sm leading-tight font-medium text-foreground"
+              )
+        }
       >
         {title}
       </h1>
@@ -1067,31 +1073,6 @@ function HeaderHeading({
     crumb is a word rather than a thing you can open. */
 function HeaderCrumb({ children }: { children: React.ReactNode }) {
   return <span className={cn(HEADER_BADGE, "min-w-0 truncate px-2 py-0.5")}>{children}</span>
-}
-
-/** The context ring in the header, as its own leaf component. The shell reads
-    only `sessions` — a streamed token would re-run its layout effects if the
-    whole header subscribed to the thread's — so the ring's own narrow
-    `useThread` subscription keeps a token's re-render to this 32px button. */
-function HeaderContextIndicator({
-  sessionId,
-  actions,
-}: {
-  sessionId: string
-  actions: Actions
-}) {
-  const thread = useThread(sessionId)
-  const meta = useSessionMeta(sessionId)
-  return (
-    <ContextIndicator
-      thread={thread}
-      meta={meta}
-      actions={actions}
-      side="bottom"
-      size="icon-sm"
-      triggerClassName={cn(HEADER_CHIP, "rounded-4xl")}
-    />
-  )
 }
 
 /** Settings sections as sidebar nav — the app has no horizontal tabs. The

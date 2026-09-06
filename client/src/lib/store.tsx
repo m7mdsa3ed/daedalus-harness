@@ -1269,7 +1269,9 @@ export type Action =
           | "agentId"
           | "model"
           | "effort"
+          | "modeId"
           | "personaId"
+          | "suggestFollowups"
           | "mcpServerIds"
           | "skillIds"
           | "commandIds"
@@ -1297,6 +1299,11 @@ export type Action =
   /** The server's staged change, absolute — from `staged_config` or the
       `staged` field of `caught_up`. */
   | { type: "staged-config"; id: string; config: StagedConfig | null }
+  /** The thread's context occupancy as the *server* holds it — from `caught_up`
+      and from the end of a re-fold. Absolute, and deliberately the last word
+      over the `usage_update`s the replay folds: the window may carry none, and
+      a `load_earlier` page carries older ones. Null = never reported. */
+  | { type: "thread-context"; id: string; context: acp.UsageUpdate | null }
   | { type: "thread-reset"; id: string; thread: ThreadState }
   | { type: "turn-active"; id: string; active: boolean; settle?: boolean }
   | { type: "paused"; id: string; paused: boolean; reason?: "user" | "error"; error?: WireError }
@@ -1494,6 +1501,8 @@ export function reducer(state: State, action: Action): State {
       })
     case "staged-config":
       return withThread(state, action.id, { stagedConfig: action.config })
+    case "thread-context":
+      return withThread(state, action.id, { context: action.context })
     case "draft-config-option":
       return {
         ...state,

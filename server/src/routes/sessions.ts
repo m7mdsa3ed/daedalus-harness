@@ -1,4 +1,6 @@
 import type { Hono } from "hono";
+import { z } from "zod";
+import { enhancePrompt } from "../enhance.js";
 import { getAgent } from "../registry.js";
 import { getProfile, profileSupports, resolveProfileAgent } from "../profiles.js";
 import { getProject } from "../projects.js";
@@ -531,4 +533,66 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
   app.post("/api/sessions/:id/restore", (c) =>
     sessions.restore(c.req.param("id")) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404),
   );
+
+  /* Rewrite the composer's draft into a sharper prompt, using the thread's own
+     profile credentials through the AI SDK (`enhance.ts`). Not a turn: nothing
+     is journaled, queued or sent to the agent — the box is replaced, unsent,
+     and the user edits or sends the rewrite. The model is the thread's current
+     one, falling back to the profile's default (`enhancePrompt` resolves it);
+     `profileId` overrides the thread's profile when the picker chose another
+     provider for the rewrite. */
+  const EnhanceSchema = z.object({
+    text: z.string(),
+    model: z.string().optional(),
+    profileId: z.string().optional(),
+  });
+
+  app.post("/api/sessions/:id/enhance", async (c) => {
+    const session = sessions.get(c.req.param("id"));
+    if (!session) return c.json({ error: "not found" }, 404);
+    if (session.deletedAt !== null) return c.json({ error: "session deleted" }, 409);
+    const parsed = EnhanceSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: "text is required" }, 400);
+    const profile = parsed.data.profileId ? getProfile(parsed.data.profileId) : getProfile(session.profileId);
+    if (!profile) return c.json({ error: "unknown profile" }, 404);
+    const agentId = session.agentId;
+    if (!profileSupports(profile, agentId) || !getAgent(agentId)) {
+      return c.json({ error: "unknown agent for this profile" }, 404);
+    }
+    const enhanced = await enhancePrompt(profile, {
+      text: parsed.data.text,
+      model: parsed.data.model || session.model || undefined,
+    });
+    return c.json({ enhanced });
+  });
+
+  /* The same rewrite for a draft, which has no server row yet: the profile (and
+     agent, and model) travel in the body instead of being read off a session.
+     `profileId` is the rewrite's provider — the thread's own draft profile
+     unless the picker chose another. */
+  const DraftEnhanceSchema = z.object({
+    text: z.string(),
+    profileId: z.string(),
+    agentId: z.string().optional(),
+    model: z.string().optional(),
+  });
+
+  app.post("/api/enhance", async (c) => {
+    const parsed = DraftEnhanceSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: "text and profileId are required" }, 400);
+    const profile = getProfile(parsed.data.profileId);
+    if (!profile) return c.json({ error: "unknown profile" }, 404);
+    // The agent only decides which per-agent base URL is NOT used (see
+    // `enhance.ts`): resolution still 404s when it names nothing usable, so a
+    // profile that serves no installed runtime is not offered it silently.
+    const agentId = resolveProfileAgent(profile, parsed.data.agentId);
+    if (!agentId || !getAgent(agentId)) {
+      return c.json({ error: "unknown agent for this profile" }, 404);
+    }
+    const enhanced = await enhancePrompt(profile, {
+      text: parsed.data.text,
+      model: parsed.data.model || undefined,
+    });
+    return c.json({ enhanced });
+  });
 }

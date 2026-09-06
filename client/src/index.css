@@ -217,9 +217,14 @@
      where it always did and, once scrolled, passes beneath the header's
      progressive blur. `--keyboard-inset` is published by lib/keyboard-inset.ts
      and named here only so every reader gets a 0 before the first
-     measurement. */
+     measurement.
+
+     The **row** is named separately from the box because a dock group can join
+     it: a tab strip in the header's band is as tall as the header's own row and
+     starts below the inset, never level with the notch (`data-header-band`). */
   --app-inset-top: max(0px, calc(env(safe-area-inset-top, 0px) - 0.375rem));
-  --app-header-h: calc(max(0px, env(safe-area-inset-top, 0px)) + 3rem);
+  --app-header-row-h: 3rem;
+  --app-header-h: calc(max(0px, env(safe-area-inset-top, 0px)) + var(--app-header-row-h));
   --keyboard-inset: 0px;
 
   /* ── The transcript's three work accents ──
@@ -934,9 +939,11 @@ html[data-window-controls-overlay="true"] [data-drag-region]:not([data-sidebar="
    is variable (Windows 11's "Caption height" accessibility setting changes
    it), and a band taller than the 3rem header would poke its buttons below it
    into the content. The header grows with it; `--app-header-h` (app-shell.tsx)
-   is read by every scroll-padding rule, so everything else follows. */
+   is read by every scroll-padding rule, so everything else follows — including
+   a tab strip sharing the header's band, which is why this raises the *row*
+   rather than the box. */
 html[data-window-controls-overlay="true"] {
-  --app-header-h: max(3rem, env(titlebar-area-height, 3rem));
+  --app-header-row-h: max(3rem, env(titlebar-area-height, 3rem));
 }
 /* Sidebar drag-resize (handle lives in app-shell.tsx): kill the width easing
    while dragging so the sidebar tracks the pointer, and drop the handle when
@@ -1383,11 +1390,10 @@ html .dv-tabs-and-actions-container {
   gap: 2px;
 }
 
-/* The strip sits under the floating app header (app-shell.tsx) when its group
-   is at the top of the column: without this the tabs slide under the blur and
-   vanish. A margin, not padding — dockview sizes the strip by a fixed height
-   var, and a single-panel dock hides it with display:none, which takes the
-   margin with it.
+/* The strip clears the floating app header (app-shell.tsx) when its group is at
+   the top of the column: without this the tabs slide under the blur and vanish.
+   A margin, not padding — dockview sizes the strip by a fixed height var, so
+   the space has to come from outside its box.
 
    The amount is *measured*, per group (`--dock-header-overlap`, set by
    workspace/dock.tsx), and the constant is only the fallback for the frame
@@ -1415,6 +1421,99 @@ html .dv-groupview > .dv-tabs-and-actions-container {
   z-index: 40;
 }
 
+/* ── The header's band ──
+   A group the header covers does not clear it, it *joins its row*: the overlap
+   above is then the safe-area inset alone, and the strip lands in the header's
+   own 3rem band. That is the whole merge — one bar carrying the app's controls
+   and this group's tabs, rather than a bar of controls with a bar of tabs under
+   it. `data-header-band` is set by workspace/dock.tsx on the groups it is true
+   of, which on a horizontal split is more than one of them.
+
+   What the strip owes the header is horizontal, and it is measured for the same
+   reason the vertical overlap is: a constant is right for one group and wrong
+   for the rest. `--dock-band-left`/`--dock-band-right` are the intersection of
+   *this* group's box with the header's two clusters, so a middle column in a
+   three-way split reserves nothing for a toggle and a bell that are nowhere
+   near it. The 4px is the strip's own gutter, kept on both ends. */
+html .dv-groupview[data-header-band] {
+  --dv-tabs-and-actions-container-height: var(--app-header-row-h);
+}
+
+html .dv-groupview[data-header-band] {
+  /* Names the containing block for the strip below. The group is already this
+     box (it fills its view), so this only makes it say so. */
+  position: relative;
+}
+
+html .dv-groupview[data-header-band] > .dv-tabs-and-actions-container {
+  /* A strip in the header's band has to be an overlay for the same reason the
+     header is one: in flow it *takes* the band, and the transcript then starts
+     below it with nothing left to pass underneath — the progressive blur had
+     nothing to take out of focus, which is the whole reason the header is
+     transparent. Out of flow the content container (`flex-grow: 1`) reclaims
+     the full group, the panel pads its own top by what the header covers
+     (`--dock-content-overlap`, already measured) and the transcript scrolls up
+     under the tabs exactly as it did under the header alone.
+
+     `top: 0` and not the inset: the offset arrives as the inherited
+     `margin-top`, which applies to an absolutely positioned box too. */
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  /* The measurement is the header's content box, gutter included, so the tabs
+     stand on the same `px-4` line the transcript and the composer do — no 4px
+     of the strip's own on top of it. */
+  padding-left: var(--dock-band-left, 0px);
+  padding-right: var(--dock-band-right, 0px);
+  /* The header draws no rule — its blur is its edge — so a strip standing in
+     its band must not draw one across it. Strips below the header keep theirs. */
+  border-bottom: none;
+  /* The strip spans its whole group at z-40, so its reserved ends sit *over*
+     the header's own controls. Without this they swallow every click meant for
+     the bell, the ⋯ menu and the sidebar toggle. */
+  pointer-events: none;
+}
+
+/* Except the void — the run of empty strip after the last tab, which dockview
+   makes a drag handle for the whole group. In the band that empty run is the
+   *window's* title bar, so pressing it dragged a ghost of an empty group out of
+   the app instead of moving the window. It goes back to being nothing the DOM
+   handles: the press falls through, and the header underneath is the drag
+   region the OS reads (`[data-drag-region]`, so `drag` and not the `no-drag`
+   its siblings take below).
+
+   The cost is that a tab can no longer be dropped onto this group's empty
+   header space — its tab row and its panel body are both still drop targets,
+   and neither is a gesture anyone reaches for by aiming at emptiness. */
+html .dv-groupview[data-header-band] > .dv-tabs-and-actions-container > .dv-void-container {
+  pointer-events: none;
+  -webkit-app-region: drag;
+}
+
+/* And the slack inside a full-width tab, for the same reason and against the
+   same rule. With one tab the strip *is* the tab, so there is no void left to
+   drag by — the empty run is inside a tab, and a tab is `no-drag` because it
+   has to be pressable. This is the one part of it that never needs to be: a tab
+   with slack is the only tab in its group, so it is already active and a press
+   here would activate nothing. Nested `drag` inside `no-drag` re-adds the rect,
+   the way the sidebar's brand row and its buttons already work. */
+html .dv-groupview[data-header-band] .panel-tab-chip [data-tab-space] {
+  -webkit-app-region: drag;
+}
+
+html .dv-groupview[data-header-band] > .dv-tabs-and-actions-container > * {
+  pointer-events: auto;
+  /* On the desktop build this row is the window's titlebar
+     (`[data-drag-region]`), and Chromium's draggable region is geometric, not
+     hierarchical: anything drawn over a `drag` rect is dragged with the window
+     unless it says otherwise — nested buttons get this already, a strip
+     standing on the header is not nested. Without it the tabs can be neither
+     pressed nor reordered there; the press moves the window. The strip's own
+     reserved ends are left out, which is the right answer for them: the band's
+     empty middle still drags the window. */
+  -webkit-app-region: no-drag;
+}
+
 /* The actions at the end of the strip (new tab, split). `dv-right-actions` is
    laid out after the void that absorbs the leftover width, so it stays pinned
    to the end rather than drifting along behind the last tab. */
@@ -1429,7 +1528,66 @@ html .dv-tab {
   display: flex;
   height: 100%;
   padding: 0;
+  /* Dockview's tabs are `flex-shrink: 0`, which is right for a strip whose
+     answer to "too many" is to scroll. Ours carry controls at their far end —
+     the reading, the ⋮, the close — and a tab that can only grow puts them past
+     the strip's edge the moment a title is long, where the only way to reach
+     them is a horizontal scroll on a bar with no scrollbar to speak of. So the
+     tab gives way instead: the title truncates (it already can), and what the
+     tab is *for* stays on screen.
+
+     The floor is what keeps this from being dockview's problem in reverse — at
+     eight tabs, shrinking without one would leave eight slivers rather than a
+     strip that scrolls. Below it the container scrolls as it always did, and
+     the tab list at the strip's end is the way back to what scrolled off. */
+  flex-shrink: 1;
+  min-width: 11rem;
 }
+
+/* ── How a tab is drawn, in every strip ──
+   **Per badge, never as one slab.** The tab holds two answers — the project it
+   runs in and the thread itself — and wrapping both in a single filled box drew
+   a second bar across the strip, one long pill with its own blur. The app
+   header's occupants have always been separate capsules for the same reason
+   (`HEADER_BADGE`), so the tab's are too: the chip carries no ground at all and
+   each badge inside takes one.
+
+   **And in every strip, not only the one in the header's band.** This was
+   scoped to `[data-header-band]` on the grounds that there is no glass under a
+   strip docked over a terminal — which is true of the *surface* and irrelevant
+   to the *tab*: with a split, the top group drew capsules and the bottom drew
+   one filled chip, so the same panel was two different objects depending on
+   where its group happened to be docked. A tab is a tab. What differs between
+   the two places is what is behind the blur, which is the point of a blur. */
+
+/* `--composer`, which is the composer card's own ground (`bg-composer/70`,
+   components/composer.tsx) — the band and the composer are the two frosted
+   surfaces the transcript runs between, so they are the same material or they
+   are two. No ring: a hairline around every badge drew boxes on a bar whose
+   whole point is that it has no edges.
+
+   **Every tab, not only the focused one.** A badge that appears on click reads
+   as part of the selection rather than as the shape a tab has; with the ground
+   always there, focus is the same surface at more weight, and the tabs beside
+   it are still visibly the same object.
+
+   **And every occupant, not only the labels.** The tab's own controls — the
+   reading, the ⋮ and the close — take it too, so the row is capsules end to end
+   rather than capsules followed by three bare glyphs. `button` and not a third
+   hook: the chip holds exactly these three, and a rule that has to be
+   remembered when a fourth is added is a rule that will not be. Hover still
+   darkens, through the ghost variant's own `bg-accent` painted over this. */
+html .panel-tab-chip [data-tab-badge],
+html .panel-tab-chip button {
+  background-color: color-mix(in oklch, var(--composer) 40%, transparent);
+  backdrop-filter: blur(var(--app-blur, 14px));
+}
+
+html .panel-tab-chip[data-active] [data-tab-badge],
+html .panel-tab-chip[data-active] button {
+  background-color: color-mix(in oklch, var(--composer) 80%, transparent);
+}
+
 
 /* ── Per-thread view options ──
    Compact density and code-wrap are presentation only, so they live here as

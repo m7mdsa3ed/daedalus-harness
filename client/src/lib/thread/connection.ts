@@ -1336,7 +1336,7 @@ export class ThreadConnection {
       onPaused: (hold) => {
         send({ type: "paused", id, ...hold })
       },
-      onCaughtUp: (cursor, promptActive, queue, hold, staged) => {
+      onCaughtUp: (cursor, promptActive, queue, hold, staged, context) => {
         this.cursor = cursor
         this.seamless = false
         if (this.socket === owner()) this.promptActiveAtLoad = promptActive
@@ -1361,6 +1361,13 @@ export class ThreadConnection {
            replay never mentions it and an attaching peer would otherwise draw
            the menus as though nothing were waiting behind them. */
         send({ type: "staged-config", id, config: staged })
+        /* And the context reading, which is the one of these four the replay
+           *does* mention — and mentions wrongly. A window may hold no
+           `usage_update` at all (a thread reopened at a tail of short turns
+           drew "—" for a conversation the agent said was nearly full), and a
+           `load_earlier` page holds older ones. The server keeps the newest on
+           the row; it lands here, after the fold, so it is the last word. */
+        send({ type: "thread-context", id, context })
         flush()
       },
       /* A page of older history arrived and the socket is about to fold the
@@ -1385,9 +1392,16 @@ export class ThreadConnection {
          turn this device started itself has no `turn_started` in the log to
          re-derive it from — the prompter is the one peer that never gets one. */
       onRewound: (earlier) => {
-        const active = getState().threads[id]?.turnActive ?? false
+        const before = getState().threads[id]
+        const active = before?.turnActive ?? false
         send({ type: "thread-window", id, earlier, loadingEarlier: false })
         if (active) send({ type: "turn-active", id, active: true })
+        /* Put back for the same reason: the fold derives the reading from the
+           `usage_update`s in the widened window, and the ones it just paged in
+           are older than the one on screen. There is no `caught_up` behind a
+           re-fold to state it again, so the value carried across the reset is
+           what stands. */
+        send({ type: "thread-context", id, context: before?.context ?? null })
         flush()
       },
       // A background task's journal grew server-side. Into the module store, not

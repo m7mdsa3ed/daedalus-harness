@@ -24,12 +24,20 @@
 export const HEADER_BADGE =
   "rounded-full bg-background/50 ring-1 ring-border/50 backdrop-blur-sm"
 
-/** A control capsule, for the header's icon buttons — the sidebar toggle, the
-    context ring, the bell, the ⋯ menu. `hover:bg-background/80` replaces the
-    ghost variant's `hover:bg-accent`: the press target is already drawn, so
-    hover is a deepening of it rather than the first time it appears. */
+/** A control capsule, for the header's icon buttons — the sidebar toggle and
+    the ⋯ menu. (The bell wore it too until it moved to the sidebar header,
+    where there is a ground under it already.)
+    `hover:bg-background/80` replaces the ghost variant's
+    `hover:bg-accent`: the press target is already drawn, so hover is a
+    deepening of it rather than the first time it appears.
+
+    `size-6` and not the button's own `icon-sm`: this is the app's chrome size
+    now, the one the palette trigger, the bell and the ⋯ menu wear in the
+    sidebar header, and the one the tab's capsules stand at in the band beside
+    it. A 32px control next to a 22px badge is the thing that made the header
+    and the tab strip read as two rows that happen to overlap. */
 export const HEADER_CHIP =
-  "bg-background/50 ring-1 ring-border/50 backdrop-blur-sm hover:bg-background/80"
+  "size-6 bg-background/50 ring-1 ring-border/50 backdrop-blur-sm hover:bg-background/80"
 
 /** The ground of a surface the app *raises over* its own content — what a
     capsule opens (the bell's glance) and what the app raises on its own (a

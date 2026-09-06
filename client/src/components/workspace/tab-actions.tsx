@@ -1,10 +1,13 @@
-/* The right-hand end of a tab strip: the group's tab list, then split.
+/* The right-hand end of a tab strip: the group's tab list, and nothing else.
 
    The + moved to the app header (`workspace/panel-items`), because a per-group
    copy meant a split dock had two of them with no obvious answer to which one
    you press, and the strip is the first thing to get cramped on a narrow screen
    — which is exactly where an affordance for opening panels matters most, there
-   being no keyboard.
+   being no keyboard. Split went the other way and simply left: the strip stands
+   in the app header's own band now, where every pixel is shared with the app's
+   controls, and splitting is asked for by name in the palette (which says which
+   group it means) or by its chord.
 
    The tab list is the opposite case, and belongs here for the same reason the +
    does not: it is *about this group*. Once tabs stop fitting, the strip scrolls
@@ -13,7 +16,7 @@
    one is doing (`panel-status`) rather than only what it is called. */
 import * as React from "react"
 import type { IDockviewHeaderActionsProps, IDockviewPanel } from "dockview-react"
-import { ChevronDownIcon, PinIcon, SplitSquareHorizontalIcon, XIcon } from "lucide-react"
+import { ChevronDownIcon, PinIcon, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -26,7 +29,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { PANEL_ICONS } from "@/components/workspace/panel-kinds"
 import { PanelStatusDot } from "@/components/workspace/panel-status-dot"
 import { useDock } from "@/components/workspace/dock"
-import { Shortcut } from "@/components/shortcut"
 import { usePanelPinned } from "@/lib/workspace/panel-pins"
 import { usePanelStatus } from "@/lib/workspace/panel-status"
 import { PANEL_SPECS, isPanelKind } from "@/lib/workspace/panels"
@@ -74,78 +76,47 @@ function TabRow({ panel, onClose }: { panel: IDockviewPanel; onClose: () => void
   )
 }
 
-export function makeTabActions({ onSplit }: { onSplit: () => void }) {
-  return function TabActions({ group, panels, containerApi }: IDockviewHeaderActionsProps) {
-    const dock = useDock()
-    /* Splitting a group with one tab in it would only move that tab into a new
-       group and leave the old one empty, so the action is offered where it can
-       actually do something — which also means a single-panel dock shows no
-       chrome here at all. */
-    const canSplit = group.panels.length > 1 || containerApi.panels.length > 1
-    const showList = panels.length >= LIST_FROM
-    if (!canSplit && !showList) return null
+export function TabActions({ panels }: IDockviewHeaderActionsProps) {
+  const dock = useDock()
+  /* Below `LIST_FROM` there is nothing here at all — no split button any more,
+     so the row is the list or it is empty. Splitting is the palette's row and
+     its chord: a button that has to be reached for in a strip that is now the
+     app header's own band was the widest thing in it and the least asked for. */
+  if (panels.length < LIST_FROM) return null
 
-    return (
-      <div className="flex h-full items-center gap-0.5 pr-1 pl-0.5">
-        {showList && (
-          <DropdownMenu>
-            <Tooltip>
-              <TooltipTrigger
+  return (
+    <div className="flex h-full items-center gap-0.5 pr-1 pl-0.5">
+      <DropdownMenu>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <DropdownMenuTrigger
                 render={
-                  <DropdownMenuTrigger
-                    render={
-                      <Button
-                        size="icon-xs"
-                        variant="ghost"
-                        aria-label="All tabs in this group"
-                        className="size-6 text-muted-foreground hover:text-foreground"
-                      >
-                        <ChevronDownIcon className="size-3.5" />
-                      </Button>
-                    }
-                  />
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label="All tabs in this group"
+                    className="size-6 text-muted-foreground hover:text-foreground"
+                  >
+                    <ChevronDownIcon className="size-3.5" />
+                  </Button>
                 }
               />
-              <TooltipContent side="bottom">{panels.length} tabs</TooltipContent>
-            </Tooltip>
-            {/* Sized to its rows, not to the 24px button it hangs off — the
-                same fix `workspace/panel-items` needed for the same reason. */}
-            <DropdownMenuContent
-              align="end"
-              className="w-auto max-w-[min(22rem,calc(100vw-1.5rem))] min-w-56"
-            >
-              {panels.map((panel) => (
-                <TabRow
-                  key={panel.id}
-                  panel={panel}
-                  onClose={() => void dock.closePanel(panel.id)}
-                />
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-        {canSplit && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label="Split right"
-                  className="size-6 text-muted-foreground hover:text-foreground"
-                  onClick={onSplit}
-                >
-                  <SplitSquareHorizontalIcon className="size-3.5" />
-                </Button>
-              }
-            />
-            <TooltipContent side="bottom">
-              Split right
-              <Shortcut id="splitRight" />
-            </TooltipContent>
-          </Tooltip>
-        )}
-      </div>
-    )
-  }
+            }
+          />
+          <TooltipContent side="bottom">{panels.length} tabs</TooltipContent>
+        </Tooltip>
+        {/* Sized to its rows, not to the 24px button it hangs off — the same
+            fix `workspace/panel-items` needed for the same reason. */}
+        <DropdownMenuContent
+          align="end"
+          className="w-auto max-w-[min(22rem,calc(100vw-1.5rem))] min-w-56"
+        >
+          {panels.map((panel) => (
+            <TabRow key={panel.id} panel={panel} onClose={() => void dock.closePanel(panel.id)} />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  )
 }

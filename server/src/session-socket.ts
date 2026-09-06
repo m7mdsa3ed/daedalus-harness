@@ -1,4 +1,5 @@
 import { WebSocket } from "ws";
+import type * as acp from "./acp.js";
 import { toWireError } from "./acp-bridge.js";
 import { queueItems } from "./session-queue.js";
 import type { SessionJournal } from "./session-journal.js";
@@ -19,6 +20,14 @@ function holdFields(session: Session): { hold?: ThreadHold } {
    finding the menus move when the turn ends. */
 function stagedFields(session: Session): { staged?: StagedConfig } {
   return session.stagedConfig ? { staged: session.stagedConfig } : {};
+}
+
+/* And how full the agent says its context window is — same bargain again, and
+   one more reason: the journal *does* carry readings, so a client folding them
+   drew the newest one inside its window rather than the newest one there is.
+   Said last, after the replay, so it wins. */
+function contextFields(session: Session): { context?: acp.UsageUpdate } {
+  return session.context ? { context: session.context } : {};
 }
 import type { EarlierPage, PromptReply, StagedConfig, ThreadCommand, ThreadEvent, ThreadHold, WireError } from "./protocol.js";
 
@@ -222,6 +231,7 @@ export class SessionSocket {
       queue: queueItems(session),
       ...holdFields(session),
       ...stagedFields(session),
+      ...contextFields(session),
     });
     /* Caught up: everything held while the replay was on the wire goes out now,
        in the order it was journaled, and from here the peer is live. */
@@ -318,6 +328,7 @@ export class SessionSocket {
       queue: queueItems(session),
       ...holdFields(session),
       ...stagedFields(session),
+      ...contextFields(session),
     };
     yield `],"caughtUp":${JSON.stringify(caughtUp)}}`;
   }

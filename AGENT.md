@@ -64,6 +64,10 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **Four kinds are journaled and replayed** — `update`, `session_config`, `turn_started`,
   `turn_ended`; the rest are live-only. **A permission or elicitation is never journaled** —
   it lives in `bridge.pending` while the agent blocks. First answer wins.
+- **State is handed over on `caught_up`; only history is replayed.** The queue, the hold and
+  a staged change are not journaled — and **the context reading is journaled and still not
+  the replay's to decide**: a window may hold no `usage_update` and a `load_earlier` page
+  holds older ones. The newest is the row's (`sessions.context`), said after the replay.
 - **A thread is opened over HTTP, and a socket is opened by an outgoing message and by
   nothing else.** Replay and the socket are one code path through the same `handle` switch —
   one parser, one set of callbacks. `ready()` is the one door to a live socket. **A dropped

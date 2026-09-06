@@ -68,7 +68,6 @@ import { useServer } from "@/lib/server-context"
 import { useStoreSelect } from "@/lib/store"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
-import { HEADER_CHIP } from "@/lib/header-chrome"
 
 /** Copy the address of a thread. The one action that is the same sentence on
     every surface, so it is written once. */
@@ -301,7 +300,6 @@ export function ThreadHeaderMenu({
   onNewTab,
   onOpenPanel,
   onOpenInNewTab,
-  onRunHelper,
   dock,
 }: {
   actions: Actions
@@ -312,7 +310,6 @@ export function ThreadHeaderMenu({
   /** Open the routed thread in a second dock tab — the sidebar row's action,
       which needs the dock and so is handed down rather than done here. */
   onOpenInNewTab?: (session: SessionMeta) => void
-  onRunHelper?: (helper: HelperCommand, projectId: string) => void
   /** The dock, for the arrangements submenu. Handed down rather than taken from
       `useDock`, which only answers inside the dock's own tree — this menu is in
       the app header, above it. */
@@ -326,7 +323,6 @@ export function ThreadHeaderMenu({
   const pins = usePins()
   const projects = useProjects()
   const project = projectProp ?? projects.find((p) => p.id === session?.projectId)
-  const helpers = project?.helpers ?? []
   /* One boolean off one thread. This menu is drawn beside a live transcript,
      so reading the whole state here re-opened the question on every streamed
      token of every thread. Undefined = no live thread, which is what the
@@ -459,9 +455,12 @@ export function ThreadHeaderMenu({
           render={
             <Button
               variant="ghost"
-              size="icon-sm"
-              /* The header's own capsule — see `lib/header-chrome`. */
-              className={cn(HEADER_CHIP, "shrink-0 text-muted-foreground hover:text-foreground")}
+              size="icon-xs"
+              /* A plain ghost button: this stands in the sidebar header now,
+                 beside the palette trigger and the bell, and the sidebar has a
+                 ground of its own — the app header's capsule was for standing
+                 on a transparent bar over a moving transcript. */
+              className="shrink-0 text-muted-foreground hover:text-foreground"
               aria-label="Menu"
               title="Menu"
             >
@@ -479,40 +478,10 @@ export function ThreadHeaderMenu({
             canOpenPanels={!!session}
           />
           {dock && <WorkspaceLayoutItems dock={dock} />}
-          {project && helpers.length > 0 && (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuGroup>
-                {renderMenuItems(
-                  [
-                    {
-                      type: "sub",
-                      label: "Project commands",
-                      hint: `Saved shell lines for ${project.name}`,
-                      icon: <SquareTerminal />,
-                      items: [
-                        ...helpers.map(
-                          (h): MenuItemSpec => ({
-                            label: h.name,
-                            icon: <Play />,
-                            onClick: () => onRunHelper?.(h, project.id),
-                          })
-                        ),
-                        { type: "separator" },
-                        {
-                          label: "Manage helpers…",
-                          icon: <Pencil />,
-                          onClick: () =>
-                            void navigate(settingsFormPath("projects", project.id)),
-                        },
-                      ],
-                    },
-                  ],
-                  parts
-                )}
-              </DropdownMenuGroup>
-            </>
-          )}
+          {/* No project commands here: a saved shell line acts on one project,
+              and which project that is, is a fact about a tab and not about
+              this menu — they are on the thread's own tab
+              (`workspace/panel-tab`), beside the rest of what that tab is. */}
           {items.length > 0 && (
             <>
               <DropdownMenuSeparator />

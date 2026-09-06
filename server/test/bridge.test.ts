@@ -784,6 +784,27 @@ assert.equal(
   archivedCursor,
   "the whole archive replays with no process running",
 );
+/* How full the agent said its context window was is the *row's*, not something
+   the client refolds out of the replay: a window may carry no `usage_update`
+   and a `load_earlier` page carries an older one. So it is written down and
+   handed over on `caught_up`, after the replay, where it is the last word — on
+   an archived thread with no process to ask, too. */
+{
+  const { eq } = await import("drizzle-orm");
+  const { db, sessions: sessionsTable } = await import("../src/db/index.js");
+  const row = db.select().from(sessionsTable).where(eq(sessionsTable.id, logged.id)).get();
+  assert.deepEqual(
+    row?.context,
+    { sessionUpdate: "usage_update", used: 12_000, size: 200_000 },
+    "the newest reading is on the row, not only in the journal",
+  );
+  assert.deepEqual(
+    reader.of("caught_up")[0]?.context,
+    { sessionUpdate: "usage_update", used: 12_000, size: 200_000 },
+    "…and is handed to an attaching peer after the replay",
+  );
+}
+
 // Commands still need an agent — reading is the only thing the journal serves.
 send(reader, { id: 900, cmd: "prompt", text: "nope" });
 await waitFor(() => reader.of("reply").length === 1, "a prompt to an archive is refused");

@@ -3,6 +3,7 @@ import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "driz
 
 import type { AuthorizationServerMetadata } from "@modelcontextprotocol/sdk/shared/auth.js";
 
+import type * as acp from "../acp.js";
 import type { AutonomyPolicy } from "../autonomy.js";
 
 /*
@@ -686,6 +687,23 @@ export const sessions = sqliteTable(
         and a failure only the open transcript knew about was invisible in every
         list. */
     lastTurnError: text("last_turn_error"),
+    /** What the agent last reported was in its context window (ACP's
+        `usage_update`), or null for a runtime that never reports one.
+
+        Persisted for the reason `last_turn_error` above it is, and then one
+        more. It is **current state, not history**: a client that folded it out
+        of the replay lost it the moment the window slid past the turn that
+        carried the reading, and paging older history back in (`load_earlier`)
+        re-folded an *older* reading over the current one — the ring walked
+        backwards for scrolling up. So the last reading is the row's, handed to
+        every attaching peer on `caught_up` after the replay, and the copies in
+        the journal are drawn only while they are the newest thing said.
+
+        Written by the same turn-boundary `persist` that writes the two fields
+        above, not per reading: a runtime reports twice per model request, and
+        the row is one turn behind at worst — the live session answers from
+        memory until then. */
+    context: text("context", { mode: "json" }).$type<acp.UsageUpdate>(),
     /** Epoch ms this thread was deleted; null = live. Deleted threads keep
         their row (and their acpSessionId) so a delete stays undoable. */
     deletedAt: integer("deleted_at"),
