@@ -26,10 +26,15 @@ import { ArrowLeft } from "lucide-react"
 
 import {
   Command,
-  CommandDialog,
   CommandEmpty,
   CommandList,
 } from "@/components/ui/command"
+import {
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogTitle,
+} from "@/components/ui/responsive-dialog"
 import { PaletteInput } from "./palette-input"
 import { cn } from "@/lib/utils"
 import { useShortcut } from "@/hooks/use-hotkey"
@@ -161,76 +166,81 @@ export function CommandPalette({
   }
 
   return (
-    /* Centred, like every other dialog: shadcn's CommandDialog pins itself at
-        top-1/3, which reads as anchored to nothing once the list grows or
-        shrinks with the query. Dead-centre keeps the input under the cursor's
-        rest position at any result count — asserted here rather than patched
-        into `ui/command.tsx`, which a re-install would overwrite. */
-    <CommandDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      className={cn(
-        "top-1/2 sm:max-w-xl",
-        /* The rows are drawn by `list.tsx`, which sets its own padding — the
-           dialog's roomier `[cmdk-item]`/`[cmdk-group]` rules are turned back
-           off here so one row is one shape on every page. */
-        "**:[[cmdk-item]]:px-2 **:[[cmdk-item]]:py-1.5",
-        "**:[[cmdk-group]]:px-2 **:[[cmdk-group-heading]]:px-2 **:[[cmdk-group-heading]]:font-medium",
-        "[&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-0"
-      )}
-    >
-      <PaletteContext.Provider value={palette}>
-        {/* Filtering is this file's, not cmdk's — see score.ts. */}
-        <Command loop shouldFilter={false} onKeyDownCapture={onKeyDownCapture} className="bg-transparent">
-          <PaletteInput
-            autoFocus
-            value={query}
-            onValueChange={setQuery}
-            placeholder={PAGE_PLACEHOLDER[page]}
-            prefix={
-              nested ? (
-                <button
-                  type="button"
-                  // Keeps the caret in the box: a chip that steals focus would
-                  // leave the next keystroke going nowhere.
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={back}
-                  className="flex shrink-0 items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  <ArrowLeft className="size-3" />
-                  {PAGE_LABEL[page]}
-                </button>
-              ) : undefined
-            }
-          />
-          {/* 60% of the viewport, or all that is left above the soft keyboard —
-              whichever is smaller. The input is the row above this one, so a
-              list that ignored the keyboard would push it back under it.
-              (~9rem: the input row, the dialog's own padding and a margin.) */}
-          <CommandList className="max-h-[min(60vh,calc(100dvh-var(--keyboard-inset,0px)-9rem))]">
-            {/* The search page says its own "nothing found", per section and per
-                clock — a single global one cannot tell "no messages" from
-                "still asking". */}
-            {/* The activity page says its own "nothing yet", per cause: an
-                empty digest can mean no routines, a read still out, or a read
-                that failed, and one global line cannot tell them apart. */}
-            {page !== "search" && page !== "routine-activity" && (
-              <CommandEmpty>No matches.</CommandEmpty>
-            )}
-            {page === "root" && <RootPage />}
-            {page === "search" && <SearchPage />}
-            {page === "projects" && <ProjectsPage />}
-            {page === "start" && <StartPage />}
-            {page === "theme" && <ThemePage />}
-            {page === "model" && <ModelPage />}
-            {page === "effort" && <EffortPage />}
-            {page === "mode" && <ModePage />}
-            {page === "persona" && <PersonaPage />}
-            {page === "routines" && <RunRoutinePage />}
-            {page === "routine-activity" && <RoutineActivityPage />}
-          </CommandList>
-        </Command>
-      </PaletteContext.Provider>
-    </CommandDialog>
+    /* Centred everywhere: the palette owns a top-input anchored layout, so the
+       bottom sheet would fight it — `disableDrawer` keeps the centred popup on
+       mobile too. The content owns no padding of its own (`bodyClassName`), so
+       the cmdk box keeps the `p-0` fit `CommandDialog` used to give it. */
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange} disableDrawer>
+      <ResponsiveDialogTitle className="sr-only">Command Palette</ResponsiveDialogTitle>
+      <ResponsiveDialogDescription className="sr-only">
+        Search for a command to run...
+      </ResponsiveDialogDescription>
+      <ResponsiveDialogContent
+        showCloseButton={false}
+        className={cn(
+          "sm:max-w-xl",
+          /* The rows are drawn by `list.tsx`, which sets its own padding — the
+             dialog's roomier `[cmdk-item]`/`[cmdk-group]` rules are turned back
+             off here so one row is one shape on every page. */
+          "**:[[cmdk-item]]:px-2 **:[[cmdk-item]]:py-1.5",
+          "**:[[cmdk-group]]:px-2 **:[[cmdk-group-heading]]:px-2 **:[[cmdk-group-heading]]:font-medium",
+          "[&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-0"
+        )}
+        bodyClassName="p-0 overflow-hidden"
+      >
+          <PaletteContext.Provider value={palette}>
+          {/* Filtering is this file's, not cmdk's — see score.ts. */}
+          <Command loop shouldFilter={false} onKeyDownCapture={onKeyDownCapture} className="bg-transparent">
+            <PaletteInput
+              autoFocus
+              value={query}
+              onValueChange={setQuery}
+              placeholder={PAGE_PLACEHOLDER[page]}
+              prefix={
+                nested ? (
+                  <button
+                    type="button"
+                    // Keeps the caret in the box: a chip that steals focus would
+                    // leave the next keystroke going nowhere.
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={back}
+                    className="flex shrink-0 items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    <ArrowLeft className="size-3" />
+                    {PAGE_LABEL[page]}
+                  </button>
+                ) : undefined
+              }
+            />
+            {/* 60% of the viewport, or all that is left above the soft keyboard —
+                whichever is smaller. The input is the row above this one, so a
+                list that ignored the keyboard would push it back under it.
+                (~9rem: the input row, the dialog's own padding and a margin.) */}
+            <CommandList className="max-h-[min(60vh,calc(100dvh-var(--keyboard-inset,0px)-9rem))]">
+              {/* The search page says its own "nothing found", per section and per
+                  clock — a single global one cannot tell "no messages" from
+                  "still asking". */}
+              {/* The activity page says its own "nothing yet", per cause: an
+                  empty digest can mean no routines, a read still out, or a read
+                  that failed, and one global line cannot tell them apart. */}
+              {page !== "search" && page !== "routine-activity" && (
+                <CommandEmpty>No matches.</CommandEmpty>
+              )}
+              {page === "root" && <RootPage />}
+              {page === "search" && <SearchPage />}
+              {page === "projects" && <ProjectsPage />}
+              {page === "start" && <StartPage />}
+              {page === "theme" && <ThemePage />}
+              {page === "model" && <ModelPage />}
+              {page === "effort" && <EffortPage />}
+              {page === "mode" && <ModePage />}
+              {page === "persona" && <PersonaPage />}
+              {page === "routines" && <RunRoutinePage />}
+              {page === "routine-activity" && <RoutineActivityPage />}
+            </CommandList>
+          </Command>
+        </PaletteContext.Provider>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   )
 }

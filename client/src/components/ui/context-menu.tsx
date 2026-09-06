@@ -2,9 +2,7 @@
 
 import * as React from "react"
 import { ContextMenu as ContextMenuPrimitive } from "@base-ui/react/context-menu"
-
-import { cn } from "@/lib/utils"
-import { useKeyboardCollisionPadding } from "@/hooks/use-keyboard-inset"
+import { cn } from "cn"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { ArrowRight01Icon, Tick02Icon } from "@hugeicons/core-free-icons"
 
@@ -43,12 +41,10 @@ function ContextMenuContent({
     ContextMenuPrimitive.Positioner.Props,
     "align" | "alignOffset" | "side" | "sideOffset"
   >) {
-  const collisionPadding = useKeyboardCollisionPadding()
   return (
     <ContextMenuPrimitive.Portal>
       <ContextMenuPrimitive.Positioner
         className="isolate z-50 outline-none"
-        collisionPadding={collisionPadding}
         align={align}
         alignOffset={alignOffset}
         side={side}

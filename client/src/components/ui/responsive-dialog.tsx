@@ -29,7 +29,11 @@ import { Cancel01Icon } from "@hugeicons/core-free-icons"
    `tall` is the escape hatch for rich editing surfaces (a task's detail: a
    description, a checklist, comments). It raises the sheet's height cap to
    near-full screen on mobile and the dialog's to 92svh on desktop — it never
-   goes fullscreen, so the grab handle and the swipe-to-dismiss stay. */
+   goes fullscreen, so the grab handle and the swipe-to-dismiss stay.
+
+   `disableDrawer` is the opt-out for surfaces that own their own anchored
+   layout (the command palette): mobile renders the centred dialog instead
+   of the sheet, and every subcomponent follows through `MobileCtx`. */
 
 const MobileCtx = React.createContext(false)
 const TallCtx = React.createContext(false)
@@ -50,14 +54,17 @@ function ResponsiveDialog({
   onOpenChange,
   children,
   tall = false,
+  disableDrawer = false,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   children: React.ReactNode
   /** Near-full-height surface: raises the sheet's mobile cap and the desktop cap. */
   tall?: boolean
+  /** Skip the bottom sheet: render the centred dialog on mobile too. */
+  disableDrawer?: boolean
 }) {
-  const isMobile = useIsMobile()
+  const isMobile = useIsMobile() && !disableDrawer
   return (
     <TallCtx.Provider value={tall}>
       <MobileCtx.Provider value={isMobile}>
@@ -130,9 +137,18 @@ type ContentProps = Omit<
      Merged last, so `p-0 overflow-hidden` wins over the defaults. */
   bodyClassName?: string
   children?: React.ReactNode
+  /* The palette hides the corner X — its input owns that row — while every
+     other surface keeps it. */
+  showCloseButton?: boolean
 }
 
-function ResponsiveDialogContent({ className, bodyClassName, children, ...props }: ContentProps) {
+function ResponsiveDialogContent({
+  className,
+  bodyClassName,
+  showCloseButton = true,
+  children,
+  ...props
+}: ContentProps) {
   const isMobile = React.useContext(MobileCtx)
   const tall = React.useContext(TallCtx)
   const { header, body, footer } = partitionChildren(children)
@@ -196,7 +212,7 @@ function ResponsiveDialogContent({ className, bodyClassName, children, ...props 
               </div>
               {footer}
             </DrawerPrimitive.Content>
-            <CloseButton Close={DrawerPrimitive.Close} />
+            {showCloseButton && <CloseButton Close={DrawerPrimitive.Close} />}
           </DrawerPrimitive.Popup>
         </DrawerPrimitive.Viewport>
       </DrawerPrimitive.Portal>
@@ -231,7 +247,7 @@ function ResponsiveDialogContent({ className, bodyClassName, children, ...props 
         {header}
         <div className={cn("flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-5", bodyClassName)}>{body}</div>
         {footer}
-        <CloseButton Close={DialogPrimitive.Close} />
+        {showCloseButton && <CloseButton Close={DialogPrimitive.Close} />}
       </DialogPrimitive.Popup>
     </DialogPrimitive.Portal>
   )

@@ -1,8 +1,7 @@
 import * as React from "react"
 import { Combobox as ComboboxPrimitive } from "@base-ui/react"
+import { cn } from "cn"
 
-import { cn } from "@/lib/utils"
-import { useKeyboardCollisionPadding } from "@/hooks/use-keyboard-inset"
 import { Button } from "@/components/ui/button"
 import {
   InputGroup,
@@ -97,7 +96,6 @@ function ComboboxContent({
     ComboboxPrimitive.Positioner.Props,
     "side" | "align" | "sideOffset" | "alignOffset" | "anchor"
   >) {
-  const collisionPadding = useKeyboardCollisionPadding()
   return (
     <ComboboxPrimitive.Portal>
       <ComboboxPrimitive.Positioner
@@ -107,12 +105,6 @@ function ComboboxContent({
         alignOffset={alignOffset}
         anchor={anchor}
         className="isolate z-50"
-        /* The keyboard is a rect floating-ui cannot see under
-           `overlaysContent` (`hooks/use-keyboard-inset.ts`): padding the
-           collision boundary by it is what makes this flip above the caret
-           instead of opening behind the keys, and what `--available-height`
-           is then measured against. */
-        collisionPadding={collisionPadding}
       >
         <ComboboxPrimitive.Popup
           data-slot="combobox-content"

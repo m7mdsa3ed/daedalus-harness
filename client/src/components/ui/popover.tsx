@@ -1,8 +1,6 @@
 import * as React from "react"
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover"
-
-import { cn } from "@/lib/utils"
-import { useKeyboardCollisionPadding } from "@/hooks/use-keyboard-inset"
+import { cn } from "cn"
 
 function Popover({ ...props }: PopoverPrimitive.Root.Props) {
   return <PopoverPrimitive.Root data-slot="popover" {...props} />
@@ -24,7 +22,6 @@ function PopoverContent({
     PopoverPrimitive.Positioner.Props,
     "align" | "alignOffset" | "side" | "sideOffset"
   >) {
-  const collisionPadding = useKeyboardCollisionPadding()
   return (
     <PopoverPrimitive.Portal>
       <PopoverPrimitive.Positioner
@@ -33,12 +30,6 @@ function PopoverContent({
         side={side}
         sideOffset={sideOffset}
         className="isolate z-50"
-        /* The keyboard is a rect floating-ui cannot see under
-           `overlaysContent` (`hooks/use-keyboard-inset.ts`): padding the
-           collision boundary by it is what makes this flip above the caret
-           instead of opening behind the keys, and what `--available-height`
-           is then measured against. */
-        collisionPadding={collisionPadding}
       >
         <PopoverPrimitive.Popup
           data-slot="popover-content"
