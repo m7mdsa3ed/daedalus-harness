@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, nativeTheme, ipcMain } = require("electron")
+const { app, BrowserWindow, Menu, Notification, shell, nativeTheme, ipcMain, clipboard } = require("electron")
 const path = require("node:path")
 const fs = require("node:fs")
 const http = require("node:http")
@@ -13,14 +13,60 @@ if (IS_WSL || process.env.ELECTRON_DISABLE_GPU) {
   app.commandLine.appendSwitch("disable-gpu-compositing")
 }
 
+/* Windows shows a notification only if it can attribute it to an installed
+   app: without an explicit AppUserModelID Chromium raises the notification and
+   the shell silently drops it, so `new Notification(...)` "works" and nothing
+   appears. Must match electron-builder's `build.appId`, and must be set before
+   any window exists. No-op on macOS/Linux. */
+if (process.platform === "win32") app.setAppUserModelId("com.daedalus.harness")
+
 let win = null
 let server = null
 
 const symbolColorFor = (resolved) => (resolved === "dark" ? "#e5e5e5" : "#171717")
 
+/* ── Notifications ──
+   The renderer does NOT use the web Notification API here, and the permission
+   handlers below are not the whole story: Chromium's web notifications inside
+   Electron depend on the embedder being attributable to the OS (a Start Menu
+   shortcut carrying the AppUserModelID on Windows, a notification daemon on
+   Linux), and when that attribution is missing `new Notification(...)` resolves
+   perfectly happily and nothing is ever drawn. Electron's own `Notification`
+   goes through the main process, which is the surface those platforms actually
+   accept, and needs no permission at all — so the desktop app never has to ask
+   for one, and never has an "enable notifications" offer to show.
+
+   The click is routed the same way the service worker routes a push: focus the
+   window that exists and tell the renderer which thread the notice was about
+   (preload re-exposes it; lib/notifications.ts navigates). */
+ipcMain.handle("notify", (_event, payload) => {
+  if (!Notification.isSupported()) return false
+  const { title, body, sessionId } = payload ?? {}
+  const notification = new Notification({
+    title: String(title ?? "Daedalus"),
+    body: String(body ?? ""),
+    // Dev/unpackaged runs have no bundled resources; a missing file is ignored.
+    icon: path.join(__dirname, "..", "build", "icon.png"),
+  })
+  notification.on("click", () => {
+    if (!win || win.isDestroyed()) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+    if (sessionId) win.webContents.send("notification-click", String(sessionId))
+  })
+  notification.show()
+  return true
+})
+
 ipcMain.on("theme-changed", (_event, resolved) => {
   if (!win || win.isDestroyed() || process.platform === "darwin") return
   win.setTitleBarOverlay({ color: "#00000000", symbolColor: symbolColorFor(resolved), height: 36 })
+})
+
+ipcMain.handle("write-clipboard", (_event, text) => {
+  clipboard.writeText(String(text ?? ""))
+  return true
 })
 
 /* Serve dist/ over local http (not file://) so the service worker (FCM) and
@@ -81,6 +127,54 @@ function saveState() {
   }
 }
 
+/* Chromium's clipboard accelerators (⌘/Ctrl+C/X/V/A) are the application
+   MENU's, not the web page's: with no menu installed there is no accelerator,
+   and copy silently does nothing. `autoHideMenuBar` only hides the bar — it
+   does not build one — so the menu has to be stated. Everything is a role, so
+   the OS supplies the labels and the platform-correct keys. */
+function installMenu() {
+  const isMac = process.platform === "darwin"
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      ...(isMac ? [{ role: "appMenu" }] : []),
+      { role: "fileMenu" },
+      { role: "editMenu" },
+      { role: "viewMenu" },
+      { role: "windowMenu" },
+    ]),
+  )
+}
+
+function installClipboardHandlers() {
+  win.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown" || input.alt) return
+    if (!(input.control || input.meta)) return
+
+    const commands = {
+      c: "copy",
+      x: "cut",
+      v: "paste",
+      a: "selectAll",
+    }
+    const command = commands[input.key.toLowerCase()]
+    if (!command) return
+
+    event.preventDefault()
+    win.webContents[command]()
+  })
+
+  win.webContents.on("context-menu", (_event, params) => {
+    const menu = Menu.buildFromTemplate([
+      { role: "copy", enabled: params.editFlags.canCopy },
+      { role: "cut", enabled: params.isEditable && params.editFlags.canCut },
+      { role: "paste", enabled: params.isEditable && params.editFlags.canPaste },
+      { type: "separator" },
+      { role: "selectAll" },
+    ])
+    menu.popup({ window: win })
+  })
+}
+
 async function createWindow() {
   const state = loadState()
 
@@ -92,6 +186,11 @@ async function createWindow() {
     minWidth: 700,
     minHeight: 500,
     show: false,
+    /* Dev/unpackaged runs have no bundled resources, so the window icon has to
+       be pointed at the source PNG; a packaged build takes it from the
+       electron-builder `icon` config instead. macOS ignores this entirely and
+       uses the bundle icon. */
+    icon: path.join(__dirname, "..", "build", "icon.png"),
     // Edge-to-edge: no OS title bar, the app paints its own chrome. macOS keeps
     // the traffic lights inset; Windows/Linux get an overlay for min/max/close.
     frame: process.platform === "darwin",
@@ -127,6 +226,8 @@ async function createWindow() {
     },
   })
 
+  installClipboardHandlers()
+
   if (state.maximized) win.maximize()
 
   // ready-to-show can never fire (WSLg withholds first frames); the timer
@@ -160,9 +261,17 @@ async function createWindow() {
   })
 
   // Mic access for native SpeechRecognition (voice input) + notifications.
+  const ALLOWED = ["media", "audioCapture", "notifications", "speaker-selection"]
   win.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(["media", "audioCapture", "notifications", "speaker-selection"].includes(permission))
+    callback(ALLOWED.includes(permission))
   })
+  /* The request handler answers `Notification.requestPermission()`; this one
+     answers the SYNCHRONOUS checks Chromium makes before it will even display a
+     notification it was handed. Without it the ask can succeed and the
+     notification still never render. */
+  win.webContents.session.setPermissionCheckHandler((_wc, permission) =>
+    ALLOWED.includes(permission)
+  )
 
   if (DEV_URL) {
     await waitForDevServer(DEV_URL)
@@ -185,7 +294,10 @@ if (!app.requestSingleInstanceLock()) {
     }
   })
 
-  app.whenReady().then(createWindow)
+  app.whenReady().then(() => {
+    installMenu()
+    return createWindow()
+  })
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

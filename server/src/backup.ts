@@ -1,0 +1,1269 @@
+import { getTableColumns, inArray, sql, type SQL } from "drizzle-orm";
+import type { SQLiteColumn, SQLiteTable } from "drizzle-orm/sqlite-core";
+import { z } from "zod";
+import {
+  agentOptions as agentOptionsTable,
+  USAGE_KINDS,
+  agents as agentsTable,
+  appSettings as appSettingsTable,
+  commands as commandsTable,
+  db,
+  knowledge as knowledgeTable,
+  mcpOauth as mcpOauthTable,
+  mcpServers as mcpServersTable,
+  modelPrompts as modelPromptsTable,
+  notifications as notificationsTable,
+  composerHistory as composerHistoryTable,
+  personas as personasTable,
+  profiles as profilesTable,
+  projectHelpers as projectHelpersTable,
+  projects as projectsTable,
+  pushTokens as pushTokensTable,
+  routineRuns as routineRunsTable,
+  routineTriggers as routineTriggersTable,
+  routines as routinesTable,
+  scheduledMessages as scheduledTable,
+  sessionEvents as eventsTable,
+  sessionQueue as queueTable,
+  sessions as sessionsTable,
+  skills as skillsTable,
+  boards as boardsTable,
+  boardViews as boardViewsTable,
+  type BoardViewConfig,
+  sprints as sprintsTable,
+  taskActivity as taskActivityTable,
+  taskComments as taskCommentsTable,
+  taskLinks as taskLinksTable,
+  boardStatuses as boardStatusesTable,
+  tasks as tasksTable,
+  webSearchUsage as usageTable,
+  workflowRuns as workflowRunsTable,
+  type NameValue,
+  type RoutineBody,
+} from "./db/index.js";
+import type { AutonomyPolicy } from "./autonomy.js";
+import { PROFILE_LINKS, SESSION_LINKS, emptyLinks, readLinks, writeLinks, type LinkSet, type Tx } from "./db/links.js";
+/* The routine link descriptor lives with the engine rather than in db/links.ts
+   — see the note there. It is imported for its links exactly as PROFILE_LINKS
+   and SESSION_LINKS are used above. */
+import { ROUTINE_LINKS } from "./routines.js";
+import { readWebSearch, saveWebSearch, type WebSearchConfig } from "./config.js";
+import { writeModelPromptsLibrary } from "./model-prompts.js";
+import { ensureDefaultBoard, reconcileTaskStatuses } from "./boards.js";
+
+/*
+ * Export / import of everything the harness stores.
+ *
+ * One JSON document — the `Bundle` below — carries every table in
+ * `db/schema.ts` that is the user's data, plus the one config.json block that
+ * is (the web-search backend). What it deliberately leaves out:
+ *
+ *   - `config.json`'s token, host and port — bootstrap for THIS server; a
+ *     restore onto another machine must not adopt the first one's bind address,
+ *     and the token is what the person restoring already holds.
+ *   - `agent_options` — a probe cache keyed by cwd, regenerated on demand.
+ *
+ * Secrets are opt-out, not opt-in, because a backup that loses its credentials
+ * is half a backup: `includeSecrets: false` blanks a profile's `apiKey`, every
+ * MCP header/env value and the web-search token. On import, a blank where the
+ * install already holds a value keeps the value, so a redacted bundle merged
+ * over the install it came from is a no-op for the secrets.
+ *
+ * Thread transcripts (`session_events`) are the bulk of any install, so they
+ * are a second opt-out (`includeJournals`). Without them a thread still comes
+ * back — the conversation lives in the agent's own store and `session/load`
+ * is what revives it — it just cannot be *read* without reviving.
+ *
+ * Import runs in ONE transaction: a half-imported install would be worse than
+ * either outcome. `merge` upserts by id and leaves everything else alone;
+ * `replace` empties every table first. The caller (index.ts) is responsible
+ * for the live processes — a session row rewritten under a running agent is a
+ * race — which is why `SessionManager.retireAll` / `reload` exist.
+ */
+
+export const BUNDLE_FORMAT = "daedalus-backup";
+export const BUNDLE_VERSION = 1;
+
+const nameValues = z.array(z.object({ name: z.string(), value: z.string() }));
+const str = z.string();
+const optStr = z.string().nullish();
+const int = z.number().int();
+const json = z.unknown();
+
+/* Row schemas. Each mirrors a table's insert shape with the nullable/defaulted
+   columns optional, so a bundle from a slightly older release still parses;
+   unknown keys are stripped (zod's default) so a slightly NEWER one does too. */
+const AgentRow = z.object({
+  id: str.min(1),
+  name: str,
+  command: str,
+  args: z.array(str).default([]),
+  env: z.record(str, str).default({}),
+  spawnCategories: z.record(str, z.enum(["model", "effort"])).nullish(),
+  /* Carried, because a restored row keeps its `seededVersion` and so is never
+     backfilled again: an agent that came back without this would quietly go
+     back to restarting for every model change. */
+  liveConfig: z.enum(["acp", "gateway"]).nullish(),
+  /* Carried for the same reason, and it is the user's besides: the command is
+     editable, so a restored row that dropped it would silently stop reporting
+     plan usage with no backfill left to put it back. The *reading* is not
+     carried — `agent_quota` is a cache, and a percentage restored onto another
+     machine describes an account that machine may not even be logged into. */
+  quotaProbe: z
+    .object({
+      kind: z.enum(["claude-cli", "codex-app-server"]),
+      command: str,
+      args: z.array(str).default([]),
+    })
+    .nullish(),
+  /* Carried for the third time and the same reason: a restored row keeps its
+     `seededVersion`, so nothing would ever backfill the door a persona reaches
+     this agent through, and every thread's persona would silently do nothing. */
+  personaVia: z.enum(["acp-meta", "env"]).nullish(),
+  seededVersion: int.default(0),
+});
+
+const ModelRow = z.object({
+  id: str.min(1),
+  label: str,
+  contextWindow: z.number().optional(),
+  maxOutputTokens: z.number().optional(),
+  reasoningEfforts: z.array(str).default([]),
+  description: str.optional(),
+  pricing: z.object({ input: z.number(), output: z.number() }).optional(),
+  modalities: z.array(str).optional(),
+  devRef: str.optional(),
+});
+
+const ProfileRow = z.object({
+  id: str.min(1),
+  name: str,
+  agents: z.record(str, z.object({ baseUrl: str.optional() })).default({}),
+  baseUrl: str.default(""),
+  /** Absent = redacted on export; "" is also read as "nothing to say". */
+  apiKey: str.optional(),
+  defaultModel: str.default(""),
+  smallModel: optStr,
+  logoUrl: optStr,
+  /** Which provider API reads this profile's plan (usage-api.ts). Carried
+      because it is configuration the user wrote, not a reading — the readings
+      in `agent_quota` are left out for the reason the probe cache is. Its
+      `apiKey` is blanked by `secrets=0` like every other credential. */
+  usage: z
+    .object({ kind: z.enum(USAGE_KINDS), baseUrl: optStr, apiKey: optStr })
+    .nullish(),
+  models: z.array(ModelRow).default([]),
+  mcpServerIds: z.array(str).default([]),
+  skillIds: z.array(str).default([]),
+  commandIds: z.array(str).default([]),
+});
+
+const McpServerRow = z.object({
+  id: str.min(1),
+  type: z.enum(["http", "stdio", "builtin"]),
+  name: str,
+  builtin: z.enum(["web-search", "knowledge", "workflow"]).nullish(),
+  /** Absent in a bundle written before OAuth existed, which read as "none". */
+  auth: z.enum(["none", "oauth"]).default("none"),
+  url: optStr,
+  headers: nameValues.nullish(),
+  command: optStr,
+  args: z.array(str).nullish(),
+  env: nameValues.nullish(),
+});
+
+/** The OAuth connection behind an `http` MCP server. Its three secrets follow
+    the same bargain a profile's key does under `secrets=0`: blanked to "", and
+    a blank on import keeps whatever the install already holds — so a redacted
+    bundle merged over its own install changes nothing. The registration
+    (client id, redirect URI, discovered metadata) is not a secret and always
+    travels; a restored row on another machine keeps it, and the first 401
+    through the shim is what discovers the redirect URI no longer matches,
+    which is the same recovery path a revoked token takes. */
+const McpOauthRow = z.object({
+  mcpServerId: str.min(1),
+  resource: str,
+  issuer: str,
+  metadata: z.record(z.string(), z.unknown()),
+  clientId: str,
+  clientSecret: optStr,
+  redirectUri: str,
+  scope: optStr,
+  accessToken: optStr,
+  refreshToken: optStr,
+  expiresAt: int.nullish(),
+  lastError: optStr,
+  updatedAt: int,
+});
+
+const SkillRow = z.object({ id: str.min(1), name: str, path: str });
+
+const CommandRow = z.object({
+  id: str.min(1),
+  name: str,
+  description: str,
+  argumentHint: optStr,
+  content: str,
+});
+
+/* A user's own personas travel; so do the built-ins, edits and all, for the
+   `seededVersion` reason above — a restored built-in is never re-seeded, so a
+   row that came back without its prompt would be a persona that does nothing
+   and cannot be repaired except by hand. */
+const PersonaRow = z.object({
+  id: str.min(1),
+  name: str,
+  description: str.default(""),
+  prompt: str,
+  thinking: int.nullish(),
+  effort: optStr,
+  seededVersion: int.default(0),
+  sortOrder: int.default(0),
+});
+
+/* Model prompts travel whole, for the same reason personas do: a restored row
+   without its prompt would be an assignment that does nothing, and the seed
+   would never repair it — a built-in the importer brought back is stamped as
+   already carried, so `seedModelPrompts` will not rewrite it. `seededVersion`
+   defaults to 0 so a bundle written before the built-ins existed still imports,
+   as a set of rows the seed then treats as the user's own. */
+const ModelPromptRow = z.object({
+  id: str.min(1),
+  name: str,
+  match: str,
+  prompt: str,
+  enabled: z.boolean().default(true),
+  sortOrder: int.default(0),
+  seededVersion: int.default(0),
+});
+
+const ProjectRow = z.object({
+  id: str.min(1),
+  name: str,
+  cwd: str,
+  description: optStr,
+  logoUrl: optStr,
+  rules: optStr,
+});
+
+/** A project's helper command — a whole row, never a link: the command is the
+    payload, so the bundle carries it rather than pointing at a library row.
+    `env` rides as the row's JSON text, so export/import is lossless. */
+const HelperRow = z.object({
+  id: str.min(1),
+  projectId: str.min(1),
+  name: str,
+  command: str,
+  cwd: optStr,
+  env: optStr,
+  description: optStr,
+  confirm: z.boolean().nullish(),
+  createdAt: int,
+});
+
+const KnowledgeRow = z.object({
+  id: str.min(1),
+  projectId: str.min(1),
+  title: str,
+  content: str,
+  tags: z.array(str).nullish(),
+  createdAt: int,
+  updatedAt: int,
+});
+
+const SessionRow = z.object({
+  id: str.min(1),
+  profileId: str,
+  projectId: str,
+  agentId: str,
+  model: str.default(""),
+  effort: str.default(""),
+  /* Absent in a bundle written before modes were persisted, which reads as
+     the agent's default — which is exactly what the thread ran on. */
+  modeId: optStr,
+  /* Absent in a bundle written before personas existed, which reads as the
+     thread having none — which is exactly what it had. */
+  personaId: optStr,
+  /* Absent in a bundle written before suggestion toggles existed, which
+     reads as on — suggestions default on, like every new thread. */
+  suggestFollowups: z.boolean().default(true),
+  title: str.default("New thread"),
+  acpSessionId: optStr,
+  acpSessionProvisional: z.boolean().default(false),
+  createdAt: int,
+  /* Absent in a bundle written before threads were ordered by activity; 0 is
+     what `reload` backfills from the imported journal. */
+  lastActivityAt: int.default(0),
+  /* How the thread's last turn went. Absent in a bundle written before it was
+     recorded, which reads as "no failure" — the same thing every row said
+     before the column existed. */
+  lastTurnError: optStr,
+  deletedAt: int.nullish(),
+  parentSessionId: optStr,
+  /* Absent in a bundle written before forks existed, which reads as a thread
+     that was never branched — which is what every thread in it was. */
+  forkedFromSessionId: optStr,
+  forkedFromTurnId: optStr,
+  mcpServerIds: z.array(str).default([]),
+  skillIds: z.array(str).default([]),
+  commandIds: z.array(str).default([]),
+});
+
+const QueueRow = z.object({
+  id: str.min(1),
+  sessionId: str.min(1),
+  position: int,
+  text: str,
+  /* The ids travel; the bytes do not. `attachments` rows are excluded from a
+     bundle for the same reason `history_*` is — they are meaningless without
+     the files beside them — so a restored queue row keeps saying what it was
+     going to send and its chips resolve to the "missing" state. */
+  attachmentIds: z.array(str).nullish(),
+  createdAt: int,
+});
+
+const ScheduledRow = z.object({
+  id: str.min(1),
+  sessionId: str.min(1),
+  text: str,
+  nextAt: int,
+  everyMs: int.nullish(),
+  createdAt: int,
+});
+
+const WorkflowRunRow = z.object({
+  id: str.min(1),
+  parentSessionId: str.min(1),
+  name: str,
+  definition: z.record(z.string(), z.unknown()),
+  inputs: z.record(z.string(), z.unknown()),
+  status: z.enum(["running", "paused", "completed", "failed", "cancelled"]),
+  error: optStr,
+  steps: z.array(
+    z.object({
+      name: str,
+      status: z.enum(["pending", "running", "completed", "failed", "cancelled", "skipped"]),
+      sessionId: str.nullable(),
+      attempt: int,
+      output: z.unknown(),
+      error: str.nullable(),
+      startedAt: int.nullable(),
+      endedAt: int.nullable(),
+    }),
+  ),
+  createdAt: int,
+  endedAt: int.nullish(),
+});
+
+/* Routines and their two children (routines.ts). A routine is a root: nothing
+   in the bundle points at it, and its project/profile/agent/persona ids are
+   deliberately not foreign keys, so a routine whose project the bundle does not
+   carry still restores — "this routine's project no longer exists" is a
+   sentence the UI can say, where a dropped row is not. */
+const RoutineRow = z.object({
+  id: str.min(1),
+  name: str,
+  description: optStr,
+  enabled: z.boolean().default(true),
+  projectId: str,
+  profileId: str,
+  agentId: str,
+  model: str.default(""),
+  effort: str.default(""),
+  personaId: optStr,
+  configChoices: z.record(str, z.union([str, z.boolean()])).default({}),
+  /* Opaque but required. Their INTERNALS are deliberately not validated here:
+     `body` holds a whole workflow definition (workflow-schema.ts owns that
+     shape) and `autonomy` a policy (autonomy.ts owns that one), and restating
+     either would be a second copy to keep in step. `z.custom` rather than
+     `z.unknown()` because both columns are NOT NULL and an `unknown` key is
+     OPTIONAL in zod — a bundle missing one would parse here and then fail the
+     insert, taking the whole transaction down instead of answering 400 at the
+     boundary. */
+  body: z.custom<RoutineBody>((v) => v !== null && typeof v === "object"),
+  output: z.record(str, z.unknown()).nullish(),
+  onFinish: z.array(json).default([]),
+  overlap: z.enum(["skip", "queue"]).default("skip"),
+  autonomy: z.custom<AutonomyPolicy>((v) => v !== null && typeof v === "object"),
+  /* Carried, and it is the one field here where carrying it is a security
+     decision rather than a convenience: it records that a run has completed
+     under this routine, which is what unlocks a blanket `allow`. A restore that
+     dropped it would re-lock a grant the user already made informedly; a
+     restore that invented it would unlock one they never did. So it travels
+     exactly as it was. */
+  dryRunCompleted: z.boolean().default(false),
+  createdAt: int,
+  updatedAt: int,
+  mcpServerIds: z.array(str).default([]),
+  skillIds: z.array(str).default([]),
+  commandIds: z.array(str).default([]),
+});
+
+const RoutineTriggerRow = z.object({
+  id: str.min(1),
+  routineId: str.min(1),
+  kind: z.enum(["schedule", "api", "git"]),
+  enabled: z.boolean().default(true),
+  cron: optStr,
+  tz: optStr,
+  atMs: int.nullish(),
+  condition: z.object({ gitChangedSince: z.literal("lastRun").optional() }).nullish(),
+  /* The clock is carried rather than recomputed: a one-off's slot is a fact
+     about when the user asked for it, and a recurring one is re-armed by the
+     sweep within SWEEP_MS anyway. A restored slot already in the past fires
+     once and rolls forward, which is the same collapse a server that was off
+     overnight already does. */
+  nextFireAt: int.nullish(),
+  /** Absent = redacted on export; "" is also read as "nothing to say". The
+      stored value is a sha-256, not the token — but it is the only credential
+      here that starts a process on this machine, so it follows the same
+      opt-out every other secret does. */
+  secretHash: str.optional(),
+  secretCreatedAt: int.nullish(),
+  branch: optStr,
+  paths: z.array(str).default([]),
+  debounceMs: int.default(30_000),
+  lastSeen: optStr,
+  lastFiredAt: int.nullish(),
+  lastError: optStr,
+  createdAt: int,
+});
+
+const RoutineRunRow = z.object({
+  id: str.min(1),
+  routineId: str.min(1),
+  triggerId: optStr,
+  fireId: str,
+  /** The run's thread. Not filtered against the sessions table on import: it is
+      not a foreign key precisely so that deleting a thread does not delete the
+      history of the run that made it. */
+  sessionId: optStr,
+  source: z.enum(["schedule", "api", "git", "manual", "routine"]),
+  payload: optStr,
+  dryRun: z.boolean().default(false),
+  status: z.enum(["running", "completed", "failed", "blocked", "skipped"]),
+  error: optStr,
+  output: optStr,
+  verdict: json,
+  actions: z.array(json).default([]),
+  headOid: optStr,
+  tokens: int.nullish(),
+  startedAt: int,
+  endedAt: int.nullish(),
+});
+
+const EventRow = z.object({
+  sessionId: str.min(1),
+  seq: int,
+  kind: str,
+  payload: json,
+  at: int.default(0),
+});
+
+const CustomFieldRow = z.object({
+  id: str.min(1),
+  name: str,
+  type: z.enum(["text", "number", "select", "date", "checkbox", "url"]),
+  options: z.array(str).optional(),
+});
+
+const BoardRow = z.object({
+  id: str.min(1),
+  name: str,
+  key: str.default("TASK"),
+  description: optStr,
+  projectId: optStr,
+  color: optStr,
+  order: int.default(0),
+  nextNumber: int.default(1),
+  customFields: z.array(CustomFieldRow).default([]),
+  createdAt: int,
+  updatedAt: int,
+});
+
+const BoardStatusRow = z.object({
+  id: str.min(1),
+  boardId: str.min(1),
+  name: str,
+  color: optStr,
+  category: z.enum(["todo", "in_progress", "done"]).default("todo"),
+  wipLimit: int.nullish(),
+  order: int.default(0),
+  createdAt: int,
+  updatedAt: int,
+});
+
+const SprintRow = z.object({
+  id: str.min(1),
+  boardId: str.min(1),
+  name: str,
+  goal: optStr,
+  startAt: int.nullish(),
+  endAt: int.nullish(),
+  state: z.enum(["planned", "active", "closed"]).default("planned"),
+  order: int.default(0),
+  createdAt: int,
+  updatedAt: int,
+});
+
+const BoardViewRow = z.object({
+  id: str.min(1),
+  boardId: str.min(1),
+  name: str,
+  kind: z.enum(["board", "list", "table", "calendar", "timeline"]).default("board"),
+  config: z.record(z.string(), z.unknown()).default({}),
+  order: int.default(0),
+  createdAt: int,
+  updatedAt: int,
+});
+
+const TaskCommentRow = z.object({
+  id: str.min(1),
+  taskId: str.min(1),
+  body: str,
+  author: optStr,
+  createdAt: int,
+  updatedAt: int,
+});
+
+const TaskActivityRow = z.object({
+  id: str.min(1),
+  taskId: str.min(1),
+  at: int,
+  field: str,
+  from: z.unknown().nullish(),
+  to: z.unknown().nullish(),
+});
+
+const TaskLinkRow = z.object({
+  id: str.min(1),
+  fromId: str.min(1),
+  toId: str.min(1),
+  kind: z.enum(["blocks", "relates", "duplicates"]).default("relates"),
+  createdAt: int,
+});
+
+/* A task's board and column are ids now, where a bundle written before boards
+   existed carries `board` (always "default") and `status` (one of four slugs).
+   Those are exactly the ids `ensureDefaultBoard` seeds, so the old keys are
+   renamed rather than translated — an old bundle imports into the default
+   board unchanged. */
+const TaskRow = z.preprocess(
+  (value) => {
+    if (!value || typeof value !== "object") return value;
+    const row = value as Record<string, unknown>;
+    if ("boardId" in row && "statusId" in row) return row;
+    const { board, status, ...rest } = row;
+    return {
+      ...rest,
+      boardId: row.boardId ?? board ?? "default",
+      statusId: row.statusId ?? status ?? "todo",
+    };
+  },
+  z.object({
+    id: str.min(1),
+    boardId: str.default("default"),
+    number: int.nullable().default(null),
+    type: z.enum(["task", "bug", "story", "epic"]).default("task"),
+    title: str,
+    description: optStr,
+    statusId: str.default("todo"),
+    priority: z.enum(["lowest", "low", "medium", "high", "urgent"]).default("medium"),
+    labels: z.array(str).default([]),
+    assignee: optStr,
+    parentId: optStr,
+    sprintId: optStr,
+    estimate: int.nullish(),
+    startAt: int.nullish(),
+    dueAt: int.nullish(),
+    completedAt: int.nullish(),
+    archived: z.boolean().nullable().default(false),
+    checklist: z
+      .array(z.object({ id: str.min(1), text: str, done: z.boolean().default(false) }))
+      .default([]),
+    custom: z.record(z.string(), z.unknown()).default({}),
+    note: optStr,
+    order: int.default(0),
+    createdAt: int,
+    updatedAt: int,
+  }),
+);
+
+const UsageRow = z.object({
+  id: str.min(1),
+  sessionId: str,
+  toolCallId: str,
+  tool: z.enum(["search", "fetch"]),
+  status: str,
+  threadTitle: str,
+  profileId: str,
+  profileName: str,
+  projectId: str,
+  projectName: str,
+  startedAt: int,
+  completedAt: int.nullish(),
+});
+
+const PushTokenRow = z.object({ token: str.min(1), createdAt: int });
+
+const NotificationRow = z.object({
+  id: str.min(1),
+  kind: z.enum(["permission", "question", "turn_finished", "turn_failed"]),
+  sessionId: optStr,
+  threadTitle: optStr,
+  body: optStr,
+  read: z.boolean().default(false),
+  createdAt: int,
+});
+
+/* The prompts the user has typed — theirs, and the one table here that is
+   worth carrying to a new install even though nothing points at it. */
+const ComposerHistoryRow = z.object({
+  id: str.min(1),
+  text: str,
+  sessionId: optStr,
+  threadTitle: optStr,
+  createdAt: int,
+});
+
+const WebSearchBlock = z.object({
+  searchApiBaseUrl: str,
+  /** Absent = redacted on export. */
+  searchApiToken: str.optional(),
+  searchModel: str,
+  fetchModel: str,
+});
+
+export const BundleSchema = z.object({
+  format: z.literal(BUNDLE_FORMAT),
+  version: z.literal(BUNDLE_VERSION),
+  exportedAt: int.optional(),
+  /** What the export left out, so the importer can say so. */
+  redacted: z.object({ secrets: z.boolean().default(false), journals: z.boolean().default(false) }).default({ secrets: false, journals: false }),
+  agents: z.array(AgentRow).default([]),
+  profiles: z.array(ProfileRow).default([]),
+  mcpServers: z.array(McpServerRow).default([]),
+  mcpOauth: z.array(McpOauthRow).default([]),
+  skills: z.array(SkillRow).default([]),
+  commands: z.array(CommandRow).default([]),
+  personas: z.array(PersonaRow).default([]),
+  modelPrompts: z.array(ModelPromptRow).default([]),
+  projects: z.array(ProjectRow).default([]),
+  projectHelpers: z.array(HelperRow).default([]),
+  knowledge: z.array(KnowledgeRow).default([]),
+  sessions: z.array(SessionRow).default([]),
+  queue: z.array(QueueRow).default([]),
+  scheduled: z.array(ScheduledRow).default([]),
+  workflowRuns: z.array(WorkflowRunRow).default([]),
+  routines: z.array(RoutineRow).default([]),
+  routineTriggers: z.array(RoutineTriggerRow).default([]),
+  routineRuns: z.array(RoutineRunRow).default([]),
+  events: z.array(EventRow).default([]),
+  boards: z.array(BoardRow).default([]),
+  boardStatuses: z.array(BoardStatusRow).default([]),
+  sprints: z.array(SprintRow).default([]),
+  boardViews: z.array(BoardViewRow).default([]),
+  tasks: z.array(TaskRow).default([]),
+  taskComments: z.array(TaskCommentRow).default([]),
+  taskActivity: z.array(TaskActivityRow).default([]),
+  taskLinks: z.array(TaskLinkRow).default([]),
+  webSearchUsage: z.array(UsageRow).default([]),
+  pushTokens: z.array(PushTokenRow).default([]),
+  notifications: z.array(NotificationRow).default([]),
+  composerHistory: z.array(ComposerHistoryRow).default([]),
+  /** `app_settings` as a record — the global rules block travels here. */
+  settings: z.record(str, str).default({}),
+  config: z.object({ webSearch: WebSearchBlock.optional() }).default({}),
+});
+
+export type Bundle = z.infer<typeof BundleSchema>;
+
+export interface ExportOptions {
+  includeSecrets: boolean;
+  includeJournals: boolean;
+}
+
+const blankValues = (pairs: NameValue[] | null | undefined): NameValue[] | null | undefined =>
+  pairs ? pairs.map(({ name }) => ({ name, value: "" })) : pairs;
+
+const withLinks = <T extends { id: string }>(rows: T[], links: Map<string, LinkSet>): (T & LinkSet)[] =>
+  rows.map((row) => ({ ...row, ...(links.get(row.id) ?? emptyLinks()) }));
+
+/** Everything, as one document. Cheap for everything but the events, which
+    are the whole transcript history — the one reason there is an opt-out. */
+export function exportBundle(opts: ExportOptions): Bundle {
+  const profiles = db.select().from(profilesTable).all();
+  const sessions = db.select().from(sessionsTable).all();
+  const mcpServers = db.select().from(mcpServersTable).all();
+  const mcpOauthRows = db.select().from(mcpOauthTable).all();
+  const routines = db.select().from(routinesTable).all();
+  const triggers = db.select().from(routineTriggersTable).all();
+  const webSearch = readWebSearch();
+
+  return {
+    format: BUNDLE_FORMAT,
+    version: BUNDLE_VERSION,
+    exportedAt: Date.now(),
+    redacted: { secrets: !opts.includeSecrets, journals: !opts.includeJournals },
+    agents: db.select().from(agentsTable).all(),
+    profiles: withLinks(profiles, readLinks(PROFILE_LINKS, profiles.map((p) => p.id))).map((p) => {
+      const { apiKey, usage, ...rest } = p;
+      /* The usage provider's own token is the second credential on a profile
+         and is redacted with the first — `kind` and the host stay, since they
+         are configuration and say nothing secret. */
+      const safeUsage = usage && !opts.includeSecrets ? { ...usage, apiKey: "" } : usage;
+      return opts.includeSecrets ? { ...rest, usage: safeUsage, apiKey } : { ...rest, usage: safeUsage };
+    }),
+    mcpServers: opts.includeSecrets
+      ? mcpServers
+      : mcpServers.map((s) => ({ ...s, headers: blankValues(s.headers), env: blankValues(s.env) })),
+    /* The tokens are the second kind of credential in the library and are
+       blanked with the first. What is left — the registration and the
+       discovered metadata — is configuration, and a connection stripped of its
+       tokens still restores as a row that only needs reconnecting. */
+    mcpOauth: opts.includeSecrets
+      ? mcpOauthRows
+      : mcpOauthRows.map((r) => ({ ...r, accessToken: "", refreshToken: "", clientSecret: "" })),
+    skills: db.select().from(skillsTable).all(),
+    commands: db.select().from(commandsTable).all(),
+    personas: db.select().from(personasTable).all(),
+    modelPrompts: db.select().from(modelPromptsTable).all(),
+    projects: db.select().from(projectsTable).all(),
+    projectHelpers: db.select().from(projectHelpersTable).all(),
+    knowledge: db.select().from(knowledgeTable).all(),
+    sessions: withLinks(sessions, readLinks(SESSION_LINKS, sessions.map((s) => s.id))),
+    queue: db.select().from(queueTable).all(),
+    scheduled: db.select().from(scheduledTable).all(),
+    workflowRuns: db.select().from(workflowRunsTable).all(),
+    routines: withLinks(routines, readLinks(ROUTINE_LINKS, routines.map((r) => r.id))),
+    /* A trigger's token hash is a credential like a profile's key: the key is
+       ABSENT under `secrets=0`, not blanked to "", because absent is what the
+       import reads as "keep whatever this install already holds". */
+    routineTriggers: opts.includeSecrets
+      ? triggers
+      : triggers.map(({ secretHash: _s, ...rest }) => rest),
+    routineRuns: db.select().from(routineRunsTable).all(),
+    events: opts.includeJournals
+      ? db.select().from(eventsTable).orderBy(eventsTable.sessionId, eventsTable.seq).all()
+      : [],
+    boards: db.select().from(boardsTable).all(),
+    boardStatuses: db.select().from(boardStatusesTable).all(),
+    sprints: db.select().from(sprintsTable).all(),
+    boardViews: db
+      .select()
+      .from(boardViewsTable)
+      .all()
+      .map((v) => ({ ...v, config: v.config as Record<string, unknown> })),
+    tasks: db.select().from(tasksTable).all(),
+    taskComments: db.select().from(taskCommentsTable).all(),
+    taskActivity: db.select().from(taskActivityTable).all(),
+    taskLinks: db.select().from(taskLinksTable).all(),
+    webSearchUsage: db.select().from(usageTable).all(),
+    pushTokens: db.select().from(pushTokensTable).all(),
+    notifications: db.select().from(notificationsTable).all(),
+    composerHistory: db.select().from(composerHistoryTable).all(),
+    settings: Object.fromEntries(db.select().from(appSettingsTable).all().map((r) => [r.key, r.value])),
+    config: webSearch
+      ? {
+          webSearch: opts.includeSecrets
+            ? webSearch
+            : { searchApiBaseUrl: webSearch.searchApiBaseUrl, searchModel: webSearch.searchModel, fetchModel: webSearch.fetchModel },
+        }
+      : {},
+  };
+}
+
+export type ImportMode = "merge" | "replace";
+
+export type ImportSummary = Record<
+  | "agents" | "profiles" | "mcpServers" | "mcpOauth" | "skills" | "commands" | "personas" | "modelPrompts" | "projects" | "projectHelpers" | "knowledge" | "settings"
+  | "sessions" | "queue" | "scheduled" | "workflowRuns" | "events" | "boards" | "boardStatuses" | "sprints" | "boardViews" | "tasks" | "taskComments" | "taskActivity" | "taskLinks"
+  | "routines" | "routineTriggers" | "routineRuns"
+  | "webSearchUsage" | "pushTokens" | "notifications" | "composerHistory",
+  number
+> & {
+  /** Rows dropped because the row they belong to is in neither the bundle
+      nor the install (a knowledge entry for a project that no longer exists). */
+  orphaned: number;
+  /** The bundle came without secrets and this install had none to keep. */
+  missingSecrets: boolean;
+};
+
+/** SQLite caps bound parameters per statement; 200 rows of the widest table
+    here stays well under it. */
+const CHUNK = 200;
+
+/** Plain inserts for the tables that are replaced per owner (a thread's queue,
+    schedules and log) or are append-only sets (push tokens): a collision means
+    the row is already there, and is skipped. */
+function insertChunked<T extends object>(tx: Tx, table: SQLiteTable, rows: T[]): void {
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const chunk = rows.slice(i, i + CHUNK) as Record<string, unknown>[];
+    if (chunk.length === 0) continue;
+    tx.insert(table).values(chunk).onConflictDoNothing().run();
+  }
+}
+
+/**
+ * Upsert by primary key WITHOUT cascading: `INSERT … ON CONFLICT DO UPDATE`
+ * over every column the row carries (`INSERT OR REPLACE` is a delete-then-
+ * insert, and the delete would fire ON DELETE CASCADE on the row's children —
+ * a merged profile would lose its links, a merged project its knowledge).
+ * Columns the bundle's rows do not carry are left as the install has them.
+ */
+function upsertChunked(tx: Tx, table: SQLiteTable, key: string, rows: Record<string, unknown>[]): void {
+  const columns = getTableColumns(table) as Record<string, SQLiteColumn>;
+  const target = columns[key];
+  if (!target) throw new Error(`no column ${key}`);
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const chunk = rows.slice(i, i + CHUNK);
+    if (chunk.length === 0) continue;
+    // Every row went through the same zod schema, so the union of the chunk's
+    // keys is the column set; a row missing one writes its default/null.
+    const present = [...new Set(chunk.flatMap((row) => Object.keys(row)))].filter((k) => k in columns);
+    const set: Record<string, SQL> = {};
+    for (const column of present) {
+      if (column === key) continue;
+      set[column] = sql.raw(`excluded."${columns[column]!.name}"`);
+    }
+    const normalized = chunk.map((row) => {
+      const out: Record<string, unknown> = {};
+      for (const column of present) out[column] = row[column] ?? null;
+      return out;
+    });
+    tx.insert(table).values(normalized).onConflictDoUpdate({ target, set }).run();
+  }
+}
+
+/** Merge a redacted row's secrets from the row the install already holds. */
+function keepSecrets(
+  incoming: z.infer<typeof ProfileRow>,
+  existing: typeof profilesTable.$inferSelect | undefined,
+): { row: z.infer<typeof ProfileRow> & { apiKey: string }; missing: boolean } {
+  const apiKey = incoming.apiKey || existing?.apiKey || "";
+  /* Same rule one level down: a redacted bundle merged over its own install
+     keeps the usage token it was exported without. */
+  const usage = incoming.usage
+    ? { ...incoming.usage, apiKey: incoming.usage.apiKey || (existing?.usage?.apiKey ?? "") }
+    : incoming.usage;
+  return { row: { ...incoming, apiKey, usage }, missing: !apiKey && incoming.apiKey === undefined };
+}
+
+function keepPairs(incoming: NameValue[] | null | undefined, existing: NameValue[] | null | undefined): NameValue[] | null {
+  if (!incoming) return null;
+  const known = new Map((existing ?? []).map((p) => [p.name, p.value]));
+  return incoming.map((p) => ({ name: p.name, value: p.value || known.get(p.name) || "" }));
+}
+
+/**
+ * Write a bundle into the database. Synchronous and in one transaction — the
+ * caller has already retired whatever processes the rows it touches belong
+ * to, and reloads the SessionManager afterwards.
+ */
+export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
+  const summary: ImportSummary = {
+    agents: 0, profiles: 0, mcpServers: 0, mcpOauth: 0, skills: 0, commands: 0, personas: 0, modelPrompts: 0, projects: 0, projectHelpers: 0, knowledge: 0, settings: 0,
+    sessions: 0, queue: 0, scheduled: 0, workflowRuns: 0, events: 0, boards: 0, boardStatuses: 0, sprints: 0, boardViews: 0, tasks: 0, taskComments: 0, taskActivity: 0, taskLinks: 0,
+    routines: 0, routineTriggers: 0, routineRuns: 0,
+    webSearchUsage: 0, pushTokens: 0, notifications: 0, composerHistory: 0,
+    orphaned: 0, missingSecrets: false,
+  };
+
+  // Read what the install holds BEFORE the transaction empties it — the
+  // secrets a redacted bundle is allowed to keep.
+  const existingProfiles = new Map(db.select().from(profilesTable).all().map((p) => [p.id, p]));
+  const existingMcp = new Map(db.select().from(mcpServersTable).all().map((s) => [s.id, s]));
+  const existingOauth = new Map(db.select().from(mcpOauthTable).all().map((r) => [r.mcpServerId, r]));
+  const existingTriggers = new Map(db.select().from(routineTriggersTable).all().map((t) => [t.id, t]));
+  const existingWebSearch = readWebSearch();
+
+  db.transaction((tx) => {
+    if (mode === "replace") {
+      // Children first only for readability — every child table cascades from
+      // its parent, and the ones that do not (usage, tokens, tasks) stand alone.
+      for (const table of [
+        // `mcp_oauth` cascades off `mcp_servers`, and is named here anyway so
+        // the list reads as the whole of what `replace` empties.
+        sessionsTable, profilesTable, projectsTable, mcpOauthTable, mcpServersTable, skillsTable, commandsTable,
+        personasTable, modelPromptsTable,
+        // A root of its own: its triggers, runs and links all cascade from it.
+        routinesTable,
+        agentsTable, taskLinksTable, taskActivityTable, taskCommentsTable, tasksTable, boardViewsTable, sprintsTable, boardStatusesTable, boardsTable, usageTable, pushTokensTable,
+        notificationsTable,
+        composerHistoryTable,
+        agentOptionsTable,
+      ]) {
+        tx.delete(table).run();
+      }
+    }
+
+    /* Parents, in dependency order. Every table below is an upsert by id in
+       both modes (after `replace` emptied them, an upsert is a plain insert),
+       so a merge keeps whatever the bundle does not name. */
+    upsertChunked(tx, agentsTable, "id", bundle.agents.map((a) => ({ ...a, spawnCategories: a.spawnCategories ?? null, liveConfig: a.liveConfig ?? null })));
+    summary.agents = bundle.agents.length;
+
+    const profileRows = bundle.profiles.map((p) => {
+      const { row, missing } = keepSecrets(p, existingProfiles.get(p.id));
+      if (missing) summary.missingSecrets = true;
+      const { mcpServerIds: _m, skillIds: _s, commandIds: _c, ...columns } = row;
+      return { ...columns, smallModel: columns.smallModel ?? "", logoUrl: columns.logoUrl ?? "", usage: columns.usage ?? null };
+    });
+    upsertChunked(tx, profilesTable, "id", profileRows);
+    summary.profiles = bundle.profiles.length;
+
+    upsertChunked(
+      tx,
+      mcpServersTable,
+      "id",
+      bundle.mcpServers.map((s) => {
+        const was = existingMcp.get(s.id);
+        return {
+          ...s,
+          builtin: s.builtin ?? null,
+          url: s.url ?? null,
+          command: s.command ?? null,
+          args: s.args ?? null,
+          headers: keepPairs(s.headers, was?.headers),
+          env: keepPairs(s.env, was?.env),
+        };
+      }),
+    );
+    summary.mcpServers = bundle.mcpServers.length;
+
+    /* The connections, after the rows they cascade off. One whose server is in
+       neither the bundle nor the install is orphaned rather than fatal, exactly
+       like a knowledge entry for a project that no longer exists — and the
+       cascade would refuse the insert anyway. */
+    const mcpIds = new Set([...existingMcp.keys(), ...bundle.mcpServers.map((s) => s.id)]);
+    const oauth = bundle.mcpOauth.filter((r) => mcpIds.has(r.mcpServerId));
+    summary.orphaned += bundle.mcpOauth.length - oauth.length;
+    upsertChunked(
+      tx,
+      mcpOauthTable,
+      "mcpServerId",
+      oauth.map((r) => {
+        const was = existingOauth.get(r.mcpServerId);
+        return {
+          ...r,
+          metadata: r.metadata as (typeof mcpOauthTable.$inferInsert)["metadata"],
+          /* A blank secret keeps the install's own — the profile-key rule. */
+          clientSecret: r.clientSecret || was?.clientSecret || null,
+          accessToken: r.accessToken || was?.accessToken || null,
+          refreshToken: r.refreshToken || was?.refreshToken || null,
+          scope: r.scope ?? null,
+          expiresAt: r.expiresAt ?? null,
+          lastError: r.lastError ?? null,
+        };
+      }),
+    );
+    summary.mcpOauth = oauth.length;
+
+    upsertChunked(tx, skillsTable, "id", bundle.skills);
+    summary.skills = bundle.skills.length;
+    upsertChunked(tx, commandsTable, "id", bundle.commands.map((c) => ({ ...c, argumentHint: c.argumentHint ?? null })));
+    summary.commands = bundle.commands.length;
+    upsertChunked(
+      tx,
+      personasTable,
+      "id",
+      bundle.personas.map((p) => ({ ...p, thinking: p.thinking ?? null, effort: p.effort ?? null })),
+    );
+    summary.personas = bundle.personas.length;
+    upsertChunked(tx, modelPromptsTable, "id", bundle.modelPrompts.map((r) => ({ ...r })));
+    summary.modelPrompts = bundle.modelPrompts.length;
+    upsertChunked(
+      tx,
+      projectsTable,
+      "id",
+      bundle.projects.map((p) => ({ ...p, description: p.description ?? null, logoUrl: p.logoUrl ?? "" })),
+    );
+    summary.projects = bundle.projects.length;
+
+    /* Settings upsert per key, never a delete: a key the bundle names is that
+       key's value, and one it does not name stays the install's. A bundle
+       written before `app_settings` existed — defaulting to `{}` — must not
+       wipe rules written since. */
+    upsertChunked(
+      tx,
+      appSettingsTable,
+      "key",
+      Object.entries(bundle.settings).map(([key, value]) => ({ key, value })),
+    );
+    summary.settings = Object.keys(bundle.settings).length;
+
+    /* The link tables are replaced wholesale per owner: `writeLinks` drops the
+       owner's rows and re-adds only ids the library actually holds, so a
+       bundle naming a server this install never had links nothing. */
+    for (const p of bundle.profiles) writeLinks(tx, PROFILE_LINKS, p.id, p);
+
+    // Children of projects. A row whose project exists nowhere is dropped, not
+    // fatal — the foreign key would refuse it and take the whole import down.
+    const projectIds = new Set(tx.select({ id: projectsTable.id }).from(projectsTable).all().map((r) => r.id));
+    const knowledge = bundle.knowledge.filter((k) => projectIds.has(k.projectId));
+    summary.orphaned += bundle.knowledge.length - knowledge.length;
+    upsertChunked(tx, knowledgeTable, "id", knowledge.map((k) => ({ ...k, tags: k.tags ?? null })));
+    summary.knowledge = knowledge.length;
+    /* The helpers ride with their project: a bundle naming a project this
+       install dropped is orphaned, exactly like a knowledge entry would be.
+       Older bundles predate the option columns, so each is defaulted here. */
+    const helpers = bundle.projectHelpers.filter((h) => projectIds.has(h.projectId));
+    summary.orphaned += bundle.projectHelpers.length - helpers.length;
+    upsertChunked(
+      tx,
+      projectHelpersTable,
+      "id",
+      helpers.map((h) => ({
+        ...h,
+        cwd: h.cwd ?? null,
+        env: h.env ?? null,
+        description: h.description ?? null,
+        confirm: h.confirm === true,
+        createdAt: h.createdAt ?? 0,
+      })),
+    );
+    summary.projectHelpers = helpers.length;
+
+    // Sessions and everything hanging off them.
+    upsertChunked(
+      tx,
+      sessionsTable,
+      "id",
+      bundle.sessions.map((s) => {
+        const { mcpServerIds: _m, skillIds: _s, commandIds: _c, ...columns } = s;
+        return {
+          ...columns,
+          modeId: columns.modeId ?? null,
+          acpSessionId: columns.acpSessionId ?? null,
+          deletedAt: columns.deletedAt ?? null,
+          parentSessionId: columns.parentSessionId ?? null,
+          forkedFromSessionId: columns.forkedFromSessionId ?? null,
+          forkedFromTurnId: columns.forkedFromTurnId ?? null,
+        };
+      }),
+    );
+    summary.sessions = bundle.sessions.length;
+    for (const s of bundle.sessions) writeLinks(tx, SESSION_LINKS, s.id, s);
+
+    const sessionIds = new Set(tx.select({ id: sessionsTable.id }).from(sessionsTable).all().map((r) => r.id));
+    const bundled = new Set(bundle.sessions.map((s) => s.id));
+    const keep = <T extends { sessionId: string }>(rows: T[]): T[] => {
+      const kept = rows.filter((r) => sessionIds.has(r.sessionId));
+      summary.orphaned += rows.length - kept.length;
+      return kept;
+    };
+
+    /* A thread's queue, schedules and log are replaced as a unit for every
+       thread the bundle carries, even one whose rows the bundle left out:
+       a merged log is two accounts stitched together, which the rest of the
+       server goes to lengths to make impossible (see sessions.ts). */
+    const owned = [...bundled];
+    if (owned.length > 0) {
+      for (let i = 0; i < owned.length; i += CHUNK) {
+        const ids = owned.slice(i, i + CHUNK);
+        tx.delete(queueTable).where(inArray(queueTable.sessionId, ids)).run();
+        tx.delete(scheduledTable).where(inArray(scheduledTable.sessionId, ids)).run();
+        tx.delete(workflowRunsTable).where(inArray(workflowRunsTable.parentSessionId, ids)).run();
+        if (!bundle.redacted.journals) tx.delete(eventsTable).where(inArray(eventsTable.sessionId, ids)).run();
+      }
+    }
+    const queue = keep(bundle.queue);
+    insertChunked(tx, queueTable, queue);
+    summary.queue = queue.length;
+    const scheduled = keep(bundle.scheduled.map((s) => ({ ...s, everyMs: s.everyMs ?? null })));
+    insertChunked(tx, scheduledTable, scheduled);
+    summary.scheduled = scheduled.length;
+    const runs = bundle.workflowRuns.filter((r) => sessionIds.has(r.parentSessionId));
+    summary.orphaned += bundle.workflowRuns.length - runs.length;
+    insertChunked(
+      tx,
+      workflowRunsTable,
+      runs.map((r) => ({ ...r, error: r.error ?? null, endedAt: r.endedAt ?? null })),
+    );
+    summary.workflowRuns = runs.length;
+    const events = keep(bundle.events);
+    insertChunked(tx, eventsTable, events);
+    summary.events = events.length;
+
+    /* Routines, and the two tables that hang off them. A root: nothing points
+       at a routine, so this sits outside the session block entirely — a routine
+       survives its project, its profile and the thread of every run it made,
+       which is the whole reason none of those ids is a foreign key. */
+    upsertChunked(
+      tx,
+      routinesTable,
+      "id",
+      bundle.routines.map((r) => {
+        const { mcpServerIds: _m, skillIds: _s, commandIds: _c, ...columns } = r;
+        return {
+          ...columns,
+          description: columns.description ?? null,
+          personaId: columns.personaId ?? null,
+          output: columns.output ?? null,
+        };
+      }),
+    );
+    summary.routines = bundle.routines.length;
+    for (const r of bundle.routines) writeLinks(tx, ROUTINE_LINKS, r.id, r);
+
+    const routineIds = new Set(tx.select({ id: routinesTable.id }).from(routinesTable).all().map((r) => r.id));
+    const ownRoutines = [...new Set(bundle.routines.map((r) => r.id))];
+    /* Both children are replaced as a unit for every routine the bundle names,
+       the same rule a thread's queue and log follow and for a sharper reason
+       than tidiness: a trigger the user deleted would otherwise come back on a
+       merge, and a run history stitched from two installs has a *newest* run
+       that came from the other machine — which is exactly the row
+       `lastRunHeadOid` reads to decide whether anything has changed since. */
+    for (let i = 0; i < ownRoutines.length; i += CHUNK) {
+      const ids = ownRoutines.slice(i, i + CHUNK);
+      tx.delete(routineTriggersTable).where(inArray(routineTriggersTable.routineId, ids)).run();
+      tx.delete(routineRunsTable).where(inArray(routineRunsTable.routineId, ids)).run();
+    }
+    const ownedRoutine = <T extends { routineId: string }>(rows: T[]): T[] => {
+      const kept = rows.filter((r) => routineIds.has(r.routineId));
+      summary.orphaned += rows.length - kept.length;
+      return kept;
+    };
+    const triggers = ownedRoutine(bundle.routineTriggers).map((t) => {
+      // A blank (or absent) hash where the install already holds one keeps the
+      // install's — the same bargain a redacted profile key makes, so a
+      // redacted bundle merged over its own install leaves every token working.
+      /* No `missingSecrets` here, unlike a profile's key: `secrets=0` strips
+         the hash from EVERY trigger, and a trigger that never had a token looks
+         identical afterwards to one whose token was redacted — so the flag
+         could only ever be raised on every install that has a schedule. */
+      const was = existingTriggers.get(t.id);
+      return {
+        ...t,
+        cron: t.cron ?? null,
+        tz: t.tz ?? null,
+        atMs: t.atMs ?? null,
+        condition: t.condition ?? null,
+        nextFireAt: t.nextFireAt ?? null,
+        secretHash: t.secretHash || (was?.secretHash ?? null),
+        secretCreatedAt: t.secretCreatedAt ?? was?.secretCreatedAt ?? null,
+        branch: t.branch ?? null,
+        lastSeen: t.lastSeen ?? null,
+        lastFiredAt: t.lastFiredAt ?? null,
+        lastError: t.lastError ?? null,
+      };
+    });
+    insertChunked(tx, routineTriggersTable, triggers);
+    summary.routineTriggers = triggers.length;
+    const routineRuns = ownedRoutine(bundle.routineRuns).map((r) => ({
+      ...r,
+      triggerId: r.triggerId ?? null,
+      sessionId: r.sessionId ?? null,
+      payload: r.payload ?? null,
+      error: r.error ?? null,
+      output: r.output ?? null,
+      /* `verdict` is genuinely nullable JSON and `undefined` is not a value the
+         driver can bind — a run with no output schema carries none. */
+      verdict: r.verdict ?? null,
+      headOid: r.headOid ?? null,
+      tokens: r.tokens ?? null,
+      endedAt: r.endedAt ?? null,
+    }));
+    insertChunked(tx, routineRunsTable, routineRuns);
+    summary.routineRuns = routineRuns.length;
+
+    // The standalone tables. Boards and their columns go in before the tasks
+    // that point at them, so `reconcileTaskStatuses` below has something to
+    // reconcile against.
+    upsertChunked(
+      tx,
+      boardsTable,
+      "id",
+      bundle.boards.map((b) => ({
+        ...b,
+        color: b.color ?? null,
+        description: b.description ?? null,
+        projectId: b.projectId ?? null,
+      })),
+    );
+    summary.boards = bundle.boards.length;
+    upsertChunked(
+      tx,
+      boardStatusesTable,
+      "id",
+      bundle.boardStatuses.map((s) => ({ ...s, color: s.color ?? null, wipLimit: s.wipLimit ?? null })),
+    );
+    summary.boardStatuses = bundle.boardStatuses.length;
+    upsertChunked(
+      tx,
+      sprintsTable,
+      "id",
+      bundle.sprints.map((s) => ({ ...s, goal: s.goal ?? null, startAt: s.startAt ?? null, endAt: s.endAt ?? null })),
+    );
+    summary.sprints = bundle.sprints.length;
+    upsertChunked(
+      tx,
+      boardViewsTable,
+      "id",
+      bundle.boardViews.map((v) => ({ ...v, config: v.config as BoardViewConfig })),
+    );
+    summary.boardViews = bundle.boardViews.length;
+    upsertChunked(
+      tx,
+      tasksTable,
+      "id",
+      bundle.tasks.map((t) => ({
+        ...t,
+        description: t.description ?? null,
+        assignee: t.assignee ?? null,
+        parentId: t.parentId ?? null,
+        sprintId: t.sprintId ?? null,
+        estimate: t.estimate ?? null,
+        startAt: t.startAt ?? null,
+        dueAt: t.dueAt ?? null,
+        completedAt: t.completedAt ?? null,
+        note: t.note ?? null,
+      })),
+    );
+    summary.tasks = bundle.tasks.length;
+    upsertChunked(tx, taskCommentsTable, "id", bundle.taskComments.map((c) => ({ ...c, author: c.author ?? null })));
+    summary.taskComments = bundle.taskComments.length;
+    upsertChunked(tx, taskActivityTable, "id", bundle.taskActivity.map((a) => ({ ...a, from: a.from ?? null, to: a.to ?? null })));
+    summary.taskActivity = bundle.taskActivity.length;
+    upsertChunked(tx, taskLinksTable, "id", bundle.taskLinks);
+    summary.taskLinks = bundle.taskLinks.length;
+    upsertChunked(tx, usageTable, "id", bundle.webSearchUsage.map((u) => ({ ...u, completedAt: u.completedAt ?? null })));
+    summary.webSearchUsage = bundle.webSearchUsage.length;
+    insertChunked(tx, pushTokensTable, bundle.pushTokens);
+    summary.pushTokens = bundle.pushTokens.length;
+    upsertChunked(tx, notificationsTable, "id", bundle.notifications);
+    summary.notifications = bundle.notifications.length;
+    upsertChunked(tx, composerHistoryTable, "id", bundle.composerHistory);
+    summary.composerHistory = bundle.composerHistory.length;
+  });
+
+  /* A bundle written before boards existed carries tasks and no boards, and a
+     `replace` emptied the ones this install had — so re-seed, then repair any
+     task left pointing at a column the bundle did not bring. Outside the
+     transaction because both are idempotent and neither may take the import
+     down with it: a task in the wrong column is recoverable, a rolled-back
+     import is not. */
+  ensureDefaultBoard();
+  summary.orphaned += reconcileTaskStatuses();
+  /* The runtime's mapping file is derived from the rows, and the rows just
+     changed — rewrite it outside the transaction, exactly like the board
+     re-seed above: idempotent, and never worth rolling an import back over. */
+  writeModelPromptsLibrary();
+
+  // config.json is outside the transaction — it is a file — and is written
+  // last so a failed transaction leaves it untouched.
+  const ws = bundle.config.webSearch;
+  if (ws) {
+    const token = ws.searchApiToken || existingWebSearch?.searchApiToken || "";
+    if (!token && ws.searchApiToken === undefined) summary.missingSecrets = true;
+    const block: WebSearchConfig = {
+      searchApiBaseUrl: ws.searchApiBaseUrl,
+      searchApiToken: token,
+      searchModel: ws.searchModel,
+      fetchModel: ws.fetchModel,
+    };
+    saveWebSearch(block);
+  }
+
+  return summary;
+}

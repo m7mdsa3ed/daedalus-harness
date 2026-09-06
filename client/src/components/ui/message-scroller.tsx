@@ -1,5 +1,3 @@
-"use client"
-
 import * as React from "react"
 import {
   MessageScroller as MessageScrollerPrimitive,
@@ -10,7 +8,8 @@ import {
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { ArrowDownIcon } from "lucide-react"
+import { HugeiconsIcon } from "@hugeicons/react"
+import { ArrowDown02Icon } from "@hugeicons/core-free-icons"
 
 function MessageScrollerProvider(
   props: React.ComponentProps<typeof MessageScrollerPrimitive.Provider>
@@ -38,11 +37,21 @@ function MessageScrollerViewport({
   className,
   ...props
 }: React.ComponentProps<typeof MessageScrollerPrimitive.Viewport>) {
+  /* The transcript's two seams — under the header above and over the composer
+     below: while more transcript sits above or below the fold, that edge of
+     the viewport is masked (data-at-start / data-at-end → the rules in
+     index.css), and the edge is whole again once it is the top or the live
+     bottom. Driven by the scroller's own "more above / more below" state —
+     the same state that shows the scroll-to-end button — so the shadowed
+     seams and the button can never disagree about where the ends are. */
+  const scrollable = useMessageScrollerScrollable()
   return (
     <MessageScrollerPrimitive.Viewport
       data-slot="message-scroller-viewport"
+      data-at-start={scrollable.start ? "false" : "true"}
+      data-at-end={scrollable.end ? "false" : "true"}
       className={cn(
-        "size-full min-h-0 min-w-0 scroll-fade-b scrollbar-thin scrollbar-gutter-stable overflow-y-auto overscroll-contain contain-content data-autoscrolling:scrollbar-thumb-transparent data-autoscrolling:scrollbar-track-transparent",
+        "size-full min-h-0 min-w-0 scroll-fade-y scrollbar-thin scrollbar-gutter-stable overflow-y-auto overscroll-contain contain-content data-autoscrolling:scrollbar-thumb-transparent data-autoscrolling:scrollbar-track-transparent data-pending-scroll:invisible",
         className
       )}
       {...props}
@@ -57,7 +66,7 @@ function MessageScrollerContent({
   return (
     <MessageScrollerPrimitive.Content
       data-slot="message-scroller-content"
-      className={cn("flex h-max min-h-full flex-col gap-6", className)}
+      className={cn("flex h-max min-h-full flex-col gap-8", className)}
       {...props}
     />
   )
@@ -107,8 +116,7 @@ function MessageScrollerButton({
     >
       {children ?? (
         <>
-          <ArrowDownIcon
-          />
+          <HugeiconsIcon icon={ArrowDown02Icon} strokeWidth={2} />
           <span className="sr-only">
             {direction === "end" ? "Scroll to end" : "Scroll to start"}
           </span>

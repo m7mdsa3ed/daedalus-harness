@@ -1,0 +1,47 @@
+/* ── What the app header's controls are made of ──
+
+   The header is transparent by design: a transcript scrolls up *under* it and
+   goes out of focus in the progressive blur, which is what makes the app feel
+   like it has one continuous column rather than a bar stapled over a list. The
+   cost is that everything sitting in the header has no ground of its own —
+   a ghost icon button and a bare line of text both sat on whatever colour
+   happened to be passing beneath them, and the four controls on the right read
+   as four different things because three of them were invisible until hovered.
+
+   So every occupant of the header is a frosted capsule: the same translucent
+   ground, the same hairline ring, its own `backdrop-blur` over the progressive
+   blur behind it. Two shapes, because there are two kinds of occupant — a
+   label that names something (`HEADER_BADGE`) and a control you press
+   (`HEADER_CHIP`, which is the same ground on a `size="icon-sm"` button, whose
+   `rounded-4xl` already makes the pill).
+
+   Kept here rather than in `app-shell` so the bell, the ⋯ menu and the context
+   ring — each its own component, each drawn only in this header — can wear it
+   without importing the shell that holds them. */
+
+/** A label capsule: the project over the title, and the title itself. Pair it
+    with the text size the line wants; this is the ground, not the type. */
+export const HEADER_BADGE =
+  "rounded-full bg-background/50 ring-1 ring-border/50 backdrop-blur-sm"
+
+/** A control capsule, for the header's icon buttons — the sidebar toggle, the
+    context ring, the bell, the ⋯ menu. `hover:bg-background/80` replaces the
+    ghost variant's `hover:bg-accent`: the press target is already drawn, so
+    hover is a deepening of it rather than the first time it appears. */
+export const HEADER_CHIP =
+  "bg-background/50 ring-1 ring-border/50 backdrop-blur-sm hover:bg-background/80"
+
+/** The ground of a surface the app *raises over* its own content — what a
+    capsule opens (the bell's glance) and what the app raises on its own (a
+    toast). Frosted for the same reason the chip is: these float over a moving
+    transcript, and a solid slab there reads as a second window rather than
+    something belonging to the one you are in.
+
+    `supports-[backdrop-filter]` keeps it nearly opaque where the filter is
+    unavailable — a translucent panel with no blur behind it is unreadable.
+
+    Kept beside the header's own two because it is the same recipe at a
+    different scale, and one recipe is the point: a frosted surface that is
+    frosted *differently* looks like a bug. */
+export const GLASS_SURFACE =
+  "bg-popover/95 backdrop-blur-xl supports-[backdrop-filter]:bg-popover/75"

@@ -1,0 +1,9 @@
+# Written by the harness itself into whatever cwd a thread runs in — and this
+# repo is one of its own projects. `materializeModelAllowlist` merges a
+# profile's catalog into `.claude/settings.local.json` and records what it wrote
+# in this manifest, so the sweep can take back only its own entries. Both are
+# per-install runtime state: the manifest names one machine's gateway model ids,
+# it is rewritten on every spawn and deleted again when no thread here needs it,
+# and committing it means a diff on every thread that opens this repo.
+.claude/.daedalus-models.json
+.claude/settings.local.json

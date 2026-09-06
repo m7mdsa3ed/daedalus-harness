@@ -1,406 +1,1216 @@
 import * as React from "react"
-import Markdown from "react-markdown"
-import remarkGfm from "remark-gfm"
-import type * as acp from "@agentclientprotocol/sdk"
-import { ChevronRightIcon } from "lucide-react"
+import {
+  ArrowUpRightIcon,
+  BotIcon,
+  BrainIcon,
+  PlayIcon,
+  SquareTerminalIcon,
+  WrenchIcon,
+} from "lucide-react"
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, GitBranch as GitBranchIcon, History as HistoryIcon } from "lucide-react"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
+import { Button } from "@/components/ui/button"
+import { ItemContextMenu } from "@/components/item-context-menu"
 import { Message, MessageContent } from "@/components/ui/message"
-import { Spinner } from "@/components/ui/spinner"
+import { MessageAttachments } from "@/components/message-attachments"
+/* The tool-call layouts and the boxes they are built from live in their own
+   files — see the header comment on each. This one keeps the transcript's own
+   rows: a message, a step, a plan, a compaction. The shared step chrome is
+   `step-row.tsx`, the non-recursive leaf layouts are `thread-cards.tsx`, and
+   a run of them (a workflow, a batch of subagents) is `workflow-run.tsx`;
+   what stays here is the mutually recursive cluster (RowView / ThreadItemView
+   / ToolRun / SubagentStep / SubagentBody), which cannot move apart without a
+   module cycle — which is also why `SubagentStep` reaches a run's list as
+   workflow-run's `stepRow` prop rather than as an import. */
+import { loadAgentTranscript, useAgentTranscript } from "@/lib/agent-transcripts"
+import { loadSettings } from "@/lib/settings"
+import {
+  DetailSection,
+  FileBadge,
+  KIND_CHIPS,
+  KIND_COLORS,
+  KIND_ICONS,
+  KIND_LABELS,
+  PANE_MAX_H,
+  Prose,
+  SmartBlock,
+  Timestamp,
+  ToolCallContent,
+} from "@/components/tool-parts"
+import {
+  SubagentBrief,
+  SubagentReport,
+  ToolDetail,
+  ToolAnswers,
+  ToolSources,
+  toolHasDetail,
+  toolOpensByDefault,
+} from "@/components/tool-views"
+import { copyText, RAIL_CLASS, StepRow, yieldToTextSelection } from "@/components/step-row"
+import {
+  collectTools,
+  stepNameOf,
+  stepUsage,
+  SubagentBatchRun,
+  subagentHasBody,
+  useStepThread,
+  WorkflowRun,
+} from "@/components/workflow-run"
+import {
+  AutonomyStep,
+  CompactionStep,
+  ErrorRow,
+  PlanStep,
+  SourcesStrip,
+  StreamedAgentText,
+  StreamedProse,
+  TaskNotificationCard,
+} from "@/components/thread-cards"
+import {
+  childToolTitle,
+  extractSubagent,
+  fileRangeOf,
+  parseTaskNotification,
+  toolHeading,
+  toolKindOf,
+  webInput,
+  workflowAgentItems,
+} from "@/lib/tools"
+import { buildRows } from "@/lib/transcript-rows"
+import type { Row, SubagentBatch, SubagentGroup, ToolRunGroup, WorkflowGroup } from "@/lib/transcript-rows"
+import { StepTokens, TokenFigure, useStepTokens } from "@/components/token-usage"
+import { Logo } from "@/components/ui/logo"
 import { cn } from "@/lib/utils"
-import type { PlanItem, ThreadItem, ToolItem } from "@/lib/store"
+import { useViewOptionsContext } from "@/lib/view-options"
+import type { TextItem, ThreadItem, ToolItem } from "@/lib/store"
+import { threadPath } from "@/lib/router"
+import { Link } from "react-router"
 
-/* Steps read as one timeline: a hairline rail down the gutter with a node per
-   step (rail geometry in index.css). The thing acted on is the headline — the
-   kind is demoted to a right-hand label so those form their own scan column.
-   Everything a step produced is collapsed behind the row until clicked. */
+/* Re-exported so the approval card and the editor panel keep importing the
+   transcript's vocabulary from the transcript, not from its internals. */
+export { FileBadge, KIND_CHIPS, KIND_COLORS, KIND_ICONS, KIND_LABELS, Prose, Timestamp, ToolCallContent }
+export { SourcesStrip }
 
-const KIND_LABELS: Record<string, string> = {
-  read: "read",
-  edit: "edit",
-  delete: "delete",
-  move: "move",
+/* The row shapes are `lib/transcript-rows`' — the transform that builds them
+   is shared with the nested transcript a subagent step draws, and both this
+   file and thread-view read them. Re-exported so callers keep importing the
+   transcript's vocabulary from the transcript. */
+export type { Row, SubagentBatch, SubagentGroup, ToolRunGroup, WorkflowGroup }
+
+/** Natural-language summary: "reading 10 files, running 28 shell commands". */
+const KIND_VERBS: Record<string, string> = {
+  read: "reading",
+  edit: "editing",
+  delete: "deleting",
+  move: "moving",
+  search: "searching",
+  execute: "running",
+  think: "thinking",
+  fetch: "fetching",
+  switch_mode: "switching mode",
+  other: "running",
+  websearch: "searching the web",
+  webfetch: "reading",
+}
+
+const KIND_NOUNS: Record<string, string> = {
+  read: "file",
+  edit: "file",
+  delete: "file",
+  move: "file",
   search: "search",
-  execute: "run",
-  think: "think",
+  execute: "shell command",
+  think: "thought",
   fetch: "fetch",
-  switch_mode: "mode",
+  switch_mode: "mode change",
   other: "tool",
+  websearch: "time",
+  webfetch: "page",
 }
 
-function lineCount(text: string): number {
-  return text ? text.split("\n").length : 0
+const KIND_NOUNS_PLURAL: Record<string, string> = {
+  search: "searches",
+  fetch: "fetches",
+  time: "times",
 }
 
-/** Right-hand size hint, derived generically from whatever the tool returned. */
-function metricFor(item: ToolItem): string | null {
-  // ponytail: old/new line counts, not a real diff — swap in a line-diff lib
-  // here and in ToolContentView together if reviews need exact +/-.
-  const diff = item.content.find((c) => c.type === "diff")
-  if (diff && diff.type === "diff") {
-    const added = lineCount(diff.newText)
-    const removed = lineCount(diff.oldText ?? "")
-    return removed ? `+${added} −${removed}` : `+${added}`
+const pluralNoun = (noun: string, count: number) =>
+  count === 1 ? noun : (KIND_NOUNS_PLURAL[noun] ?? `${noun}s`)
+
+/** What the run actually did: "reading 10 files, running 28 shell commands", in the
+    order the kinds first appeared. */
+function summarise(items: ToolItem[]): { verb: string; noun: string; count: number }[] {
+  const counts = new Map<string, number>()
+  for (const item of items) {
+    // toolKindOf, not the raw field: a run of Bash calls from an agent that
+    // omits `kind` should still summarise as "running 3 shell commands", not "3 tools".
+    // The web's two acts are named apart from the `fetch` kind they share:
+    // "searching the web 3 times, reading 2 pages" says what a run of
+    // globe-icon rows did; "fetching 5 fetches" did not.
+    const web = webInput(item)
+    const kind = web?.query ? "websearch" : web?.url ? "webfetch" : toolKindOf(item)
+    counts.set(kind, (counts.get(kind) ?? 0) + 1)
   }
-  const text = item.content
-    .filter((c) => c.type === "content" && c.content.type === "text")
-    .map((c) => (c.type === "content" && c.content.type === "text" ? c.content.text : ""))
-    .join("\n")
-  if (text.trim()) return `${lineCount(text.trimEnd())}L`
-  if (item.locations.length > 1) return `${item.locations.length} files`
-  return null
+  return [...counts.entries()].map(([kind, count]) => ({
+    verb: KIND_VERBS[kind] ?? KIND_VERBS.other,
+    noun: KIND_NOUNS[kind] ?? KIND_NOUNS.other,
+    count,
+  }))
 }
 
-function useElapsed(startedAt: number, active: boolean): number | null {
-  const [ms, setMs] = React.useState<number | null>(null)
-  React.useEffect(() => {
-    if (!active) {
-      setMs(null)
-      return
+/** How much of a running group stays on screen without being expanded. */
+const PEEK = 3
+
+/** The three acts a folded run can hold, as the avatar stack below draws them:
+    shell commands, thoughts, and everything else a tool call does. Each avatar
+    is one act that is in the run, not one call — "12 reads" is one wrench, the
+    way a people stack is one face per person rather than a face per message.
+    Each carries the app's accent for that act — a thought is the same blue a
+    thinking step row shimmers with, a failed shell command the same red the
+    row would claim — so a glance at the stack reads the run's shape. */
+const RUN_BUCKETS = {
+  command: {
+    icon: SquareTerminalIcon,
+    noun: "shell command",
+    className: "text-step-command",
+    chip: "bg-step-command/25",
+  },
+  thought: {
+    icon: BrainIcon,
+    noun: "thought",
+    className: "text-step-think",
+    chip: "bg-step-think/25",
+  },
+  tool: {
+    icon: WrenchIcon,
+    noun: "tool",
+    className: "text-step-tool",
+    chip: "bg-step-tool/25",
+  },
+} as const
+type RunBucket = keyof typeof RUN_BUCKETS
+
+function bucketOf(item: ToolItem | TextItem): RunBucket {
+  if (item.kind === "thought") return "thought"
+  if (item.kind === "tool") {
+    /* A `think` call is a thought in this vocabulary everywhere else — the
+       summary line counts it as "thinking N thoughts" — so it stacks with the
+       thoughts rather than with the tools. */
+    if (toolKindOf(item) === "think") return "thought"
+    if (toolKindOf(item) === "execute") return "command"
+  }
+  return "tool"
+}
+
+/** What a folded run contains, as a stack of overlapping marks: one avatar per
+    act present — commands, thoughts, tools — in the order they first happened,
+    each telling its count on hover. The at-a-glance reading of the run; the
+    sentence next to it is the same fact in words ("running 8 shell commands"). */
+function RunAvatarStack({ items }: { items: Array<ToolItem | TextItem> }) {
+  const slots = React.useMemo(() => {
+    const order: RunBucket[] = []
+    const counts = new Map<RunBucket, number>()
+    for (const item of items) {
+      const bucket = bucketOf(item)
+      if (!counts.has(bucket)) order.push(bucket)
+      counts.set(bucket, (counts.get(bucket) ?? 0) + 1)
     }
-    const tick = () => setMs(Date.now() - startedAt)
-    tick()
-    const timer = setInterval(tick, 1000)
-    return () => clearInterval(timer)
-  }, [startedAt, active])
-  return ms
-}
-
-function formatElapsed(ms: number): string {
-  return ms < 60_000
-    ? `${Math.round(ms / 1000)}s`
-    : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
-}
-
-/** The mark sitting on the rail: spinner while live, dot once settled. */
-function StepNode({ status, active }: { status: string | null; active: boolean }) {
-  if (active) return <Spinner className="harness-node harness-node-active size-2.5 text-primary" />
+    return order.map((bucket) => ({ bucket, count: counts.get(bucket)! }))
+  }, [items])
+  if (slots.length === 0) return null
   return (
-    <span
-      className={cn(
-        "harness-node size-1.5 rounded-full",
-        status === "failed"
-          ? "bg-destructive"
-          : status === "pending"
-            ? "border border-muted-foreground/60"
-            : "bg-muted-foreground/70"
-      )}
-    />
+    /* Decorative on purpose: the sentence beside it says the same thing for a
+       screen reader, so the marks are not read twice. Hover still tells each
+       count, because the sentence groups by kind only for the tools. */
+    <span aria-hidden className="flex shrink-0 items-center -space-x-1.5">
+      {slots.map(({ bucket, count }) => {
+        const { icon: Icon, noun, className, chip } = RUN_BUCKETS[bucket]
+        return (
+          <span
+            key={bucket}
+            title={`${count} ${count === 1 ? noun : `${noun}s`}`}
+            className={cn(
+              "grid size-4 shrink-0 place-items-center rounded-full ring-2 ring-background",
+              chip,
+              className
+            )}
+          >
+            <Icon className="size-2.5" />
+          </span>
+        )
+      })}
+    </span>
   )
 }
 
-function StepRow({
-  target,
-  label,
-  status,
-  metric,
-  detail,
-  startedAt,
-  mono = true,
+/** The group's title as a sentence: "Reading 10 files · Running 28 shell
+    commands". The verbs stay in the row's muted voice and the counts take the
+    foreground, so a scanned transcript reads the numbers first; the segments
+    join on dots rather than commas, which keeps several kinds reading as one
+    title instead of a run-on list. Drawn as markup rather than the plain
+    string the metric column builds (SubagentStep), because the emphasis is
+    per-word — a sentence-cased string could not carry it. */
+function RunSummary({ summary }: { summary: ReturnType<typeof summarise> }) {
+  return (
+    <>
+      {summary.map(({ verb, noun, count }, i) => (
+        <React.Fragment key={`${verb}:${noun}`}>
+          {i > 0 && <span className="text-muted-foreground/40">{" · "}</span>}
+          {verb.charAt(0).toUpperCase() + verb.slice(1)}{" "}
+          <span className="text-foreground/80">{count}</span> {pluralNoun(noun, count)}
+        </React.Fragment>
+      ))}
+    </>
+  )
+}
+
+/** The rail nested steps hang off: one for a run and for a subagent's
+    transcript alike, so a subagent's steps read as steps and not as a second
+    kind of list. `ml-[calc(0.75rem-1px)]` puts the line under the parent
+    row's icon column, and a rail inside a rail indents once more. */
+/* ── A run's rail ──
+   Drawn per step rather than as one border down the box around them: the line
+   has to *stop* at the last step's elbow (a tail running on under the last row
+   is a branch that goes nowhere), and a border on the container cannot know
+   which child is last. So `RUN_RAIL_CLASS` is the same geometry as `RAIL_CLASS`
+   with the border taken off, and each step carries its own piece of it.
+
+   Each piece is an elbow: the rail down the step's left, turning into its icon
+   column on a curve. `before:h-4` ends the turn at 14px — the middle of the
+   row's first line box (`py-0.5` + `leading-6`) — so it meets the leading mark
+   however many lines the row grows to, and the `-top-0.5` closes the 2px
+   `space-y` gap over it so consecutive elbows read as one line. The left edge
+   is `-left-[11px]`, which is where the container's border used to sit, so
+   nothing else moved. Every row in a run is a StepRow with that geometry — a
+   thought rides the rail exactly as a tool does — where a subagent's rail
+   also carries prose, which has no mark to meet.
+
+   The width is 13px and not 11px — two more than the distance to the row's
+   content edge — because the mark it turns into is a 14px *box* with the glyph
+   inset inside it. Ending the curve at x=0 landed it on the box's edge and left
+   a hairline of daylight before the icon actually starts, so the rail read as
+   pointing at the step rather than joining it; the extra 2px tuck under the
+   glyph's leading edge, where the line is hidden by the mark itself. */
+const RUN_RAIL_CLASS = "mt-0.5 ml-[calc(0.75rem-1px)] space-y-0.5 pl-2.5"
+
+const RAIL_ELBOW =
+  "relative before:absolute before:-top-0.5 before:-left-[11px] before:h-4 before:w-[13px] before:rounded-bl-[6px] before:border-b before:border-l before:border-border/60"
+
+/** The rail continuing past a step to the one under it — every step but the
+    last, which is what makes the run's line end on its own last elbow. */
+const RAIL_TAIL =
+  "after:absolute after:top-[0.875rem] after:-bottom-0.5 after:-left-[11px] after:w-px after:bg-border/60"
+
+/** A straight length of the same rail, for a row in it that is not a step (the
+    "N earlier steps" line) — it passes the line on without claiming an elbow. */
+const RAIL_THROUGH =
+  "relative before:absolute before:-top-0.5 before:-bottom-0.5 before:-left-[11px] before:w-px before:bg-border/60"
+
+/** "N earlier steps" — the top of a peeking rail. */
+function EarlierSteps({ count, onClick }: { count: number; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="-mx-1 block rounded px-1 text-[11px] leading-5 text-muted-foreground/70 transition-colors hover:text-foreground"
+    >
+      {count} earlier {count === 1 ? "step" : "steps"}
+    </button>
+  )
+}
+
+export const ToolRun = React.memo(function ToolRun({
+  items,
+  showTimestamps,
+  tail,
 }: {
-  target: React.ReactNode
-  label: string
-  status: string | null
-  metric?: React.ReactNode
-  detail?: React.ReactNode
-  startedAt?: number
-  mono?: boolean
+  items: Array<ToolItem | TextItem>
+  showTimestamps?: boolean
+  /** This group is the transcript's last row and the turn is still open — the
+      agent has said nothing since, so the run is not finished being written
+      even in the gaps between its calls. */
+  tail?: boolean
 }) {
-  const [open, setOpen] = React.useState(false)
-  const expandable = detail !== undefined && detail !== null && detail !== false
-  const active = status === "in_progress" || status === "pending"
-  const failed = status === "failed"
-  const elapsedMs = useElapsed(startedAt ?? 0, active && startedAt !== undefined)
+  /* The run's own acting is its tool calls — the thoughts between them are
+     folded in so toggling the group hides the thinking too, but they are not
+     what the counting line is about. Failed and live are tool states; a
+     thought has no status of its own. */
+  const tools = items.filter((item): item is ToolItem => item.kind === "tool")
+  const failed = tools.filter((item) => item.status === "failed").length
+  const active = tools.some((item) => item.status === "in_progress" || item.status === "pending")
+  const summary = summarise(tools)
+  /* Open while it runs, folded once it has. A group is the tool calls of one
+     act with the thoughts woven between them — `groupToolRuns` breaks the run
+     on anything else — so the summary line is a heading for steps that belong
+     together; while they are happening that heading is a number that ticks,
+     and the work belongs on screen. Finished, the counting line IS the
+     reading ("read 12 files"), and a scrolled-back transcript should be the
+     prose with its work folded beside it rather than every step the agent
+     ever took.
+
+     `active` alone is the wrong test for "still going", and that is what `tail`
+     is for. A step settles the instant its call returns, so between two calls
+     of one run there is a moment with nothing pending — on `active` alone the
+     group folded and re-opened around every gap, which is the transcript
+     rewriting itself while it is being read. The group at the *end* of an open
+     turn is still being written whatever its steps are doing at this instant,
+     and it stops being that the moment a different row lands after it: the
+     agent has moved on, so the run becomes the history the counting line
+     describes.
+
+     Derived rather than seeded, and this is the `useState` trap the view
+     options warn about: an initialiser reading these is read once, so a run
+     that mounted live would stay open forever and one replayed from the
+     journal would stay shut. `open` is the reader's answer when they have
+     given one and the run's own state otherwise, so a hand-opened group stays
+     open through the turn that follows it and a hand-closed one stays closed. */
+  const [choice, setChoice] = React.useState<boolean | null>(null)
+  const open = choice ?? (active || tail === true)
+  const setOpen = (value: boolean | ((previous: boolean) => boolean)) =>
+    setChoice(typeof value === "function" ? value(open) : value)
+
+  /* A run the reader has closed by hand while it is *still running* keeps its
+     tail visible rather than going fully dark: the group the agent is inside
+     is the one thing on screen that is actually happening, and a live process
+     reduced to a number that ticks is not a reading of it. Three: enough to
+     see what it just did and what it is doing, few enough that the transcript
+     is not re-expanding itself behind your back. A finished run shows nothing,
+     which is what the counting line is for — so the peek closes on its own
+     when the run ends. */
+  const showing = open ? items : active ? items.slice(-PEEK) : []
+  const hidden = active && !open ? items.length - showing.length : 0
 
   return (
-    <div className="relative ps-6" data-open={expandable && open ? "" : undefined}>
-      <span aria-hidden className="harness-rail-top" />
-      <span aria-hidden className="harness-rail-bottom" />
-      <StepNode status={status} active={active} />
-
+    <div>
       <button
         type="button"
-        disabled={!expandable}
-        onClick={() => setOpen((o) => !o)}
-        className={cn(
-          "group/step -ms-1.5 flex w-full min-w-0 items-baseline gap-2 rounded-md py-0.5 pe-1.5 ps-1.5 text-start transition-colors duration-150",
-          expandable && "hover:bg-muted/40"
-        )}
+        onClick={() => setOpen((value) => !value)}
+        className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-0.5 text-start transition-colors duration-150 hover:bg-muted/40"
       >
-        <span
-          className={cn(
-            "min-w-0 flex-1 truncate text-[13px] leading-6",
-            mono && "font-mono",
-            failed ? "text-destructive" : active ? "harness-shimmer text-foreground" : "text-foreground/85"
-          )}
-        >
-          {target}
-        </span>
-
-        {elapsedMs !== null && elapsedMs >= 2000 && (
-          <span className="shrink-0 text-[11px] leading-6 tabular-nums text-muted-foreground/60">
-            {formatElapsed(elapsedMs)}
-          </span>
-        )}
-        {metric && (
-          <span className="shrink-0 text-[11px] leading-6 tabular-nums text-muted-foreground/60">
-            {metric}
-          </span>
-        )}
-        <span
-          className={cn(
-            "shrink-0 text-[11px] leading-6",
-            failed ? "text-destructive" : "text-muted-foreground/50"
-          )}
-        >
-          {failed ? "failed" : label}
-        </span>
-
         <ChevronRightIcon
+          aria-hidden
           className={cn(
-            "size-3 shrink-0 self-center text-muted-foreground/60 transition-transform duration-150",
-            !expandable && "invisible",
-            open ? "rotate-90 opacity-100" : "opacity-0 group-hover/step:opacity-100"
+            "size-3 shrink-0 text-muted-foreground/60 transition-transform duration-200",
+            open && "rotate-90"
           )}
         />
+        <RunAvatarStack items={items} />
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate text-xs leading-6 text-muted-foreground",
+            active && "harness-shimmer"
+          )}
+        >
+          <RunSummary summary={summary} />
+        </span>
+        {failed > 0 && (
+          <span className="shrink-0 text-[11px] leading-6 text-destructive">{failed} failed</span>
+        )}
       </button>
-
-      {expandable && open && <div className="mt-1 mb-2.5 min-w-0 space-y-2">{detail}</div>}
+      {showing.length > 0 && (
+        /* One rail for both states, so expanding a peeking run grows the list
+           in place instead of swapping one layout for another. */
+        <div className={RUN_RAIL_CLASS}>
+          {hidden > 0 && (
+            <div className={RAIL_THROUGH}>
+              <EarlierSteps count={hidden} onClick={() => setOpen(true)} />
+            </div>
+          )}
+          {/* Not `[data-message-id]` rows, so the transcript's entrance does
+              not reach them on its own — the class is the same animation. */}
+          {showing.map((item, index) => (
+            <div
+              key={item.id}
+              className={cn(
+                "harness-item-in",
+                RAIL_ELBOW,
+                index < showing.length - 1 && RAIL_TAIL
+              )}
+            >
+              {/* A thought rides the same rail as the steps around it — it is
+                  the reasoning that led to them. `ThreadItemView` draws it
+                  exactly as it would out in the open: its own StepRow, folded
+                  to the preview line or opened by "Show thinking". Only the
+                  run's tail can still be streaming, so that is the only item
+                  handed the flag. */}
+              {item.kind === "tool" ? (
+                <ToolStep item={item} showTimestamp={showTimestamps} />
+              ) : (
+                <ThreadItemView
+                  item={item}
+                  showTimestamps={showTimestamps}
+                  streaming={tail && index === showing.length - 1}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
-}
+})
+ToolRun.displayName = "ToolRun"
 
-/** True for kinds that render as step rows (rail-threaded timeline). */
-export function isStepItem(item: ThreadItem): boolean {
-  return item.kind === "tool" || item.kind === "thought" || item.kind === "plan"
-}
-
-/* Prose palette + code/table styling live in index.css, so both themes come
-   from the app tokens — no prose-invert needed. */
-function Prose({ text }: { text: string }) {
+/**
+ * One row of the transcript, whichever shape `buildRows` gave it. The top
+ * level and every subagent's rail draw through this, which is what makes a
+ * nested transcript the same transcript — same step rows, same prose, same
+ * grouping — and not a summary of one.
+ */
+export const RowView = React.memo(function RowView({
+  row,
+  onContinue,
+  onRetry,
+  onRetryAsPaths,
+  onDismiss,
+  onRewind,
+  onFork,
+  showTimestamps,
+  streaming,
+}: {
+  row: Row
+  onContinue?: () => void
+  onRetry?: () => void
+  onRetryAsPaths?: () => void
+  onDismiss?: () => void
+  /** Present on a finished user turn that can be rewound — see ThreadItemView. */
+  onRewind?: () => void
+  /** Present where the agent's runtime can branch: a new thread carrying the
+      conversation through this turn. Same surface as rewind, minus the scope —
+      a fork never touches the parent, so there is nothing to choose. */
+  onFork?: () => void
+  showTimestamps?: boolean
+  /** This row is the transcript's tail and the turn is still open — it is the
+      one thing still being written. Only a thought draws differently for it
+      (see ThreadItemView); prose streams visibly on its own. */
+  streaming?: boolean
+}) {
+  if (row.kind === "run")
+    return <ToolRun items={row.items} showTimestamps={showTimestamps} tail={streaming} />
+  if (row.kind === "subagent-group") return <SubagentStep group={row} showTimestamps={showTimestamps} />
+  if (row.kind === "workflow-group")
+    return <WorkflowRun group={row} showTimestamps={showTimestamps} stepRow={SubagentStep} />
+  if (row.kind === "subagent-batch")
+    return <SubagentBatchRun group={row} showTimestamps={showTimestamps} stepRow={SubagentStep} />
   return (
-    <div className="prose prose-sm max-w-none">
-      <Markdown remarkPlugins={[remarkGfm]}>{text}</Markdown>
+    <ThreadItemView
+      item={row}
+      onContinue={onContinue}
+      onRetry={onRetry}
+      onRetryAsPaths={onRetryAsPaths}
+      onDismiss={onDismiss}
+      onRewind={onRewind}
+      onFork={onFork}
+      showTimestamps={showTimestamps}
+      streaming={streaming}
+    />
+  )
+})
+RowView.displayName = "RowView"
+
+/**
+ * A subagent: the step that launched it, with everything it did underneath.
+ *
+ * Brief, then the rail of steps and prose, then the report — the order the
+ * work happened in. Open while it runs (a worker's rail is the one live thing
+ * on screen; folded, the transcript would go quiet exactly where the agent
+ * is busiest) and left as it is when it finishes: StepRow reads its default
+ * once, so a rail you were watching does not snap shut under you. The rail
+ * peeks its last few steps while live, like a run does.
+ *
+ * `head` is a Task tool call (Claude Code, OpenCode, Codex's legacy rows) or
+ * the session the agent announced (the ACP subagent RFD). The RFD's has no
+ * brief or report of its own — the child's prose IS the report, and it is in
+ * the rail — so those two halves are drawn only for a tool head.
+ */
+export const SubagentStep = React.memo(function SubagentStep({
+  group,
+  showTimestamps,
+}: {
+  group: SubagentGroup
+  showTimestamps?: boolean
+}) {
+  const { head, children } = group
+  const view = useViewOptionsContext()
+  const tool = head.kind === "tool" ? head : null
+  const session = head.kind === "subagent" ? head : null
+  const call = tool ? extractSubagent(tool) : null
+  /* The RFD's states onto the step vocabulary: `failed` is a failure,
+     `cancelled`/`disconnected` are endings that are not — they get the word
+     in the label column, in the quiet colour, rather than "failed". */
+  const headStatus = tool
+    ? tool.status
+    : session!.state === "running"
+      ? "in_progress"
+      : session!.state === "failed"
+        ? "failed"
+        : "completed"
+  const label =
+    session && (session.state === "cancelled" || session.state === "disconnected") ? session.state : undefined
+  /* Whether it is at work is the row builder's call (`subagentActive` in
+     lib/transcript-rows), the same answer the count above the composer
+     reads — a launch call can settle before its child does, and the head's
+     own status alone would say "done" of a worker mid-rail. */
+  const active = group.active
+  const status = active ? "in_progress" : headStatus
+
+  /* One naming rule for a subagent, in a run or on its own: the workflow
+     definition's name for the step when there is one, else what the worker was
+     asked to do. Shared with the run's list (`stepNameOf`) so a step does not
+     change its name depending on where it is read. */
+  const target = stepNameOf(group)
+  const captionOf = tool
+    ? [call?.agentType, call?.model].filter(Boolean).join(" · ") || undefined
+    : session!.name
+  // Never the same string twice: the name can be what the row is already titled.
+  const caption = captionOf === target ? undefined : captionOf
+  const steps = collectTools(children)
+  const prose = summarise(steps)
+    .map(({ verb, noun, count }) => `${verb} ${count} ${pluralNoun(noun, count)}`)
+    .join(", ")
+  const stepThread = useStepThread(group)
+  const hasBody = subagentHasBody(group, stepThread)
+  const tokens = view.showTokens ? stepUsage(group) : undefined
+
+  return (
+    <StepRow
+      icon={BotIcon}
+      iconAccent={KIND_COLORS.other}
+      iconChip={KIND_CHIPS.other}
+      status={status}
+      label={label}
+      target={target}
+      caption={caption}
+      mono={false}
+      startedAt={head.startedAt}
+      metric={
+        prose || showTimestamps || tokens ? (
+          <>
+            {prose}
+            {prose && tokens && " · "}
+            {/* Bare text, not the popover form: this sits inside StepRow's own
+                disclosure button, and a button may not hold a button. */}
+            {tokens && <TokenFigure usage={tokens} />}
+            {(prose || tokens) && showTimestamps && " · "}
+            {showTimestamps && <Timestamp at={head.at} />}
+          </>
+        ) : undefined
+      }
+      detail={hasBody ? <SubagentBody group={group} stepThread={stepThread} showTimestamps={showTimestamps} /> : undefined}
+      /* Folded by default, live or not: the shimmering title and the step
+         count say enough at a glance, and the rail is one click away. Only
+         the "show tool details" option opens it unasked, as it does every
+         other tool row. */
+      defaultOpen={view.showToolDetails}
+      openSetting={view.showToolDetails}
+    />
+  )
+})
+SubagentStep.displayName = "SubagentStep"
+
+/**
+ * Everything a subagent produced: brief, its own thread, its rail, its report.
+ *
+ * Split out of `SubagentStep` because a workflow step is drawn twice — as an
+ * ordinary step row on its own, and as a row of the run's table — and the two
+ * differ only in the header above this. The brief and report exist for a tool
+ * head alone: the RFD's child has no brief of its own, its prose IS the report
+ * and it is already in the rail.
+ */
+function SubagentBody({
+  group,
+  stepThread,
+  showTimestamps,
+}: {
+  group: SubagentGroup
+  stepThread: string | null
+  showTimestamps?: boolean
+}) {
+  const tool = group.head.kind === "tool" ? group.head : null
+  const session = group.head.kind === "subagent" ? group.head : null
+  const active = group.active
+  return (
+    <div className="space-y-2">
+      {tool && <SubagentBrief item={tool} />}
+      {/* A step the runtime previews rather than streams (a native workflow's
+          agent — see `nativeWorkflowRun`). The same two sections a tool-headed
+          step gets, from the only source there is for one of these. */}
+      {session?.activity && active && (
+        <p className="text-[11px] text-muted-foreground/70 harness-shimmer">{session.activity}</p>
+      )}
+      {session?.prompt && (
+        <DetailSection label="Brief">
+          <div className={cn(PANE_MAX_H, "overflow-auto rounded-md border border-border/50 bg-muted/40 px-2.5 py-2")}>
+            <Prose text={session.prompt} />
+          </div>
+        </DetailSection>
+      )}
+      {stepThread && (
+        <Link
+          to={threadPath(stepThread)}
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          Open thread <ArrowUpRightIcon className="size-3" />
+        </Link>
+      )}
+      {/* The rail is drawn while the subagent is live even with nothing on it
+          yet, so the working line at its foot has somewhere to sit and the
+          first step lands in place rather than opening a rail. */}
+      {(group.children.length > 0 || (active && !session?.transcript)) && (
+        <SubagentTranscript rows={group.children} active={active} showTimestamps={showTimestamps} />
+      )}
+      {session?.transcript && (
+        <NativeStepTranscript transcript={session.transcript} active={active} showTimestamps={showTimestamps} />
+      )}
+      {tool && <SubagentReport item={tool} active={active} />}
+      {session?.report && (
+        <DetailSection label={session.state === "failed" ? "Error" : active ? "Report so far" : "Report"}>
+          <SmartBlock text={session.report} tone={session.state === "failed" ? "error" : undefined} />
+        </DetailSection>
+      )}
     </div>
   )
 }
 
-/* Explanatory agents emit their insight box as two backticked rule lines around
-   the body — as markdown that's a pair of code chips with a wall of dashes.
-   The rules are the frame, so drop them and render the body as a callout.
-   Unterminated matches (still streaming) run to the end of the text. */
-const INSIGHT_RE = /`?★[^\n]*?Insight[^\n]*\n([\s\S]*?)(?:\n?`?[─—–-]{5,}`?|$)/g
+/** How often an open, still-working step re-reads its file. The agent is
+    writing to it from another process, so there is nothing to push us. */
+const NATIVE_STEP_REFRESH_MS = 6_000
 
-function AgentText({ text }: { text: string }) {
-  const parts: React.ReactNode[] = []
-  let cut = 0
-  for (const match of text.matchAll(INSIGHT_RE)) {
-    if (match.index > cut) parts.push(<Prose key={cut} text={text.slice(cut, match.index)} />)
-    parts.push(
-      <aside key={match.index} className="rounded-lg border border-border/60 bg-muted/30 px-4 py-3">
-        <p className="mb-1.5 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
-          <span aria-hidden>★</span> Insight
-        </p>
-        <Prose text={match[1]} />
-      </aside>
+/**
+ * The rail of a native workflow step, read off the server's disk.
+ *
+ * Its agent runs inside the CLI and produces no ACP frames, so unlike every
+ * other subagent this one has no children in the store — what it did is a file
+ * (`agent-<agentId>.jsonl` beside the run's journal) that only the server can
+ * read. Fetched when the step is opened, never before: a run of thirty agents
+ * is thirty files, and a reader opens one.
+ *
+ * The records become ordinary `ThreadItem`s (`workflowAgentItems`) and then
+ * ordinary rows, so the rail, the tool views and the nesting are the same ones
+ * the rest of the transcript uses — the file is where this history came from,
+ * and the only place that fact is known.
+ */
+function NativeStepTranscript({
+  transcript,
+  active,
+  showTimestamps,
+}: {
+  transcript: { dir: string; agentId: string }
+  active: boolean
+  showTimestamps?: boolean
+}) {
+  const events = useAgentTranscript(transcript.dir, transcript.agentId)
+  const [failed, setFailed] = React.useState(false)
+  const { dir, agentId } = transcript
+
+  React.useEffect(() => {
+    const settings = loadSettings()
+    if (!settings) return
+    let cancelled = false
+    const read = (force: boolean) =>
+      loadAgentTranscript(settings, dir, agentId, force).then(
+        () => !cancelled && setFailed(false),
+        () => !cancelled && setFailed(true)
+      )
+    void read(false)
+    // A settled agent's file does not change, so only a live one is re-read.
+    if (!active) return () => {
+      cancelled = true
+    }
+    const timer = setInterval(() => void read(true), NATIVE_STEP_REFRESH_MS)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [dir, agentId, active])
+
+  const rows = React.useMemo(() => buildRows(workflowAgentItems(events), false, active), [events, active])
+
+  if (rows.length === 0) {
+    return (
+      <p className={cn("text-[11px] text-muted-foreground/70", active && !failed && "harness-shimmer")}>
+        {failed
+          ? "Couldn't read this agent's transcript on the server."
+          : active
+            ? "Reading this agent's transcript…"
+            : "This agent left no transcript."}
+      </p>
     )
-    cut = match.index + match[0].length
   }
-  if (parts.length === 0) return <Prose text={text} />
-  if (cut < text.length) parts.push(<Prose key={cut} text={text.slice(cut)} />)
-  return <div className="space-y-3">{parts}</div>
+  return <SubagentTranscript rows={rows} active={active} showTimestamps={showTimestamps} />
 }
 
-export function ThreadItemView({ item }: { item: ThreadItem }) {
+/** A subagent's rows, on a rail. Peeks the tail while the subagent is live;
+    the whole thing once it is done, or once asked. */
+function SubagentTranscript({
+  rows,
+  active,
+  showTimestamps,
+}: {
+  rows: Row[]
+  active: boolean
+  showTimestamps?: boolean
+}) {
+  const [expanded, setExpanded] = React.useState(false)
+  const showing = expanded || !active ? rows : rows.slice(-PEEK)
+  const hidden = rows.length - showing.length
+  return (
+    <div className={RAIL_CLASS}>
+      {hidden > 0 && <EarlierSteps count={hidden} onClick={() => setExpanded(true)} />}
+      {showing.map((row, i) => (
+        <div key={row.id} className="harness-item-in">
+          <RowView
+            row={row}
+            showTimestamps={showTimestamps}
+            streaming={active && i === showing.length - 1}
+          />
+        </div>
+      ))}
+      {/* The subagent's own working line, at the foot of its rail: the thread's
+          indicator under the composer says the *turn* is running, which is
+          true whether or not this worker is — and between two of its steps,
+          or before its first, its rail would otherwise just stop. */}
+      {active && (
+        <div
+          aria-label="Subagent working"
+          className="flex items-center gap-2 px-1.5 py-0.5 text-[11px] leading-6 text-primary"
+        >
+          <Logo working className="size-3.5 shrink-0" />
+          <span className="harness-shimmer">{rows.length === 0 ? "Starting…" : "Working…"}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* Memoized — the transcript's row discriminator, and the thing that makes
+   memo work up the tree: `item` is referentially stable for everything the
+   reducer did not touch, so a streaming chunk re-renders only the changed rows
+   instead of all n. The `useViewOptionsContext` inside reads the same
+   context value across a re-render storm, so it does not break memo. */
+const THOUGHT_SNIPPET = 96
+
+/** The line of a thought that stands for it in a folded row: the first while
+    it is settled, the tail of the newest while it streams (see the `thought`
+    case). Markdown marks are stripped — the row is one plain line. */
+function thoughtPreview(reasoning: string, streaming: boolean): string {
+  const lines = reasoning.split("\n").filter((line) => line.trim())
+  if (lines.length === 0) return streaming ? "Thinking…" : "…"
+  const line = (streaming ? lines[lines.length - 1] : lines[0]).replace(/[`*_~#>]/g, "").trim()
+  if (!streaming || line.length <= THOUGHT_SNIPPET) return line
+  return "…" + line.slice(-THOUGHT_SNIPPET).replace(/^\S*\s/, "")
+}
+
+export const ThreadItemView = React.memo(function ThreadItemView({
+  item,
+  onContinue,
+  onRetry,
+  onRetryAsPaths,
+  onDismiss,
+  onRewind,
+  onFork,
+  showTimestamps = false,
+  streaming = false,
+}: {
+  item: ThreadItem
+  /** Present only on the transcript's last interrupt notice — see ThreadView. */
+  onContinue?: () => void
+  /** Present on an error row that knows the prompt it killed. */
+  onRetry?: () => void
+  /** Present when that prompt's attachments were delivered inline — see ErrorRow. */
+  onRetryAsPaths?: () => void
+  onDismiss?: () => void
+  /** Present on a finished user turn: rewind the thread to before it. Absent
+      while the turn runs, on untagged bubbles, and off the transcript's own
+      turns (a subagent's prose is its report, not a turn to cut at). */
+  onRewind?: () => void
+  /** Present on a finished user turn whose agent can branch: fork the
+      conversation through this turn into a new thread. Absent wherever rewind
+      is, and on agents with no fork-point door (`rewindVia`). */
+  onFork?: () => void
+  showTimestamps?: boolean
+  /** See RowView. */
+  streaming?: boolean
+}) {
+  const view = useViewOptionsContext()
+  /* Read here rather than in the one case that prints it: a switch is not a
+     place a hook can live. Only a thought uses it — a tool row draws its own
+     inside ToolStep, and the other kinds are not steps. */
+  const stepTokens = useStepTokens(item.id)
   switch (item.kind) {
+    case "error":
+      return (
+        <ErrorRow
+          item={item}
+          onRetry={onRetry}
+          onRetryAsPaths={onRetryAsPaths}
+          onDismiss={onDismiss}
+          showTimestamp={showTimestamps}
+        />
+      )
     case "user":
       return (
-        <Message align="end" className="py-2">
-          <MessageContent>
-            <Bubble align="end">
-              <BubbleContent className="rounded-2xl rounded-br-sm px-4 py-2.5 text-sm whitespace-pre-wrap">
-                {item.text}
-              </BubbleContent>
-            </Bubble>
-          </MessageContent>
-        </Message>
+        <ItemContextMenu
+          items={[
+            { label: "Copy text", icon: <CopyIcon />, onClick: () => copyText(item.text) },
+            ...(onRewind
+              ? [
+                  {
+                    label: "Rewind to here",
+                    icon: <HistoryIcon />,
+                    onClick: onRewind,
+                  } as const,
+                ]
+              : []),
+            ...(onFork
+              ? [
+                  {
+                    label: "Fork from here",
+                    icon: <GitBranchIcon />,
+                    onClick: onFork,
+                  } as const,
+                ]
+              : []),
+          ]}
+          className="select-text"
+          onContextMenu={yieldToTextSelection}
+        >
+          {/* Tinted, not filled: a soft wash of the accent with foreground text
+              rather than the primary-on-primary-foreground pair, which is the
+              loudest thing the theme has and made every prompt shout over the
+              answer under it. Width, alignment and the corner tail are as they
+              were — the bubble still hugs the right edge at 80%. */}
+          <Message align="end" className="flex-col items-end gap-0.5 py-2">
+            <MessageContent>
+              <Bubble variant="tinted" align="end">
+                <BubbleContent dir="auto" className="rounded-2xl rounded-br-sm px-4 py-2.5 text-sm">
+                  {/* Above the prose, inside the same tinted bubble: what was
+                      attached is part of the message, not a note beside it. */}
+                  {item.attachments && item.attachments.length > 0 && (
+                    <MessageAttachments attachments={item.attachments} />
+                  )}
+                  {item.text && <UserMessageText text={item.text} />}
+                </BubbleContent>
+              </Bubble>
+            </MessageContent>
+            {showTimestamps && <Timestamp at={item.at} className="pr-1" />}
+          </Message>
+        </ItemContextMenu>
       )
     case "agent":
       return (
-        <Message className="py-2">
-          <MessageContent>
-            <Bubble variant="ghost">
-              <BubbleContent className="text-sm leading-relaxed">
-                <AgentText text={item.text} />
-              </BubbleContent>
-            </Bubble>
-          </MessageContent>
-        </Message>
+        <ItemContextMenu
+          items={[{ label: "Copy text", icon: <CopyIcon />, onClick: () => copyText(item.text) }]}
+          className="select-text"
+          onContextMenu={yieldToTextSelection}
+        >
+          {/* The transcript is ONE column: prose, steps and notices all start on
+              the same left edge, with nothing inset for a gutter. */}
+          <Message className="flex-col items-start gap-0.5 py-2">
+            <MessageContent>
+              <Bubble variant="ghost">
+                <BubbleContent dir="auto" className="text-sm leading-relaxed">
+                  <StreamedAgentText text={item.text} streaming={streaming} />
+                </BubbleContent>
+              </Bubble>
+            </MessageContent>
+            {showTimestamps && <Timestamp at={item.at} />}
+          </Message>
+        </ItemContextMenu>
       )
-    case "thought":
+    case "notice": {
+      // Two things arrive as agent-authored transcript events: an interrupt
+      // (one line, a rule) and a background task reporting back (a card — see
+      // TaskNotificationCard). The store keeps the raw block; this is where it
+      // becomes one or the other.
+      const task = parseTaskNotification(item.text)
+      if (task) {
+        return <TaskNotificationCard task={task} at={item.at} showTimestamp={showTimestamps} />
+      }
+      // A break in the conversation, so it reads as one: hairline across the
+      // column with the reason inline. An interrupt you can still resume gets
+      // the resume button right there in the rule — picking the turn back up
+      // is the only thing anyone wants after stopping it.
+      return (
+        <div className="flex items-center gap-2.5 py-2 text-[11px] text-muted-foreground/70">
+          <span aria-hidden className="h-px flex-1 bg-border" />
+          <span className="shrink-0">{item.text}</span>
+          {showTimestamps && <Timestamp at={item.at} />}
+          {onContinue && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 shrink-0 gap-1 rounded-pill px-2 text-[11px]"
+              onClick={onContinue}
+              title="Ask the agent to pick up where it stopped"
+            >
+              <PlayIcon className="size-3" />
+              Continue
+            </Button>
+          )}
+          <span aria-hidden className="h-px flex-1 bg-border" />
+        </div>
+      )
+    }
+    case "thought": {
+      const reasoning = item.text.trim()
+      /* The title is a snippet of the detail. Settled, it is the opening
+         line — what the thought was about. Still streaming, it is the
+         *newest* line's tail instead, so a folded row reads as a ticker of
+         what the agent is thinking right now rather than freezing on the
+         first words for a minute of silence; the whole item is rebuilt per
+         chunk anyway (appendText replaces the tail item), so this costs no
+         extra render. Clipped from the front because `truncate` cuts the
+         end, and the end is the part that is new. */
+      const preview = thoughtPreview(reasoning, streaming)
+      /* A request that ended on its thinking — no tool call after it — files
+         its cost here, and this is the row that has to print it or the reading
+         is simply lost. Never while it streams: the figure lands with the
+         request that is still being written. */
+      const tokens = view.showTokens && !streaming ? stepTokens : undefined
+
       return (
         <StepRow
-          label="think"
-          status={null}
+          icon={KIND_ICONS.think}
+          iconAccent={KIND_COLORS.think}
+          iconChip={KIND_CHIPS.think}
+          status={streaming ? "in_progress" : null}
+          label={streaming ? "thinking" : undefined}
+          startedAt={streaming ? item.at : undefined}
+          metric={tokens ? <StepTokens usage={tokens} itemId={item.id} /> : undefined}
           mono={false}
-          target={item.text.split("\n").find((l) => l.trim()) ?? "…"}
+          defaultOpen={view.showThinking}
+          openSetting={view.showThinking}
+          target={
+            streaming ? (
+              <span className="harness-shimmer text-primary">{preview}</span>
+            ) : (
+              preview
+            )
+          }
           detail={
-            <p className="text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground">
-              {item.text}
-            </p>
+            <StreamedProse
+              text={reasoning}
+              streaming={streaming}
+              className="text-xs leading-relaxed text-muted-foreground"
+            />
           }
         />
       )
+    }
     case "tool":
-      return <ToolStep item={item} />
+      return <ToolStep item={item} showTimestamp={showTimestamps} />
     case "plan":
       return <PlanStep item={item} />
+    case "compaction":
+      return <CompactionStep item={item} showTimestamp={showTimestamps} />
+    case "autonomy":
+      return <AutonomyStep item={item} showTimestamp={showTimestamps} />
+    case "subagent":
+      // An announced session with nothing filed under it yet — `buildRows`
+      // wraps every one it sees, so this is the bare item reaching a row view
+      // directly (a rail's own list). Same step, empty rail.
+      return (
+        <SubagentStep
+          group={{ kind: "subagent-group", id: item.id, head: item, active: item.state === "running", children: [] }}
+          showTimestamps={showTimestamps}
+        />
+      )
   }
-}
+})
+ThreadItemView.displayName = "ThreadItemView"
 
-/* Agents stream output as many small text blocks (one per result, per line).
-   Rendering a bordered box per block turns six one-liners into six panels —
-   consecutive text is one stream, so it gets one block. */
-function mergeText(content: acp.ToolCallContent[]): acp.ToolCallContent[] {
-  const merged: acp.ToolCallContent[] = []
-  for (const part of content) {
-    const prev = merged[merged.length - 1]
-    if (
-      part.type === "content" &&
-      part.content.type === "text" &&
-      prev?.type === "content" &&
-      prev.content.type === "text"
-    ) {
-      merged[merged.length - 1] = {
-        ...prev,
-        content: { ...prev.content, text: `${prev.content.text}\n${part.content.text}` },
-      }
-    } else {
-      merged.push(part)
-    }
-  }
-  return merged
-}
+// ─── Per-kind layouts ────────────────────────────────────────────────────────
 
-function ToolStep({ item }: { item: ToolItem }) {
+const ToolStep = React.memo(function ToolStep({
+  item,
+  showTimestamp,
+}: {
+  item: ToolItem;
+  showTimestamp?: boolean;
+}) {
   const active = item.status === "in_progress" || item.status === "pending"
-  const json = JSON.stringify(item.rawInput ?? null)
-  const args = json === "null" || json === "{}" ? null : json
-  const hasBody = item.content.length > 0 || item.locations.length > 0 || args !== null
-  const detail = hasBody ? (
-    <>
-      {/* The title often names only the tool ("ToolSearch") — the input is what
-          says which call this was. */}
-      {args && (
-        <p className="truncate font-mono text-[11px] text-muted-foreground/70">
-          {args}
-        </p>
-      )}
-      {item.locations.length > 0 && (
-        <ul className="space-y-0.5 font-mono text-[11px] text-muted-foreground/80">
-          {item.locations.map((l, i) => (
-            <li key={i} className="truncate">
-              {l.path}
-              {l.line != null && `:${l.line}`}
-            </li>
-          ))}
-        </ul>
-      )}
-      {mergeText(item.content).map((content, i) => (
-        <ToolContentView key={i} content={content} />
-      ))}
-    </>
-  ) : active ? (
-    // Running but nothing printed yet.
-    <div className="space-y-1.5 py-1">
-      <div className="harness-skeleton-line w-3/5" />
-      <div className="harness-skeleton-line w-2/5" />
-    </div>
-  ) : undefined
+  const kind = toolKindOf(item)
+  const KindIcon = KIND_ICONS[kind] ?? WrenchIcon
+  const view = useViewOptionsContext()
+  /* Both of these are `tool-views`' to answer, not this row's: whether an
+     expansion would hold anything, and whether it should start open, both
+     depend on which layout the call resolved to — and a chevron that opens an
+     empty box is worse than no chevron. "Expand tool output" overrides the
+     second, so the body is there to read without a click. */
+  const hasBody = toolHasDetail(item)
+  /* What the request that ended on this call cost. Only the step it ended on
+     carries one, so most rows in a run have none — that is the reading being
+     honest about which step it can be pinned to, not a gap. */
+  const stepTokens = useStepTokens(item.id)
+  const tokens = view.showTokens ? stepTokens : undefined
+  /* What the agent said it was doing beats what it typed: a Bash call carries
+     both, and the command truncates to nothing useful in a row this wide.
+     A subagent's step drops the child's name its runtime may have prefixed —
+     the rail it sits in is already headed by that name. */
+  const heading = toolHeading(item.parentId ? { ...item, title: childToolTitle(item) } : item)
 
   return (
     <StepRow
-      label={KIND_LABELS[item.toolKind ?? "other"] ?? KIND_LABELS.other}
       status={item.status}
-      target={item.title}
-      metric={metricFor(item)}
+      icon={KindIcon}
+      iconAccent={KIND_COLORS[kind] ?? KIND_COLORS.other}
+      iconChip={KIND_CHIPS[kind] ?? KIND_CHIPS.other}
+      target={heading.title}
+      /* "Show the command" off leaves the sentence alone on the row. What was
+         typed is still in the body, which is where it is read once the line
+         above it says what the call was for. */
+      caption={view.showToolCommand ? heading.detail : undefined}
+      file={heading.file}
+      filePath={heading.filePath}
+      fileRange={fileRangeOf(item) ?? undefined}
+      mono={!heading.prose}
+      /* No outcome here. The header line is the title and the command that
+         produced it; churn counts and echoed output lines competed with both
+         for the same strip of row, and a long one pushed the command it
+         belonged to out of view. What happened is in the body — the diff, the
+         output, the matches — where it is the thing being read rather than a
+         teaser for it. `failed` still reaches the row, as the label. */
+      metric={
+        tokens || showTimestamp ? (
+          <>
+            {tokens ? <StepTokens usage={tokens} itemId={item.id} /> : null}
+            {tokens && showTimestamp ? " · " : null}
+            {showTimestamp ? <Timestamp at={item.at} /> : null}
+          </>
+        ) : undefined
+      }
       startedAt={item.startedAt}
-      detail={detail}
+      detail={hasBody || active ? <ToolDetail item={item} active={active} /> : undefined}
+      /* Two strips can sit under a row and they answer different questions —
+         which sites a search saw, and what you told the agent when it asked.
+         Neither applies to the other's kind of call, so they never both draw. */
+      below={
+        <>
+          <ToolAnswers item={item} />
+          <ToolSources item={item} />
+        </>
+      }
+      defaultOpen={view.showToolDetails || toolOpensByDefault(item)}
+      openSetting={view.showToolDetails}
     />
+  )
+})
+ToolStep.displayName = "ToolStep"
+
+/**
+ * Renders user message text, collapsing any pasted text blocks into interactive
+ * toggles that can be opened/closed to view the pasted content.
+ */
+function UserMessageText({ text }: { text: string }) {
+  const parts = React.useMemo(() => parseUserMessageParts(text), [text])
+  if (parts.length === 1 && parts[0].type === "prose") {
+    return <Prose text={parts[0].text} />
+  }
+  return (
+    <div className="space-y-2">
+      {parts.map((part, index) =>
+        part.type === "prose" ? (
+          <Prose key={index} text={part.text} />
+        ) : (
+          <PastedTextItem key={index} n={part.n} content={part.content} />
+        )
+      )}
+    </div>
   )
 }
 
-function ToolContentView({ content }: { content: acp.ToolCallContent }) {
-  if (content.type === "content" && content.content.type === "text") {
-    return (
-      <pre className="max-h-64 w-fit max-w-full overflow-auto rounded-md border border-border/50 bg-muted/40 px-2.5 py-2 font-mono text-[11px] whitespace-pre-wrap">
-        {content.content.text}
-      </pre>
-    )
+function parseUserMessageParts(text: string): Array<
+  | { type: "prose"; text: string }
+  | { type: "paste"; n?: string; content: string }
+> {
+  const regex = /(?:^|\n)(`{3,})pasted-text(?: #?(\d+))?[^\n]*\n([\s\S]*?)\n\1(?=\n|$)/g
+  const parts: Array<{ type: "prose"; text: string } | { type: "paste"; n?: string; content: string }> = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = regex.exec(text)) !== null) {
+    const before = text.slice(lastIndex, match.index)
+    if (before.trim()) {
+      parts.push({ type: "prose", text: before.trim() })
+    }
+    parts.push({
+      type: "paste",
+      n: match[2],
+      content: match[3],
+    })
+    lastIndex = match.index + match[0].length
   }
-  if (content.type === "diff") {
-    // ponytail: whole-block old/new render; swap in a line-diff lib if reviews need it.
-    return (
-      <div className="overflow-hidden rounded-md border border-border/50 font-mono text-[11px]">
-        <div className="truncate border-b border-border/50 bg-muted/40 px-2 py-1 text-muted-foreground">
-          {content.path}
-        </div>
-        {content.oldText != null && content.oldText !== "" && (
-          <pre className="max-h-48 overflow-auto bg-red-500/10 p-2 whitespace-pre-wrap text-red-700 dark:text-red-300">
-            {content.oldText}
-          </pre>
-        )}
-        <pre className="max-h-48 overflow-auto bg-green-500/10 p-2 whitespace-pre-wrap text-green-700 dark:text-green-300">
-          {content.newText}
-        </pre>
-      </div>
-    )
+
+  const after = text.slice(lastIndex)
+  if (after.trim()) {
+    parts.push({ type: "prose", text: after.trim() })
   }
-  return <div className="text-[11px] text-muted-foreground">[{content.type}]</div>
+
+  return parts.length > 0 ? parts : [{ type: "prose", text }]
 }
 
-function PlanStep({ item }: { item: PlanItem }) {
-  const done = item.entries.filter((e) => e.status === "completed").length
-  const current = item.entries.find((e) => e.status === "in_progress")
-  // Agents often leave a plan with nothing in_progress (turn ended mid-list).
-  // Headline the step that's up next, and only spin while one is actually running.
-  const next = current ?? item.entries.find((e) => e.status !== "completed")
+function PastedTextItem({
+  n,
+  content,
+}: {
+  n?: string
+  content: string
+}) {
+  const [open, setOpen] = React.useState(false)
+  const [copied, setCopied] = React.useState(false)
+  const lines = content.split("\n").length
+  const chars = content.length
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    void copyText(content)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
   return (
-    <StepRow
-      label="plan"
-      status={current ? "in_progress" : next ? null : "completed"}
-      mono={false}
-      target={next?.content ?? "all steps complete"}
-      metric={`${done}/${item.entries.length}`}
-      detail={
-        <ul className="space-y-1">
-          {item.entries.map((entry, i) => (
-            <li key={i} className="flex items-start gap-2 text-xs">
-              <span
-                className={cn(
-                  "mt-1.5 size-1.5 shrink-0 rounded-full",
-                  entry.status === "completed"
-                    ? "bg-primary"
-                    : entry.status === "in_progress"
-                      ? "harness-node-active bg-primary"
-                      : "bg-muted-foreground/40"
-                )}
-              />
-              <span
-                className={cn(
-                  "min-w-0",
-                  entry.status === "completed"
-                    ? "text-muted-foreground line-through"
-                    : entry.status === "in_progress"
-                      ? "text-foreground"
-                      : "text-muted-foreground"
-                )}
-              >
-                {entry.content}
-              </span>
-            </li>
-          ))}
-        </ul>
-      }
-    />
+    <div className="my-1.5 overflow-hidden rounded-xl border border-border/50 bg-background/50 text-foreground">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-start text-xs transition-colors hover:bg-muted/50"
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <ClipboardListIcon className="size-4 shrink-0 text-muted-foreground" />
+          <span className="font-medium truncate">
+            {n ? `Pasted text #${n}` : "Pasted text"}
+          </span>
+          <span className="text-[11px] text-muted-foreground shrink-0">
+            ({lines.toLocaleString()} line{lines === 1 ? "" : "s"} · {chars.toLocaleString()} chars)
+          </span>
+        </div>
+        <div className="flex items-center gap-1 shrink-0 text-muted-foreground">
+          <span className="text-[11px]">{open ? "Hide" : "Show"}</span>
+          <ChevronDownIcon
+            className={cn("size-3.5 transition-transform duration-200", open && "rotate-180")}
+          />
+        </div>
+      </button>
+      {open && (
+        <div className="border-t border-border/40 bg-muted/20 p-2.5">
+          <div className="mb-1.5 flex justify-end">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={handleCopy}
+              className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+              title="Copy pasted text"
+            >
+              {copied ? <CheckIcon className="size-3 text-emerald-500" /> : <CopyIcon className="size-3" />}
+              <span>{copied ? "Copied" : "Copy"}</span>
+            </Button>
+          </div>
+          <pre className="max-h-72 overflow-auto text-xs whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-muted-foreground">
+            {content}
+          </pre>
+        </div>
+      )}
+    </div>
   )
 }

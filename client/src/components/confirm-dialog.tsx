@@ -45,13 +45,15 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
     <ConfirmCtx.Provider value={confirm}>
       {children}
       <ResponsiveDialog open={pending !== null} onOpenChange={(open) => !open && settle(false)}>
-        <ResponsiveDialogContent className="sm:max-w-sm">
+        <ResponsiveDialogContent className="sm:max-w-md">
           <ResponsiveDialogHeader>
             <ResponsiveDialogTitle>{pending?.title}</ResponsiveDialogTitle>
-            {pending?.description && (
-              <ResponsiveDialogDescription>{pending.description}</ResponsiveDialogDescription>
-            )}
           </ResponsiveDialogHeader>
+          {/* The consequence is the body, not a subtitle: a header holds what the
+              dialog *is*, and what it will do to your data is the thing being read. */}
+          {pending?.description && (
+            <ResponsiveDialogDescription>{pending.description}</ResponsiveDialogDescription>
+          )}
           <ResponsiveDialogFooter>
             <Button variant="outline" onClick={() => settle(false)}>
               Cancel
