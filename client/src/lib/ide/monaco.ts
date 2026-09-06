@@ -32,11 +32,21 @@
      (`internal/common/workers.js`) consults `MonacoEnvironment.getWorker` first
      and does not fall back when it returns nothing.
 
+     **The editor worker's entry is `editor.worker.js`, never
+     `editor.worker.start.js`.** The `.start` module only *exports* `start()`;
+     the entry beside it is what calls it from a `self.onmessage`. Pointed at
+     `.start`, the worker booted, answered nothing, and the handshake never
+     completed — so every worker-backed feature was silently dead. The visible
+     one was the diff: `IEditorWorkerService.computeDiff` never resolved, so a
+     comparison drew both files whole, with no line marked changed and nothing
+     for `hideUnchangedRegions` to fold. A worker entry is one that installs a
+     message handler; the others are libraries.
+
    The module is loaded through `loadMonaco()` and never imported statically by
    anything a reader loads: it is a couple of megabytes, and the transcript must
    not carry it. `lib/ide/open.ts` is the seam that keeps it that way. */
 import type * as Monaco from "monaco-editor"
-import EditorWorker from "monaco-editor/editor/editor.worker.start.js?worker"
+import EditorWorker from "monaco-editor/editor/editor.worker.js?worker"
 import CssWorker from "monaco-editor/languages/features/css/css.worker.js?worker"
 import HtmlWorker from "monaco-editor/languages/features/html/html.worker.js?worker"
 import JsonWorker from "monaco-editor/languages/features/json/json.worker.js?worker"

@@ -211,7 +211,10 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   `createdAt`. Reading is not activity.** Pinned and Recents are shortcuts, not places.
 - **Everything with a face is drawn by `components/entity-icon.tsx`.** No component draws a
   folder for a project, and **an agent's mark is the server's** (`AgentDef.icon`, `"app"` =
-  the harness's own) — the client holds no table of which runtimes exist.
+  the harness's own) — the client holds no table of which runtimes exist. A **kind** wears the
+  kind's glyph (`PANEL_ICONS`, for the menu that opens one); an **open panel** wears
+  `PanelIcon`, and a chat's is its thread's agent — four threads used to be four identical
+  speech bubbles.
 - **The composer is `components/composer.tsx`: one card, two rows** — what *adds to* the
   message behind "+", what governs *how it sends* behind the chevron beside Send. Touch
   targets follow `useCoarsePointer` (the device); what Enter means follows `useIsMobile`
@@ -243,9 +246,23 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **Source control starts from `GET …/git/repos`, never from "the project's git"**: a section
   per repository, and every read and write names its `repo`. **Status paths are
   repository-relative** — `projectPath(repo, path)` is the one join back to the file routes.
+  **A comparison names both its sides**, never just the left: a staged row is HEAD ↔ index and
+  an unstaged one index ↔ worktree, or staging shows edits made after it. **Branches, stashes
+  and the log are read when asked for** — the branch list on the menu's open, the two sections
+  on their first expand — never with the status, which the watch stream re-reads.
 - **Monaco's workers are wired by `?worker` import, never by path**, and
   `MonacoEnvironment.getWorker` answers for **every** label while `getWorkerUrl` is never
   defined — a `?worker` import makes a stale path a build error instead of a blank editor.
+  **A worker entry is the module that installs `self.onmessage`** (`editor.worker.js`), never
+  the library beside it that only exports `start` (`editor.worker.start.js`): pointed at the
+  latter the worker boots, answers nothing, and every worker-backed feature dies quietly —
+  the visible one being the diff, which drew both files whole with nothing marked changed.
+- **A tab strip carries only what is about its own group** — the tab list, split, and the
+  context ring of the thread in its `activePanel`. The app's single controls (the bell, the ⋯
+  menu) live beside the palette trigger in the sidebar header, because the sidebar does not
+  split and is on every route; only the sidebar toggle stays elected to one strip
+  (`lib/workspace/dock-chrome`). **Splitting has no chord** — it is the strip's button and the
+  palette's row, both of which name the group they act on.
 - **A panel kind is a surface, and a surface that reads the URL cannot be one** — the board
   panel keeps "which board, which task" in its descriptor (`lib/tasks-location.ts`), never in
   the route. **What a panel is doing is data the panel publishes and the tab draws**

@@ -15,6 +15,7 @@ import type * as acp from "@daedalus/acp"
 import {
   ArrowLeftRightIcon,
   BrainIcon,
+  ChevronRightIcon,
   ClipboardListIcon,
   CornerDownRightIcon,
   FileTextIcon,
@@ -117,6 +118,67 @@ export const KIND_CHIPS: Record<string, string> = {
    the thing it is in. Outside the dock the var is unset and the fallback makes
    it the viewport again. */
 export const PANE_MAX_H = "max-h-[min(calc(var(--panel-h,100svh)*0.6),28rem)]"
+
+/* ── The transcript's shared shapes ──
+   One spelling each for a pane, a card, a caption and a disclosure, because
+   the alternative is what was here: two washes for the same box (`bg-muted/30`
+   and `/40`), three card geometries (`rounded-xl px-3 py-2.5`, `rounded-lg
+   px-4 py-3`, `my-1.5` vs `my-2`) and three section labels. A row that adds
+   one of these reaches for the constant; a theme that moves `--radius` moves
+   all of them, which a bare `rounded` (a hardcoded 0.25rem — Tailwind defines
+   no default radius from this theme) never did. */
+
+/** A payload's box: rows drawn inside it supply their own padding. */
+export const PANE = "overflow-hidden rounded-md border border-border/50 bg-muted/40"
+
+/** The same box with its own padding, for a pane holding one thing rather than
+    a list of rows (a brief, a plan, tool prose, a code block). */
+export const PANE_PAD = "rounded-md border border-border/50 bg-muted/40 px-2.5 py-2"
+
+/** A recessed block inside a pane — a heredoc body, an unfolded stack trace. */
+export const INSET = "rounded-sm border border-border/50 bg-background/50"
+
+/** A notice that is its own object in the flow rather than a step: an error, a
+    task reporting back, an agent's demarcated block, a pasted blob. The tone
+    (border and wash) is the caller's; the geometry is not. */
+export const CARD = "my-2 rounded-xl border px-3 py-2.5"
+
+/** The caption over a section of a step's detail, and over anything else that
+    is a group of rows with a name. */
+export const LABEL =
+  "text-[10px] font-semibold tracking-[0.08em] uppercase text-muted-foreground/50"
+
+/** The "Show details" / "Hide result" line every card folds its payload behind.
+    One component rather than three copies of the same flex row, so the chevron
+    turns the same way and sits at the same size wherever it is drawn. */
+export function Disclosure({
+  open,
+  onToggle,
+  children,
+  className,
+}: {
+  open: boolean
+  onToggle: () => void
+  children: React.ReactNode
+  className?: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={cn(
+        "flex w-fit items-center gap-1 text-[11px] text-muted-foreground/80 transition-colors hover:text-foreground",
+        className
+      )}
+    >
+      <ChevronRightIcon
+        aria-hidden
+        className={cn("size-3 shrink-0 transition-transform duration-200", open && "rotate-90")}
+      />
+      {children}
+    </button>
+  )
+}
 
 const REHYPE = [[rehypeHighlight, { detect: false, ignoreMissing: true }]] as never
 /* The same pass with the tail wrapper appended, for the one row being written.
@@ -338,9 +400,7 @@ export function mergeText(content: acp.ToolCallContent[]): acp.ToolCallContent[]
 export function DetailSection({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <section className="min-w-0 space-y-1">
-      <h4 className="text-[10px] font-semibold tracking-[0.08em] uppercase text-muted-foreground/50">
-        {label}
-      </h4>
+      <h4 className={LABEL}>{label}</h4>
       {children}
     </section>
   )
@@ -442,7 +502,7 @@ export function ToolLocations({ item }: { item: ToolItem }) {
 export function ToolProse({ text }: { text: string }) {
   if (!text.trim()) return null
   return (
-    <div className={cn(PANE_MAX_H, "min-w-0 overflow-auto rounded-md border border-border/50 bg-muted/40 px-2.5 py-2")}>
+    <div className={cn(PANE_MAX_H, PANE_PAD, "min-w-0 overflow-auto")}>
       {/* No size utility: the unlayered `.prose` rule in index.css sets the body
           size and outranks any `text-*` utility on this element — the
           `text-[11px]` that used to be here never applied, which is half of why
@@ -498,7 +558,7 @@ export function ShellScript({ command, className }: { command: string; className
         segment.kind === "shell" ? (
           <Highlighted key={index} code={segment.text} language="bash" />
         ) : (
-          <div key={index} className="overflow-hidden rounded border border-border/50 bg-background/50">
+          <div key={index} className={cn(INSET, "overflow-hidden")}>
             <div className="flex items-center gap-1.5 border-b border-border/50 px-2 py-0.5 font-mono text-[10px] text-muted-foreground/70">
               <CornerDownRightIcon aria-hidden className="size-3 shrink-0" />
               <span>{segment.label}</span>
@@ -527,10 +587,10 @@ export function CodeBlock({
     <div
       className={cn(
         PANE_MAX_H,
-        "w-fit max-w-full overflow-auto rounded-md border px-2.5 py-2",
+        "w-fit max-w-full overflow-auto",
         tone === "error"
-          ? "border-destructive/40 bg-destructive/5 text-destructive"
-          : "border-border/50 bg-muted/40"
+          ? "rounded-md border border-destructive/40 bg-destructive/5 px-2.5 py-2 text-destructive"
+          : PANE_PAD
       )}
     >
       {/* Errors stay uncoloured: a stack trace highlighted as code competes with
@@ -602,8 +662,6 @@ export function ShowAll({ onClick }: { onClick: () => void }) {
   )
 }
 
-export const PANE = "overflow-hidden rounded-md border border-border/50 bg-muted/30"
-
 /** A file a step acted on, as a chip. The path is elided to its basename so a
     row says "Read" + `package.json` rather than an elided mono path; the full
     path rides in the tooltip. Clickable only where `useThreadLinks` is alive. */
@@ -661,7 +719,7 @@ export function Favicon({ url, className }: { url: string; className?: string })
       loading="lazy"
       referrerPolicy="no-referrer"
       onError={() => setFailed(true)}
-      className={cn("size-3.5 shrink-0 rounded-sm bg-background/60", className)}
+      className={cn("size-3.5 shrink-0 rounded-sm bg-background/50", className)}
     />
   )
 }
@@ -879,7 +937,13 @@ export function Timestamp({ at, className }: { at?: number; className?: string }
           <time
             dateTime={date.toISOString()}
             className={cn(
-              "shrink-0 cursor-default whitespace-nowrap text-[10px] tabular-nums text-muted-foreground/50 transition-colors hover:text-muted-foreground",
+              // 11px, the transcript's meta scale — NOT 10px. A stamp is read
+              // beside a token figure and an outcome word in the same trailing
+              // group, and one part a notch smaller than the rest reads as a
+              // misalignment rather than as a quieter voice; the colour is what
+              // makes it quiet. Callers wanting the smaller one still say so
+              // (the queue's rows).
+              "shrink-0 cursor-default whitespace-nowrap text-[11px] tabular-nums text-muted-foreground/50 transition-colors hover:text-muted-foreground",
               className
             )}
           />

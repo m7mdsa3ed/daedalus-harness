@@ -27,9 +27,9 @@ import { BotIcon, CircleDashedIcon, PauseIcon, PlayIcon, WorkflowIcon } from "lu
    both files read (`collectTools`, `useStepThread`, `subagentHasBody`,
    `stepUsage`, `stepNameOf`) are declared *here* and imported by thread-items,
    because the one-way edge already points this way. */
-import { formatElapsed, RAIL_CLASS, StepRow, useElapsed } from "@/components/step-row"
-import { TokenFigure } from "@/components/token-usage"
-import { KIND_CHIPS, KIND_COLORS } from "@/components/tool-parts"
+import { formatElapsed, RAIL_CLASS, StepMeta, StepRow, useElapsed } from "@/components/step-row"
+import { TokenSummary } from "@/components/token-usage"
+import { KIND_CHIPS, KIND_COLORS, LABEL } from "@/components/tool-parts"
 import { extractSubagent, toolHeading } from "@/lib/tools"
 import type { Row, SubagentBatch, SubagentGroup, WorkflowGroup } from "@/lib/transcript-rows"
 import { sumUsage } from "@/lib/tokens"
@@ -221,16 +221,19 @@ function phasesOf(group: Pick<WorkflowGroup, "steps" | "plan">): PhaseView[] {
 function PendingStepRow({ name }: { name: string }) {
   return (
     <div className="flex min-w-0 items-start gap-2 py-0.5">
-      <span aria-hidden className="flex h-6 w-3.5 shrink-0 items-center justify-center text-muted-foreground/30">
+      <span aria-hidden className="flex h-6 w-3.5 shrink-0 items-center justify-center text-muted-foreground/40">
         <CircleDashedIcon className="size-3.5" />
       </span>
-      <span className="min-w-0 flex-1 truncate text-xs leading-6 text-muted-foreground/45">
+      <span className="min-w-0 flex-1 truncate text-xs leading-6 text-muted-foreground/50">
         <span className="sr-only">pending: </span>
         {name}
       </span>
       {/* A trailing word rather than a blank: a column of blanks reads as
-          missing data rather than as work not yet done. */}
-      <span className="shrink-0 text-[11px] leading-6 text-muted-foreground/40">waiting</span>
+          missing data rather than as work not yet done. Through StepMeta like
+          every other row's, so it sits on the same line box as the readings on
+          the steps above and below it — this row borrows StepRow's geometry
+          and has to borrow all of it. */}
+      <StepMeta parts={[<span className="text-muted-foreground/40">waiting</span>]} />
     </div>
   )
 }
@@ -344,15 +347,16 @@ function RunRow({
       target={name}
       caption={caption}
       mono={false}
-      metric={
-        <>
-          {total > 0 && `${done}/${total} ${countNoun}`}
-          {ms !== null && ms >= 2000 && ` · ${formatElapsed(ms)}`}
-          {tokens && " · "}
-          {tokens && <TokenFigure usage={tokens} />}
-          {control}
-        </>
-      }
+      metric={[
+        total > 0 ? `${done}/${total} ${countNoun}` : null,
+        /* Not StepRow's own clock: a run's elapsed is the span of its steps
+           (`startedAt` is the earliest of them, and a settled run's end is its
+           last activity), not the head's — so it is stated here as a reading
+           rather than handed over as `startedAt`. */
+        ms !== null && ms >= 2000 ? formatElapsed(ms) : null,
+        tokens ? <TokenSummary usage={tokens} label="This run" /> : null,
+      ]}
+      control={control}
       /* A run that is running when it mounts opens itself — it is the liveliest
          thing on the screen and a folded line is not what a reader wants of it
          — and then stays wherever the reader leaves it (StepRow reads its
@@ -377,7 +381,7 @@ function RunRow({
                   does a definition that turned out to have exactly one phase:
                   the run's own name is already above it. */}
               {banded && phases.length > 1 && (
-                <div className="pt-2 pb-0.5 text-[11px] leading-5 font-medium tracking-[0.08em] text-muted-foreground/50 uppercase first:pt-0">
+                <div className={cn(LABEL, "pt-2 pb-0.5 leading-5 first:pt-0")}>
                   {phase.name}
                 </div>
               )}
@@ -465,7 +469,9 @@ function WorkflowHold({ sessionId, runId, paused }: { sessionId: string; runId: 
       onClick={() => void toggle()}
       title={paused ? "Resume the workflow" : "Pause the workflow after the steps in flight"}
       className={cn(
-        "ml-1.5 inline-flex h-6 w-5 items-center justify-center rounded align-middle transition-colors",
+        // No margin of its own: it is the row's own trailing slot now, so the
+        // row's gap is the gap (see StepRow's `control`).
+        "inline-flex h-6 w-5 shrink-0 items-center justify-center rounded-sm align-middle transition-colors",
         paused ? "text-primary hover:text-primary" : "text-muted-foreground/60 hover:text-foreground",
         busy && "opacity-50"
       )}

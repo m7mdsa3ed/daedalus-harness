@@ -15,7 +15,7 @@ import { toast } from "@/lib/toast"
 
 import { Button } from "@/components/ui/button"
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"
-import { PANEL_ICONS } from "@/components/workspace/panel-kinds"
+import { PanelIcon } from "@/components/workspace/panel-kinds"
 import { PanelStatusDot } from "@/components/workspace/panel-status-dot"
 import { useDock } from "@/components/workspace/dock"
 import { reportError } from "@/lib/errors"
@@ -65,7 +65,6 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
   }, [api, containerApi])
 
   const descriptor = parsePanel(api.component, params)
-  const Icon = isPanelKind(api.component) ? PANEL_ICONS[api.component] : null
   const fallbackTitle = isPanelKind(api.component) ? PANEL_SPECS[api.component].defaultTitle : "Panel"
   const title = api.title ?? fallbackTitle
 
@@ -118,7 +117,7 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
               : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
           )}
         >
-          {Icon && <Icon className="size-3.5 shrink-0" />}
+          <PanelIcon panel={descriptor} />
           <span className="max-w-40 truncate">{title}</span>
           <PanelStatusDot status={status} />
           {/* A pinned tab trades its close button for the pin that undoes the

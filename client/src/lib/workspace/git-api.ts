@@ -207,24 +207,26 @@ export function stashList(settings: ServerSettings, projectId: string, repo?: st
 export function stashPush(
   settings: ServerSettings,
   projectId: string,
-  message?: string
+  options: { message?: string; repo?: string } = {}
 ): Promise<GitStatus & { created: boolean }> {
-  return writeStatus(settings, projectId, "stash", { message: message ?? "" }).then((result) => ({
-    ...result,
-    created: result.created ?? false,
-  }))
+  return writeStatus(settings, projectId, "stash", {
+    message: options.message ?? "",
+    repo: options.repo,
+  }).then((result) => ({ ...result, created: result.created ?? false }))
 }
 
-export function stashApply(settings: ServerSettings, projectId: string, index: number) {
-  return writeStatus(settings, projectId, "stash/apply", { index })
-}
+/** A stash belongs to one repository, the same way a status does — so every
+    verb names it, and omitting it means the project's own. */
+export type StashVerb = "apply" | "pop" | "drop"
 
-export function stashPop(settings: ServerSettings, projectId: string, index: number) {
-  return writeStatus(settings, projectId, "stash/pop", { index })
-}
-
-export function stashDrop(settings: ServerSettings, projectId: string, index: number) {
-  return writeStatus(settings, projectId, "stash/drop", { index })
+export function stashAct(
+  settings: ServerSettings,
+  projectId: string,
+  verb: StashVerb,
+  index: number,
+  repo?: string
+) {
+  return writeStatus(settings, projectId, `stash/${verb}`, { index, repo })
 }
 
 type WriteResult = (GitStatus & { output?: string }) & { created?: boolean }

@@ -52,6 +52,7 @@ import { idePrefs, setIdePref } from "@/lib/ide/prefs"
 import { useProjects } from "@/lib/queries/catalog"
 import { cn } from "@/lib/utils"
 import { basename } from "@/lib/workspace/fs-api"
+import type { Comparison } from "@/lib/workspace/git-api"
 
 type SideView = "explorer" | "search" | "scm"
 
@@ -159,8 +160,8 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
   )
 
   const openDiff = React.useCallback(
-    (path: string, comparison: "head" | "staged") => {
-      openTab(projectId, { kind: "diff", path, comparison })
+    (path: string, left: Comparison, right: Comparison) => {
+      openTab(projectId, { kind: "diff", path, left, right })
       if (narrowRef.current) setSideOpen(false)
     },
     [projectId]
@@ -346,7 +347,12 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
                     />
                   )}
                   {tab.body.kind === "diff" && (
-                    <DiffTab projectId={projectId} path={tab.body.path} comparison={tab.body.comparison} />
+                    <DiffTab
+                      projectId={projectId}
+                      path={tab.body.path}
+                      left={tab.body.left}
+                      right={tab.body.right}
+                    />
                   )}
                   {tab.body.kind === "changes" && (
                     <ChangesTab sessionId={tab.body.sessionId} scope={tab.body.scope} />

@@ -27,6 +27,15 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { formatDuration, formatRate, formatTokens, promptTokens } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 
+/* The trigger box both popover figures wear. One padding, one line box, one
+   colour, one hover — a step's figure and a turn's are the same reading at two
+   scopes and were drawn at two sizes, which is what tilted the coin against the
+   timestamp beside it in a step's trailing group. Stated here rather than
+   inherited from wherever it lands, so the figure looks the same in a run's
+   header, on a step and under a turn. */
+const FIGURE =
+  "inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-[11px] leading-4 tabular-nums text-muted-foreground/60 transition-colors duration-150 hover:text-muted-foreground focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-ring"
+
 /** The headline number: everything the turn or step burned, both directions.
     `totalTokens` is the agent's own sum and is what the composer's popover
     already reports, so the two never disagree. */
@@ -122,12 +131,7 @@ export function StepTokens({
           <button
             type="button"
             aria-label={`This step: about ${usage.used} tokens`}
-            className={cn(
-              "inline-flex items-center gap-1 rounded-md px-1 py-0.5 leading-4 tabular-nums",
-              "transition-colors duration-150 hover:text-muted-foreground",
-              "focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-ring",
-              className
-            )}
+            className={cn(FIGURE, className)}
           >
             <CoinsIcon aria-hidden className="size-3 shrink-0" />~{formatTokens(usage.used)} tokens
           </button>
@@ -228,12 +232,7 @@ export function TokenSummary({
           <button
             type="button"
             aria-label={`${label}: ${usage.totalTokens} tokens`}
-            className={cn(
-              "inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-[11px] leading-4 text-muted-foreground/60",
-              "transition-colors duration-150 hover:text-muted-foreground",
-              "focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-ring",
-              className
-            )}
+            className={cn(FIGURE, className)}
           >
             <CoinsIcon aria-hidden className="size-3 shrink-0" />
             <TokenFigure usage={usage} />

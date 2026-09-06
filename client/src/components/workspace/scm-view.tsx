@@ -24,17 +24,33 @@
    status and that is what repaints — staging a file the agent is still editing
    is a race the server wins, and the honest answer is whatever it says next.
    Refresh otherwise happens on the project watch stream, debounced because a
-   checkout touches hundreds of files. Never on a timer. */
+   checkout touches hundreds of files. Never on a timer.
+
+   **The commit box sits above the file list, not below it.** It is the thing
+   the panel is for, and a repository with forty changed files put it off the
+   bottom of a 320px column — you had to scroll past the work to say what the
+   work was. The order now reads top to bottom as the sentence the panel is:
+   which branch, what to call this, what is in it.
+
+   **A branch is a control, not a caption.** The header's branch name opens the
+   list and switches, and creates one from the same menu; ahead/behind is drawn
+   beside it because a status that already answers it and does not say so is a
+   panel that makes you open a terminal to find out. Stashes and history are the
+   sections below (`scm-log.tsx`) — both were already routes with no surface. */
 import * as React from "react"
 import {
   ArrowDown01Icon,
   ArrowRight01Icon,
   ArrowTurnBackwardIcon,
+  Archive02Icon,
+  Clock01Icon,
   Folder01Icon,
   FolderTreeIcon,
   GitBranchIcon,
   ListIcon,
   MinusSignIcon,
+  MoreHorizontalIcon,
+  PackageIcon,
   PlusSignIcon,
   RefreshIcon,
   Tick02Icon,
@@ -42,10 +58,20 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react"
 
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useConfirm } from "@/components/confirm-dialog"
+import { usePrompt } from "@/components/prompt-dialog"
+import { HistorySection, StashSection } from "@/components/workspace/scm-log"
 import { PanelEmptyState, PanelNotice, PanelToolbar } from "@/components/workspace/primitives"
 import { useCoarsePointer } from "@/hooks/use-mobile"
 import { describeError } from "@/lib/errors"
@@ -54,10 +80,13 @@ import { useServer } from "@/lib/server-context"
 import { cn } from "@/lib/utils"
 import { basename } from "@/lib/workspace/fs-api"
 import {
+  gitBranches,
   gitRepos,
   gitStatus,
   gitWrite,
   projectPath,
+  stashPush,
+  type Comparison,
   type GitAction,
   type GitFileState,
   type GitRepo,
@@ -127,8 +156,9 @@ export function ScmView({
   onOpenFile,
 }: {
   projectId: string
-  /** `path` is project-relative — see `projectPath`. */
-  onOpenDiff: (path: string, comparison: "head" | "staged") => void
+  /** `path` is project-relative — see `projectPath`. Both sides are named: a
+      staged row is HEAD ↔ index, an unstaged one index ↔ worktree. */
+  onOpenDiff: (path: string, left: Comparison, right: Comparison) => void
   onOpenFile: (path: string) => void
 }) {
   const settings = useServer()
@@ -287,15 +317,11 @@ export function ScmView({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PanelToolbar>
-        <span className="flex min-w-0 flex-1 items-center gap-1 truncate text-[11px] text-muted-foreground">
-          <HugeiconsIcon icon={GitBranchIcon} strokeWidth={2} className="size-3 shrink-0" />
-          <span className="truncate font-mono">
-            {single
-              ? (states[repos[0].path]?.status?.branch ??
-                repos[0].branch ??
-                "Source control")
-              : `${repos.length} repositories`}
-          </span>
+        {/* The branch used to live here, and it could only be read. It is a
+            control now, so it belongs on the repository it switches — one
+            repository or eight. What is left is what is about the *view*. */}
+        <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-muted-foreground">
+          {single ? "Source control" : `${repos.length} repositories`}
         </span>
         <LayoutToggle layout={layout} onChange={(next) => setIdePref("scmLayout", next)} />
         <IconAction label="Refresh" icon={RefreshIcon} onClick={refreshAll} />
@@ -310,8 +336,9 @@ export function ScmView({
               repo={repo}
               state={states[repo.path]}
               layout={layout}
-              /* One repository is not a section — there is nothing to choose
-                 between, so it is always open and wears no header. */
+              /* One repository has nothing to choose between, so it is always
+                 open and its header carries no name and no disclosure — only
+                 the branch and the actions, which it needs either way. */
               collapsible={!single}
               open={single || open.has(repo.path)}
               onToggle={() => toggleRepo(repo.path)}
@@ -359,7 +386,7 @@ function RepoSection({
   onToggle: () => void
   onRefresh: () => void
   onStatus: (status: GitStatus) => void
-  onOpenDiff: (path: string, comparison: "head" | "staged") => void
+  onOpenDiff: (path: string, left: Comparison, right: Comparison) => void
   onOpenFile: (path: string) => void
 }) {
   const settings = useServer()
@@ -374,6 +401,12 @@ function RepoSection({
      back to. Cleared by the next write that succeeds. */
   const [writeError, setWriteError] = React.useState<string | null>(null)
   const [collapsedDirs, setCollapsedDirs] = React.useState<ReadonlySet<string>>(() => new Set())
+  /* The two lists below the working set, closed until asked for — each one
+     costs a git process, and this panel is often open for an hour. */
+  const [showStashes, setShowStashes] = React.useState(false)
+  const [showHistory, setShowHistory] = React.useState(false)
+  /* A commit is the one thing that changes the log while the panel is open. */
+  const [commits, setCommits] = React.useState(0)
 
   const status = state?.status ?? null
   const count = status ? changeCount(status) : null
@@ -389,6 +422,7 @@ function RepoSection({
         if (action.action === "commit") {
           setMessage("")
           setOutput(next.output?.split("\n").find((line) => line.trim())?.trim() ?? null)
+          setCommits((current) => current + 1)
         }
         return true
       } catch (err) {
@@ -457,48 +491,188 @@ function RepoSection({
   const stagedCount = status?.staged.length ?? 0
   const unstaged = [...(status?.unstaged ?? []), ...(status?.untracked ?? [])]
 
+  /* Which two sides a row's diff has. A **staged** row is what a commit would
+     contain — HEAD against the index, and deliberately not against the working
+     tree, or an unstaged edit made after staging would be drawn as part of the
+     commit. An **unstaged** row is the other half: index against disk. Neither
+     a new file nor an untracked one has a left side worth an empty pane, so
+     those open as themselves. */
   const openRow = (file: GitFileState, side: Side) => {
     const path = projectPath(repo.path, file.path)
-    if (side === "untracked" || markOf(file, side) === "A") onOpenFile(path)
-    else onOpenDiff(path, side === "index" ? "head" : "staged")
+    if (side === "untracked" || (side !== "index" && markOf(file, side) === "A")) onOpenFile(path)
+    else if (side === "index") onOpenDiff(path, "head", "staged")
+    else onOpenDiff(path, "staged", "worktree")
   }
+
+  const stashAll = React.useCallback(async () => {
+    setBusy(true)
+    try {
+      const next = await stashPush(settings, projectId, { repo: repo.path || undefined })
+      onStatus(next)
+      setWriteError(null)
+      setOutput(next.created ? "Stashed the working tree." : "Nothing to stash.")
+      /* Whatever was parked is only findable in the list, so open it. */
+      if (next.created) setShowStashes(true)
+    } catch (err) {
+      const { title, detail } = describeError(err)
+      setWriteError(detail ? `${title}: ${detail}` : title)
+    } finally {
+      setBusy(false)
+    }
+  }, [onStatus, projectId, repo.path, settings])
 
   return (
     <section className="border-b border-border/40 last:border-b-0">
-      {collapsible && (
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={open}
-          className={cn(
-            "flex w-full items-center gap-1.5 px-1.5 text-left text-xs hover:bg-accent/40",
-            coarse ? "min-h-11" : "min-h-8"
-          )}
-        >
-          <HugeiconsIcon
-            icon={open ? ArrowDown01Icon : ArrowRight01Icon}
-            strokeWidth={2}
-            className="size-3.5 shrink-0 text-muted-foreground"
-          />
-          <span className="min-w-0 truncate font-medium">{repo.name}</span>
-          <span className="flex min-w-0 shrink items-center gap-1 truncate text-[10px] text-muted-foreground">
-            <HugeiconsIcon icon={GitBranchIcon} strokeWidth={2} className="size-3 shrink-0" />
-            <span className="truncate font-mono">{branch}</span>
+      {/* ── The header ──
+          A row, not a button: it holds three controls now (the disclosure, the
+          branch, the overflow) and a button cannot contain them. With one
+          repository the disclosure and the name are gone and what is left is
+          the branch and the actions. */}
+      <div
+        className={cn(
+          "flex items-center gap-1 px-1 text-xs",
+          coarse ? "min-h-12" : "min-h-9"
+        )}
+      >
+        {collapsible && (
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={open}
+            className="flex min-w-0 shrink items-center gap-1 py-1 text-left hover:text-foreground"
+            title={repo.path || repo.name}
+          >
+            <HugeiconsIcon
+              icon={open ? ArrowDown01Icon : ArrowRight01Icon}
+              strokeWidth={2}
+              className="size-3.5 shrink-0 text-muted-foreground"
+            />
+            <span className="min-w-0 truncate font-medium">{repo.name}</span>
+          </button>
+        )}
+        <BranchMenu
+          projectId={projectId}
+          repo={repo.path}
+          branch={branch}
+          unborn={status?.unborn ?? false}
+          disabled={busy || !status?.repository}
+          onCheckout={(name, create) => void write({ action: "checkout", branch: name, create })}
+        />
+        <Tracking status={status} />
+        <span className="flex-1" />
+        {count !== null && count > 0 && (
+          <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 font-mono text-[10px] tabular-nums">
+            {count}
           </span>
-          <span className="flex-1" />
-          {count !== null && count > 0 && (
-            <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 font-mono text-[10px] tabular-nums">
-              {count}
-            </span>
-          )}
-        </button>
-      )}
+        )}
+        {status?.repository && (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={`More for ${repo.name}`}
+                  className={cn("shrink-0", coarse ? "size-11" : "size-6")}
+                >
+                  <HugeiconsIcon icon={MoreHorizontalIcon} strokeWidth={2} className="size-3.5" />
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="end" className="w-auto min-w-52">
+              <DropdownMenuItem
+                disabled={busy || (count ?? 0) === 0}
+                onClick={() => void stashAll()}
+              >
+                <HugeiconsIcon icon={Archive02Icon} strokeWidth={2} />
+                Stash everything
+              </DropdownMenuItem>
+              {/* The two lists live in the body, so offering to reveal one
+                  while the body is collapsed would be a toggle with nothing to
+                  show for it. */}
+              {open && (
+                <>
+                  <DropdownMenuItem onClick={() => setShowStashes((current) => !current)}>
+                    <HugeiconsIcon icon={PackageIcon} strokeWidth={2} />
+                    {showStashes ? "Hide stashes" : "Show stashes"}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setShowHistory((current) => !current)}>
+                    <HugeiconsIcon icon={Clock01Icon} strokeWidth={2} />
+                    {showHistory ? "Hide history" : "Show history"}
+                  </DropdownMenuItem>
+                </>
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={onRefresh}>
+                <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
+                Refresh
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
 
       {open && (
         <div>
           {state?.error && <PanelNotice className="text-destructive">{state.error}</PanelNotice>}
           {writeError && <PanelNotice className="text-destructive">{writeError}</PanelNotice>}
           {output && <PanelNotice className="font-mono">{output}</PanelNotice>}
+
+          {/* The commit box comes *before* the files: it is what the panel is
+              for, and forty changed files used to push it off the bottom. */}
+          {status?.repository && (
+            <form
+              className="border-b border-border/60 p-2"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void commit()
+              }}
+            >
+              <Textarea
+                value={message}
+                onChange={(event) => setMessage(event.target.value)}
+                placeholder={collapsible ? `Commit to ${repo.name}` : "Commit message"}
+                rows={2}
+                className="min-h-0 text-xs"
+                onKeyDown={(event) => {
+                  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                    event.preventDefault()
+                    void commit()
+                  }
+                }}
+              />
+              {/* The commit button says what it will commit, because "commit"
+                  with nothing staged silently means "stage everything first"
+                  and that is not something a button should imply. */}
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <Button
+                  type="submit"
+                  size="xs"
+                  className="min-w-0 flex-1"
+                  disabled={busy || !message.trim() || (count ?? 0) === 0}
+                  title={`Commit on ${branch} (⌘Enter)`}
+                >
+                  <HugeiconsIcon icon={Tick02Icon} strokeWidth={2} className="size-3.5" />
+                  <span className="truncate">
+                    {stagedCount > 0
+                      ? `Commit ${stagedCount}`
+                      : unstaged.length > 0
+                        ? `Stage all & commit ${unstaged.length}`
+                        : "Commit"}
+                  </span>
+                </Button>
+                <IconAction
+                  label={`Stage all ${unstaged.length}`}
+                  icon={PlusSignIcon}
+                  disabled={busy || unstaged.length === 0}
+                  onClick={() =>
+                    void write({ action: "stage", paths: unstaged.map((file) => file.path) })
+                  }
+                />
+                <Count value={unstaged.length} />
+              </div>
+            </form>
+          )}
 
           {!status && !state?.error ? (
             <p className="px-3 py-2 text-xs text-muted-foreground">Reading the repository…</p>
@@ -543,52 +717,149 @@ function RepoSection({
           )}
 
           {status?.repository && (
-            <form
-              className="border-t border-border/60 p-2"
-              onSubmit={(event) => {
-                event.preventDefault()
-                void commit()
-              }}
-            >
-              <Textarea
-                value={message}
-                onChange={(event) => setMessage(event.target.value)}
-                placeholder={collapsible ? `Commit to ${repo.name}` : "Commit message"}
-                rows={2}
-                className="min-h-0 text-xs"
-                onKeyDown={(event) => {
-                  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                    event.preventDefault()
-                    void commit()
-                  }
-                }}
+            <>
+              <StashSection
+                projectId={projectId}
+                repo={repo.path}
+                open={showStashes}
+                onToggle={() => setShowStashes((current) => !current)}
+                onStatus={onStatus}
+                coarse={coarse}
               />
-              {/* One row of icons, the same ones the file rows wear: stage
-                  everything on the left, commit what is staged on the right,
-                  each with its count beside it. */}
-              <div className="mt-1 flex items-center gap-1">
-                <IconAction
-                  label={`Stage all ${unstaged.length}`}
-                  icon={PlusSignIcon}
-                  disabled={busy || unstaged.length === 0}
-                  onClick={() => void write({ action: "stage", paths: unstaged.map((file) => file.path) })}
-                />
-                <Count value={unstaged.length} />
-                <span className="flex-1" />
-                <Count value={stagedCount} />
-                <IconAction
-                  label={`Commit ${stagedCount > 0 ? `${stagedCount} staged` : ""} on ${branch} (⌘Enter)`}
-                  icon={Tick02Icon}
-                  variant="default"
-                  disabled={busy || !message.trim()}
-                  onClick={() => void commit()}
-                />
-              </div>
-            </form>
+              <HistorySection
+                projectId={projectId}
+                repo={repo.path}
+                open={showHistory}
+                onToggle={() => setShowHistory((current) => !current)}
+                coarse={coarse}
+                generation={commits}
+              />
+            </>
           )}
         </div>
       )}
     </section>
+  )
+}
+
+/* ── The branch ──
+   The header's branch name, and the list behind it. Branches are read **when
+   the menu opens** and not with the status: a repository with two thousand refs
+   would otherwise pay for them on every watch burst, to draw one name.
+
+   Switching is `checkout`, which the server already refuses when the worktree
+   would be clobbered — so the panel does not second-guess it, and git's own
+   refusal is what the section prints. */
+function BranchMenu({
+  projectId,
+  repo,
+  branch,
+  unborn,
+  disabled,
+  onCheckout,
+}: {
+  projectId: string
+  repo: string
+  branch: string
+  unborn: boolean
+  disabled: boolean
+  onCheckout: (branch: string, create: boolean) => void
+}) {
+  const settings = useServer()
+  const prompt = usePrompt()
+  const coarse = useCoarsePointer()
+  const [branches, setBranches] = React.useState<string[] | null>(null)
+  const [error, setError] = React.useState<string | null>(null)
+
+  const load = React.useCallback(() => {
+    setBranches(null)
+    setError(null)
+    void gitBranches(settings, projectId, repo || undefined)
+      .then((list) => setBranches(list.branches))
+      .catch((err: unknown) => setError(describeError(err).title))
+  }, [projectId, repo, settings])
+
+  const create = async () => {
+    const name = await prompt({
+      title: "New branch",
+      description: `Branched from ${branch}, and checked out.`,
+      placeholder: "feature/…",
+      confirmLabel: "Create",
+      maxLength: 200,
+    })
+    if (name) onCheckout(name, true)
+  }
+
+  return (
+    <DropdownMenu onOpenChange={(open) => open && load()}>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="xs"
+            disabled={disabled}
+            title={`On ${branch} — switch or create a branch`}
+            className={cn(
+              "min-w-0 shrink gap-1 px-1.5 font-mono text-[11px] text-muted-foreground hover:text-foreground data-popup-open:bg-accent",
+              coarse && "min-h-11"
+            )}
+          >
+            <HugeiconsIcon icon={GitBranchIcon} strokeWidth={2} className="size-3 shrink-0" />
+            <span className="min-w-0 truncate">{branch}</span>
+          </Button>
+        }
+      />
+      <DropdownMenuContent align="start" className="w-auto min-w-56">
+        <DropdownMenuItem onClick={() => void create()}>
+          <HugeiconsIcon icon={PlusSignIcon} strokeWidth={2} />
+          Create a branch…
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        {/* Before the first commit there is no branch to switch *to*: the one
+            you are on does not exist as a ref yet. */}
+        {unborn ? (
+          <DropdownMenuLabel>No commits yet, so nothing to switch to.</DropdownMenuLabel>
+        ) : error ? (
+          <DropdownMenuLabel className="text-destructive">{error}</DropdownMenuLabel>
+        ) : branches === null ? (
+          <DropdownMenuLabel>Reading branches…</DropdownMenuLabel>
+        ) : branches.length === 0 ? (
+          <DropdownMenuLabel>No branches.</DropdownMenuLabel>
+        ) : (
+          branches.map((name) => (
+            <DropdownMenuItem
+              key={name}
+              disabled={name === branch}
+              onClick={() => onCheckout(name, false)}
+            >
+              <HugeiconsIcon
+                icon={name === branch ? Tick02Icon : GitBranchIcon}
+                strokeWidth={2}
+                className={name === branch ? undefined : "opacity-40"}
+              />
+              <span className="min-w-0 truncate font-mono text-xs">{name}</span>
+            </DropdownMenuItem>
+          ))
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/** Ahead of / behind the upstream. The status has always answered this and the
+    panel has never said it, so "is my work pushed?" meant a terminal. Nothing
+    is drawn when there is no upstream — a zero would claim there was one. */
+function Tracking({ status }: { status: GitStatus | null }) {
+  if (!status?.upstream || (status.ahead === 0 && status.behind === 0)) return null
+  return (
+    <span
+      className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground"
+      title={`${status.ahead} ahead of and ${status.behind} behind ${status.upstream}`}
+    >
+      {status.ahead > 0 && <span>↑{status.ahead}</span>}
+      {status.ahead > 0 && status.behind > 0 && " "}
+      {status.behind > 0 && <span>↓{status.behind}</span>}
+    </span>
   )
 }
 

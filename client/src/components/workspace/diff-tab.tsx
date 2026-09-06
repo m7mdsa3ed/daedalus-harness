@@ -1,17 +1,29 @@
 /* ── A file against git ──
-   The comparison a source-control row or a transcript's "compare" chip opens:
-   HEAD (or the index) on the left, what is on disk on the right.
+   The comparison a source-control row or a transcript's "compare" chip opens.
+
+   **Both sides are named**, and either can be a revision or the working file:
+   HEAD ↔ worktree is "everything since the last commit", index ↔ worktree is
+   "what is not staged", HEAD ↔ index is "what a commit would contain". Saying
+   only which revision goes on the left forced the right to be the worktree, and
+   a staged file then drew its unstaged edits as part of the commit.
 
    Both sides are read whole rather than as a patch, because Monaco computes and
    draws its own diff — handing it a unified patch would mean re-deriving the
-   text it needs from the hunks the server chose. The left side is a revision,
-   so it is read once; the right side follows the worktree, so it re-reads when
-   the project's files move.
+   text it needs from the hunks the server chose.
 
    A side that does not exist is empty, not an error: a file added since HEAD has
-   no left side, a deleted one no right. */
-import * as React from "react"
+   no left side, a deleted one no right.
 
+   The **worktree** side follows the project's watch stream, because it changes
+   under you while an agent works. A revision does not, so the two git sides are
+   read once and moved on by the Refresh button — staging is the only thing that
+   moves the index, and it happens in the panel next door. */
+import * as React from "react"
+import { RefreshIcon } from "@hugeicons/core-free-icons"
+import { HugeiconsIcon } from "@hugeicons/react"
+
+import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { DiffEditor } from "@/components/workspace/diff-editor"
 import { PanelEmptyState, PanelToolbar } from "@/components/workspace/primitives"
 import { describeError } from "@/lib/errors"
@@ -19,49 +31,69 @@ import { readFile } from "@/lib/workspace/fs-api"
 import { gitFileAt, type Comparison } from "@/lib/workspace/git-api"
 import { watchProject } from "@/lib/workspace/watch"
 
-export function DiffTab({
-  projectId,
-  path,
-  comparison,
-}: {
-  projectId: string
-  path: string
-  comparison: Exclude<Comparison, "worktree">
-}) {
-  const [original, setOriginal] = React.useState<string | null>(null)
-  const [modified, setModified] = React.useState<string | null>(null)
-  const [error, setError] = React.useState<string | null>(null)
-  const [generation, setGeneration] = React.useState(0)
+const SIDE_LABEL: Record<Comparison, string> = {
+  head: "HEAD",
+  staged: "Index",
+  worktree: "Working tree",
+}
 
-  React.useEffect(() => {
-    let cancelled = false
-    void gitFileAt(projectId, path, comparison)
-      .then((result) => {
-        if (!cancelled) setOriginal(result.missing ? "" : result.content)
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(describeError(err).title)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [projectId, path, comparison])
+/** One side of the comparison, whole. `generation` is how a caller says
+    "read it again" — bumped by the watch stream and by Refresh. */
+function useSide(
+  projectId: string,
+  path: string,
+  side: Comparison,
+  generation: number
+): { text: string | null; error: string | null } {
+  const [text, setText] = React.useState<string | null>(null)
+  const [error, setError] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     const controller = new AbortController()
-    void readFile(projectId, path, controller.signal)
-      .then((file) => {
-        if (!controller.signal.aborted) setModified(file.content ?? "")
-      })
-      .catch(() => {
-        /* Deleted on disk is a real answer, and the empty right-hand side is
-           what it looks like. */
-        if (!controller.signal.aborted) setModified("")
-      })
+    const settle = (value: string) => {
+      if (controller.signal.aborted) return
+      setText(value)
+      setError(null)
+    }
+    if (side === "worktree") {
+      void readFile(projectId, path, controller.signal)
+        .then((file) => settle(file.content ?? ""))
+        /* Deleted on disk is a real answer, and an empty side is what it looks
+           like. */
+        .catch(() => settle(""))
+    } else {
+      void gitFileAt(projectId, path, side)
+        .then((result) => settle(result.missing ? "" : result.content))
+        .catch((err: unknown) => {
+          if (!controller.signal.aborted) setError(describeError(err).title)
+        })
+    }
     return () => controller.abort()
-  }, [projectId, path, generation])
+  }, [projectId, path, side, generation])
 
+  return { text, error }
+}
+
+export function DiffTab({
+  projectId,
+  path,
+  left,
+  right,
+}: {
+  projectId: string
+  path: string
+  left: Comparison
+  right: Comparison
+}) {
+  const [generation, setGeneration] = React.useState(0)
+  const original = useSide(projectId, path, left, generation)
+  const modified = useSide(projectId, path, right, generation)
+
+  /* Only worth listening for when one of the sides is the file on disk — two
+     revisions do not move because someone saved. */
+  const live = left === "worktree" || right === "worktree"
   React.useEffect(() => {
+    if (!live) return
     let timer: ReturnType<typeof setTimeout> | null = null
     const stop = watchProject(projectId, (batch) => {
       if (!batch.overflow && !batch.events.some((event) => event.path === path)) return
@@ -72,23 +104,46 @@ export function DiffTab({
       if (timer) clearTimeout(timer)
       stop()
     }
-  }, [projectId, path])
+  }, [projectId, path, live])
 
+  const error = original.error ?? modified.error
   if (error) return <PanelEmptyState>{error}</PanelEmptyState>
-  if (original === null || modified === null) return <PanelEmptyState>Reading both sides…</PanelEmptyState>
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PanelToolbar>
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground" title={path}>
+        <span
+          className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground"
+          title={path}
+        >
           {path}
         </span>
         <span className="shrink-0 text-[11px] text-muted-foreground">
-          {comparison === "head" ? "HEAD ↔ working tree" : "Index ↔ working tree"}
+          {SIDE_LABEL[left]} ↔ {SIDE_LABEL[right]}
         </span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="size-6 shrink-0"
+                aria-label="Read both sides again"
+                onClick={() => setGeneration((current) => current + 1)}
+              >
+                <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} className="size-3.5" />
+              </Button>
+            }
+          />
+          <TooltipContent>Read both sides again</TooltipContent>
+        </Tooltip>
       </PanelToolbar>
       <div className="min-h-0 flex-1 overflow-hidden">
-        <DiffEditor original={original} modified={modified} filename={path} />
+        {original.text === null || modified.text === null ? (
+          <PanelEmptyState>Reading both sides…</PanelEmptyState>
+        ) : (
+          <DiffEditor original={original.text} modified={modified.text} filename={path} />
+        )}
       </div>
     </div>
   )

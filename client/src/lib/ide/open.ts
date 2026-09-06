@@ -42,7 +42,9 @@ export function requestIde(request: IdeRequest): void {
       )
       return
     case "diff":
-      openTab(request.projectId, { kind: "diff", path: request.path, comparison: "head" })
+      /* "Compare with HEAD" from a transcript means everything that has
+         happened to the file since the last commit, staged or not. */
+      openTab(request.projectId, { kind: "diff", path: request.path, left: "head", right: "worktree" })
       return
     case "changes":
       openTab(request.projectId, {

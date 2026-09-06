@@ -7,7 +7,6 @@
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
 import {
-  ChevronRightIcon,
   CopyIcon,
   FoldVerticalIcon,
   ListTodoIcon,
@@ -19,7 +18,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"
-import { ContentBlockView, Prose, SmartBlock, SourceChip, Timestamp } from "@/components/tool-parts"
+import { CARD, ContentBlockView, Disclosure, LABEL, Prose, SmartBlock, SourceChip, Timestamp } from "@/components/tool-parts"
 import { TodoList } from "@/components/tool-views"
 import { copyText, formatElapsed, StepRow, yieldToTextSelection } from "@/components/step-row"
 import { useStreamedText } from "@/hooks/use-streamed-text"
@@ -80,18 +79,16 @@ function AgentBlock({
   return (
     <aside
       className={cn(
-        "rounded-lg border px-4 py-3",
+        // The card geometry every notice in the flow shares, minus the `my-2`:
+        // this one sits inside prose that already spaces its blocks.
+        CARD,
+        "my-0",
         // A proposal is waiting on a decision, so it reads a shade louder than
         // an aside that is only explaining something.
-        accent ? "border-primary/30 border-l-2 border-l-primary/60 bg-primary/[0.03]" : "border-border/60 bg-muted/30"
+        accent ? "border-primary/30 border-l-2 border-l-primary/60 bg-primary/[0.03]" : "border-border/60 bg-muted/40"
       )}
     >
-      <p
-        className={cn(
-          "mb-1.5 text-[11px] font-medium tracking-wider uppercase",
-          accent ? "text-primary/80" : "text-muted-foreground"
-        )}
-      >
+      <p className={cn(LABEL, "mb-1.5", accent && "text-primary/80")}>
         <span aria-hidden>{mark}</span> {label}
       </p>
       <Prose text={body} />
@@ -233,8 +230,9 @@ export const TaskNotificationCard = React.memo(function TaskNotificationCard({
   return (
     <div
       className={cn(
-        "my-2 rounded-xl border px-3 py-2.5 text-xs",
-        failed ? "border-destructive/30 bg-destructive/5" : "border-border/60 bg-muted/30"
+        CARD,
+        "text-xs",
+        failed ? "border-destructive/30 bg-destructive/5" : "border-border/60 bg-muted/40"
       )}
     >
       <div className="flex items-start gap-2">
@@ -256,7 +254,7 @@ export const TaskNotificationCard = React.memo(function TaskNotificationCard({
                 {labels.map((label) => (
                   <span
                     key={label}
-                    className="rounded bg-destructive/10 px-1.5 py-px font-mono text-[10px] text-destructive"
+                    className="rounded-sm bg-destructive/10 px-1.5 py-px font-mono text-[10px] text-destructive"
                   >
                     {label}
                   </span>
@@ -266,14 +264,9 @@ export const TaskNotificationCard = React.memo(function TaskNotificationCard({
             </div>
           ))}
           {task.result && (
-            <button
-              type="button"
-              onClick={() => setOpen((value) => !value)}
-              className="flex items-center gap-1 text-[11px] text-muted-foreground/80 hover:text-foreground"
-            >
-              <ChevronRightIcon className={cn("size-3 transition-transform", open && "rotate-90")} />
+            <Disclosure open={open} onToggle={() => setOpen((value) => !value)}>
               {open ? "Hide result" : "Show result"}
-            </button>
+            </Disclosure>
           )}
           {open && task.result && <SmartBlock text={task.result} />}
           {/* The per-agent journal is still on disk, and the panel on the
@@ -346,24 +339,21 @@ export const ErrorRow = React.memo(function ErrorRow({
       className="select-text"
       onContextMenu={yieldToTextSelection}
     >
-      <div className="my-2 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-xs">
+      <div className={cn(CARD, "border-destructive/30 bg-destructive/5 text-xs")}>
         <div className="flex items-start gap-2">
           <TriangleAlertIcon className="mt-px size-3.5 shrink-0 text-destructive" />
-          <div className="min-w-0 flex-1 space-y-1">
+          {/* The same rhythm the task card's body keeps — both are an icon and
+              a stack of lines, and they sat one notch apart for no reason. */}
+          <div className="min-w-0 flex-1 space-y-1.5">
             <p className="font-medium text-destructive">{item.title}</p>
             {item.reason && <p className="text-muted-foreground">{item.reason}</p>}
             {item.detail && (
-              <button
-                type="button"
-                onClick={() => setOpen((v) => !v)}
-                className="flex items-center gap-1 text-[11px] text-muted-foreground/80 hover:text-foreground"
-              >
-                <ChevronRightIcon className={cn("size-3 transition-transform", open && "rotate-90")} />
+              <Disclosure open={open} onToggle={() => setOpen((v) => !v)}>
                 {open ? "Hide details" : "Show details"}
-              </button>
+              </Disclosure>
             )}
             {open && item.detail && (
-              <pre className="max-h-56 overflow-auto rounded-md border border-destructive/20 bg-background/60 p-2 font-mono text-[11px] whitespace-pre-wrap">
+              <pre className="max-h-56 overflow-auto rounded-sm border border-destructive/20 bg-background/50 p-2 font-mono text-[11px] whitespace-pre-wrap">
                 {item.detail}
               </pre>
             )}
@@ -469,7 +459,7 @@ export const CompactionStep = React.memo(function CompactionStep({
       status={running ? "in_progress" : failed ? "failed" : null}
       mono={false}
       target={label}
-      metric={showTimestamp && item.at !== undefined ? <Timestamp at={item.at} /> : undefined}
+      metric={[showTimestamp && item.at !== undefined ? <Timestamp at={item.at} /> : null]}
       detail={detail}
     />
   )
@@ -505,7 +495,7 @@ export const AutonomyStep = React.memo(function AutonomyStep({
       status={line.attention ? "failed" : null}
       mono={false}
       target={line.title}
-      metric={showTimestamp && item.at !== undefined ? <Timestamp at={item.at} /> : undefined}
+      metric={[showTimestamp && item.at !== undefined ? <Timestamp at={item.at} /> : null]}
       detail={<p className="text-xs leading-relaxed text-muted-foreground">{line.detail}</p>}
     />
   )
@@ -527,9 +517,7 @@ export const SourcesStrip = React.memo(function SourcesStrip({ turn }: { turn: T
   ].filter(Boolean)
   return (
     <div className="mt-1 mb-2 flex min-w-0 flex-wrap items-center gap-1.5 pl-1">
-      <span className="mr-0.5 text-[10px] font-semibold tracking-[0.08em] uppercase text-muted-foreground/50">
-        Sources
-      </span>
+      <span className={cn(LABEL, "mr-0.5")}>Sources</span>
       {turn.sources.map((source) => (
         <SourceChip key={source.url} url={source.url} title={source.title} />
       ))}
@@ -584,7 +572,7 @@ export const PlanStep = React.memo(function PlanStep({ item }: { item: PlanItem 
       status={current ? "in_progress" : next ? null : "completed"}
       mono={false}
       target={next?.content ?? "all steps complete"}
-      metric={`${done}/${item.entries.length}`}
+      metric={[`${done}/${item.entries.length}`]}
       /* The same drawing a `TodoWrite` gets. Codex sends its checklist down
          ACP's plan channel and Claude Code and OpenCode send theirs as tool
          input, and a reader should not be able to tell which — where the list

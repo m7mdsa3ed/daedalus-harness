@@ -43,6 +43,35 @@ export function copyText(text: string) {
     (see the header comment on workflow-run). */
 export const RAIL_CLASS = "mt-0.5 ml-[calc(0.75rem-1px)] space-y-0.5 border-l border-border/60 pl-2.5"
 
+/* ── A step's trailing columns ──
+   The elapsed clock, whatever the row filed as its `metric` (tokens, a stamp,
+   a count) and the outcome word are ONE group with one type scale, one line
+   box and one separator — not three siblings each bringing its own size and
+   its own padding. That is what made a column of steps wobble: a 10px stamp
+   beside an 11px figure beside a 24px line box, each aligned by whatever its
+   own box happened to be. `h-6` pins the group to the row's FIRST line box, so
+   a row that grew a caption keeps its meta on the title's line rather than
+   drifting to the middle of two, and `items-center` makes the parts agree
+   whatever padding they carry. */
+export function StepMeta({ parts }: { parts: React.ReactNode[] }) {
+  const shown = parts.filter((part) => part !== null && part !== undefined && part !== false && part !== "")
+  if (shown.length === 0) return null
+  return (
+    <span className="flex h-6 shrink-0 items-center gap-1 text-[11px] tabular-nums text-muted-foreground/60">
+      {shown.map((part, i) => (
+        <React.Fragment key={i}>
+          {i > 0 && (
+            <span aria-hidden className="text-muted-foreground/30">
+              ·
+            </span>
+          )}
+          {part}
+        </React.Fragment>
+      ))}
+    </span>
+  )
+}
+
 export function useElapsed(startedAt: number, active: boolean): number | null {
   const [ms, setMs] = React.useState<number | null>(null)
   React.useEffect(() => {
@@ -79,6 +108,7 @@ export const StepRow = React.memo(function StepRow({
   label,
   status,
   metric,
+  control,
   detail,
   below,
   startedAt,
@@ -107,7 +137,16 @@ export const StepRow = React.memo(function StepRow({
       nothing here, and only a failure claims the column. */
   label?: string
   status: string | null
-  metric?: React.ReactNode
+  /** The trailing readings, in the order they are read — a count, a cost, a
+      stamp. A LIST, not a node: the row joins them with the one separator and
+      the one type scale (`StepMeta`), because a caller building its own
+      `{" · "}` chain is a caller inventing its own spacing. Falsy entries are
+      dropped, so a call site states what it has and never what it does not. */
+  metric?: React.ReactNode[]
+  /** A control at the very end of the row — a run's hold toggle. Its own slot
+      rather than the tail of `metric`: it is a button, not a reading, so it
+      takes the row's gap instead of a separator dot in front of it. */
+  control?: React.ReactNode
   detail?: React.ReactNode
   /** A strip under the header that stays whether or not the row is open —
       the step's outcome in chips (the pages a web search returned, the page
@@ -263,7 +302,7 @@ export const StepRow = React.memo(function StepRow({
             {caption && (
               <span
                 className={cn(
-                  "-mt-1 min-w-0 truncate text-[11px] leading-5 text-muted-foreground/55",
+                  "-mt-1 min-w-0 truncate text-[11px] leading-5 text-muted-foreground/60",
                   // Mono follows the title: a caption under a command is the
                   // literal thing that ran, but under prose (a subagent's
                   // model, a run's live step) it is prose too.
@@ -275,27 +314,19 @@ export const StepRow = React.memo(function StepRow({
             )}
           </span>
 
-          {elapsedMs !== null && elapsedMs >= 2000 && (
-            <span className="shrink-0 text-[11px] leading-6 tabular-nums text-muted-foreground/60">
-              {formatElapsed(elapsedMs)}
-            </span>
-          )}
         </button>
-        {metric && (
-          <span className="shrink-0 text-[11px] leading-6 tabular-nums text-muted-foreground/60">
-            {metric}
-          </span>
-        )}
-        {(failed || label) && (
-          <span
-            className={cn(
-              "shrink-0 text-[11px] leading-6",
-              failed ? "text-destructive" : "text-muted-foreground/50"
-            )}
-          >
-            {failed ? "failed" : label}
-          </span>
-        )}
+        {/* Every reading the row has, in one line box. The clock leads (it is
+            the one that ticks), the caller's own readings follow, and the
+            outcome word ends the line — a failure still claims the column, in
+            its own colour, but at the group's size and not its own. */}
+        <StepMeta
+          parts={[
+            elapsedMs !== null && elapsedMs >= 2000 ? formatElapsed(elapsedMs) : null,
+            ...(metric ?? []),
+            failed ? <span className="text-destructive">failed</span> : label,
+          ]}
+        />
+        {control}
       </div>
 
       {below && <div className="mb-1 min-w-0 pl-[1.375rem]">{below}</div>}

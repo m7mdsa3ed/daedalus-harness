@@ -80,6 +80,18 @@ const MIME = {
   ".woff2": "font/woff2",
   ".json": "application/json",
 }
+/* The origin IS the storage key. Everything device-local — the server URL and
+   token, themes, drafts, pins, the dock layout — is localStorage on whatever
+   origin the window loaded from, and Chromium keys that by scheme://host:PORT.
+   `listen(0)` handed out a fresh ephemeral port on every launch, so every
+   launch was a new origin and the app opened blank with the previous run's
+   state stranded on a port nothing will ever serve again (six such orphans in
+   %APPDATA%/daedalus-client before this was pinned).
+
+   Fixed port, therefore. If something else already holds it we fall back to an
+   ephemeral one rather than refusing to start: that loses one launch's state,
+   which beats not opening. */
+const STATIC_PORT = 43917
 function startStaticServer(root) {
   return new Promise((resolve) => {
     const srv = http.createServer((req, res) => {
@@ -91,7 +103,15 @@ function startStaticServer(root) {
       res.setHeader("content-type", MIME[path.extname(file)] || "application/octet-stream")
       fs.createReadStream(file).pipe(res)
     })
-    srv.listen(0, "127.0.0.1", () => resolve({ port: srv.address().port, close: () => srv.close() }))
+    let retried = false
+    srv.on("error", (err) => {
+      if (retried) throw err
+      retried = true
+      console.warn(`[daedalus] port ${STATIC_PORT} is taken (${err.code}); this launch starts with empty settings`)
+      srv.listen(0, "127.0.0.1")
+    })
+    srv.once("listening", () => resolve({ port: srv.address().port, close: () => srv.close() }))
+    srv.listen(STATIC_PORT, "127.0.0.1")
   })
 }
 

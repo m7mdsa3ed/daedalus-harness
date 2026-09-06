@@ -17,17 +17,24 @@
    slice it actually read. */
 import * as React from "react"
 
+/* Type-only, so this module stays as free of runtime imports as `open.ts`. */
+import type { Comparison } from "@/lib/workspace/git-api"
+
 export interface FileTab {
   kind: "file"
   /** Project-relative, POSIX. */
   path: string
 }
 
+/** A comparison names **both** its sides. Only saying which revision goes on
+    the left forces the right to always be the working tree, and then a staged
+    file's diff is HEAD ↔ worktree — it shows unstaged edits as part of what is
+    about to be committed, which is the one question staging exists to answer. */
 export interface DiffTab {
   kind: "diff"
   path: string
-  /** Which git side sits on the left. */
-  comparison: "head" | "staged"
+  left: Comparison
+  right: Comparison
 }
 
 /** A turn's files, or everything uncommitted — the "N files changed" chip. */
@@ -85,7 +92,7 @@ export function tabId(body: TabBody): string {
     case "file":
       return `file:${body.path}`
     case "diff":
-      return `diff:${body.comparison}:${body.path}`
+      return `diff:${body.left}:${body.right}:${body.path}`
     case "changes":
       return `changes:${body.sessionId}:${body.scope}`
   }

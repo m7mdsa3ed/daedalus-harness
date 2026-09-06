@@ -7,7 +7,7 @@ import {
   SquareTerminalIcon,
   WrenchIcon,
 } from "lucide-react"
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, GitBranch as GitBranchIcon, History as HistoryIcon } from "lucide-react"
+import { CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, GitBranch as GitBranchIcon, History as HistoryIcon } from "lucide-react"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import { ItemContextMenu } from "@/components/item-context-menu"
@@ -32,6 +32,7 @@ import {
   KIND_ICONS,
   KIND_LABELS,
   PANE_MAX_H,
+  PANE_PAD,
   Prose,
   SmartBlock,
   Timestamp,
@@ -46,7 +47,7 @@ import {
   toolHasDetail,
   toolOpensByDefault,
 } from "@/components/tool-views"
-import { copyText, RAIL_CLASS, StepRow, yieldToTextSelection } from "@/components/step-row"
+import { copyText, RAIL_CLASS, StepMeta, StepRow, yieldToTextSelection } from "@/components/step-row"
 import {
   collectTools,
   stepNameOf,
@@ -78,7 +79,7 @@ import {
 } from "@/lib/tools"
 import { buildRows } from "@/lib/transcript-rows"
 import type { Row, SubagentBatch, SubagentGroup, ToolRunGroup, WorkflowGroup } from "@/lib/transcript-rows"
-import { StepTokens, TokenFigure, useStepTokens } from "@/components/token-usage"
+import { StepTokens, TokenSummary, useStepTokens } from "@/components/token-usage"
 import { Logo } from "@/components/ui/logo"
 import { cn } from "@/lib/utils"
 import { useViewOptionsContext } from "@/lib/view-options"
@@ -312,7 +313,7 @@ function EarlierSteps({ count, onClick }: { count: number; onClick: () => void }
     <button
       type="button"
       onClick={onClick}
-      className="-mx-1 block rounded px-1 text-[11px] leading-5 text-muted-foreground/70 transition-colors hover:text-foreground"
+      className="-mx-1 block rounded-sm px-1 text-[11px] leading-5 text-muted-foreground/70 transition-colors hover:text-foreground"
     >
       {count} earlier {count === 1 ? "step" : "steps"}
     </button>
@@ -403,9 +404,10 @@ export const ToolRun = React.memo(function ToolRun({
         >
           <RunSummary summary={summary} />
         </span>
-        {failed > 0 && (
-          <span className="shrink-0 text-[11px] leading-6 text-destructive">{failed} failed</span>
-        )}
+        {/* The run's own trailing column, on the same group its steps use — a
+            count that sits a pixel off the rows it heads reads as a different
+            kind of thing than it is. */}
+        <StepMeta parts={[failed > 0 ? <span className="text-destructive">{failed} failed</span> : null]} />
       </button>
       {showing.length > 0 && (
         /* One rail for both states, so expanding a peeking run grows the list
@@ -583,19 +585,16 @@ export const SubagentStep = React.memo(function SubagentStep({
       caption={caption}
       mono={false}
       startedAt={head.startedAt}
-      metric={
-        prose || showTimestamps || tokens ? (
-          <>
-            {prose}
-            {prose && tokens && " · "}
-            {/* Bare text, not the popover form: this sits inside StepRow's own
-                disclosure button, and a button may not hold a button. */}
-            {tokens && <TokenFigure usage={tokens} />}
-            {(prose || tokens) && showTimestamps && " · "}
-            {showTimestamps && <Timestamp at={head.at} />}
-          </>
-        ) : undefined
-      }
+      /* The popover form, the same one a tool step and a turn footer draw:
+         StepRow's trailing columns live OUTSIDE its disclosure button (they
+         have since a step's figure became a popover), so the "bare text, a
+         button may not hold a button" rule that made this row the one place
+         tokens wore no coin no longer applies to it. */
+      metric={[
+        prose,
+        tokens ? <TokenSummary usage={tokens} label="This step" /> : null,
+        showTimestamps ? <Timestamp at={head.at} /> : null,
+      ]}
       detail={hasBody ? <SubagentBody group={group} stepThread={stepThread} showTimestamps={showTimestamps} /> : undefined}
       /* Folded by default, live or not: the shimmering title and the step
          count say enough at a glance, and the rail is one click away. Only
@@ -640,7 +639,7 @@ function SubagentBody({
       )}
       {session?.prompt && (
         <DetailSection label="Brief">
-          <div className={cn(PANE_MAX_H, "overflow-auto rounded-md border border-border/50 bg-muted/40 px-2.5 py-2")}>
+          <div className={cn(PANE_MAX_H, PANE_PAD, "overflow-auto")}>
             <Prose text={session.prompt} />
           </div>
         </DetailSection>
@@ -977,7 +976,7 @@ export const ThreadItemView = React.memo(function ThreadItemView({
           status={streaming ? "in_progress" : null}
           label={streaming ? "thinking" : undefined}
           startedAt={streaming ? item.at : undefined}
-          metric={tokens ? <StepTokens usage={tokens} itemId={item.id} /> : undefined}
+          metric={[tokens ? <StepTokens usage={tokens} itemId={item.id} /> : null]}
           mono={false}
           defaultOpen={view.showThinking}
           openSetting={view.showThinking}
@@ -1071,15 +1070,10 @@ const ToolStep = React.memo(function ToolStep({
          belonged to out of view. What happened is in the body — the diff, the
          output, the matches — where it is the thing being read rather than a
          teaser for it. `failed` still reaches the row, as the label. */
-      metric={
-        tokens || showTimestamp ? (
-          <>
-            {tokens ? <StepTokens usage={tokens} itemId={item.id} /> : null}
-            {tokens && showTimestamp ? " · " : null}
-            {showTimestamp ? <Timestamp at={item.at} /> : null}
-          </>
-        ) : undefined
-      }
+      metric={[
+        tokens ? <StepTokens usage={tokens} itemId={item.id} /> : null,
+        showTimestamp ? <Timestamp at={item.at} /> : null,
+      ]}
       startedAt={item.startedAt}
       detail={hasBody || active ? <ToolDetail item={item} active={active} /> : undefined}
       /* Two strips can sit under a row and they answer different questions —
@@ -1170,11 +1164,14 @@ function PastedTextItem({
   }
 
   return (
-    <div className="my-1.5 overflow-hidden rounded-xl border border-border/50 bg-background/50 text-foreground">
+    /* The card geometry the error and task notices keep — same margin, same
+       radius, same border. The padding is on the header and the body rather
+       than the box, because the two are separated by a rule. */
+    <div className="my-2 overflow-hidden rounded-xl border border-border/50 bg-background/50 text-foreground">
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-start text-xs transition-colors hover:bg-muted/50"
+        className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-start text-xs transition-colors hover:bg-muted/40"
       >
         <div className="flex items-center gap-2 min-w-0">
           <ClipboardListIcon className="size-4 shrink-0 text-muted-foreground" />
@@ -1185,15 +1182,17 @@ function PastedTextItem({
             ({lines.toLocaleString()} line{lines === 1 ? "" : "s"} · {chars.toLocaleString()} chars)
           </span>
         </div>
+        {/* The chevron turns the way every other disclosure in the transcript
+            turns — right, then down — rather than flipping a caret. */}
         <div className="flex items-center gap-1 shrink-0 text-muted-foreground">
           <span className="text-[11px]">{open ? "Hide" : "Show"}</span>
-          <ChevronDownIcon
-            className={cn("size-3.5 transition-transform duration-200", open && "rotate-180")}
+          <ChevronRightIcon
+            className={cn("size-3.5 transition-transform duration-200", open && "rotate-90")}
           />
         </div>
       </button>
       {open && (
-        <div className="border-t border-border/40 bg-muted/20 p-2.5">
+        <div className="border-t border-border/50 bg-muted/40 px-2.5 py-2">
           <div className="mb-1.5 flex justify-end">
             <Button
               variant="ghost"
@@ -1202,7 +1201,9 @@ function PastedTextItem({
               className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground hover:text-foreground"
               title="Copy pasted text"
             >
-              {copied ? <CheckIcon className="size-3 text-emerald-500" /> : <CopyIcon className="size-3" />}
+              {/* The theme's affirmative, not a raw palette green — every other
+                  tick in the transcript (a todo, a chosen option) is primary. */}
+              {copied ? <CheckIcon className="size-3 text-primary" /> : <CopyIcon className="size-3" />}
               <span>{copied ? "Copied" : "Copy"}</span>
             </Button>
           </div>

@@ -30,8 +30,10 @@ import {
   DetailSection,
   Favicon,
   Highlighted,
+  LABEL,
   PANE,
   PANE_MAX_H,
+  PANE_PAD,
   PlanFullscreen,
   Prose,
   ProsePreview,
@@ -145,7 +147,7 @@ function ReadDetail({ item }: { item: ToolItem }) {
         {!preNumbered && (
           <pre
             aria-hidden
-            className="shrink-0 py-1 pe-3 ps-2 text-end font-mono text-[11.5px] leading-5 tabular-nums whitespace-pre text-muted-foreground/45 select-none"
+            className="shrink-0 py-1 pe-3 ps-2 text-end font-mono text-[11.5px] leading-5 tabular-nums whitespace-pre text-muted-foreground/50 select-none"
           >
             {lines.map((_, index) => first + index).join("\n")}
           </pre>
@@ -227,7 +229,7 @@ function SearchDetail({ item }: { item: ToolItem }) {
         {flags.map((flag) => (
           <span
             key={flag}
-            className="rounded border border-border/60 px-1 py-px text-[10px] text-muted-foreground/70"
+            className="rounded-sm border border-border/60 px-1 py-px text-[10px] text-muted-foreground/70"
           >
             {flag}
           </span>
@@ -525,7 +527,7 @@ function EditDetail({ item, active }: { item: ToolItem; active: boolean }) {
           {/* Numbered only when there is more than one: a lone "hunk 1 of 1"
               is a label for a fact the reader can already see. */}
           {edits.length > 1 && (
-            <div className="text-[10px] tracking-wide uppercase text-muted-foreground/50">
+            <div className={LABEL}>
               hunk {index + 1} of {edits.length}
             </div>
           )}
@@ -658,7 +660,7 @@ export function SubagentBrief({ item }: { item: ToolItem }) {
       </div>
       {call.prompt && (
         <DetailSection label="Brief">
-          <div className={cn(PANE_MAX_H, "overflow-auto rounded-md border border-border/50 bg-muted/40 px-2.5 py-2")}>
+          <div className={cn(PANE_MAX_H, PANE_PAD, "overflow-auto")}>
             <Prose text={call.prompt} />
           </div>
         </DetailSection>
@@ -755,7 +757,7 @@ function WebSearchDetail({ item, active }: { item: ToolItem; active: boolean }) 
             <span
               key={domain}
               className={cn(
-                "rounded border px-1 py-px font-mono text-[10px]",
+                "rounded-sm border px-1 py-px font-mono text-[10px]",
                 allowed
                   ? "border-border/60 text-muted-foreground"
                   : "border-destructive/40 text-destructive/80"
@@ -904,7 +906,7 @@ function WebResultRow({ hit }: { hit: WebResult }) {
   const host = hostOf(hit.url)
   return (
     <li className="px-2.5 py-2">
-      <div className="flex min-w-0 items-center gap-1.5 text-[10.5px] text-muted-foreground/70">
+      <div className="flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground/70">
         <Favicon url={hit.url} className="size-3.5" />
         <span className="truncate">{host || hit.url}</span>
       </div>
@@ -1023,7 +1025,7 @@ function QuestionsDetail({ item }: { item: ToolItem }) {
                 <ProsePreview text={question.question} />
               </span>
               {question.multiSelect && (
-                <span className="shrink-0 rounded bg-muted/60 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                <span className="shrink-0 rounded-sm bg-muted/60 px-1.5 py-0.5 text-[10px] text-muted-foreground">
                   multi-select
                 </span>
               )}
@@ -1037,7 +1039,7 @@ function QuestionsDetail({ item }: { item: ToolItem }) {
                       key={optionIndex}
                       className={cn(
                         "flex items-start gap-2 rounded-lg px-2 py-1 text-[11.5px]",
-                        chosen ? "bg-primary/10 ring-1 ring-primary/25" : "bg-background/40"
+                        chosen ? "bg-primary/10 ring-1 ring-primary/25" : "bg-background/50"
                       )}
                     >
                       {chosen ? (
@@ -1121,7 +1123,7 @@ export function ToolAnswers({ item }: { item: ToolItem }) {
               a strip. With no header the chips stand alone — which reads fine,
               because the row above them is the question. */}
           {question.header && (
-            <span className="shrink-0 text-[10px] tracking-wide text-muted-foreground/60 uppercase">
+            <span className={cn(LABEL, "shrink-0")}>
               {question.header}
             </span>
           )}
@@ -1182,7 +1184,7 @@ function FindingsDetail({ item }: { item: ToolItem }) {
                 </span>
               )}
               {finding.category && (
-                <span className="shrink-0 rounded border border-border/60 px-1 text-[10px] text-muted-foreground/70">
+                <span className="shrink-0 rounded-sm border border-border/60 px-1 text-[10px] text-muted-foreground/70">
                   {finding.category}
                 </span>
               )}
@@ -1213,7 +1215,7 @@ function PlanProposalDetail({ item }: { item: ToolItem }) {
   }
   return (
     <div className="space-y-2">
-      <div className={cn(PANE_MAX_H, "overflow-auto rounded-md border border-border/50 bg-muted/40 px-2.5 py-2")}>
+      <div className={cn(PANE_MAX_H, PANE_PAD, "overflow-auto")}>
         <Prose text={plan} />
       </div>
       {/* The same way out of the capped pane the approval card offers, so a
