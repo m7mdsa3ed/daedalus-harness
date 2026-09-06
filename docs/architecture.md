@@ -191,6 +191,15 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   the SQLite handle are owned by this process, and a cluster fork could not see another
   fork's bridges.
 
+- **The client deploys on Vercel as `vite build`, never `tsc -b`** (`client/vercel.json`).
+  The client's tsconfig paths reach into `../server/src` (`@daedalus/protocol`, `/delivery`,
+  `/acp`) and Vercel installs only `client/node_modules`, so every server import resolves to
+  nothing there and the whole ACP vocabulary types as `any` — a typecheck that would pass
+  while meaning nothing. Only `delivery.ts` crosses at runtime and it is dependency-free, so
+  vite alone builds. Typechecking stays local (`pnpm test`), where the server's deps exist.
+  The rationale lives here and not in the file: `vercel.json` is validated against a schema
+  that forbids extra keys, so the `"//"` comment convention is a build-time error.
+
 ## Schema changes
 
 - **Schema change: edit `server/src/db/schema.ts`, run `pnpm db:push`.** That is the whole

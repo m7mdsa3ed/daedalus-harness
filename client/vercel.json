@@ -1,6 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "//": "No `tsc -b`: the client's tsconfig paths reach into ../server/src (@daedalus/protocol, /delivery, /acp), and Vercel installs only client/node_modules — so every server import resolves to nothing and the whole ACP vocabulary types as `any`. Only `delivery.ts` crosses at runtime and it is dependency-free, so vite alone builds. Typechecking stays `pnpm test` locally, where the server's deps exist.",
   "buildCommand": "vite build",
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }
