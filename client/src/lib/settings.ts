@@ -614,6 +614,8 @@ export interface ModelOption {
   /** Optional URL for a model-specific icon. When set, the composer trigger
       shows this icon instead of the profile's logo. */
   iconUrl?: string
+  /** User-defined group label for organising models in the picker. */
+  group?: string
 }
 
 /** A model the agent itself advertised (POST /api/profiles/:id/fetch-models),

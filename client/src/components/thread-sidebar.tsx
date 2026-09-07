@@ -432,7 +432,6 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
     const pinned = pins
       .map((id) => newestFirst.find((session) => session.id === id))
       .filter((session): session is SessionMeta => !!session)
-    const rest = newestFirst.filter((session) => !pinSet.has(session.id))
     /* Recent first: a flat Recents list of the newest few — and the folders
        still hold *every* thread, this one included. Recents is a shortcut, not
        a place a thread moves to: a folder that dropped whatever was recent was
@@ -440,11 +439,9 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
        most likely to be looked for — was the one missing from where it lives.
        By project: no Recents at all, which is the view for someone who thinks
        in projects rather than in time. */
-    /* Running first, always. A turn in progress is the one thing in this list
-       that is happening *now*, and by-activity order buried it under whatever
-       was typed most recently. Every running thread is in the list whatever its
-       age, and the rest fill the remaining slots. */
+    /* By creation date, ascending — the oldest threads at the top of Recents. */
     const isRunning = (session: SessionMeta) => statuses.get(session.id) === "running"
+    const rest = [...live].sort((a, b) => b.createdAt - a.createdAt)
     const running = rest.filter(isRunning)
     const idle = rest.filter((session) => !isRunning(session))
     const recent =

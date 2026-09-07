@@ -268,7 +268,7 @@ export async function handlePrompt(
           },
         });
 
-        const outcome = await pumpStream(result, emit, meta, deps.env, session, undefined);
+        const outcome = await pumpStream(result, emit, meta, deps.env, session, undefined, subagentsNegotiated(deps));
         if (outcome.totalUsage) turnUsage = addUsage(turnUsage, outcome.totalUsage);
 
         /* `result.response` is the *last step's* metadata — its `messages` are
@@ -534,6 +534,9 @@ async function pumpStream(
   env: AgentEnv,
   contextOf: Session | null,
   onUsage: ((usage: LanguageModelUsage) => void) | undefined,
+  /* Whether the client negotiated the subagent RFD — the one thing that
+     decides if `announcesOwnSession` has anything to defer to. */
+  subagentsRfd = false,
 ): Promise<StreamOutcome> {
   const outcome: StreamOutcome = {
     finishReason: "stop",
@@ -544,6 +547,11 @@ async function pumpStream(
   };
   let messageId = randomUUID();
   let block = { kind: "" as "text" | "reasoning" | "", buffer: "" };
+  /* Calls whose row was withheld, by id, so the result can be dropped and a
+     failure can be sent whole. Keyed on the id `tool-input-start` carries,
+     which is the `toolCallId` the later parts use. */
+  const silenced = new Map<string, ToolMeta>();
+  const silent = (m: ToolMeta): boolean => subagentsRfd && m.announcesOwnSession === true;
 
   const flushBlock = () => {
     if (!block.kind || !block.buffer) {
@@ -595,6 +603,10 @@ async function pumpStream(
         case "tool-input-start": {
           flushBlock();
           const m = metaFor(meta, part.toolName);
+          if (silent(m)) {
+            silenced.set(part.id, m);
+            break;
+          }
           await emit.update({
             sessionUpdate: "tool_call",
             toolCallId: part.id,
@@ -607,6 +619,10 @@ async function pumpStream(
         }
         case "tool-call": {
           const m = metaFor(meta, part.toolName);
+          if (silent(m)) {
+            silenced.set(part.toolCallId, m);
+            break;
+          }
           await emit.update({
             sessionUpdate: "tool_call_update",
             toolCallId: part.toolCallId,
@@ -618,6 +634,7 @@ async function pumpStream(
           break;
         }
         case "tool-result": {
+          if (silenced.delete(part.toolCallId)) break;
           const text = outputText(part.output);
           await emit.update({
             sessionUpdate: "tool_call_update",
@@ -629,17 +646,32 @@ async function pumpStream(
           break;
         }
         case "tool-error": {
-          await emit.update({
-            sessionUpdate: "tool_call_update",
-            toolCallId: part.toolCallId,
-            status: "failed",
-            content: [
-              {
-                type: "content",
-                content: { type: "text", text: errorText(part.error) },
-              },
-            ],
-          });
+          const content = [
+            { type: "content" as const, content: { type: "text" as const, text: errorText(part.error) } },
+          ];
+          /* A silenced tool has no row on the client to fold an update into,
+             so its failure arrives as the whole call — the one thing about it
+             worth a row. */
+          const quiet = silenced.get(part.toolCallId);
+          silenced.delete(part.toolCallId);
+          await emit.update(
+            quiet
+              ? {
+                  sessionUpdate: "tool_call",
+                  toolCallId: part.toolCallId,
+                  title: quiet.title(part.input),
+                  name: part.toolName,
+                  kind: quiet.kind,
+                  status: "failed",
+                  content,
+                }
+              : {
+                  sessionUpdate: "tool_call_update",
+                  toolCallId: part.toolCallId,
+                  status: "failed",
+                  content,
+                },
+          );
           break;
         }
         case "finish-step": {
@@ -698,6 +730,14 @@ async function pumpStream(
   return outcome;
 }
 
+/* Whether the client is listening to the subagent RFD. Read in two places —
+   the spawn itself, and the gate that withholds an `announcesOwnSession`
+   tool's row — and they must agree: a row withheld for a card that was never
+   sent is a child that ran invisibly. */
+function subagentsNegotiated(deps: TurnDeps): boolean {
+  return Boolean((deps.clientCaps() as { subagents?: unknown } | null)?.subagents);
+}
+
 /* A subagent is a nested loop in the same process: same cwd, same model, same
    permission memory (its asks carry the parent session id, which is the one
    the harness is holding). With the RFD negotiated its work streams as a
@@ -716,7 +756,7 @@ async function runSubagent(
   reportUsage: (usage: LanguageModelUsage | null) => void,
 ): Promise<string> {
   const childId = randomUUID();
-  const rfd = Boolean((deps.clientCaps() as { subagents?: unknown } | null)?.subagents);
+  const rfd = subagentsNegotiated(deps);
   if (rfd) {
     await parentEmit.update({
       sessionUpdate: "subagent_spawned",
@@ -770,7 +810,7 @@ async function runSubagent(
       });
 
       try {
-        const outcome = await pumpStream(result, childEmit, meta, deps.env, null, undefined);
+        const outcome = await pumpStream(result, childEmit, meta, deps.env, null, undefined, rfd);
         if (outcome.totalUsage) reportUsage(outcome.totalUsage);
         if (outcome.error !== undefined) {
           if (isRetriableStreamError(outcome.error) && attempt < MAX_STREAM_RETRIES && !session.abort?.signal.aborted) {

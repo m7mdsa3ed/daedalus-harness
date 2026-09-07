@@ -67,15 +67,24 @@ const SCRIPTS = () => [
     const state = harness.updatesOf("subagent_state_update");
     assert.equal((state.at(-1)?.update as { state?: string }).state, "completed");
 
-    const taskDone = harness
-      .updatesOf("tool_call_update")
-      .find(
-        (u) =>
-          u.sessionId === sessionId &&
-          (u.update as { status?: string }).status === "completed" &&
-          JSON.stringify(u.update).includes("child report"),
-      );
-    assert.ok(taskDone, "the parent tool result carries the child's report");
+    /* The card is the row. With the RFD negotiated the `task` call is not
+       announced as a tool at all — the spawn carries the name and the brief,
+       the child's own session carries the work and the report, and a tool row
+       beside it was the same subagent drawn twice: the transcript showed a
+       generic row holding the prompt and the whole report, and then the card
+       holding both again. `announcesOwnSession` is what withholds it. */
+    const taskRows = [...harness.updatesOf("tool_call"), ...harness.updatesOf("tool_call_update")].filter(
+      (u) => u.sessionId === sessionId,
+    );
+    assert.equal(taskRows.length, 0, "the launch is the card, not a tool row beside it");
+    // Chunk by chunk, so the phrase is only whole once they are joined.
+    const childText = childChunks
+      .map((u) => (u.update as { content?: { text?: string } }).content?.text ?? "")
+      .join("");
+    assert.ok(
+      childText.includes("child report"),
+      `the report is in the child's transcript, where the card draws it (got ${JSON.stringify(childText)})`,
+    );
   });
   console.log("subagents: rfd ok");
 }

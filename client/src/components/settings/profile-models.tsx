@@ -1,5 +1,5 @@
 import * as React from "react"
-import { BotIcon, Download, Pencil, Plus, Trash2 } from "lucide-react"
+import { ArrowDown, ArrowUp, BotIcon, Download, Pencil, Plus, Trash2 } from "lucide-react"
 import { toast } from "@/lib/toast"
 import { ErrorNote } from "@/components/error-note"
 import { EntityIcon } from "@/components/entity-icon"
@@ -48,6 +48,7 @@ export interface ModelRow {
   modalities: string
   devRef: string
   iconUrl: string
+  group: string
 }
 
 let modelUid = 0
@@ -64,6 +65,7 @@ export const blankModelRow = (): ModelRow => ({
   modalities: "",
   devRef: "",
   iconUrl: "",
+  group: "",
 })
 
 export const candidateToRow = (candidate: ModelCandidate): ModelRow => ({
@@ -81,6 +83,7 @@ export const candidateToRow = (candidate: ModelCandidate): ModelRow => ({
   modalities: (candidate.modalities ?? []).join(", "),
   devRef: candidate.devRef ?? "",
   iconUrl: candidate.iconUrl ?? "",
+  group: candidate.group ?? "",
 })
 
 export const toModelRows = (models: {
@@ -94,6 +97,7 @@ export const toModelRows = (models: {
   modalities?: string[]
   devRef?: string
   iconUrl?: string
+  group?: string
 }[]): ModelRow[] =>
   models.map((m) => ({
     uid: `model-${++modelUid}`,
@@ -108,6 +112,7 @@ export const toModelRows = (models: {
     modalities: (m.modalities ?? []).join(", "),
     devRef: m.devRef ?? "",
     iconUrl: m.iconUrl ?? "",
+    group: m.group ?? "",
   }))
 
 export function rowsToModels(rows: ModelRow[]) {
@@ -122,6 +127,7 @@ export function rowsToModels(rows: ModelRow[]) {
     modalities?: string[]
     devRef?: string
     iconUrl?: string
+    group?: string
   }[] = []
   for (const row of rows) {
     const id = row.id.trim()
@@ -153,6 +159,7 @@ export function rowsToModels(rows: ModelRow[]) {
       ...(modalities.length ? { modalities } : {}),
       ...(row.devRef.trim() ? { devRef: row.devRef.trim() } : {}),
       ...(row.iconUrl.trim() ? { iconUrl: row.iconUrl.trim() } : {}),
+      ...(row.group.trim() ? { group: row.group.trim() } : {}),
     })
   }
   return models
@@ -198,6 +205,7 @@ export function ModelsSection({
   onRemove,
   onAdd,
   onImport,
+  onReorder,
 }: {
   rows: ModelRow[]
   defaultModel: string
@@ -217,6 +225,8 @@ export function ModelsSection({
   /** Rows the fetch dialog finished with — already filled from models.dev
       where the user asked, so the form only has to append them. */
   onImport: (rows: ModelRow[]) => void
+  /** Reorder the rows — receives the full new order. */
+  onReorder: (rows: ModelRow[]) => void
 }) {
   const [editingUid, setEditingUid] = React.useState<string | null>(null)
   const [importing, setImporting] = React.useState(false)
@@ -242,7 +252,7 @@ export function ModelsSection({
           </p>
         ) : (
           <div className="divide-y rounded-lg border">
-            {rows.map((row) => {
+            {rows.map((row, index) => {
               const isDefault = row.id.trim() !== "" && row.id.trim() === defaultModel
               const badges = summaryBadges(row)
               return (
@@ -276,6 +286,34 @@ export function ModelsSection({
                       </div>
                     </button>
                     <div className="flex shrink-0 items-center gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-lg"
+                        title="Move up"
+                        disabled={index === 0}
+                        onClick={() => {
+                          const next = [...rows]
+                          ;[next[index - 1], next[index]] = [next[index], next[index - 1]]
+                          onReorder(next)
+                        }}
+                      >
+                        <ArrowUp />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-lg"
+                        title="Move down"
+                        disabled={index === rows.length - 1}
+                        onClick={() => {
+                          const next = [...rows]
+                          ;[next[index], next[index + 1]] = [next[index + 1], next[index]]
+                          onReorder(next)
+                        }}
+                      >
+                        <ArrowDown />
+                      </Button>
                       <Button
                         type="button"
                         variant="ghost"
@@ -498,6 +536,16 @@ function ModelEditorFields({
                 className="font-mono text-xs min-w-0 flex-1"
               />
             </div>
+          </Field>
+        </div>
+        <div className="sm:col-span-2">
+          <Field label="Group" hint="Models with the same group appear under a shared heading in the picker.">
+            <Input
+              value={row.group}
+              onChange={(e) => onPatch({ group: e.target.value })}
+              placeholder="e.g. Frontier, Mid-tier, Legacy"
+              className="text-xs"
+            />
           </Field>
         </div>
       </div>

@@ -329,6 +329,7 @@ export function SessionConfigPopover({
                   value: m.id,
                   name: m.label,
                   icon: <ModelIcon iconUrl={m.iconUrl} className="size-4" />,
+                  group: m.group || undefined,
                 })),
               ]}
               /* A new model brings its own effort list, and the one you were on

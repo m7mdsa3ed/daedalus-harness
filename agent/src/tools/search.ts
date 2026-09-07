@@ -11,6 +11,13 @@ const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".next", "__
 const MAX_RESULTS = 200;
 const MAX_VISITS = 20_000;
 const MAX_FILE_BYTES = 1_000_000;
+/* A line count is not a size. `MAX_FILE_BYTES` bounds a *file*, and 200 lines
+   of a minified 1MB JSON (a profiler dump, a bundle, a fixture) is a legal
+   answer worth 116MB — which is what one grep of a Laravel project handed the
+   model. Both engines are held to the same two budgets: rg already had the
+   byte one, the fallback had neither. */
+const MAX_LINE_CHARS = 400;
+const MAX_TOTAL_BYTES = 200_000;
 const SEARCH_TIMEOUT_MS = 10_000;
 
 export const globMeta: ToolMeta = {
@@ -184,7 +191,7 @@ function tryRipgrep(
     let cutOff: string | null = null;
     child.stdout.on("data", (chunk: Buffer) => {
       out += chunk.toString("utf8");
-      if (out.length > 200_000) {
+      if (out.length > MAX_TOTAL_BYTES) {
         cutOff ??= "[more matches not shown]";
         child.kill("SIGKILL");
       }
@@ -230,6 +237,7 @@ function grepFallback(
   }
   const fileRe = glob ? globToRegExp(glob.includes("/") ? glob : `**/${glob}`) : null;
   const lines: string[] = [];
+  let total = 0;
   let isFile = false;
   try {
     isFile = statSync(root).isFile();
@@ -259,16 +267,35 @@ function grepFallback(
     const fileLines = text.split("\n");
     for (let i = 0; i < fileLines.length; i++) {
       if (re.test(fileLines[i] as string)) {
-        lines.push(`${file}:${i + 1}:${fileLines[i]}`);
-        if (lines.length >= MAX_RESULTS) return `${lines.join("\n")}\n[more matches not shown]`;
+        const line = `${file}:${i + 1}:${clampLine(fileLines[i] as string)}`;
+        lines.push(line);
+        total += line.length + 1;
+        if (lines.length >= MAX_RESULTS || total >= MAX_TOTAL_BYTES) {
+          return `${lines.join("\n")}\n[more matches not shown]`;
+        }
       }
     }
   }
   return lines.length ? lines.join("\n") : "No matches.";
 }
 
+/* A 962KB "matching line" is not a match anyone can read, and it is the whole
+   cost: the head of it says which file and which line, which is what the model
+   came for. */
+function clampLine(line: string): string {
+  return line.length > MAX_LINE_CHARS ? `${line.slice(0, MAX_LINE_CHARS)}…` : line;
+}
+
 function clampLines(text: string): string {
-  const lines = text.trimEnd().split("\n");
-  if (lines.length <= MAX_RESULTS) return text.trimEnd();
-  return `${lines.slice(0, MAX_RESULTS).join("\n")}\n[${lines.length - MAX_RESULTS} more lines not shown]`;
+  const all = text.trimEnd().split("\n");
+  const kept: string[] = [];
+  let total = 0;
+  for (const line of all) {
+    if (kept.length >= MAX_RESULTS || total >= MAX_TOTAL_BYTES) break;
+    const clamped = clampLine(line);
+    kept.push(clamped);
+    total += clamped.length + 1;
+  }
+  const dropped = all.length - kept.length;
+  return dropped > 0 ? `${kept.join("\n")}\n[${dropped} more lines not shown]` : kept.join("\n");
 }

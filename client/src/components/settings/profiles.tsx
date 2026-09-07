@@ -562,6 +562,7 @@ function ProfileForm({
         onRemove={handleRemove}
         onAdd={() => setRows((r) => [...r, blankModelRow()])}
         onImport={importModels}
+        onReorder={(newRows) => setRows(() => newRows)}
       />
       <Field
         label="Quiet Codex's model-metadata notice"

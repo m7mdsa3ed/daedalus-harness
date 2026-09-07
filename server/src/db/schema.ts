@@ -46,6 +46,10 @@ export interface ModelDef {
       shows this icon instead of the profile's logo. User-provided (models.dev
       does not carry per-model artwork). */
   iconUrl?: string;
+  /** User-defined group label for organising models in the picker.
+      Models with the same group are shown under a shared heading; models
+      without a group appear at the end with no heading. */
+  group?: string;
 }
 
 /** `{name, value}` pairs — the shape the MCP library already stores. */

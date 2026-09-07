@@ -6,6 +6,7 @@ import { inputOf } from "./context.js";
 export const taskMeta: ToolMeta = {
   kind: "other",
   title: (input) => `Subagent: ${String(inputOf(input).description ?? "task")}`,
+  announcesOwnSession: true,
 };
 
 export function makeTaskTool(rt: ToolRuntime) {

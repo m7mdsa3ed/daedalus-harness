@@ -7,17 +7,27 @@ export type ToolKind = NonNullable<ToolItem["toolKind"]>
 
 // ─── Names ───────────────────────────────────────────────────────────────────
 
-/* ACP has no tool-name field — `title` is human-readable prose ("Read
-   package.json") for most agents, but several send the bare identifier
-   ("Bash", "mcp__crm__search"). Treat the title as a name only when it looks
-   like one, so a prose title never gets matched against the table below. */
+/* ACP grew a tool-name field (`ToolCall.name`, still marked experimental in
+   SDK 1.4) and it is the answer when a runtime sends one — our own agent does,
+   and it was the only runtime whose rows had no name at all, because its
+   titles are prose by design ("Subagent: …", "Search for …").
+
+   The title sniff stays for the three that do not send it yet: `title` is
+   human-readable prose ("Read package.json") for most agents, but several send
+   the bare identifier ("Bash", "mcp__crm__search"). Treat the title as a name
+   only when it looks like one, so a prose title never gets matched against the
+   table below. */
 /* Hyphens and dots are part of a name too: an MCP server is registered as
    `web-search`, so its tools arrive as `mcp__web-search__web_search`, and a
    pattern that stopped at `[A-Za-z0-9_]` read that as prose — which made it
    the row's title, verbatim. Prose has spaces; a name does not. */
 export const NAME_RE = /^(mcp__)?[A-Za-z_][\w.-]*$/
 
-export function toolNameOf(item: Pick<ToolItem, "title">): string | null {
+/* `name` is widened past `ToolItem`'s own: the reducer passes the raw ACP
+   update, where the field is nullable (`null` and absent both mean "no name"). */
+export function toolNameOf(item: Pick<ToolItem, "title"> & { name?: string | null }): string | null {
+  const declared = item.name?.trim()
+  if (declared) return declared.toLowerCase()
   const title = item.title.trim()
   return NAME_RE.test(title) ? title.toLowerCase() : null
 }

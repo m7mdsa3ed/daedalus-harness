@@ -1,6 +1,6 @@
 import type { Tool, ToolSet } from "ai";
 import type { ToolMeta, ToolRuntime } from "./context.js";
-import { inputOf } from "./context.js";
+import { clampToolOutput, inputOf } from "./context.js";
 import { checkPermission } from "../permissions.js";
 import { makeReadTool, makeWriteTool, makeEditTool, readMeta, writeMeta, editMeta } from "./fs-tools.js";
 import { makeBashTool, bashMeta } from "./bash.js";
@@ -75,7 +75,25 @@ export function buildTools(rt: ToolRuntime, opts: BuildToolsOptions = {}): Built
   if (!opts.subagent && !planOnly) {
     tools.task = makeTaskTool(rt);
   }
+  /* Last, over everything — built-ins, MCP, the subagent's own set — because
+     what reaches the model is the request's size and no single tool is the
+     right place to defend it. */
+  for (const name of Object.keys(tools)) {
+    tools[name] = withOutputClamp(tools[name] as Tool);
+  }
   return { tools, meta };
+}
+
+/* The clamp is on the *return*, not on the update the tool emits mid-execute:
+   the transcript's own limit is turn.ts's and smaller, and a tool that streams
+   its own content (bash's terminal deltas, edit's diff) has already said it. */
+function withOutputClamp(t: Tool): Tool {
+  if (!t.execute) return t;
+  const inner = t.execute.bind(t);
+  return {
+    ...t,
+    execute: async (input, options) => clampToolOutput(await inner(input, options)),
+  } as Tool;
 }
 
 /* MCP tools are built at connect time, before any turn or context exists —

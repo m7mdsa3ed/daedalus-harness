@@ -8,9 +8,11 @@ import type * as acp from "@daedalus/acp"
 import * as React from "react"
 import {
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuPortal,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -22,6 +24,9 @@ export interface Choice {
   name: string
   /** A mark drawn before the name — a profile's logo, an agent's brand. */
   icon?: React.ReactNode
+  /** Optional group label — choices with the same group are rendered under a
+      shared heading in the submenu. */
+  group?: string
 }
 
 export function MenuRow({
@@ -37,6 +42,37 @@ export function MenuRow({
 }) {
   const current = choices.find((choice) => choice.value === value)
   const [submenuOpen, setSubmenuOpen] = React.useState(false)
+
+  /* When any choice carries a group, the submenu is partitioned into labelled
+     sections.  The array order is the display order; a group label is drawn the
+     first time its value appears, and a separator is drawn between adjacent
+     groups.  Choices without a group go under no heading. */
+  const hasGroups = choices.some((c) => c.group)
+
+  /** Render one choice item, optionally preceded by a group header. */
+  const renderChoice = (choice: Choice, prevGroup: string | undefined) => {
+    const parts: React.ReactNode[] = []
+    if (hasGroups && choice.group !== prevGroup) {
+      if (prevGroup !== undefined) {
+        parts.push(<DropdownMenuSeparator key={`sep-${choice.group ?? "none"}`} />)
+      }
+      if (choice.group) {
+        parts.push(
+          <DropdownMenuLabel key={`lbl-${choice.group}`} className="text-[11px] tracking-wide uppercase pt-1 pb-0.5">
+            {choice.group}
+          </DropdownMenuLabel>,
+        )
+      }
+    }
+    parts.push(
+      <DropdownMenuRadioItem key={choice.value} value={choice.value}>
+        {choice.icon}
+        <span className="truncate">{choice.name}</span>
+      </DropdownMenuRadioItem>,
+    )
+    return parts
+  }
+
   return (
     <DropdownMenuSub open={submenuOpen} onOpenChange={setSubmenuOpen}>
       <DropdownMenuSubTrigger>
@@ -55,12 +91,14 @@ export function MenuRow({
               next && next !== value && onSelect(next)
             }}
           >
-            {choices.map((choice) => (
-              <DropdownMenuRadioItem key={choice.value} value={choice.value}>
-                {choice.icon}
-                <span className="truncate">{choice.name}</span>
-              </DropdownMenuRadioItem>
-            ))}
+            {(() => {
+              let prevGroup: string | undefined
+              return choices.flatMap((choice) => {
+                const parts = renderChoice(choice, prevGroup)
+                prevGroup = choice.group
+                return parts
+              })
+            })()}
           </DropdownMenuRadioGroup>
         </DropdownMenuSubContent>
       </DropdownMenuPortal>
