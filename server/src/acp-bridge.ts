@@ -834,19 +834,13 @@ export class AcpBridge {
    * a reason to throw a restored thread away.
    */
   private async applyRestore(restore: RestoreState): Promise<void> {
-    /* The mode twin first: an agent that advertises the mode twice (once as
-       `modes`, once as a select config option — claude-agent-acp does) keeps
-       the two in lockstep, and whichever lands second wins. Restoring a stale
-       twin's value after the mode would move the mode back to what the old
-       process happened to be on. `captureRestoreState` already drops the twin
-       from the list, but a restore captured by an older server — or one that
-       arrives with the twin while the agent renamed its modes — must not
-       clobber the mode through the back door either. */
+    /* The mode twin never restores as a config option: the `modes` channel is
+       the authority and the twin is the same knob said twice. Restoring a
+       stale twin's value after the mode would move the mode back to what the
+       old process happened to be on. `captureRestoreState` already drops the
+       twin from the list; this skips one that arrives anyway (captured by an
+       older server, or while the agent renamed its modes). */
     const modeIds = new Set(this.modes?.availableModes.map((m) => m.id) ?? []);
-    const twin = restore.configOptions.find((o) => isModeTwin(o, modeIds));
-    if (twin && twin.type === "select" && restore.modeId && modeIds.has(twin.currentValue)) {
-      restore = { ...restore, modeId: twin.currentValue };
-    }
     if (restore.modeId && this.modes && this.modes.currentModeId !== restore.modeId) {
       if (!this.modes.availableModes.some((m) => m.id === restore.modeId)) {
         console.warn(`couldn't restore mode ${restore.modeId} after the restart: the agent no longer offers it`);
@@ -1462,7 +1456,14 @@ export class AcpBridge {
     const wasActive = this.promptActive;
     const oldId = this.modes?.currentModeId;
     await this.connection.agent.request(acp.methods.agent.session.setMode, { sessionId, modeId });
-    if (this.modes) this.modes = { ...this.modes, currentModeId: modeId };
+    /* Only what the agent advertised: a runtime that accepts an unknown id
+       anyway must not get it recorded, or the row names a mode no later
+       revive can ask for. A refusal throws above, so reaching here means the
+       agent claims to run as this — which is worth recording only when it is
+       one of the modes it offers. */
+    if (this.modes && this.modes.availableModes.some((m) => m.id === modeId)) {
+      this.modes = { ...this.modes, currentModeId: modeId };
+    }
     /* Model and effort are process env the respawn rebuilds from the session
        record; the mode is the same kind of spawn input — a revive with no live
        process to copy from (idle-retired, pre-restart) puts it back from the

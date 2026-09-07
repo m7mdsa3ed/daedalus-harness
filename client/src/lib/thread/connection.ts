@@ -1114,8 +1114,18 @@ export class ThreadConnection {
            an agent that advertises them only on the `modes` channel (daedalus)
            would otherwise stay modeless in every draft menu. */
         const meta = getState().sessions.find((s) => s.id === id)
-        if (meta?.profileId && meta.agentId && configOptions && configOptions.length > 0) {
-          saveAgentOptions(optionKey(meta.profileId, meta.agentId), configOptions, modes ?? undefined)
+        /* Modes ride along on their own: a `current_mode_update` that arrives
+           without a `session_config` (claude-agent-acp moves the mode on one
+           channel and the twin on the other) still refreshes the remembered
+           list the draft menu reads — otherwise a new thread keeps offering
+           the probe's stale answer until some thread happens to restate its
+           full options. */
+        if (meta?.profileId && meta.agentId && (configOptions?.length || modes)) {
+          saveAgentOptions(
+            optionKey(meta.profileId, meta.agentId),
+            configOptions ?? [],
+            modes ?? undefined
+          )
         }
         /* And what it can carry, on the same store and for the same reason:
            the next draft on this pair has to know whether an image will reach
