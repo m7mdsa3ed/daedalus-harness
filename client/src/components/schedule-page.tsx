@@ -67,7 +67,7 @@ import {
   scheduleSkipped,
   scheduleWhen,
 } from "@/lib/schedule"
-import { isTopLevel, type ScheduledMessage, type SessionMeta } from "@/lib/settings"
+import { isListed, type ScheduledMessage, type SessionMeta } from "@/lib/settings"
 import { useAgents, useProjects } from "@/lib/queries/catalog"
 import { useCancelSchedule, useScheduled, useUpdateSchedule } from "@/lib/queries/routines"
 import { untilLabel } from "@/components/routines/trigger-summary"
@@ -753,7 +753,7 @@ function NewSchedulePage({ actions }: { actions: Actions }) {
   const location = useLocation()
   const [params] = useSearchParams()
   const routeState = (location.state ?? {}) as ScheduleLocationState
-  const sessions = allSessions.filter((session) => isTopLevel(session) && !session.draft && !session.deletedAt)
+  const sessions = allSessions.filter((session) => isListed(session) && !session.deletedAt)
   const requested = params.get("session")
   const initialTarget = sessions.some((session) => session.id === requested)
     ? (requested ?? "")

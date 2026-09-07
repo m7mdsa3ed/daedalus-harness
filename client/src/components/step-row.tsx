@@ -238,7 +238,9 @@ export const StepRow = React.memo(function StepRow({
               className={cn(
                 // h-6, not size-3.5: the mark has to occupy a whole line box, or
                 // `items-start` would hang it off the top of the text it marks.
-                "relative flex h-6 w-3.5 shrink-0 items-center justify-center",
+                // The row assembles mark → title → command (`harness-part-in`,
+                // index.css); the mark is part 0 and states no `--part-i`.
+                "harness-part-in relative flex h-6 w-3.5 shrink-0 items-center justify-center",
                 failed
                   ? "text-destructive"
                   : (iconAccent ?? (active ? "text-primary" : "text-muted-foreground/60"))
@@ -277,7 +279,10 @@ export const StepRow = React.memo(function StepRow({
           {/* Steps are what the agent did, not what it said: the whole row sits at
               caption weight so prose stays the thing you read. */}
           <span className="flex min-w-0 flex-1 flex-col">
-            <span className="flex min-w-0 items-baseline gap-1.5">
+            {/* The title and the file it acted on are one part, not two: the
+                chip is the object of the verb beside it, so they sharpen
+                together or the row reads as "Read" … "package.json". */}
+            <span className="harness-part-in [--part-i:1] flex min-w-0 items-baseline gap-1.5">
               <span
                 className={cn(
                   "min-w-0 truncate text-xs leading-6",
@@ -302,7 +307,7 @@ export const StepRow = React.memo(function StepRow({
             {caption && (
               <span
                 className={cn(
-                  "-mt-1 min-w-0 truncate text-[11px] leading-5 text-muted-foreground/60",
+                  "harness-part-in [--part-i:2] -mt-1 min-w-0 truncate text-[11px] leading-5 text-muted-foreground/60",
                   // Mono follows the title: a caption under a command is the
                   // literal thing that ran, but under prose (a subagent's
                   // model, a run's live step) it is prose too.
@@ -329,8 +334,22 @@ export const StepRow = React.memo(function StepRow({
         {control}
       </div>
 
-      {below && <div className="mb-1 min-w-0 pl-[1.375rem]">{below}</div>}
-      {expandable && open && <div className="mt-1 mb-2.5 min-w-0 space-y-2">{detail}</div>}
+      {/* Both bodies fade rather than rise, and neither animates its height.
+          The diff of an edit, the output of a command and a search's answers
+          all arrive well after the row that heads them — the call is drawn the
+          moment it opens and filled in as its result streams — so mounting them
+          with nothing at all is the pop that ends an otherwise smooth row.
+          `harness-fade-in` and not `harness-item-in`: a rise would slide a
+          block into space that did not exist a frame ago, and the height is the
+          one thing that must land in a single frame (index.css — `scrollHeight`
+          is what the autoscroll pin chases). So the space appears at once and
+          only the content resolves into it, which is the accepted cost already
+          documented there rather than a new one.
+          It also covers the click: opening a row by hand used to pop too. */}
+      {below && <div className="harness-fade-in mb-1 min-w-0 pl-[1.375rem]">{below}</div>}
+      {expandable && open && (
+        <div className="harness-fade-in mt-1 mb-2.5 min-w-0 space-y-2">{detail}</div>
+      )}
     </div>
   )
 })

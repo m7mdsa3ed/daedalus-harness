@@ -296,7 +296,9 @@ async function createWindow() {
   if (DEV_URL) {
     await waitForDevServer(DEV_URL)
     await win.loadURL(DEV_URL)
-    win.webContents.openDevTools({ mode: "detach" })
+    // ponytail: DevTools is for a vite server, not for pointing the shell at a
+    // deployed client — same door, different intent.
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)/.test(DEV_URL)) win.webContents.openDevTools({ mode: "detach" })
   } else {
     server = await startStaticServer(path.join(app.getAppPath(), "dist"))
     await win.loadURL(`http://127.0.0.1:${server.port}/`)

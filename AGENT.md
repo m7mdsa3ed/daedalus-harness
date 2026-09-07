@@ -81,9 +81,15 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   to be answerable, and it is only answerable from rows nothing merged. The merged event
   stands at its run's **last** seq. Downstream of it, what spans the log is counted in seqs
   and never in events: `EarlierPage.from`, and the replay's progress.
-- **A replay that replaces a transcript commits once, not per frame** (`seamless`), and
-  **while a restart runs the doomed socket's events are dropped** — a cleared journal being
-  refilled is the transcript already on screen, said again.
+- **A restart keeps the journal and drops the load's narration, not the other way round**
+  (`restart.kept`): the clear is what made a setting change cost every peer a rebuild, and it
+  took the turn boundaries `rewindPoint`, the turn rail and every window are read from with
+  it. Kept only where the log is *holding* this conversation — live process, non-empty log,
+  no respawn queued — never for a rewind (clearing IS its truncation), and taken back by a
+  `historyLost`. Where it is not kept the old bargain stands: **while a restart runs the
+  doomed socket's events are dropped** — a cleared journal being refilled is the transcript
+  already on screen, said again — and **a replay that replaces a transcript commits once,
+  not per frame** (`seamless`).
 - **The ACP SDK is named in one file per half** — `server/src/acp.ts`, `agent/src/acp.ts`,
   the client's `@daedalus/acp`. Import `acp` from there, never from the package. The version
   is pinned exactly in all three manifests.
@@ -159,6 +165,19 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   list refresh replaces it. **Picks coalesce** — one request per menu, not per row.
 - **Nothing about these settings asks before it acts.** They are reversible, and the undo is
   on the toast a restart raises, not a dialog in front of a menu row.
+- **A setting a person changed is said in the transcript, and `origin` is what says a person
+  changed it.** One emitter per door — `applyConfig` diffs a *reading* per setting taken
+  before and after (never the request: a menu sends model and effort on every call), and the
+  agent's own selectors write theirs in `setMode`/`setConfigOption`, gated on the peer that
+  asked so a restore never narrates its own bookkeeping. Idle or mid-turn, live or respawn,
+  the row is the same; only *when* it lands differs, because a running turn holds it for its
+  step boundary. Reporting all of them is safe because `showConfigNotices` can hide them —
+  the reader picks, not the server.
+- **A setting survives a change to a different one.** A restart copies the agent's selectors
+  off the live process (`captureRestoreState`), and a revive that has no process to copy from
+  replays them from `sessions.config_choices` — the same row-shaped bargain `mode_id` makes,
+  and the reason an idle-retired thread no longer comes back on the agent's defaults. Model
+  and effort keep their own columns; a value written twice can disagree with itself.
 - **A message typed into a running turn is queued, not steered — and the queue is the
   server's.** Steering is explicit (`prompt {steer:true}`, ⌘⇧Enter). The `queue` event is
   absolute and reaches every peer including the origin.
@@ -221,6 +240,12 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - Device-local state lives in tiny stores (`lib/drafts.ts`, `lib/pins.ts`,
   `lib/view-options.ts`, `lib/keybindings.ts`) — how a transcript is drawn is the reader's
   property, not the conversation's.
+- **"New thread" is the landing console (`/`), not an empty transcript**, and a project's own
+  `+` aims it with `?project=` because there is no row for it to ride on yet. **No list draws
+  a draft** — `isListed`, not `isTopLevel`, is what the sidebar, Recents, the project page,
+  the palette and the schedule form filter by. The tab strip's `+` is the one exception left
+  (a tab has to be a panel, and the landing page is a route), with the project page's queued
+  terminal/IDE behind it — both open a draft because they need a dock.
 - **Sidebar order and the period a row is filed under are `activityAt` — the last turn, never
   `createdAt`. Reading is not activity.** Pinned and Recents are shortcuts, not places.
 - **Everything with a face is drawn by `components/entity-icon.tsx`.** No component draws a
@@ -233,6 +258,27 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   message behind "+", what governs *how it sends* behind the chevron beside Send. Touch
   targets follow `useCoarsePointer` (the device); what Enter means follows `useIsMobile`
   (the width).
+- **The shelf has a floor and a pile, and the floor is what is permanently true.** Project,
+  tools and the context ring are `ComposerStrip`'s `footer` (`DraftScopeRow`) — always drawn,
+  never a card, on **both** sides of the first message: a started thread's project only stops
+  being *editable*, it never stops being *said*, and the tab does not repeat it. It wears
+  `--composer`, not the pile's `--surface`: it belongs to the box below it, not to the shelf.
+  **The tuck is worn by whoever is last** — the footer when there is one, the cards when there
+  is not, never both. **A tools menu's side is the caller's, never inferred from `editable`.**
+- **The pile is only what is about the message being typed** — attachments, parked pastes, the
+  history notice, the two completers, the archive notice.
+- **A reading of the thread is a 24px trigger over a popover, in the footer's end cluster** —
+  the checklist's progress, the running-subagent count, the context ring (`TodoIndicator`,
+  `AgentsIndicator`, `ContextIndicator`). One kind of question, one shape, one place; each
+  draws nothing when it has nothing to say. A popover is a fixed surface, so those lists scroll
+  without taking room from the transcript. **A floating summary pill over the composer was
+  tried and removed** — see `docs/client.md`.
+- **The queue is drawn as the user messages it is**, dashed, at the very **end** of the flow —
+  after the approval and the question, because a queued message is the conversation's future.
+  **Editing one takes it back to the composer** (`queueRemove`, then `fill`, and only on
+  success): there is no second editor in the transcript, and cancelling is the same gesture.
+  **A scroller item that renders nothing still reserves its intrinsic size**, so the caller
+  gates (`thread.queue.length`) and the component only draws.
 - **A slash command is either the agent's or the harness's and the composer draws one list**;
   the agent's shadows the harness's, and a draft is offered no harness commands. An `@`
   mention is text *and* a `resource_link`, added server-side only when it resolves inside cwd.
@@ -250,6 +296,13 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **A key that is bound is a key that is listed and a key that can be moved.** Nothing reads
   `KEYS` to bind — use `useShortcut(id, handler)`; chords print through
   `components/shortcut.tsx` and nowhere else.
+- **A restart the user asked for is not a thread coming back from the dead**, and the wait
+  says which (`ConnPhase.reviving.because`): one paragraph explaining idle-retirement used to
+  be shown to someone who had just picked a persona. **A wait in front of a transcript that
+  is staying put is not drawn until it lasts** (`waitDelayMs`) — a respawn usually beats it,
+  and a headline plus a paragraph that appears and vanishes is flicker announcing a wait
+  nobody waited for. The gate is the caller's, because a scroller item that renders nothing
+  still reserves its size.
 - **Errors are never `String(err)`** — normalize through `lib/errors.ts`. A failure belonging
   to a thread goes IN that thread; a surface with the user's attention holds its own; toasts
   are for failures with no surface to go back to. **An error a surface could render as

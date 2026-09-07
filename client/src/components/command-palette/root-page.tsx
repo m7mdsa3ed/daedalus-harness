@@ -76,7 +76,7 @@ import { boardPath, newRoutinePath, settingsPath, settingsRootPath, threadPath }
 import {
   activityAt,
   clearSettings,
-  isTopLevel,
+  isListed,
   loadServers,
   loadSettings,
   setActiveServer,
@@ -219,7 +219,7 @@ export function RootPage() {
      page, which can say that it is still asking. */
   if (!query) {
     const recents = sessions
-      .filter(isTopLevel)
+      .filter(isListed)
       .filter((session) => !session.deletedAt && session.id !== sessionId)
       .sort((a, b) => activityAt(b) - activityAt(a))
       .slice(0, RECENT_LIMIT)

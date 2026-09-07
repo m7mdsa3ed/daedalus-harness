@@ -265,15 +265,43 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `thread-reset` included, since that is buffered too — and lands it in one commit at
   `caught_up`. The progress still reports, because the *wait* is real even when the change
   is not.
-- **A restart is announced, and while it runs the socket's events are dropped.** Between
-  `restart: "started"` and the reattach, the server is clearing this thread's journal and
-  re-narrating the whole conversation into it through `session/load` — and every one of
-  those events is fanned out to the sockets that are still attached. They are not news; they
-  are the transcript already on screen, said again. `ThreadConnection.restarting` gates
-  `send`/`sendStream` for exactly that window, and `"ready"` rebuilds from 0 (the log was
-  replaced, so every cursor into it names nothing). Before this event existed only the
-  device that had asked for the change knew to do any of that, and every other one appended
-  the conversation to itself.
+- **A restart is announced, and `kept` says whether it costs the reader anything.** The
+  respawn's problem is that `session/load` re-narrates the whole conversation as ordinary
+  updates, duplicating what is already journaled. There are two ways to answer that, and
+  `restart.kept` is which one was taken.
+
+  `kept: false` is the old bargain and still the fallback: the log is **cleared** and the
+  load refills it, so every one of those re-narrated events is fanned out to the sockets
+  that are still attached, where they are not news but the transcript already on screen said
+  again. `ThreadConnection.restarting` gates `send`/`sendStream` for exactly that window and
+  `"ready"` rebuilds from 0, every cursor into the replaced log naming nothing. Before this
+  event existed only the device that had asked for the change knew to do any of that, and
+  every other one appended the conversation to itself.
+
+  `kept: true` — the ordinary case for a setting change on a live thread — **keeps the log
+  and drops the narration instead**. The bridge already knows which updates are narration
+  (`historyReplay`, set around the whole `session/load`), so `Session.quietLoad` is read at
+  `SessionManager.emit`, the one chokepoint both the journal append and the fan-out pass
+  through, and they are dropped where they are produced. Nothing is appended, no seq moves,
+  every cursor stays valid, and the socket that was open across the respawn simply carries
+  on: the client sets `restarting = false`, does no rebuild, and returns the phase straight
+  to `live`. That is what makes a persona or agent change stop reloading the transcript —
+  and it is also what stops the clear taking the journaled `turn_started`/`turn_ended` rows
+  with it, which `rewindPoint`, the turn rail's ticks and every window are read from and
+  which the load never restates. (Before this, changing a persona silently disabled rewind
+  on that thread and emptied its turn list.)
+
+  Kept only where the log really is holding this conversation, and the check is
+  `restartWith`'s: a live process (so `pruneJournals`, which only touches threads with none,
+  has not dropped the archive), a non-empty log, and no second respawn queued behind this
+  one — a rewind's respawn *must* clear, because clearing and refilling is how it truncates.
+  Stated on `"started"` as well as `"ready"`, because the client's deafness starts there and
+  a peer that goes deaf on the kept path drops the new process's `spawn_config` and
+  `session_config` with no reattach coming to state them again. And taken back by
+  `historyLost` moving across the respawn: a load that came back **without** the
+  conversation makes the journal a record of something the process does not hold, so that
+  one answers `kept: false` and the rebuild it forces is how the news reaches a peer at all
+  (`historyLost` is stated on `attached`).
 
 ## ACP schema is the source
 
@@ -379,8 +407,10 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   process at all — `attach` serves the archive and marks it `archived`, `openThread` takes
   that path when `meta.cursor > 0`, and `actions.send` is what revives, because sending is
   the moment a reader becomes a user. But nothing ever reconstructs a thread's state *for the
-  agent* out of these rows: a revive is still `session/load`, and `respawnNow` clears the log
-  before the load refills it so the two accounts can never be stitched together. That rule
+  agent* out of these rows: a revive is still `session/load`, and `respawnNow` either clears
+  the log before the load refills it or drops the load's narration and keeps the log
+  (`restart.kept`, above) — never both accounts at once, so they can never be stitched
+  together. That rule
   used to be enforced by deleting the table at boot, which also made reading yesterday's work
   cost a spawn. Reconnect paths always revive (`ConnectOpts.revive`) — a socket that dropped
   because the process died must not come back silently read-only. Retention is

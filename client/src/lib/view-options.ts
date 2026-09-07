@@ -63,8 +63,11 @@ export interface ViewOptions {
   turnRail: boolean
   /** Favicon strips: the pages a step saw and the ones the answer cited. */
   showSources: boolean
-  /** The mid-turn mode/model/effort/profile change rows (`Mode: Plan → Build`).
-      Off, a change still takes effect — the row is silent, not the switch. */
+  /** The setting-change rows (`Mode: Plan → Build`) — mode, model, effort,
+      profile, persona, agent, follow-ups, wherever in the thread they were
+      changed. Off, a change still takes effect: the row is silent, not the
+      switch. This switch is what makes reporting *every* change safe, and it
+      is why the server no longer picks which ones are worth mentioning. */
   showConfigNotices: boolean
   /** What each turn, workflow step and subagent spent, in tokens. */
   showTokens: boolean

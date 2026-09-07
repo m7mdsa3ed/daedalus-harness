@@ -143,13 +143,18 @@ export interface ThreadCallbacks {
   /**
    * The agent process is being replaced under this thread.
    *
-   * `started` means stop folding: what arrives next is a `session/load`
-   * re-narrating the whole conversation into a journal that has just been
-   * cleared, and folding it would append the transcript to itself. `ready`
-   * means reattach from 0 — every cursor into the old log names nothing.
+   * `kept` is what the other two arguments mean. False (and absent, which is a
+   * server predating the field) is the old bargain: `started` means stop
+   * folding, because what arrives next is a `session/load` re-narrating the
+   * whole conversation into a journal that has just been cleared and folding it
+   * would append the transcript to itself, and `ready` means reattach from 0 —
+   * every cursor into the old log names nothing. True means the server kept the
+   * log and dropped the narration instead: nothing to stop folding for, nothing
+   * to reattach to, and the transcript on screen is still exactly right.
+   *
    * `failed` carries why, and leaves a thread that needs reviving.
    */
-  onRestart: (state: "started" | "ready" | "failed", error?: WireError) => void
+  onRestart: (state: "started" | "ready" | "failed", kept: boolean, error?: WireError) => void
   /** Time-to-first-update for a turn, ms, measured server-side. */
   onTtft: (ms: number) => void
   /** What is left of the subscription this thread spends, re-read after a turn
@@ -681,7 +686,7 @@ export class ThreadSocket {
         this.callbacks.onStagedConfig(event.config)
         return
       case "restart":
-        this.callbacks.onRestart(event.state, event.error)
+        this.callbacks.onRestart(event.state, event.kept === true, event.error)
         return
       case "ttft":
         this.callbacks.onTtft(event.ms)

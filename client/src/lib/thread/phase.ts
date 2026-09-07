@@ -35,8 +35,15 @@ export type ConnPhase =
   /** `POST /api/sessions` is in flight — the server is spawning the agent and
       running the ACP handshake, which is the seconds-long part. */
   | { kind: "starting" }
-  /** `POST …/respawn` is in flight — putting a process back under a thread. */
-  | { kind: "reviving" }
+  /** A process is being put back under a thread. Two causes, and they are not
+      the same news: `because: "revive"` is a thread whose agent had *stopped*
+      (idle-retired, or a server restart took it), and `because: "config"` is a
+      setting the user just changed that could not be applied to the running
+      process. Told apart because the sentence under the wait explains the
+      cause, and one explanation was being given for both — a reader who had
+      just picked a persona was told their agent had been retired to free a
+      process, which is a paragraph about something that did not happen. */
+  | { kind: "reviving"; because: "revive" | "config" }
   /** `GET …/replay` is in flight; nothing has been folded yet. */
   | { kind: "loading" }
   /** Folding the transcript. `total` is 0 when the server did not state one,
@@ -93,6 +100,7 @@ export function samePhase(a: ConnPhase, b: ConnPhase): boolean {
   if (a.kind !== b.kind) return false
   if (a.kind === "replaying" && b.kind === "replaying")
     return a.done === b.done && a.total === b.total
+  if (a.kind === "reviving" && b.kind === "reviving") return a.because === b.because
   if (a.kind === "reconnecting" && b.kind === "reconnecting")
     return a.attempt === b.attempt && a.nextAt === b.nextAt && a.reason === b.reason
   if (a.kind === "parked" && b.kind === "parked")
@@ -107,7 +115,7 @@ export function samePhase(a: ConnPhase, b: ConnPhase): boolean {
 export type ConnEvent =
   | { type: "open-begin" }
   | { type: "create-begin" }
-  | { type: "revive-begin" }
+  | { type: "revive-begin"; because: "revive" | "config" }
   | { type: "attached"; total: number }
   | { type: "replay-progress"; done: number; total: number }
   /** The snapshot document ended: either there is no socket coming (archived)
@@ -162,7 +170,7 @@ export function reduceConn(phase: ConnPhase, event: ConnEvent): ConnPhase {
     case "create-begin":
       return { kind: "starting" }
     case "revive-begin":
-      return { kind: "reviving" }
+      return { kind: "reviving", because: event.because }
     case "open-begin":
       /* A reconnect attempt is an open, and while it runs the thread is still
          *recovering* rather than merely loading — the difference is what the
@@ -366,7 +374,11 @@ export function composerLock(
     case "starting":
       return { typable: true, submittable: false, note: "Starting the agent…" }
     case "reviving":
-      return { typable: true, submittable: false, note: "Restarting the agent…" }
+      return {
+        typable: true,
+        submittable: false,
+        note: phase.because === "config" ? "Applying your change…" : "Restarting the agent…",
+      }
     case "loading":
     case "replaying":
     case "attaching":
@@ -491,6 +503,31 @@ export function markFor(
 }
 
 /**
+ * How long to let a wait run before drawing anything about it.
+ *
+ * Zero for every phase but one, and that is the point: an open, a create and a
+ * reconnect are all in front of a transcript that is empty, absent or known to
+ * be stale, so the wait is the only thing on screen worth saying and saying it
+ * late reads as an app that has hung.
+ *
+ * A config restart is the opposite case in every respect. The transcript is
+ * full, correct and stays on screen (the rebuild is `seamless`), the wait is
+ * usually a few hundred milliseconds — a globally installed binary spawns in
+ * ~0.4s — and what gets drawn over it is a headline plus a paragraph of
+ * explanation. Drawn immediately, that paragraph appears and vanishes before
+ * it can be read: pure flicker, announcing a wait nobody waited for. So it is
+ * held, and a restart that beats the delay is never announced at all — the
+ * only thing the reader sees is the setting row landing in the transcript when
+ * it is done, which is the honest report of what happened.
+ *
+ * The same argument the replay bar already makes for itself
+ * (`LONG_REPLAY_EVENTS`): progress about work nobody waited for is noise.
+ */
+export function waitDelayMs(phase: ConnPhase): number {
+  return phase.kind === "reviving" && phase.because === "config" ? 450 : 0
+}
+
+/**
  * The line at the foot of a transcript that is not ready yet, the sentence
  * under it saying what that means, and the bar when there is a number behind
  * the wait.
@@ -521,11 +558,17 @@ export function startingLine(
           "The agent runs as its own program. The server is launching it and agreeing what it can do, which is the slow part of a new thread.",
       }
     case "reviving":
-      return {
-        text: "Restarting the agent…",
-        detail:
-          "This thread's agent had stopped — threads nobody is reading are retired to free the process, and a server restart ends them all. Nothing was lost: it is being started again and told the conversation so far.",
-      }
+      return phase.because === "config"
+        ? {
+            text: "Applying your change…",
+            detail:
+              "This setting is read only when a session starts, so the agent is being started again on it and told the conversation so far. Nothing is lost, and the thread comes back where you left it.",
+          }
+        : {
+            text: "Restarting the agent…",
+            detail:
+              "This thread's agent had stopped — threads nobody is reading are retired to free the process, and a server restart ends them all. Nothing was lost: it is being started again and told the conversation so far.",
+          }
     case "loading":
       return {
         text: "Reading this conversation…",
@@ -564,7 +607,9 @@ export function describePhase(phase: ConnPhase): string {
     case "starting":
       return "waiting for the agent to spawn"
     case "reviving":
-      return "waiting for the agent to restart"
+      return phase.because === "config"
+        ? "waiting for the agent to restart on the new settings"
+        : "waiting for the agent to restart"
     case "loading":
       return "reading the conversation"
     case "replaying":
@@ -597,7 +642,9 @@ export function slowLine(phase: ConnPhase): string | null {
     case "starting":
       return "Still starting — the first launch of an agent can take a while."
     case "reviving":
-      return "Still restarting — starting the agent again can take a while."
+      return phase.because === "config"
+        ? "Still applying — starting the agent again can take a while."
+        : "Still restarting — starting the agent again can take a while."
     case "loading":
     case "attaching":
       return "Still connecting — the server hasn't sent this thread's history yet."

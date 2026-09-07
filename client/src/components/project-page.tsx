@@ -65,11 +65,14 @@ import { errorText, reportError } from "@/lib/errors"
 import { toast } from "@/lib/toast"
 import { settingsFormPath, settingsPath, schedulesPath, threadPath } from "@/lib/router"
 import { scheduleWhen } from "@/lib/schedule"
-import { activityAt, isTopLevel, type HelperCommand, type Project, type ScheduledMessage, type SessionMeta } from "@/lib/settings"
+import { activityAt, isListed, type HelperCommand, type Project, type ScheduledMessage, type SessionMeta } from "@/lib/settings"
 import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
+import { defaultsForProfile, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import { useServer } from "@/lib/server-context"
+import { StatusDot } from "@/components/status-dot"
 import { useStoreSelect, type ThreadState } from "@/lib/store"
-import { IDLE_PHASE, markFor, type ThreadActivity } from "@/lib/thread/phase"
+import type { ThreadActivity } from "@/lib/thread/phase"
+import { threadStatus } from "@/lib/thread/statuses"
 import { shortAge } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { activityDays, type ProjectStats } from "@/lib/workspace/project-stats"
@@ -106,9 +109,29 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
   const allScheduled = useScheduled().data ?? []
   const liveThreads = useStoreSelect((store) => store.threads)
   const navigate = useNavigate()
-  const startIn = useStartThreadIn(actions)
+  const startIn = useStartThreadIn()
+  const profiles = useProfiles()
   const { stats, error, loading, refresh } = useProjectStats(project.id)
   const [importing, setImporting] = React.useState(false)
+
+  /* Somewhere for a queued *panel* to land. A helper's terminal and the rules
+     editor are panels, panels live in the dock, and the dock only exists on a
+     thread route — so with no thread in this project yet, this is the one path
+     left that still opens an empty one. "New thread" does not: it goes to the
+     landing console, and nothing exists until it is sent. The draft this mints
+     is invisible to every list (`isListed`) until the same thing is true of it. */
+  const openWorkspaceThread = () => {
+    const defaults = loadThreadDefaults()
+    const start = resolveThreadStart(defaults, profiles)
+    if (!start) return void navigate(settingsPath("projects"))
+    const id = actions.newDraftThread({
+      project,
+      ...start,
+      ...defaultsForProfile(defaults, start.profile.id),
+    })
+    void navigate(threadPath(id))
+  }
+
   /* No dock on this route, so the helper's terminal is queued for the thread
      we then go to — the same trade `openRules` below makes for the editor. */
   const startHelper = useRunHelper(null)
@@ -116,14 +139,15 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
     if (!(await startHelper(helper, project.id))) return
     const latest = threads[0]
     if (latest) void navigate(threadPath(latest.id))
-    else startIn(project)
+    else openWorkspaceThread()
   }
 
-  /* The live half. Steps are excluded exactly as they are everywhere else —
-     they are reached from their parent's transcript, never listed — and the
-     trashed ones are counted but not listed: Trash is the sidebar's tier. */
+  /* The live half. Steps and unsent drafts are excluded exactly as they are
+     everywhere else (`isListed`) — the one is reached from its parent's
+     transcript and the other does not exist yet — and the trashed ones are
+     counted but not listed: Trash is the sidebar's tier. */
   const { threads, trashed, running, waiting } = React.useMemo(() => {
-    const mine = sessions.filter(isTopLevel).filter((s) => s.projectId === project.id)
+    const mine = sessions.filter(isListed).filter((s) => s.projectId === project.id)
     const threads = mine
       .filter((s) => !s.deletedAt)
       .sort((a, b) => activityAt(b) - activityAt(a))
@@ -145,7 +169,7 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
     queuePanel({ kind: "ide", projectId: project.id }, { direction: "right" })
     const latest = threads[0]
     if (latest) void navigate(threadPath(latest.id))
-    else startIn(project)
+    else openWorkspaceThread()
   }
 
   const scheduled = React.useMemo(() => {
@@ -273,20 +297,6 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
         </div>
       </div>
     </div>
-  )
-}
-
-/** The same reading the sidebar and the dock tabs take — literally the same
-    function, so three surfaces cannot drift into three answers about one
-    thread. The live thread is the truth about a running turn, and
-    `promptActive` is the only signal for one this client has never connected. */
-function threadStatus(session: SessionMeta, thread: ThreadState | undefined): ThreadActivity {
-  const waiting = !!thread && !!(thread.permissions.length > 0 || thread.elicitations.length > 0)
-  return markFor(
-    thread?.phase ?? IDLE_PHASE,
-    thread?.turnActive ?? session.promptActive,
-    waiting,
-    !!session.lastTurnError
   )
 }
 
@@ -925,39 +935,6 @@ function useThreadSelection(threads: SessionMeta[], shown: SessionMeta[], action
     selectAll,
     deleteSelected,
   }
-}
-
-/** One dot, five colours: working, needs you, a turn that ended badly,
-    something is wrong with the connection, and everything else. The connection tints are what a list could
-    not say at all before — a thread mid-reconnect drew the same grey dot as one
-    sitting quietly, which is the reading this page exists to give. */
-function StatusDot({ status }: { status: ThreadActivity }) {
-  if (status === "running") {
-    return (
-      <span className="relative flex size-2 shrink-0 items-center justify-center">
-        <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-        <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
-        <span className="sr-only">running</span>
-      </span>
-    )
-  }
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "size-1.5 shrink-0 rounded-full",
-        status === "waiting"
-          ? "bg-amber-500 ring-2 ring-amber-500/20"
-          : status === "failed"
-            ? "bg-destructive"
-            : status === "reconnecting" || status === "offline" || status === "gone"
-              ? "bg-muted-foreground/70 animate-pulse"
-              : "bg-muted-foreground/30"
-      )}
-    >
-      <span className="sr-only">{status}</span>
-    </span>
-  )
 }
 
 /** What this project is actually worked on with — threads per agent and per

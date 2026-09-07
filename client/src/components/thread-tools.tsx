@@ -25,6 +25,28 @@ import { cn } from "@/lib/utils"
 type LinkKey = "mcpServerIds" | "skillIds" | "commandIds"
 
 /**
+ * How many tools this thread is carrying, the thread's own picks plus the
+ * profile's.
+ *
+ * Exported because it is also the rule that decides whether the menu draws at
+ * all (`total === 0` on a started thread renders nothing), and the row the menu
+ * sits in has to know that before it draws a divider in front of it — a
+ * separator hanging off nothing is what "the menu decides for itself" costs
+ * every caller. One place spells the count.
+ */
+export function useThreadToolCount(meta: SessionMeta): number {
+  const profile = useProfiles().find((p) => p.id === meta.profileId)
+  return (
+    (meta.mcpServerIds?.length ?? 0) +
+    (meta.skillIds?.length ?? 0) +
+    (meta.commandIds?.length ?? 0) +
+    new Set(profile?.mcpServerIds ?? []).size +
+    new Set(profile?.skillIds ?? []).size +
+    new Set(profile?.commandIds ?? []).size
+  )
+}
+
+/**
  * What this thread brings with it: MCP servers, skills and slash commands out
  * of the library, on top of whatever its profile already links.
  *
@@ -60,12 +82,20 @@ export function ThreadToolsMenu({
   editable,
   className,
   remember = true,
+  side = "top",
 }: {
   meta: SessionMeta
   actions: Actions
   /** A draft can still choose; a started thread's links are already spawned. */
   editable: boolean
   className?: string
+  /** Which way the popup opens. The caller's, not this component's: the same
+      menu sits in the composer's band (bottom of the panel, opens upward) and
+      on the routine form (a page, where it is pinned below). It used to be
+      read off `editable`, which was only ever a proxy for *where the trigger
+      was standing* — and the moment a draft's row moved into the composer,
+      that proxy pointed the draft's menu off the bottom of the screen. */
+  side?: "top" | "bottom"
   /** False when this menu is editing a saved configuration rather than the
       draft you are about to send (a routine's kit) — see DraftScopeRow. */
   remember?: boolean
@@ -96,8 +126,7 @@ export function ThreadToolsMenu({
     if (remember) saveThreadDefaults({ ...own, [key]: next })
   }
   const extra = own.mcpServerIds.length + own.skillIds.length + own.commandIds.length
-  const total =
-    extra + inherited.mcpServerIds.size + inherited.skillIds.size + inherited.commandIds.size
+  const total = useThreadToolCount(meta)
 
   /* Only an MCP row can need one; the generic section renderer is handed a
      predicate rather than learning what a server is. */
@@ -239,18 +268,17 @@ export function ThreadToolsMenu({
           </Button>
         }
       />
-      {/* On the draft strip: pinned below rather than flipping above it — the
-          popup already sizes itself to the room it has and scrolls, so keeping
-          the side fixed costs nothing and keeps the three menus on the strip
-          opening the same way. On a started thread the trigger sits in the
-          composer's own control row, at the bottom of the panel, where a menu
-          pinned below would open off screen — so that one opens upwards like
-          every other control beside it. */}
+      {/* Pinned below rather than flipping, when the caller asks to open that
+          way: the popup already sizes itself to the room it has and scrolls, so
+          on a form page keeping the side fixed costs nothing and keeps the
+          menus in that column opening alike. Upward — the composer's case, and
+          the default — flips as normal, because a trigger at the bottom of the
+          panel has no room under it. */}
       <DropdownMenuContentPositioned
         align="start"
-        side={editable ? "bottom" : "top"}
+        side={side}
         collisionAvoidance={
-          editable ? { side: "none", fallbackAxisSide: "none" } : undefined
+          side === "bottom" ? { side: "none", fallbackAxisSide: "none" } : undefined
         }
         className="w-56"
       >

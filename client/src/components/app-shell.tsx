@@ -48,6 +48,7 @@ import type { Actions } from "@/lib/actions"
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router"
 import {
   currentThreadId,
+  landingPath,
   NavigationBridge,
   projectPath,
   settingsFormPath,
@@ -331,35 +332,47 @@ export function AppShell({
      on a phone it is a drawer that closed when you tapped Settings. */
   const openSettings = (next?: SettingsSectionId) =>
     void navigate(next ? settingsPath(next) : settingsRootPath())
-  /* A new thread is a route change, not a round trip: mint the id, put a draft
-     row in the store and navigate. Nothing is created on the server and no
-     agent is spawned until the first message — see actions.newDraftThread. The
-     agent/profile/model picker moved onto the composer of the empty thread,
-     which is where the choice is actually about to matter.
 
-     `text` is the one thing that changes the shape of this: the palette can
-     hand over a first message, in which case the draft is created, routed to
-     AND sent in the same gesture — `actions.send` is what turns a draft into a
+  /* Mint the draft: the id, the route and the transcript all exist before
+     anything touches the network, and nothing is created on the server — no
+     row, no agent process — until the first message (see actions.send). Null
+     when there is nothing to start on, which is the "set up a project" case.
+     `projectId` is the caller's; without one, the remembered default. */
+  const openDraftThread = (projectId?: string): string | null => {
+    const defaults = loadThreadDefaults()
+    const project =
+      (projectId ? projects.find((p) => p.id === projectId) : undefined) ??
+      projects.find((p) => p.id === defaults.projectId) ??
+      projects[0]
+    const start = resolveThreadStart(defaults, profiles)
+    if (!project || !start) return null
+    return actions.newDraftThread({
+      project,
+      ...start,
+      ...defaultsForProfile(defaults, start.profile.id),
+    })
+  }
+
+  /* "New thread" is the landing page, not a thread. An empty draft routed to
+     on ⌘N was a row in the sidebar, in Recents and in its project's list that
+     nothing had ever happened in — one this tab alone could see, which vanished
+     on reload. The console on `/` is where a thread is started now, and the
+     thread begins to exist when it is sent.
+
+     `text` is what changes the shape of this: ⌘K's ask row and the console
+     itself hand over a first message, in which case the draft is minted, routed
+     to AND sent in one gesture — `actions.send` is what turns a draft into a
      real session, and it does not need the composer to be mounted to do it, so
      the thread is already spawning while the transcript is still opening.
      A failure lands in that thread as a Retry row like any other send. */
   const startThread = (opts: { text?: string; projectId?: string } = {}) => {
     if (!ready) return openSettings("projects")
-    const defaults = loadThreadDefaults()
-    const project =
-      (opts.projectId ? projects.find((p) => p.id === opts.projectId) : undefined) ??
-      projects.find((p) => p.id === defaults.projectId) ??
-      projects[0]
-    const start = resolveThreadStart(defaults, profiles)
-    if (!project || !start) return openSettings("projects")
-    const id = actions.newDraftThread({
-      project,
-      ...start,
-      ...defaultsForProfile(defaults, start.profile.id),
-    })
-    void navigate(threadPath(id))
     const text = opts.text?.trim()
-    if (text) void actions.send(id, text).catch(() => {})
+    if (!text) return void navigate(landingPath(opts.projectId))
+    const id = openDraftThread(opts.projectId)
+    if (!id) return openSettings("projects")
+    void navigate(threadPath(id))
+    void actions.send(id, text).catch(() => {})
   }
   // The key handler is bound once; the ref keeps it pointed at the live closure.
   const startThreadRef = React.useRef(startThread)
@@ -417,14 +430,18 @@ export function AppShell({
     openWorkspacePanel("ide")
   })
 
-  /* The + on the tab strip. Same thread-creation path as ⌘N and the sidebar —
-     `markNewTab` is the one-shot flag the route effect reads when it opens the
-     panel, so "new tab" is decided here and honoured there rather than being a
-     second way to create a thread. */
-  const newThreadInTab = React.useCallback(() => {
+  /* The + on the tab strip — the one caller that still opens an empty thread,
+     because a new *tab* has to be a panel and the landing page is a route, not
+     a panel kind. `markNewTab` is the one-shot flag the route effect reads when
+     it opens the panel, so "new tab" is decided here and honoured there. The
+     draft it mints is still invisible to every list until it is sent. */
+  const newThreadInTab = () => {
+    if (!ready) return openSettings("projects")
+    const id = openDraftThread()
+    if (!id) return openSettings("projects")
     markNewTab()
-    startThreadRef.current()
-  }, [])
+    void navigate(threadPath(id))
+  }
 
   /* The manifest's "New thread" app shortcut (see client/vite.config.ts) can
      only name a fixed URL, and a thread id is minted per thread — so it lands
@@ -486,7 +503,7 @@ export function AppShell({
     <LandingPage
       loading={loading}
       ready={ready}
-      onNewThread={startThread}
+      actions={actions}
       onOpenSettings={openSettings}
     />
   )

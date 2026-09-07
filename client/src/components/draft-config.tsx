@@ -17,8 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { MenuRow, selectChoices } from "@/components/config-menu"
-import { useStripSummary } from "@/components/composer-strip"
-import { ThreadToolsMenu } from "@/components/thread-tools"
+import { ThreadToolsMenu, useThreadToolCount } from "@/components/thread-tools"
 import type { Actions } from "@/lib/actions"
 import { optionKey, optionsForModel, useAgentOptions, withChoices } from "@/lib/agent-options"
 import { partitionSessionOptions } from "@/lib/session-options"
@@ -74,69 +73,100 @@ function useDraft(meta: SessionMeta, actions: Actions, remember = true) {
 }
 
 /**
- * Where this thread will run: the project.
+ * Where this thread runs and what it carries: the project, and the tools kit.
  *
- * Draft-only — once the session exists the project is fixed (it is the
- * agent's cwd). Who answers (the agent) moved into `DraftConfigPopover`,
- * beside the model it decides the meaning of: see that component's doc.
+ * It outlives the draft. Both halves used to disappear at the moment they
+ * started mattering — the row was rendered only while `meta.draft`, so the
+ * project (the one fact that says *which directory these edits land in*) was
+ * visible right up until the first message and never again. It is the same
+ * question either side of that message; only the answer's editability changes.
+ * A started thread's project is fixed (it IS the agent's cwd), so that half
+ * becomes a read-out, exactly as the tools menu already did for itself.
+ *
+ * Who answers (the agent) is not here — it moved into `DraftConfigPopover`,
+ * beside the model whose meaning it decides: see that component's doc.
  */
 export function DraftScopeRow({
   meta,
   actions,
   remember = true,
-  hideProject = false,
-  leading,
+  editable = true,
+  side,
+  trailing,
 }: {
   meta: SessionMeta
   actions: Actions
   /** False when these controls are editing a saved configuration rather than
       the draft you are about to send — see `useDraft`. */
   remember?: boolean
-  /** Drop the project half. For a caller whose project does not exist yet —
-      the build page, which makes one from a starter at send time. */
-  hideProject?: boolean
-  /** Drawn where the project picker would be: the build page's starter
-      picker. */
-  leading?: React.ReactNode
+  /** A draft may still pick; a started thread's project and links are already
+      spawned, so the row reads them out instead. */
+  editable?: boolean
+  /** Passed to the tools menu — the row does not know whether it is standing
+      in the composer or on a form. See `ThreadToolsMenu`. */
+  side?: "top" | "bottom"
+  /** Drawn at the row's own end. The composer's context ring goes here: how
+      full the window is belongs with where the thread runs, not with the
+      controls that send. */
+  trailing?: React.ReactNode
 }) {
-  const { projects, project, agent, configure } = useDraft(meta, actions, remember)
-
-  /* On the strip's collapsed line this row is still "which agent, which
-     project" — the agent just answers to `DraftConfigPopover`'s picker now,
-     not one of its own here. */
-  useStripSummary({
-    id: "scope",
-    icon: BotIcon,
-    label: hideProject
-      ? (agent?.name ?? "No agent")
-      : `${agent?.name ?? "No agent"} · ${project?.name ?? "No project"}`,
-  })
+  const { projects, project, configure } = useDraft(meta, actions, remember)
+  /* Asked before the menu is drawn rather than left to it: on a started thread
+     carrying nothing the menu renders null, and a divider in front of a
+     component that decided not to exist is a hairline hanging off the end of
+     the row. Same count the menu itself prints. */
+  const carries = useThreadToolCount(meta)
+  const showTools = editable || carries > 0
 
   const divider = <span aria-hidden className="h-3.5 w-px shrink-0 bg-border" />
 
   return (
-    <div className="flex items-center gap-1 px-2 py-1">
-      {leading}
-      {!hideProject && (
-        <>
-          {leading && divider}
-          <PickerMenu
-            icon={<ProjectIcon project={project} className="size-3.5" />}
-            label={project?.name ?? "No project"}
-            title="Project"
-            value={project?.id ?? ""}
-            options={projects.map((p) => ({
-              value: p.id,
-              name: p.name,
-              hint: p.cwd,
-              icon: <ProjectIcon project={p} className="size-4" />,
-            }))}
-            onSelect={(id) => configure({ projectId: id })}
-          />
-        </>
+    /* py-0.5, not the shelf's py-1.5: every control in here is already h-6, so
+       the padding is the only slack there is, and this row is under the pile on
+       every thread — four pixels here is four pixels off the transcript for the
+       whole life of the app. */
+    <div className="flex min-w-0 items-center gap-1 px-2 py-0.5">
+      {editable ? (
+        <PickerMenu
+          icon={<ProjectIcon project={project} className="size-3.5" />}
+          label={project?.name ?? "No project"}
+          title="Project"
+          value={project?.id ?? ""}
+          options={projects.map((p) => ({
+            value: p.id,
+            name: p.name,
+            hint: p.cwd,
+            icon: <ProjectIcon project={p} className="size-4" />,
+          }))}
+          onSelect={(id) => configure({ projectId: id })}
+        />
+      ) : (
+        /* The same shape as the picker beside it, minus the affordance: there
+           is nothing to choose, and a menu that opens on one option is a menu
+           that lies. The cwd is the title, because "which project" and "which
+           directory" are the same question asked at two zoom levels. */
+        <span
+          title={project?.cwd}
+          className="flex h-6 min-w-0 items-center gap-1.5 px-1.5 text-[11px] text-muted-foreground"
+        >
+          <ProjectIcon project={project} className="size-3.5 shrink-0" />
+          <span className="max-w-40 truncate">{project?.name ?? "No project"}</span>
+        </span>
       )}
-      {divider}
-      <ThreadToolsMenu meta={meta} actions={actions} editable remember={remember} />
+      {showTools && divider}
+      {showTools && (
+        <ThreadToolsMenu
+          meta={meta}
+          actions={actions}
+          editable={editable}
+          remember={remember}
+          side={side}
+        />
+      )}
+      {/* gap-0.5, not the row's gap-1: the cluster is several 24px triggers of
+          one kind, so they read as a group of readings rather than as three
+          more controls on the row. */}
+      {trailing && <span className="ms-auto flex shrink-0 items-center gap-0.5">{trailing}</span>}
     </div>
   )
 }

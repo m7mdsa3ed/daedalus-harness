@@ -568,15 +568,13 @@ export function ComposerStrip({
           // Width follows the composer: minus whatever the composer actually is
           // (capped when there is room, 100% of the container when there is not)
           // the strip stays narrower, so it reads as tucked behind rather than
-          // flush with it. The inset is 3rem of a wide composer and 1rem of a
-          // cramped one: 3rem of a 360px column is a sixth of the shelf spent on
-          // margin, and what it cost was the content — a queued message
-          // truncated to three words. Measured against the panel, so a chat
-          // squeezed beside a terminal gets the narrow inset the same way a
-          // phone does. Half a rem and a rem and a half: enough offset to read
-          // as tucked behind, and no more, now that the shelf carries a row
-          // that is on screen for the whole life of the thread.
-          "mx-auto -mb-4 w-full max-w-[calc(min(100%,var(--harness-composer-width))_-_0.5rem)] @panel-sm:max-w-[calc(min(100%,var(--harness-composer-width))_-_1.5rem)]",
+          // flush with it. Fixed px offsets — narrower on mobile (16px) for a
+          // more tucked look on cramped screens, tighter on desktop (8px) where
+          // the shelf has room. rem values scaled differently across viewport
+          // sizes; px keeps the visual gap predictable. Measured against the
+          // panel, so a chat squeezed beside a terminal gets the narrow inset
+          // the same way a phone does.
+          "mx-auto -mb-4 w-full max-w-[calc(min(100%,var(--harness-composer-width))_-_16px)] @panel-sm:max-w-[calc(min(100%,var(--harness-composer-width))_-_8px)]",
           // The fold has nothing left to draw — the last card unregistered the
           // frame the shelf emptied — so the box wears the surface itself on
           // the way down. Without it the composer would jump rather than slide.

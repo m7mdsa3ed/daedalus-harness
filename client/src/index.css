@@ -1242,11 +1242,80 @@ html[data-window-controls-overlay="true"] {
   animation-delay: calc(min(var(--item-i, 0), 6) * 60ms);
 }
 
+/* ── A step assembling itself ──
+   `harness-item-in` moves a whole row as one block, which is right for a
+   message and wrong for a step. A step is a mark, a title, and the literal
+   command under it; they arrived together only because they are *drawn*
+   together, and sliding them in as one pane says they are one thing. This is
+   the same fade with the distances cut right down — 3px against 10px, 1px of
+   blur against 2 — so it reads as the row sharpening into focus rather than as
+   a second object sliding in behind the first.
+
+   `--part-i` ADDS to `--item-i` rather than replacing it, and that is the whole
+   trick: custom properties inherit, so a step row inside a run already has its
+   own step's number in scope and each part only has to state where it sits
+   *within* the row. Nothing passes the row's position down to its parts, so
+   nothing can pass it down wrong — the two cascades compose by themselves.
+
+   The parts are Tailwind arbitrary properties (`[--part-i:1]`) and not a
+   `stagger()`-shaped helper, because unlike the transcript's numbers these are
+   three literals in one file: a function whose every call site takes a constant
+   is a function that exists to be read, not to be called.
+
+   Known and accepted: a caption that arrives *after* its row — a tool call is
+   `generic` until its input lands — mounts alone and still waits out its 90ms.
+   That is the same shape of mistake the list-index stagger made, at a twentieth
+   of the size: 90ms sits under the threshold where a delay reads as lag instead
+   of as sequence, and it does not buy the batch-tracking the other one needed. */
+@keyframes harness-part-in {
+  from { opacity: 0; filter: blur(1px); transform: translateY(3px); }
+  to { opacity: 1; filter: blur(0); transform: none; }
+}
+.harness-part-in {
+  animation: harness-part-in 300ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation-delay: calc(min(var(--item-i, 0), 6) * 60ms + var(--part-i, 0) * 45ms);
+}
+
+/* ── One sentence replacing another in a line that does not move ──
+   The status line's text changes while the line stays exactly where it is:
+   spawning becomes reading becomes connecting becomes working, and each of
+   those was a cut. `PhaseLine` keys the span on its own text, so a new sentence
+   is a *mount* — and this has to be a transition rather than an animation,
+   because `animation` is one shorthand per element and `harness-shimmer`
+   already owns it on this exact span. Nesting a span to get a second element to
+   animate is the one fix not available: the shimmer paints a background clipped
+   to text and `background-image` does not inherit, so the inner span goes
+   blank. `@starting-style` is what gives a transition a from-state on the frame
+   an element first renders, which is the whole of what the animation was for.
+
+   `translate`, not `transform`: the independent property composes with anything
+   else that wants this element's transform rather than replacing it. */
+.harness-phase-swap {
+  transition:
+    opacity 260ms var(--stream-ease),
+    filter 260ms var(--stream-ease),
+    translate 260ms var(--stream-ease);
+}
+@starting-style {
+  .harness-phase-swap {
+    opacity: 0;
+    filter: blur(2px);
+    translate: 0 4px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .harness-item-in,
   .harness-fade-in,
+  .harness-part-in,
   .t-stream-w {
     animation: none;
+  }
+  /* A transition, so it is stopped rather than cancelled — and with nothing to
+     transition, `@starting-style` has no effect to begin with, so the sentence
+     simply appears at rest. */
+  .harness-phase-swap {
+    transition: none;
   }
   /* Named separately from the classes above: these are the pseudo-elements'
      animations, and `.harness-rail-draw` itself has none to cancel. Left out,
@@ -1277,8 +1346,12 @@ html[data-window-controls-overlay="true"] {
    transcript column — the composer, the sidebar and the working line are not
    in it. */
 [data-slot="message-scroller-content"][data-motion="calm"] .harness-item-in,
-[data-slot="message-scroller-content"][data-motion="calm"] .harness-fade-in {
+[data-slot="message-scroller-content"][data-motion="calm"] .harness-fade-in,
+[data-slot="message-scroller-content"][data-motion="calm"] .harness-part-in {
   animation: none;
+}
+[data-slot="message-scroller-content"][data-motion="calm"] .harness-phase-swap {
+  transition: none;
 }
 [data-slot="message-scroller-content"][data-motion="calm"] .harness-rail-draw::before,
 [data-slot="message-scroller-content"][data-motion="calm"] .harness-rail-draw::after {

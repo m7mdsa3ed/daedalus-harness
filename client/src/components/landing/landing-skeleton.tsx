@@ -1,31 +1,26 @@
-/* The landing page while the catalogs are still loading: the hero's shape and
-   a row of feature cards, all skeletons — a page that is going to look like
-   the page, not a paragraph that shrinks into one. */
+/* The landing page while the catalogs load. A skeleton is a promise about the
+   next frame, so it has to be shaped like the page — which is now the empty
+   thread's own welcome and composer, centred. It has been shaped like a hero
+   and then like a console card that no longer exist; this one is two lines and
+   a box, in the place they are about to appear. */
 import { Skeleton } from "@/components/ui/skeleton"
 
 export function LandingSkeleton() {
   return (
-    <div className="flex min-h-0 flex-1 items-start justify-center overflow-y-auto px-4 pt-[calc(var(--app-header-h)+2.5rem)] pb-16 sm:px-8 sm:pt-[calc(var(--app-header-h)+4rem)]">
-      <div aria-busy="true" className="w-full max-w-3xl text-center">
-        <Skeleton className="mx-auto size-11 rounded-full" />
-        <Skeleton className="mx-auto mt-6 h-10 w-3/4 sm:h-14" />
-        <Skeleton className="mx-auto mt-4 h-10 w-1/2" />
-        <Skeleton className="mx-auto mt-6 h-4 w-2/3" />
-        <div className="mx-auto mt-10 grid max-w-xl grid-cols-2 gap-6 sm:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, index) => (
-            <Skeleton key={index} className="mx-auto h-14 w-20" />
-          ))}
-        </div>
-        <div className="mt-16 flex flex-col items-center">
-          <Skeleton className="h-5 w-56" />
-          <Skeleton className="mt-2 h-3 w-72" />
-          <div className="mt-6 grid w-full max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2">
-            {Array.from({ length: 4 }).map((_, index) => (
-              <Skeleton key={index} className="h-32 w-full rounded-2xl" />
-            ))}
-          </div>
-        </div>
+    <div
+      aria-busy="true"
+      className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto_minmax(0,1fr)] pt-[var(--app-header-h)]"
+    >
+      <span aria-hidden />
+      <div className="mx-auto flex w-full max-w-[var(--harness-composer-width)] flex-col items-center px-4">
+        {/* The welcome's two lines. */}
+        <Skeleton className="h-5 w-48" />
+        <Skeleton className="mt-2 h-3 w-64" />
+        {/* The shelf's footer, tucked behind the card, and the card. */}
+        <Skeleton className="mt-6 h-8 w-[calc(100%-1.5rem)] rounded-t-xl" />
+        <Skeleton className="h-[8.5rem] w-full rounded-2xl" />
       </div>
+      <span aria-hidden />
     </div>
   )
 }

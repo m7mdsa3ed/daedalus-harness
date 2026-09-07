@@ -4,20 +4,13 @@ import {
   BotIcon,
   CheckCircle2Icon,
   CheckIcon,
-  ChevronDownIcon,
   CircleDashedIcon,
   LoaderCircleIcon,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible"
 import { Logo } from "@/components/ui/logo"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { useStripDisclosure, useStripSummary } from "@/components/composer-strip"
 import { formatReset, peakWindow, planReadable, quotaStatusText, quotaTone } from "@/lib/quota"
 import type { Actions } from "@/lib/actions"
 import type { SessionMeta } from "@/lib/settings"
@@ -332,167 +325,25 @@ interface ChecklistRowData {
 }
 
 /**
- * One expanding row of a checklist, on the strip. Both the plan above the
- * composer and a `TodoWrite` checklist are the same object to a reader — "here
- * is the work the agent has ahead of it, and how far it is" — so this owns the
- * whole collapsible that either surface would otherwise have each written a
- * copy of: a ring of progress and a truncated current step when closed, the
- * full list when open.
- *
- * The list owns no inner scroll. It is read in one piece — which step follows
- * which is most of the information in it — and a list that scrolls inside a
- * shelf that is itself inside a scrolling page gives you two wheels doing
- * different things over one line of text. The transcript above is the flexible
- * track (`minmax(0,1fr)`), so an open list takes its room from the conversation
- * and gives it straight back on collapse; the composer never moves. It is
- * opened by hand and closes the same way, so a long one is on screen because it
- * was asked for.
- */
-function ChecklistCollapsible({
-  percent,
-  completed,
-  total,
-  current,
-  running,
-  rows,
-}: {
-  percent: number
-  completed: number
-  total: number
-  current?: string
-  running: boolean
-  rows: ChecklistRowData[]
-}) {
-  /* Closed by default: the collapsed line already says which step and how far,
-     which is what a glance wants, and the steps are one click away. */
-  const [open, setOpen] = useState(false)
-  const done = completed === total
-  return (
-    <Collapsible open={open} onOpenChange={setOpen} className="w-full">
-      <CollapsibleTrigger
-        render={
-          <button
-            type="button"
-            /* px-2: the shelf's own gutter — every row on it starts on the
-               same column, and on the same one as the scope band below. */
-            className="flex w-full items-center gap-2 px-2 py-1.5 text-left transition-colors hover:bg-accent/40"
-          />
-        }
-      >
-        {/* The ring carries the progress — same dial the context indicator uses,
-            so "how far through" reads the same way everywhere in the composer. */}
-        <span className="relative grid size-6 shrink-0 place-items-center text-primary">
-          <Ring percent={percent} />
-          <span className="absolute grid place-items-center text-[8px] font-semibold tabular-nums">
-            {done ? <CheckIcon className="size-2.5" /> : completed}
-          </span>
-        </span>
-        <span
-          className={cn(
-            "min-w-0 flex-1 truncate text-xs",
-            // The live step shimmers like the transcript's working line, so
-            // "which step" and "still going" are the same signal.
-            running ? "harness-shimmer text-primary" : "text-muted-foreground"
-          )}
-        >
-          {current ?? "All steps complete"}
-        </span>
-        {/* The count and the chevron are one cluster, not two things that
-            happened to end up next to each other: they share a tighter gap than
-            the row's, and the chevron sits in a fixed square so it is on the
-            same right edge whether the count is 1/9 or 12/40. */}
-        <span className="flex shrink-0 items-center gap-1.5">
-          {/* Plain caption text, not a filled badge: the strip has no chips on
-              it anywhere else, and the ring to the left is already the loud way
-              of saying how far along this is. */}
-          <span className="text-[11px] tabular-nums text-muted-foreground/70">
-            {completed}/{total}
-          </span>
-          <span className="grid size-4 place-items-center">
-            <ChevronDownIcon
-              aria-hidden
-              className={cn(
-                "size-3.5 text-muted-foreground transition-transform duration-200",
-                open && "rotate-180"
-              )}
-            />
-          </span>
-        </span>
-        <span className="sr-only">{open ? "Hide steps" : "Show all steps"}</span>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="harness-collapse">
-        {/* A checklist step IS a transcript step, so it is built like one: a
-            `size-3.5` status icon on the first line, `text-xs leading-6` beside
-            it, nothing boxed. The Item kit gave every row its own padded,
-            rounded, sometimes-filled surface — a list of little cards stacked
-            inside a shelf that is itself inside the composer, three frames deep
-            for one line of text each. */}
-        <ul className="space-y-0.5 border-t border-border/40 px-2 py-1.5">
-          {rows.map((row, index) => (
-            <li key={`${row.content}-${index}`} className="flex items-start gap-2 text-xs">
-              {/* `size-6`, the ring's width, so a step's icon sits under the
-                  ring's centre and its text starts on the same column as the
-                  current-step line above it. Without the box the list was
-                  indented ten pixels left of the row it expands from. */}
-              <span className="grid size-6 shrink-0 place-items-center">
-                {row.status === "completed" ? (
-                  <CheckCircle2Icon aria-hidden className="size-3.5 text-primary" />
-                ) : row.status === "in_progress" ? (
-                  <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin text-primary" />
-                ) : (
-                  <CircleDashedIcon aria-hidden className="size-3.5 text-muted-foreground/60" />
-                )}
-              </span>
-              <span
-                className={cn(
-                  // break-words, not truncate: an expanded checklist is opened
-                  // to be read in full, and a step is often a path or a
-                  // command whose one long token would otherwise be clipped by
-                  // the strip's own `overflow-hidden` and read as missing.
-                  "min-w-0 flex-1 leading-6 break-words",
-                  row.status === "completed"
-                    ? "text-muted-foreground line-through opacity-70"
-                    : row.status === "in_progress"
-                      ? "text-foreground"
-                      : "text-muted-foreground"
-                )}
-              >
-                {row.content}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </CollapsibleContent>
-    </Collapsible>
-  )
-}
-
-/**
  * The agent's checklist, when it arrives through a tool call instead of ACP's
  * `plan` channel. Claude Code's `TodoWrite` and OpenCode's `todowrite` both
  * send the list as tool *input* and return nothing worth reading, and neither
  * maps to ACP's `plan` channel — so without this the most-repeated call in a
- * long thread has no surface at all. A real ACP plan is NOT drawn here: it
+ * long thread has no surface at all. A real ACP plan is NOT read here: it
  * arrives as its own session update, at its own point in the conversation, so
  * the transcript draws it in place (`PlanStep`). This one has no such point —
- * it is the input of a call the agent makes over and over, and stacking a row
- * per revision is what one collapsed checklist exists to avoid.
+ * it is the input of a call the agent makes over and over, and a row per
+ * revision is what one collapsed reading exists to avoid.
  *
  * `toolViewOf` is the single place that says "this call IS a todo list"; the
  * newest such call wins, so an agent revising its list mid-turn replaces the
- * list in place rather than stacking a row for every revision.
- *
- * Split from the component because the caller draws the card: the checklist
- * lives at the foot of the transcript now, and an item in the scroller that
- * renders nothing still reserves its intrinsic size. The reader answers "is
- * there one", the component draws it, and the scan runs once.
+ * reading rather than stacking one per revision.
  */
-export function threadTodos(thread: ThreadState): ChecklistRowData[] | null {
+function threadTodos(thread: ThreadState): ChecklistRowData[] | null {
   const todoItem = [...thread.items]
     .reverse()
-    // Not a subagent's: a child's checklist is its own, drawn in its rail,
-    // and letting it win here handed the checklist to whichever worker
-    // wrote last.
+    // Not a subagent's: a child's checklist is its own, drawn in its rail, and
+    // letting it win here handed the reading to whichever worker wrote last.
     .find((item): item is ToolItem => item.kind === "tool" && !item.parentId && toolViewOf(item) === "todos")
   /* Claude Code's ACP adapter now sends TodoWrite as an ACP `plan` update
      rather than a tool call with input, so with no such call the thread's own
@@ -506,22 +357,99 @@ export function threadTodos(thread: ThreadState): ChecklistRowData[] | null {
   return todos && todos.length > 0 ? todos : null
 }
 
-export function ComposerTodo({ todos }: { todos: ChecklistRowData[] }) {
+/**
+ * How far the agent's checklist has got, beside the context ring.
+ *
+ * A trigger and a popover, not a row: the checklist is the same *kind* of
+ * answer as the context reading — one number that is true of the thread right
+ * now, wanted at a glance and read in full only when something looks wrong —
+ * so it is drawn the same way and stands in the same cluster. It has been a
+ * card on the composer's shelf (folded behind a 14px sliver) and a card at the
+ * foot of the transcript (a screenful of scrolling from view); both were the
+ * whole list, permanently, for a question that is usually "how far along".
+ *
+ * The ring is the progress and the popover is the steps. The list inside it
+ * scrolls — a popover is a fixed surface with a viewport of its own, which is
+ * the thing the shelf could not offer without taking the room from the
+ * transcript.
+ */
+export function TodoIndicator({ thread }: { thread: ThreadState }) {
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the one field it reads
+  const todos = useMemo(() => threadTodos(thread), [thread.items])
+  if (!todos) return null
+
   const total = todos.length
   const completed = todos.filter((todo) => todo.status === "completed").length
-  const current = todos.find((todo) => todo.status === "in_progress")
-    ?? todos.find((todo) => todo.status !== "completed")
+  const current =
+    todos.find((todo) => todo.status === "in_progress") ??
+    todos.find((todo) => todo.status !== "completed")
   const percent = Math.round((completed / total) * 100)
+  const done = completed === total
 
   return (
-    <ChecklistCollapsible
-      percent={percent}
-      completed={completed}
-      total={total}
-      current={current?.content}
-      running={current?.status === "in_progress"}
-      rows={todos.map((todo) => ({ content: todo.content, status: todo.status }))}
-    />
+    <Popover>
+      <PopoverTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="relative shrink-0 rounded-lg text-primary hover:text-primary"
+            title={`Checklist — ${completed} of ${total} done${current ? ` · ${current.content}` : ""}`}
+            aria-label="Checklist"
+          >
+            <Ring percent={percent} />
+            {/* The count inside the dial, exactly as the context ring prints
+                its percentage — one shape, two readings, so a glance at the
+                cluster is one habit and not two. */}
+            <span className="absolute inset-0 grid place-items-center text-[8px] font-semibold tabular-nums">
+              {done ? <CheckIcon className="size-2.5" /> : completed}
+            </span>
+          </Button>
+        }
+      />
+      <PopoverContent align="end" side="top" className="w-72 gap-2">
+        <div className="flex items-baseline justify-between gap-2">
+          <p className="font-medium">Checklist</p>
+          <span className="text-xs tabular-nums text-muted-foreground">
+            {completed}/{total}
+          </span>
+        </div>
+        {/* Its own scroll, capped against the panel: a forty-step list is
+            longer than a phone. The popover is a fixed surface, so this costs
+            the transcript nothing — which is the whole reason the list moved
+            here. */}
+        <ul className="-mx-1 max-h-[min(50svh,20rem)] space-y-0.5 overflow-y-auto overscroll-contain px-1">
+          {todos.map((row, index) => (
+            <li key={`${row.content}-${index}`} className="flex items-start gap-2 text-xs">
+              <span className="grid size-5 shrink-0 place-items-center">
+                {row.status === "completed" ? (
+                  <CheckCircle2Icon aria-hidden className="size-3.5 text-primary" />
+                ) : row.status === "in_progress" ? (
+                  <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin text-primary" />
+                ) : (
+                  <CircleDashedIcon aria-hidden className="size-3.5 text-muted-foreground/60" />
+                )}
+              </span>
+              {/* break-words, not truncate: the popover is opened to read the
+                  list in full, and a step is often a path or a command whose
+                  one long token would otherwise read as missing. */}
+              <span
+                className={cn(
+                  "min-w-0 flex-1 leading-5 break-words",
+                  row.status === "completed"
+                    ? "text-muted-foreground line-through opacity-70"
+                    : row.status === "in_progress"
+                      ? "text-foreground"
+                      : "text-muted-foreground"
+                )}
+              >
+                {row.content}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -574,74 +502,66 @@ const formatElapsed = (ms: number): string =>
   ms < 60_000 ? `${Math.max(0, Math.round(ms / 1000))}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
 
 /**
- * How many subagents are running, above the composer. A subagent's rail is
- * somewhere up in the transcript — often scrolled past, sometimes folded — so
- * while workers are out the shelf says how many, and opens to who they are
- * and how long each has been at it. Gone the moment none are running: it is
- * a live count, not a history.
+ * How many subagents are out working, beside the checklist and the context
+ * ring — a count, and their names and elapsed times in a popover.
+ *
+ * A subagent's rail is somewhere up in the transcript, often scrolled past and
+ * sometimes folded, so while workers are out the cluster says how many. Gone
+ * the moment none are running: it is a live count, not a history, and the rail
+ * is where the record lives.
  */
-export function ComposerAgents({ thread }: { thread: ThreadState }) {
+export function AgentsIndicator({ thread }: { thread: ThreadState }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the two fields it reads
   const agents = useMemo(() => runningAgents(thread), [thread.items, thread.turnActive])
-  const [open, setOpen] = useStripDisclosure()
-  const now = useNow(agents.length > 0)
   const count = agents.length
-  const label = `${count} ${count === 1 ? "agent" : "agents"} running`
-  useStripSummary(count > 0 ? { id: "agents", icon: BotIcon, label, badge: count } : null)
+  /* The clock ticks only while the popover is open AND workers are out: an
+     elapsed time nobody is looking at is a re-render a second for nothing. */
+  const [open, setOpen] = useState(false)
+  const now = useNow(open && count > 0)
   if (count === 0) return null
+  const label = `${count} ${count === 1 ? "agent" : "agents"} running`
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="w-full">
-      <CollapsibleTrigger
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
         render={
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 px-2 py-1.5 text-left transition-colors hover:bg-accent/40"
-          />
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="relative shrink-0 rounded-lg text-primary hover:text-primary"
+            title={`${label} — ${agents.map((agent) => agent.name ?? agent.task).join(", ")}`}
+            aria-label={label}
+          >
+            <BotIcon className="size-3.5" />
+            {/* The count rides the mark rather than sitting beside it: the
+                cluster is a row of 24px squares and a number outside one would
+                make this the only control that is wider than it is tall. */}
+            <span className="absolute -end-0.5 -top-0.5 grid size-3 place-items-center rounded-full bg-primary text-[8px] font-semibold tabular-nums text-primary-foreground">
+              {count > 9 ? "9+" : count}
+            </span>
+          </Button>
         }
-      >
-        <span className="relative grid size-6 shrink-0 place-items-center text-primary">
-          <BotIcon aria-hidden className="size-3.5" />
-        </span>
-        <span className="harness-shimmer min-w-0 flex-1 truncate text-xs text-primary">
-          {label}
-          <span className="text-muted-foreground">
-            {" · "}
-            {agents.map((agent) => agent.name ?? agent.task).join(", ")}
-          </span>
-        </span>
-        <span className="flex shrink-0 items-center gap-1.5">
-          <span className="grid size-4 place-items-center">
-            <ChevronDownIcon
-              aria-hidden
-              className={cn(
-                "size-3.5 text-muted-foreground transition-transform duration-200",
-                open && "rotate-180"
-              )}
-            />
-          </span>
-        </span>
-        <span className="sr-only">{open ? "Hide agents" : "Show running agents"}</span>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="harness-collapse">
-        <ul className="space-y-0.5 border-t border-border/40 px-2 py-1.5">
+      />
+      <PopoverContent align="end" side="top" className="w-72 gap-2">
+        <p className="harness-shimmer font-medium text-primary">{label}</p>
+        <ul className="-mx-1 max-h-[min(50svh,20rem)] space-y-0.5 overflow-y-auto overscroll-contain px-1">
           {agents.map((agent) => (
             <li key={agent.id} className="flex items-start gap-2 text-xs">
-              <span className="grid size-6 shrink-0 place-items-center">
+              <span className="grid size-5 shrink-0 place-items-center">
                 <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin text-primary" />
               </span>
-              <span className="min-w-0 flex-1 leading-6 break-words text-foreground">
+              <span className="min-w-0 flex-1 leading-5 break-words text-foreground">
                 {agent.name && <span className="font-mono text-muted-foreground">{agent.name} </span>}
                 {agent.task}
               </span>
-              <span className="shrink-0 text-[11px] leading-6 tabular-nums text-muted-foreground/60">
+              <span className="shrink-0 text-[11px] leading-5 tabular-nums text-muted-foreground/60">
                 {formatElapsed(now - agent.startedAt)}
               </span>
             </li>
           ))}
         </ul>
-      </CollapsibleContent>
-    </Collapsible>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -721,42 +641,80 @@ export function workingMessage(thread: ThreadState): string {
   return "Working"
 }
 
-export function ActivityIndicator({ thread }: { thread: ThreadState }) {
-  const message = workingMessage(thread)
-  /* A held turn is stopped, so it does not shimmer and the mark does not
-     glint: motion here would say the agent is working when it is waiting for
-     the reader. The line stays in the same slot, which is the point — the turn
-     is still open and the composer still belongs to it. */
-  const held = thread.paused
-
+/**
+ * The one line a thread says about itself while something is happening.
+ *
+ * Seven sentences reach it and they used to reach it through two components
+ * with the same body: six from `startingLine` — spawning, restarting, reading,
+ * loading, connecting, reconnecting — and one from `workingMessage`, the turn
+ * itself. Duplicated, the two drifted (only one carried `max-w-full`, only one
+ * had a `title`), and worse, every step of one uninterrupted wait was a cut,
+ * because the only thing the reader has to follow from stage to stage is a
+ * sentence being *replaced* in a line that never moves.
+ *
+ * The mark is deliberately outside the swap. It glints for as long as the
+ * thread is busy — the same sweep the sidebar's makes every few seconds, run
+ * continuously — and re-keying it on each sentence would restart that glint
+ * four times on the way from "Spawning the agent…" to "Working…".
+ */
+export function PhaseLine({
+  text,
+  still = false,
+  label,
+}: {
+  text: string
+  /** Nothing is moving — a held turn. Motion here would say the agent is
+      working when it is in fact waiting for the reader. */
+  still?: boolean
+  label: string
+}) {
   return (
     <div
-      aria-label={held ? "Turn held" : "Agent working"}
+      aria-label={label}
       // flex, not inline-flex: an inline-flex box is sized by its content, so
       // the `truncate` below had nothing to truncate against and a long tool
       // heading (a whole bash command, a long path) ran off the transcript.
       className={cn(
         "flex min-w-0 max-w-full items-center gap-2",
-        held ? "text-muted-foreground" : "text-primary",
+        still ? "text-muted-foreground" : "text-primary",
       )}
       role="status"
     >
-      {/* The mark glints for as long as the turn runs — the same sweep the
-          sidebar's mark makes every few seconds, run continuously here — so
-          starting a turn rhymes with the mark that is always on screen.
-          size-4 sits on the step row's 1.5rem line box. */}
-      <Logo working={!held} className="size-4 shrink-0" />
+      {/* size-4 sits on the step row's 1.5rem line box. */}
+      <Logo working={!still} className="size-4 shrink-0" />
       {/* ponytail: one flat text node — the shimmer paints a background clipped to
-          text, and background-image doesn't inherit, so a nested span goes blank. */}
-      {/* leading-6 matches a step row's line box, so the working line keeps the
+          text, and background-image doesn't inherit, so a nested span goes blank.
+          That constraint is also why the swap below is a transition and not an
+          animation: `animation` is one shorthand per element and the shimmer
+          already owns it here, and the fix cannot be to nest a span. See
+          `harness-phase-swap` in index.css.
+          leading-6 matches a step row's line box, so the line keeps the
           transcript's vertical rhythm. */}
       <span
+        key={text}
         aria-hidden
-        className={cn("min-w-0 truncate text-xs leading-6", !held && "harness-shimmer")}
-        title={held ? message : undefined}
+        className={cn(
+          "harness-phase-swap min-w-0 truncate text-xs leading-6",
+          !still && "harness-shimmer",
+        )}
+        title={still ? text : undefined}
       >
-        {held ? message : `${message}…`}
+        {text}
       </span>
     </div>
+  )
+}
+
+export function ActivityIndicator({ thread }: { thread: ThreadState }) {
+  const message = workingMessage(thread)
+  /* A held turn is stopped. The line stays in the same slot, which is the
+     point — the turn is still open and the composer still belongs to it. */
+  const held = thread.paused
+  return (
+    <PhaseLine
+      text={held ? message : `${message}…`}
+      still={held}
+      label={held ? "Turn held" : "Agent working"}
+    />
   )
 }

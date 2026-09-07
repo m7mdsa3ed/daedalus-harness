@@ -11,7 +11,7 @@ import { ensureProjectDir, materializeModelAllowlist, materializeWorkspace } fro
 import { mcpServers as mcpLibrary } from "./library.js";
 import { isConnected as isMcpConnected } from "./mcp-oauth.js";
 import { mcpProxyUrlFor } from "./mcp-shim.js";
-import { personaEffort, resolvePersonaSpawn } from "./personas.js";
+import { personaEffort, personas, resolvePersonaSpawn } from "./personas.js";
 import { globalRules, projectRules } from "./rules.js";
 import type { Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
@@ -26,7 +26,7 @@ import { databaseUrl, getConfig, loadConfig } from "./config.js";
 import { WEB_SEARCH_SERVER_NAME, toMcpServerEnv } from "./websearch.js";
 import { pruneWebSearchUsage, recordWebSearchUsage } from "./websearch-usage.js";
 import { KNOWLEDGE_SERVER_NAME, toKnowledgeServerEnv } from "./knowledge-db.js";
-import { AcpBridge, agentStream, configNoticeText, spawnAgent, toWireError, type BridgeHost } from "./acp-bridge.js";
+import { AcpBridge, agentStream, spawnAgent, toWireError, type BridgeHost, type ConfigNoticeLabel } from "./acp-bridge.js";
 import { makeBridgeHost } from "./bridge-host.js";
 import { enrichError, pushStderr, resetStderr } from "./stderr-ring.js";
 import { SessionQueue } from "./session-queue.js";
@@ -146,6 +146,12 @@ export interface Session {
       puts it back from the row instead of coming back on default. Written on
       every accepted `set_mode`, not just the draft pick. */
   modeId: string | null;
+  /** Every other agent selector this thread has been moved off its default on,
+      `{configId: value}`. The same bargain `modeId` makes, for the settings
+      that had no row to be restored from: `captureRestoreState` can only read
+      them off a live process, so a revive with none (idle-retired,
+      pre-restart) used to bring the thread back on the agent's defaults. */
+  configChoices: Record<string, string | boolean>;
   /** How this thread wants to be worked on (`personas.ts`), or "" for no
       persona. A spawn input like model and effort — and unlike them it can
       never be applied live, because every runtime reads it only when a session
@@ -240,6 +246,13 @@ export interface Session {
       bridge, which is what used to reject the first call's `await bridge.ready`
       with the close reason and answer a fine respawn with 500 "respawning". */
   respawnChain: Promise<Session> | null;
+  /** True while a respawn that is *keeping* this thread's journal is running its
+      `session/load`. The load narrates the whole conversation back as ordinary
+      updates, which is the duplicate the clear used to answer — so the flag is
+      read by `emit` and those updates are dropped at the one chokepoint they
+      both journal and fan out through. Set for the length of one spawn; see
+      `respawnNow`. */
+  quietLoad: boolean;
   /** A config change waiting for the running turn to end — see `StagedConfig`.
       In memory, never a column: its whole lifetime is the turn it is held
       behind, and a server that restarted has killed that turn. Cleared by the
@@ -636,6 +649,10 @@ export class SessionManager {
         // Rows written before the mode column existed never picked one —
         // null is the agent's default, which is exactly what they had.
         modeId: row.modeId ?? null,
+        // Same for the rest of the agent's selectors: a row written before the
+        // column existed never recorded one, and "none recorded" is the empty
+        // set, not a reason to restore anything.
+        configChoices: row.configChoices ?? {},
         // Absent on rows written before the toggle existed — which never asked
         // either way — so missing reads as the default: on.
         suggestFollowups: row.suggestFollowups ?? true,
@@ -657,6 +674,7 @@ export class SessionManager {
         detachedAt: Date.now(),
         exited: true,
         respawnChain: null,
+        quietLoad: false,
         stagedConfig: null,
         queueChain: null,
         /* Autonomy is not a column and never revives with a thread: a run a
@@ -742,6 +760,7 @@ export class SessionManager {
         model: s.model,
         effort: s.effort,
         modeId: s.modeId,
+        configChoices: s.configChoices,
         personaId: s.personaId || null,
         suggestFollowups: s.suggestFollowups,
         title: s.title,
@@ -907,6 +926,13 @@ export class SessionManager {
        land a microtask later — after a purge has already deleted the row the
        event rows point at. Nothing is listening for them either way. */
     if (!this.sessions.has(session.id)) return;
+    /* A respawn that kept the journal is being handed the conversation back by
+       `session/load`, and every word of it is already a row in that journal.
+       Dropped here rather than by clearing the log first, because the clear is
+       what made a config change cost every peer a reattach and a rebuild — and
+       what took the turn boundaries with it, which `rewindPoint`, the turn
+       table of contents and every window are read from. See `respawnNow`. */
+    if (session.quietLoad && event.ev === "update" && event.historyReplay) return;
     // A mirrored event is a step's, already recorded under the step's own
     // thread — counting it again here would bill every search twice.
     if (!mirrored && session.websearchViaMcp && event.ev === "update" && !event.historyReplay) {
@@ -1345,6 +1371,10 @@ export class SessionManager {
       model: opts.model || profile.defaultModel || "",
       effort: opts.effort ?? "",
       modeId: opts.modeId ?? null,
+      /* A draft's picks are passed to `start` as `configChoices` and land here
+         the moment the agent confirms them (`onSpawnStateChange`), so a fresh
+         row starts empty rather than claiming settings no process has taken. */
+      configChoices: {},
       personaId: opts.personaId ?? "",
       suggestFollowups: opts.suggestFollowups ?? true,
       title: opts.title ?? "New thread",
@@ -1367,6 +1397,7 @@ export class SessionManager {
       deletedAt: null,
       exited: false,
       respawnChain: null,
+      quietLoad: false,
       stagedConfig: null,
       queueChain: null,
       parentSessionId: opts.parentSessionId ?? null,
@@ -1718,11 +1749,16 @@ export class SessionManager {
        is trusted to have cleared it, the staged path used to lose the clearing,
        and every later revive re-passes whatever the row ended up holding. */
     next = { ...next, model: modelFor(session, next.profile, next.model) };
+    /* Before anything moves — including `applyConfigLive`'s own writes and the
+       persona this method assigns below — so the rows can be the difference
+       between two readings rather than a guess from the request. */
+    const before = await this.configLabels(session);
     if (await this.applyConfigLive(session, next)) {
       /* Whatever was waiting for the boundary has just been overtaken for the
          fields this call names — leaving them staged would move the setting
          back the moment the turn ended. */
       this.dropStaged(session, next);
+      this.noteConfig(session, before, await this.configLabels(session));
       return { live: true };
     }
     /* Nothing live could be done, so this costs the process. If a turn is
@@ -1748,15 +1784,11 @@ export class SessionManager {
        model, and the respawn silently puts it back on high. Picking is a
        statement about how to work; the effort row underneath stays theirs. */
     const effort = (changed ? await personaEffort(next.personaId) : undefined) ?? next.effort;
-    /* Named before the respawn: it moves the row, and the journal is cleared
-       under it. */
-    const movingProfile = next.profile.id !== session.profileId;
-    const fromProfileName = session.profile?.name;
     /* Everything staged is about to be superseded by a process spawned on these
        settings — and it is dropped before the restart is announced, so a peer
        that reattaches at `ready` cannot be handed a stale one on `caught_up`. */
     this.clearStaged(session);
-    const restart = this.restartWith(session, next, effort, movingProfile, fromProfileName);
+    const restart = this.restartWith(session, next, effort, before);
     /* Answered before the restart — but only for a caller that said it is
        attached and will follow the `restart` events. One that is not (a device
        reading a retired thread, a script) has no way to learn how this ended,
@@ -1774,11 +1806,26 @@ export class SessionManager {
   /**
    * The restart half of `applyConfig`, run *past* the HTTP answer.
    *
-   * Three events, in the order a client needs them: `started` (stop folding
-   * into a transcript that is about to be replaced), `spawn_config` + `ready`
-   * (the row as it ended up, then reattach from 0 — the log was cleared, so
-   * every saved cursor into it names nothing), or `failed` (the thread needs
-   * reviving, and this is the only place the reason exists).
+   * Three events, in the order a client needs them: `started` (a process is
+   * being replaced under this thread), `spawn_config` + `ready` (the row as it
+   * ended up, then whatever `kept` asks of the reader), or `failed` (the thread
+   * needs reviving, and this is the only place the reason exists).
+   *
+   * **`kept` is what makes a setting change cost the reader nothing.** The
+   * respawn keeps the journal wherever the log is actually holding this
+   * conversation — a live process, a log with something in it, no second
+   * respawn queued behind this one — so nothing is cleared, no seq moves, and
+   * the sockets that were open across it carry on where they were. The old
+   * bargain (clear, refill from `session/load`, every peer reattaches from 0)
+   * is still what a thread with no such log gets, and it is still what a load
+   * that came back without the conversation gets: `historyLost` moving across
+   * the respawn is the one thing that can take `kept` back, and the rebuild it
+   * forces is how that news reaches a peer at all (it is stated on `attached`).
+   *
+   * Stated on `started` as well as on `ready` because the client's gate goes up
+   * there: a peer told to stop folding drops the `spawn_config` and
+   * `session_config` of the process coming up, and on the kept path there is no
+   * reattach to state them again.
    *
    * Nothing here throws — the caller is usually a route that has already
    * answered. The failure is *returned* as well as announced, for the one
@@ -1788,27 +1835,39 @@ export class SessionManager {
     session: Session,
     next: { profile: Profile; agentId: string; project: Project; model?: string },
     effort: string | undefined,
-    movingProfile: boolean,
-    fromProfileName: string | undefined,
+    /** The readings taken before any of this moved — see `noteConfig`. */
+    before: Record<ConfigNoticeLabel, string>,
   ): Promise<unknown> {
-    this.emit(session, { ev: "restart", state: "started" });
+    /* Three conditions, and every one of them is "the log in front of this
+       thread is the conversation the load is about to restate":
+        - a live process, so the log has not been pruned (`pruneJournals` only
+          touches threads with none) and there are peers with cursors into it;
+        - something in the log — a thread whose only record is the load's own
+          narration needs that narration;
+        - nothing queued behind this respawn, because a respawn that *does*
+          clear (a rewind's) would then refill the log under peers that are no
+          longer dropping what they are told. */
+    const keep = !!session.bridge && !session.exited && session.eventCount > 0 && !session.respawnChain;
+    const lostBefore = session.historyLost;
+    this.emit(session, { ev: "restart", state: "started", kept: keep });
     try {
-      await this.respawn(session.id, next.profile, next.agentId, next.project, next.model, effort);
+      await this.respawn(session.id, next.profile, next.agentId, next.project, next.model, effort, {
+        keepJournal: keep,
+      });
     } catch (error) {
       this.emit(session, { ev: "restart", state: "failed", error: toWireError(error) });
       return error;
     }
-    /* A profile move draws the same transcript row a mode/model change does
-       (`Profile: Old → New`), journaled so it replays and reaches every peer on
-       reattach. Said after the respawn, once the restored conversation is
-       journaled again. */
-    if (movingProfile) {
-      this.emit(session, {
-        ev: "config_notice",
-        seq: 0,
-        text: configNoticeText("Profile", fromProfileName, next.profile.name),
-      });
-    }
+    /* Every setting this restart moved, one row each, journaled so they replay
+       and reach every peer on reattach. Said after the respawn, once the
+       restored conversation is journaled again — before it, the clear would
+       take them straight back out.
+
+       This used to be the profile alone, which is the setting a restart is
+       *least* likely to be about: a persona change costs a respawn every time
+       and is the change most likely to alter how the answers read, and it said
+       nothing. */
+    this.noteConfig(session, before, await this.configLabels(session));
     /* What the thread ended up on, absolute — the same event the live path
        sends, for the same reason: a cleared model resolved to the profile's
        default in here, and the answer rather than the request is what every
@@ -1822,7 +1881,15 @@ export class SessionManager {
       personaId: session.personaId,
       suggestFollowups: session.suggestFollowups,
     });
-    this.emit(session, { ev: "restart", state: "ready" });
+    /* The load came back without the conversation, so the journal is no longer
+       a record of what this process holds — and the peer that has not been
+       reattaching has no other way to be told. `attached` carries `historyLost`;
+       this is what sends it there. */
+    this.emit(session, {
+      ev: "restart",
+      state: "ready",
+      kept: keep && session.historyLost === lostBefore,
+    });
     return null;
   }
 
@@ -1940,6 +2007,67 @@ export class SessionManager {
     }, 0).unref();
   }
 
+  /* ── Saying what changed ───────────────────────────────────────────────────
+   *
+   * One reading per setting, in the words the menu uses, taken before the
+   * change and again after it. The rows are the difference, and taking them
+   * this way rather than from the request is what makes them honest: a menu
+   * sends model and effort on *every* call (they fall back to the row for what
+   * the user did not pick), a profile move deliberately clears both, a persona
+   * that names an effort moves it as a side effect, and a model the agent
+   * refuses is put back. Diffing the readings says what the thread ended up
+   * on; reading the request would have announced what was asked for.
+   *
+   * There used to be one row for one of these — a profile move — and it was
+   * written in two places with two different rules for when it appeared. The
+   * other five changed how the agent answers and said nothing at all.
+   */
+  private readonly configLabelOrder: ConfigNoticeLabel[] = [
+    "Profile",
+    "Agent",
+    "Model",
+    "Effort",
+    "Persona",
+    "Follow-ups",
+  ];
+
+  private async configLabels(session: Session): Promise<Record<ConfigNoticeLabel, string>> {
+    const [persona, agent] = await Promise.all([
+      session.personaId ? personas.get(session.personaId) : undefined,
+      getAgent(session.agentId),
+    ]);
+    /* The catalog's label where the profile owns one, the raw id where it does
+       not — the same fallback `selectValueName` makes, for the same reason: an
+       id nobody can name is still better than saying nothing changed. */
+    const model = session.profile?.models?.find((m) => m.id === session.model);
+    return {
+      Profile: session.profile?.name ?? session.profileId,
+      Agent: agent?.name ?? session.agentId,
+      Model: model?.label || session.model || "Default",
+      Effort: session.effort || "Default",
+      // A persona deleted out from under a live thread reads as "None", which
+      // is exactly what the next spawn will give it.
+      Persona: persona?.name ?? "None",
+      "Follow-ups": session.suggestFollowups ? "On" : "Off",
+      // Never diffed here: the mode travels its own door and writes its own row
+      // (`AcpBridge.setMode`). Present so the record is total.
+      Mode: session.modeId ?? "",
+    };
+  }
+
+  private noteConfig(
+    session: Session,
+    before: Record<ConfigNoticeLabel, string>,
+    after: Record<ConfigNoticeLabel, string>,
+  ): void {
+    const bridge = session.bridge;
+    if (!bridge) return;
+    for (const label of this.configLabelOrder) {
+      if (before[label] === after[label]) continue;
+      bridge.noteConfigChange(label, before[label], after[label]);
+    }
+  }
+
   /** The live half of `applyConfig`; false means "this one needs a respawn",
       and it is answered before anything about the thread has been changed. */
   private async applyConfigLive(
@@ -2029,10 +2157,10 @@ export class SessionManager {
       personaId: session.personaId,
       suggestFollowups: session.suggestFollowups,
     });
-    /* A move that landed mid-turn draws the same transcript row a mode/model
-       change does (`Profile: Old → New`), held for the step boundary; an idle
-       move stays silent — the menu already says where the thread is. */
-    if (moving) bridge.noteProfileChange(previous.profile?.name, next.profile.name);
+    /* What moved is said by `applyConfig`, which owns both outcomes and can
+       therefore say the same thing whether the change was live or cost the
+       process. It used to be said here, which is why a live profile move drew
+       a row and a live *model* move on the same agent drew nothing. */
     return true;
   }
 
@@ -2045,6 +2173,12 @@ export class SessionManager {
    * restore-the-settings sequence happens here, while it used to be three
    * round trips the browser drove. A tab closing halfway through can no longer
    * leave a thread half-restored.
+   *
+   * `keepJournal` is the caller saying "the conversation this comes back with
+   * is the one already in the log" — see `respawnNow`. Only `restartWith`
+   * passes it, and only after checking that the log is actually holding that
+   * conversation; a rewind must NOT, because clearing and refilling the journal
+   * is how it truncates.
    */
   async respawn(
     id: string,
@@ -2053,6 +2187,7 @@ export class SessionManager {
     project: Project,
     model?: string,
     effort?: string,
+    opts: { keepJournal?: boolean } = {},
   ): Promise<Session> {
     const session = this.sessions.get(id);
     if (!session) throw new Error(
@@ -2072,7 +2207,7 @@ export class SessionManager {
     const ahead = session.respawnChain;
     const run = (async (): Promise<Session> => {
       await ahead?.catch(() => {}); // queue behind it, whichever way it settled
-      return this.respawnNow(session, profile, agentId, project, model, effort);
+      return this.respawnNow(session, profile, agentId, project, model, effort, opts);
     })();
     session.respawnChain = run;
     void run.finally(() => {
@@ -2088,6 +2223,7 @@ export class SessionManager {
     project: Project,
     model?: string,
     effort?: string,
+    opts: { keepJournal?: boolean } = {},
   ): Promise<Session> {
     // Re-checked once the queue lets us through: the thread may have been
     // deleted (or purged) while a first respawn was still in flight.
@@ -2101,15 +2237,17 @@ export class SessionManager {
     /* Whatever was waiting for a turn boundary belonged to the process being
        replaced — and the one coming up is spawned on settings newer than it. */
     this.clearStaged(session);
-    // Captured while the old process is still up — it is the only thing that
-    // knows how the agent was configured. A thread with no live process
-    // (idle-retired, pre-restart) has nothing to capture from, so the row's
-    // own recorded mode stands in — otherwise the revive comes back on the
-    // agent's default and the pick is silently lost.
-    const restore = session.bridge?.captureRestoreState() ?? {
-      modeId: session.modeId ?? undefined,
-      configOptions: [],
-    };
+    /* Captured while the old process is still up — it is the only thing that
+       knows how the agent was configured. A thread with no live process
+       (idle-retired, pre-restart) has nothing to capture from, so the row
+       stands in: the mode it recorded, and — this is the half that used to be
+       lost — every other selector it recorded, replayed below through
+       `configChoices` rather than here, because `applyRestore` compares whole
+       options and the row holds only values. Either way the settings the user
+       did not touch survive the one they did. */
+    const live = session.bridge?.captureRestoreState();
+    const restore = live ?? { modeId: session.modeId ?? undefined, configOptions: [] };
+    const choices = live ? undefined : session.configChoices;
     const oldProc = session.proc;
     const oldBridge = session.bridge;
     session.bridge = null; // stale generation from here on
@@ -2120,23 +2258,48 @@ export class SessionManager {
     session.model = model || profile.defaultModel || "";
     session.effort = effort ?? "";
     /* The load replays the entire conversation as fresh updates, so everything
-       already journaled is about to be said again. Awaited: the clear is what
-       zeroes the seq counter the reload then stamps from, and fire-and-forget
-       it was a rejection nobody saw and a counter nobody reset. */
-    await this.log.clear(session);
+       already journaled is about to be said again. There are two ways to answer
+       that duplicate, and which one is taken is the difference between a
+       setting change that costs the reader nothing and one that costs them
+       their transcript.
+
+       The default is the clear: the log is emptied and the load refills it.
+       Awaited, because the clear is what zeroes the seq counter the reload then
+       stamps from, and fire-and-forget it was a rejection nobody saw and a
+       counter nobody reset. It is also what a rewind's truncation *is*, which
+       is why that caller may never ask for the other one.
+
+       The other is to keep the log and drop the narration instead
+       (`Session.quietLoad`, read in `emit`) — for a caller that knows the
+       conversation coming back is the one already written down. Nothing is
+       appended, no seq moves, and every peer's cursor stays valid: the socket
+       that was open across the respawn simply carries on. The clear was the
+       whole reason a persona change made every device rebuild its transcript
+       from zero — and it took the journaled `turn_started`/`turn_ended` rows
+       with it, which are what `rewindPoint`, the turn table of contents and
+       every window are read from and which the load never restates. */
+    if (opts.keepJournal) session.quietLoad = true;
+    else await this.log.clear(session);
     resetStderr(session);
-    const bridge = await this.start(session, profile, project, model, effort, {
-      load: session.acpSessionId ? { acpSessionId: session.acpSessionId } : undefined,
-      restore,
-    });
-    this.persist(session);
     try {
-      await bridge.ready;
-    } catch (error) {
-      // A handshake that never finished leaves a thread that needs reviving —
-      // the caller turns this into an {error} the client can read.
-      if (session.bridge === bridge) this.collapse(session, bridge, describe(error));
-      throw error;
+      const bridge = await this.start(session, profile, project, model, effort, {
+        load: session.acpSessionId ? { acpSessionId: session.acpSessionId } : undefined,
+        restore,
+        ...(choices && Object.keys(choices).length > 0 ? { configChoices: choices } : {}),
+      });
+      this.persist(session);
+      try {
+        await bridge.ready;
+      } catch (error) {
+        // A handshake that never finished leaves a thread that needs reviving —
+        // the caller turns this into an {error} the client can read.
+        if (session.bridge === bridge) this.collapse(session, bridge, describe(error));
+        throw error;
+      }
+    } finally {
+      /* The load is over either way it went, and a flag left standing would
+         silence the next turn's updates. */
+      session.quietLoad = false;
     }
     return session;
   }

@@ -733,7 +733,15 @@ export function FileBadge({
       {range && <span className="shrink-0 opacity-60">:{formatRange(range)}</span>}
     </>
   )
-  const cls = "inline-flex max-w-[45%] shrink-0 items-center gap-1 rounded-md bg-muted/60 px-1.5 py-px font-mono text-[10px] leading-4 text-muted-foreground/80"
+  /* The chip carries the row's own entrance (`harness-part-in`, index.css)
+     because it is very often the last thing to arrive: a tool call's input
+     streams, so an edit row is drawn as "Edit" the moment the call opens and
+     only learns its path a beat later. Mounted then, with the title already
+     settled beside it, an un-animated chip is a hard pop in the middle of a
+     line that had otherwise faded in. On a row that mounts whole it simply
+     lands with the title it belongs to — it inherits that part's `--part-i`,
+     so it is the same 45ms, not a slot of its own. */
+  const cls = "harness-part-in inline-flex max-w-[45%] shrink-0 items-center gap-1 rounded-md bg-muted/60 px-1.5 py-px font-mono text-[10px] leading-4 text-muted-foreground/80"
   if (!links) return <span className={cls} title={filePath ?? file}>{inner}</span>
   return (
     <button

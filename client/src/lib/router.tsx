@@ -8,7 +8,7 @@
        (lib/notifications fires from ACP callbacks, not from a render)
      - "which thread does the URL point at", for the same callers
 
-   /                     home (no thread open)
+   /                     home (no thread open); /?project=<id> aims its console
    /t/<sessionId>        one thread
    /projects/<id>        one project: overview, threads, metrics
    /settings             the settings overview: every section as a link
@@ -21,6 +21,12 @@ import * as React from "react"
 import { matchPath, useNavigate, type NavigateFunction } from "react-router"
 
 export const threadPath = (sessionId: string) => `/t/${encodeURIComponent(sessionId)}`
+/** Where "New thread" goes: the landing console, optionally aimed at a project.
+    A thread is not created — not here, not on the server — until that console's
+    first message, so the project it will land in cannot ride on a row yet and
+    rides on the URL instead. */
+export const landingPath = (projectId?: string) =>
+  projectId ? `/?project=${encodeURIComponent(projectId)}` : "/"
 /** One thread's trace — the journal as a timeline rather than a transcript. */
 export const threadTracePath = (sessionId: string) =>
   `/t/${encodeURIComponent(sessionId)}/trace`

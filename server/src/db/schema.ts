@@ -695,6 +695,26 @@ export const sessions = pgTable(
         puts it back from the row instead of coming back on default. Written on
         every accepted `set_mode`, not just the draft pick. */
     modeId: text("mode_id"),
+    /** Every *other* agent selector this thread has been moved off its default
+        on — `{configId: value}`, the same shape `routines.config_choices`
+        holds and the same shape `applyChoices` replays.
+
+        `mode_id` above is the worked example of why this exists: a setting the
+        user picked survives a revive only if there is a row to put it back
+        from. `captureRestoreState` reads the rest off the *live process*, which
+        answers a restart and nothing else — an idle-retired thread, or any
+        thread at all after a server restart, came back with `configOptions: []`
+        and every one of these silently on the agent's default. Written on every
+        accepted `set_config_option`, so the row always names what the agent
+        last confirmed.
+
+        Model, effort and the mode twin are deliberately absent: they have
+        columns of their own, and a value written twice is a value that can
+        disagree with itself. */
+    configChoices: jsonb("config_choices")
+      .$type<Record<string, string | boolean>>()
+      .notNull()
+      .default({}),
     /** The persona this thread runs under, or null for none. Not a foreign key
         either, and for the same reason `parent_session_id` below is not: a row
         vanishing out from under a live thread is the manager's business, not

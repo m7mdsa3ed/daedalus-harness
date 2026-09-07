@@ -8,7 +8,7 @@ import { useNavigate } from "react-router"
 import { useSidebar } from "@/components/ui/sidebar"
 import { reportError } from "@/lib/errors"
 import { projectPath, settingsPath } from "@/lib/router"
-import { activityAt, isTopLevel } from "@/lib/settings"
+import { activityAt, isListed } from "@/lib/settings"
 import { usePersonas, useProjects } from "@/lib/queries/catalog"
 import { useStoreSelect } from "@/lib/store"
 import { customThemeValue } from "@/lib/custom-themes"
@@ -222,7 +222,7 @@ export function StartPage() {
   /* Newest turn per project — the one worked in last is the one most likely to
      be wanted next, and a fresh project with no threads sorts last, not first. */
   const latest = new Map<string, number>()
-  for (const session of sessions.filter(isTopLevel)) {
+  for (const session of sessions.filter(isListed)) {
     const at = activityAt(session)
     if (at > (latest.get(session.projectId) ?? 0)) latest.set(session.projectId, at)
   }

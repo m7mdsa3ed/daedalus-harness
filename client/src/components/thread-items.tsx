@@ -81,7 +81,7 @@ import { buildRows } from "@/lib/transcript-rows"
 import type { Row, SubagentBatch, SubagentGroup, ToolRunGroup, WorkflowGroup } from "@/lib/transcript-rows"
 import { StepTokens, TokenSummary, useStepTokens } from "@/components/token-usage"
 import { Logo } from "@/components/ui/logo"
-import { cn } from "@/lib/utils"
+import { cn, stagger } from "@/lib/utils"
 import { useViewOptionsContext } from "@/lib/view-options"
 import type { TextItem, ThreadItem, ToolItem } from "@/lib/store"
 import { threadPath } from "@/lib/router"
@@ -291,11 +291,19 @@ function RunSummary({ summary }: { summary: ReturnType<typeof summarise> }) {
    inset inside it. Ending the curve at x=0 landed it on the box's edge and left
    a hairline of daylight before the icon actually starts, so the rail read as
    pointing at the step rather than joining it; the extra 2px tuck under the
-   glyph's leading edge, where the line is hidden by the mark itself. */
+   glyph's leading edge, where the line is hidden by the mark itself.
+
+   `harness-rail-draw` is the entrance for that geometry: the elbow and the tail
+   are the *same wrapper's* `::before` and `::after`, so one class on the step
+   animates both, and the tail's absence on the last step is simply a pseudo
+   with no `content` and so no box to animate. It is on the classes rather than
+   on `.harness-item-in` in the stylesheet because these three constants are the
+   only rails in the app — a footer chip in thread-view wears the same entrance
+   and has no line to draw. */
 const RUN_RAIL_CLASS = "mt-0.5 ml-[calc(0.75rem-1px)] space-y-0.5 pl-2.5"
 
 const RAIL_ELBOW =
-  "relative before:absolute before:-top-0.5 before:-left-[11px] before:h-4 before:w-[13px] before:rounded-bl-[6px] before:border-b before:border-l before:border-border/60"
+  "harness-rail-draw relative before:absolute before:-top-0.5 before:-left-[11px] before:h-4 before:w-[13px] before:rounded-bl-[6px] before:border-b before:border-l before:border-border/60"
 
 /** The rail continuing past a step to the one under it — every step but the
     last, which is what makes the run's line end on its own last elbow. */
@@ -305,7 +313,7 @@ const RAIL_TAIL =
 /** A straight length of the same rail, for a row in it that is not a step (the
     "N earlier steps" line) — it passes the line on without claiming an elbow. */
 const RAIL_THROUGH =
-  "relative before:absolute before:-top-0.5 before:-bottom-0.5 before:-left-[11px] before:w-px before:bg-border/60"
+  "harness-rail-draw relative before:absolute before:-top-0.5 before:-bottom-0.5 before:-left-[11px] before:w-px before:bg-border/60"
 
 /** "N earlier steps" — the top of a peeking rail. */
 function EarlierSteps({ count, onClick }: { count: number; onClick: () => void }) {
@@ -381,6 +389,21 @@ export const ToolRun = React.memo(function ToolRun({
   const showing = open ? items : active ? items.slice(-PEEK) : []
   const hidden = active && !open ? items.length - showing.length : 0
 
+  /* How many of `showing` were already on screen at the last commit, which is
+     what the entrance staggers off (`--item-i`, index.css). The steps' place
+     in the *list* is the wrong number: a run that streams one step at a time
+     mounts one row, and that row is its batch's first, so it waits for
+     nothing. Only a burst spreads — a replay, or this run being opened onto
+     the steps the peek had folded. Read in render and written in an effect,
+     never assigned during the render itself: under StrictMode's double pass
+     the second render would read what the first had just written and stagger
+     nothing, in dev only, which is the half of the feature you look at. */
+  const shown = React.useRef(0)
+  const already = shown.current
+  React.useEffect(() => {
+    shown.current = showing.length
+  })
+
   return (
     <div>
       <button
@@ -423,6 +446,7 @@ export const ToolRun = React.memo(function ToolRun({
           {showing.map((item, index) => (
             <div
               key={item.id}
+              style={stagger(index - already)}
               className={cn(
                 "harness-item-in",
                 RAIL_ELBOW,
@@ -1096,7 +1120,7 @@ ToolStep.displayName = "ToolStep"
  * Renders user message text, collapsing any pasted text blocks into interactive
  * toggles that can be opened/closed to view the pasted content.
  */
-function UserMessageText({ text }: { text: string }) {
+export function UserMessageText({ text }: { text: string }) {
   const parts = React.useMemo(() => parseUserMessageParts(text), [text])
   if (parts.length === 1 && parts[0].type === "prose") {
     return <Prose text={parts[0].text} />

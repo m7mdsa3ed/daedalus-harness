@@ -539,7 +539,9 @@ export function RoutineForm({
               these values and then one prompt, so anything a thread can be
               started with, a routine can be started with, and nothing else. */}
           <div className="rounded-xl border">
-            <DraftScopeRow meta={meta} actions={facade} remember={false} />
+            {/* Pinned below, unlike the composer's copy: this row is near the
+                top of a form page, where there is room under it. */}
+            <DraftScopeRow meta={meta} actions={facade} remember={false} side="bottom" />
             <div className="border-t px-1 py-0.5">
               <DraftConfigPopover meta={meta} actions={facade} remember={false} />
             </div>

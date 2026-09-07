@@ -82,22 +82,20 @@ import { useChord } from "@/lib/keybindings"
 import { formatChord, type ShortcutId } from "@/lib/shortcuts"
 import { Shortcut } from "@/components/shortcut"
 import type { ThreadStatus } from "@/components/sidebar/thread-row"
-import { IDLE_PHASE, markFor } from "@/lib/thread/phase"
+import { useThreadStatuses } from "@/lib/thread/statuses"
 import type { Actions } from "@/lib/actions"
 import {
   boardPath,
+  landingPath,
   projectPath,
   routinesPath,
   schedulesPath,
-  settingsPath,
-  threadPath,
 } from "@/lib/router"
 import { usePins } from "@/lib/pins"
-import { useProfiles, useProjects } from "@/lib/queries/catalog"
+import { useProjects } from "@/lib/queries/catalog"
 import { useRoutines, useScheduled } from "@/lib/queries/routines"
-import { activityAt, isTopLevel, type Project, type SessionMeta } from "@/lib/settings"
-import { defaultsForProfile, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
-import { useStoreSelect, type ThreadState as LiveThreadState } from "@/lib/store"
+import { activityAt, isListed, type Project, type SessionMeta } from "@/lib/settings"
+import { useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
 
 /* The scale keeps its historical import path: everything outside the sidebar
@@ -289,86 +287,21 @@ function useSidebarView(): SidebarView {
   )
 }
 
-/** Starting a thread *in* a given project — the + on a project folder. The
-    profile/agent/model come from the same remembered defaults ⌘N uses; only
-    the project is the caller's. With no usable profile there is nothing to
-    start, so it lands on the projects settings page like the empty state does. */
-export function useStartThreadIn(actions: Actions) {
-  const profiles = useProfiles()
+/** Starting a thread *in* a given project — the + on a project folder, and the
+    project page's own button. The same front door ⌘N takes (the landing
+    console, which resolves the profile/agent/model from the remembered
+    defaults); only the project is the caller's, and it rides on the URL because
+    there is no thread yet for it to ride on. */
+export function useStartThreadIn() {
   const navigate = useNavigate()
   const { isMobile, setOpenMobile } = useSidebar()
   return React.useCallback(
     (project: Project) => {
-      const defaults = loadThreadDefaults()
-      const start = resolveThreadStart(defaults, profiles)
-      if (!start) return void navigate(settingsPath("projects"))
-      const id = actions.newDraftThread({
-        project,
-        ...start,
-        ...defaultsForProfile(defaults, start.profile.id),
-      })
       if (isMobile) setOpenMobile(false)
-      void navigate(threadPath(id))
+      void navigate(landingPath(project.id))
     },
-    [actions, profiles, navigate, isMobile, setOpenMobile]
+    [navigate, isMobile, setOpenMobile]
   )
-}
-
-/* ── Per-thread status, with a stable identity ──
-   The statuses the sidebar sorts, filters and groups by almost never change
-   with the stream that produces them, so the map is rebuilt on each notify
-   (cheap — one pass, no parsing) and *reused by identity* when its contents
-   are unchanged.
-
-   That identity is now the subscription itself: the derivation lives inside
-   the selector, so the store's own `Object.is` on the returned map is what
-   decides whether the sidebar renders at all. It used to sit in the render
-   body under `useStore()`, which meant the whole sidebar re-rendered on every
-   streamed token of every thread and merely skipped the memos below it. The
-   selector must be idempotent for this to be safe, and it is: the same state
-   yields the same map and the ref is replaced only when a status word
-   actually differs.
-
-   The live thread is the truth about a running turn: SessionMeta.promptActive
-   is a server snapshot refetched only on bootstrap and on mutations, so on
-   its own it never lights up mid-turn. Fall back to it for threads this
-   client has not connected yet — for those it is the only signal there is.
-   Waiting on you: the agent raised a question (elicitation) or an approval
-   (permission) that is still open. Only known for threads this client has
-   connected, so best-effort — and correct whenever a tab has it open. */
-function useThreadStatuses(): Map<string, ThreadStatus> {
-  const prev = React.useRef<Map<string, ThreadStatus>>(new Map())
-  return useStoreSelect((state) => {
-    const next = new Map<string, ThreadStatus>()
-    for (const session of state.sessions) {
-      const thread = state.threads[session.id] as LiveThreadState | undefined
-      const waiting =
-        !!thread && (thread.permissions.length > 0 || thread.elicitations.length > 0)
-      const running = thread?.turnActive ?? session.promptActive
-      /* A thread this client has never connected has no phase of its own, and
-         `idle` is the honest reading for it — the server's `promptActive` is
-         the only signal there is, and it says nothing about a connection that
-         does not exist. */
-      /* The row's own record of how its last turn went — the server's, so it
-         is known for every thread in the list and not only for the ones this
-         device has open. */
-      next.set(
-        session.id,
-        markFor(thread?.phase ?? IDLE_PHASE, running, waiting, !!session.lastTurnError)
-      )
-    }
-    let same = next.size === prev.current.size
-    if (same) {
-      for (const [id, value] of next) {
-        if (prev.current.get(id) !== value) {
-          same = false
-          break
-        }
-      }
-    }
-    if (!same) prev.current = next
-    return prev.current
-  })
 }
 
 /* ── The list ── */
@@ -381,7 +314,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
   const pins = usePins()
   const view = useSidebarView()
   const navigate = useNavigate()
-  const startIn = useStartThreadIn(actions)
+  const startIn = useStartThreadIn()
   /* The icon rail is 3rem wide: a thread row there is a title clipped to
      nothing, and a group label is already hidden by the primitive — so the
      rail would be a column of blank rows and stray fold chevrons. Collapsed,
@@ -405,7 +338,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
     // Deleting is reversible, so a deleted thread leaves the tiers above but
     // not the sidebar: it drops into Trash until it is restored or purged.
     const live = sessions
-      .filter(isTopLevel)
+      .filter(isListed)
       .filter((session) => !session.deletedAt)
       .filter((session) => {
         if (view.filter === "running") return statuses.get(session.id) === "running"
@@ -419,7 +352,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
         return true
       })
     const trashed = sessions
-      .filter(isTopLevel)
+      .filter(isListed)
       .filter((session) => !!session.deletedAt)
       .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0))
 

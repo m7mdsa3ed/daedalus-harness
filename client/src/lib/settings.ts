@@ -739,8 +739,22 @@ export interface SessionMeta {
   forkedFromTurnId?: string | null
 }
 
-/** A thread that is nobody's workflow step — the only kind the lists show. */
-export const isTopLevel = (s: SessionMeta): boolean => !s.parentSessionId
+/** A thread that is nobody's workflow step. Half of `isListed`, which is what
+    every list actually asks for. */
+const isTopLevel = (s: SessionMeta): boolean => !s.parentSessionId
+
+/**
+ * A thread a *list* may show: not a subagent's step, and not a draft the server
+ * has never been told about. A draft is a thread the user has opened and not
+ * yet started, and it used to appear in Recents, the sidebar and the project's
+ * own list as a "New thread" row that nothing had happened in — an entry only
+ * this browser tab could see, which vanished on reload.
+ *
+ * Trash is deliberately not part of this. Some of these lists exclude deleted
+ * threads and one of them *is* the deleted ones, so `deletedAt` stays the
+ * caller's question.
+ */
+export const isListed = (s: SessionMeta): boolean => isTopLevel(s) && !s.draft
 
 const sameIds = (a?: string[], b?: string[]): boolean =>
   a === b || (!!a && !!b && a.length === b.length && a.every((id, i) => id === b[i]))

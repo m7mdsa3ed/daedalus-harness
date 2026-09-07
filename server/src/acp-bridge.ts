@@ -430,7 +430,15 @@ export interface BridgeHost {
   /** `session/load` was refused. The thread runs on a fresh session from here,
       but the id it failed on stays the thread's record of itself. */
   onHistoryLost(lost: HistoryLost): void;
-  onSpawnStateChange(next: { model?: string; effort?: string; modeId?: string | null }): void;
+  onSpawnStateChange(next: {
+    model?: string;
+    effort?: string;
+    modeId?: string | null;
+    /** Absolute, never a patch: the whole of what the agent's other selectors
+        are set to right now. A delta would need a delete for a value that went
+        back to its default, and there is nothing to gain from having one. */
+    configChoices?: Record<string, string | boolean>;
+  }): void;
 }
 
 export interface BridgeOptions {
@@ -1032,6 +1040,24 @@ export class AcpBridge {
    * The rule is the client's `partitionSessionOptions` / `isModeTwin`, narrowed
    * to the part a restore needs. Captured while the old process is still up.
    */
+  /**
+   * The same set `captureRestoreState` restores, flattened to the
+   * `{configId: value}` shape `applyChoices` replays and `sessions.config_choices`
+   * stores.
+   *
+   * Two readers of one rule, deliberately: a restart copies the live options
+   * across whole (they are still the same agent's, and richer), while a revive
+   * with no process to copy from replays this from the row. Sharing the filter
+   * is what stops the two from disagreeing about whether the mode twin counts.
+   */
+  private choices(): Record<string, string | boolean> {
+    const out: Record<string, string | boolean> = {};
+    for (const option of this.captureRestoreState().configOptions) {
+      out[option.id] = option.currentValue;
+    }
+    return out;
+  }
+
   captureRestoreState(): RestoreState {
     const modeIds = new Set(this.modes?.availableModes.map((m) => m.id) ?? []);
     const configOptions = this.configOptions.filter((option) => {
@@ -1502,7 +1528,6 @@ export class AcpBridge {
 
   async setMode(modeId: string, origin?: Peer): Promise<void> {
     const sessionId = this.requireSession();
-    const wasActive = this.promptActive;
     const oldId = this.modes?.currentModeId;
     await this.connection.agent.request(acp.methods.agent.session.setMode, { sessionId, modeId });
     /* Only what the agent advertised: a runtime that accepts an unknown id
@@ -1518,13 +1543,18 @@ export class AcpBridge {
        process to copy from (idle-retired, pre-restart) puts it back from the
        row instead of coming back on the agent's default. */
     this.host.onSpawnStateChange({ modeId });
-    /* A mode switched mid-turn is part of what happened in this thread, so it
-       gets a transcript row of its own — held for the step boundary like a
-       steer (see `holdConfigNotice`), so the row lands where the replay will
-       agree with rather than in the middle of the running step. Idle changes
-       stay silent. */
-    if (wasActive && oldId !== undefined && oldId !== modeId) {
-      this.holdConfigNotice(configNoticeText("Mode", this.modeName(oldId), this.modeName(modeId)));
+    /* A mode switch is part of what happened in this thread, so it gets a
+       transcript row of its own (`noteConfigChange` for when it lands).
+
+       Gated on `origin`, which is the whole of "a person asked for this": the
+       socket command passes the peer that sent it, and every *internal* caller
+       — a draft's pick, a respawn putting back what it captured — passes
+       nothing. Gating on `promptActive` instead only worked by accident, since
+       a restore happens to run between turns; the moment one did not, a
+       respawn would have narrated its own bookkeeping back to the reader as
+       changes they never made. */
+    if (origin && oldId !== undefined && oldId !== modeId) {
+      this.noteConfigChange("Mode", this.modeName(oldId), this.modeName(modeId));
     }
     this.emitConfig(origin);
   }
@@ -1535,7 +1565,6 @@ export class AcpBridge {
     origin?: Peer,
   ): Promise<acp.SessionConfigOption[]> {
     const sessionId = this.requireSession();
-    const wasActive = this.promptActive;
     const before = this.configOptions.find((o) => o.id === configId);
     const beforeValue = before?.type === "select" ? before.currentValue : undefined;
     const response = await this.connection.agent.request(
@@ -1556,18 +1585,33 @@ export class AcpBridge {
        on the model the user switched away from. */
     const after = this.configOptions.find((o) => o.id === configId);
     const category = after?.category ?? before?.category;
-    if (typeof value === "string") {
-      if (category === "model") this.host.onSpawnStateChange({ model: value });
-      else if (category === "thought_level") this.host.onSpawnStateChange({ effort: value });
+    if (typeof value === "string" && category === "model") {
+      this.host.onSpawnStateChange({ model: value });
+    } else if (typeof value === "string" && category === "thought_level") {
+      this.host.onSpawnStateChange({ effort: value });
+    } else {
+      /* Everything else the agent offers — and this is the half that had no row
+         to come back from. Model, effort and the mode have columns of their
+         own and are reported above (and by `setMode`); the rest were readable
+         only off the live process, so a thread revived without one came back
+         on the agent's defaults with nothing saying it had. */
+      this.host.onSpawnStateChange({ configChoices: this.choices() });
     }
-    /* Like `setMode` above: a model/effort switch that lands mid-turn draws
-       its own row (`Model: Fast → Smart`), held for the step boundary;
-       anything else — an idle change, a boolean toggle, an uncategorised
-       option — stays a silent state update. */
+    /* Like `setMode` above, and gated the same way: a model or effort switch a
+       *person* made draws its own row (`Model: Fast → Smart`). A boolean
+       toggle and an uncategorised option stay silent state updates — they have
+       no shared vocabulary to name them with, and `configOptions` on the wire
+       already says what they are set to.
+
+       `origin` is also what keeps this quiet for `setByCategory`, which is how
+       `applyConfigLive` places a model the /config door already owns: that
+       door writes the row itself (`SessionManager.noteConfig`), and gating on
+       `promptActive` used to mean the same change was announced once live and
+       not at all when it cost a respawn. */
     const newValue =
       after?.type === "select" ? after.currentValue : typeof value === "string" ? value : undefined;
     if (
-      wasActive &&
+      origin &&
       typeof newValue === "string" &&
       (category === "model" || category === "thought_level") &&
       (beforeValue === undefined || beforeValue !== newValue)
@@ -1577,7 +1621,7 @@ export class AcpBridge {
         after?.type === "select" ? after : before?.type === "select" ? before : undefined;
       const from = beforeValue !== undefined ? selectValueName(picker, beforeValue) : undefined;
       const to = selectValueName(picker, newValue);
-      this.holdConfigNotice(configNoticeText(label, from, to));
+      this.noteConfigChange(label, from, to);
     }
     this.emitConfig(origin);
     return this.configOptions;
@@ -1968,11 +2012,32 @@ export class AcpBridge {
     this.host.onHeldSteersChanged();
   }
 
-  /** A live profile move that landed mid-turn draws its own row, held for the
-      step boundary like a mode/model change; an idle move stays silent — the
-      menu already says where the thread is. */
-  noteProfileChange(from: string | undefined, to: string): void {
-    if (this.promptActive) this.holdConfigNotice(configNoticeText("Profile", from, to));
+  /**
+   * One transcript row for a setting the *user* changed — the single door for
+   * every notice this thread's own settings produce.
+   *
+   * Two things it settles that used to be settled three different ways.
+   *
+   * **A change is said whether or not a turn was running.** It used to be said
+   * only mid-turn, on the argument that an idle change needs no announcement
+   * because the menu already shows where the thread is. But the menu shows the
+   * *current* state and the transcript is the record: reading back, "these
+   * answers came from a different model than those" is precisely the question,
+   * and an idle change is the more consequential of the two — it governs every
+   * turn after it, where a mid-turn one governs the rest of one turn. The
+   * reader who finds them noisy has a switch (`showConfigNotices`), which is
+   * the right place for that argument.
+   *
+   * **When it lands is still the turn's business.** A turn in flight holds the
+   * row for its step boundary (`holdConfigNotice`) so the replay agrees with
+   * what was on screen; an idle thread has no boundary to wait for, and a row
+   * held for one it will never reach is a change that looks like it did
+   * nothing.
+   */
+  noteConfigChange(label: ConfigNoticeLabel, from: string | undefined, to: string): void {
+    const text = configNoticeText(label, from, to);
+    if (this.promptActive) this.holdConfigNotice(text);
+    else this.host.emit({ ev: "config_notice", seq: 0, text });
   }
 
   private emitConfig(except?: Peer): void {
@@ -2013,10 +2078,23 @@ export class AcpBridge {
   }
 }
 
-/** One transcript line for a mid-turn setting change (`Mode: Plan → Build`).
+/** What a setting change row can be about. Persona and the suggestions toggle
+    joined the list late and are the reason it is a type: both always cost a
+    respawn, so both used to change the way the agent answers with nothing
+    anywhere saying they had. */
+export type ConfigNoticeLabel =
+  | "Mode"
+  | "Model"
+  | "Effort"
+  | "Profile"
+  | "Persona"
+  | "Agent"
+  | "Follow-ups";
+
+/** One transcript line for a setting change (`Mode: Plan → Build`).
     Exported for tests. */
 export function configNoticeText(
-  label: "Mode" | "Model" | "Effort" | "Profile",
+  label: ConfigNoticeLabel,
   from: string | undefined,
   to: string,
 ): string {

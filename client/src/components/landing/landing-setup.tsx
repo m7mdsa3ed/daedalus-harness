@@ -36,12 +36,12 @@ export function LandingSetup({
   ]
 
   return (
-    <section aria-labelledby="landing-setup-title" className="mx-auto mt-16 max-w-2xl">
-      <div className="text-center">
+    <section aria-labelledby="landing-setup-title">
+      <div>
         <h2 id="landing-setup-title" className="font-heading text-lg font-semibold tracking-tight">
           Finish the setup
         </h2>
-        <p className="mx-auto mt-1 max-w-md text-sm text-pretty text-muted-foreground">
+        <p className="mt-1 max-w-md text-sm text-pretty text-muted-foreground">
           Two things stand between you and a running thread. Either is one
           settings page away.
         </p>

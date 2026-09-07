@@ -483,15 +483,76 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 
 ## Composer
 
-- **The composer is one component, `components/composer.tsx`, and one card of two rows.**
-  The textarea, and under it a single toolbar reading *what goes in → where it goes → what
-  happens*: a "+" menu (attach, take a photo on touch, mention a file, run a command, insert a
-  code block, clear), the model/config cluster, the length reading, the context ring, then
-  expand, voice, pause, stop and a filled primary Send. It used to be five loose buttons on a
-  row that a phone overflowed first; every way of *adding to* the message is behind the "+",
-  and every way of *sending* it is behind the chevron beside Send (queue or steer while a turn
-  runs, Schedule…, and the Enter preference). A long-press on Send (touch) and a right-click
-  (mouse) open that same menu, so the chevron is a hint, not the only door.
+- **The composer is one component, `components/composer.tsx`, and one card of two rows** — the
+  textarea and a toolbar — with the shelf above it.
+- **The shelf has a floor: `ComposerStrip`'s `footer`, the one row that is always there**
+  (`DraftScopeRow` in `components/draft-config.tsx`): the project this thread runs in, the
+  tools it carries (`ThreadToolsMenu`), and at the row's end the context ring
+  (`ContextIndicator`, opening upward). It is not a card — it registers no sliver, never goes
+  behind, and holds the shelf open between turns, so **the strip is a permanent object with a
+  pile that comes and goes** rather than the other way round. It wears the shelf's width (half
+  a rem narrower than the composer, a rem and a half from `@panel-sm`) and **`--composer`, not
+  the pile's `--surface`** — it belongs to the box it sits on, not to the shelf, so the seam
+  below it disappears and the one above it is where the shelf begins.
+  **The tuck belongs to whoever is last** (`TUCK`): with a footer the cards stand on it and
+  give up their `pb-4`, and the footer takes it, so the shelf still ends behind the composer
+  and nothing reserves that edge twice. The footer squares its top corners the moment a card
+  stands on it — a rounded corner under a card's square one is a notch of transcript through
+  the seam. Both halves used to be a draft-only card on the shelf,
+  so the project — *which directory these edits land in* — was visible while you typed the
+  first message and never again; the tools menu meanwhile hopped into the toolbar as a
+  read-out, which is the same question answered in two places. It is one row now, on both
+  sides of the first message: a started thread's project is fixed (it **is** the agent's cwd)
+  so that half reads out instead of picking, and `editable` is the only thing the draft
+  changes. The ring is there because how full the window is, is a fact about the thread rather
+  than a control on the send row — the tab wears the same component, opening downward.
+  **`ThreadToolsMenu` renders nothing when a started thread carries no links**, so the row
+  asks `useThreadToolCount` before it draws the divider in front of it; that hook is also what
+  the menu counts with, so neither can drift. **Which way its popup opens is the caller's**
+  (`side`), not read off `editable` — that was only ever a proxy for where the trigger stood,
+  and it pointed the draft's menu off the bottom of the screen the moment the row moved into
+  the composer. The routine form passes `side="bottom"`; the composer takes the default.
+- **The toolbar is the card's second row**, reading *what goes in → who answers → what
+  happens*: a "+" menu (attach, take a photo on touch, mention a file, run a command, insert a code block,
+  clear), the model/config cluster, the length reading, then voice, pause, stop and a filled
+  primary Send. It used to be five loose buttons on a row that a phone overflowed first; every
+  way of *adding to* the message is behind the "+", and every way of *sending* it is behind
+  the chevron beside Send (queue or steer while a turn runs, Schedule…, and the Enter
+  preference). A long-press on Send (touch) and a right-click (mouse) open that same menu, so
+  the chevron is a hint, not the only door.
+- **The pile is only what is about the message being typed** (`components/composer-strip.tsx`):
+  attachments, parked pastes, the history notice, the two completers, the archive notice, and
+  the count of subagents out working. It is a "which of these do you want in front" mechanism,
+  and a fact that is *always* true is not a card in it — the project spent its life as a card
+  nobody brought forward and then stopped being drawn at all. It stacks **above the footer**.
+- **The readings are one cluster at the end of the footer, one shape each**
+  (`TodoIndicator`, `AgentsIndicator`, `ContextIndicator` in `components/composer-status.tsx`,
+  passed as `DraftScopeRow`'s `trailing`). They answer the same *kind* of question — one number
+  that is true of the thread right now, glanced at constantly and read in full rarely — so each
+  is a 24px trigger over a popover: the checklist's ring and its steps, the running-subagent
+  count and their names and elapsed times, the context ring and the turn's numbers. Each draws
+  nothing when it has nothing to say, so an idle thread's cluster is the ring alone. The
+  checklist and the agent count have been a card on the shelf (folded behind a 14px sliver) and
+  a card at the foot of the transcript (a screenful of scrolling from view); both were the
+  whole list, permanently, for a question that is usually "how far along". **A popover is a
+  fixed surface with a viewport of its own**, which is what lets these lists scroll without
+  taking the room from the transcript.
+- **The queue is drawn as the messages it is** (`components/composer-queue.tsx`), at the very
+  end of the flow: the same tinted bubble at the same right edge as a sent message, dashed and
+  a shade back, with the state ("Next", "Steering") and the queued time in the caption. It is
+  **last** because a queued message is the conversation's *future* — everything above it has
+  happened or is happening, including the approval or question the turn stopped on. What
+  changes when one is sent is one border, not its shape or its place.
+- **Editing a queued message takes it back to the composer** — `queueRemove` first, then the
+  composer's `fill` handle, and the fill only on success, because a message in the box *and*
+  in the queue gets said twice. There is no in-place editor: that was a second, worse composer
+  that could not attach a file or run a command. Cancelling is therefore the same gesture.
+- **A `MessageScrollerItem` that renders nothing still reserves `contain-intrinsic-size`**, so
+  the caller gates (`thread.queue.length`) and the component only draws.
+  **A summary bar over the composer was tried and taken back out**: a floating pill of counts
+  (checklist `done/total`, messages waiting, the last turn's `files +a −r`), each chip
+  scrolling to its card. The readings belong in the footer's cluster, where they are one habit
+  and not two. Don't re-add it.
 - **Two "mobile" answers, used for two different things.** `useCoarsePointer` (the device's
   pointer) sizes the touch targets — 36px on a finger, 32px on a mouse — and decides whether
   "Take a photo" is offered (`capture="environment"` on a second picker: `capture` is an
@@ -815,7 +876,9 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   (`lib/workspace/panel-status.ts`, `components/workspace/panel-status-dot.tsx`). It used to
   be a glyph the chat panel prefixed onto its own title, which made the reading part of the
   *title*: no other kind could have one, it could not be coloured, and a screen reader read
-  it as a stray character. A dock keeps every panel mounted, so the strip is the only place a
+  it as a stray character. (**The project a chat runs in is not on its tab** — it is the
+  composer's scope band, where it is a name rather than a 14px mark that drops its label
+  below `sm`.) A dock keeps every panel mounted, so the strip is the only place a
   panel nobody is looking at can speak — a turn waiting on you, a shell that exited, a dev
   server that failed, unsaved files in the IDE. Four tones, and the whole sentence in the
   label, because a strip has room for one dot and a pointer and a screen reader both read the

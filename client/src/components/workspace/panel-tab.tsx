@@ -2,8 +2,10 @@
    what makes `dock.closePanel` the only way a panel closes — and therefore the
    only place a dirty editor gets asked.
 
-   What it draws is deliberately little: the project a thread runs in, the
-   thread's name, and the two controls that act on the tab itself. A panel's
+   What it draws is deliberately little: the thread's name, its context ring,
+   and the two controls that act on the tab itself. The project it runs in is
+   NOT among them — it moved to the composer's scope band, where it is a name
+   and not a mark that drops its label below `sm`. A panel's
    *reading* (`lib/workspace/panel-status`) is not among them — it is on the
    strip's tab list, where a panel you cannot see is the one you need it for.
    On the face it was a third mark competing with two logos for one line of
@@ -31,7 +33,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ContextIndicator } from "@/components/composer-status"
-import { ProjectIcon } from "@/components/entity-icon"
 import { MENU_WIDTH } from "@/components/menu-row"
 import {
   ItemContextMenu,
@@ -84,6 +85,8 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
   const chatSessionId = descriptor?.kind === "chat" ? descriptor.sessionId : ""
   const meta = useSessionMeta(chatSessionId)
   const projects = useProjects()
+  /* Not drawn on the face any more — the composer's scope band says it. Still
+     looked up, because "Project commands" below is this thread's project's. */
   const project = meta ? projects.find((p) => p.id === meta.projectId) : undefined
   const [active, setActive] = React.useState(api.isActive)
   const [closable, setClosable] = React.useState(false)
@@ -229,23 +232,12 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
               room before a 10px corner that an icon, centred in its own square,
               does not.
 
-              A badge per answer, the same shape and the same ground at every
-              width: the project this thread runs in, then the thread itself.
-              What changes between a phone and a desk is how much of a badge is
-              *said*, never how it is drawn — the project keeps its mark and
-              drops its name, rather than becoming a different object (it was a
-              stacked pair of ringed avatars on one side of `sm` and a row of
-              plain icons on the other, which is two designs sharing a
-              component). */}
-          {project && (
-            <span
-              data-tab-badge
-              className="flex min-w-0 items-center gap-1 rounded-lg p-1 text-muted-foreground sm:pr-2"
-            >
-              <ProjectIcon project={project} className="size-3.5 shrink-0" />
-              <span className="hidden max-w-24 truncate sm:inline">{project.name}</span>
-            </span>
-          )}
+              One badge, one answer: the thread itself. The project used to lead
+              the row, and it is a better fact than a tab can carry — it is
+              *where the edits land*, which is worth a name and not a 14px mark
+              that drops its name below `sm`. It is the composer's scope band
+              now (`composer.tsx`), in front of the thread it is true of and
+              legible at every width, so the tab does not say it twice. */}
           {/* The thread: its name, and nothing beside it. A chat tab wore its
               runtime's logo, a project logo and a status dot — three marks for
               one line of text, when the thing a reader needs to tell two tabs

@@ -79,7 +79,7 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { Shortcut } from "@/components/shortcut"
-import { ComposerAgents, ContextIndicator } from "@/components/composer-status"
+import { AgentsIndicator, ContextIndicator, TodoIndicator } from "@/components/composer-status"
 import { ComposerAttachments, ComposerPastes, type AttachmentDelivery } from "@/components/composer-attachments"
 import { ComposerHistoryDialog } from "@/components/composer-history-dialog"
 import { ComposerStrip, ComposerStripItem } from "@/components/composer-strip"
@@ -700,6 +700,12 @@ export function Composer({
           )}
         </div>
       )}
+      {thread.archived && (
+        <div className="mx-auto mb-1.5 flex w-full max-w-[var(--harness-composer-width)] items-center justify-center gap-2 rounded-lg border border-dashed px-3 py-1.5 text-center text-xs text-muted-foreground">
+          <Archive className="size-3.5 shrink-0" />
+          <span>This thread's agent isn't running. Sending a message starts it again.</span>
+        </div>
+      )}
       <ComposerStrip
         /* ── The scope row ──
            Where this thread runs, what it carries, how full it is — the shelf's
@@ -715,38 +721,35 @@ export function Composer({
               meta={meta}
               actions={actions}
               editable={draft}
+              /* The readings, in one cluster at the row's end: how far the
+                 checklist has got, how many workers are out, how full the
+                 window is. Three answers of the same *kind* — one number that
+                 is true of the thread right now, glanced at constantly and
+                 read in full rarely — so they are one shape (a 24px trigger
+                 over a popover) in one place, rather than a card on a shelf
+                 each. Every one of them draws nothing when it has nothing to
+                 say, so an idle thread's cluster is the ring alone. */
               trailing={
-                <ContextIndicator
-                  thread={thread}
-                  meta={meta}
-                  actions={actions}
-                  side="top"
-                  size="icon-xs"
-                />
+                <>
+                  <TodoIndicator thread={thread} />
+                  <AgentsIndicator thread={thread} />
+                  <ContextIndicator
+                    thread={thread}
+                    meta={meta}
+                    actions={actions}
+                    side="top"
+                    size="icon-xs"
+                  />
+                </>
               }
             />
           )
         }
       >
-        {/* Read from the journal, with no agent behind it. Said rather than
-            enforced: the composer stays live because sending is what revives
-            the thread (see actions.send), and a box you cannot type into would
-            make the user go looking for a button to press first. */}
-        {thread.archived && (
-          <ComposerStripItem
-            summary={{ id: "archived", icon: Archive, label: "Agent not running" }}
-            className="flex items-center gap-2 px-2 py-1.5 text-[11px] text-muted-foreground"
-          >
-            <Archive className="size-3 shrink-0" />
-            <span>This thread's agent isn't running. Sending a message starts it again.</span>
-          </ComposerStripItem>
-        )}
-        {/* How many subagents are out working, while any are. The checklist and
-            the queue used to sit here too; they are the *turn's*, not the
-            message's, so they are drawn at the tail of the transcript with
-            everything else the turn is doing (`thread-view.tsx`). What is left
-            on this shelf is about the message being typed right now. */}
-        <ComposerAgents thread={thread} />
+        {/* The shelf is only what is about the message being typed. The
+            checklist and the running-agent count are readings of the *thread*
+            and live in the footer's cluster; the queue is the user's own
+            sentences and lives in the transcript, as sentences. */}
         {/* What is riding along with the message but is not in the box: a file. */}
         <ComposerAttachments
           attachments={files.attachments}

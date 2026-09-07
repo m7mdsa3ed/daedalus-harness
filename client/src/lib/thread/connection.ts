@@ -202,11 +202,18 @@ export class ThreadConnection {
     this.apply({ type: "create-begin" })
   }
 
-  /** A config change the server answered `live: false` to — the process is
-      being replaced under this thread, so the rebuild reads as a restart
-      ("Restarting the agent…") rather than a plain read. */
-  markReviving(): void {
-    this.apply({ type: "revive-begin" })
+  /**
+   * A process is being put back under this thread, so the rebuild reads as a
+   * restart rather than a plain read.
+   *
+   * `because` is what the wait *says*, and the two callers mean different
+   * things by it: a revive is a thread whose agent had stopped and is coming
+   * back, and a config restart is a setting the user just picked that could
+   * not be applied to the running process. Told apart because one sentence was
+   * being used for both — see `ConnPhase`.
+   */
+  markReviving(because: "revive" | "config" = "revive"): void {
+    this.apply({ type: "revive-begin", because })
   }
 
   /** The create never happened — put the thread back to "never opened", which
@@ -541,7 +548,7 @@ export class ThreadConnection {
       /* Putting a process back is the seconds-long part, exactly as spawning one
          is, and it is worth saying so: without this the thread reads "Reading
          this conversation…" through a wait that is not a read at all. */
-      this.apply({ type: "revive-begin" })
+      this.apply({ type: "revive-begin", because: "revive" })
       await api(this.deps.settings, `/api/sessions/${this.id}/respawn`, {
         method: "POST",
         body: JSON.stringify({
@@ -1157,10 +1164,17 @@ export class ThreadConnection {
          fanned out to this still-attached socket. Folding them would append the
          transcript to itself — on every device that was not the one holding the
          menu, which is exactly the case nothing used to tell. */
-      onRestart: (state, error) => {
+      onRestart: (state, kept, error) => {
         if (state === "started") {
-          this.restarting = true
-          this.markReviving()
+          /* …unless the server kept the log (`kept`). Then there is no
+             narration coming — it is dropped where it is produced — and going
+             deaf here would throw away the two events that DO arrive, the new
+             process's `spawn_config` and `session_config`, with no reattach
+             coming to state them again. */
+          this.restarting = !kept
+          /* The user asked for this by changing a setting — not a thread whose
+             agent had stopped, which is the other caller of this. */
+          this.markReviving("config")
           return
         }
         if (state === "failed") {
@@ -1179,11 +1193,21 @@ export class ThreadConnection {
           this.detach()
           return
         }
-        /* Up, on the settings that were asked for. The log was cleared under
-           this socket, so the cursor names nothing and the transcript has to be
-           rebuilt — `seamless`, because what is on screen is a correct
-           transcript of this very conversation and there is no reason for the
-           reader to watch it disappear and come back. */
+        /* Up, on the settings that were asked for — and the log was never
+           touched, so there is nothing to rebuild: this socket is still
+           attached, its cursor still names the same place, and the transcript
+           on screen was never wrong. All that is left is to stop saying a
+           process is being replaced. The phase goes straight back to `live`
+           rather than through an open, because no open happened. */
+        if (kept) {
+          this.restarting = false
+          this.apply({ type: "socket-live" })
+          return
+        }
+        /* The log WAS cleared under this socket, so the cursor names nothing
+           and the transcript has to be rebuilt — `seamless`, because what is on
+           screen is a correct transcript of this very conversation and there is
+           no reason for the reader to watch it disappear and come back. */
         this.forgetJournal()
         void this.openFromStore({ revive: true, seamless: true })
       },

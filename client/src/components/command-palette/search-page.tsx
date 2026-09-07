@@ -26,7 +26,7 @@ import { useSidebar } from "@/components/ui/sidebar"
 import { KEYS } from "@/lib/shortcuts"
 import { searchThreads, type SearchResult } from "@/lib/search"
 import { useServer } from "@/lib/server-context"
-import { activityAt, isTopLevel } from "@/lib/settings"
+import { activityAt, isListed } from "@/lib/settings"
 import { useProjects } from "@/lib/queries/catalog"
 import { threadPath } from "@/lib/router"
 import { useLiveTurnActive, useStoreSelect } from "@/lib/store"
@@ -103,7 +103,7 @@ export function SearchPage() {
   /* Deleted threads live in the sidebar's Trash, not here — searching is for
      going somewhere, and a deleted thread is nowhere to go. */
   const threads = React.useMemo(() => {
-    const live = sessions.filter(isTopLevel).filter((session) => !session.deletedAt)
+    const live = sessions.filter(isListed).filter((session) => !session.deletedAt)
     if (!query) {
       return [...live].sort((a, b) => activityAt(b) - activityAt(a)).slice(0, RECENT_LIMIT)
     }

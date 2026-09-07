@@ -1,43 +1,37 @@
-/* ── The queue, at the foot of the transcript ──
-   Messages typed while the agent was busy, waiting for the turn to end. They
-   belong to the *turn* rather than to the message being typed, which is why
-   they are read where the turn is (`thread-view.tsx`, under the working line)
-   and no longer folded behind a 14px sliver on the composer's shelf — a list
-   of the user's own sentences was the wrong thing to hide. They are the user's
-   words and not the agent's state, so this is its own file rather than a third
-   checklist in composer-status.
+/* ── The queue, as the messages it is ──
+   Messages typed while the agent was busy, waiting for the turn to end.
 
-   Two bands, like the plan: a collapsed row that says how many are waiting
-   and shows the one that goes next, with the two actions that apply to the
-   whole queue ("send all now" interrupts the turn and sends everything
-   combined; "clear" forgets it); and an expandable list, one row per message,
-   each with its own send-now / steer / edit / remove. Editing is in place — a
-   textarea swapped in for the text — because the words are still the user's
-   until the turn ends, and a message you cannot fix before it goes is one you
-   would rather not have queued.
+   They are drawn as **user messages**, because that is what they are: the same
+   tinted bubble, hugging the same right edge, at the same width, in the same
+   column — sitting at the end of the transcript where they will land. What
+   changes when one is sent is that it stops being dashed, not that it moves.
+   Every other shape this has worn — a collapsed row on the composer's shelf, a
+   numbered list with a rail behind a chevron — was a *list of messages*, which
+   is a thing you read; a queue is a thing you are about to say.
 
-   The list reads as a *queue* and not as a list of rows that happen to be
-   numbered: the messages are the user's own words, so each sits in a bubble
-   the same shade as a sent one, they are threaded onto a rail down the ordinal
-   column (the order is the only thing a queue actually promises), and the
-   first is marked "Next" — everything below it is waiting on that one. Each
-   row also says when it was queued, which the shelf never used to show at all
-   and which is the difference between "I typed that a moment ago" and a
-   message parked on an archived thread since yesterday.
+   ── Different, because it has not gone ──
+   The bubble is dashed and a shade back (`opacity-90`). The caption under it
+   carries the state — "Next" for the one the turn's end will send, "Steering"
+   for one already on the wire — and the time it was queued, which is the
+   difference between "I typed that a moment ago" and a message parked on an
+   archived thread since yesterday.
 
-   Row actions are revealed on hover on a pointer device and always drawn on a
-   phone, where there is no hover to reveal them with: four icon buttons per
-   row, always lit, made the list read as a toolbar with some text in it.
+   ── Editing takes it back ──
+   There is no in-place editor. "Edit" removes the message from the queue and
+   puts its words back in the composer, which is where a message is composed:
+   one box with the "+" menu, the model picker, the history and every send it
+   knows. An editor in the transcript was a second, worse composer that could
+   not attach a file or run a command, and a message you can only half-fix is
+   one you would rather re-type. Cancelling is therefore the same gesture —
+   pull it back and delete the box.
 
    The list is the server's (`thread.queue`): every action here is a command,
-   and the row redraws from the `queue` event that answers it. Nothing is
+   and the rows redraw from the `queue` event that answers it. Nothing is
    removed optimistically, so a failed remove leaves the message where it is
    and the error where the thread's errors go. */
 import * as React from "react"
 import {
-  ChevronDownIcon,
   CornerDownRightIcon,
-  ListOrderedIcon,
   PaperclipIcon,
   PencilIcon,
   SendHorizontalIcon,
@@ -45,14 +39,11 @@ import {
 } from "lucide-react"
 import type { QueuedMessage } from "@daedalus/protocol"
 
+import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible"
-import { Textarea } from "@/components/ui/textarea"
+import { Message, MessageContent } from "@/components/ui/message"
 import { Timestamp } from "@/components/tool-parts"
+import { UserMessageText } from "@/components/thread-items"
 import type { Actions } from "@/lib/actions"
 import type { ThreadState } from "@/lib/store"
 import { formatBytes } from "@/lib/attachments"
@@ -66,14 +57,15 @@ export function ComposerQueue({
   sessionId,
   thread,
   actions,
+  onEdit,
 }: {
   sessionId: string
   thread: ThreadState
   actions: Actions
+  /** Put these words back in the composer. The row has already been removed
+      from the queue by the time this is called — see the note above. */
+  onEdit: (text: string) => void
 }) {
-  /* Closed by default — the header row already says how many are waiting and
-     which one goes next, which is the whole of a glance. */
-  const [open, setOpen] = React.useState(false)
   const items = thread.queue
   const count = items.length
   /* A held steer is listed but already sent: "send all" and "clear" have
@@ -90,68 +82,18 @@ export function ComposerQueue({
   const running = thread.turnActive
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="w-full">
-      {/* The header is a row that CONTAINS the trigger, not a trigger that
-          contains the buttons. It used to be the latter — three buttons nested
-          inside the disclosure button, each cancelling the click it was sitting
-          in — which is invalid markup, is why `stop(e)` existed, and above all
-          could not wrap: `shrink-0` actions and a `flex-1` summary on one line
-          meant "Send all now" and "Clear" took ~150px of a 360px column and the
-          message they were about truncated to nothing. Now the summary and the
-          actions are siblings, so in a narrow panel the actions drop to their
-          own line under a summary that has the whole width, and from
-          `@panel-sm` up the row reads exactly as it did. */}
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-2 py-1.5">
-        <CollapsibleTrigger
-          render={
-            <button
-              type="button"
-              className="-mx-1 flex min-w-0 flex-1 basis-full items-center gap-2 rounded-md px-1 py-1 text-left transition-colors hover:bg-accent/40 sm:py-0.5 @panel-sm:basis-0"
-            />
-          }
-        >
-          {/* size-6, the ring's width on the checklist rows, so the queue's icon
-              sits on the same column as the plan's progress dial above it — and
-              on the ordinal column of the rows below it, which is what makes
-              the rail under it read as hanging off this row. Tinted rather than
-              bare: the shelf stacks several of these bands and the disc is what
-              tells them apart at a glance. */}
-          <span className="grid size-6 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
-            <ListOrderedIcon aria-hidden className="size-3.5" />
-          </span>
-          {/* One truncating line, so what gets cut is whatever is last — which
-              is why the order matters more than it looks. "waiting for this
-              turn to end" is ~180px of a 360px column, and with it in front the
-              ellipsis always landed before the message, leaving a row whose
-              only variable part said nothing. The clause is the least
-              informative thing here (the shelf's own collapsed line already
-              says "3 queued", and the composer already says whether a turn is
-              running), so it is the part that goes in a narrow panel and the
-              message keeps the room. */}
-          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-            <span className="font-medium text-foreground">
-              {count === 1 ? "1 message" : `${count} messages`}
-            </span>
-            <span className="hidden @panel-sm:inline">
-              {" "}
-              {running ? "waiting for this turn to end" : "waiting to be sent"}
-            </span>
-            {/* The message that goes first, named as such: the row is a preview
-                of what happens next, not a sample of what is in the list. */}
-            <span className="text-muted-foreground/60"> · next: {firstLine(items[0].text)}</span>
-          </span>
-          <span className="grid size-4 shrink-0 place-items-center">
-            <ChevronDownIcon
-              aria-hidden
-              className={cn(
-                "size-3.5 text-muted-foreground transition-transform duration-200",
-                open && "rotate-180"
-              )}
-            />
-          </span>
-          <span className="sr-only">{open ? "Hide queued messages" : "Show queued messages"}</span>
-        </CollapsibleTrigger>
-        <span className="ms-auto flex shrink-0 items-center gap-1">
+    <div className="pt-1">
+      {/* A rule, the same one a notice wears, rather than a header bar: what
+          follows is the conversation continuing, not a panel of queued items,
+          and the two actions that apply to the whole queue ride the rule
+          because there is nowhere else they belong. */}
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 py-2 text-[11px] text-muted-foreground/70">
+        <span aria-hidden className="h-px min-w-4 flex-1 bg-border" />
+        <span className="shrink-0">
+          {count === 1 ? "1 message" : `${count} messages`}{" "}
+          {running ? "waiting for this turn" : "waiting to be sent"}
+        </span>
+        <span className="flex shrink-0 items-center gap-1">
           <Button
             variant="ghost"
             size="xs"
@@ -179,278 +121,172 @@ export function ComposerQueue({
           </Button>
         </span>
       </div>
-      <CollapsibleContent className="harness-collapse">
-        <ul className="border-t border-border/40 px-2 py-1.5">
-          {items.map((item, index) => (
-            <QueueRow
-              key={item.id}
-              item={item}
-              index={index}
-              next={item.id === editable[0]?.id}
-              last={index === items.length - 1}
-              sessionId={sessionId}
-              actions={actions}
-              canSend={canSend && !item.steer}
-              canEdit={canEdit && !item.steer}
-              running={running}
-            />
-          ))}
-        </ul>
-      </CollapsibleContent>
-    </Collapsible>
+      {items.map((item) => (
+        <QueuedMessageRow
+          key={item.id}
+          item={item}
+          next={item.id === editable[0]?.id}
+          sessionId={sessionId}
+          actions={actions}
+          onEdit={onEdit}
+          canSend={canSend && !item.steer}
+          canEdit={canEdit && !item.steer}
+          running={running}
+        />
+      ))}
+    </div>
   )
 }
 
-function firstLine(text: string): string {
-  const line = text.split("\n").find((l) => l.trim()) ?? ""
-  return line.length > 80 ? `${line.slice(0, 80)}…` : line
-}
-
-function QueueRow({
+function QueuedMessageRow({
   item,
-  index,
   next,
-  last,
   sessionId,
   actions,
+  onEdit,
   canSend,
   canEdit,
   running,
 }: {
   item: QueuedMessage
-  index: number
   /** The first row the turn's end will send — the first that is not a steer. */
   next: boolean
-  /** The rail is drawn *between* ordinals, so the last row does not carry one
-      on down into the padding under the list. */
-  last: boolean
   sessionId: string
   actions: Actions
+  onEdit: (text: string) => void
   canSend: boolean
   canEdit: boolean
   running: boolean
 }) {
-  const [editing, setEditing] = React.useState(false)
-  const [draft, setDraft] = React.useState(item.text)
-  const [expanded, setExpanded] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
-
-  // Another device may edit the same row; its words win over a stale draft.
-  React.useEffect(() => {
-    if (!editing) setDraft(item.text)
-  }, [item.text, editing])
 
   const run = (op: Promise<unknown>) => {
     setBusy(true)
     void op.catch(() => {}).finally(() => setBusy(false))
   }
-  const save = () => {
-    const value = draft.trim()
-    setEditing(false)
-    if (!value || value === item.text) return
-    run(actions.queueUpdate(sessionId, item.id, value))
-  }
-  const cancel = () => {
-    setDraft(item.text)
-    setEditing(false)
+  /* Removed first, filled second, and the fill only on success: a message that
+     is in the box *and* still in the queue is one that gets said twice. */
+  const edit = () => {
+    setBusy(true)
+    void actions
+      .queueRemove(sessionId, item.id)
+      .then(() => onEdit(item.text))
+      .catch(() => {})
+      .finally(() => setBusy(false))
   }
 
   return (
-    /* Wraps for the same reason the header does: the message and four icon
-       buttons on one line left ~150px for the words in a narrow panel.
-       `basis-full` gives the text the row to itself and drops the actions
-       underneath it, right-aligned under the message they act on; from
-       `@panel-sm` up `basis-0` puts them back on the line. */
-    <li
+    <Message
+      align="end"
       aria-busy={busy || undefined}
       className={cn(
-        "group/queue relative flex flex-wrap items-start gap-x-2 gap-y-1 py-1 text-xs transition-opacity",
-        busy && "opacity-60"
+        "group/queued flex-col items-end gap-0.5 py-2 transition-opacity",
+        busy && "opacity-50"
       )}
     >
-      {/* The rail the ordinals are threaded onto, so the list reads as a line
-          of messages waiting rather than as three separately numbered things.
-          Anchored to the row and not to the ordinal column: the row is as tall
-          as the message in it, and a line measured against the 24px column
-          would be 4px of rail under a three-line bubble. `top-7`/`-bottom-1`
-          are the gap under this ordinal and the gap over the next one. */}
-      {!last && (
-        <span
-          aria-hidden
-          className="absolute top-7 -bottom-1 left-3 w-px -translate-x-1/2 rounded-full bg-border/50"
-        />
-      )}
-      {/* The position, in the icon column the header's disc sits in — the order
-          is what a queue is. Only the one that goes next is tinted: everything
-          below it is waiting on it. */}
-      <span className="grid size-6 shrink-0 place-items-center">
-        <span
-          className={cn(
-            "grid size-[1.125rem] place-items-center rounded-full text-[10px] font-semibold tabular-nums",
-            index === 0 ? "bg-primary/10 text-primary" : "text-muted-foreground/70"
-          )}
-        >
-          {index + 1}
-        </span>
-      </span>
-      {editing ? (
-        <div className="flex min-w-0 flex-1 basis-[calc(100%-2rem)] flex-col gap-1 @panel-sm:basis-0">
-          <Textarea
-            autoFocus
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                e.preventDefault()
-                cancel()
-              } else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault()
-                save()
-              }
-            }}
-            rows={2}
-            className="min-h-9 rounded-lg px-2 py-1.5 text-xs md:text-xs"
-          />
-          <div className="flex items-center gap-1">
-            <Button size="xs" className={ROW_BUTTON} onClick={save} disabled={!draft.trim()}>
-              Save
-            </Button>
-            <Button size="xs" variant="ghost" className={ROW_BUTTON} onClick={cancel}>
-              Cancel
-            </Button>
-            {/* The two keys that already work, said once — an in-place editor
-                with no visible contract is one people leave with Escape by
-                accident and re-type the message. */}
-            <span className="ms-1 hidden text-[10px] text-muted-foreground/60 @panel-sm:inline">
-              Enter to save · Esc to cancel
-            </span>
-          </div>
-        </div>
-      ) : (
-        <div className="flex min-w-0 flex-1 basis-[calc(100%-2rem)] flex-col @panel-sm:basis-0">
-          <button
-            type="button"
-            className={cn(
-              /* The user's own words, in the surface a sent message uses, so a
-                 queued message looks like the message it is about to become.
-                 `wrap-anywhere`, not `break-words`: `overflow-wrap: break-word`
-                 breaks a long token only after the line has already been laid
-                 out at its full width, so it neither wraps a pasted URL nor
-                 stops it counting as this row's minimum width. `anywhere` does
-                 both — the token wraps, and the row can be as narrow as the
-                 panel. */
-              "min-w-0 rounded-lg border border-border/40 bg-muted/40 px-2 py-1 text-left leading-5 whitespace-pre-wrap wrap-anywhere text-foreground transition-colors hover:border-border/70 hover:bg-muted/60",
-              !expanded && "line-clamp-3"
-            )}
-            title={expanded ? "Collapse" : "Show the whole message"}
-            onClick={() => setExpanded((v) => !v)}
+      <MessageContent>
+        {/* The sent message's own bubble, dashed: same tint, same corner tail,
+            same 80% cap, so what changes when it goes is one border and not
+            the shape of the thing you wrote. */}
+        <Bubble variant="tinted" align="end" className="opacity-90">
+          <BubbleContent
+            dir="auto"
+            className="rounded-2xl rounded-br-sm border border-dashed border-primary/40 px-4 py-2.5 text-sm dark:border-primary/30"
           >
-            {item.text}
-          </button>
-          {/* What this message will carry when it drains. Shown while the words
-              are still editable, and removable there, because `queue_update`
-              carries the ids — a queued item's attachments are a thing you can
-              take back, not a thing you can add to (the composer is where a
-              message is composed). */}
-          {item.attachments && item.attachments.length > 0 && (
-            <QueuedAttachments
-              attachments={item.attachments}
-              removable={canEdit}
-              onRemove={(id) =>
-                run(
-                  actions.queueUpdate(
-                    sessionId,
-                    item.id,
-                    item.text,
-                    (item.attachments ?? [])
-                      .filter((ref) => ref.id !== id)
-                      .map((ref) => ref.id)
+            {item.attachments && item.attachments.length > 0 && (
+              <QueuedAttachments
+                attachments={item.attachments}
+                removable={canEdit && !busy}
+                onRemove={(id) =>
+                  run(
+                    actions.queueUpdate(
+                      sessionId,
+                      item.id,
+                      item.text,
+                      (item.attachments ?? []).filter((ref) => ref.id !== id).map((ref) => ref.id)
+                    )
                   )
-                )
-              }
-            />
-          )}
-          {/* When it was queued, and — for the first row only — that it is the
-              one the turn's end will send. */}
-          <span className="mt-0.5 flex items-center gap-1.5 ps-0.5 text-[10px] text-muted-foreground/60">
-            {item.steer ? (
-              /* Already on the wire, joining the running turn at its next step
-                 boundary — which is where its bubble will land. Until then this
-                 row is the only place the words are. */
-              <span className="flex items-center gap-0.5 rounded bg-primary/10 px-1 font-medium text-primary">
-                <CornerDownRightIcon aria-hidden className="size-2.5" />
-                Steering
-              </span>
-            ) : (
-              next && (
-                <span className="rounded bg-primary/10 px-1 font-medium text-primary">Next</span>
-              )
+                }
+              />
             )}
-            <Timestamp at={item.createdAt} className="text-[10px]" />
-          </span>
-        </div>
-      )}
-      {!editing && !item.steer && (
-        /* Revealed on hover, kept on a phone: four lit icon buttons per row
-           made a list of the user's own sentences read as a toolbar. Focus
-           counts as hover, or the row would be unusable from the keyboard. */
-        <span className="ms-auto flex shrink-0 items-center gap-0.5 pt-0.5 transition-opacity sm:opacity-0 sm:group-hover/queue:opacity-100 sm:group-focus-within/queue:opacity-100">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className={ICON_BUTTON + " text-primary hover:text-primary"}
-            disabled={!canSend || busy}
-            title={running ? "Stop the running turn and send this now" : "Send this now"}
-            onClick={() => run(actions.queueSendNow(sessionId, item.id))}
-          >
-            <SendHorizontalIcon />
-          </Button>
-          {running && (
+            <UserMessageText text={item.text} />
+          </BubbleContent>
+        </Bubble>
+      </MessageContent>
+      {/* State, time, and the actions — under the bubble on the same right
+          edge a timestamp uses, so the row reads as one object. The actions
+          are revealed on hover on a pointer and always drawn on a phone, where
+          there is no hover to reveal them with. Focus counts as hover, or the
+          row would be unusable from the keyboard. */}
+      <div className="flex items-center gap-1.5 pe-1 text-[10px] text-muted-foreground/60">
+        {!item.steer && (
+          <span className="flex items-center gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover/queued:opacity-100 sm:group-focus-within/queued:opacity-100">
             <Button
               variant="ghost"
               size="icon-xs"
-              /* The one action in this row that was missing the touch size, so
-                 on a phone it was a 24px target between three 28px ones — and
-                 it only appears mid-turn, which is exactly when the row is
-                 being used. */
-              className={ICON_BUTTON}
+              className={cn(ICON_BUTTON, "text-primary hover:text-primary")}
               disabled={!canSend || busy}
-              title="Steer: send this into the running turn without stopping it"
-              onClick={() => run(actions.queueSteer(sessionId, item.id))}
+              title={running ? "Stop the running turn and send this now" : "Send this now"}
+              onClick={() => run(actions.queueSendNow(sessionId, item.id))}
             >
-              <CornerDownRightIcon />
+              <SendHorizontalIcon />
             </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className={ICON_BUTTON}
-            disabled={!canEdit || busy}
-            title="Edit"
-            onClick={() => setEditing(true)}
-          >
-            <PencilIcon />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className={ICON_BUTTON + " text-muted-foreground hover:text-destructive"}
-            disabled={!canEdit || busy}
-            title="Remove"
-            onClick={() => run(actions.queueRemove(sessionId, item.id))}
-          >
-            <XIcon />
-          </Button>
-        </span>
-      )}
-    </li>
+            {running && (
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className={ICON_BUTTON}
+                disabled={!canSend || busy}
+                title="Steer: send this into the running turn without stopping it"
+                onClick={() => run(actions.queueSteer(sessionId, item.id))}
+              >
+                <CornerDownRightIcon />
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className={ICON_BUTTON}
+              disabled={!canEdit || busy}
+              title="Take it back to the composer — this removes it from the queue"
+              onClick={edit}
+            >
+              <PencilIcon />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className={cn(ICON_BUTTON, "text-muted-foreground hover:text-destructive")}
+              disabled={!canEdit || busy}
+              title="Remove"
+              onClick={() => run(actions.queueRemove(sessionId, item.id))}
+            >
+              <XIcon />
+            </Button>
+          </span>
+        )}
+        {item.steer ? (
+          /* Already on the wire, joining the running turn at its next step
+             boundary — which is where its bubble will land. Until then this
+             row is the only place the words are, which is also why it has no
+             actions: there is nothing left to take back. */
+          <span className="flex items-center gap-0.5 rounded bg-primary/10 px-1 font-medium text-primary">
+            <CornerDownRightIcon aria-hidden className="size-2.5" />
+            Steering
+          </span>
+        ) : (
+          next && <span className="rounded bg-primary/10 px-1 font-medium text-primary">Next</span>
+        )}
+        <Timestamp at={item.createdAt} className="text-[10px]" />
+      </div>
+    </Message>
   )
 }
 
-/** A queued message's attachments: names and sizes, with a ✕ while the queue is
-    editable. Not thumbnails — the queue is a list of what is waiting, read at
-    the width of a shelf, and a row of pictures there would be the loudest thing
-    on a surface whose job is to be glanceable. */
+/** A queued message's attachments, inside the bubble the way a sent message's
+    are — with a ✕ while the queue is editable, because `queue_update` carries
+    the ids and a queued item's attachments are a thing you can take back. Not
+    thumbnails: what is being read here is whether the right file is coming. */
 function QueuedAttachments({
   attachments,
   removable,
@@ -461,11 +297,11 @@ function QueuedAttachments({
   onRemove: (id: string) => void
 }) {
   return (
-    <ul className="mt-1 flex flex-wrap gap-1 ps-0.5">
+    <ul className="mb-1.5 flex flex-wrap gap-1">
       {attachments.map((ref) => (
         <li
           key={ref.id}
-          className="flex items-center gap-1 rounded-pill border border-border/40 bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+          className="flex items-center gap-1 rounded-pill border border-border/40 bg-background/40 px-1.5 py-0.5 text-[10px] text-muted-foreground"
         >
           <PaperclipIcon className="size-2.5 shrink-0" />
           <span className="max-w-32 truncate">{ref.name}</span>

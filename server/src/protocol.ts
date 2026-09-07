@@ -939,13 +939,23 @@ export type ThreadEvent =
    * decided (live or not), the sequence runs on, and this says where it got to.
    *
    * Live-only and never journaled: it describes a process, not a conversation.
-   * `started` is the client's signal to stop folding events into a transcript
-   * that is about to be replaced; `ready` is the one to reattach from 0 (the
-   * log was cleared, so every cursor into it names nothing); `failed` carries
-   * the reason the way any thread failure is carried, and leaves a thread that
-   * needs reviving.
+   * `failed` carries the reason the way any thread failure is carried, and
+   * leaves a thread that needs reviving.
+   *
+   * **`kept` says whether the journal survived**, and it is what the other two
+   * states mean. False is the old bargain: the log was cleared and the
+   * conversation reloaded into it, so `started` means "stop folding events into
+   * a transcript that is about to be replaced" and `ready` means "reattach from
+   * 0", every saved cursor into that log now naming nothing. True — the
+   * ordinary case for a setting change on a live thread — means nothing was
+   * cleared and nothing restated: the socket carries on where it was, the
+   * cursor is still good, and the reader's transcript never moves. Stated on
+   * `started` as well, because a peer that goes deaf there would drop the
+   * `spawn_config` and `session_config` of the new process and, with no
+   * reattach coming, never hear them again. Absent on a server that predates
+   * the field, which is the old bargain and reads as false.
    */
-  | { ev: "restart"; state: "started" | "ready" | "failed"; error?: WireError }
+  | { ev: "restart"; state: "started" | "ready" | "failed"; kept?: boolean; error?: WireError }
   /** A turn began, and whose words began it. Fanned out to every peer except
       the sender, which already showed its own message. */
   /** `attachments` is journaled, which is the whole point of carrying refs

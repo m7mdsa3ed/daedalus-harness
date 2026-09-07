@@ -154,6 +154,10 @@ export function makeBridgeHost(session: Session, owner: BridgeHostOwner): Bridge
          handshake answered: the row is what a revive with no live process
          restores from, so it always names the last confirmed mode. */
       if (next.modeId !== undefined) session.modeId = next.modeId;
+      /* Absolute, so it replaces rather than merges: an option the user put
+         back on its default has to be able to leave this map, and a merge
+         could only ever add to it. */
+      if (next.configChoices !== undefined) session.configChoices = next.configChoices;
       owner.persist(session);
     },
   };

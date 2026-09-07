@@ -4,7 +4,7 @@ import { ChevronUp, GitCompare } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Logo } from "@/components/ui/logo"
-import { ActivityIndicator, ComposerTodo, threadTodos } from "@/components/composer-status"
+import { ActivityIndicator, PhaseLine } from "@/components/composer-status"
 import { ComposerQueue } from "@/components/composer-queue"
 import { useAttachmentDelivery, wentInline } from "@/components/composer-attachments"
 import {
@@ -20,7 +20,7 @@ import type { Actions } from "@/lib/actions"
 import { reportError } from "@/lib/errors"
 import { KEYBOARD_CENTER_FLOW, KEYBOARD_LIFT, KEYBOARD_LIFT_FOCUSED } from "@/lib/keyboard-inset"
 import { holdOf } from "@/lib/thread/hold"
-import { slowLine, startingLine, type ConnPhase } from "@/lib/thread/phase"
+import { slowLine, startingLine, waitDelayMs, type ConnPhase } from "@/lib/thread/phase"
 import { currentThreadId, navigateTo, threadPath } from "@/lib/router"
 import { KEYS, isInteractiveTarget, isTypingTarget, overlayOpen } from "@/lib/shortcuts"
 import { useDispatch, useSessionMeta, useThread, threadIsEmpty, type ThreadItem, type ThreadState } from "@/lib/store"
@@ -385,13 +385,6 @@ function useThreadKeys({
 
 const OPTION_DIGITS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
 
-/* The card the checklist and the queue are read on at the foot of the flow.
-   Plainer than `AgentRequestCard` on purpose: that one is tinted because the
-   agent is *waiting on you*, and neither of these is a question — one is the
-   work ahead, the other is what goes next. Both were rows on a shelf, in a
-   gutter the width of a sliver; here they have the transcript's own column. */
-const TAIL_CARD = "overflow-hidden rounded-xl border border-border/60 bg-surface/50"
-
 /** A transcript, addressed by the pair that names it. The panel above hands
     the key down (see workspace/chat-panel): every store read, every action and
     every device-local draft below is keyed by it, because a bare session id is
@@ -404,11 +397,9 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
   const dispatch = useDispatch()
   const thread = useThread(sessionId)
   const hold = holdOf(thread)
-  /* The checklist at the foot of the transcript, or null. Read here rather
-     than inside the card, because the card's slot in the scroller reserves an
-     intrinsic size whether or not anything renders into it. */
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the one field it reads
-  const todos = React.useMemo(() => threadTodos(thread), [thread.items])
+  /* Whether the connection's own wait is on screen — read by the two rows at
+     the foot of the transcript that trade places with it. */
+  const waitShown = useWaitShown(thread.phase)
   /* Safe unconditionally: a transcript only ever exists inside a chat panel
      (`workspace/chat-panel.tsx`), which is inside the dock. The composer does
      not do this itself — it is also the build page's, where there is none. */
@@ -967,7 +958,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   still landing under it, and then vanished from off-screen.
                   Here it is where the next thing to happen will happen, in the
                   same slot the working line takes once the thread is live. */}
-              {startingLine(thread.phase) && (
+              {waitShown && (
                 <MessageScrollerItem messageId="starting">
                   <StartingLine phase={thread.phase} />
                 </MessageScrollerItem>
@@ -981,7 +972,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   sentence with the buttons that act on it, and a line above it
                   repeating the reason is the wait announced twice. A *user's*
                   pause keeps the line, because it has no card. */}
-              {thread.turnActive && !startingLine(thread.phase) && !hold.byError && (
+              {thread.turnActive && !waitShown && !hold.byError && (
                 <MessageScrollerItem messageId="working">
                   {/* The turn's foot is its own five-slot cascade, counted from
                       the working line down: these mount together far more often
@@ -991,35 +982,6 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   <div className="harness-item-in" style={stagger(0)}>
                     <div className="py-0.5">
                       <ActivityIndicator thread={thread} />
-                    </div>
-                  </div>
-                </MessageScrollerItem>
-              )}
-              {/* The work the turn has ahead of it, and the words waiting
-                  behind it. Both were rows on the composer's shelf, folded
-                  behind a 14px sliver — which is the wrong home for either: a
-                  checklist is a running account of the turn, and a queue is a
-                  list of the user's own sentences. They are the *turn's*, so
-                  they are read where the turn is, at its foot, in the flow that
-                  already holds the working line above them. The shelf keeps
-                  only what is about the message being typed.
-
-                  Above the three cards below, not among them: those are things
-                  the turn has STOPPED on and want the last word. */}
-              {todos && (
-                <MessageScrollerItem messageId="todos">
-                  <div className="harness-item-in py-1" style={stagger(1)}>
-                    <div className={TAIL_CARD}>
-                      <ComposerTodo todos={todos} />
-                    </div>
-                  </div>
-                </MessageScrollerItem>
-              )}
-              {thread.queue.length > 0 && (
-                <MessageScrollerItem messageId="queue">
-                  <div className="harness-item-in py-1" style={stagger(2)}>
-                    <div className={TAIL_CARD}>
-                      <ComposerQueue sessionId={sessionId} thread={thread} actions={actions} />
                     </div>
                   </div>
                 </MessageScrollerItem>
@@ -1078,6 +1040,26 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   </div>
                 </MessageScrollerItem>
               ))}
+              {/* Last, and last on purpose: a queued message is the *future* of
+                  this conversation. Everything above it has happened or is
+                  happening — the working line, the approval, the question the
+                  turn stopped on — and these are the sentences that go next, so
+                  they sit where they will land, at the end, until they are
+                  sent. Editing one takes it back to the composer, which is why
+                  there is no editor here.
+
+                  Gated outside the component: a `MessageScrollerItem` that
+                  renders nothing still reserves `contain-intrinsic-size`. */}
+              {thread.queue.length > 0 && (
+                <MessageScrollerItem messageId="queue">
+                  <ComposerQueue
+                    sessionId={sessionId}
+                    thread={thread}
+                    actions={actions}
+                    onEdit={(text) => composerApiRef.current?.fill(text)}
+                  />
+                </MessageScrollerItem>
+              )}
             </MessageScrollerContent>
             </StepTokensProvider>
             </ViewOptionsContext.Provider>
@@ -1213,8 +1195,10 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
 }
 
 /** Sits directly above the composer while a thread is empty, so it travels with
-    it rather than being stranded at the top of an empty transcript. */
-function ThreadWelcome({ draft }: { draft?: boolean }) {
+    it rather than being stranded at the top of an empty transcript. Exported
+    because the landing page is this same empty state — the composer of a thread
+    that does not exist yet — and two copies of these two sentences would drift. */
+export function ThreadWelcome({ draft }: { draft?: boolean }) {
   return (
     <div className="mx-auto flex w-full max-w-[var(--harness-composer-width)] flex-col items-center gap-1.5 px-4 pb-5 text-center">
       <p className="text-base font-medium">
@@ -1258,6 +1242,34 @@ const SLOW_MS = 6_000
     but not worth drawing. */
 const LONG_REPLAY_EVENTS = 400
 
+/**
+ * Whether this phase's wait should be on screen at all.
+ *
+ * Two answers folded into one: is there a wait to draw (`startingLine`), and
+ * has it lasted long enough to be worth drawing (`waitDelayMs`). The caller
+ * needs both as one boolean because a `MessageScrollerItem` that renders
+ * nothing still reserves its intrinsic size — so the gate has to be outside
+ * the item, not inside `StartingLine`.
+ *
+ * The delay is zero for every phase but a config restart, so this is a
+ * `useState` that never changes and a `setTimeout` that is never set on the
+ * paths that used to render immediately.
+ */
+function useWaitShown(phase: ConnPhase): boolean {
+  const delay = startingLine(phase) ? waitDelayMs(phase) : 0
+  const [elapsed, setElapsed] = React.useState(delay === 0)
+  React.useEffect(() => {
+    if (delay === 0) {
+      setElapsed(true)
+      return
+    }
+    setElapsed(false)
+    const timer = setTimeout(() => setElapsed(true), delay)
+    return () => clearTimeout(timer)
+  }, [delay])
+  return elapsed && startingLine(phase) !== null
+}
+
 function StartingLine({ phase }: { phase: ConnPhase }) {
   const [slow, setSlow] = React.useState(false)
   React.useEffect(() => {
@@ -1273,13 +1285,12 @@ function StartingLine({ phase }: { phase: ConnPhase }) {
   const slowText = slow ? slowLine(phase) : null
   return (
     <div className="py-2">
-      {/* The same mark and layout as the working line (`ActivityIndicator`):
+      {/* Literally the working line now, not merely "the same shape as" it:
           spawning, restarting and connecting are the thread being worked on,
-          and the reader should not have to learn a second shape for the wait. */}
-      <div className="flex min-w-0 items-center gap-2 text-primary" role="status">
-        <Logo working className="size-4 shrink-0" />
-        <span className="harness-shimmer min-w-0 truncate text-xs leading-6">{line.text}</span>
-      </div>
+          and the reader should not have to learn a second shape for the wait.
+          Sharing the component is also what makes the swap between these six
+          sentences a transition instead of a cut — see `PhaseLine`. */}
+      <PhaseLine text={line.text} label="Opening this thread" />
       {bar && (
         <div className="flex max-w-xs items-center gap-2 pl-6 pt-1.5">
           <Progress

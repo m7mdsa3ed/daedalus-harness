@@ -194,9 +194,9 @@ const GROUPS: Group[] = [
       {
         key: "showConfigNotices",
         icon: Eye,
-        title: "Show mode and model changes",
+        title: "Show setting changes",
         description:
-          "The rows marking a mid-turn mode, model, effort or profile change. Off, the change still takes effect — only the row is silent.",
+          "The rows marking a mode, model, effort, profile, persona or agent change, wherever in the thread it happened. Off, the change still takes effect — only the row is silent.",
       },
     ],
   },
