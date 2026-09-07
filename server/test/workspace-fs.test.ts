@@ -4,6 +4,7 @@
 // teardown. These are the paths a browser can reach with a project id, so they
 // are the ones worth proving rather than reasoning about.
 // Run: pnpm test:fs
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import {
   mkdirSync,
@@ -65,7 +66,7 @@ writeFileSync(join(root, "binary.bin"), Buffer.from([0x89, 0x50, 0x00, 0x01, 0x0
 symlinkSync(outside, join(root, "escape"), "dir");
 symlinkSync(join(root, "src"), join(root, "inside-link"), "dir");
 
-const project = createProject({
+const project = await createProject({
   name: "ws",
   cwd: root,
   description: null,
@@ -113,7 +114,7 @@ await test("a project rooted at a symlink is not its own escape", async () => {
   const linked = join(tmpdir(), `daedalus-link-${process.pid}`);
   rmSync(linked, { force: true });
   symlinkSync(root, linked, "dir");
-  const viaLink = createProject({
+  const viaLink = await createProject({
     name: "linked",
     cwd: linked,
     description: null,
@@ -221,7 +222,7 @@ await test("a stale write is a conflict, not an overwrite", async () => {
   const first = await fs.readFile(project.id, "src/written.ts");
   fs.writeFile(project.id, "src/written.ts", "changed by someone else\n");
   assert.equal(
-    await status(() =>
+    await status(async () =>
       fs.writeFile(project.id, "src/written.ts", "mine\n", { expectedVersion: first.version }),
     ),
     409,
@@ -233,8 +234,8 @@ await test("a stale write is a conflict, not an overwrite", async () => {
   );
 });
 
-await test("force is how the user overrides a conflict", () => {
-  const written = fs.writeFile(project.id, "src/written.ts", "mine\n", {
+await test("force is how the user overrides a conflict", async () => {
+  const written = await fs.writeFile(project.id, "src/written.ts", "mine\n", {
     expectedVersion: "nonsense",
     force: true,
   });
@@ -242,9 +243,9 @@ await test("force is how the user overrides a conflict", () => {
   assert.ok(written.version);
 });
 
-await test("the version a write returns is the one the next write expects", () => {
-  const first = fs.writeFile(project.id, "src/chain.ts", "1\n");
-  const second = fs.writeFile(project.id, "src/chain.ts", "2\n", {
+await test("the version a write returns is the one the next write expects", async () => {
+  const first = await fs.writeFile(project.id, "src/chain.ts", "1\n");
+  const second = await fs.writeFile(project.id, "src/chain.ts", "2\n", {
     expectedVersion: first.version,
   });
   assert.notEqual(first.version, second.version);
@@ -263,7 +264,7 @@ await test("writes are bounded and cannot escape", async () => {
 
 // ── Create, rename, delete ───────────────────────────────────────────────────
 await test("create refuses to clobber and refuses the root", async () => {
-  const made = fs.createEntry(project.id, "src/fresh.ts", "file");
+  const made = await fs.createEntry(project.id, "src/fresh.ts", "file");
   assert.equal(made.path, "src/fresh.ts");
   assert.equal(await status(() => fs.createEntry(project.id, "src/fresh.ts", "file")), 409);
   assert.equal(await status(() => fs.createEntry(project.id, "", "dir")), 400);
@@ -272,7 +273,7 @@ await test("create refuses to clobber and refuses the root", async () => {
 });
 
 await test("rename moves inside the project only", async () => {
-  const renamed = fs.renameEntry(project.id, "src/fresh.ts", "src/renamed.ts");
+  const renamed = await fs.renameEntry(project.id, "src/fresh.ts", "src/renamed.ts");
   assert.equal(renamed.path, "src/renamed.ts");
   assert.equal(await status(() => fs.renameEntry(project.id, "src/renamed.ts", "../out.ts")), 403);
   assert.equal(await status(() => fs.renameEntry(project.id, "src/renamed.ts", "README.md")), 409);
@@ -292,8 +293,8 @@ await test("delete refuses the root and reports a missing target", async () => {
 // ── Watcher ─────────────────────────────────────────────────────────────────
 await test("the watcher batches events and refcounts its handle", async () => {
   const batches: unknown[] = [];
-  const off = watchProject(project.id, (batch) => batches.push(batch));
-  const off2 = watchProject(project.id, () => {});
+  const off = await watchProject(project.id, (batch) => batches.push(batch));
+  const off2 = await watchProject(project.id, () => {});
   assert.deepEqual(watchedProjects(), [project.id], "both subscribers share one watcher");
 
   for (let i = 0; i < 5; i += 1) writeFileSync(join(root, `watched-${i}.txt`), "x");
@@ -332,7 +333,7 @@ await test("trees: a snapshot sees shell edits and untracked files, and a hunk a
   writeFileSync(join(repo, "a.txt"), "one\ntwo\nthree\n");
   run(["add", "."]);
   run(["commit", "--quiet", "-m", "first"]);
-  const project = createProject({ name: "trees", cwd: repo, description: null });
+  const project = await createProject({ name: "trees", cwd: repo, description: null });
 
   const dir = await git.repoDirAt(repo);
   assert.equal(dir, repo);
@@ -377,7 +378,7 @@ await test("status parses porcelain v2, including renames and untracked", async 
   run(["add", "."]);
   run(["commit", "--quiet", "-m", "first"]);
 
-  const gitProject = createProject({
+  const gitProject = await createProject({
     name: "git",
     cwd: repo,
     description: null,
@@ -473,7 +474,7 @@ await test("a project that is a folder of repositories, not one", async () => {
   mkdirSync(join(workspace, "node_modules", "pkg"), { recursive: true });
   mkdirSync(join(workspace, "node_modules", "pkg", ".git"), { recursive: true });
 
-  const multi = createProject({ name: "multi", cwd: workspace, description: null });
+  const multi = await createProject({ name: "multi", cwd: workspace, description: null });
 
   const repos = await git.repositories(multi.id);
   const paths = repos.map((r) => r.path).sort();
@@ -535,7 +536,7 @@ await test("a project inside a larger repository sees only its own subtree", asy
   run(["add", "."]);
   run(["commit", "--quiet", "-m", "first"]);
 
-  const inner = createProject({
+  const inner = await createProject({
     name: "app",
     cwd: join(repo, "packages", "app"),
     description: null,
@@ -579,7 +580,7 @@ await test("a project inside a larger repository sees only its own subtree", asy
 
 // ── Terminals ────────────────────────────────────────────────────────────────
 await test("a terminal runs in the project directory and is bounded per project", async () => {
-  const created = terminals.createTerminal(project.id, { cols: 100, rows: 30 });
+  const created = await terminals.createTerminal(project.id, { cols: 100, rows: 30 });
   assert.equal(created.projectId, project.id);
   assert.equal(created.cols, 100);
   assert.equal(created.exitCode, null);

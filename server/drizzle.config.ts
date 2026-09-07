@@ -1,32 +1,39 @@
 import { defineConfig } from "drizzle-kit";
+import { databaseUrl } from "./src/config.js";
 
 /*
  * The schema is pushed, never migrated: `pnpm db:push` after a schema.ts
  * change (src/db/index.ts does it itself for a database that has never been
  * opened). There are no migration files.
  *
- * DAEDALUS_DATA_DIR moves the database, and the default matches config.ts.
+ * Which server is `config.ts`'s answer and not a second one written here:
+ * `databaseUrl()` reads DATABASE_URL, then `data/config.json`, then the
+ * default — so a push and the server it is pushing for can never disagree
+ * about which database they mean. Unlike the SQLite file this replaced, push
+ * needs a *reachable* server — `pnpm db:push` on a machine where Postgres is
+ * down fails at connect, not at the first statement.
  *
- * If push dies on `no such column: "x"`, it is drizzle recreating a table —
- * SQLite cannot ALTER a constraint, so a nullability or default change is a
- * `__new_<table>` copy — and building the copy's SELECT from the *new* column
- * list rather than the intersection with the old one. Push is not one
- * transaction, so the CREATE lands, the INSERT throws, and every later run
- * dies at the same statement: nothing behind it in the plan ever applies.
- * The repair is to make that SELECT legal, then push again:
- *   sqlite3 data/daedalus.db "DROP TABLE IF EXISTS \`__new_<table>\`;
- *     ALTER TABLE \`<table>\` ADD COLUMN \`x\` <type>;"
- * Nullable adds only — anything NOT NULL wants a default or a backfill first.
+ * Push is not one transaction. If it dies partway, the statements behind the
+ * failure never apply and every later run stops at the same place; the repair
+ * is to make that statement legal by hand (`psql "$DATABASE_URL"`) and push
+ * again. Unlike SQLite, Postgres can ALTER a constraint in place, so a
+ * nullability or default change is no longer a table rebuild — the old
+ * `__new_<table>` failure mode is gone with the dialect.
  */
 export default defineConfig({
   schema: "./src/db/schema.ts",
-  dialect: "sqlite",
-  /* The FTS5 index over the journal is a virtual table drizzle cannot model
-     (src/search.ts creates it at boot). Left to push, drizzle-kit reads its
-     shadow tables as unknown, drops the virtual table with them and then
-     crashes on the shadow it has already taken — so it is hidden from push. */
-  tablesFilter: ["!session_events_fts*"],
+  dialect: "postgresql",
+  /* The full-text index over the journal is maintained by hand (src/db/index.ts
+     creates it at boot, src/search.ts writes it): it carries a generated
+     tsvector column and a GIN index, neither of which is worth modelling in
+     schema.ts for a table nothing joins to by drizzle. Hidden from push so
+     push does not drop what it cannot see declared — but `tablesFilter` hides
+     *tables*, and a `bigserial` on a hidden table leaves behind a sequence
+     that push does see, does not recognise and tries to DROP, which Postgres
+     refuses because the hidden column still defaults from it. That is why the
+     table carries no surrogate key at all (db/index.ts). */
+  tablesFilter: ["!session_events_fts"],
   dbCredentials: {
-    url: `${process.env.DAEDALUS_DATA_DIR ?? "./data"}/daedalus.db`,
+    url: databaseUrl(),
   },
 });

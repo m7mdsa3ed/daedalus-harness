@@ -7,6 +7,7 @@
 // installed before the first call and every test shares one fixture. Provider
 // endpoints are canned per URL; anything else reaching fetch is a test bug.
 // Run: pnpm test:models
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 
 let passed = 0;

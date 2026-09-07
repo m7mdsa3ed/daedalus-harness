@@ -22,12 +22,13 @@ import {
   boardStatuses,
   boardViews,
   boards,
-  db,
+  conn,
   sprints,
   taskActivity,
   taskComments,
   taskLinks,
   tasks as tasksTable,
+  transaction,
   type CustomFieldDef,
 } from "./db/index.js";
 import { HttpError } from "./http-error.js";
@@ -194,79 +195,79 @@ export class BoardError extends HttpError {
 
 // ---- reads ----
 
-export function listBoards(): Board[] {
-  return db.select().from(boards).orderBy(asc(boards.order), asc(boards.createdAt)).all();
+export async function listBoards(): Promise<Board[]> {
+  return await conn().select().from(boards).orderBy(asc(boards.order), asc(boards.createdAt));
 }
 
-export function getBoard(id: string): Board | undefined {
-  return db.select().from(boards).where(eq(boards.id, id)).get();
+export async function getBoard(id: string): Promise<Board | undefined> {
+  return (await conn().select().from(boards).where(eq(boards.id, id)).limit(1))[0];
 }
 
 /** Every status on one board, left to right. */
-export function listStatuses(boardId: string): BoardStatus[] {
-  return db
+export async function listStatuses(boardId: string): Promise<BoardStatus[]> {
+  return await conn()
     .select()
     .from(boardStatuses)
     .where(eq(boardStatuses.boardId, boardId))
     .orderBy(asc(boardStatuses.order), asc(boardStatuses.createdAt))
-    .all();
+    ;
 }
 
 /** Every status on every board — one query, so the client can load the whole
     switcher without a request per board. */
-export function listAllStatuses(): BoardStatus[] {
-  return db
+export async function listAllStatuses(): Promise<BoardStatus[]> {
+  return await conn()
     .select()
     .from(boardStatuses)
     .orderBy(asc(boardStatuses.boardId), asc(boardStatuses.order), asc(boardStatuses.createdAt))
-    .all();
+    ;
 }
 
-export function getStatus(id: string): BoardStatus | undefined {
-  return db.select().from(boardStatuses).where(eq(boardStatuses.id, id)).get();
+export async function getStatus(id: string): Promise<BoardStatus | undefined> {
+  return (await conn().select().from(boardStatuses).where(eq(boardStatuses.id, id)).limit(1))[0];
 }
 
 /** The column a task lands in when the caller named none: the board's first. */
-export function firstStatusId(boardId: string): string | undefined {
-  return listStatuses(boardId)[0]?.id;
+export async function firstStatusId(boardId: string): Promise<string | undefined> {
+  return (await listStatuses(boardId))[0]?.id;
 }
 
-export function listAllSprints(): Sprint[] {
-  return db
+export async function listAllSprints(): Promise<Sprint[]> {
+  return await conn()
     .select()
     .from(sprints)
     .orderBy(asc(sprints.boardId), asc(sprints.order), asc(sprints.createdAt))
-    .all();
+    ;
 }
 
-export function listSprints(boardId: string): Sprint[] {
-  return db
+export async function listSprints(boardId: string): Promise<Sprint[]> {
+  return await conn()
     .select()
     .from(sprints)
     .where(eq(sprints.boardId, boardId))
     .orderBy(asc(sprints.order), asc(sprints.createdAt))
-    .all();
+    ;
 }
 
-export function getSprint(id: string): Sprint | undefined {
-  return db.select().from(sprints).where(eq(sprints.id, id)).get();
+export async function getSprint(id: string): Promise<Sprint | undefined> {
+  return (await conn().select().from(sprints).where(eq(sprints.id, id)).limit(1))[0];
 }
 
-export function listAllViews(): BoardView[] {
-  return db
+export async function listAllViews(): Promise<BoardView[]> {
+  return await conn()
     .select()
     .from(boardViews)
     .orderBy(asc(boardViews.boardId), asc(boardViews.order), asc(boardViews.createdAt))
-    .all();
+    ;
 }
 
-export function getView(id: string): BoardView | undefined {
-  return db.select().from(boardViews).where(eq(boardViews.id, id)).get();
+export async function getView(id: string): Promise<BoardView | undefined> {
+  return (await conn().select().from(boardViews).where(eq(boardViews.id, id)).limit(1))[0];
 }
 
 // ---- writes ----
 
-function insertStatus(
+async function insertStatus(
   boardId: string,
   spec: {
     id?: string;
@@ -277,9 +278,9 @@ function insertStatus(
     order: number;
   },
   now: number,
-): BoardStatus {
+): Promise<BoardStatus> {
   const id = spec.id ?? randomUUID();
-  db.insert(boardStatuses)
+  await conn().insert(boardStatuses)
     .values({
       id,
       boardId,
@@ -290,9 +291,8 @@ function insertStatus(
       order: spec.order,
       createdAt: now,
       updatedAt: now,
-    })
-    .run();
-  return getStatus(id)!;
+    });
+  return (await getStatus(id))!;
 }
 
 /** A key from a name: the first letters of its words, or its first letters,
@@ -330,11 +330,11 @@ export function keyFromName(name: string, taken: Set<string> = new Set()): strin
  * (in creation order, per board), so the first boot after the upgrade shows
  * `TASK-1 … TASK-n` rather than a page of `TASK-0`.
  */
-export function ensureDefaultBoard(): void {
+export async function ensureDefaultBoard(): Promise<void> {
   const now = Date.now();
-  if (db.select({ id: boards.id }).from(boards).limit(1).all().length === 0) {
-    db.transaction(() => {
-      db.insert(boards)
+  if ((await conn().select({ id: boards.id }).from(boards).limit(1)).length === 0) {
+    await transaction(async () => {
+      await conn().insert(boards)
         .values({
           id: DEFAULT_BOARD_ID,
           name: "Tasks",
@@ -345,63 +345,62 @@ export function ensureDefaultBoard(): void {
           customFields: [],
           createdAt: now,
           updatedAt: now,
-        })
-        .run();
-      SEED_STATUSES.forEach((seed, index) =>
-        insertStatus(DEFAULT_BOARD_ID, { ...seed, order: index }, now),
-      );
+        });
+      /* A `for` loop and not `forEach(async …)`: the callback's promise is
+         not awaited by forEach, so the seed columns would escape the
+         transaction and land after the board they belong to was committed. */
+      for (const [index, seed] of SEED_STATUSES.entries()) {
+        await insertStatus(DEFAULT_BOARD_ID, { ...seed, order: index }, now);
+      }
     });
   }
-  backfillNumbers(now);
+  await backfillNumbers(now);
 }
 
 /** Tasks with no number are pre-keys rows; give each a number after the
     board's current counter and advance it. Column categories the seed knew
     (`done`) are restored on the legacy ids too. */
-function backfillNumbers(now: number): void {
-  const unnumbered = db
+async function backfillNumbers(now: number): Promise<void> {
+  const unnumbered = await conn()
     .select()
     .from(tasksTable)
     .where(or(isNull(tasksTable.number), eq(tasksTable.number, 0)))
-    .orderBy(asc(tasksTable.createdAt))
-    .all();
-  const legacyDone = getStatus("done");
+    .orderBy(asc(tasksTable.createdAt));
+  const legacyDone = await getStatus("done");
   if (unnumbered.length === 0 && (!legacyDone || legacyDone.category === "done")) return;
-  db.transaction(() => {
+  await transaction(async () => {
     if (legacyDone && legacyDone.category !== "done") {
-      db.update(boardStatuses)
+      await conn().update(boardStatuses)
         .set({ category: "done", updatedAt: now })
-        .where(eq(boardStatuses.id, "done"))
-        .run();
-      db.update(boardStatuses)
+        .where(eq(boardStatuses.id, "done"));
+      await conn().update(boardStatuses)
         .set({ category: "in_progress", updatedAt: now })
-        .where(inArray(boardStatuses.id, ["in_progress", "blocked"]))
-        .run();
+        .where(inArray(boardStatuses.id, ["in_progress", "blocked"]));
     }
     const counters = new Map<string, number>();
     for (const task of unnumbered) {
-      const board = getBoard(task.boardId);
+      const board = await getBoard(task.boardId);
       if (!board) continue;
       const next = counters.get(board.id) ?? board.nextNumber;
-      db.update(tasksTable).set({ number: next }).where(eq(tasksTable.id, task.id)).run();
+      await conn().update(tasksTable).set({ number: next }).where(eq(tasksTable.id, task.id));
       counters.set(board.id, next + 1);
     }
     for (const [boardId, nextNumber] of counters) {
-      db.update(boards).set({ nextNumber, updatedAt: now }).where(eq(boards.id, boardId)).run();
+      await conn().update(boards).set({ nextNumber, updatedAt: now }).where(eq(boards.id, boardId));
     }
   });
 }
 
-export function createBoard(input: CreateBoardInput): Board {
+export async function createBoard(input: CreateBoardInput): Promise<Board> {
   const id = randomUUID();
   const now = Date.now();
   const names = input.statuses?.length ? input.statuses : null;
-  const existing = listBoards();
+  const existing = await listBoards();
   const taken = new Set(existing.map((b) => b.key));
   const key = input.key ?? keyFromName(input.name, taken);
   if (taken.has(key)) throw new BoardError(`the key ${key} is already used by another board`);
-  db.transaction(() => {
-    db.insert(boards)
+  await transaction(async () => {
+    await conn().insert(boards)
       .values({
         id,
         name: input.name,
@@ -414,11 +413,13 @@ export function createBoard(input: CreateBoardInput): Board {
         customFields: [],
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
+      });
+    /* `for` loops and not `forEach(async …)`: forEach does not await its
+       callback, so the columns would escape the transaction — and a board
+       committed without any is a board nothing can be filed on. */
     if (names) {
-      names.forEach((name, index) =>
-        insertStatus(
+      for (const [index, name] of names.entries()) {
+        await insertStatus(
           id,
           {
             name,
@@ -427,29 +428,29 @@ export function createBoard(input: CreateBoardInput): Board {
             category: index === names.length - 1 && names.length > 1 ? "done" : index === 0 ? "todo" : "in_progress",
           },
           now,
-        ),
-      );
+        );
+      }
     } else {
       // A new board gets the seed columns by *name* only — the seed ids belong
       // to the default board, which is the one legacy tasks point at.
-      SEED_STATUSES.forEach((seed, index) =>
-        insertStatus(
+      for (const [index, seed] of SEED_STATUSES.entries()) {
+        await insertStatus(
           id,
           { name: seed.name, color: seed.color, category: seed.category, order: index },
           now,
-        ),
-      );
+        );
+      }
     }
   });
-  return getBoard(id)!;
+  return (await getBoard(id))!;
 }
 
-export function updateBoard(id: string, input: UpdateBoardInput): Board | null {
-  if (!getBoard(id)) return null;
+export async function updateBoard(id: string, input: UpdateBoardInput): Promise<Board | null> {
+  if (!(await getBoard(id))) return null;
   const patch: Partial<Board> = { updatedAt: Date.now() };
   if (input.name !== undefined) patch.name = input.name;
   if (input.key !== undefined) {
-    const clash = listBoards().find((b) => b.id !== id && b.key === input.key);
+    const clash = (await listBoards()).find((b) => b.id !== id && b.key === input.key);
     if (clash) throw new BoardError(`the key ${input.key} is already used by "${clash.name}"`);
     patch.key = input.key;
   }
@@ -467,8 +468,8 @@ export function updateBoard(id: string, input: UpdateBoardInput): Board | null {
       ...(f.type === "select" ? { options: f.options ?? [] } : {}),
     }));
   }
-  db.update(boards).set(patch).where(eq(boards.id, id)).run();
-  return getBoard(id) ?? null;
+  await conn().update(boards).set(patch).where(eq(boards.id, id));
+  return (await getBoard(id)) ?? null;
 }
 
 /**
@@ -480,47 +481,46 @@ export function updateBoard(id: string, input: UpdateBoardInput): Board | null {
  * back except creating one — a state worth making unreachable rather than
  * handling.
  */
-export function deleteBoard(id: string): boolean {
-  if (!getBoard(id)) return false;
-  if (listBoards().length <= 1) throw new BoardError("the last board cannot be deleted");
-  db.transaction(() => {
-    const ids = db
-      .select({ id: tasksTable.id })
-      .from(tasksTable)
-      .where(eq(tasksTable.boardId, id))
-      .all()
-      .map((r) => r.id);
+export async function deleteBoard(id: string): Promise<boolean> {
+  if (!(await getBoard(id))) return false;
+  if ((await listBoards()).length <= 1) throw new BoardError("the last board cannot be deleted");
+  await transaction(async () => {
+    const ids = (
+      await conn().select({ id: tasksTable.id }).from(tasksTable).where(eq(tasksTable.boardId, id))
+    ).map((r) => r.id);
     if (ids.length > 0) {
-      db.delete(taskComments).where(inArray(taskComments.taskId, ids)).run();
-      db.delete(taskActivity).where(inArray(taskActivity.taskId, ids)).run();
-      db.delete(taskLinks).where(inArray(taskLinks.fromId, ids)).run();
-      db.delete(taskLinks).where(inArray(taskLinks.toId, ids)).run();
+      await conn().delete(taskComments).where(inArray(taskComments.taskId, ids));
+      await conn().delete(taskActivity).where(inArray(taskActivity.taskId, ids));
+      await conn().delete(taskLinks).where(inArray(taskLinks.fromId, ids));
+      await conn().delete(taskLinks).where(inArray(taskLinks.toId, ids));
     }
-    db.delete(tasksTable).where(eq(tasksTable.boardId, id)).run();
-    db.delete(boardStatuses).where(eq(boardStatuses.boardId, id)).run();
-    db.delete(sprints).where(eq(sprints.boardId, id)).run();
-    db.delete(boardViews).where(eq(boardViews.boardId, id)).run();
-    db.delete(boards).where(eq(boards.id, id)).run();
+    await conn().delete(tasksTable).where(eq(tasksTable.boardId, id));
+    await conn().delete(boardStatuses).where(eq(boardStatuses.boardId, id));
+    await conn().delete(sprints).where(eq(sprints.boardId, id));
+    await conn().delete(boardViews).where(eq(boardViews.boardId, id));
+    await conn().delete(boards).where(eq(boards.id, id));
   });
   return true;
 }
 
-export function createStatus(boardId: string, input: CreateStatusInput): BoardStatus {
-  if (!getBoard(boardId)) throw new BoardError("unknown board", 404);
-  const existing = listStatuses(boardId);
+export async function createStatus(boardId: string, input: CreateStatusInput): Promise<BoardStatus> {
+  if (!(await getBoard(boardId))) throw new BoardError("unknown board", 404);
+  const existing = await listStatuses(boardId);
   const at = Math.min(input.order ?? existing.length, existing.length);
   const now = Date.now();
   let created!: BoardStatus;
-  db.transaction(() => {
-    // Inserting in the middle pushes everything at or after `at` one right, so
-    // `order` stays a dense 0..n-1 run and the board never has to sort ties.
-    existing.slice(at).forEach((status, offset) => {
-      db.update(boardStatuses)
+  await transaction(async () => {
+    /* Inserting in the middle pushes everything at or after `at` one right, so
+       `order` stays a dense 0..n-1 run and the board never has to sort ties.
+       A `for` loop and not `forEach(async …)`: the callback's promise is not
+       awaited by forEach, so the writes would escape the transaction and the
+       function would return before any of them landed. */
+    for (const [offset, status] of existing.slice(at).entries()) {
+      await conn().update(boardStatuses)
         .set({ order: at + offset + 1, updatedAt: now })
-        .where(eq(boardStatuses.id, status.id))
-        .run();
-    });
-    created = insertStatus(
+        .where(eq(boardStatuses.id, status.id));
+    }
+    created = await insertStatus(
       boardId,
       {
         name: input.name,
@@ -535,8 +535,8 @@ export function createStatus(boardId: string, input: CreateStatusInput): BoardSt
   return created;
 }
 
-export function updateStatus(id: string, input: UpdateStatusInput): BoardStatus | null {
-  const status = getStatus(id);
+export async function updateStatus(id: string, input: UpdateStatusInput): Promise<BoardStatus | null> {
+  const status = await getStatus(id);
   if (!status) return null;
   const now = Date.now();
   const patch: Partial<BoardStatus> = { updatedAt: now };
@@ -544,20 +544,19 @@ export function updateStatus(id: string, input: UpdateStatusInput): BoardStatus 
   if (input.color !== undefined) patch.color = input.color;
   if (input.category !== undefined) patch.category = input.category;
   if (input.wipLimit !== undefined) patch.wipLimit = input.wipLimit;
-  db.transaction(() => {
-    db.update(boardStatuses).set(patch).where(eq(boardStatuses.id, id)).run();
+  await transaction(async () => {
+    await conn().update(boardStatuses).set(patch).where(eq(boardStatuses.id, id));
     /* A column that becomes (or stops being) done changes what every task in
        it means: stamp or clear their completion so the sprint counts and the
        "done this week" filters agree with the board. */
     if (input.category !== undefined && input.category !== status.category) {
       const nowDone = input.category === "done";
-      db.update(tasksTable)
+      await conn().update(tasksTable)
         .set({ completedAt: nowDone ? now : null, updatedAt: now })
-        .where(and(eq(tasksTable.boardId, status.boardId), eq(tasksTable.statusId, id)))
-        .run();
+        .where(and(eq(tasksTable.boardId, status.boardId), eq(tasksTable.statusId, id)));
     }
   });
-  return getStatus(id) ?? null;
+  return (await getStatus(id)) ?? null;
 }
 
 /**
@@ -568,50 +567,48 @@ export function updateStatus(id: string, input: UpdateStatusInput): BoardStatus 
  * Refuses the board's last column for the reason `deleteBoard` refuses the last
  * board — the tasks would have nowhere to be.
  */
-export function deleteStatus(id: string, moveTo?: string): boolean {
-  const status = getStatus(id);
+export async function deleteStatus(id: string, moveTo?: string): Promise<boolean> {
+  const status = await getStatus(id);
   if (!status) return false;
-  const siblings = listStatuses(status.boardId).filter((s) => s.id !== id);
+  const siblings = (await listStatuses(status.boardId)).filter((s) => s.id !== id);
   if (siblings.length === 0) throw new BoardError("a board needs at least one column");
   const target = moveTo ? siblings.find((s) => s.id === moveTo) : siblings[0];
   if (!target) throw new BoardError("moveTo must name another column on the same board");
 
   const now = Date.now();
-  db.transaction(() => {
+  await transaction(async () => {
     // The rehomed tasks go to the end of the target column, keeping their order
     // relative to each other.
-    const tail = db
-      .select()
-      .from(tasksTable)
-      .where(and(eq(tasksTable.boardId, status.boardId), eq(tasksTable.statusId, target.id)))
-      .all().length;
-    const moving = db
+    const tail = (
+      await conn()
+        .select()
+        .from(tasksTable)
+        .where(and(eq(tasksTable.boardId, status.boardId), eq(tasksTable.statusId, target.id)))
+    ).length;
+    const moving = await conn()
       .select()
       .from(tasksTable)
       .where(and(eq(tasksTable.boardId, status.boardId), eq(tasksTable.statusId, id)))
-      .orderBy(asc(tasksTable.order))
-      .all();
+      .orderBy(asc(tasksTable.order));
     const completedAt = target.category === "done" ? now : null;
-    moving.forEach((task, index) => {
-      db.update(tasksTable)
+    for (const [index, task] of moving.entries()) {
+      await conn().update(tasksTable)
         .set({
           statusId: target.id,
           order: tail + index,
           completedAt: target.category === "done" ? (task.completedAt ?? completedAt) : null,
           updatedAt: now,
         })
-        .where(eq(tasksTable.id, task.id))
-        .run();
-    });
-    db.delete(boardStatuses).where(eq(boardStatuses.id, id)).run();
+        .where(eq(tasksTable.id, task.id));
+    }
+    await conn().delete(boardStatuses).where(eq(boardStatuses.id, id));
     // Close the gap the delete left, so `order` stays dense.
-    siblings.forEach((sibling, index) => {
-      if (sibling.order === index) return;
-      db.update(boardStatuses)
+    for (const [index, sibling] of siblings.entries()) {
+      if (sibling.order === index) continue;
+      await conn().update(boardStatuses)
         .set({ order: index, updatedAt: now })
-        .where(eq(boardStatuses.id, sibling.id))
-        .run();
-    });
+        .where(eq(boardStatuses.id, sibling.id));
+    }
   });
   return true;
 }
@@ -619,32 +616,31 @@ export function deleteStatus(id: string, moveTo?: string): boolean {
 /** Left-to-right column order for one board, from the full list of its ids.
     Ids that are not this board's are ignored; ones left out keep their place
     at the end, so a stale client can never lose a column. */
-export function reorderStatuses(boardId: string, ids: string[]): BoardStatus[] {
-  const existing = listStatuses(boardId);
+export async function reorderStatuses(boardId: string, ids: string[]): Promise<BoardStatus[]> {
+  const existing = await listStatuses(boardId);
   const known = new Set(existing.map((s) => s.id));
   const ordered = [...ids.filter((id) => known.has(id))];
   for (const status of existing) if (!ordered.includes(status.id)) ordered.push(status.id);
   const now = Date.now();
-  db.transaction(() => {
-    ordered.forEach((id, index) => {
-      db.update(boardStatuses)
+  await transaction(async () => {
+    for (const [index, id] of ordered.entries()) {
+      await conn().update(boardStatuses)
         .set({ order: index, updatedAt: now })
-        .where(eq(boardStatuses.id, id))
-        .run();
-    });
+        .where(eq(boardStatuses.id, id));
+    }
   });
-  return listStatuses(boardId);
+  return await listStatuses(boardId);
 }
 
 // ---- sprints ----
 
-export function createSprint(boardId: string, input: CreateSprintInput): Sprint {
-  if (!getBoard(boardId)) throw new BoardError("unknown board", 404);
+export async function createSprint(boardId: string, input: CreateSprintInput): Promise<Sprint> {
+  if (!(await getBoard(boardId))) throw new BoardError("unknown board", 404);
   if (input.startAt != null && input.endAt != null && input.endAt < input.startAt)
     throw new BoardError("a sprint cannot end before it starts");
   const id = randomUUID();
   const now = Date.now();
-  db.insert(sprints)
+  await conn().insert(sprints)
     .values({
       id,
       boardId,
@@ -653,16 +649,15 @@ export function createSprint(boardId: string, input: CreateSprintInput): Sprint 
       startAt: input.startAt ?? null,
       endAt: input.endAt ?? null,
       state: "planned",
-      order: listSprints(boardId).length,
+      order: (await listSprints(boardId)).length,
       createdAt: now,
       updatedAt: now,
-    })
-    .run();
-  return getSprint(id)!;
+    });
+  return (await getSprint(id))!;
 }
 
-export function updateSprint(id: string, input: UpdateSprintInput): Sprint | null {
-  const sprint = getSprint(id);
+export async function updateSprint(id: string, input: UpdateSprintInput): Promise<Sprint | null> {
+  const sprint = await getSprint(id);
   if (!sprint) return null;
   const patch: Partial<Sprint> = { updatedAt: Date.now() };
   if (input.name !== undefined) patch.name = input.name;
@@ -673,29 +668,28 @@ export function updateSprint(id: string, input: UpdateSprintInput): Sprint | nul
   const endAt = patch.endAt !== undefined ? patch.endAt : sprint.endAt;
   if (startAt != null && endAt != null && endAt < startAt)
     throw new BoardError("a sprint cannot end before it starts");
-  db.update(sprints).set(patch).where(eq(sprints.id, id)).run();
-  return getSprint(id) ?? null;
+  await conn().update(sprints).set(patch).where(eq(sprints.id, id));
+  return (await getSprint(id)) ?? null;
 }
 
 /** Start a planned sprint. One active sprint per board: starting a second
     is refused rather than silently closing the first. */
-export function startSprint(id: string): Sprint {
-  const sprint = getSprint(id);
+export async function startSprint(id: string): Promise<Sprint> {
+  const sprint = await getSprint(id);
   if (!sprint) throw new BoardError("unknown sprint", 404);
   if (sprint.state !== "planned") throw new BoardError(`the sprint is already ${sprint.state}`);
-  const active = listSprints(sprint.boardId).find((s) => s.state === "active");
+  const active = (await listSprints(sprint.boardId)).find((s) => s.state === "active");
   if (active) throw new BoardError(`"${active.name}" is still active — complete it first`);
   const now = Date.now();
-  db.update(sprints)
+  await conn().update(sprints)
     .set({
       state: "active",
       startAt: sprint.startAt ?? now,
       endAt: sprint.endAt ?? now + 14 * 24 * 60 * 60_000,
       updatedAt: now,
     })
-    .where(eq(sprints.id, id))
-    .run();
-  return getSprint(id)!;
+    .where(eq(sprints.id, id));
+  return (await getSprint(id))!;
 }
 
 /**
@@ -705,102 +699,96 @@ export function startSprint(id: string): Sprint {
  * the backlog or to the next planned sprint, which is created if the board has
  * none — a closer who asked for "next" gets one, not an error.
  */
-export function completeSprint(
+export async function completeSprint(
   id: string,
   moveTo: "backlog" | "next",
-): { sprint: Sprint; moved: number; next: Sprint | null } {
-  const sprint = getSprint(id);
+): Promise<{ sprint: Sprint; moved: number; next: Sprint | null }> {
+  const sprint = await getSprint(id);
   if (!sprint) throw new BoardError("unknown sprint", 404);
   if (sprint.state === "closed") throw new BoardError("the sprint is already closed");
   const doneIds = new Set(
-    listStatuses(sprint.boardId)
+    (await listStatuses(sprint.boardId))
       .filter((s) => s.category === "done")
       .map((s) => s.id),
   );
   const now = Date.now();
   let moved = 0;
   let next: Sprint | null = null;
-  db.transaction(() => {
+  await transaction(async () => {
     if (moveTo === "next") {
-      const siblings = listSprints(sprint.boardId);
+      const siblings = await listSprints(sprint.boardId);
       next =
         siblings.find((s) => s.state === "planned" && s.order > sprint.order) ??
         siblings.find((s) => s.state === "planned") ??
         null;
       if (!next) {
         const n = siblings.length + 1;
-        next = createSprint(sprint.boardId, { name: `Sprint ${n}` });
+        next = await createSprint(sprint.boardId, { name: `Sprint ${n}` });
       }
     }
-    const open = db
-      .select()
-      .from(tasksTable)
-      .where(eq(tasksTable.sprintId, id))
-      .all()
-      .filter((t) => !doneIds.has(t.statusId));
+    const open = (
+      await conn().select().from(tasksTable).where(eq(tasksTable.sprintId, id))
+    ).filter((t) => !doneIds.has(t.statusId));
     for (const task of open) {
-      db.update(tasksTable)
+      await conn().update(tasksTable)
         .set({ sprintId: next?.id ?? null, updatedAt: now })
-        .where(eq(tasksTable.id, task.id))
-        .run();
+        .where(eq(tasksTable.id, task.id));
       moved++;
     }
-    db.update(sprints)
+    await conn()
+      .update(sprints)
       .set({ state: "closed", endAt: sprint.endAt ?? now, updatedAt: now })
-      .where(eq(sprints.id, id))
-      .run();
+      .where(eq(sprints.id, id));
   });
-  return { sprint: getSprint(id)!, moved, next };
+  return { sprint: (await getSprint(id))!, moved, next };
 }
 
 /** Delete a sprint; its tasks return to the backlog. */
-export function deleteSprint(id: string): boolean {
-  if (!getSprint(id)) return false;
+export async function deleteSprint(id: string): Promise<boolean> {
+  if (!(await getSprint(id))) return false;
   const now = Date.now();
-  db.transaction(() => {
-    db.update(tasksTable)
+  await transaction(async () => {
+    await conn().update(tasksTable)
       .set({ sprintId: null, updatedAt: now })
-      .where(eq(tasksTable.sprintId, id))
-      .run();
-    db.delete(sprints).where(eq(sprints.id, id)).run();
+      .where(eq(tasksTable.sprintId, id));
+    await conn().delete(sprints).where(eq(sprints.id, id));
   });
   return true;
 }
 
 // ---- saved views ----
 
-export function createView(boardId: string, input: CreateViewInput): BoardView {
-  if (!getBoard(boardId)) throw new BoardError("unknown board", 404);
+export async function createView(boardId: string, input: CreateViewInput): Promise<BoardView> {
+  if (!await getBoard(boardId)) throw new BoardError("unknown board", 404);
   const id = randomUUID();
   const now = Date.now();
-  db.insert(boardViews)
+  await conn().insert(boardViews)
     .values({
       id,
       boardId,
       name: input.name,
       kind: input.kind,
       config: input.config ?? {},
-      order: listAllViews().filter((v) => v.boardId === boardId).length,
+      order: (await listAllViews()).filter((v) => v.boardId === boardId).length,
       createdAt: now,
       updatedAt: now,
-    })
-    .run();
-  return getView(id)!;
+    });
+  return (await getView(id))!;
 }
 
-export function updateView(id: string, input: UpdateViewInput): BoardView | null {
-  if (!getView(id)) return null;
+export async function updateView(id: string, input: UpdateViewInput): Promise<BoardView | null> {
+  if (!(await getView(id))) return null;
   const patch: Partial<BoardView> = { updatedAt: Date.now() };
   if (input.name !== undefined) patch.name = input.name;
   if (input.kind !== undefined) patch.kind = input.kind;
   if (input.config !== undefined) patch.config = input.config;
   if (input.order !== undefined) patch.order = input.order;
-  db.update(boardViews).set(patch).where(eq(boardViews.id, id)).run();
-  return getView(id) ?? null;
+  await conn().update(boardViews).set(patch).where(eq(boardViews.id, id));
+  return (await getView(id)) ?? null;
 }
 
-export function deleteView(id: string): boolean {
-  return db.delete(boardViews).where(eq(boardViews.id, id)).run().changes > 0;
+export async function deleteView(id: string): Promise<boolean> {
+  return ((await conn().delete(boardViews).where(eq(boardViews.id, id))).rowCount ?? 0) > 0;
 }
 
 // ---- repair ----
@@ -813,24 +801,24 @@ export function deleteView(id: string): boolean {
  * with a dangling `statusId` renders in no column at all, which reads as data
  * loss. Called after an import; cheap enough to be worth the certainty.
  */
-export function reconcileTaskStatuses(): number {
+export async function reconcileTaskStatuses(): Promise<number> {
   const byBoard = new Map<string, Set<string>>();
-  for (const status of listAllStatuses()) {
+  for (const status of await listAllStatuses()) {
     let set = byBoard.get(status.boardId);
     if (!set) byBoard.set(status.boardId, (set = new Set()));
     set.add(status.id);
   }
   const fallback = new Map<string, string>();
-  for (const board of listBoards()) {
-    const first = firstStatusId(board.id);
+  for (const board of await listBoards()) {
+    const first = await firstStatusId(board.id);
     if (first) fallback.set(board.id, first);
   }
-  const sprintIds = new Set(listAllSprints().map((s) => s.id));
-  const defaultBoard = listBoards()[0];
+  const sprintIds = new Set((await listAllSprints()).map((s) => s.id));
+  const defaultBoard = (await listBoards())[0];
   let repaired = 0;
   const now = Date.now();
-  db.transaction(() => {
-    const all = db.select().from(tasksTable).all();
+  await transaction(async () => {
+    const all = await conn().select().from(tasksTable);
     const taskIds = new Set(all.map((t) => t.id));
     for (const task of all) {
       const patch: Partial<typeof task> = {};
@@ -843,10 +831,9 @@ export function reconcileTaskStatuses(): number {
       if (task.sprintId && !sprintIds.has(task.sprintId)) patch.sprintId = null;
       if (task.parentId && !taskIds.has(task.parentId)) patch.parentId = null;
       if (Object.keys(patch).length === 0) continue;
-      db.update(tasksTable)
+      await conn().update(tasksTable)
         .set({ ...patch, updatedAt: now })
-        .where(eq(tasksTable.id, task.id))
-        .run();
+        .where(eq(tasksTable.id, task.id));
       repaired++;
     }
   });
@@ -854,8 +841,8 @@ export function reconcileTaskStatuses(): number {
 }
 
 /** Assert a (board, status) pair the client sent is real and consistent. */
-export function assertStatusOnBoard(boardId: string, statusId: string): void {
-  const status = getStatus(statusId);
+export async function assertStatusOnBoard(boardId: string, statusId: string): Promise<void> {
+  const status = await getStatus(statusId);
   if (!status) throw new BoardError("unknown status", 404);
   if (status.boardId !== boardId) throw new BoardError("that status is on another board");
 }

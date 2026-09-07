@@ -50,46 +50,46 @@ export function libraryRoutes(app: Hono): void {
        row carries its OAuth state, computed from the join. Tokens never leave
        the server, exactly as `profiles.apiKey` never does — what goes out is
        whether it is connected, until when, and why the last attempt failed. */
-    app.get(`/api/${base}`, (c) => {
-      if (base !== "mcp-servers") return c.json(reg.list());
-      const states = authStates();
+    app.get(`/api/${base}`, async (c) => {
+      if (base !== "mcp-servers") return c.json(await reg.list());
+      const states = await authStates();
       return c.json(
-        mcpServers.list().map((s) => ({ ...s, authState: states.get(s.id) ?? { kind: "none" as const } })),
+        (await mcpServers.list()).map((s) => ({ ...s, authState: states.get(s.id) ?? { kind: "none" as const } })),
       );
     });
     app.post(`/api/${base}`, async (c) => {
       const parsed = schema.safeParse(await c.req.json());
       if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-      return c.json(reg.create(parsed.data as never), 201);
+      return c.json(await reg.create(parsed.data as never), 201);
     });
     app.put(`/api/${base}/:id`, async (c) => {
       const parsed = schema.safeParse(await c.req.json());
       if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-      const updated = reg.update(c.req.param("id"), parsed.data as never);
+      const updated = await reg.update(c.req.param("id"), parsed.data as never);
       return updated ? c.json(updated) : c.json({ error: "not found" }, 404);
     });
-    app.delete(`/api/${base}/:id`, (c) =>
-      reg.remove(c.req.param("id")) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404),
+    app.delete(`/api/${base}/:id`, async (c) =>
+      (await reg.remove(c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404),
     );
   }
 
   /** Put one of the harness's own MCP servers in the library. Idempotent — the
       row has a fixed id — so the button is safe to press again. */
-  app.post("/api/mcp-servers/builtin/:kind", (c) => {
+  app.post("/api/mcp-servers/builtin/:kind", async (c) => {
     const kind = c.req.param("kind");
     if (!isBuiltinMcp(kind)) return c.json({ error: "unknown builtin" }, 404);
-    return c.json(mcpServers.ensureBuiltin(kind), 201);
+    return c.json(await mcpServers.ensureBuiltin(kind), 201);
   });
 
   // Importable entries from the agents' own configs, minus what the library already has.
-  app.get("/api/import", (c) => {
-    const haveMcp = new Set(mcpServers.list().map((s) => s.name));
-    const havePaths = new Set(skills.list().map((s) => s.path));
-    const haveCommands = new Set(commands.list().map((s) => s.name));
+  app.get("/api/import", async (c) => {
+    const haveMcp = new Set((await mcpServers.list()).map((s) => s.name));
+    const havePaths = new Set((await skills.list()).map((s) => s.path));
+    const haveCommands = new Set((await commands.list()).map((s) => s.name));
     return c.json({
-      mcpServers: discoverMcpServers().filter((s) => !haveMcp.has(s.name)),
-      skills: discoverSkills().filter((s) => !havePaths.has(s.path)),
-      commands: discoverCommands().filter((s) => !haveCommands.has(s.name)),
+      mcpServers: (await discoverMcpServers()).filter((s) => !haveMcp.has(s.name)),
+      skills: (await discoverSkills()).filter((s) => !havePaths.has(s.path)),
+      commands: (await discoverCommands()).filter((s) => !haveCommands.has(s.name)),
     });
   });
 
@@ -125,12 +125,12 @@ function mcpOauthRoutes(app: Hono): void {
    */
   app.post("/api/mcp-servers/:id/authorize", async (c) => {
     const id = c.req.param("id");
-    const server = mcpServers.list().find((s) => s.id === id);
+    const server = (await mcpServers.list()).find((s) => s.id === id);
     if (!server) return c.json({ error: "not found" }, 404);
     if (server.type !== "http") return c.json({ error: "only an HTTP MCP server can use OAuth" }, 400);
 
     const redirectUri = `${redirectBase(c.req.raw)}/oauth/mcp/callback`;
-    let row = mcpOauth.get(id);
+    let row = await mcpOauth.get(id);
 
     /* Discovery, when this row has never been connected — or when it was
        connected against a different authorization server, which is what a
@@ -152,7 +152,7 @@ function mcpOauthRoutes(app: Hono): void {
          is a later refinement. */
       const scope = probe.scopesSupported.length ? probe.scopesSupported.join(" ") : null;
       const client = await registerMcpClient(probe.metadata, redirectUri, scope);
-      row = mcpOauth.put({
+      row = await mcpOauth.put({
         mcpServerId: id,
         resource: probe.resource,
         issuer: probe.issuer,
@@ -168,12 +168,12 @@ function mcpOauthRoutes(app: Hono): void {
       });
     } else if (row.redirectUri !== redirectUri) {
       const client = await registerMcpClient(row.metadata, redirectUri, row.scope);
-      row = mcpOauth.patch(id, {
+      row = (await mcpOauth.patch(id, {
         clientId: client.client_id,
         clientSecret: client.client_secret ?? null,
         redirectUri,
         scope: client.scope ?? row.scope,
-      })!;
+      }))!;
     }
 
     /* The state is minted first because `startAuthorization` takes it as
@@ -214,11 +214,11 @@ function mcpOauthRoutes(app: Hono): void {
     const asError = url.searchParams.get("error");
     const pending = state ? takePendingFlow(state) : undefined;
     if (!pending) return c.html(callbackPage({ ok: false, message: "This authorization link has expired or was already used. Start again from Settings › MCP servers." }), 400);
-    const row = mcpOauth.get(pending.serverId);
+    const row = await mcpOauth.get(pending.serverId);
     if (!row) return c.html(callbackPage({ ok: false, message: "That MCP server is no longer connected here." }), 404);
     if (asError) {
       const detail = url.searchParams.get("error_description") || asError;
-      mcpOauth.patch(pending.serverId, { lastError: detail });
+      await mcpOauth.patch(pending.serverId, { lastError: detail });
       return c.html(callbackPage({ ok: false, message: `The authorization server refused: ${detail}` }), 400);
     }
     if (!code) return c.html(callbackPage({ ok: false, message: "The authorization server sent no code." }), 400);
@@ -226,7 +226,7 @@ function mcpOauthRoutes(app: Hono): void {
       await completeAuthorization(row, code, pending.verifier, pending.redirectUri);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      mcpOauth.patch(pending.serverId, { lastError: detail });
+      await mcpOauth.patch(pending.serverId, { lastError: detail });
       return c.html(callbackPage({ ok: false, message: `The token exchange failed: ${detail}` }), 502);
     }
     return c.html(callbackPage({ ok: true, message: "Connected. You can close this window." }));
@@ -238,10 +238,10 @@ function mcpOauthRoutes(app: Hono): void {
       un-disconnectable. */
   app.delete("/api/mcp-servers/:id/authorize", async (c) => {
     const id = c.req.param("id");
-    const server = mcpServers.list().find((s) => s.id === id);
+    const server = (await mcpServers.list()).find((s) => s.id === id);
     if (!server) return c.json({ error: "not found" }, 404);
     const result = await disconnectServer(id);
-    return c.json({ ok: true, ...result, authState: authStateOf(id, server.type === "http" ? server.auth : "none") });
+    return c.json({ ok: true, ...result, authState: await authStateOf(id, server.type === "http" ? server.auth : "none") });
   });
 }
 

@@ -4,7 +4,9 @@ import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
 import path from "path";
 import { BOOT_COLORS } from "./src/lib/boot-colors";
-import pkg from "./package.json" with { type: "json" };
+// The app's one version lives in the root manifest — the harness is one
+// product deployed together, and /api/meta reads the same file.
+import rootPkg from "../package.json" with { type: "json" };
 
 // `pnpm dev:tunnel` sets this. Behind a Cloudflare quick tunnel the page is
 // https on port 443, but Vite's HMR client derives its socket from the dev
@@ -16,11 +18,12 @@ const tunnelled = !!process.env.DAEDALUS_TUNNEL;
    dumped cache is only safe to rehydrate into the build that wrote it, since
    what a query's data *is* can change with a release. One value per build, so
    a deploy drops every device's dump exactly once. */
-const buildId = `${pkg.version}-${Date.now().toString(36)}`;
+const buildId = `${rootPkg.version}-${Date.now().toString(36)}`;
 
 export default defineConfig({
   define: {
     __QUERY_CACHE_BUSTER__: JSON.stringify(buildId),
+    __APP_VERSION__: JSON.stringify(rootPkg.version),
   },
   build: {
     /* Monaco is authored against a modern baseline and its workers are ES

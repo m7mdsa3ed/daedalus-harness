@@ -135,6 +135,27 @@ export interface WireError {
 }
 
 /**
+ * A turn that failed and is trying again on its own, as both the `retry` event
+ * and `caught_up` state it — one shape, the way the hold has one.
+ *
+ * The step before a hold, and the reason it exists: a retriable failure used to
+ * cost seconds of a thread that looked alive, said nothing, and then either
+ * carried on as though nothing had happened or arrived all at once as a held
+ * turn quoting an error the reader had no idea had already been met twice.
+ * `error` is the failure being retried, in the same shape the hold carries it,
+ * so one reader draws both.
+ */
+export interface ThreadRetry {
+  /** Which attempt is about to run, 1-based. */
+  attempt: number;
+  /** How many retries there are in all, when the runtime says. */
+  of?: number;
+  /** The backoff before it starts, in ms. The silence this explains. */
+  delayMs?: number;
+  error?: WireError;
+}
+
+/**
  * A spawn-config change asked for and not yet applied — the shape both the
  * `staged_config` event and `caught_up` carry.
  *
@@ -651,8 +672,20 @@ export interface TurnTick {
     has, plus how many older steps are still behind it. */
 export interface EarlierPage {
   events: JournaledEvent[];
-  /** Steps (turns) before `events[0]` that were not sent. 0 = this is the
-      head of the log and there is nothing left to ask for. */
+  /**
+   * The seq this page begins at — where the client's window now starts, and
+   * what the next page back is asked for.
+   *
+   * Stated rather than counted. The client used to subtract the page's length
+   * from the window it held, which was exact only while one journaled event was
+   * one event on the wire; a page whose chunk runs are merged (`coalescedPage`)
+   * carries fewer events than the seqs it spans, and subtracting its length
+   * left the window short — the next page would then be asked for from inside
+   * the one already folded and fold those turns in twice.
+   */
+  from: number;
+  /** Steps (turns) before `from` that were not sent. 0 = this is the head of
+      the log and there is nothing left to ask for. */
   earlier: number;
 }
 
@@ -764,6 +797,11 @@ export type ThreadEvent =
           than finding it in a replay that never carried it. Absent means
           not held. */
       hold?: ThreadHold;
+      /** A retry the turn is waiting out, in the shape the `retry` event
+          carries it — state, like the hold, and the one a late peer is most
+          likely to attach in the middle of, since a backoff is seconds long
+          and never journaled. Absent means not retrying. */
+      retry?: ThreadRetry;
       /** A config change held for this turn's boundary, in the shape the
           `staged_config` event carries it — current state, like the hold and
           the queue, so an attaching peer is told rather than left to find the
@@ -866,6 +904,13 @@ export type ThreadEvent =
       never a failure to record. Only a runtime that owns its own loop can do
       this — the same one `canPause` names. */
   | ({ ev: "paused" } & ThreadHold)
+  /** The turn failed on something worth trying again, and is waiting out a
+      backoff before it does. Absolute and live-only exactly like `paused` —
+      `caught_up` carries it, a replay never redraws it, `retry: null` ends it
+      — and it is the same failure said one step earlier: if the attempts run
+      out, this clears and a `paused` with `reason: "error"` takes its place.
+      Only a runtime that owns its own loop can report one. */
+  | { ev: "retry"; retry: ThreadRetry | null }
   /** The thread moved to another provider, model or effort *without* being
       restarted (`SessionManager.applyConfig`). Absolute, like `session_config`,
       but live-only and not journaled: it is the session row's own state, and a

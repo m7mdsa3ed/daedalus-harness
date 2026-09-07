@@ -52,11 +52,11 @@ const isTerminalStatus = (status: string): boolean =>
  * isn't a search/fetch never touches the database, and a `tool_call_update`
  * for a call not in the set is dropped before any SQL is built.
  */
-export function recordWebSearchUsage(
+export async function recordWebSearchUsage(
   context: WebSearchUsageContext,
   update: SessionUpdate,
   live: Set<string>,
-): void {
+): Promise<void> {
   if (update.sessionUpdate === "tool_call") {
     const tool = toolOf(update);
     if (!tool) return;
@@ -64,7 +64,7 @@ export function recordWebSearchUsage(
     else live.add(update.toolCallId);
     const now = Date.now();
     const status = update.status ?? "pending";
-    db.insert(webSearchUsage)
+    await db.insert(webSearchUsage)
       .values({
         id: randomUUID(),
         sessionId: context.sessionId,
@@ -82,8 +82,7 @@ export function recordWebSearchUsage(
       .onConflictDoUpdate({
         target: [webSearchUsage.sessionId, webSearchUsage.toolCallId],
         set: { status, completedAt: isTerminalStatus(status) ? now : null },
-      })
-      .run();
+      });
     return;
   }
 
@@ -91,7 +90,7 @@ export function recordWebSearchUsage(
   if (!live.has(update.toolCallId)) return;
   if (isTerminalStatus(update.status)) live.delete(update.toolCallId);
   const now = Date.now();
-  db.update(webSearchUsage)
+  await db.update(webSearchUsage)
     .set({
       status: update.status,
       ...(isTerminalStatus(update.status) ? { completedAt: now } : {}),
@@ -99,34 +98,31 @@ export function recordWebSearchUsage(
     .where(and(
       eq(webSearchUsage.sessionId, context.sessionId),
       eq(webSearchUsage.toolCallId, update.toolCallId),
-    ))
-    .run();
+    ));
 }
 
 /** Drop ledger rows older than `cutoff` (epoch ms). Rides the same hourly
     sweep as the journal retention — the ledger is metadata about transcripts
     whose archives are pruned on the same clock. */
-export function pruneWebSearchUsage(cutoff: number): number {
-  return db.delete(webSearchUsage).where(lt(webSearchUsage.startedAt, cutoff)).run().changes;
+export async function pruneWebSearchUsage(cutoff: number): Promise<number> {
+  return ((await db.delete(webSearchUsage).where(lt(webSearchUsage.startedAt, cutoff))).rowCount ?? 0);
 }
 
-export function getWebSearchUsage(limit = 50) {
-  const grouped = db
+export async function getWebSearchUsage(limit = 50) {
+  const grouped = await db
     .select({ tool: webSearchUsage.tool, status: webSearchUsage.status, total: count() })
     .from(webSearchUsage)
-    .groupBy(webSearchUsage.tool, webSearchUsage.status)
-    .all();
+    .groupBy(webSearchUsage.tool, webSearchUsage.status);
   const totals = { searches: 0, fetches: 0, failed: 0 };
   for (const row of grouped) {
     if (row.tool === "search") totals.searches += row.total;
     else totals.fetches += row.total;
     if (row.status === "failed" || row.status === "cancelled") totals.failed += row.total;
   }
-  const recent = db
+  const recent = await db
     .select()
     .from(webSearchUsage)
     .orderBy(desc(webSearchUsage.startedAt))
-    .limit(Math.max(1, Math.min(limit, 200)))
-    .all();
+    .limit(Math.max(1, Math.min(limit, 200)));
   return { totals, recent };
 }

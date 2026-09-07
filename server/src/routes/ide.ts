@@ -13,7 +13,7 @@ export function ideRoutes(app: Hono): void {
      `/api`, because an iframe cannot send an Authorization header and the key in
      the path is what stands in for one (see ide.ts). */
   app.get("/api/projects/:projectId/ide", (c) =>
-    workspace(c, () => ideStatus(c.req.param("projectId"))),
+    workspace(c, async () => await ideStatus(c.req.param("projectId"))),
   );
 
   /* The body is optional: `{ theme }` paints the editor in the app's palette
@@ -22,7 +22,7 @@ export function ideRoutes(app: Hono): void {
     workspace(c, async () => {
       const body = (await c.req.json().catch(() => null)) as { theme?: unknown } | null;
       const theme = body?.theme ? IdeThemeSchema.safeParse(body.theme) : null;
-      return startIde(c.req.param("projectId"), theme?.success ? theme.data : undefined);
+      return await startIde(c.req.param("projectId"), theme?.success ? theme.data : undefined);
     }),
   );
 
@@ -30,15 +30,15 @@ export function ideRoutes(app: Hono): void {
     workspace(c, async () => {
       const parsed = IdeThemeSchema.safeParse(await c.req.json());
       if (!parsed.success) throw new WorkspaceError(parsed.error.message, 400);
-      applyIdeTheme(c.req.param("projectId"), parsed.data);
+      await applyIdeTheme(c.req.param("projectId"), parsed.data);
       return { ok: true };
     }),
   );
 
   app.delete("/api/projects/:projectId/ide", (c) =>
-    workspace(c, () => {
+    workspace(c, async () => {
       stopIde(c.req.param("projectId"));
-      return ideStatus(c.req.param("projectId"));
+      return await ideStatus(c.req.param("projectId"));
     }),
   );
 

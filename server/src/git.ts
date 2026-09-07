@@ -183,7 +183,7 @@ interface RepoContext {
  * and "it came from our own list" is not a check.
  */
 async function contextFor(projectId: string, repo?: string): Promise<RepoContext | null> {
-  const root = projectRoot(projectId);
+  const root = await projectRoot(projectId);
   const dir = resolveInProject(root, repo);
   const top = await toplevelOf(dir);
   if (!top) return null;
@@ -229,7 +229,7 @@ const isRepoDir = (dir: string): boolean => existsSync(join(dir, ".git"));
  * checkout, and its status is that checkout's, scoped.
  */
 export async function repositories(projectId: string): Promise<GitRepo[]> {
-  const root = projectRoot(projectId);
+  const root = await projectRoot(projectId);
   const found: string[] = [];
   if (await toplevelOf(root)) found.push("");
 
@@ -698,7 +698,7 @@ export async function fileAt(
   comparison: Comparison,
 ): Promise<{ content: string; missing: boolean }> {
   if (comparison === "worktree") return { content: "", missing: true };
-  const root = projectRoot(projectId);
+  const root = await projectRoot(projectId);
   const absolute = resolveInProject(root, path);
   /* Up to the nearest directory that exists: a file deleted along with its
      folder still has a revision to show, and `rev-parse` needs somewhere to

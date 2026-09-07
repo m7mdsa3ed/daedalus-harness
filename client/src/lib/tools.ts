@@ -24,6 +24,7 @@ export {
   parseMcpToolName,
   toolDisplayName,
   toolIdentity,
+  couldTouchFiles,
 } from "./tools/naming"
 
 export type { ToolHeading } from "./tools/heading"

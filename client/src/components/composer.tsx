@@ -66,11 +66,10 @@ import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { Shortcut } from "@/components/shortcut"
 import { ComposerAgents, ComposerTodo } from "@/components/composer-status"
-import { ComposerAttachments, PasteChip, type AttachmentDelivery } from "@/components/composer-attachments"
+import { ComposerAttachments, ComposerPastes, type AttachmentDelivery } from "@/components/composer-attachments"
 import { ComposerHistoryDialog } from "@/components/composer-history-dialog"
 import { ComposerQueue } from "@/components/composer-queue"
 import { ComposerStrip, ComposerStripItem } from "@/components/composer-strip"
-import { ThreadRail } from "@/components/thread-rail"
 import { DraftConfigPopover, DraftScopeRow } from "@/components/draft-config"
 import { SessionConfigPopover } from "@/components/session-config"
 import { ThreadToolsMenu } from "@/components/thread-tools"
@@ -117,8 +116,7 @@ import { useServer } from "@/lib/server-context"
 import type { SessionMeta } from "@/lib/settings"
 import { KEYS, formatChord, matchesChord } from "@/lib/shortcuts"
 import { bannerFor, composerLock } from "@/lib/thread/phase"
-import type { TurnTick } from "@daedalus/protocol"
-import type { ThreadItem, ThreadState } from "@/lib/store"
+import type { ThreadState } from "@/lib/store"
 import { holdOf } from "@/lib/thread/hold"
 import { formatTokens } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
@@ -165,10 +163,6 @@ export function Composer({
   scope,
   placeholder,
   ref,
-  railItems,
-  railTurns,
-  onEnsureTurn,
-  showRail,
 }: {
   sessionId: string
   actions: Actions
@@ -183,18 +177,6 @@ export function Composer({
   /** Overrides the idle placeholder only; the lock and queue notes still win. */
   placeholder?: string
   ref?: React.Ref<ComposerHandle>
-  /** The transcript rows the turn rail reads — the same list the transcript
-      renders, so the rail cannot disagree with what is on screen. Absent on
-      surfaces with no transcript (the build page), where no rail is drawn. */
-  railItems?: ThreadItem[]
-  /** The journal's whole turn list, oldest first — the rail's ticks for turns
-      still withheld behind `earlier`. See `ThreadState.turns`. */
-  railTurns?: TurnTick[]
-  /** Page history back until a withheld turn is folded; resolves to its row
-      id, or null when it never made it on screen. */
-  onEnsureTurn?: (turnId: string, seq: number) => Promise<string | null>
-  /** The reader's Turn rail toggle. */
-  showRail?: boolean
 }) {
   const navigate = useNavigate()
   const location = useLocation()
@@ -764,6 +746,10 @@ export function Composer({
           onRemoveAttachment={files.remove}
           onRetryAttachment={files.retry}
         />
+        {/* Long pastes, parked as tokens in the textarea, shown as chips.
+            Moved from inside the card to the strip so pastes and files are
+            managed in the same rail. */}
+        <ComposerPastes pastes={shownPastes} onRemove={removePaste} />
         {/* Says what the box is showing and how to get back out of it — without
             it, a recalled prompt is indistinguishable from one you typed. */}
         {history.browsing && (
@@ -835,29 +821,6 @@ export function Composer({
           <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-2xl border-2 border-dashed border-primary bg-composer/80 text-xs font-medium text-primary">
             Drop to attach
           </div>
-        )}
-        {shownPastes.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 px-2 pt-1 pb-1.5">
-            {shownPastes.map((paste) => (
-              <PasteChip
-                key={paste.n}
-                paste={paste}
-                onRemove={() => removePaste(paste.n)}
-              />
-            ))}
-          </div>
-        )}
-        {/* The turn rail: one tick per turn, riding the card's right edge as
-            an absolute overlay — bottom-anchored above the Send button, so it
-            adds no size to the composer. Under the same toggle as the old
-            transcript-edge column, and the rail draws nothing under two turns,
-            so a short thread pays for it only in a hook call. */}
-        {showRail === true && railItems && railItems.length > 0 && (
-          <ThreadRail
-            items={railItems}
-            turns={railTurns}
-            onEnsureTurn={onEnsureTurn}
-          />
         )}
         <Textarea
           ref={composerRef}

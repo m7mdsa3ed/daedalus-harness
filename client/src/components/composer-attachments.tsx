@@ -125,6 +125,7 @@ export function ComposerAttachments({
         id: "attachments",
         icon: PaperclipIcon,
         label,
+        badge: attachments.length,
       }}
       className="px-2 py-1.5"
     >
@@ -186,7 +187,7 @@ function FileChip({
     <Attachment
       size="sm"
       state={attachment.status === "ready" ? "done" : attachment.status}
-      className="min-w-0 @panel-sm:min-w-40"
+      className="min-w-0"
     >
       <AttachmentMedia variant={thumb ? "image" : "icon"}>
         {attachment.status === "uploading" ? (
@@ -226,7 +227,7 @@ export function PasteChip({ paste, onRemove }: { paste: Paste; onRemove: () => v
   const [open, setOpen] = React.useState(false)
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <Attachment size="sm" className="min-w-0 @panel-sm:min-w-40">
+      <Attachment size="sm" className="min-w-0">
         <AttachmentMedia>
           <ClipboardListIcon />
         </AttachmentMedia>
@@ -255,6 +256,42 @@ export function PasteChip({ paste, onRemove }: { paste: Paste; onRemove: () => v
         </pre>
       </PopoverContent>
     </Popover>
+  )
+}
+
+/* ── Paste chips on the strip ──
+   Long pastes are parked as tokens in the textarea and shown as chips. They
+   used to live inside the composer card (above the textarea), but that put
+   them outside the strip's unified collapse/rail system. Moving them into the
+   strip means pastes and files are managed in one place: when both are present
+   the strip holds one rail of two chips, and when only pastes exist the strip
+   shows them flat without a rail — exactly the same model as everything else
+   on the shelf. */
+export function ComposerPastes({
+  pastes,
+  onRemove,
+}: {
+  pastes: Paste[]
+  onRemove: (n: number) => void
+}) {
+  if (pastes.length === 0) return null
+  const label = `${pastes.length} paste${pastes.length === 1 ? "" : "s"}`
+  return (
+    <ComposerStripItem
+      summary={{
+        id: "pastes",
+        icon: ClipboardListIcon,
+        label,
+        badge: pastes.length,
+      }}
+      className="px-2 py-1.5"
+    >
+      <AttachmentGroup className="gap-2 py-0">
+        {pastes.map((paste) => (
+          <PasteChip key={paste.n} paste={paste} onRemove={() => onRemove(paste.n)} />
+        ))}
+      </AttachmentGroup>
+    </ComposerStripItem>
   )
 }
 

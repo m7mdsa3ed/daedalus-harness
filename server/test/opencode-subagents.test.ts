@@ -2,6 +2,7 @@
    translator against scripted bus events, the SSE framing, the merge into
    the bridge's inbound stream, and the fetch/retry/abort path against a tiny
    HTTP server that speaks `text/event-stream`. No database, no agent. */
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";

@@ -153,9 +153,9 @@ function skillsIn(root: string, source: string): Found<SkillInput>[] {
     .filter((s) => !lstatSync(s.path).isSymbolicLink() && existsSync(join(s.path, "SKILL.md")));
 }
 
-export function discoverMcpServers(): Found<McpServerInput>[] {
+export async function discoverMcpServers(): Promise<Found<McpServerInput>[]> {
   const found: Found<McpServerInput>[] = [];
-  for (const agent of listAgents()) {
+  for (const agent of (await listAgents())) {
     for (const source of agent.discovery?.mcp ?? []) {
       for (const { path } of expandHome(source.path)) {
         found.push(
@@ -207,21 +207,21 @@ function commandsIn(root: string, source: string): Found<CommandInput>[] {
   return found;
 }
 
-export function discoverCommands(): Found<CommandInput>[] {
-  return everyDeclared("commands").flatMap(({ path, source }) => commandsIn(path, source));
+export async function discoverCommands(): Promise<Found<CommandInput>[]> {
+  return (await everyDeclared("commands")).flatMap(({ path, source }) => commandsIn(path, source));
 }
 
-export function discoverSkills(): Found<SkillInput>[] {
-  return everyDeclared("skills").flatMap(({ path, source }) => skillsIn(path, source));
+export async function discoverSkills(): Promise<Found<SkillInput>[]> {
+  return (await everyDeclared("skills")).flatMap(({ path, source }) => skillsIn(path, source));
 }
 
 /** Every directory the agent rows declare for one kind, expanded and labelled.
     A path two agents both name (they do share directories — OpenCode reads
     `.claude/skills` too) is visited once: the same skill found twice is one
     library row offered twice. */
-function everyDeclared(kind: "skills" | "commands"): { path: string; source: string }[] {
+async function everyDeclared(kind: "skills" | "commands"): Promise<{ path: string; source: string }[]> {
   const seen = new Map<string, string>();
-  for (const agent of listAgents()) {
+  for (const agent of (await listAgents())) {
     for (const pattern of agent.discovery?.[kind] ?? []) {
       for (const { path, label } of expandHome(pattern)) {
         if (!seen.has(path)) seen.set(path, sourceLabel(agent.name, label ?? "global"));

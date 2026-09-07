@@ -14,6 +14,7 @@
  * Idempotent — run it again after moving the repo and the command is rewritten.
  * Delete it from Settings › Agents when you are done.
  */
+import "./require-temp-data.js";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
@@ -33,12 +34,12 @@ const row = {
   seededVersion: 0,
 };
 
-db.insert(agents)
+await db.insert(agents)
   .values(row)
   .onConflictDoUpdate({ target: agents.id, set: { command: row.command, args: row.args } })
-  .run();
+  ;
 
-const saved = db.select().from(agents).where(eq(agents.id, row.id)).get();
+const saved = (await db.select().from(agents).where(eq(agents.id, row.id)))[0];
 console.log(`[fake] ${saved?.name} → ${saved?.command} ${(saved?.args ?? []).join(" ")}`);
 console.log("[fake] restart the server, then pick it on a new thread (profile: Default).");
 console.log('[fake] say `scene:` in the composer for the list of samples.');

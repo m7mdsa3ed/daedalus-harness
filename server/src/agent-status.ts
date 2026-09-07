@@ -213,7 +213,7 @@ async function measure(agent: AgentDef): Promise<AgentStatus> {
   if (!base.installed) return base;
   /* Re-read the row: the caller's copy may predate an edit, and it is the
      command on the row that is about to be spawned. */
-  if (!getAgent(agent.id)) return base;
+  if (!await getAgent(agent.id)) return base;
   try {
     const answered = await withAgentConnection(
       defaultProfileFor(agent.id, agent.name),

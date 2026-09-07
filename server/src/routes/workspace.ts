@@ -39,13 +39,13 @@ import { crud, flag, workspace } from "./helpers.js";
 /** Projects and everything scoped to a project's directory: the workspace
     filesystem, source control, the file watcher and the terminals' JSON half. */
 export function workspaceRoutes(app: Hono): void {
-  app.get("/api/projects", (c) => c.json(listProjects()));
+  app.get("/api/projects", async (c) => c.json(await listProjects()));
   const projectCrud = crud(ProjectInputSchema);
   app.post("/api/projects", projectCrud.create(createProject));
   app.put("/api/projects/:id", projectCrud.update(updateProject));
-  app.delete("/api/projects/:id", (c) => {
+  app.delete("/api/projects/:id", async (c) => {
     const id = c.req.param("id");
-    if (!deleteProject(id)) return c.json({ error: "not found" }, 404);
+    if (!await deleteProject(id)) return c.json({ error: "not found" }, 404);
     // The directory may still exist, but nothing is allowed to look at it through
     // this project any more — and a watcher nobody can unsubscribe from is a
     // handle held until the process exits.
@@ -57,25 +57,25 @@ export function workspaceRoutes(app: Hono): void {
   /* Helper commands: the small shell actions a person runs against this
      workspace from its page's header. The rows are read back embedded on the
      project itself; these are the writes and the one async run. */
-  app.get("/api/projects/:id/helpers", (c) => workspace(c, () => listHelpers(c.req.param("id"))));
+  app.get("/api/projects/:id/helpers", (c) => workspace(c, async () => await listHelpers(c.req.param("id"))));
 
   app.post("/api/projects/:id/helpers", async (c) => {
     const parsed = HelperInputSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-    return workspace(c, () => addHelper(c.req.param("id"), parsed.data));
+    return workspace(c, async () => await addHelper(c.req.param("id"), parsed.data));
   });
 
   app.put("/api/projects/:id/helpers/:helperId", async (c) => {
     const parsed = HelperInputSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-    const updated = await workspace(c, () =>
-      updateHelper(c.req.param("id"), c.req.param("helperId"), parsed.data),
+    const updated = await workspace(c, async () =>
+      await updateHelper(c.req.param("id"), c.req.param("helperId"), parsed.data),
     );
     return updated ? c.json(updated) : c.json({ error: "no such helper" }, 404);
   });
 
   app.delete("/api/projects/:id/helpers/:helperId", async (c) =>
-    (await workspace(c, () => deleteHelper(c.req.param("id"), c.req.param("helperId"))))
+    (await workspace(c, async () => await deleteHelper(c.req.param("id"), c.req.param("helperId"))))
       ? c.json({ ok: true })
       : c.json({ error: "no such helper" }, 404),
   );
@@ -92,12 +92,12 @@ export function workspaceRoutes(app: Hono): void {
      endpoint wearing a helper's name. */
   app.post("/api/projects/:id/helpers/:helperId/terminal", async (c) => {
     const id = c.req.param("id");
-    const helper = getHelper(id, c.req.param("helperId"));
+    const helper = await getHelper(id, c.req.param("helperId"));
     if (!helper) return c.json({ error: "no such helper" }, 404);
     const body = await c.req.json().catch(() => ({}));
     const { cols, rows } = body as { cols?: number; rows?: number };
-    return workspace(c, () =>
-      createTerminal(id, {
+    return workspace(c, async () =>
+      await createTerminal(id, {
         title: helper.name,
         command: helper.command,
         cwd: helper.cwd,
@@ -111,7 +111,7 @@ export function workspaceRoutes(app: Hono): void {
   /* The project overview's numbers — the half the browser cannot derive from
      its own session list (turns, activity, what the project has learned). One
      route, because a page that asked six would redraw six times. */
-  app.get("/api/projects/:id/stats", (c) => workspace(c, () => projectStats(c.req.param("id"))));
+  app.get("/api/projects/:id/stats", (c) => workspace(c, async () => await projectStats(c.req.param("id"))));
 
   // Feeds the client's path autocomplete; ?path= (empty lists the home dir).
   // Handles its own errors: `not found` vs `not a directory` deserve real codes,
@@ -127,8 +127,8 @@ export function workspaceRoutes(app: Hono): void {
   });
 
   app.get("/api/projects/:projectId/tree", (c) =>
-    workspace(c, () =>
-      listDir(c.req.param("projectId"), c.req.query("path"), {
+    workspace(c, async () =>
+      await listDir(c.req.param("projectId"), c.req.query("path"), {
         hidden: flag(c, "hidden"),
         ignored: flag(c, "ignored"),
       }),
@@ -140,9 +140,9 @@ export function workspaceRoutes(app: Hono): void {
      whole project — and a `?q=` on a listing route would be two routes wearing
      one path. */
   app.get("/api/projects/:projectId/files/search", (c) =>
-    workspace(c, () => {
+    workspace(c, async () => {
       const limit = Number(c.req.query("limit"));
-      return searchEntries(c.req.param("projectId"), c.req.query("q"), {
+      return await searchEntries(c.req.param("projectId"), c.req.query("q"), {
         limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
       });
     }),
@@ -177,7 +177,7 @@ export function workspaceRoutes(app: Hono): void {
   });
 
   app.get("/api/projects/:projectId/file-stat", (c) =>
-    workspace(c, () => statFile(c.req.param("projectId"), c.req.query("path") ?? "")),
+    workspace(c, async () => await statFile(c.req.param("projectId"), c.req.query("path") ?? "")),
   );
 
   app.put("/api/projects/:projectId/file", async (c) => {
@@ -199,22 +199,22 @@ export function workspaceRoutes(app: Hono): void {
     const body = (await c.req.json()) as { path?: unknown; type?: unknown };
     if (typeof body.path !== "string") return c.json({ error: "path is required" }, 400);
     const type = body.type === "dir" ? "dir" : "file";
-    return workspace(c, () => createEntry(c.req.param("projectId"), body.path as string, type));
+    return workspace(c, async () => await createEntry(c.req.param("projectId"), body.path as string, type));
   });
 
   app.patch("/api/projects/:projectId/files", async (c) => {
     const body = (await c.req.json()) as { from?: unknown; to?: unknown };
     if (typeof body.from !== "string" || typeof body.to !== "string")
       return c.json({ error: "from and to are required" }, 400);
-    return workspace(c, () =>
-      renameEntry(c.req.param("projectId"), body.from as string, body.to as string),
+    return workspace(c, async () =>
+      await renameEntry(c.req.param("projectId"), body.from as string, body.to as string),
     );
   });
 
   app.delete("/api/projects/:projectId/files", async (c) => {
     const body = (await c.req.json()) as { path?: unknown };
     if (typeof body.path !== "string") return c.json({ error: "path is required" }, 400);
-    return workspace(c, () => deleteEntry(c.req.param("projectId"), body.path as string));
+    return workspace(c, async () => await deleteEntry(c.req.param("projectId"), body.path as string));
   });
 
   /* Source control. Every write names its paths explicitly — there is no
@@ -382,7 +382,7 @@ export function workspaceRoutes(app: Hono): void {
   app.post("/api/projects/:projectId/terminals", async (c) => {
     const body = await c.req.json().catch(() => ({}));
     const { title, cols, rows } = body as { title?: string; cols?: number; rows?: number };
-    return workspace(c, () => createTerminal(c.req.param("projectId"), { title, cols, rows }));
+    return workspace(c, async () => await createTerminal(c.req.param("projectId"), { title, cols, rows }));
   });
 
   app.delete("/api/projects/:projectId/terminals/:terminalId", (c) =>
@@ -394,13 +394,13 @@ export function workspaceRoutes(app: Hono): void {
   /* File events as an NDJSON stream rather than SSE: EventSource cannot set an
      Authorization header, and the alternative is the bearer token in a URL — in
      history, in logs, in whatever proxy is in front. `fetch` reads this fine. */
-  app.get("/api/projects/:projectId/watch", (c) => {
+  app.get("/api/projects/:projectId/watch", async (c) => {
     const projectId = c.req.param("projectId");
     /* Validate before streaming, not inside it: once `stream()` has taken the
        response there is no status left to send, so an unknown project would have
        been a 200 that immediately ends rather than the 404 it is. */
     try {
-      projectRoot(projectId);
+      await projectRoot(projectId);
     } catch (err) {
       if (err instanceof WorkspaceError) return c.json({ error: err.message }, err.status);
       throw err;
@@ -411,7 +411,7 @@ export function workspaceRoutes(app: Hono): void {
       c.header("Cache-Control", "no-store");
       const queue: WatchBatch[] = [];
       const wake = { fn: null as (() => void) | null };
-      const off = watchProject(projectId, (batch) => {
+      const off = await watchProject(projectId, (batch) => {
         queue.push(batch);
         wake.fn?.();
       });

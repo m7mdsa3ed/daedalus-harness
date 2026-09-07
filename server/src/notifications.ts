@@ -47,12 +47,12 @@ const row = (r: typeof notificationsTable.$inferSelect): AppNotification => ({
  * Record one notification. `session` is the thread's (the "where"); `body` is
  * the event's own line, exactly as a push would carry it.
  */
-export function addNotification(
+export async function addNotification(
   kind: NotificationKind,
   session: { id: string; title: string },
   body?: string,
-): void {
-  db.insert(notificationsTable)
+): Promise<void> {
+  await db.insert(notificationsTable)
     .values({
       id: randomUUID(),
       kind,
@@ -61,28 +61,25 @@ export function addNotification(
       body: body || null,
       read: false,
       createdAt: Date.now(),
-    })
-    .run();
+    });
 }
 
 /** The newest `limit` notifications, newest first. */
-export function listNotifications(limit: number = NOTIFICATIONS_LIMIT): AppNotification[] {
-  return db
+export async function listNotifications(limit: number = NOTIFICATIONS_LIMIT): Promise<AppNotification[]> {
+  return await (await db
     .select()
     .from(notificationsTable)
     .orderBy(desc(notificationsTable.createdAt), desc(notificationsTable.id))
-    .limit(limit)
-    .all()
+    .limit(limit))
+    
     .map(row);
 }
 
 /** How many notifications have not been read — the pill's badge. */
-export function unreadNotifications(): number {
-  return db
-    .select({ n: count() })
-    .from(notificationsTable)
-    .where(eq(notificationsTable.read, false))
-    .all()[0].n;
+export async function unreadNotifications(): Promise<number> {
+  return (
+    await db.select({ n: count() }).from(notificationsTable).where(eq(notificationsTable.read, false))
+  )[0].n;
 }
 
 /**
@@ -91,25 +88,24 @@ export function unreadNotifications(): number {
  * and only if they still exist. An empty array marks nothing (the client never
  * sends one; the distinction guards a round-trip that lost its ids).
  */
-export function markNotificationsRead(ids: readonly string[] | null): void {
+export async function markNotificationsRead(ids: readonly string[] | null): Promise<void> {
   if (ids == null) {
-    db.update(notificationsTable).set({ read: true }).run();
+    await db.update(notificationsTable).set({ read: true });
     return;
   }
   if (ids.length === 0) return;
   const where = and(...ids.map((id) => eq(notificationsTable.id, id)));
-  const found = db.select({ id: notificationsTable.id }).from(notificationsTable).where(where).all();
+  const found = await db.select({ id: notificationsTable.id }).from(notificationsTable).where(where);
   if (found.length === 0) return;
-  db.update(notificationsTable)
+  await db.update(notificationsTable)
     .set({ read: true })
-    .where(and(...found.map((r) => eq(notificationsTable.id, r.id))))
-    .run();
+    .where(and(...found.map((r) => eq(notificationsTable.id, r.id))));
 }
 
 /** Delete notifications written strictly before `before` (ms), or everything
     when `before` is omitted (a "clear" action). Returns how many were removed. */
-export function clearNotifications(before?: number): number {
+export async function clearNotifications(before?: number): Promise<number> {
   const q = db.delete(notificationsTable);
   const stmt = before === undefined ? q : q.where(lt(notificationsTable.createdAt, before));
-  return stmt.run().changes;
+  return (await stmt).rowCount ?? 0;
 }

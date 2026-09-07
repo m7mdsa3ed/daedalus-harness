@@ -263,11 +263,11 @@ await test("a server that answers unauthenticated is `none`, and anything else i
 /* ── registration, the authorize URL, the exchange ── */
 
 const rowId = "mcp-oauth-test";
-db.delete(mcpOauthTable).run();
-db.delete(mcpServersTable).where((await import("drizzle-orm")).eq(mcpServersTable.id, rowId)).run();
-db.insert(mcpServersTable)
+await db.delete(mcpOauthTable);
+await db.delete(mcpServersTable).where((await import("drizzle-orm")).eq(mcpServersTable.id, rowId));
+await db.insert(mcpServersTable)
   .values({ id: rowId, type: "http", name: "protected", url: resourceUrl, headers: [{ name: "x-tenant", value: "acme" }], auth: "oauth" })
-  .run();
+  ;
 
 let redirectUri = "";
 
@@ -278,7 +278,7 @@ await test("dynamic registration, then an authorize URL carrying PKCE, the resou
   assert.equal(registrations.length, 1);
   assert.deepEqual(registrations[0]!.redirect_uris, [redirectUri]);
 
-  const row = mcpOauth.put({
+  const row = await mcpOauth.put({
     mcpServerId: rowId,
     resource: probed.resource,
     issuer: probed.issuer,
@@ -318,7 +318,7 @@ await test("dynamic registration, then an authorize URL carrying PKCE, the resou
   assert.ok(after.refreshToken);
   assert.ok(after.expiresAt && after.expiresAt > Date.now());
   assert.equal(isConnected(rowId), true);
-  const state2 = authStateOf(rowId, "oauth");
+  const state2 = await authStateOf(rowId, "oauth");
   assert.equal(state2.kind === "oauth" ? state2.state : state2.kind, "connected");
 });
 
@@ -341,7 +341,7 @@ await test("a proxied call carries the bearer, keeps the row's own headers, and 
   assert.equal(res.status, 200);
   assert.deepEqual((await res.json() as { result: unknown }).result, { tools: [{ name: "search" }] });
   const last = mcpSeen.at(-1)!;
-  assert.equal(last.auth, `Bearer ${mcpOauth.get(rowId)!.accessToken}`);
+  assert.equal(last.auth, `Bearer ${(await mcpOauth.get(rowId))!.accessToken}`);
   assert.equal(last.extra, "acme", "the user's own static header still travels");
   assert.equal(last.path, "/mcp");
 });
@@ -356,7 +356,7 @@ await test("a wrong key is a 404 that says nothing, and so is an unknown server"
 await test("an expired token is refreshed exactly once under five concurrent requests", async () => {
   refreshCalls = 0;
   mcpOauth.patch(rowId, { expiresAt: Date.now() - 1000 });
-  const before = mcpOauth.get(rowId)!.accessToken;
+  const before = (await mcpOauth.get(rowId))!.accessToken;
   const results = await Promise.all(
     Array.from({ length: 5 }, () =>
       fetch(proxied, {
@@ -370,12 +370,12 @@ await test("an expired token is refreshed exactly once under five concurrent req
   // A refresh token is frequently single-use: two concurrent refreshes is how
   // an account ends up disconnected.
   assert.equal(refreshCalls, 1);
-  assert.notEqual(mcpOauth.get(rowId)!.accessToken, before);
+  assert.notEqual((await mcpOauth.get(rowId))!.accessToken, before);
 });
 
 await test("an upstream 401 is refreshed once and retried", async () => {
   refreshCalls = 0;
-  rejectBearer = mcpOauth.get(rowId)!.accessToken;
+  rejectBearer = (await mcpOauth.get(rowId))!.accessToken;
   const res = await fetch(proxied, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -396,7 +396,7 @@ await test("a second 401 clears the connection and reports it, rather than hangi
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
   });
   assert.equal(res.status, 401);
-  const row = mcpOauth.get(rowId)!;
+  const row = (await mcpOauth.get(rowId))!;
   assert.equal(row.accessToken, null);
   assert.equal(row.refreshToken, null);
   assert.match(row.lastError ?? "", /refused/);
@@ -408,14 +408,14 @@ await test("a second 401 clears the connection and reports it, rather than hangi
 await test("an unauthorized server is not advertised at spawn; a connected one is, as the proxy", async () => {
   const links = { mcpServerIds: [rowId] };
   const project = { id: "proj-1" };
-  const off = mcpServersFor(links, project, getConfig());
+  const off = await mcpServersFor(links, project, getConfig());
   assert.deepEqual(off.servers, [], "a tool that cannot answer is not offered");
   assert.deepEqual(off.skipped, [rowId]);
 
   // Reconnect, and it comes back — as the shim's URL, never its own.
   mcpOauth.patch(rowId, { accessToken: "access-manual", refreshToken: "refresh-manual", expiresAt: Date.now() + 3600_000, lastError: null });
   issued.set("access-manual", { refresh: "refresh-manual", expiresIn: 3600 });
-  const on = mcpServersFor(links, project, getConfig());
+  const on = await mcpServersFor(links, project, getConfig());
   assert.equal(on.servers.length, 1);
   assert.deepEqual(on.skipped, []);
   const [only] = on.servers as { type: string; url: string; headers: { name: string }[] }[];
@@ -424,8 +424,8 @@ await test("an unauthorized server is not advertised at spawn; a connected one i
   assert.deepEqual(only!.headers.map((h) => h.name), ["x-tenant"]);
 
   // A row that does not use OAuth is handed its own URL exactly as before.
-  const plain = mcpLibrary.create({ type: "http", name: "plain", url: "https://plain.example/mcp", headers: [], auth: "none" });
-  const both = mcpServersFor({ mcpServerIds: [plain.id] }, project, getConfig());
+  const plain = await mcpLibrary.create({ type: "http", name: "plain", url: "https://plain.example/mcp", headers: [], auth: "none" });
+  const both = await mcpServersFor({ mcpServerIds: [plain.id] }, project, getConfig());
   assert.equal((both.servers[0] as { url: string }).url, "https://plain.example/mcp");
   mcpLibrary.remove(plain.id);
 });
@@ -443,7 +443,7 @@ await test("disconnecting revokes what it can and always forgets locally", async
   assert.equal(result.revoked, true);
   assert.ok(revoked.length > 0);
   assert.equal(mcpOauth.get(rowId), undefined);
-  const after = authStateOf(rowId, "oauth");
+  const after = await authStateOf(rowId, "oauth");
   assert.equal(after.kind === "oauth" ? after.state : after.kind, "disconnected");
 });
 

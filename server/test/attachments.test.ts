@@ -7,6 +7,7 @@
 // than what this process believed it sent.
 // Run: pnpm test:attachments (DAEDALUS_DATA_DIR is set by the npm script —
 // static imports are hoisted, so setting it here would be too late).
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
@@ -98,9 +99,9 @@ const project = { id: "w1", name: "test-ws", cwd: CWD, description: null };
 const send = (ws: MockWs, command: ThreadCommand) =>
   ws.emit("message", Buffer.from(JSON.stringify(command)));
 
-const waitFor = async (predicate: () => boolean, what: string) => {
-  for (let i = 0; i < 100 && !predicate(); i++) await new Promise((r) => setTimeout(r, 50));
-  assert.ok(predicate(), `timed out waiting for ${what}`);
+const waitFor = async (predicate: () => boolean | Promise<boolean>, what: string) => {
+  for (let i = 0; i < 100 && !(await predicate()); i++) await new Promise((r) => setTimeout(r, 50));
+  assert.ok(await predicate(), `timed out waiting for ${what}`);
 };
 
 const png = Buffer.from(
@@ -111,28 +112,28 @@ const png = Buffer.from(
 console.log("attachments — the store");
 
 const imageId = randomUUID();
-await test("an upload answers a ref and writes the bytes once", () => {
-  const row = putAttachment({ id: imageId, name: "shot.png", mimeType: "image/png", bytes: png });
+await test("an upload answers a ref and writes the bytes once", async () => {
+  const row = await putAttachment({ id: imageId, name: "shot.png", mimeType: "image/png", bytes: png });
   assert.equal(row.name, "shot.png");
   assert.equal(row.size, png.length);
   assert.equal(row.sessionId, null, "owned by nobody until a prompt claims it");
   assert.deepEqual(readAttachment(row), png);
 });
 
-await test("the same id twice is a retry, not a second file", () => {
-  const again = putAttachment({ id: imageId, name: "shot.png", mimeType: "image/png", bytes: png });
-  assert.equal(again.createdAt, getAttachment(imageId)!.createdAt);
+await test("the same id twice is a retry, not a second file", async () => {
+  const again = await putAttachment({ id: imageId, name: "shot.png", mimeType: "image/png", bytes: png });
+  assert.equal(again.createdAt, (await getAttachment(imageId))!.createdAt);
   assert.equal(countAttachments(), 1);
 });
 
-await test("the same content under another id is a row over one file", () => {
+await test("the same content under another id is a row over one file", async () => {
   const second = randomUUID();
   putAttachment({ id: second, name: "copy.png", mimeType: "image/png", bytes: png });
   assert.equal(countAttachments(), 2, "a claim is a thread's, a file is content's");
   // Dropping one leaves the other's bytes alone: the file goes only when no row
   // still references that hash.
   deleteAttachments([second]);
-  assert.deepEqual(readAttachment(getAttachment(imageId)!), png);
+  assert.deepEqual(readAttachment((await getAttachment(imageId))!), png);
   assert.equal(countAttachments(), 1);
 });
 
@@ -161,22 +162,22 @@ putAttachment({
   bytes: Buffer.from("%PDF-1.4\n"),
 });
 
-await test("each file takes the branch its capabilities allow", () => {
-  const out = attachmentBlocks({
+await test("each file takes the branch its capabilities allow", async () => {
+  const out = await attachmentBlocks({
     refs: [imageId, textId, pdfId].map((id) => ({ id, name: "", mimeType: "", size: 0 })),
     caps: { image: true, embeddedContext: true },
     cwd: CWD,
     modalities: undefined,
     hasCatalog: false,
   });
-  assert.deepEqual(out.blocks.map((b) => b.type), ["image", "resource", "resource_link"]);
+  assert.deepEqual((await out).blocks.map((b) => b.type), ["image", "resource", "resource_link"]);
   // And every one of them is named in the prose, whatever branch it took —
   // the text is what every runtime reads without being taught anything.
   assert.match(out.textSuffix, /\[attached: shot\.png\]/);
   assert.match(out.textSuffix, /\[attached: spec\.pdf — @\.daedalus\/attachments\//);
 });
 
-await test("a binary mislabelled as text is refused the resource branch", () => {
+await test("a binary mislabelled as text is refused the resource branch", async () => {
   const sneaky = randomUUID();
   putAttachment({
     id: sneaky,
@@ -191,7 +192,7 @@ await test("a binary mislabelled as text is refused the resource branch", () => 
     modalities: undefined,
     hasCatalog: false,
   });
-  assert.deepEqual(out.blocks.map((b) => b.type), ["resource_link"]);
+  assert.deepEqual((await out).blocks.map((b) => b.type), ["resource_link"]);
   deleteAttachments([sneaky]);
 });
 
@@ -200,7 +201,7 @@ await test("the materialised directory gitignores itself", () => {
   assert.equal(readFileSync(join(CWD, ".daedalus", ".gitignore"), "utf8").trim(), "*");
 });
 
-await test("forceLink pins everything to the path branch", () => {
+await test("forceLink pins everything to the path branch", async () => {
   const out = attachmentBlocks({
     refs: [{ id: imageId, name: "", mimeType: "", size: 0 }],
     caps: { image: true },
@@ -209,13 +210,13 @@ await test("forceLink pins everything to the path branch", () => {
     hasCatalog: false,
     forceLink: true,
   });
-  assert.deepEqual(out.blocks.map((b) => b.type), ["resource_link"]);
+  assert.deepEqual((await out).blocks.map((b) => b.type), ["resource_link"]);
 });
 
 console.log("attachments — a thread");
 
 const manager = new SessionManager({}, 1);
-const session = manager.create(profile, "fake", project);
+const session = await manager.create(profile, "fake", project);
 await session.bridge!.ready;
 const ws = new MockWs();
 assert.equal(await manager.attach(session.id, ws as never), null);
@@ -255,18 +256,18 @@ await test("…and the turn_started that other peers see names them", () => {
   });
 });
 
-await test("a claimed attachment belongs to the thread", () => {
-  assert.equal(getAttachment(imageId)!.sessionId, session.id);
-  assert.ok(getAttachment(imageId)!.claimedAt);
+await test("a claimed attachment belongs to the thread", async () => {
+  assert.equal((await getAttachment(imageId))!.sessionId, session.id);
+  assert.ok((await getAttachment(imageId))!.claimedAt);
 });
 
-await test("an unknown id is dropped, not fatal", () => {
+await test("an unknown id is dropped, not fatal", async () => {
   const kept = claimAttachments([randomUUID(), textId], session.id);
-  assert.deepEqual(kept.map((ref) => ref.name), ["notes.txt"]);
+  assert.deepEqual((await kept).map((ref) => ref.name), ["notes.txt"]);
 });
 
-await test("an id claimed by another thread is dropped too", () => {
-  const other = manager.create(profile, "fake", project);
+await test("an id claimed by another thread is dropped too", async () => {
+  const other = await manager.create(profile, "fake", project);
   const kept = claimAttachments([imageId], other.id);
   assert.deepEqual(kept, [], "a file belongs to the thread that sent it");
   manager.purge(other.id);
@@ -279,14 +280,14 @@ await test("a queue row round-trips ids and answers refs", async () => {
   // Enqueued directly: `queueAdd` on an *idle* thread drains straight away —
   // one path, so a client whose picture of the turn was stale still gets its
   // words sent — which is asserted below rather than worked around here.
-  enqueue(session.id, "later", claimAttachments([held], session.id));
-  const queued = listQueue(session.id);
+  enqueue(session.id, "later", await claimAttachments([held], session.id));
+  const queued = (await listQueue(session.id));
   assert.deepEqual(
-    queued.at(-1)?.attachments?.map((a) => a.name),
+    (await queued).at(-1)?.attachments?.map((a) => a.name),
     ["queued.png"],
     "the row stores ids; the wire carries refs",
   );
-  assert.equal(getAttachment(held)!.sessionId, session.id, "queuing claims it too");
+  assert.equal((await getAttachment(held))!.sessionId, session.id, "queuing claims it too");
 });
 
 await test("…and the drain carries them into the prompt", async () => {
@@ -294,14 +295,14 @@ await test("…and the drain carries them into the prompt", async () => {
   // Whatever is queued, combined into one prompt with one attachment set.
   manager.queueAdd(session.id, "attachments:", []);
   await waitFor(() => ws.of("turn_ended").length > before, "the drained turn to end");
-  assert.equal(listQueue(session.id).length, 0, "rows go only after the prompt is dispatched");
+  assert.equal((await listQueue(session.id)).length, 0, "rows go only after the prompt is dispatched");
   /* One prompt, one attachment set: the row queued above and the one added
      here are unioned in row order, which is what the drain sends. The
      `[attachments]` line the bridge logs for `queued.png` is the other half of
      the same statement — the decision is made at send, against the model the
      turn is actually going to. */
   assert.equal(
-    (getAttachment(heldId)?.sessionId ?? null),
+    ((await getAttachment(heldId))?.sessionId ?? null),
     session.id,
     "the drained turn's attachments were this thread's all along",
   );
@@ -314,10 +315,10 @@ await test("an unclaimed upload past its day is swept; a claimed one is kept", a
   putAttachment({ id: stale, name: "forgotten.png", mimeType: "image/png", bytes: png });
   const { db, attachments: table } = await import("../src/db/index.js");
   const { eq } = await import("drizzle-orm");
-  db.update(table)
+  await db.update(table)
     .set({ createdAt: Date.now() - 48 * 60 * 60 * 1000 })
     .where(eq(table.id, stale))
-    .run();
+    ;
   sweepAttachments();
   assert.equal(getAttachment(stale), undefined, "an upload whose prompt was never sent");
   assert.ok(getAttachment(imageId), "one a thread claimed stays as long as the thread does");

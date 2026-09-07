@@ -33,7 +33,7 @@ export function workflowRoutes(app: Hono, deps: { runner: WorkflowRunner; sessio
     const body = ScriptInput.safeParse(await c.req.json().catch(() => ({})));
     if (!body.success) return c.json({ error: body.error.issues }, 400);
     try {
-      const view = runner.startScript(parent, body.data.script, body.data.args, body.data.tokenBudget);
+      const view = await runner.startScript(parent, body.data.script, body.data.args, body.data.tokenBudget);
       const wait = waitSec(c.req.query("wait"));
       return c.json(wait > 0 ? await runner.wait(view.id, wait * 1000) : view, 201);
     } catch (error) {
@@ -48,7 +48,7 @@ export function workflowRoutes(app: Hono, deps: { runner: WorkflowRunner; sessio
     const body = RunInput.safeParse(await c.req.json().catch(() => ({})));
     if (!body.success) return c.json({ error: body.error.issues }, 400);
     try {
-      const view = runner.start(parent, body.data.definition, body.data.inputs);
+      const view = await runner.start(parent, body.data.definition, body.data.inputs);
       const wait = waitSec(c.req.query("wait"));
       return c.json(wait > 0 ? await runner.wait(view.id, wait * 1000) : view, 201);
     } catch (error) {
@@ -62,16 +62,16 @@ export function workflowRoutes(app: Hono, deps: { runner: WorkflowRunner; sessio
     if (!parent) return c.json({ error: "not found" }, 404);
     const id = c.req.param("id");
     const wait = waitSec(c.req.query("wait"));
-    const view = wait > 0 ? await runner.wait(id, wait * 1000) : runner.status(id);
+    const view = wait > 0 ? await runner.wait(id, wait * 1000) : await runner.status(id);
     return view ? c.json(view) : c.json({ error: "no such run" }, 404);
   });
 
-  app.post(`${base}/runs/:id/cancel`, (c) => {
+  app.post(`${base}/runs/:id/cancel`, async (c) => {
     const parent = runner.resolveCaller(c.req.param("key"), c.req.param("sessionId"));
     if (!parent) return c.json({ error: "not found" }, 404);
     const id = c.req.param("id");
     runner.cancel(id, "cancelled by the agent");
-    const view = runner.status(id);
+    const view = await runner.status(id);
     return view ? c.json(view) : c.json({ error: "no such run" }, 404);
   });
 
@@ -80,14 +80,14 @@ export function workflowRoutes(app: Hono, deps: { runner: WorkflowRunner; sessio
      answers the run as it stands, so a tool call retried by the runtime is
      harmless. */
   for (const verb of ["pause", "resume"] as const) {
-    app.post(`${base}/runs/:id/${verb}`, (c) => {
+    app.post(`${base}/runs/:id/${verb}`, async (c) => {
       const parent = runner.resolveCaller(c.req.param("key"), c.req.param("sessionId"));
       if (!parent) return c.json({ error: "not found" }, 404);
       const id = c.req.param("id");
-      const view = runner.status(id);
+      const view = await runner.status(id);
       if (!view) return c.json({ error: "no such run" }, 404);
       runner[verb](id);
-      return c.json(runner.status(id));
+      return c.json(await runner.status(id));
     });
   }
 
@@ -95,17 +95,17 @@ export function workflowRoutes(app: Hono, deps: { runner: WorkflowRunner; sessio
      the run belongs to, which is also the check — a run id is not a
      credential, so one on another thread is "no such run". */
   for (const verb of ["pause", "resume"] as const) {
-    app.post(`/api/sessions/:id/workflows/:runId/${verb}`, (c) => {
+    app.post(`/api/sessions/:id/workflows/:runId/${verb}`, async (c) => {
       const session = sessions.get(c.req.param("id"));
       if (!session || session.deletedAt !== null) return c.json({ error: "not found" }, 404);
       const runId = c.req.param("runId");
-      const view = runner.statusFor(session.id, runId);
+      const view = await runner.statusFor(session.id, runId);
       if (!view) return c.json({ error: "no such run" }, 404);
       if (!runner[verb](runId)) {
         const state = view.status === "paused" ? "already paused" : view.status === "running" ? "already running" : `already ${view.status}`;
         return c.json({ error: `the run is ${state}` }, 409);
       }
-      return c.json(runner.status(runId));
+      return c.json(await runner.status(runId));
     });
   }
 }

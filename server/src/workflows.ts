@@ -200,7 +200,7 @@ export class WorkflowRunner {
 
   /** Validate and start. Synchronous: the run exists and its first steps are
       spawning by the time this returns. Throws `WorkflowError`. */
-  start(parent: Session, definition: unknown, inputsRaw?: unknown): RunView {
+  async start(parent: Session, definition: unknown, inputsRaw?: unknown): Promise<RunView> {
     if (parent.parentSessionId) throw new WorkflowError("a workflow step cannot start a workflow", 409);
     const parsed = WorkflowDefinitionSchema.safeParse(definition);
     if (!parsed.success) throw new WorkflowError(`invalid workflow: ${issues(parsed.error)}`);
@@ -218,8 +218,8 @@ export class WorkflowRunner {
        effort. A step is the same actor working in another thread, never a
        second identity: the credentials, catalog and way of working the user
        picked for the thread are the ones its workflow spends. */
-    if (!getProfile(parent.profileId)) throw new WorkflowError("this thread's profile no longer exists", 409);
-    if (!getProject(parent.projectId)) throw new WorkflowError("this thread's project no longer exists", 409);
+    if (!await getProfile(parent.profileId)) throw new WorkflowError("this thread's profile no longer exists", 409);
+    if (!await getProject(parent.projectId)) throw new WorkflowError("this thread's project no longer exists", 409);
 
     const now = Date.now();
     const run: Run = {
@@ -257,7 +257,7 @@ export class WorkflowRunner {
       resumeWaiters: [],
     };
     this.runs.set(run.id, run);
-    db.insert(runsTable)
+    await db.insert(runsTable)
       .values({
         id: run.id,
         parentSessionId: parent.id,
@@ -269,8 +269,7 @@ export class WorkflowRunner {
         steps: [...run.steps.values()],
         createdAt: now,
         endedAt: null,
-      })
-      .run();
+      });
     this.pump(run);
     return this.view(run);
   }
@@ -290,7 +289,7 @@ export class WorkflowRunner {
    * literal: the card draws a run's shape from its first step, and a shape that
    * could only be known by running would leave nothing to draw.
    */
-  startScript(parent: Session, source: unknown, args?: unknown, budgetTotal?: unknown): RunView {
+  async startScript(parent: Session, source: unknown, args?: unknown, budgetTotal?: unknown): Promise<RunView> {
     if (parent.parentSessionId) throw new WorkflowError("a workflow step cannot start a workflow", 409);
     if (typeof source !== "string" || !source.trim()) throw new WorkflowError("script must be a non-empty string");
     let meta: ScriptMeta;
@@ -303,8 +302,8 @@ export class WorkflowRunner {
     if (active.length >= MAX_RUNS_PER_PARENT) {
       throw new WorkflowError(`this thread already has ${active.length} workflow(s) running — wait for or cancel one first`, 409);
     }
-    if (!getProfile(parent.profileId)) throw new WorkflowError("this thread's profile no longer exists", 409);
-    if (!getProject(parent.projectId)) throw new WorkflowError("this thread's project no longer exists", 409);
+    if (!await getProfile(parent.profileId)) throw new WorkflowError("this thread's profile no longer exists", 409);
+    if (!await getProject(parent.projectId)) throw new WorkflowError("this thread's project no longer exists", 409);
 
     const now = Date.now();
     const totalTimeoutSec = LIMITS.totalTimeoutSec.default;
@@ -339,7 +338,7 @@ export class WorkflowRunner {
       resumeWaiters: [],
     };
     this.runs.set(run.id, run);
-    db.insert(runsTable)
+    await db.insert(runsTable)
       .values({
         id: run.id,
         parentSessionId: parent.id,
@@ -351,8 +350,7 @@ export class WorkflowRunner {
         steps: [],
         createdAt: now,
         endedAt: null,
-      })
-      .run();
+      });
     void this.driveScript(run, args, typeof budgetTotal === "number" && budgetTotal > 0 ? Math.floor(budgetTotal) : null);
     return this.view(run);
   }
@@ -488,10 +486,10 @@ export class WorkflowRunner {
     await this.whenRunning(run);
   }
 
-  status(runId: string): RunView | null {
+  async status(runId: string): Promise<RunView | null> {
     const run = this.runs.get(runId);
     if (run) return this.view(run);
-    const row = db.select().from(runsTable).where(eq(runsTable.id, runId)).get();
+    const row = (await db.select().from(runsTable).where(eq(runsTable.id, runId)).limit(1))[0];
     return row
       ? { id: row.id, name: row.name, status: row.status, error: row.error, createdAt: row.createdAt, endedAt: row.endedAt, steps: row.steps }
       : null;
@@ -499,10 +497,10 @@ export class WorkflowRunner {
 
   /** `status`, but only for a run of that thread's — the browser's routes
       name a thread, and a run id on another thread is not theirs to touch. */
-  statusFor(parentId: string, runId: string): RunView | null {
+  async statusFor(parentId: string, runId: string): Promise<RunView | null> {
     const run = this.runs.get(runId);
     if (run) return run.parent.id === parentId ? this.view(run) : null;
-    const row = db.select().from(runsTable).where(eq(runsTable.id, runId)).get();
+    const row = (await db.select().from(runsTable).where(eq(runsTable.id, runId)).limit(1))[0];
     return row && row.parentSessionId === parentId ? this.status(runId) : null;
   }
 
@@ -610,8 +608,8 @@ export class WorkflowRunner {
       child), so what the table says was running is over. The parent's log is
       told, so a reopened thread shows the steps as disconnected rather than
       forever running. */
-  recoverAtBoot(): void {
-    const rows = db.select().from(runsTable).where(inArray(runsTable.status, ["running", "paused"])).all();
+  async recoverAtBoot(): Promise<void> {
+    const rows = await db.select().from(runsTable).where(inArray(runsTable.status, ["running", "paused"]));
     for (const row of rows) {
       const steps = row.steps.map((s) => ({
         ...s,
@@ -619,10 +617,9 @@ export class WorkflowRunner {
         error: s.status === "running" ? "server restarted" : s.error,
         endedAt: s.status === "running" ? Date.now() : s.endedAt,
       }));
-      db.update(runsTable)
+      await db.update(runsTable)
         .set({ status: "failed", error: "server restarted", steps, endedAt: Date.now() })
-        .where(eq(runsTable.id, row.id))
-        .run();
+        .where(eq(runsTable.id, row.id));
       for (const s of row.steps) {
         if (s.status === "running" && s.sessionId) {
           this.manager.emitOn(row.parentSessionId, stateUpdate(s.sessionId, "disconnected"));
@@ -687,9 +684,9 @@ export class WorkflowRunner {
       const prompt = step.literal
         ? step.prompt
         : renderTemplate(step.prompt, { inputs: run.inputs, steps: run.outputs });
-      const profile = getProfile(run.parent.profileId);
+      const profile = await getProfile(run.parent.profileId);
       if (!profile) throw new WorkflowError("this thread's profile no longer exists", 409);
-      const project = getProject(run.parent.projectId);
+      const project = await getProject(run.parent.projectId);
       if (!project) throw new WorkflowError("this thread's project no longer exists", 409);
       // A step inherits how its parent was configured — the permission mode
       // above all, so a step does not ask what the parent would not.
@@ -697,7 +694,7 @@ export class WorkflowRunner {
         modeId: run.parent.modeId ?? undefined,
         configOptions: [],
       };
-      child = this.manager.create(profile, run.parent.agentId, project, step.model ?? run.parent.model, step.effort ?? run.parent.effort, undefined, undefined, run.parent.links, {
+      child = await this.manager.create(profile, run.parent.agentId, project, step.model ?? run.parent.model, step.effort ?? run.parent.effort, undefined, undefined, run.parent.links, {
         parentSessionId: run.parent.id,
         title: `${run.def.name} · ${step.name}`,
         restore,
@@ -928,12 +925,11 @@ export class WorkflowRunner {
     this.persist(run);
   }
 
-  private persist(run: Run): void {
-    db.update(runsTable)
+  private async persist(run: Run): Promise<void> {
+    await db.update(runsTable)
       .set({
         status: run.status, error: run.error, steps: [...run.steps.values()], endedAt: run.endedAt })
-      .where(eq(runsTable.id, run.id))
-      .run();
+      .where(eq(runsTable.id, run.id));
   }
 
   private view(run: Run): RunView {

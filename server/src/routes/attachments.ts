@@ -40,7 +40,7 @@ export function attachmentRoutes(app: Hono): void {
     }
 
     const bytes = Buffer.from(await c.req.arrayBuffer());
-    const row = putAttachment({
+    const row = await putAttachment({
       id,
       name: decodeName(c.req.header("x-filename")),
       mimeType: (c.req.header("content-type") ?? "").split(";")[0].trim(),
@@ -52,8 +52,8 @@ export function attachmentRoutes(app: Hono): void {
   /* The bytes. Same header set as `/file-raw` (routes/workspace.ts), and for
      the same reason: the server is serving user-controlled bytes from its own
      origin, and an uploaded file is more of that, not less. */
-  app.get("/api/attachments/:id", (c) => {
-    const row = getAttachment(c.req.param("id"));
+  app.get("/api/attachments/:id", async (c) => {
+    const row = await getAttachment(c.req.param("id"));
     if (!row) return c.json({ error: "no such attachment" }, 404);
     const bytes = readAttachment(row);
     // A row whose file is gone — a restored backup, whose bundles deliberately
@@ -70,11 +70,11 @@ export function attachmentRoutes(app: Hono): void {
 
   /** A chip removed before send. After send the row belongs to the thread and
       goes with it (`softDelete`/`purge`). */
-  app.delete("/api/attachments/:id", (c) => {
-    const row = getAttachment(c.req.param("id"));
+  app.delete("/api/attachments/:id", async (c) => {
+    const row = await getAttachment(c.req.param("id"));
     if (!row) return c.json({ error: "no such attachment" }, 404);
     if (row.sessionId) throw new HttpError("that attachment has already been sent", 409);
-    deleteAttachments([row.id]);
+    await deleteAttachments([row.id]);
     return c.json({ ok: true });
   });
 }

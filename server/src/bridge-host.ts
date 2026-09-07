@@ -55,8 +55,8 @@ export function makeBridgeHost(session: Session, owner: BridgeHostOwner): Bridge
        is actually being sent to. `hasCatalog` is the carve-out — a profile with
        no `models[]` defers to the agent by construction, which is exactly where
        `promptCapabilities` is authoritative. */
-    deliveryContext: () => {
-      const profile = getProfile(session.profileId);
+    deliveryContext: async () => {
+      const profile = await getProfile(session.profileId);
       const models = profile?.models ?? [];
       if (models.length === 0) return { modalities: undefined, hasCatalog: false };
       const wanted = bareModelId(profile!, session.model);
@@ -67,7 +67,7 @@ export function makeBridgeHost(session: Session, owner: BridgeHostOwner): Bridge
     onAutonomyBlocked: () => {
       session.autonomyBlocked += 1;
     },
-    hasQueued: () => !session.queueChain && listQueue(session.id).length > 0,
+    hasQueued: async () => !session.queueChain && (await listQueue(session.id)).length > 0,
     onHeldSteersChanged: () => owner.emitQueue(session),
     /* The drain runs here, synchronously after `turn_ended` was journaled,
        so the log reads turn_ended(continued) → turn_started(combined). The

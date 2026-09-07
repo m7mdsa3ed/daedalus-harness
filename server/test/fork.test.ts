@@ -7,6 +7,7 @@
 // parent is revived rather than refused. Against the fake agent under
 // DATA_DIR.
 // Run: pnpm test:fork
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
@@ -35,7 +36,7 @@ const { createProject, deleteProject } = await import("../src/projects.js");
 const setRewindVia = async (value: "acp-fork-point" | null) => {
   const { eq } = await import("drizzle-orm");
   const { db, agents: agentsTable } = await import("../src/db/index.js");
-  db.update(agentsTable).set({ rewindVia: value }).where(eq(agentsTable.id, "fake")).run();
+  await db.update(agentsTable).set({ rewindVia: value }).where(eq(agentsTable.id, "fake"));
 };
 
 class MockWs extends EventEmitter {
@@ -72,17 +73,17 @@ const profile: Profile = {
 const send = (ws: MockWs, command: ThreadCommand) =>
   ws.emit("message", Buffer.from(JSON.stringify(command)));
 
-const waitFor = async (predicate: () => boolean, what: string) => {
-  for (let i = 0; i < 100 && !predicate(); i += 1) await new Promise((r) => setTimeout(r, 50));
-  assert.ok(predicate(), `timed out waiting for ${what}`);
+const waitFor = async (predicate: () => boolean | Promise<boolean>, what: string) => {
+  for (let i = 0; i < 100 && !(await predicate()); i += 1) await new Promise((r) => setTimeout(r, 50));
+  assert.ok(await predicate(), `timed out waiting for ${what}`);
 };
 
 const manager = new SessionManager({}, 1);
-const project = createProject({ name: "test-fork", cwd: "/tmp/daedalus-test-fork/ws", description: null, logoUrl: "" });
+const project = await createProject({ name: "test-fork", cwd: "/tmp/daedalus-test-fork/ws", description: null, logoUrl: "" });
 
 // --- a parent with two settled turns ---
 
-const parent = manager.create(profile, "fake", project);
+const parent = await manager.create(profile, "fake", project);
 await parent.bridge!.ready;
 const ws = new MockWs();
 await manager.attach(parent.id, ws as never);

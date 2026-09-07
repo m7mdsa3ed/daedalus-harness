@@ -235,14 +235,14 @@ test("quotes, newlines and backslashes in a prompt do not break the template", (
   assert.equal(config.developer_instructions, prompt, "the prompt survives the round trip verbatim");
 });
 
-test("no persona prunes the key away rather than sending an empty instruction", () => {
+test("no persona prunes the key away rather than sending an empty instruction", async () => {
   const { env } = resolveSpawn(codexAgent, profileWith(), project);
   const config = JSON.parse(env.CODEX_CONFIG) as Record<string, string>;
   assert.equal("developer_instructions" in config, false);
   assert.equal(config.model, "gw/big", "…and the rest of the template is untouched");
 });
 
-test("a file-shaped agent gets the path, and an empty list prunes to nothing", () => {
+test("a file-shaped agent gets the path, and an empty list prunes to nothing", async () => {
   const { env } = resolveSpawn(
     opencodeAgent,
     profileWith(),
@@ -257,7 +257,7 @@ test("a file-shaped agent gets the path, and an empty list prunes to nothing", (
   assert.equal("instructions" in JSON.parse(bare.OPENCODE_CONFIG_CONTENT), false);
 });
 
-test("a persona with no file resolves the path empty even when it has a prompt", () => {
+test("a persona with no file resolves the path empty even when it has a prompt", async () => {
   // The prompt is the *other* agent's shape; this one only reads a path, and
   // the writer is the caller's job (`resolvePersonaSpawn`).
   const { env } = resolveSpawn(opencodeAgent, profileWith(), project, undefined, undefined, undefined, persona());
@@ -266,23 +266,35 @@ test("a persona with no file resolves the path empty even when it has a prompt",
 
 /* ── seedAgents ─────────────────────────────────────────────────────────── */
 
-function resetAgents(rows: { id: string; env: Record<string, string>; seededVersion: number }[]) {
-  db.delete(agentsTable).run();
+async function resetAgents(rows: { id: string; env: Record<string, string>; seededVersion: number }[]) {
+  await db.delete(agentsTable);
   for (const row of rows) {
-    db.insert(agentsTable)
+    await db.insert(agentsTable)
       .values({ name: row.id, command: row.id, args: [], spawnCategories: null, ...row })
-      .run();
+      ;
   }
 }
 
-test("OpenCode's built-in config bypasses permission prompts", () => {
+test("OpenCode's built-in config bypasses permission prompts", async () => {
   resetAgents([]);
   seedAgents();
-  const opencode = getAgent("opencode");
+  const opencode = await getAgent("opencode");
   assert.equal(JSON.parse(opencode?.env.OPENCODE_CONFIG_CONTENT ?? "{}").permission, "allow");
 });
 
-test("OpenCode backfill preserves an explicit permission policy", () => {
+test("OpenCode's built-in model field carries the opencode/ provider prefix", async () => {
+  resetAgents([]);
+  seedAgents();
+  const opencode = await getAgent("opencode");
+  /* OpenCode resolves a model only against `provider/<id>`; a bare id in the
+     top-level `model` is a ProviderModelNotFoundError and the thread hangs. */
+  assert.equal(
+    JSON.parse(opencode?.env.OPENCODE_CONFIG_CONTENT ?? "{}").model,
+    "opencode/{env:DAEDALUS_OPENCODE_MODEL}",
+  );
+});
+
+test("OpenCode backfill preserves an explicit permission policy", async () => {
   resetAgents([
     {
       id: "opencode",
@@ -291,12 +303,32 @@ test("OpenCode backfill preserves an explicit permission policy", () => {
     },
   ]);
   seedAgents();
-  const config = JSON.parse(getAgent("opencode")?.env.OPENCODE_CONFIG_CONTENT ?? "{}");
+  const config = JSON.parse((await getAgent("opencode"))?.env.OPENCODE_CONFIG_CONTENT ?? "{}");
   assert.deepEqual(config.permission, { bash: "ask" });
   assert.equal(config.model, "{model}");
 });
 
-test("seed 16 declares OpenCode's subagent feed without touching the user's env", () => {
+test("OpenCode backfill prefixes an unprefixed model field on a stored template", async () => {
+  /* Existing installs store the pre-seed-21 template (no `opencode/` prefix);
+  re-seeding must rewrite only the seeded unprefixed substring, leaving the
+  user's permission policy and surrounding keys alone. */
+  resetAgents([
+    {
+      id: "opencode",
+      seededVersion: 20,
+      env: {
+        OPENCODE_CONFIG_CONTENT:
+          '{"permission":"allow","model":"{env:DAEDALUS_OPENCODE_MODEL}","provider":{"opencode":{}}}',
+      },
+    },
+  ]);
+  seedAgents();
+  const config = JSON.parse((await getAgent("opencode"))?.env.OPENCODE_CONFIG_CONTENT ?? "{}");
+  assert.equal(config.model, "opencode/{env:DAEDALUS_OPENCODE_MODEL}");
+  assert.equal(config.permission, "allow", "the user's permission policy is preserved");
+});
+
+test("seed 16 declares OpenCode's subagent feed without touching the user's env", async () => {
   resetAgents([
     {
       id: "opencode",
@@ -305,7 +337,7 @@ test("seed 16 declares OpenCode's subagent feed without touching the user's env"
     },
   ]);
   seedAgents();
-  const opencode = getAgent("opencode");
+  const opencode = await getAgent("opencode");
   assert.equal(opencode?.subagentFeed, "opencode-http");
   assert.equal(opencode?.env.MY_KEY, "kept");
   assert.equal(opencode?.command, "opencode");
@@ -313,20 +345,20 @@ test("seed 16 declares OpenCode's subagent feed without touching the user's env"
   /* The probe cache is left alone — nothing the agent advertises changed. */
 });
 
-test("a fresh install gets the built-ins, pointed at {smallModel}", () => {
+test("a fresh install gets the built-ins, pointed at {smallModel}", async () => {
   resetAgents([]);
   seedAgents();
-  const claude = getAgent("claude-code");
+  const claude = await getAgent("claude-code");
   assert.equal(claude?.env.ANTHROPIC_SMALL_FAST_MODEL, SMALL);
   assert.equal(claude?.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, SMALL);
   assert.equal(claude?.env.ANTHROPIC_DEFAULT_SONNET_MODEL, MODEL);
   assert.equal(claude?.env.ANTHROPIC_DEFAULT_OPUS_MODEL, MODEL);
   assert.equal(claude?.env.ANTHROPIC_DEFAULT_FABLE_MODEL, MODEL);
-  assert.ok(getAgent("codex"));
-  assert.ok(getAgent("opencode"));
+  assert.ok((await getAgent("codex")));
+  assert.ok((await getAgent("opencode")));
 });
 
-test("the backfill moves a seed-3 row off {model} and keeps the user's edits", () => {
+test("the backfill moves a seed-3 row off {model} and keeps the user's edits", async () => {
   resetAgents([
     {
       id: "claude-code",
@@ -341,7 +373,7 @@ test("the backfill moves a seed-3 row off {model} and keeps the user's edits", (
     { id: "codex", seededVersion: 2, env: {} },
   ]);
   seedAgents();
-  const claude = getAgent("claude-code");
+  const claude = await getAgent("claude-code");
   assert.equal(claude?.env.ANTHROPIC_SMALL_FAST_MODEL, SMALL);
   assert.equal(claude?.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, SMALL);
   // Never a wholesale replacement: what the user put in the template is theirs.
@@ -351,7 +383,7 @@ test("the backfill moves a seed-3 row off {model} and keeps the user's edits", (
   assert.equal(claude?.env.ANTHROPIC_BASE_URL, "{gatewayUrl}");
 });
 
-test("seed 9 moves Codex's provider base_url onto the shim, only when it is the seeded slot", () => {
+test("seed 9 moves Codex's provider base_url onto the shim, only when it is the seeded slot", async () => {
   const seededTemplate = '{"model":"{model}","model_providers":{"daedalus":{"base_url":"{baseUrl}","wire_api":"{baseUrl?responses}"}}}';
   resetAgents([
     { id: "codex", seededVersion: 8, env: { CODEX_CONFIG: seededTemplate } },
@@ -359,7 +391,7 @@ test("seed 9 moves Codex's provider base_url onto the shim, only when it is the 
     { id: "opencode", seededVersion: 8, env: {} },
   ]);
   seedAgents();
-  const moved = getAgent("codex")?.env.CODEX_CONFIG ?? "";
+  const moved = (await getAgent("codex"))?.env.CODEX_CONFIG ?? "";
   assert.ok(moved.includes('"base_url":"{gatewayUrl}"'));
   assert.ok(!moved.includes('"base_url":"{baseUrl}"'));
   // The catalog key rides along for a row that never got it.
@@ -367,13 +399,13 @@ test("seed 9 moves Codex's provider base_url onto the shim, only when it is the 
   // A hand-written URL is the user's.
   resetAgents([{ id: "codex", seededVersion: 8, env: { CODEX_CONFIG: '{"model_providers":{"daedalus":{"base_url":"https://my.gw/v1"}}}' } }]);
   seedAgents();
-  assert.ok(getAgent("codex")?.env.CODEX_CONFIG.includes('"base_url":"https://my.gw/v1"'));
+  assert.ok((await getAgent("codex"))?.env.CODEX_CONFIG.includes('"base_url":"https://my.gw/v1"'));
 });
 
-test("a base URL the user wrote by hand is not moved onto the shim", () => {
+test("a base URL the user wrote by hand is not moved onto the shim", async () => {
   resetAgents([{ id: "claude-code", seededVersion: 7, env: { ANTHROPIC_BASE_URL: "https://my.gw/v1" } }]);
   seedAgents();
-  assert.equal(getAgent("claude-code")?.env.ANTHROPIC_BASE_URL, "https://my.gw/v1");
+  assert.equal((await getAgent("claude-code"))?.env.ANTHROPIC_BASE_URL, "https://my.gw/v1");
 });
 
 test("{gatewayUrl} is the profile's endpoint until a shim is up, then the shim", () => {
@@ -398,10 +430,10 @@ test("{gatewayUrl} is the profile's endpoint until a shim is up, then the shim",
   // in the env beyond the pair being named.
 });
 
-test("the backfill adds the keys to a row that predates them", () => {
+test("the backfill adds the keys to a row that predates them", async () => {
   resetAgents([{ id: "claude-code", seededVersion: 1, env: { ANTHROPIC_MODEL: "{model}" } }]);
   seedAgents();
-  const claude = getAgent("claude-code");
+  const claude = await getAgent("claude-code");
   assert.equal(claude?.env.ANTHROPIC_SMALL_FAST_MODEL, SMALL);
   // Seed 5's alias keys arrive on the same jump — an install stamped 1 never
   // saw seed 4 on its own — and seed 6's 1M conditional rides along on all of
@@ -411,13 +443,13 @@ test("the backfill adds the keys to a row that predates them", () => {
   assert.equal(claude?.env.ANTHROPIC_DEFAULT_FABLE_MODEL, MODEL);
 });
 
-test("a value that is neither missing nor {model} is left alone", () => {
+test("a value that is neither missing nor {model} is left alone", async () => {
   resetAgents([{ id: "claude-code", seededVersion: 3, env: { ANTHROPIC_SMALL_FAST_MODEL: "haiku-x" } }]);
   seedAgents();
-  assert.equal(getAgent("claude-code")?.env.ANTHROPIC_SMALL_FAST_MODEL, "haiku-x");
+  assert.equal((await getAgent("claude-code"))?.env.ANTHROPIC_SMALL_FAST_MODEL, "haiku-x");
 });
 
-test("a deleted built-in is not resurrected by a later backfill", () => {
+test("a deleted built-in is not resurrected by a later backfill", async () => {
   // claude-code was introduced in seed 1 and this install is past that, so its
   // absence is a deletion — not a fresh install owed the agent. Bumping `since`
   // to 4 for the backfill must not read as "never offered".
@@ -426,21 +458,21 @@ test("a deleted built-in is not resurrected by a later backfill", () => {
     { id: "opencode", seededVersion: 1, env: {} },
   ]);
   seedAgents();
-  assert.equal(getAgent("claude-code"), undefined);
+  assert.equal((await getAgent("claude-code")), undefined);
 });
 
-test("a genuinely new agent still reaches an install that has rows", () => {
+test("a genuinely new agent still reaches an install that has rows", async () => {
   // codex was introduced in seed 2; an install seeded only to 1 has never been
   // offered it, so it must arrive.
   resetAgents([{ id: "opencode", seededVersion: 1, env: {} }]);
   seedAgents();
-  assert.ok(getAgent("codex"));
+  assert.ok((await getAgent("codex")));
 });
 
-test("seed 14 brings the first-party Daedalus agent to fresh and seeded installs alike", () => {
+test("seed 14 brings the first-party Daedalus agent to fresh and seeded installs alike", async () => {
   resetAgents([]);
   seedAgents();
-  const daedalus = getAgent("daedalus");
+  const daedalus = await getAgent("daedalus");
   assert.ok(daedalus, "fresh install gets it");
   assert.equal(daedalus?.command, "node");
   assert.equal(daedalus?.liveConfig, "acp");
@@ -449,18 +481,18 @@ test("seed 14 brings the first-party Daedalus agent to fresh and seeded installs
   // An install seeded to 13 has never been offered it, so it arrives.
   resetAgents([{ id: "opencode", seededVersion: 13, env: {} }]);
   seedAgents();
-  assert.ok(getAgent("daedalus"));
+  assert.ok((await getAgent("daedalus")));
 
   // Deleted on purpose stays deleted: this install is past seed 14.
   resetAgents([{ id: "opencode", seededVersion: 14, env: {} }]);
   seedAgents();
-  assert.equal(getAgent("daedalus"), undefined);
+  assert.equal((await getAgent("daedalus")), undefined);
 });
 
-test("the Daedalus agent's spawn resolves the entry path and prunes like the rest", () => {
+test("the Daedalus agent's spawn resolves the entry path and prunes like the rest", async () => {
   resetAgents([]);
   seedAgents();
-  const daedalus = getAgent("daedalus");
+  const daedalus = await getAgent("daedalus");
   assert.ok(daedalus);
   const spawn = resolveSpawn(daedalus, profileWith(), project, "gw-model", "high");
   // The args placeholder resolves to a real path ending in the built entry.
@@ -475,17 +507,17 @@ test("the Daedalus agent's spawn resolves the entry path and prunes like the res
   assert.equal(bare.env.DAEDALUS_AGENT_API_KEY, undefined);
 });
 
-test("an agent's user half is editable, and the probe cache goes with it", () => {
+test("an agent's user half is editable, and the probe cache goes with it", async () => {
   resetAgents([]);
   seedAgents();
-  db.insert(agentOptionsTable)
+  await db.insert(agentOptionsTable)
     .values([
       { key: "p1:daedalus:/tmp/x", options: {}, probedAt: 1 },
       { key: "p1:codex:/tmp/x", options: {}, probedAt: 1 },
     ])
-    .run();
+    ;
 
-  const updated = updateAgent("daedalus", {
+  const updated = await updateAgent("daedalus", {
     name: "My Agent",
     command: "node",
     args: ["/opt/agent/index.js"],
@@ -499,29 +531,29 @@ test("an agent's user half is editable, and the probe cache goes with it", () =>
   assert.equal(updated?.personaVia, "env");
 
   // Its own probe answers are gone; another agent's are not.
-  const keys = db.select().from(agentOptionsTable).all().map((r) => r.key);
+  const keys = (await db.select().from(agentOptionsTable)).map((r) => r.key);
   assert.deepEqual(keys, ["p1:codex:/tmp/x"]);
 
   assert.equal(updateAgent("no-such-agent", { name: "x", command: "x", args: [], env: {} }), undefined);
 });
 
-test("a seed release never takes an edited agent back", () => {
+test("a seed release never takes an edited agent back", async () => {
   resetAgents([]);
   seedAgents();
   updateAgent("daedalus", { name: "Mine", command: "bun", args: ["x.js"], env: { A: "1" } });
   seedAgents();
-  const after = getAgent("daedalus");
+  const after = await getAgent("daedalus");
   assert.equal(after?.name, "Mine");
   assert.equal(after?.command, "bun");
   assert.deepEqual(after?.env, { A: "1" });
 });
 
-test("reset puts a built-in back, and only a built-in has one", () => {
+test("reset puts a built-in back, and only a built-in has one", async () => {
   resetAgents([]);
   seedAgents();
-  const original = getAgent("daedalus");
-  updateAgent("daedalus", { name: "Mine", command: "bun", args: ["x.js"], env: { A: "1" } });
-  const restored = resetAgent("daedalus");
+  const original = await getAgent("daedalus");
+  await updateAgent("daedalus", { name: "Mine", command: "bun", args: ["x.js"], env: { A: "1" } });
+  const restored = await resetAgent("daedalus");
   assert.equal(restored?.name, original?.name);
   assert.equal(restored?.command, "node");
   assert.deepEqual(restored?.args, original?.args);
@@ -547,65 +579,65 @@ test("reset puts a built-in back, and only a built-in has one", () => {
    knowing one runtime from another, so what is asserted here is mostly that the
    *right* runtime carries each one and the others do not. */
 
-test("seed 20 declares each runtime's workspace layout, and codex's is nothing", () => {
+test("seed 20 declares each runtime's workspace layout, and codex's is nothing", async () => {
   resetAgents([]);
   seedAgents();
-  const claude = getAgent("claude-code")?.workspaceLayout;
+  const claude = (await getAgent("claude-code"))?.workspaceLayout;
   assert.equal(claude?.dir, ".claude");
   assert.equal(claude?.skills, "skills");
   assert.equal(claude?.commands, "commands");
   assert.equal(claude?.argumentHintKey, "argument-hint");
   assert.deepEqual(claude?.modelAllowlist, { file: "settings.local.json", key: "availableModels" });
   // The harness's own runtime reads the same directory (agent/src/commands.ts).
-  assert.deepEqual(getAgent("daedalus")?.workspaceLayout, claude);
+  assert.deepEqual((await getAgent("daedalus"))?.workspaceLayout, claude);
   // OpenCode reads its own, and has no argument hint in its frontmatter.
-  assert.equal(getAgent("opencode")?.workspaceLayout?.dir, ".opencode");
-  assert.equal(getAgent("opencode")?.workspaceLayout?.argumentHintKey, undefined);
-  assert.equal(getAgent("opencode")?.workspaceLayout?.modelAllowlist, undefined);
+  assert.equal((await getAgent("opencode"))?.workspaceLayout?.dir, ".opencode");
+  assert.equal((await getAgent("opencode"))?.workspaceLayout?.argumentHintKey, undefined);
+  assert.equal((await getAgent("opencode"))?.workspaceLayout?.modelAllowlist, undefined);
   /* Codex resolves skills and prompts only under $CODEX_HOME, so there is
      nowhere in a cwd to write them — and writing `.claude/` at it anyway is
      exactly what this replaced. */
-  assert.equal(getAgent("codex")?.workspaceLayout, null);
+  assert.equal((await getAgent("codex"))?.workspaceLayout, null);
 });
 
-test("seed 20 puts the workflow engine, the built-in tools and the catalog probe on the row", () => {
+test("seed 20 puts the workflow engine, the built-in tools and the catalog probe on the row", async () => {
   resetAgents([]);
   seedAgents();
   // What `sessions.ts` compared an agent id against.
-  assert.equal(getAgent("claude-code")?.workflowsVia, "native");
-  assert.equal(getAgent("codex")?.workflowsVia, null);
-  assert.equal(getAgent("opencode")?.workflowsVia, null);
+  assert.equal((await getAgent("claude-code"))?.workflowsVia, "native");
+  assert.equal((await getAgent("codex"))?.workflowsVia, null);
+  assert.equal((await getAgent("opencode"))?.workflowsVia, null);
   // The two tool-name lists that used to be spelled inside the bridge.
-  const tools = getAgent("claude-code")?.builtinTools;
+  const tools = (await getAgent("claude-code"))?.builtinTools;
   assert.equal(tools?.via, "acp-meta");
   assert.deepEqual(tools?.tools.webSearch, ["WebSearch", "WebFetch"]);
   assert.deepEqual(tools?.tools.workflow, ["Workflow"]);
-  assert.equal(getAgent("codex")?.builtinTools, null);
+  assert.equal((await getAgent("codex"))?.builtinTools, null);
   // The module constant that read `codex` off PATH.
-  assert.equal(getAgent("codex")?.catalogProbe?.kind, "codex-cli");
-  assert.deepEqual(getAgent("codex")?.catalogProbe?.args, ["debug", "models"]);
-  assert.equal(getAgent("claude-code")?.catalogProbe, null);
+  assert.equal((await getAgent("codex"))?.catalogProbe?.kind, "codex-cli");
+  assert.deepEqual((await getAgent("codex"))?.catalogProbe?.args, ["debug", "models"]);
+  assert.equal((await getAgent("claude-code"))?.catalogProbe, null);
 });
 
-test("seed 20 carries the install line, the mark and the import paths", () => {
+test("seed 20 carries the install line, the mark and the import paths", async () => {
   resetAgents([]);
   seedAgents();
-  assert.match(getAgent("claude-code")?.install ?? "", /^npm install -g /);
-  assert.match(getAgent("claude-code")?.icon ?? "", /^data:image\/png/);
+  assert.match((await getAgent("claude-code"))?.install ?? "", /^npm install -g /);
+  assert.match((await getAgent("claude-code"))?.icon ?? "", /^data:image\/png/);
   // The harness's own mark is the app's, not a fourth piece of flat art.
-  assert.equal(getAgent("daedalus")?.icon, "app");
-  assert.deepEqual(getAgent("claude-code")?.discovery?.mcp, [{ path: ".claude.json", format: "claude-json" }]);
-  assert.deepEqual(getAgent("codex")?.discovery?.mcp, [{ path: ".codex/config.toml", format: "codex-toml" }]);
+  assert.equal((await getAgent("daedalus"))?.icon, "app");
+  assert.deepEqual((await getAgent("claude-code"))?.discovery?.mcp, [{ path: ".claude.json", format: "claude-json" }]);
+  assert.deepEqual((await getAgent("codex"))?.discovery?.mcp, [{ path: ".codex/config.toml", format: "codex-toml" }]);
   // Nothing of OpenCode's is imported, which is a statement and not an omission.
-  assert.equal(getAgent("opencode")?.discovery, null);
+  assert.equal((await getAgent("opencode"))?.discovery, null);
 });
 
-test("the seed 20 backfill fills a row that predates it without touching the env", () => {
+test("the seed 20 backfill fills a row that predates it without touching the env", async () => {
   resetAgents([
     { id: "claude-code", seededVersion: 19, env: { ANTHROPIC_MODEL: MODEL, MY_OWN: "keep me" } },
   ]);
   seedAgents();
-  const claude = getAgent("claude-code");
+  const claude = await getAgent("claude-code");
   assert.equal(claude?.workflowsVia, "native");
   assert.equal(claude?.workspaceLayout?.dir, ".claude");
   assert.ok(claude?.install);
@@ -613,7 +645,7 @@ test("the seed 20 backfill fills a row that predates it without touching the env
   assert.equal(claude?.env.ANTHROPIC_MODEL, MODEL);
 });
 
-test("the seed 20 backfill leaves an icon the user cleared cleared", () => {
+test("the seed 20 backfill leaves an icon the user cleared cleared", async () => {
   resetAgents([{ id: "claude-code", seededVersion: 19, env: {} }]);
   seedAgents();
   // A save with no icon clears it; a later re-seed must not put the art back,
@@ -626,27 +658,27 @@ test("the seed 20 backfill leaves an icon the user cleared cleared", () => {
     icon: null,
     install: null,
   });
-  assert.equal(getAgent("claude-code")?.icon, null);
+  assert.equal((await getAgent("claude-code"))?.icon, null);
   seedAgents();
-  assert.equal(getAgent("claude-code")?.icon, null);
+  assert.equal((await getAgent("claude-code"))?.icon, null);
 });
 
-test("a reset puts the install line and the mark back with everything else", () => {
+test("a reset puts the install line and the mark back with everything else", async () => {
   resetAgents([]);
   seedAgents();
   updateAgent("codex", { name: "Mine", command: "codex-acp", args: [], env: {}, icon: null, install: null });
-  assert.equal(getAgent("codex")?.icon, null);
+  assert.equal((await getAgent("codex"))?.icon, null);
   resetAgent("codex");
-  assert.match(getAgent("codex")?.icon ?? "", /^data:image\/png/);
-  assert.match(getAgent("codex")?.install ?? "", /^npm install -g /);
+  assert.match((await getAgent("codex"))?.icon ?? "", /^data:image\/png/);
+  assert.match((await getAgent("codex"))?.install ?? "", /^npm install -g /);
 });
 
-test("seeding twice changes nothing", () => {
+test("seeding twice changes nothing", async () => {
   resetAgents([]);
   seedAgents();
-  const before = db.select().from(agentsTable).where(eq(agentsTable.id, "claude-code")).get();
+  const before = (await db.select().from(agentsTable).where(eq(agentsTable.id, "claude-code")))[0];
   seedAgents();
-  assert.deepEqual(db.select().from(agentsTable).where(eq(agentsTable.id, "claude-code")).get(), before);
+  assert.deepEqual((await db.select().from(agentsTable).where(eq(agentsTable.id, "claude-code")))[0], before);
 });
 
 
@@ -673,20 +705,20 @@ test("locateCommand finds a binary on PATH and nowhere else", () => {
   assert.equal(locateCommand(join(bin, "gone"), { path, cwd: root, exts: [] }), null);
 });
 
-test("checkInstalled names what is missing — the command, or a file the args point at", () => {
+test("checkInstalled names what is missing — the command, or a file the args point at", async () => {
   resetAgents([]);
-  seedAgents();
-  const missingCommand = { ...getAgent("codex")!, command: "definitely-not-a-binary-here" };
+  await seedAgents();
+  const missingCommand = { ...(await getAgent("codex"))!, command: "definitely-not-a-binary-here" };
   const a = checkInstalled(missingCommand, project);
   assert.equal(a.installed, false);
   assert.equal(a.missing, "definitely-not-a-binary-here");
   /* `node` exists; the entry it is handed does not. */
-  const missingEntry = { ...getAgent("daedalus")!, args: ["/nonexistent/daedalus/agent/dist/index.js"] };
+  const missingEntry = { ...(await getAgent("daedalus"))!, args: ["/nonexistent/daedalus/agent/dist/index.js"] };
   const b = checkInstalled(missingEntry, project);
   assert.equal(b.installed, false);
   assert.ok(b.path, "node itself was found");
   assert.equal(b.missing, "/nonexistent/daedalus/agent/dist/index.js");
-  const present = { ...getAgent("daedalus")!, args: [process.execPath] };
+  const present = { ...(await getAgent("daedalus"))!, args: [process.execPath] };
   assert.deepEqual(checkInstalled(present, project).installed, true);
 });
 

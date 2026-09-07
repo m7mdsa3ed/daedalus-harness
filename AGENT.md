@@ -76,6 +76,11 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   thread *as it is* — a live process gets its socket, a retired one is read from its
   journal. Only a send or the button puts a process back. The four codes that mean the
   thread is gone or taken over (4000/4001/4002/4004) are still said once, with a button.
+- **A run of streamed chunks is replayed as the one event it draws, and the merge is a
+  read** (`coalescedPage`) — never an append, because a cursor resuming *inside* a run has
+  to be answerable, and it is only answerable from rows nothing merged. The merged event
+  stands at its run's **last** seq. Downstream of it, what spans the log is counted in seqs
+  and never in events: `EarlierPage.from`, and the replay's progress.
 - **A replay that replaces a transcript commits once, not per frame** (`seamless`), and
   **while a restart runs the doomed socket's events are dropped** — a cleared journal being
   refilled is the transcript already on screen, said again.
@@ -113,6 +118,11 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   record. **A thread with nobody in front of it never holds** (`DAEDALUS_AGENT_HOLD_ON_ERROR`,
   off for a workflow step or a scheduled run), because `whenTurnSettled` would wait forever.
   Subagents never hold: theirs would re-run every tool it already ran.
+- **A retry is said, not just logged** (`_daedalus/session/retry`): announced *before* the
+  backoff, because the backoff is the silence it explains, and absolute and live-only like the
+  hold — `caught_up` carries it, nothing journals it, and it is taken back before a `paused`
+  goes out in its place. The count is **the harness's** retries; the AI SDK's own are inside
+  one `streamText` call and reporting those means owning the policy (`maxRetries: 0`).
 - **A failed attempt persists nothing it did not finish.** The JSONL is append-only, so the
   write is what is delayed — down to the last step whose tool calls all came back. An
   assistant message carrying a call with no result is what the next `session/load` hands back
@@ -302,6 +312,11 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   chunk name from the service worker's precache.
 - **A turn's changes are measured by git, never read off the transcript** — tree snapshots at
   `turn_started`/`turn_ended` through a scratch index; **the real index is never touched**.
+  **What git measures is a window, not an author**, so the *chip* is gated on the transcript
+  (`couldTouchFiles`, ACP `kind` and no vendor name): a turn that only read, searched,
+  fetched or thought draws nothing, because in a cwd shared with another thread, an editor or
+  a build it would otherwise claim their diff. The gate is a **read-only allowlist** — an
+  unrecognised kind still draws — and it decides only what is drawn, never what is recorded.
   Staging, discarding and committing belong to the source-control view, because they act on
   the worktree as it is now and not on a scope.
 - A project's own page reads its settled half from one `/stats` call, on mount and by Refresh

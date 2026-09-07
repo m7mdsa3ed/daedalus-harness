@@ -1,5 +1,5 @@
 import { eq, inArray } from "drizzle-orm";
-import type { AnySQLiteColumn, SQLiteTable } from "drizzle-orm/sqlite-core";
+import type { AnyPgColumn, PgTable } from "drizzle-orm/pg-core";
 import {
   commands as commandsTable,
   db,
@@ -38,9 +38,9 @@ export const emptyLinks = (): LinkSet => ({ mcpServerIds: [], skillIds: [], comm
 /** One join table: which column names the owner and which the library row.
     `ownerKey`/`targetKey` are the JS property names an insert takes. */
 interface LinkTable {
-  table: SQLiteTable;
-  owner: AnySQLiteColumn;
-  target: AnySQLiteColumn;
+  table: PgTable;
+  owner: AnyPgColumn;
+  target: AnyPgColumn;
   ownerKey: string;
   targetKey: string;
 }
@@ -67,23 +67,30 @@ export const SESSION_LINKS: LinkTables = {
     the driver escape hatch, so helpers can take either. */
 export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
-function readOne(link: LinkTable, ownerIds: string[]): Map<string, string[]> {
+async function readOne(link: LinkTable, ownerIds: string[]): Promise<Map<string, string[]>> {
   const out = new Map<string, string[]>();
   if (ownerIds.length === 0) return out;
-  const rows = db
+  const rows = (await db
     .select({ owner: link.owner, target: link.target })
     .from(link.table)
-    .where(inArray(link.owner, ownerIds))
-    .all() as { owner: string; target: string }[];
+    .where(inArray(link.owner, ownerIds))) as { owner: string; target: string }[];
   for (const row of rows) out.set(row.owner, [...(out.get(row.owner) ?? []), row.target]);
   return out;
 }
 
 /** Every owner's links, grouped — one query per table however many owners. */
-export function readLinks(tables: LinkTables, ownerIds: string[]): Map<string, LinkSet> {
-  const mcp = readOne(tables.mcp, ownerIds);
-  const skill = readOne(tables.skill, ownerIds);
-  const command = readOne(tables.command, ownerIds);
+export async function readLinks(
+  tables: LinkTables,
+  ownerIds: string[],
+): Promise<Map<string, LinkSet>> {
+  // Three independent reads: awaited together rather than in sequence, because
+  // an async driver charges a round trip for each and they do not depend on
+  // one another.
+  const [mcp, skill, command] = await Promise.all([
+    readOne(tables.mcp, ownerIds),
+    readOne(tables.skill, ownerIds),
+    readOne(tables.command, ownerIds),
+  ]);
   const out = new Map<string, LinkSet>();
   for (const id of ownerIds) {
     out.set(id, {
@@ -95,44 +102,50 @@ export function readLinks(tables: LinkTables, ownerIds: string[]): Map<string, L
   return out;
 }
 
-export function linksOf(tables: LinkTables, ownerId: string): LinkSet {
-  return readLinks(tables, [ownerId]).get(ownerId) ?? emptyLinks();
+export async function linksOf(tables: LinkTables, ownerId: string): Promise<LinkSet> {
+  return (await readLinks(tables, [ownerId])).get(ownerId) ?? emptyLinks();
 }
 
 /** Ids the library actually holds. A request naming an entry that no longer
     exists is stale, not fatal — it links what it can, which is what the old
     read-time filtering did, only now the stored state is clean too. */
-function existing(
+async function existing(
+  tx: Tx,
   ids: string[],
   table: typeof mcpServersTable | typeof skillsTable | typeof commandsTable,
-): string[] {
+): Promise<string[]> {
   if (ids.length === 0) return [];
   const unique = [...new Set(ids)];
-  const found = db
-    .select({ id: table.id })
-    .from(table)
-    .where(inArray(table.id, unique))
-    .all()
-    .map((r) => r.id);
+  /* Read inside the caller's transaction rather than through `db`. It always
+     should have been: a library row deleted between this check and the insert
+     below took the link's foreign key with it, and outside the transaction
+     that is a window the write can lose. */
+  const rows = await tx.select({ id: table.id }).from(table).where(inArray(table.id, unique));
+  const found = rows.map((r) => r.id);
   return unique.filter((id) => found.includes(id));
 }
 
-function writeOne(tx: Tx, link: LinkTable, ownerId: string, ids: string[]): void {
-  tx.delete(link.table).where(eq(link.owner, ownerId)).run();
+async function writeOne(tx: Tx, link: LinkTable, ownerId: string, ids: string[]): Promise<void> {
+  await tx.delete(link.table).where(eq(link.owner, ownerId));
   for (const id of ids) {
     // The descriptor names the two columns; the table type is erased above,
     // so the row is built by key rather than typed per table.
-    tx.insert(link.table)
-      .values({ [link.ownerKey]: ownerId, [link.targetKey]: id } as Record<string, string>)
-      .run();
+    await tx
+      .insert(link.table)
+      .values({ [link.ownerKey]: ownerId, [link.targetKey]: id } as Record<string, string>);
   }
 }
 
 /** Replace an owner's links wholesale. Inside the caller's transaction. */
-export function writeLinks(tx: Tx, tables: LinkTables, ownerId: string, links: LinkSet): void {
-  writeOne(tx, tables.mcp, ownerId, existing(links.mcpServerIds, mcpServersTable));
-  writeOne(tx, tables.skill, ownerId, existing(links.skillIds, skillsTable));
-  writeOne(tx, tables.command, ownerId, existing(links.commandIds, commandsTable));
+export async function writeLinks(
+  tx: Tx,
+  tables: LinkTables,
+  ownerId: string,
+  links: LinkSet,
+): Promise<void> {
+  await writeOne(tx, tables.mcp, ownerId, await existing(tx, links.mcpServerIds, mcpServersTable));
+  await writeOne(tx, tables.skill, ownerId, await existing(tx, links.skillIds, skillsTable));
+  await writeOne(tx, tables.command, ownerId, await existing(tx, links.commandIds, commandsTable));
 }
 
 /** The union of several link sets, first-seen order, no duplicates. */

@@ -397,11 +397,18 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   apps: fixed nav rows on top (`SidebarNav`: New thread, Search, Tasks — menu rows,
   so they survive the icon rail), then Pinned, a flat Recents, **one folder per
   project** with its threads under it and a hover `+` that starts a thread *in*
-  that project, Scheduled, Trash. **Recents puts every running thread at the
-  top**, whatever its age, and there is no Running tier of its own any more: a
-  tier above Recents drew the same threads twice, and by-activity order alone
+  that project, Scheduled, Trash. **Recents keeps every running thread in the
+  list**, whatever its age, and there is no Running tier of its own any more: a
+  tier above Recents drew the same threads twice, and length alone
   buried the turn that is happening *now* under whatever was typed most
-  recently. Pinned and Recents are **shortcuts, not
+  recently. **Running decides membership, never position**: it used to hoist
+  those rows to the top, and a status is only *known* for a thread this client
+  has connected to — `useThreadStatuses` falls back to the server's
+  `promptActive`, a snapshot refetched on bootstrap and on mutations, so
+  clicking a row attached its socket, corrected a stale reading and re-sorted
+  the list out from under the click that opened it. The order is the sort alone,
+  so a correction can add or drop a row at the end of the list and can move
+  nothing. Pinned and Recents are **shortcuts, not
   places**: a folder holds every one of its project's threads, the recent and
   the pinned included, because a folder that dropped whatever was recent was an
   incomplete index of its own project — with the newest thread, the one most
@@ -991,7 +998,22 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   open.
 - **A turn's changes open as a tab, not as a panel of their own.** The "N files changed" chip
   under a turn (`TurnChangesChip` in `thread-view.tsx`) opens the IDE and requests the scope;
-  `changes-tab.tsx` draws the files as a tree (twelve files across four directories is
+  **whether it is drawn at all is the transcript's one contribution to a measurement that is
+  otherwise entirely git's.** The snapshots bracket a *window*, and everything landing in that
+  window is attributed to whichever turn was open — a second thread on the same cwd, the
+  user's own editor, a dev server writing something that is not gitignored. The recorded row
+  keeps all of it (it is what the review panel and a rewind read), but the chip asks
+  `turnCouldTouchFiles` first: did the turn run one tool whose ACP `kind` is not `read`,
+  `search`, `fetch`, `think` or `switch_mode` (`couldTouchFiles` in `lib/tools/naming.ts`)? A
+  turn that only searched the web cannot have written a file, and used to be handed the
+  neighbouring thread's seventy. The predicate is a **read-only allowlist**, not a writer
+  list: `execute` counts because a shell can `sed`, `other` counts because it is the protocol
+  declining to say (Claude Code files every MCP tool there), and a verb nobody has seen counts
+  — a chip drawn over someone else's diff is a smaller lie than one that hides real work.
+  Subagent rows count too: they carry a `parentId`, but a child's Edit is the parent turn's
+  change. Nothing here spells a vendor tool name — a new runtime's writer is free as long as
+  it declares a kind.
+  Once the tab is open, `changes-tab.tsx` draws the files as a tree (twelve files across four directories is
   unreadable as twelve full paths) and a Monaco diff per file, both sides read whole from
   `GET /api/sessions/:id/changes/file` — the before side from the turn's start tree, the after
   side from its end tree once it has ended and from the working file while it is still

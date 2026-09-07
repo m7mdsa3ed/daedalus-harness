@@ -12,7 +12,7 @@ import { mcpServers as mcpLibrary } from "./library.js";
 import { isConnected as isMcpConnected } from "./mcp-oauth.js";
 import { mcpProxyUrlFor } from "./mcp-shim.js";
 import { personaEffort, resolvePersonaSpawn } from "./personas.js";
-import { spawnRules } from "./rules.js";
+import { globalRules, projectRules } from "./rules.js";
 import type { Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 import { getProfile, listProfiles, profileBaseUrl, profileSupports } from "./profiles.js";
@@ -22,7 +22,7 @@ import { gatewayUrlFor, setGatewaySessionResolver, type GatewaySession } from ".
 import { HttpError } from "./http-error.js";
 import * as git from "./git.js";
 import { getProject } from "./projects.js";
-import { getConfig, loadConfig } from "./config.js";
+import { databaseUrl, getConfig, loadConfig } from "./config.js";
 import { WEB_SEARCH_SERVER_NAME, toMcpServerEnv } from "./websearch.js";
 import { pruneWebSearchUsage, recordWebSearchUsage } from "./websearch-usage.js";
 import { KNOWLEDGE_SERVER_NAME, toKnowledgeServerEnv } from "./knowledge-db.js";
@@ -342,14 +342,14 @@ function truncateReason(reason: string): string {
  * nothing when that server cannot run (search unconfigured), because a linked
  * tool that cannot answer is worse than an absent one.
  */
-export function mcpServersFor(
+export async function mcpServersFor(
   links: Pick<LinkSet, "mcpServerIds">,
   project: Pick<Project, "id">,
   config: ReturnType<typeof loadConfig>,
   /** The `workflow` server as this thread may have it — null for a thread
       that must not (a workflow step: one level, never a tree). */
   workflow: StdioMcpServer | null = null,
-): { servers: acp.McpServer[]; skipped: string[] } {
+): Promise<{ servers: acp.McpServer[]; skipped: string[] }> {
   const linked = new Set(links.mcpServerIds);
   const servers: acp.McpServer[] = [];
   /** Linked rows that resolved to nothing and *could* have resolved to
@@ -357,7 +357,7 @@ export function mcpServersFor(
       journaled: nothing failed, the thread simply spawned without a tool it
       was never able to use. */
   const skipped: string[] = [];
-  for (const s of mcpLibrary.list()) {
+  for (const s of (await mcpLibrary.list())) {
     if (!linked.has(s.id)) continue;
     if (s.type === "builtin") {
       const built =
@@ -376,7 +376,7 @@ export function mcpServersFor(
          since a row may carry both. */
       if (s.auth !== "oauth") servers.push({ type: "http", name: s.name, url: s.url, headers: s.headers });
       else {
-        const proxied = isMcpConnected(s.id) ? mcpProxyUrlFor(s.id) : "";
+        const proxied = (await isMcpConnected(s.id)) ? mcpProxyUrlFor(s.id) : "";
         if (proxied) servers.push({ type: "http", name: s.name, url: proxied, headers: s.headers });
         else skipped.push(s.id);
       }
@@ -439,9 +439,15 @@ function harnessMcpServer(name: string, script: string, env: StdioMcpServer["env
 
 /** The harness's own `knowledge` MCP server. The project's id is injected
     into the server's env so every query is scoped to the workspace this
-    session runs in — which is why it cannot be a stored command. */
+    session runs in — which is why it cannot be a stored command. The
+    connection string goes with it: the subprocess opens its own connection to
+    the same database, and must not import `config.ts` to find it. */
 export function knowledgeServer(project: Pick<Project, "id">): StdioMcpServer {
-  return harnessMcpServer(KNOWLEDGE_SERVER_NAME, "knowledge-mcp", toKnowledgeServerEnv(project.id));
+  return harnessMcpServer(
+    KNOWLEDGE_SERVER_NAME,
+    "knowledge-mcp",
+    toKnowledgeServerEnv(project.id, databaseUrl()),
+  );
 }
 
 /** The harness's own `workflow` MCP server. The only thing it is handed is the
@@ -522,17 +528,24 @@ export class SessionManager {
        reading is served from the log, resuming still goes through the agent, and
        `respawnNow` clears the log before the load refills it so the two can
        never be stitched together. */
-    this.pruneJournals();
-    this.reload();
+    /* The constructor cannot await, and both of these read the database. They
+       are held on `ready` instead, and every entry point that touches
+       `this.sessions` waits for it — `reload` ends by *purging* every session
+       whose row it did not see, so a `create` that raced it had its thread
+       deleted out from under the caller. */
+    this.ready = (async () => {
+      await this.pruneJournals();
+      await this.reload();
+    })().catch((error) => console.error("[sessions] boot read failed", error));
 
     /* What answers a `/gw/<key>/s/<id>/…` request. The shim asks per request
        rather than being told at spawn, which is the whole of "the endpoint,
        credentials and model behind a running child are still ours to change"
        — see `applyConfig`. */
-    setGatewaySessionResolver((id) => this.gatewayStateOf(id));
+    setGatewaySessionResolver(async (id) => await this.gatewayStateOf(id));
 
     const idleMs = idleMinutes * 60_000;
-    setInterval(() => {
+    setInterval(async () => {
       for (const s of this.sessions.values()) {
         /* Not a thread mid-turn: a parent blocked inside a workflow call with
            no browser open was being retired under it. And never a workflow
@@ -557,19 +570,24 @@ export class SessionManager {
         }
         if (s.parentSessionId || bridge?.promptActive) continue;
         if (!s.exited && s.peers.size === 0 && s.detachedAt && Date.now() - s.detachedAt > idleMs) {
-          this.retire(s);
+          this.retire(
+            s,
+            `Nobody had this thread open for ${idleMinutes} minutes, so its agent process was stopped to free it. The conversation is kept — sending a message starts the agent again.`,
+          );
         }
       }
     }, 60_000).unref();
     // Retention is checked at boot and then hourly, so a server that runs for
     // months does not accumulate every thread it ever ran.
-    setInterval(() => this.pruneJournals(), 3_600_000).unref();
+    setInterval(async () => this.pruneJournals(), 3_600_000).unref();
     /* Uploads nobody ever sent, on the same clock. An attachment is claimed by
        the prompt that references it (see attachments.ts); one that never was
        is a draft the user abandoned, and keeping it is a disk leak with no
        reader. */
-    sweepAttachments();
-    setInterval(() => sweepAttachments(), 3_600_000).unref();
+    void sweepAttachments().catch((error) => console.error("[attachments] sweep failed", error));
+    setInterval(() => {
+      void sweepAttachments().catch((error) => console.error("[attachments] sweep failed", error));
+    }, 3_600_000).unref();
   }
 
   /**
@@ -583,23 +601,28 @@ export class SessionManager {
    * closed so they reconnect to the new log — and one whose row is gone
    * (`replace` mode) is dropped.
    */
-  reload(): void {
-    const counts = this.log.nextSeqBySession();
+  /** The boot read (`pruneJournals` + `reload`), which the constructor starts
+      and every public entry point awaits before it touches `this.sessions`. */
+  readonly ready: Promise<void>;
+
+  async reload(): Promise<void> {
+    const counts = await this.log.nextSeqBySession();
     /* Rows written before `last_activity_at` existed carry 0, and a thread
        that has never been ordered by activity would sort to the bottom of a
        list it may well belong at the top of. The journal already knows when it
        was last written to, so the backfill is one grouped scan here rather
        than a migration — and it is written back, so it happens once. */
-    const activity = this.log.lastActivityBySession();
-    const rows = db.select().from(sessionsTable).all();
-    const links = readLinks(SESSION_LINKS, rows.map((r) => r.id));
+    const activity = await this.log.lastActivityBySession();
+    const rows = await db.select().from(sessionsTable);
+    const links = await readLinks(SESSION_LINKS, rows.map((r) => r.id));
     const seen = new Set<string>();
     const backfilled: Session[] = [];
     for (const row of rows) {
       seen.add(row.id);
       const current = this.sessions.get(row.id);
       if (current && !current.exited) continue;
-      if (current) this.closePeers(current, 4000, "session reloaded");
+      if (current)
+        this.closePeers(current, 4000, "The server reloaded this thread's record, so its connection was replaced.");
       const lastActivityAt =
         row.lastActivityAt || activity.get(row.id) || row.createdAt;
       const session: Session = {
@@ -657,8 +680,8 @@ export class SessionManager {
     for (const session of backfilled) this.persist(session);
     for (const [id, session] of this.sessions) {
       if (seen.has(id)) continue;
-      this.closePeers(session, 4000, "session purged");
-      this.retire(session);
+      this.closePeers(session, 4000, "This thread is no longer on the server.");
+      this.retire(session, "This thread is no longer on the server, so its agent process was stopped.");
       this.sessions.delete(id);
     }
   }
@@ -671,8 +694,12 @@ export class SessionManager {
   retireAll(ids?: Iterable<string>): void {
     const targets = ids ? [...ids].map((id) => this.sessions.get(id)).filter((s): s is Session => Boolean(s)) : [...this.sessions.values()];
     for (const session of targets) {
-      this.closePeers(session, 4000, "session reloaded");
-      if (!session.exited) this.retire(session);
+      this.closePeers(session, 4000, "A backup was imported, which restarts every thread it touched.");
+      if (!session.exited)
+        this.retire(
+          session,
+          "A backup was imported over this thread, so its agent process was stopped. The conversation is kept — sending a message starts the agent again.",
+        );
     }
   }
 
@@ -686,8 +713,12 @@ export class SessionManager {
    */
   shutdown(): void {
     for (const session of this.sessions.values()) {
-      this.closePeers(session, 4000, "server shutting down");
-      if (!session.exited) this.retire(session);
+      this.closePeers(session, 4000, "The server shut down, which stops every agent process with it.");
+      if (!session.exited)
+        this.retire(
+          session,
+          "The server shut down, which stops every agent process with it. The conversation is kept — sending a message starts the agent again.",
+        );
     }
     this.log.flush();
   }
@@ -700,7 +731,7 @@ export class SessionManager {
    * What is NOT here is deliberate: the conversation lives in the agent's own
    * session store and comes back through ACP session/load on revive.
    */
-  private persist(session?: Session): void {
+  private async persist(session?: Session): Promise<void> {
     const rows = session ? [session] : [...this.sessions.values()];
     for (const s of rows) {
       const values = {
@@ -725,19 +756,19 @@ export class SessionManager {
         forkedFromSessionId: s.forkedFromSessionId,
         forkedFromTurnId: s.forkedFromTurnId,
       };
-      db.insert(sessionsTable).values(values).onConflictDoUpdate({
+      await db.insert(sessionsTable).values(values).onConflictDoUpdate({
         target: sessionsTable.id,
         set: values,
-      }).run();
+      });
     }
   }
 
   /** The thread's own links are written once, at create — they do not change
       with a title sniff or a model switch, so `persist` leaves them alone. */
-  private persistLinks(session: Session): void {
-    db.transaction((tx) => writeLinks(tx, SESSION_LINKS, session.id, session.links));
+  private async persistLinks(session: Session): Promise<void> {
+    await db.transaction(async (tx) => await writeLinks(tx, SESSION_LINKS, session.id, session.links));
     // What the tables kept (a stale id links nothing) is what the thread has.
-    session.links = linksOf(SESSION_LINKS, session.id);
+    session.links = await linksOf(SESSION_LINKS, session.id);
   }
 
   /**
@@ -757,7 +788,7 @@ export class SessionManager {
    * handed is the union over all of them; a thread being spawned counts as
    * live already, and a retired one has no process to lose anything.
    */
-  private materializeFor(session: Session, profile: Profile, project: Project): void {
+  private async materializeFor(session: Session, profile: Profile, project: Project): Promise<void> {
     /* One sweep per *layout*, not one per cwd: where a skill or a command has
        to land is the runtime's fact (`AgentDef.workspaceLayout`), two runtimes
        may share a directory (claude-code and the harness's own agent both read
@@ -770,8 +801,8 @@ export class SessionManager {
     ensureProjectDir(project.cwd);
     const layouts = new Map<string, { layout: WorkspaceLayout; sets: LinkSet[] }>();
     const agentCache = new Map<string, AgentDef | undefined>();
-    const add = (agentId: string, links: LinkSet) => {
-      if (!agentCache.has(agentId)) agentCache.set(agentId, getAgent(agentId));
+    const add = async (agentId: string, links: LinkSet) => {
+      if (!agentCache.has(agentId)) agentCache.set(agentId, await getAgent(agentId));
       const layout = agentCache.get(agentId)?.workspaceLayout;
       if (!layout) return;
       const key = JSON.stringify(layout);
@@ -779,11 +810,11 @@ export class SessionManager {
       entry.sets.push(links);
       layouts.set(key, entry);
     };
-    add(session.agentId, this.effectiveLinks(session, profile));
+    await add(session.agentId, this.effectiveLinks(session, profile));
     for (const other of this.sessions.values()) {
       if (other === session || other.exited || other.deletedAt !== null) continue;
       if (other.project?.cwd !== project.cwd) continue;
-      add(other.agentId, this.effectiveLinks(other));
+      await add(other.agentId, this.effectiveLinks(other));
     }
     for (const { layout, sets } of layouts.values()) {
       materializeWorkspace(project.cwd, layout, unionLinks(...sets));
@@ -798,7 +829,7 @@ export class SessionManager {
     const cwds = [session, ...this.sessions.values()].filter(
       (s) => s.deletedAt === null && (s === session || (!s.exited && s.project?.cwd === project.cwd)),
     );
-    sweepMaterialisedAttachments(project.cwd, claimedAttachmentIds(cwds.map((s) => s.id)));
+    sweepMaterialisedAttachments(project.cwd, await claimedAttachmentIds(cwds.map((s) => s.id)));
   }
 
   // ---- the event log (see session-journal.ts for the table itself) ----
@@ -814,18 +845,18 @@ export class SessionManager {
    * falls back to reviving through `session/load`, exactly as it did before any
    * of this existed.
    */
-  private pruneJournals(): void {
+  private async pruneJournals(): Promise<void> {
     const days = this.journalRetentionDays;
     if (days < 0) return;
     const cutoff = days === 0 ? Date.now() : Date.now() - days * 86_400_000;
     const live = [...this.sessions.values()].filter((s) => !s.exited).map((s) => s.id);
-    for (const id of this.log.prune(cutoff, live)) {
+    for (const id of (await this.log.prune(cutoff, live))) {
       const session = this.sessions.get(id);
       if (session) session.eventCount = 0;
     }
     /* The web-search usage ledger ages out on the same clock: it is metadata
        about transcripts whose archives were just judged by this cutoff. */
-    const usageDropped = pruneWebSearchUsage(cutoff);
+    const usageDropped = await pruneWebSearchUsage(cutoff);
     if (usageDropped > 0) console.log(`[journal] dropped ${usageDropped} web-search usage row(s)`);
     /* And so does the trash. A soft delete keeps the row so a delete stays
        undoable, but "undoable" was never meant to mean "immortal" — a thread
@@ -839,10 +870,10 @@ export class SessionManager {
   }
 
   /** Everything this session has journaled, and the cursor that follows it. */
-  journal(id: string): { cursor: number; events: ThreadEvent[] } | undefined {
+  async journal(id: string): Promise<{ cursor: number; events: ThreadEvent[] } | undefined> {
     const session = this.sessions.get(id);
     if (!session) return undefined;
-    return { cursor: session.eventCount, events: this.log.eventsFrom(session.id, 0) };
+    return { cursor: session.eventCount, events: await this.log.eventsFrom(session.id, 0) };
   }
 
   /** One page of the journal for the trace view — the newest `limit` events
@@ -850,11 +881,11 @@ export class SessionManager {
       for a thread this server does not hold. The page's own `next` is the seq
       to page older from, computed here where `eventCount` — the head of the
       log — is known. */
-  trace(id: string, before: number, limit: number): TracePage | undefined {
+  async trace(id: string, before: number, limit: number): Promise<TracePage | undefined> {
     const session = this.sessions.get(id);
     if (!session) return undefined;
     const from = Number.isFinite(before) && before > 0 ? before : session.eventCount;
-    const events = this.log.trace(id, from, limit);
+    const events = await this.log.trace(id, from, limit);
     const next = events.length > 0 && events[0].seq > 0 ? events[0].seq : null;
     return { events, next };
   }
@@ -879,14 +910,16 @@ export class SessionManager {
     // A mirrored event is a step's, already recorded under the step's own
     // thread — counting it again here would bill every search twice.
     if (!mirrored && session.websearchViaMcp && event.ev === "update" && !event.historyReplay) {
-      recordWebSearchUsage({
+      void recordWebSearchUsage({
         sessionId: session.id,
         threadTitle: session.title,
         profileId: session.profileId,
         profileName: session.profile?.name ?? session.profileId,
         projectId: session.projectId,
         projectName: session.project?.name ?? session.projectId,
-      }, event.update, session.websearchCalls);
+      }, event.update, session.websearchCalls).catch((error) =>
+        console.error("[websearch] usage write failed", error),
+      );
     }
     /* How full the agent says its context window is. Kept on the session
        because it is current state rather than history — see `Session.context`:
@@ -963,11 +996,11 @@ export class SessionManager {
    * Deliberately not awaited. The turn is settled; nothing downstream of it may
    * wait on a child process.
    */
-  private refreshQuota(session: Session): void {
+  private async refreshQuota(session: Session): Promise<void> {
     if (session.parentSessionId || session.peers.size === 0) return;
-    const agent = getAgent(session.agentId);
-    const profile = session.profile ?? getProfile(session.profileId);
-    const project = session.project ?? getProject(session.projectId);
+    const agent = await getAgent(session.agentId);
+    const profile = session.profile ?? (await getProfile(session.profileId));
+    const project = session.project ?? (await getProject(session.projectId));
     /* Only a plan the turn actually spent is the turn's to report: the
        profile's own provider, or — on a Default profile, which carries no
        credentials — the machine's `claude`/`codex login` the agent probe
@@ -979,7 +1012,7 @@ export class SessionManager {
        /usage` — and a turn is not worth spawning one for, so that side rides
        the 5-minute TTL instead: fresh enough for a glance, and one spawn
        however many turns land inside the window. */
-    if (profileUsage(profile)) invalidateQuota(profile, agent.id);
+    if (profileUsage(profile)) await invalidateQuota(profile, agent.id);
     void getQuota(agent, profile, project)
       .then((quota) => this.emit(session, { ev: "quota", quota }))
       .catch(() => {});
@@ -1153,14 +1186,14 @@ export class SessionManager {
     this.processGone(session, reason);
     setTimeout(() => {
       if (session.bridge !== bridge) return;
-      this.closePeers(session, 4001, truncateReason(reason));
+      this.closePeers(session, 4001, reason);
     }, 0).unref();
   }
 
   /** `id` lets the client name the thread it has already routed to; the caller
       is responsible for having checked that it is a free UUID. Without one the
       server names it, which is still the path the API takes when asked. */
-  create(
+  async create(
     profile: Profile,
     agentId: string,
     project: Project,
@@ -1198,7 +1231,8 @@ export class SessionManager {
           missed the request it existed for. */
       autonomy?: AutonomyPolicy;
     } = {},
-  ): Session {
+  ): Promise<Session> {
+    await this.ready;
     const session = this.blankSession(profile, agentId, project, links, {
       id,
       model,
@@ -1213,9 +1247,9 @@ export class SessionManager {
     this.sessions.set(session.id, session);
     // Before the bridge: the event rows reference this one, so the session has
     // to exist by the time the agent's first update arrives.
-    this.persist(session);
-    this.persistLinks(session);
-    this.start(session, profile, project, model, effort, {
+    await this.persist(session);
+    await this.persistLinks(session);
+    await this.start(session, profile, project, model, effort, {
       configChoices,
       restore: opts.restore,
       modeId: opts.modeId,
@@ -1390,7 +1424,7 @@ export class SessionManager {
   }
 
   /** Spawn a process for this session and put an ACP client in front of it. */
-  private start(
+  private async start(
     session: Session,
     profile: Profile,
     project: Project,
@@ -1402,7 +1436,7 @@ export class SessionManager {
       configChoices?: Record<string, string | boolean>;
       modeId?: string;
     },
-  ): AcpBridge {
+  ): Promise<AcpBridge> {
     session.profile = profile;
     session.project = project;
     /* Model and effort go back the way they came. A profile with a catalog
@@ -1414,7 +1448,7 @@ export class SessionManager {
        once the session exists instead. */
     const ownsCatalog = (profile.models?.length ?? 0) > 0;
     this.materializeFor(session, profile, project);
-    const agent = getAgent(session.agentId);
+    const agent = await getAgent(session.agentId);
     /* The allowlist an `"acp"`-live agent builds its model picker from. Written
        before the spawn because it is read once, at `session/new`, and it is the
        union across every profile that serves this agent rather than this one's
@@ -1427,7 +1461,7 @@ export class SessionManager {
        nothing rather than a Claude Code settings file it will never open. */
     const allowlist = agent?.workspaceLayout;
     if (agent?.liveConfig === "acp" && allowlist) {
-      materializeModelAllowlist(project.cwd, allowlist, modelAllowlistFor(agent, profile, listProfiles()));
+      materializeModelAllowlist(project.cwd, allowlist, modelAllowlistFor(agent, profile, await listProfiles()));
     }
     session.spawnProfileId = profile.id;
     session.viaGateway = !!gatewayUrlFor(profile.id, session.agentId, profileBaseUrl(profile, session.agentId), session.id);
@@ -1438,7 +1472,8 @@ export class SessionManager {
        unconditionally — a thread that has just had its persona removed needs
        the stale prompt file cleared as much as one that gained a persona needs
        it written. */
-    const persona = resolvePersonaSpawn(session.id, session.personaId, agent, session.suggestFollowups);
+    const rules = [...(await globalRules()), ...(await projectRules(project.id))];
+    const persona = await resolvePersonaSpawn(session.id, session.personaId, agent, session.suggestFollowups, rules);
     /* An agent whose children never reach ACP is given a port and a secret so
        the server can read them off its own event bus (opencode-subagents.ts).
        Minted here, per spawn, never stored — like the gateway key. The pool
@@ -1448,7 +1483,7 @@ export class SessionManager {
     const feedPort = wantsFeed ? this.ports.take() : undefined;
     const sidecar = feedPort ? { port: feedPort, password: randomBytes(24).toString("hex") } : undefined;
     if (wantsFeed && !sidecar) console.warn(`[${session.id.slice(0, 8)}] no port ready for the subagent feed; spawning without it`);
-    const proc = spawnAgent(
+    const proc = await spawnAgent(
       profile,
       session.agentId,
       project,
@@ -1474,7 +1509,7 @@ export class SessionManager {
         })
       : undefined;
     if (feed) proc.on("close", () => feed.close());
-    const { mcpServers, websearchViaMcp, workflowViaMcp } = this.serversFor(session, profile, project);
+    const { mcpServers, websearchViaMcp, workflowViaMcp } = await this.serversFor(session, profile, project);
     session.websearchViaMcp = websearchViaMcp;
     session.websearchCalls = new Set(); // in-flight calls went with the old process
     // Both belong to the process about to be replaced, and the handshake below
@@ -1515,11 +1550,11 @@ export class SessionManager {
       harness's web-search server is among them — the bridge turns the runtime's
       own web tools off when it is (`AgentDef.builtinTools`), and usage is
       recorded. */
-  private serversFor(session: Session, profile: Profile, project: Project): {
+  private async serversFor(session: Session, profile: Profile, project: Project): Promise<{
     mcpServers: acp.McpServer[];
     websearchViaMcp: boolean;
     workflowViaMcp: boolean;
-  } {
+  }> {
     // getConfig, not loadConfig: this runs on every spawn, and re-reading and
     // re-parsing config.json each time bought nothing — saveWebSearch is the
     // only runtime writer and it invalidates the cache.
@@ -1547,12 +1582,12 @@ export class SessionManager {
        Enforced here rather than left to whoever edits the profile's links:
        the two decisions are one decision, and a half-applied one silently
        costs the better tool. */
-    const ownsWorkflows = getAgent(session.agentId)?.workflowsVia === "native";
+    const ownsWorkflows = (await getAgent(session.agentId))?.workflowsVia === "native";
     const workflow =
       this.workflowRunner && !session.parentSessionId && !ownsWorkflows
         ? workflowServer(session, this.workflowRunner)
         : null;
-    const { servers: mcpServers, skipped } = mcpServersFor(
+    const { servers: mcpServers, skipped } = await mcpServersFor(
       this.effectiveLinks(session, profile),
       project,
       getConfig(),
@@ -1591,10 +1626,10 @@ export class SessionManager {
    */
 
   /** What the shim needs to know about a thread, resolved per request. */
-  private gatewayStateOf(id: string): GatewaySession | undefined {
+  private async gatewayStateOf(id: string): Promise<GatewaySession | undefined> {
     const session = this.sessions.get(id);
     if (!session || !session.profile) return undefined;
-    const agent = getAgent(session.agentId);
+    const agent = await getAgent(session.agentId);
     const ownsCatalog = (session.profile.models?.length ?? 0) > 0;
     /* Two ways the id the child names can be the wrong one. Codex is told its
        model at spawn and will not be told another, so every request it makes
@@ -1670,8 +1705,19 @@ export class SessionManager {
     opts: { defer?: boolean; follow?: boolean } = {},
   ): Promise<{ live: boolean; staged?: StagedConfig; restarting?: boolean }> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error("unknown session");
-    if (session.deletedAt !== null) throw new Error("session deleted");
+    if (!session) throw new Error(
+      "This thread is not on this server. It may have been deleted, or the server may have restarted without it.",
+    );
+    if (session.deletedAt !== null)
+      throw new Error(
+        "This thread is in Trash. Restore it from the thread list before changing or starting it.",
+      );
+    /* A model belongs to the profile that lists it, and this is the one door
+       every change comes through — so it is where the pair is made true. What
+       gets here otherwise is a model id of the profile being *left*: no client
+       is trusted to have cleared it, the staged path used to lose the clearing,
+       and every later revive re-passes whatever the row ended up holding. */
+    next = { ...next, model: modelFor(session, next.profile, next.model) };
     if (await this.applyConfigLive(session, next)) {
       /* Whatever was waiting for the boundary has just been overtaken for the
          fields this call names — leaving them staged would move the setting
@@ -1701,7 +1747,7 @@ export class SessionManager {
        every argument: the user drops "Think more" to medium, changes their
        model, and the respawn silently puts it back on high. Picking is a
        statement about how to work; the effort row underneath stays theirs. */
-    const effort = (changed ? personaEffort(next.personaId) : undefined) ?? next.effort;
+    const effort = (changed ? await personaEffort(next.personaId) : undefined) ?? next.effort;
     /* Named before the respawn: it moves the row, and the journal is cleared
        under it. */
     const movingProfile = next.profile.id !== session.profileId;
@@ -1821,6 +1867,16 @@ export class SessionManager {
   ): void {
     const staged = session.stagedConfig;
     if (!staged) return;
+    /* A live change taken on the profile the thread is *leaving* says nothing
+       about a change staged for the one it is joining — and the model is where
+       that mattered. A staged profile move carries `model: ""` on purpose (it
+       names a model the new profile does not serve, so the new profile's own
+       default is what should resolve); deleting that key because a live model
+       pick "overtook" it left `{profileId}` alone, and the flush below then
+       read `staged.model ?? current.model` and carried the old profile's model
+       across the move. The agent refused it, the row kept claiming it, and the
+       thread ran on a model nobody picked. */
+    if (staged.profileId && staged.profileId !== applied.profile.id) return;
     const rest: StagedConfig = { ...staged };
     if (staged.profileId === applied.profile.id) delete rest.profileId;
     if (applied.model !== undefined) delete rest.model;
@@ -1849,7 +1905,7 @@ export class SessionManager {
   private flushStaged(session: Session, continued: boolean): void {
     const staged = session.stagedConfig;
     if (!staged || continued) return;
-    setTimeout(() => {
+    setTimeout(async () => {
       /* Re-read: everything about this may have moved while the tick was
          pending — the thread deleted, another turn started, the change
          cancelled or applied by hand from another device. */
@@ -1857,18 +1913,23 @@ export class SessionManager {
       if (!current || current.deletedAt !== null) return;
       if (current.stagedConfig !== staged) return;
       if (current.bridge?.promptActive) return;
-      const profile = getProfile(staged.profileId ?? current.profileId);
-      const project = getProject(current.projectId);
+      const profile = await getProfile(staged.profileId ?? current.profileId);
+      const project = await getProject(current.projectId);
       if (!profile || !project) return this.clearStaged(current);
       this.clearStaged(current);
+      /* What the row is on stands in for anything the patch does not name —
+         except across a profile move, where the row's model and effort name a
+         model of the profile being left. There "unnamed" means "let the new
+         profile's default resolve", which is what `applyConfig` does with "".*/
+      const moving = profile.id !== current.profileId;
       void this.applyConfig(
         current.id,
         {
           profile,
           agentId: current.agentId,
           project,
-          model: staged.model ?? current.model,
-          effort: staged.effort ?? current.effort,
+          model: staged.model ?? (moving ? "" : current.model),
+          effort: staged.effort ?? (moving ? "" : current.effort),
           ...(staged.personaId !== undefined ? { personaId: staged.personaId } : {}),
           ...(staged.suggestFollowups !== undefined ? { suggestFollowups: staged.suggestFollowups } : {}),
         },
@@ -1885,7 +1946,7 @@ export class SessionManager {
     session: Session,
     next: { profile: Profile; agentId: string; project: Project; model?: string; effort?: string; personaId?: string; suggestFollowups?: boolean },
   ): Promise<boolean> {
-    const agent = getAgent(session.agentId);
+    const agent = await getAgent(session.agentId);
     if (!agent?.liveConfig) return false;
     if (next.agentId !== session.agentId) return false;
     /* Nothing to be clever about: `_meta` is read at `session/new`/`session/load`
@@ -1994,8 +2055,13 @@ export class SessionManager {
     effort?: string,
   ): Promise<Session> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error("unknown session");
-    if (session.deletedAt !== null) throw new Error("session deleted");
+    if (!session) throw new Error(
+      "This thread is not on this server. It may have been deleted, or the server may have restarted without it.",
+    );
+    if (session.deletedAt !== null)
+      throw new Error(
+        "This thread is in Trash. Restore it from the thread list before changing or starting it.",
+      );
     // One respawn at a time, per thread. The whole spawn → session/load →
     // restore sequence runs against a bridge that `session.bridge` already
     // points at, so a second call before the first settles would close that
@@ -2025,8 +2091,13 @@ export class SessionManager {
   ): Promise<Session> {
     // Re-checked once the queue lets us through: the thread may have been
     // deleted (or purged) while a first respawn was still in flight.
-    if (this.sessions.get(session.id) !== session) throw new Error("unknown session");
-    if (session.deletedAt !== null) throw new Error("session deleted");
+    if (this.sessions.get(session.id) !== session) throw new Error(
+      "This thread is not on this server. It may have been deleted, or the server may have restarted without it.",
+    );
+    if (session.deletedAt !== null)
+      throw new Error(
+        "This thread is in Trash. Restore it from the thread list before changing or starting it.",
+      );
     /* Whatever was waiting for a turn boundary belonged to the process being
        replaced — and the one coming up is spawned on settings newer than it. */
     this.clearStaged(session);
@@ -2048,11 +2119,13 @@ export class SessionManager {
     session.agentId = agentId;
     session.model = model || profile.defaultModel || "";
     session.effort = effort ?? "";
-    // The load replays the entire conversation as fresh updates, so everything
-    // already journaled is about to be said again.
-    this.log.clear(session);
+    /* The load replays the entire conversation as fresh updates, so everything
+       already journaled is about to be said again. Awaited: the clear is what
+       zeroes the seq counter the reload then stamps from, and fire-and-forget
+       it was a rejection nobody saw and a counter nobody reset. */
+    await this.log.clear(session);
     resetStderr(session);
-    const bridge = this.start(session, profile, project, model, effort, {
+    const bridge = await this.start(session, profile, project, model, effort, {
       load: session.acpSessionId ? { acpSessionId: session.acpSessionId } : undefined,
       restore,
     });
@@ -2111,17 +2184,22 @@ export class SessionManager {
     scope: "conversation" | "files" | "both",
   ): Promise<{ ok: true; acpSessionId: string | null | undefined; restored?: boolean; historyLost?: HistoryLost }> {
     const session = this.sessions.get(id);
-    if (!session) throw new Error("unknown session");
-    if (session.deletedAt !== null) throw new Error("session deleted");
+    if (!session) throw new Error(
+      "This thread is not on this server. It may have been deleted, or the server may have restarted without it.",
+    );
+    if (session.deletedAt !== null)
+      throw new Error(
+        "This thread is in Trash. Restore it from the thread list before changing or starting it.",
+      );
     if (session.parentSessionId) throw new HttpError("a workflow step cannot be rewound — rewind the thread that started the run", 409);
     if (session.bridge?.promptActive) throw new HttpError("a turn is running — cancel it before rewinding", 409);
 
-    const profile = session.profile ?? getProfile(session.profileId);
+    const profile = session.profile ?? (await getProfile(session.profileId));
     if (!profile) throw new HttpError("unknown profile", 404);
-    const project = session.project ?? getProject(session.projectId);
+    const project = session.project ?? (await getProject(session.projectId));
     if (!project) throw new HttpError("unknown project", 404);
 
-    const point = this.log.rewindPoint(session.id, turnId);
+    const point = await this.log.rewindPoint(session.id, turnId);
     if (!point) throw new HttpError("unknown turn", 404);
 
     const conversational = scope === "conversation" || scope === "both";
@@ -2129,7 +2207,7 @@ export class SessionManager {
     let cut = false;
 
     if (conversational) {
-      if (getAgent(session.agentId)?.rewindVia !== "acp-fork-point") {
+      if ((await getAgent(session.agentId))?.rewindVia !== "acp-fork-point") {
         throw new HttpError("this agent cannot rewind its conversation — files can still be restored", 400);
       }
       if (point.before === null) {
@@ -2155,7 +2233,7 @@ export class SessionManager {
 
     let restored: boolean | undefined;
     if (physical) {
-      const tree = this.turnChanges.startTreeOf(session.id, turnId);
+      const tree = await this.turnChanges.startTreeOf(session.id, turnId);
       if (!tree) throw new HttpError("no file snapshot for this turn", 404);
       restored = (await git.restoreToTree(session.projectId, tree)).restored;
     }
@@ -2226,17 +2304,17 @@ export class SessionManager {
        branch is a plain thread — no parent of its own, visible, mortal. */
     if (session.bridge?.promptActive) throw new HttpError("a turn is running — cancel it before forking", 409);
 
-    const profile = session.profile ?? getProfile(session.profileId);
+    const profile = session.profile ?? (await getProfile(session.profileId));
     if (!profile) throw new HttpError("unknown profile", 404);
-    const project = session.project ?? getProject(session.projectId);
+    const project = session.project ?? (await getProject(session.projectId));
     if (!project) throw new HttpError("unknown project", 404);
 
-    const point = this.log.forkPoint(session.id, turnId);
+    const point = await this.log.forkPoint(session.id, turnId);
     if (!point) throw new HttpError("unknown turn", 404);
     if (point.messageId === null) {
       throw new HttpError("this turn has no recorded fork point, so the conversation cannot be branched there", 400);
     }
-    if (getAgent(session.agentId)?.rewindVia !== "acp-fork-point") {
+    if ((await getAgent(session.agentId))?.rewindVia !== "acp-fork-point") {
       throw new HttpError("this agent cannot fork its conversation at a turn", 400);
     }
 
@@ -2272,10 +2350,10 @@ export class SessionManager {
     // Before the bridge, for the same reason `create` does it this way: the
     // event rows reference this row, and the load replay starts arriving the
     // moment the process answers its handshake.
-    this.persist(child);
-    this.persistLinks(child);
+    await this.persist(child);
+    await this.persistLinks(child);
 
-    const childBridge = this.start(child, profile, project, child.model || undefined, child.effort || undefined, {
+    const childBridge = await this.start(child, profile, project, child.model || undefined, child.effort || undefined, {
       load: { acpSessionId: forkId },
       modeId: child.modeId ?? undefined,
     });
@@ -2342,35 +2420,35 @@ export class SessionManager {
        before the queue branch too, since a queued message's attachments are
        just as much this thread's as a sent one's. Unknown or foreign ids are
        dropped rather than refused (attachments.ts). */
-    const attachments = claimAttachments(opts.attachmentIds ?? [], session.id);
+    const attachments = await claimAttachments(opts.attachmentIds ?? [], session.id);
     if (bridge.promptActive && !opts.steer) {
-      const item = enqueue(session.id, text, attachments);
+      const item = await enqueue(session.id, text, attachments);
       this.queue.emitQueue(session);
       return { queued: true, itemId: item.id };
     }
-    return this.startTurn(session, bridge, text, peer, { attachments, forceLink: opts.forceLink });
+    return await this.startTurn(session, bridge, text, peer, { attachments, forceLink: opts.forceLink });
   }
 
   /** Put a prompt on the wire. `peer` is the origin (told nothing — it already
       showed its own message); a drained prompt has none, so every peer draws
       the bubble from `turn_started`. */
-  private startTurn(
+  private async startTurn(
     session: Session,
     bridge: AcpBridge,
     text: string,
     peer: Peer | undefined,
     opts: { attachments?: AttachmentRef[]; forceLink?: boolean } = {},
-  ): { turnId: string; deferred?: boolean } {
+  ): Promise<{ turnId: string; deferred?: boolean }> {
     /* One id per logical turn: steering (a second prompt while one is in
        flight) joins the turn already running rather than starting another. */
     const turnId = bridge.promptActive && bridge.currentTurnId ? bridge.currentTurnId : randomUUID();
     /* `deferred` = the words went out but their bubble is held for the step
        boundary, so the sender must not draw one of its own. */
-    const { deferred } = bridge.prompt(text, peer, turnId, opts);
+    const { deferred } = await bridge.prompt(text, peer, turnId, opts);
     if (text && session.title === "New thread") {
       session.title = text.slice(0, TITLE_SNIFF_MAX);
       session.titleFromPrompt = session.title;
-      this.persist(session);
+      await this.persist(session);
     }
     return deferred ? { turnId, deferred } : { turnId };
   }
@@ -2400,25 +2478,25 @@ export class SessionManager {
     startTurn: (session, bridge, text, peer, opts) => this.startTurn(session, bridge, text, peer, opts),
   });
 
-  queueAdd(id: string, text: string, attachmentIds?: string[]): PromptReply {
+  async queueAdd(id: string, text: string, attachmentIds?: string[]): Promise<PromptReply> {
     const session = this.requireSession(id);
-    return this.queue.add(session, text, claimAttachments(attachmentIds ?? [], session.id));
+    return await this.queue.add(session, text, await claimAttachments(attachmentIds ?? [], session.id));
   }
 
-  queueUpdate(id: string, itemId: string, text: string, attachmentIds?: string[]): void {
+  async queueUpdate(id: string, itemId: string, text: string, attachmentIds?: string[]): Promise<void> {
     const session = this.requireSession(id);
     /* Re-claimed rather than trusted: an edit may name an attachment added on
        another device, and the ids on the row are already this thread's. */
-    if (attachmentIds) claimAttachments(attachmentIds, session.id);
-    this.queue.update(session, itemId, text, attachmentIds);
+    if (attachmentIds) await claimAttachments(attachmentIds, session.id);
+    await this.queue.update(session, itemId, text, attachmentIds);
   }
 
-  queueRemove(id: string, itemId: string): void {
-    this.queue.remove(this.requireSession(id), itemId);
+  async queueRemove(id: string, itemId: string): Promise<void> {
+    await this.queue.remove(this.requireSession(id), itemId);
   }
 
-  queueClear(id: string): void {
-    this.queue.clear(this.requireSession(id));
+  async queueClear(id: string): Promise<void> {
+    await this.queue.clear(this.requireSession(id));
   }
 
   queueSteer(id: string, itemId: string): Promise<{ turnId: string }> {
@@ -2431,13 +2509,31 @@ export class SessionManager {
 
   private requireSession(id: string): Session {
     const session = this.sessions.get(id);
-    if (!session) throw new Error("unknown session");
+    if (!session) throw new Error(
+      "This thread is not on this server. It may have been deleted, or the server may have restarted without it.",
+    );
     return session;
   }
 
-  /** Stop the process but keep the thread — the opposite of purge(). The thread
-      stays readable afterwards: the log is kept and `attach` serves it. */
-  retire(session: Session): void {
+  /**
+   * Stop the process but keep the thread — the opposite of purge(). The thread
+   * stays readable afterwards: the log is kept and `attach` serves it.
+   *
+   * `reason` is what anything still waiting on this process is told, and it is
+   * the caller's to give because only the caller knows which of these this is:
+   * an idle sweep, a server shutting down, a backup import, a delete. It used
+   * to be the literal string "thread retired" for all six callers — a phrase
+   * that names the mechanism and answers none of the three questions a person
+   * reading it in a transcript actually has (what stopped, why, and whether the
+   * conversation survived). It reaches two places, both of which a user reads:
+   * the error card `AcpBridge.close` settles an interrupted turn with, and
+   * every `whenTurnSettled` waiter, via `processGone`. So it is written as a
+   * sentence, and the default is the one that is true of all of them.
+   */
+  retire(
+    session: Session,
+    reason = "The agent process for this thread was stopped. The conversation is kept — sending a message starts it again.",
+  ): void {
     const proc = session.proc;
     const bridge = session.bridge;
     session.proc = null;
@@ -2460,11 +2556,11 @@ export class SessionManager {
        is the revive (`respawnNow`), which is the only moment the agent is about
        to re-narrate the conversation and the two accounts could otherwise be
        stitched together. */
-    bridge?.close(new Error("thread retired"));
+    bridge?.close(new Error(reason));
     this.log.flush();
     resetStderr(session);
     proc?.kill();
-    this.processGone(session, "thread retired");
+    this.processGone(session, reason);
   }
 
   list() {
@@ -2531,11 +2627,14 @@ export class SessionManager {
   softDelete(id: string): boolean {
     const session = this.sessions.get(id);
     if (!session || session.deletedAt !== null) return false;
-    this.closePeers(session, 4000, "session deleted");
+    this.closePeers(session, 4000, "This thread was moved to Trash. Restoring it brings the conversation back.");
     session.deletedAt = Date.now();
     // Retiring fires onProcessGone, which is where the runner cancels the run
     // this thread was orchestrating; the steps then go to the trash with it.
-    this.retire(session);
+    this.retire(
+      session,
+      "This thread was moved to Trash, so its agent process was stopped. Restoring the thread brings the conversation back.",
+    );
     this.persist(session);
     for (const child of this.childrenOf(id)) this.softDelete(child.id);
     return true;
@@ -2553,29 +2652,43 @@ export class SessionManager {
   }
 
   /** Forget the thread for good. Only the agent's own store still has it. */
-  purge(id: string): boolean {
+  async purge(id: string): Promise<boolean> {
     const session = this.sessions.get(id);
     if (!session) return false;
     /* Children first: `parent_session_id` is not a foreign key on purpose (see
        schema.ts), so each step goes through this same path — its process, its
        peers, its FTS rows, its slot in the map. */
     for (const child of this.childrenOf(id)) this.purge(child.id);
-    this.closePeers(session, 4000, "session purged");
-    this.retire(session);
+    this.closePeers(session, 4000, "This thread was deleted for good and cannot be restored.");
+    this.retire(session, "This thread was deleted for good, so its agent process was stopped.");
     this.sessions.delete(id);
     // ON DELETE CASCADE takes the event rows with it; the FTS rows have no
     // foreign key (virtual table), so they go by hand — and so do the
     // attachments, whose rows are deliberately not cascaded either (a cascade
     // would take a row out from under the bytes this process still owns on
     // disk). Children first, which the loop above already did.
-    db.delete(sessionsTable).where(eq(sessionsTable.id, id)).run();
-    deleteSearchIndex([id]);
-    deleteSessionAttachments(id);
+    await db.delete(sessionsTable).where(eq(sessionsTable.id, id));
+    await deleteSearchIndex([id]);
+    await deleteSessionAttachments(id);
     return true;
   }
 
+  /**
+   * `reason` reaches the user: it is the `detail` under the failure card the
+   * client draws from the close code (`failureFor`), so every caller writes a
+   * sentence rather than the log-line phrases these used to be ("session
+   * purged", "session reloaded").
+   *
+   * Truncated here rather than by each caller. A WebSocket close reason is
+   * capped at 123 bytes by the protocol and `ws` throws over it, so a sentence
+   * that grew past the limit would turn a thread being tidied up into an
+   * exception on the way out. One caller already knew that (the 4001 path,
+   * whose reason is agent stderr and unbounded by nature); making it the rule
+   * means the next sentence written here cannot get it wrong.
+   */
   private closePeers(session: Session, code: number, reason: string): void {
-    for (const peer of session.peers) peer.ws.close(code, reason);
+    const said = truncateReason(reason);
+    for (const peer of session.peers) peer.ws.close(code, said);
   }
 
   // ---- the socket ----
@@ -2585,9 +2698,9 @@ export class SessionManager {
   private socket = new SessionSocket({
     getSession: (id) => this.sessions.get(id),
     journal: this.log,
-    prompt: (id, text, peer, opts) => this.prompt(id, text, peer, opts),
-    queueAdd: (id, text, attachmentIds) => this.queueAdd(id, text, attachmentIds),
-    queueSendNow: (id, itemId) => this.queueSendNow(id, itemId),
+    prompt: async (id, text, peer, opts) => await this.prompt(id, text, peer, opts),
+    queueAdd: async (id, text, attachmentIds) => await this.queueAdd(id, text, attachmentIds),
+    queueSendNow: async (id, itemId) => await this.queueSendNow(id, itemId),
     queueSteer: (id, itemId) => this.queueSteer(id, itemId),
     queueUpdate: (id, itemId, text, attachmentIds) => this.queueUpdate(id, itemId, text, attachmentIds),
     queueRemove: (id, itemId) => this.queueRemove(id, itemId),
@@ -2608,14 +2721,15 @@ export class SessionManager {
    * decided before the first await, so the caller's close-with-a-reason path
    * is unchanged in everything but its shape.
    */
-  attach(
+  async attach(
     id: string,
     ws: WebSocket,
     cursor = 0,
     batch = false,
     opts: { window?: number } = {},
   ): Promise<string | null> {
-    return this.socket.attach(id, ws, cursor, batch, opts);
+    await this.ready;
+    return await this.socket.attach(id, ws, cursor, batch, opts);
   }
 
   /** The attach bracket as an HTTP document — what a thread is opened with
@@ -2632,4 +2746,34 @@ export class SessionManager {
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * The model a thread may actually be moved onto — which is never a model of
+ * the profile it is leaving.
+ *
+ * `""` is a real answer everywhere it lands: `applyConfigLive`, `respawnNow`
+ * and `start` all read it as "the profile's own default", which is the honest
+ * value for a thread that has just been handed credentials with a different
+ * catalog behind them. Two ways a request earns it —
+ *
+ *  - the target profile **owns a catalog** and the id is not in it. Its ids are
+ *    the only ones its gateway serves, so anything else is a 404 the user did
+ *    not ask for.
+ *  - the target profile **owns none** (the virtual Default is the one everybody
+ *    meets) and the thread is *moving*. There the value is an id out of the
+ *    agent's own selector, and the only thing that understands such an id is
+ *    the selector it came from — the agent behind the profile being left. Kept
+ *    when the profile is not moving: that is the same agent, and the id is its
+ *    own (see `applyAgentOwned`).
+ */
+function modelFor(session: Session, profile: Profile, model: string | undefined): string | undefined {
+  if (!model) return model;
+  const catalog = profile.models ?? [];
+  /* Through `bareModelId` first, for the same reason the row is written through
+     it: Claude Code answers with the long-context suffix its env template
+     appends, and the catalog's own id is what a menu matches on. */
+  const bare = bareModelId(profile, model);
+  if (catalog.length > 0) return catalog.some((entry) => entry.id === bare) ? bare : "";
+  return profile.id === session.profileId ? model : "";
 }

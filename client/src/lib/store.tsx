@@ -9,6 +9,7 @@ import type {
   SessionUpdate,
   StagedConfig,
   SubagentState,
+  ThreadRetry,
   TurnChanges,
   TurnTick,
   WireError,
@@ -411,6 +412,13 @@ export interface ThreadState {
       turn carries — so the held card folds its detail through `describeError`
       exactly as `ErrorRow` does. */
   pausedError: WireError | null
+  /** The turn failed on something worth trying again and is waiting out a
+      backoff (`retry` event / `caught_up`). One step short of a hold and the
+      same failure: if the attempts run out this clears and `pausedReason`
+      becomes `"error"`. Live-only and never journaled — a retry that worked is
+      not history — so it is handed over on attach like the hold and the queue,
+      and null the rest of the time. */
+  retry: ThreadRetry | null
   /** Whether the runtime takes pause at all (`session_config.canPause`) —
       the harness's own agent; every other runtime has only Stop. */
   canPause: boolean
@@ -418,8 +426,13 @@ export interface ThreadState {
       Not whether it compacts — ACP's `compaction_update` is any agent's to send,
       and most send it without ever taking an instruction. */
   canCompact: boolean
-  permission: PendingPermission | null
-  elicitation: PendingElicitation | null
+  /** Every ask currently parked, oldest first. Parallel tool calls can block on
+      more than one permission at once (the server holds a map of them), so this
+      is a queue and not a slot: a second `permission` event used to overwrite
+      the first card, and the ask under it became unanswerable. The head is what
+      the hotkeys answer and what focus sits on; the rest stack beneath it. */
+  permissions: PendingPermission[]
+  elicitations: PendingElicitation[]
   /** Messages waiting for the running turn to end, in order. The server's
       list, whole — every change arrives as the `queue` event, this device's
       own included (the ids are minted there). */
@@ -528,10 +541,11 @@ export const emptyThread: ThreadState = {
   paused: false,
   pausedReason: null,
   pausedError: null,
+  retry: null,
   canPause: false,
   canCompact: false,
-  permission: null,
-  elicitation: null,
+  permissions: [],
+  elicitations: [],
   queue: [],
   modes: null,
   configOptions: [],
@@ -1307,6 +1321,9 @@ export type Action =
   | { type: "thread-reset"; id: string; thread: ThreadState }
   | { type: "turn-active"; id: string; active: boolean; settle?: boolean }
   | { type: "paused"; id: string; paused: boolean; reason?: "user" | "error"; error?: WireError }
+  /** The turn is retrying, or has stopped (`retry: null`). Absolute, from the
+      `retry` event and the `retry` field of `caught_up`. */
+  | { type: "retry"; id: string; retry: ThreadRetry | null }
   /** How the turn that just ended went, onto the *session* row rather than the
       thread: it is what a list draws about a thread nothing is looking at, and
       the server records the same verdict on its own row. `error` is the
@@ -1365,8 +1382,18 @@ export type Action =
       local?: boolean
     }
   | { type: "dismiss-error"; id: string; itemId: string }
-  | { type: "permission"; id: string; permission: PendingPermission | null }
-  | { type: "elicitation"; id: string; elicitation: PendingElicitation | null }
+  | {
+      type: "permission"
+      id: string
+      requestId: string
+      permission: PendingPermission | null
+    }
+  | {
+      type: "elicitation"
+      id: string
+      requestId: string
+      elicitation: PendingElicitation | null
+    }
   | { type: "session-title"; id: string; title: string }
   | { type: "agent-session-title"; id: string; title: string }
   | { type: "rename-session"; id: string; title: string }
@@ -1405,6 +1432,23 @@ function thread(state: State, id: string): ThreadState {
 
 function withThread(state: State, id: string, patch: Partial<ThreadState>): State {
   return { ...state, threads: { ...state.threads, [id]: { ...thread(state, id), ...patch } } }
+}
+
+/** One queue entry per requestId: a repeat of the same ask — a re-attach
+    replaying the server's pending set — replaces its row in place rather than
+    queuing a second card, and an answer, ours or a peer's, removes exactly that
+    one and leaves the rest in arrival order. */
+function upsertAsk<T extends { requestId: string }>(
+  list: T[],
+  requestId: string,
+  next: T | null,
+): T[] {
+  if (!next) return list.filter((ask) => ask.requestId !== requestId)
+  const at = list.findIndex((ask) => ask.requestId === requestId)
+  if (at === -1) return [...list, next]
+  const replaced = list.slice()
+  replaced[at] = next
+  return replaced
 }
 
 export function reducer(state: State, action: Action): State {
@@ -1685,9 +1729,21 @@ export function reducer(state: State, action: Action): State {
         items: thread(state, action.id).items.filter((i) => i.id !== action.itemId),
       })
     case "permission":
-      return withThread(state, action.id, { permission: action.permission })
+      return withThread(state, action.id, {
+        permissions: upsertAsk(
+          thread(state, action.id).permissions,
+          action.requestId,
+          action.permission
+        ),
+      })
     case "elicitation":
-      return withThread(state, action.id, { elicitation: action.elicitation })
+      return withThread(state, action.id, {
+        elicitations: upsertAsk(
+          thread(state, action.id).elicitations,
+          action.requestId,
+          action.elicitation
+        ),
+      })
     case "session-title":
       return {
         ...state,
@@ -1728,6 +1784,8 @@ export function reducer(state: State, action: Action): State {
         pausedReason: action.paused ? action.reason ?? "user" : null,
         pausedError: action.paused ? action.error ?? null : null,
       })
+    case "retry":
+      return withThread(state, action.id, { retry: action.retry })
     case "mode": {
       const t = thread(state, action.id)
       return t.modes

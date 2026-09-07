@@ -6,6 +6,7 @@
 // read as what they are. Against the fake agent and a real repository under
 // DATA_DIR.
 // Run: pnpm test:rewind
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { execFileSync } from "node:child_process";
@@ -37,7 +38,7 @@ const { SessionManager } = await import("../src/sessions.js");
 const setRewindVia = async (value: "acp-fork-point" | null) => {
   const { eq } = await import("drizzle-orm");
   const { db, agents: agentsTable } = await import("../src/db/index.js");
-  db.update(agentsTable).set({ rewindVia: value }).where(eq(agentsTable.id, "fake")).run();
+  await db.update(agentsTable).set({ rewindVia: value }).where(eq(agentsTable.id, "fake"));
 };
 
 class MockWs extends EventEmitter {
@@ -73,9 +74,9 @@ const profile: Profile = {
 const send = (ws: MockWs, command: ThreadCommand) =>
   ws.emit("message", Buffer.from(JSON.stringify(command)));
 
-const waitFor = async (predicate: () => boolean, what: string) => {
-  for (let i = 0; i < 100 && !predicate(); i++) await new Promise((r) => setTimeout(r, 50));
-  assert.ok(predicate(), `timed out waiting for ${what}`);
+const waitFor = async (predicate: () => boolean | Promise<boolean>, what: string) => {
+  for (let i = 0; i < 100 && !(await predicate()); i++) await new Promise((r) => setTimeout(r, 50));
+  assert.ok(await predicate(), `timed out waiting for ${what}`);
 };
 
 const manager = new SessionManager({}, 1);
@@ -96,12 +97,12 @@ git("commit", "-q", "-m", "Scaffold");
 /* Real rows: the git half resolves the repository through the project row
    (`projectRoot`), so an in-memory object like the bridge test's would read
    as "no such project" the moment a restore was asked for. */
-const gitProject = createProject({ name: "rewind-git", cwd: gitRoot, description: null, logoUrl: "" });
-const plainProject = createProject({ name: "test-ws", cwd: "/tmp/daedalus-test-data/ws", description: null, logoUrl: "" });
+const gitProject = await createProject({ name: "rewind-git", cwd: gitRoot, description: null, logoUrl: "" });
+const plainProject = await createProject({ name: "test-ws", cwd: "/tmp/daedalus-test-data/ws", description: null, logoUrl: "" });
 
 // --- two turns, then rewind the second ---
 
-const session = manager.create(profile, "fake", plainProject);
+const session = await manager.create(profile, "fake", plainProject);
 await session.bridge!.ready;
 const ws = new MockWs();
 await manager.attach(session.id, ws as never);
@@ -164,7 +165,7 @@ assert.ok(
 
 // --- files only: the worktree moves, the conversation does not ---
 
-const gitSession = manager.create(profile, "fake", gitProject);
+const gitSession = await manager.create(profile, "fake", gitProject);
 await gitSession.bridge!.ready;
 const gws = new MockWs();
 await manager.attach(gitSession.id, gws as never);

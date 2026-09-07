@@ -8,6 +8,7 @@
 // alongside the happy path, because this route reads arbitrary absolute paths
 // for a living.
 // Run: pnpm test:task-agent
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";

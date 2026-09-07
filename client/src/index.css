@@ -101,8 +101,8 @@
   /* One body size for the whole app — chat prose, sidebar, settings, controls.
      The kit is downsized to text-xs everywhere, so this is *the* size knob;
      text-sm stays the title tier, text-[11px] the caption tier. */
-  --text-xs: 0.8125rem;
-  --text-xs--line-height: 1.125rem;
+  --text-xs: 0.875rem;
+  --text-xs--line-height: 1.25rem;
 
   /* Container breakpoints for the dock (`components/workspace/panel-container`).
      Deliberately the pixel values of `sm:` and `md:` rather than Tailwind's own
@@ -593,8 +593,8 @@
    at the size of the messages it answers, not the control tier (`md:text-sm`
    on the Textarea primitive would otherwise win halfway up the breakpoints). */
 :is(.thread-transcript, [data-slot="composer-card"]) {
-  --text-xs: 0.875rem;
-  --text-xs--line-height: 1.25rem;
+  --text-xs: 0.9375rem;
+  --text-xs--line-height: 1.375rem;
 }
 
 /* ── Streaming prose, a word at a time ──
@@ -809,22 +809,24 @@
 
 /* The rail's active pill, sliding from chip to chip. Transform and width
    rather than `left`: the rail scrolls sideways, and the two are the pair the
-   compositor can carry. */
+   compositor can carry. A box-shadow gives the pill a subtle lift that
+   distinguishes it from a flat background fill. */
 .harness-strip-pill {
   transition:
-    transform 280ms cubic-bezier(0.22, 1, 0.36, 1),
-    width 280ms cubic-bezier(0.22, 1, 0.36, 1),
-    height 280ms cubic-bezier(0.22, 1, 0.36, 1);
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    width 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    height 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* A chip arriving with its row. Mount-only — chips are keyed by summary id, so
    a label ticking from 2/5 to 3/5 reuses the node and this does not replay. */
 @keyframes harness-strip-chip-in {
-  from { opacity: 0; transform: scale(0.9); }
+  from { opacity: 0; transform: scale(0.92) translateY(2px); }
   to { opacity: 1; transform: none; }
 }
 .harness-strip-chip {
-  animation: harness-strip-chip-in 240ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation: harness-strip-chip-in 200ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 
 /* The row taking the panel. Attribute-driven, not mount-driven: the slots stay
@@ -834,11 +836,11 @@
    less than a transcript item does: the panel underneath it is already moving,
    and two travels on one object read as a bounce. */
 @keyframes harness-strip-in {
-  from { opacity: 0; transform: translateY(4px); }
+  from { opacity: 0; transform: translateY(3px); }
   to { opacity: 1; transform: none; }
 }
 [data-strip-slot][data-active] {
-  animation: harness-strip-in 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: harness-strip-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -926,14 +928,31 @@ html[data-desktop="true"]:not([data-desktop-platform="darwin"]) [data-drag-regio
   padding-right: 148px;
 }
 /* The PWA's overlay mode, same corner but the browser tells us exactly how
-   wide the caption buttons are: `env(titlebar-area-*)` measures the title bar
-   area, which is the window less the overlay, so the overlay's width is the
-   viewport less the area — and `titlebar-area-x` moves that gap to the left
-   when a second monitor draws its controls that way. Only live while the
-   overlay is engaged (the attribute turns off with it), so the env vars are
-   resolved, never the fallbacks. */
+   wide the caption buttons are — twice, and the two are not equally good.
+
+   `--wco-inset-*` is the overlay's own rect, published by
+   hooks/use-windows-controls-overlay.ts, and it is the one that is *measured*:
+   the inset per side, so a left-handed caption band clears on the left, and no
+   subtraction against a viewport that a scrollbar or a zoom level has already
+   made a different width than the window.
+
+   `env(titlebar-area-*)` is the same fact in CSS and stays as the fallback for
+   the frame before the first publish (and for a build that exposes the display
+   mode without a readable rect): the title bar area is the window less the
+   overlay, so the overlay's width is the viewport less the area, and
+   `titlebar-area-x` moves that gap to the left. Only live while the overlay is
+   engaged — the attribute turns off with it — so the env vars are resolved,
+   never *their* fallbacks.
+
+   Both ends keep the app's own `px-4` gutter as a floor: a band whose tabs run
+   flush into the caption buttons is the thing this rule exists to stop, and on
+   the side the buttons are not, the gutter is the whole answer. */
 html[data-window-controls-overlay="true"] [data-drag-region]:not([data-sidebar="header"] *) {
-  padding-right: calc(100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px));
+  padding-right: max(
+    1rem,
+    var(--wco-inset-right, calc(100vw - env(titlebar-area-width, 100vw) - env(titlebar-area-x, 0px)))
+  );
+  padding-left: max(1rem, var(--wco-inset-left, env(titlebar-area-x, 0px)));
 }
 /* And let the header fully cover the caption-button band: `titlebar-area-height`
    is variable (Windows 11's "Caption height" accessibility setting changes
@@ -943,7 +962,7 @@ html[data-window-controls-overlay="true"] [data-drag-region]:not([data-sidebar="
    a tab strip sharing the header's band, which is why this raises the *row*
    rather than the box. */
 html[data-window-controls-overlay="true"] {
-  --app-header-row-h: max(3rem, env(titlebar-area-height, 3rem));
+  --app-header-row-h: max(3rem, var(--wco-titlebar-h, env(titlebar-area-height, 3rem)));
 }
 /* Sidebar drag-resize (handle lives in app-shell.tsx): kill the width easing
    while dragging so the sidebar tracks the pointer, and drop the handle when

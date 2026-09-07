@@ -9,6 +9,7 @@
 //   - expandPastes: the token is replaced in place, a computed fence, a deleted
 //     token drops its body, numbering is stable.
 // Run: pnpm test:delivery
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 
 const { resolveDelivery, isTextish } = await import("../src/delivery.js");

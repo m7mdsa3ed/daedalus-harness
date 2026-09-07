@@ -224,11 +224,11 @@ export class RoutineGitTriggers {
    * costs nothing, which is the same bargain the scheduler makes for a disabled
    * routine's clock.
    */
-  reconcile(): void {
+  async reconcile(): Promise<void> {
     if (this.stopped) return;
     const wanted = new Set<string>();
-    for (const trigger of this.enabledTriggers()) {
-      const routine = getRoutine(trigger.routineId);
+    for (const trigger of (await this.enabledTriggers())) {
+      const routine = await getRoutine(trigger.routineId);
       if (routine?.enabled) wanted.add(routine.projectId);
     }
 
@@ -244,7 +244,7 @@ export class RoutineGitTriggers {
       try {
         this.watching.set(
           projectId,
-          watchProject(
+          await watchProject(
             projectId,
             (batch) => this.onBatch(batch),
             /* Torn down under us — an `fs.watch` error, or the project going
@@ -265,8 +265,8 @@ export class RoutineGitTriggers {
            project's triggers instead, where the form can print it, and only
            when the message changed. */
         const message = describe(error);
-        for (const trigger of this.triggersForProject(projectId)) {
-          if (trigger.lastError !== message) markTriggerError(trigger.id, message);
+        for (const trigger of (await this.triggersForProject(projectId))) {
+          if (trigger.lastError !== message) await markTriggerError(trigger.id, message);
         }
       }
     }
@@ -279,19 +279,24 @@ export class RoutineGitTriggers {
 
   // ---- collecting ----
 
-  private enabledTriggers(): RoutineTrigger[] {
-    return db
+  private async enabledTriggers(): Promise<RoutineTrigger[]> {
+    return await db
       .select()
       .from(triggersTable)
       .where(and(eq(triggersTable.kind, "git"), eq(triggersTable.enabled, true)))
-      .all();
+      ;
   }
 
-  private triggersForProject(projectId: string): RoutineTrigger[] {
-    return this.enabledTriggers().filter((t) => {
-      const routine = getRoutine(t.routineId);
-      return routine?.enabled === true && routine.projectId === projectId;
-    });
+  private async triggersForProject(projectId: string): Promise<RoutineTrigger[]> {
+    /* One `await` per trigger, in a loop and not in `filter`: an async
+       predicate hands `filter` a promise, which is always truthy, so every
+       trigger on the install passed as this project's. */
+    const out: RoutineTrigger[] = [];
+    for (const t of await this.enabledTriggers()) {
+      const routine = await getRoutine(t.routineId);
+      if (routine?.enabled === true && routine.projectId === projectId) out.push(t);
+    }
+    return out;
   }
 
   /**
@@ -303,7 +308,7 @@ export class RoutineGitTriggers {
    * against its globs. A trigger interested in neither collects nothing and
    * never opens a window.
    */
-  private onBatch(batch: WatchBatch): void {
+  private async onBatch(batch: WatchBatch): Promise<void> {
     if (this.stopped) return;
     const refs: RefMove[] = [];
     const paths: string[] = [];
@@ -318,7 +323,7 @@ export class RoutineGitTriggers {
     }
     if (refs.length === 0 && paths.length === 0 && !batch.overflow) return;
 
-    for (const trigger of this.triggersForProject(batch.projectId)) {
+    for (const trigger of (await this.triggersForProject(batch.projectId))) {
       const wantsPaths = trigger.paths.length > 0;
       const hitPaths = wantsPaths ? paths.filter((p) => matchesAny(p, trigger.paths)) : [];
       /* An overflowed batch stopped naming paths, so a path-filtered trigger
@@ -367,9 +372,9 @@ export class RoutineGitTriggers {
     this.windows.delete(triggerId);
     if (!window || this.stopped) return;
 
-    const trigger = getTrigger(triggerId);
+    const trigger = await getTrigger(triggerId);
     if (!trigger || !trigger.enabled || trigger.kind !== "git") return;
-    const routine = getRoutine(trigger.routineId);
+    const routine = await getRoutine(trigger.routineId);
     /* A disabled routine keeps its triggers and runs nothing — and deliberately
        writes no `skipped` run, exactly as the scheduler decides for a disabled
        routine's slot: a state is not an event, and a project worked in all week
@@ -381,7 +386,7 @@ export class RoutineGitTriggers {
       refHit = await this.movedRefs(routine.projectId, window.refs, trigger.branch);
     } catch (error) {
       const message = describe(error);
-      if (trigger.lastError !== message) markTriggerError(trigger.id, message);
+      if (trigger.lastError !== message) await markTriggerError(trigger.id, message);
       return;
     }
     const pathHit = window.unknownPaths || window.paths.size > 0;
@@ -412,11 +417,11 @@ export class RoutineGitTriggers {
       });
       /* `nextFireAt` stays null: a git trigger has no clock, and the scheduler's
          sweep only ever selects `kind = "schedule"`, so nothing else reads it. */
-      markTriggerFired(trigger.id, Date.now(), null, headOid);
+      await markTriggerFired(trigger.id, Date.now(), null, headOid);
     } catch (error) {
       /* `fire` only throws for a routine that no longer exists; everything it
          decides is a `skipped` row it wrote itself. */
-      markTriggerError(trigger.id, describe(error));
+      await markTriggerError(trigger.id, describe(error));
     }
   }
 

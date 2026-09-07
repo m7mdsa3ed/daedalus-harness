@@ -920,7 +920,7 @@ export function AppShell({
               key={path}
               path={path}
               element={
-                <div className="min-h-0 flex-1 overflow-y-auto">
+                <div className="min-h-0 flex-1 overflow-y-auto pt-[var(--app-header-h)]">
                   <div
                     className={cn(
                       "mx-auto w-full px-4 pt-6 pb-16 sm:px-8",
@@ -944,7 +944,7 @@ export function AppShell({
               key={path}
               path={path}
               element={
-                <div className="min-h-0 flex-1 overflow-y-auto">
+                <div className="min-h-0 flex-1 overflow-y-auto pt-[var(--app-header-h)]">
                   <div
                     className={cn(
                       "mx-auto w-full px-4 pt-6 pb-16 sm:px-8",
@@ -961,7 +961,7 @@ export function AppShell({
           <Route
             path="/notifications"
             element={
-              <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="min-h-0 flex-1 overflow-y-auto pt-[var(--app-header-h)]">
                 <div className="mx-auto w-full max-w-3xl px-4 pt-6 pb-16 sm:px-8">
                   <NotificationsInboxPage />
                 </div>

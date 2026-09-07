@@ -10,6 +10,7 @@ import { refreshNotificationOffer } from "@/lib/notifications"
 import { setupPush } from "@/lib/push"
 import { loadSettings, subscribeActiveServer, type ServerSettings } from "@/lib/settings"
 import { pruneAgentOptions } from "@/lib/agent-options"
+import { mountThemeSync } from "@/lib/custom-theme-sync"
 import { makeQueryClient } from "@/lib/queries/client"
 import { persistOptionsFor } from "@/lib/queries/persist"
 import { useProfiles } from "@/lib/queries/catalog"
@@ -135,6 +136,12 @@ function ConnectedShell({
         refreshNotificationOffer()
       })
   }, [actions, settings])
+
+  /* Custom themes live in the database now (themes table, /api/themes): adopt
+     this server's saved rows into the local store on connect, and push every
+     studio edit through. Keyed by the server id like everything else here, so
+     a switch tears one sync down and mounts the next. */
+  React.useEffect(() => mountThemeSync(settings), [settings])
 
   return (
     <>

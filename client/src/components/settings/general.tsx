@@ -22,6 +22,9 @@ import {
 } from "@/lib/settings"
 import { InstallGroup, SecurityGroup, SiteDataGroup } from "./app"
 import { PageHeader, Group, Row } from "./primitives"
+import { errorText } from "@/lib/errors"
+import { useAppMeta } from "@/lib/queries"
+import { ChangelogDialog } from "@/components/changelog-dialog"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { EnhanceGroup } from "./enhance"
@@ -50,6 +53,7 @@ export function GeneralPage() {
       <InstallGroup />
       <SecurityGroup />
       <SiteDataGroup />
+      <AboutGroup />
     </>
   )
 }
@@ -122,36 +126,52 @@ function ServersGroup({ active }: { active: ServerSettings }) {
         {servers.map((server) => {
           const isActive = server.id === active.id
           return (
-            <Row
+            <div
               key={server.id}
-              title={server.name}
-              subtitle={<span className="font-mono">{server.url}</span>}
+              className="flex flex-col gap-3 px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4"
             >
-              {/* On a phone these three drop to their own line (see Row), where
-                  a 32px-high ghost button is a poor target — so they grow back
-                  to the default height there. */}
-              {isActive ? (
-                <Badge variant="secondary" className="gap-1.5">
-                  <span className="size-1.5 rounded-full bg-emerald-500" />
-                  Connected
-                </Badge>
-              ) : (
-                <Button variant="outline" size="sm" className="max-sm:h-9" onClick={() => switchTo(server)}>
-                  Switch
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium">{server.name}</div>
+                <div className="mt-0.5 break-all font-mono text-xs text-muted-foreground">{server.url}</div>
+              </div>
+              <div className="flex w-full shrink-0 flex-col gap-1.5 sm:w-auto sm:flex-row sm:items-center">
+                {isActive ? (
+                  <Badge
+                    variant="secondary"
+                    className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-md border px-3 text-sm sm:w-auto"
+                  >
+                    <span className="size-1.5 rounded-full bg-emerald-500" />
+                    Connected
+                  </Badge>
+                ) : (
+                  <Button variant="outline" size="sm" className="h-9 w-full sm:w-auto" onClick={() => switchTo(server)}>
+                    Switch
+                  </Button>
+                )}
+                <Button variant="outline" size="sm" className="h-9 w-full sm:w-auto" onClick={() => startRename(server)}>
+                  Rename
                 </Button>
-              )}
-              <Button variant="ghost" size="sm" className="max-sm:h-9" onClick={() => startRename(server)}>
-                Rename
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-destructive max-sm:h-9"
-                onClick={() => void forget(server)}
-              >
-                {isActive ? "Disconnect" : "Forget"}
-              </Button>
-            </Row>
+                {isActive ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-9 w-full text-destructive sm:w-auto"
+                    onClick={() => void forget(server)}
+                  >
+                    Disconnect
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-9 w-full text-destructive sm:w-auto"
+                    onClick={() => void forget(server)}
+                  >
+                    Forget
+                  </Button>
+                )}
+              </div>
+            </div>
           )
         })}
       </Group>
@@ -180,5 +200,42 @@ function ServersGroup({ active }: { active: ServerSettings }) {
         </ResponsiveDialogContent>
       </ResponsiveDialog>
     </>
+  )
+}
+
+/* ── About ──
+   What is running where: the deployment's version from /api/meta and the build
+   this device is running (a compile-time constant), shown apart because they
+   can legitimately differ — the browser keeps serving a cached shell until its
+   pending update is applied — plus the changelog both halves of a release are
+   written into. */
+function AboutGroup() {
+  const meta = useAppMeta()
+  const [changelogOpen, setChangelogOpen] = React.useState(false)
+  return (
+    <Group label="About">
+      <Row title="Server version" subtitle="The harness deployed on the active connection.">
+        {meta.data ? (
+          <Badge variant="secondary">{meta.data.version}</Badge>
+        ) : meta.isError ? (
+          <span className="text-sm text-muted-foreground">{errorText(meta.error)}</span>
+        ) : null}
+      </Row>
+      <Row title="Client version" subtitle="The build this device is running.">
+        <Badge variant="secondary">{__APP_VERSION__}</Badge>
+      </Row>
+      <Row title="What's new" subtitle="Everything each version changed.">
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-9 w-full sm:w-auto"
+          disabled={!meta.data}
+          onClick={() => setChangelogOpen(true)}
+        >
+          Changelog
+        </Button>
+      </Row>
+      <ChangelogDialog open={changelogOpen} onOpenChange={setChangelogOpen} />
+    </Group>
   )
 }

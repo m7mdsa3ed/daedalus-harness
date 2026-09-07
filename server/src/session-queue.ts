@@ -28,7 +28,7 @@ export interface QueueHost {
     text: string,
     peer: Peer | undefined,
     opts?: { attachments?: AttachmentRef[] },
-  ): { turnId: string; deferred?: boolean };
+  ): Promise<{ turnId: string; deferred?: boolean }>;
 }
 
 // ---- the queue ----
@@ -36,8 +36,8 @@ export interface QueueHost {
 /** The queue as a peer sees it: the steers the bridge is holding for a step
     boundary first (already sent, flagged `steer`, not editable), then the rows
     waiting for the turn to end. */
-export function queueItems(session: Session): QueuedMessage[] {
-  return [...(session.bridge?.heldSteers() ?? []), ...listQueue(session.id)];
+export async function queueItems(session: Session): Promise<QueuedMessage[]> {
+  return [...(session.bridge?.heldSteers() ?? []), ...(await listQueue(session.id))];
 }
 
 export class SessionQueue {
@@ -45,8 +45,8 @@ export class SessionQueue {
 
   /** The whole queue to every peer, the origin included: ids are minted here,
       so no peer's own picture of the list is the one to keep. */
-  emitQueue(session: Session): void {
-    this.host.emit(session, { ev: "queue", items: queueItems(session) });
+  async emitQueue(session: Session): Promise<void> {
+    this.host.emit(session, { ev: "queue", items: await queueItems(session) });
   }
 
   /**
@@ -55,58 +55,58 @@ export class SessionQueue {
    * some of these rows itself and must not find them gone. Rows are deleted
    * after the prompt is dispatched, so nothing here can lose a message.
    */
-  drain(session: Session): { turnId: string } | null {
+  async drain(session: Session): Promise<{ turnId: string } | null> {
     const bridge = session.bridge;
     if (!bridge || bridge.promptActive || session.queueChain) return null;
-    const items = listQueue(session.id);
+    const items = await listQueue(session.id);
     if (items.length === 0) return null;
-    const result = this.host.startTurn(session, bridge, combineQueued(items), undefined, {
+    const result = await this.host.startTurn(session, bridge, combineQueued(items), undefined, {
       attachments: attachmentsOf(items),
     });
-    removeQueuedMany(session.id, items.map((item) => item.id));
-    this.emitQueue(session);
+    await removeQueuedMany(session.id, items.map((item) => item.id));
+    await this.emitQueue(session);
     return result;
   }
 
   /** `prompt` from a client that already knows the thread is busy. On an idle
       thread it drains straight away — one path, so a client whose picture of
       the turn was stale still gets its words sent. */
-  add(session: Session, text: string, attachments: AttachmentRef[] = []): PromptReply {
-    const item = enqueue(session.id, text, attachments);
-    this.emitQueue(session);
-    return this.drain(session) ?? { queued: true, itemId: item.id };
+  async add(session: Session, text: string, attachments: AttachmentRef[] = []): Promise<PromptReply> {
+    const item = await enqueue(session.id, text, attachments);
+    await this.emitQueue(session);
+    return (await this.drain(session)) ?? { queued: true, itemId: item.id };
   }
 
   /* The three edits need no process: a parked queue on an archived thread is
      edited without spawning an agent to do it. */
-  update(session: Session, itemId: string, text: string, attachmentIds?: string[]): void {
-    if (!updateQueued(session.id, itemId, text, attachmentIds)) {
+  async update(session: Session, itemId: string, text: string, attachmentIds?: string[]): Promise<void> {
+    if (!(await updateQueued(session.id, itemId, text, attachmentIds))) {
       throw new Error("that queued message is gone");
     }
-    this.emitQueue(session);
+    await this.emitQueue(session);
   }
 
-  remove(session: Session, itemId: string): void {
-    removeQueued(session.id, itemId);
-    this.emitQueue(session);
+  async remove(session: Session, itemId: string): Promise<void> {
+    await removeQueued(session.id, itemId);
+    await this.emitQueue(session);
   }
 
-  clear(session: Session): void {
-    clearQueue(session.id);
-    this.emitQueue(session);
+  async clear(session: Session): Promise<void> {
+    await clearQueue(session.id);
+    await this.emitQueue(session);
   }
 
   /** Inject one queued item into the running turn without stopping it — the
       old steering path (`inflight++`). On an idle thread it simply starts one. */
   async steer(session: Session, itemId: string): Promise<{ turnId: string }> {
     const bridge = await this.host.whenSpawnable(session);
-    const item = listQueue(session.id).find((entry) => entry.id === itemId);
+    const item = (await listQueue(session.id)).find((entry) => entry.id === itemId);
     if (!item) throw new Error("that queued message is gone");
-    const result = this.host.startTurn(session, bridge, item.text, undefined, {
+    const result = await this.host.startTurn(session, bridge, item.text, undefined, {
       attachments: item.attachments ?? [],
     });
-    removeQueued(session.id, itemId);
-    this.emitQueue(session);
+    await removeQueued(session.id, itemId);
+    await this.emitQueue(session);
     return result;
   }
 
@@ -135,7 +135,7 @@ export class SessionQueue {
 
   private async sendNowNow(session: Session, itemId?: string): Promise<{ turnId: string }> {
     const bridge = await this.host.whenSpawnable(session);
-    const all = listQueue(session.id);
+    const all = await listQueue(session.id);
     const items = itemId ? all.filter((item) => item.id === itemId) : all;
     if (items.length === 0) throw new Error("nothing is queued");
     if (bridge.promptActive) {
@@ -147,12 +147,15 @@ export class SessionQueue {
     /* The process may have died while we waited. The rows are untouched, so
        the queue is exactly as the user left it and the next revive still has
        it. */
-    if (session.bridge !== bridge) throw new Error("the agent process is gone");
-    const result = this.host.startTurn(session, bridge, combineQueued(items), undefined, {
+    if (session.bridge !== bridge)
+      throw new Error(
+        "This thread's agent process ended while the queue was waiting for it. The queued messages are kept — sending or reviving the thread runs them.",
+      );
+    const result = await this.host.startTurn(session, bridge, combineQueued(items), undefined, {
       attachments: attachmentsOf(items),
     });
-    removeQueuedMany(session.id, items.map((item) => item.id));
-    this.emitQueue(session);
+    await removeQueuedMany(session.id, items.map((item) => item.id));
+    await this.emitQueue(session);
     return result;
   }
 }

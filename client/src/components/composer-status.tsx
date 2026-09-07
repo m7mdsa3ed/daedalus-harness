@@ -26,6 +26,7 @@ import { extractSubagent, extractTodos, toolHeading, toolViewOf } from "@/lib/to
 import { activeSubagents, buildRows } from "@/lib/transcript-rows"
 import { useAgents, useProfiles } from "@/lib/queries/catalog"
 import { useStoreSelect, type PlanItem, type ThreadState, type ToolItem } from "@/lib/store"
+import { describeError } from "@/lib/errors"
 import { holdOf } from "@/lib/thread/hold"
 import { formatRate, formatTokens } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
@@ -593,7 +594,7 @@ export function ComposerAgents({ thread }: { thread: ThreadState }) {
   const now = useNow(agents.length > 0)
   const count = agents.length
   const label = `${count} ${count === 1 ? "agent" : "agents"} running`
-  useStripSummary(count > 0 ? { id: "agents", icon: BotIcon, label } : null)
+  useStripSummary(count > 0 ? { id: "agents", icon: BotIcon, label, badge: count } : null)
   if (count === 0) return null
 
   return (
@@ -675,8 +676,20 @@ export function workingMessage(thread: ThreadState): string {
      which is what tells the reader which model to reach for — never as the
      failure an `ErrorRow` would draw. */
   if (thread.paused) return holdOf(thread).message
-  if (thread.permission) return "Waiting for your approval"
-  if (thread.elicitation) return "Waiting for your answer"
+  /* Above everything but the hold, and for the same reason: a turn waiting out
+     a backoff is not doing whatever the transcript's newest item says it is.
+     This is the silence that used to read as work — seconds of shimmer under
+     the name of a tool call that had already failed — and it is worth naming
+     while there is still a chance it fixes itself. Named with the failure, not
+     just the count: "Retrying (1 of 2)" alone leaves the reader waiting to find
+     out what for. */
+  if (thread.retry) {
+    const of = thread.retry.of ? ` of ${thread.retry.of}` : ""
+    const why = thread.retry.error ? describeError(thread.retry.error).title : ""
+    return `Retrying (${thread.retry.attempt}${of})${why ? ` — ${why}` : ""}`
+  }
+  if (thread.permissions.length > 0) return "Waiting for your approval"
+  if (thread.elicitations.length > 0) return "Waiting for your answer"
   const agents = runningAgents(thread)
   if (agents.length > 0) return `${agents.length} ${agents.length === 1 ? "agent" : "agents"} running`
   const items = thread.items

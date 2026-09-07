@@ -987,11 +987,12 @@ export class ThreadConnection {
         send({
           type: "permission",
           id,
+          requestId,
           permission: {
             requestId,
             request,
             resolve: (response) => {
-              send({ type: "permission", id, permission: null })
+              send({ type: "permission", id, requestId, permission: null })
               owner().answerPermission(requestId, response)
             },
           },
@@ -1002,11 +1003,12 @@ export class ThreadConnection {
         send({
           type: "elicitation",
           id,
+          requestId,
           elicitation: {
             requestId,
             request,
             resolve: (response) => {
-              send({ type: "elicitation", id, elicitation: null })
+              send({ type: "elicitation", id, requestId, elicitation: null })
               owner().answerElicitation(requestId, response)
             },
           },
@@ -1017,11 +1019,11 @@ export class ThreadConnection {
          answer is no longer ours to give. */
       onRequestAnswered: (requestId) => {
         const thread = getState().threads[id]
-        if (thread?.permission?.requestId === requestId) {
-          send({ type: "permission", id, permission: null })
+        if (thread?.permissions.some((p) => p.requestId === requestId)) {
+          send({ type: "permission", id, requestId, permission: null })
         }
-        if (thread?.elicitation?.requestId === requestId) {
-          send({ type: "elicitation", id, elicitation: null })
+        if (thread?.elicitations.some((e) => e.requestId === requestId)) {
+          send({ type: "elicitation", id, requestId, elicitation: null })
         }
       },
       onStatus: (status, closeInfo) => {
@@ -1346,7 +1348,10 @@ export class ThreadConnection {
       onPaused: (hold) => {
         send({ type: "paused", id, ...hold })
       },
-      onCaughtUp: (cursor, promptActive, queue, hold, staged, context) => {
+      onRetry: (retry) => {
+        send({ type: "retry", id, retry })
+      },
+      onCaughtUp: (cursor, promptActive, queue, hold, staged, context, retry) => {
         this.cursor = cursor
         this.seamless = false
         if (this.socket === owner()) this.promptActiveAtLoad = promptActive
@@ -1366,6 +1371,9 @@ export class ThreadConnection {
         // over after the replay rather than replayed.
         send({ type: "queue", id, items: queue })
         send({ type: "paused", id, ...hold })
+        /* And the retry, on the same terms: never journaled, seconds long, and
+           the state a peer is most likely to attach in the middle of. */
+        send({ type: "retry", id, retry })
         /* Absolute, and handed over here for the same reason the queue and the
            hold are: it is state the running turn is carrying, not history, so a
            replay never mentions it and an attaching peer would otherwise draw

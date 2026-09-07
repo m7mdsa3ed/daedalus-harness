@@ -121,6 +121,23 @@ function currentActivity(group: SubagentGroup): string | undefined {
   return toolHeading(open ?? tools[tools.length - 1]).title
 }
 
+/** What a step was asked to do: the task description from the head, preferring
+    the descriptive task over the raw prompt. For a tool-launched subagent, the
+    description the parent agent gave the worker. The caption uses this to say
+    what a running step is *about* rather than just which step it is. */
+function stepDescription(group: SubagentGroup): string | undefined {
+  const head = group.head
+  if (head.kind === "subagent") return head.task || head.prompt
+  return extractSubagent(head)?.description
+}
+
+/** How many tools a step has completed so far — the progress indicator in the
+    caption. Only completed tools count: a tool in flight is the "current
+    activity", not the progress behind it. */
+function completedToolCount(group: SubagentGroup): number {
+  return collectTools(group.children).filter((t) => t.status === "completed").length
+}
+
 /** A step's state as one word, from either kind of head. A step the runner has
     not spawned yet has no group at all — see `PendingStepRow`. */
 export function stepStateOf(
@@ -326,12 +343,19 @@ function RunRow({
         .filter(Boolean)
         .join(" — ")
     : runningStep
-    ? [
-        [runningPhase, stepNameOf(runningStep)].filter(Boolean).join(" · "),
-        currentActivity(runningStep),
-      ]
-        .filter(Boolean)
-        .join(" — ")
+    ? (() => {
+        const desc = stepDescription(runningStep)
+        const count = completedToolCount(runningStep)
+        const activity = currentActivity(runningStep)
+        return [
+          [runningPhase, stepNameOf(runningStep)].filter(Boolean).join(" · "),
+          desc,
+          count > 0 ? `${count} tools` : null,
+          activity,
+        ]
+          .filter(Boolean)
+          .join(" — ")
+      })()
     : failedCount > 0
       ? failedCount > 1
         ? `${failedCount} steps failed`

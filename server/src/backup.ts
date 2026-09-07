@@ -1,5 +1,5 @@
 import { getTableColumns, inArray, sql, type SQL } from "drizzle-orm";
-import type { SQLiteColumn, SQLiteTable } from "drizzle-orm/sqlite-core";
+import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import {
   agentOptions as agentOptionsTable,
@@ -38,6 +38,8 @@ import {
   tasks as tasksTable,
   webSearchUsage as usageTable,
   workflowRuns as workflowRunsTable,
+  rules as rulesTable,
+  themes as themesTable,
   type NameValue,
   type RoutineBody,
 } from "./db/index.js";
@@ -243,7 +245,28 @@ const ProjectRow = z.object({
   cwd: str,
   description: optStr,
   logoUrl: optStr,
-  rules: optStr,
+});
+
+/** A standing instruction rule — individual title and content. */
+const RulesRow = z.object({
+  id: str.min(1),
+  projectId: str.nullish(),
+  title: str,
+  content: str,
+  sortOrder: int.default(0),
+  createdAt: int,
+  updatedAt: int,
+});
+
+/** A user-made theme — the three halves the studio edits, as JSON records. */
+const ThemeRow = z.object({
+  id: str.min(1),
+  name: str,
+  light: z.record(str, str),
+  dark: z.record(str, str),
+  base: z.record(str, str),
+  createdAt: int,
+  updatedAt: int,
 });
 
 /** A project's helper command — a whole row, never a link: the command is the
@@ -671,7 +694,11 @@ export const BundleSchema = z.object({
   pushTokens: z.array(PushTokenRow).default([]),
   notifications: z.array(NotificationRow).default([]),
   composerHistory: z.array(ComposerHistoryRow).default([]),
-  /** `app_settings` as a record — the global rules block travels here. */
+  /** Standalone rules — individual items rather than a single blob. */
+  rules: z.array(RulesRow).default([]),
+  /** User-made themes from the studio, whole rows. */
+  themes: z.array(ThemeRow).default([]),
+  /** `app_settings` as a record. */
   settings: z.record(str, str).default({}),
   config: z.object({ webSearch: WebSearchBlock.optional() }).default({}),
 });
@@ -691,13 +718,13 @@ const withLinks = <T extends { id: string }>(rows: T[], links: Map<string, LinkS
 
 /** Everything, as one document. Cheap for everything but the events, which
     are the whole transcript history — the one reason there is an opt-out. */
-export function exportBundle(opts: ExportOptions): Bundle {
-  const profiles = db.select().from(profilesTable).all();
-  const sessions = db.select().from(sessionsTable).all();
-  const mcpServers = db.select().from(mcpServersTable).all();
-  const mcpOauthRows = db.select().from(mcpOauthTable).all();
-  const routines = db.select().from(routinesTable).all();
-  const triggers = db.select().from(routineTriggersTable).all();
+export async function exportBundle(opts: ExportOptions): Promise<Bundle> {
+  const profiles = await db.select().from(profilesTable);
+  const sessions = await db.select().from(sessionsTable);
+  const mcpServers = await db.select().from(mcpServersTable);
+  const mcpOauthRows = await db.select().from(mcpOauthTable);
+  const routines = await db.select().from(routinesTable);
+  const triggers = await db.select().from(routineTriggersTable);
   const webSearch = readWebSearch();
 
   return {
@@ -705,8 +732,8 @@ export function exportBundle(opts: ExportOptions): Bundle {
     version: BUNDLE_VERSION,
     exportedAt: Date.now(),
     redacted: { secrets: !opts.includeSecrets, journals: !opts.includeJournals },
-    agents: db.select().from(agentsTable).all(),
-    profiles: withLinks(profiles, readLinks(PROFILE_LINKS, profiles.map((p) => p.id))).map((p) => {
+    agents: await db.select().from(agentsTable),
+    profiles: withLinks(profiles, await readLinks(PROFILE_LINKS, profiles.map((p) => p.id))).map((p) => {
       const { apiKey, usage, ...rest } = p;
       /* The usage provider's own token is the second credential on a profile
          and is redacted with the first — `kind` and the host stay, since they
@@ -724,45 +751,47 @@ export function exportBundle(opts: ExportOptions): Bundle {
     mcpOauth: opts.includeSecrets
       ? mcpOauthRows
       : mcpOauthRows.map((r) => ({ ...r, accessToken: "", refreshToken: "", clientSecret: "" })),
-    skills: db.select().from(skillsTable).all(),
-    commands: db.select().from(commandsTable).all(),
-    personas: db.select().from(personasTable).all(),
-    modelPrompts: db.select().from(modelPromptsTable).all(),
-    projects: db.select().from(projectsTable).all(),
-    projectHelpers: db.select().from(projectHelpersTable).all(),
-    knowledge: db.select().from(knowledgeTable).all(),
-    sessions: withLinks(sessions, readLinks(SESSION_LINKS, sessions.map((s) => s.id))),
-    queue: db.select().from(queueTable).all(),
-    scheduled: db.select().from(scheduledTable).all(),
-    workflowRuns: db.select().from(workflowRunsTable).all(),
-    routines: withLinks(routines, readLinks(ROUTINE_LINKS, routines.map((r) => r.id))),
+    skills: await db.select().from(skillsTable),
+    commands: await db.select().from(commandsTable),
+    personas: await db.select().from(personasTable),
+    modelPrompts: await db.select().from(modelPromptsTable),
+    projects: await db.select().from(projectsTable),
+    projectHelpers: await db.select().from(projectHelpersTable),
+    knowledge: await db.select().from(knowledgeTable),
+    sessions: withLinks(sessions, await readLinks(SESSION_LINKS, sessions.map((s) => s.id))),
+    queue: await db.select().from(queueTable),
+    scheduled: await db.select().from(scheduledTable),
+    workflowRuns: await db.select().from(workflowRunsTable),
+    routines: withLinks(routines, await readLinks(ROUTINE_LINKS, routines.map((r) => r.id))),
     /* A trigger's token hash is a credential like a profile's key: the key is
        ABSENT under `secrets=0`, not blanked to "", because absent is what the
        import reads as "keep whatever this install already holds". */
     routineTriggers: opts.includeSecrets
       ? triggers
       : triggers.map(({ secretHash: _s, ...rest }) => rest),
-    routineRuns: db.select().from(routineRunsTable).all(),
+    routineRuns: await db.select().from(routineRunsTable),
     events: opts.includeJournals
-      ? db.select().from(eventsTable).orderBy(eventsTable.sessionId, eventsTable.seq).all()
+      ? await db.select().from(eventsTable).orderBy(eventsTable.sessionId, eventsTable.seq)
       : [],
-    boards: db.select().from(boardsTable).all(),
-    boardStatuses: db.select().from(boardStatusesTable).all(),
-    sprints: db.select().from(sprintsTable).all(),
-    boardViews: db
+    boards: await db.select().from(boardsTable),
+    boardStatuses: await db.select().from(boardStatusesTable),
+    sprints: await db.select().from(sprintsTable),
+    boardViews: await (await db
       .select()
-      .from(boardViewsTable)
-      .all()
+      .from(boardViewsTable))
+      
       .map((v) => ({ ...v, config: v.config as Record<string, unknown> })),
-    tasks: db.select().from(tasksTable).all(),
-    taskComments: db.select().from(taskCommentsTable).all(),
-    taskActivity: db.select().from(taskActivityTable).all(),
-    taskLinks: db.select().from(taskLinksTable).all(),
-    webSearchUsage: db.select().from(usageTable).all(),
-    pushTokens: db.select().from(pushTokensTable).all(),
-    notifications: db.select().from(notificationsTable).all(),
-    composerHistory: db.select().from(composerHistoryTable).all(),
-    settings: Object.fromEntries(db.select().from(appSettingsTable).all().map((r) => [r.key, r.value])),
+    tasks: await db.select().from(tasksTable),
+    taskComments: await db.select().from(taskCommentsTable),
+    taskActivity: await db.select().from(taskActivityTable),
+    taskLinks: await db.select().from(taskLinksTable),
+    webSearchUsage: await db.select().from(usageTable),
+    pushTokens: await db.select().from(pushTokensTable),
+    notifications: await db.select().from(notificationsTable),
+    composerHistory: await db.select().from(composerHistoryTable),
+    rules: await db.select().from(rulesTable),
+    themes: await db.select().from(themesTable),
+    settings: Object.fromEntries(await (await db.select().from(appSettingsTable)).map((r) => [r.key, r.value])),
     config: webSearch
       ? {
           webSearch: opts.includeSecrets
@@ -777,7 +806,7 @@ export type ImportMode = "merge" | "replace";
 
 export type ImportSummary = Record<
   | "agents" | "profiles" | "mcpServers" | "mcpOauth" | "skills" | "commands" | "personas" | "modelPrompts" | "projects" | "projectHelpers" | "knowledge" | "settings"
-  | "sessions" | "queue" | "scheduled" | "workflowRuns" | "events" | "boards" | "boardStatuses" | "sprints" | "boardViews" | "tasks" | "taskComments" | "taskActivity" | "taskLinks"
+  | "rules" | "themes" | "sessions" | "queue" | "scheduled" | "workflowRuns" | "events" | "boards" | "boardStatuses" | "sprints" | "boardViews" | "tasks" | "taskComments" | "taskActivity" | "taskLinks"
   | "routines" | "routineTriggers" | "routineRuns"
   | "webSearchUsage" | "pushTokens" | "notifications" | "composerHistory",
   number
@@ -796,11 +825,11 @@ const CHUNK = 200;
 /** Plain inserts for the tables that are replaced per owner (a thread's queue,
     schedules and log) or are append-only sets (push tokens): a collision means
     the row is already there, and is skipped. */
-function insertChunked<T extends object>(tx: Tx, table: SQLiteTable, rows: T[]): void {
+async function insertChunked<T extends object>(tx: Tx, table: PgTable, rows: T[]): Promise<void> {
   for (let i = 0; i < rows.length; i += CHUNK) {
     const chunk = rows.slice(i, i + CHUNK) as Record<string, unknown>[];
     if (chunk.length === 0) continue;
-    tx.insert(table).values(chunk).onConflictDoNothing().run();
+    await tx.insert(table).values(chunk).onConflictDoNothing();
   }
 }
 
@@ -811,8 +840,8 @@ function insertChunked<T extends object>(tx: Tx, table: SQLiteTable, rows: T[]):
  * a merged profile would lose its links, a merged project its knowledge).
  * Columns the bundle's rows do not carry are left as the install has them.
  */
-function upsertChunked(tx: Tx, table: SQLiteTable, key: string, rows: Record<string, unknown>[]): void {
-  const columns = getTableColumns(table) as Record<string, SQLiteColumn>;
+async function upsertChunked(tx: Tx, table: PgTable, key: string, rows: Record<string, unknown>[]): Promise<void> {
+  const columns = getTableColumns(table) as Record<string, PgColumn>;
   const target = columns[key];
   if (!target) throw new Error(`no column ${key}`);
   for (let i = 0; i < rows.length; i += CHUNK) {
@@ -831,7 +860,7 @@ function upsertChunked(tx: Tx, table: SQLiteTable, key: string, rows: Record<str
       for (const column of present) out[column] = row[column] ?? null;
       return out;
     });
-    tx.insert(table).values(normalized).onConflictDoUpdate({ target, set }).run();
+    await tx.insert(table).values(normalized).onConflictDoUpdate({ target, set });
   }
 }
 
@@ -860,10 +889,10 @@ function keepPairs(incoming: NameValue[] | null | undefined, existing: NameValue
  * caller has already retired whatever processes the rows it touches belong
  * to, and reloads the SessionManager afterwards.
  */
-export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
+export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<ImportSummary> {
   const summary: ImportSummary = {
     agents: 0, profiles: 0, mcpServers: 0, mcpOauth: 0, skills: 0, commands: 0, personas: 0, modelPrompts: 0, projects: 0, projectHelpers: 0, knowledge: 0, settings: 0,
-    sessions: 0, queue: 0, scheduled: 0, workflowRuns: 0, events: 0, boards: 0, boardStatuses: 0, sprints: 0, boardViews: 0, tasks: 0, taskComments: 0, taskActivity: 0, taskLinks: 0,
+    rules: 0, themes: 0, sessions: 0, queue: 0, scheduled: 0, workflowRuns: 0, events: 0, boards: 0, boardStatuses: 0, sprints: 0, boardViews: 0, tasks: 0, taskComments: 0, taskActivity: 0, taskLinks: 0,
     routines: 0, routineTriggers: 0, routineRuns: 0,
     webSearchUsage: 0, pushTokens: 0, notifications: 0, composerHistory: 0,
     orphaned: 0, missingSecrets: false,
@@ -871,13 +900,13 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
 
   // Read what the install holds BEFORE the transaction empties it — the
   // secrets a redacted bundle is allowed to keep.
-  const existingProfiles = new Map(db.select().from(profilesTable).all().map((p) => [p.id, p]));
-  const existingMcp = new Map(db.select().from(mcpServersTable).all().map((s) => [s.id, s]));
-  const existingOauth = new Map(db.select().from(mcpOauthTable).all().map((r) => [r.mcpServerId, r]));
-  const existingTriggers = new Map(db.select().from(routineTriggersTable).all().map((t) => [t.id, t]));
+  const existingProfiles = new Map(await (await db.select().from(profilesTable)).map((p) => [p.id, p]));
+  const existingMcp = new Map(await (await db.select().from(mcpServersTable)).map((s) => [s.id, s]));
+  const existingOauth = new Map(await (await db.select().from(mcpOauthTable)).map((r) => [r.mcpServerId, r]));
+  const existingTriggers = new Map(await (await db.select().from(routineTriggersTable)).map((t) => [t.id, t]));
   const existingWebSearch = readWebSearch();
 
-  db.transaction((tx) => {
+  await db.transaction(async (tx) => {
     if (mode === "replace") {
       // Children first only for readability — every child table cascades from
       // its parent, and the ones that do not (usage, tokens, tasks) stand alone.
@@ -893,7 +922,7 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
         composerHistoryTable,
         agentOptionsTable,
       ]) {
-        tx.delete(table).run();
+        await tx.delete(table);
       }
     }
 
@@ -992,14 +1021,18 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
     );
     summary.settings = Object.keys(bundle.settings).length;
 
+    /* Rules — individual items, imported wholesale. */
+    upsertChunked(tx, rulesTable, "id", bundle.rules.map((r) => ({ ...r })));
+    summary.rules = bundle.rules.length;
+
     /* The link tables are replaced wholesale per owner: `writeLinks` drops the
        owner's rows and re-adds only ids the library actually holds, so a
        bundle naming a server this install never had links nothing. */
-    for (const p of bundle.profiles) writeLinks(tx, PROFILE_LINKS, p.id, p);
+    for (const p of bundle.profiles) await writeLinks(tx, PROFILE_LINKS, p.id, p);
 
     // Children of projects. A row whose project exists nowhere is dropped, not
     // fatal — the foreign key would refuse it and take the whole import down.
-    const projectIds = new Set(tx.select({ id: projectsTable.id }).from(projectsTable).all().map((r) => r.id));
+    const projectIds = new Set(await (await tx.select({ id: projectsTable.id }).from(projectsTable)).map((r) => r.id));
     const knowledge = bundle.knowledge.filter((k) => projectIds.has(k.projectId));
     summary.orphaned += bundle.knowledge.length - knowledge.length;
     upsertChunked(tx, knowledgeTable, "id", knowledge.map((k) => ({ ...k, tags: k.tags ?? null })));
@@ -1043,9 +1076,9 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
       }),
     );
     summary.sessions = bundle.sessions.length;
-    for (const s of bundle.sessions) writeLinks(tx, SESSION_LINKS, s.id, s);
+    for (const s of bundle.sessions) await writeLinks(tx, SESSION_LINKS, s.id, s);
 
-    const sessionIds = new Set(tx.select({ id: sessionsTable.id }).from(sessionsTable).all().map((r) => r.id));
+    const sessionIds = new Set(await (await tx.select({ id: sessionsTable.id }).from(sessionsTable)).map((r) => r.id));
     const bundled = new Set(bundle.sessions.map((s) => s.id));
     const keep = <T extends { sessionId: string }>(rows: T[]): T[] => {
       const kept = rows.filter((r) => sessionIds.has(r.sessionId));
@@ -1061,10 +1094,10 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
     if (owned.length > 0) {
       for (let i = 0; i < owned.length; i += CHUNK) {
         const ids = owned.slice(i, i + CHUNK);
-        tx.delete(queueTable).where(inArray(queueTable.sessionId, ids)).run();
-        tx.delete(scheduledTable).where(inArray(scheduledTable.sessionId, ids)).run();
-        tx.delete(workflowRunsTable).where(inArray(workflowRunsTable.parentSessionId, ids)).run();
-        if (!bundle.redacted.journals) tx.delete(eventsTable).where(inArray(eventsTable.sessionId, ids)).run();
+        await tx.delete(queueTable).where(inArray(queueTable.sessionId, ids));
+        await tx.delete(scheduledTable).where(inArray(scheduledTable.sessionId, ids));
+        await tx.delete(workflowRunsTable).where(inArray(workflowRunsTable.parentSessionId, ids));
+        if (!bundle.redacted.journals) await tx.delete(eventsTable).where(inArray(eventsTable.sessionId, ids));
       }
     }
     const queue = keep(bundle.queue);
@@ -1104,9 +1137,9 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
       }),
     );
     summary.routines = bundle.routines.length;
-    for (const r of bundle.routines) writeLinks(tx, ROUTINE_LINKS, r.id, r);
+    for (const r of bundle.routines) await writeLinks(tx, ROUTINE_LINKS, r.id, r);
 
-    const routineIds = new Set(tx.select({ id: routinesTable.id }).from(routinesTable).all().map((r) => r.id));
+    const routineIds = new Set(await (await tx.select({ id: routinesTable.id }).from(routinesTable)).map((r) => r.id));
     const ownRoutines = [...new Set(bundle.routines.map((r) => r.id))];
     /* Both children are replaced as a unit for every routine the bundle names,
        the same rule a thread's queue and log follow and for a sharper reason
@@ -1116,8 +1149,8 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
        `lastRunHeadOid` reads to decide whether anything has changed since. */
     for (let i = 0; i < ownRoutines.length; i += CHUNK) {
       const ids = ownRoutines.slice(i, i + CHUNK);
-      tx.delete(routineTriggersTable).where(inArray(routineTriggersTable.routineId, ids)).run();
-      tx.delete(routineRunsTable).where(inArray(routineRunsTable.routineId, ids)).run();
+      await tx.delete(routineTriggersTable).where(inArray(routineTriggersTable.routineId, ids));
+      await tx.delete(routineRunsTable).where(inArray(routineRunsTable.routineId, ids));
     }
     const ownedRoutine = <T extends { routineId: string }>(rows: T[]): T[] => {
       const kept = rows.filter((r) => routineIds.has(r.routineId));
@@ -1243,12 +1276,12 @@ export function importBundle(bundle: Bundle, mode: ImportMode): ImportSummary {
      transaction because both are idempotent and neither may take the import
      down with it: a task in the wrong column is recoverable, a rolled-back
      import is not. */
-  ensureDefaultBoard();
-  summary.orphaned += reconcileTaskStatuses();
+  await ensureDefaultBoard();
+  summary.orphaned += await reconcileTaskStatuses();
   /* The runtime's mapping file is derived from the rows, and the rows just
      changed — rewrite it outside the transaction, exactly like the board
      re-seed above: idempotent, and never worth rolling an import back over. */
-  writeModelPromptsLibrary();
+  await writeModelPromptsLibrary();
 
   // config.json is outside the transaction — it is a file — and is written
   // last so a failed transaction leaves it untouched.

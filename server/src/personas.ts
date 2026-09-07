@@ -6,6 +6,7 @@ import { z } from "zod";
 import { DATA_DIR } from "./config.js";
 import { db, personas as personasTable } from "./db/index.js";
 import { usesPersonaFile, type AgentDef } from "./registry.js";
+import { globalRules, projectRules, type Rule } from "./rules.js";
 
 /**
  * A persona is how a thread wants to be worked on.
@@ -81,23 +82,23 @@ export type PersonaInput = z.infer<typeof PersonaInputSchema>;
  * the seed's to stamp, and editing one is allowed but does not make it yours to
  * renumber. */
 export const personas = {
-  list: (): PersonaDef[] =>
-    db.select().from(personasTable).orderBy(asc(personasTable.sortOrder), asc(personasTable.name)).all(),
-  get: (id: string): PersonaDef | undefined =>
-    db.select().from(personasTable).where(eq(personasTable.id, id)).get(),
-  create(input: PersonaInput): PersonaDef {
+  list: async (): Promise<PersonaDef[]> =>
+    await db.select().from(personasTable).orderBy(asc(personasTable.sortOrder), asc(personasTable.name)),
+  get: async (id: string): Promise<PersonaDef | undefined> =>
+    (await db.select().from(personasTable).where(eq(personasTable.id, id)).limit(1))[0],
+  async create(input: PersonaInput): Promise<PersonaDef> {
     const persona: PersonaDef = { id: randomUUID(), seededVersion: 0, ...input };
-    db.insert(personasTable).values(persona).run();
+    await db.insert(personasTable).values(persona);
     return persona;
   },
-  update(id: string, input: PersonaInput): PersonaDef | undefined {
-    const existing = personas.get(id);
+  async update(id: string, input: PersonaInput): Promise<PersonaDef | undefined> {
+    const existing = await personas.get(id);
     if (!existing) return undefined;
-    db.update(personasTable).set(input).where(eq(personasTable.id, id)).run();
+    await db.update(personasTable).set(input).where(eq(personasTable.id, id));
     return { ...existing, ...input };
   },
-  remove: (id: string): boolean =>
-    db.delete(personasTable).where(eq(personasTable.id, id)).run().changes > 0,
+  remove: async (id: string): Promise<boolean> =>
+    ((await db.delete(personasTable).where(eq(personasTable.id, id))).rowCount ?? 0) > 0,
 };
 
 /* ── The built-ins ──
@@ -310,29 +311,29 @@ const SEED_PERSONAS: SeedPersona[] = [
  * the name, the prompt and the two dials are the user's the moment they touch
  * them.
  */
-export function seedPersonas(): void {
+export async function seedPersonas(): Promise<void> {
   const applied =
-    db
+    (await db
       .select({ v: personasTable.seededVersion })
       .from(personasTable)
       .orderBy(desc(personasTable.seededVersion))
-      .get()?.v ?? 0;
+      .limit(1))[0]?.v ?? 0;
   for (const { since, introduced, ...persona } of SEED_PERSONAS) {
     if (since <= applied) continue;
-    const existing = db.select().from(personasTable).where(eq(personasTable.id, persona.id)).get();
+    const existing = (await db.select().from(personasTable).where(eq(personasTable.id, persona.id)).limit(1))[0];
     if (existing) {
       // Offered before and still here: stamp it as carried this far and leave
       // every field alone. There is nothing a release has added to a persona
       // yet, so unlike `seedAgents` there is no backfill hook — when there is
       // one, it belongs here and it may not touch name/prompt/thinking/effort.
-      db.update(personasTable)
+      await db
+        .update(personasTable)
         .set({ seededVersion: since })
-        .where(eq(personasTable.id, persona.id))
-        .run();
+        .where(eq(personasTable.id, persona.id));
       continue;
     }
     if (introduced <= applied) continue; // deleted on purpose
-    db.insert(personasTable).values({ ...persona, seededVersion: since }).run();
+    await db.insert(personasTable).values({ ...persona, seededVersion: since });
   }
 }
 
@@ -354,7 +355,7 @@ export interface PersonaSpawn {
  * The thread's persona, ready to spawn with: the row resolved, and the prompt
  * written to disk if this agent is one that reads it from there.
  *
- * `rules` (see rules.ts) is the standing instruction text — global and project
+ * `rules` (see rules.ts) is the standing instruction items — global and project
  * layers already composed — folded in beneath the persona, so one text reaches
  * every door and no door learns rules exist. A thread with rules and no
  * persona spawns with just the rules.
@@ -364,24 +365,25 @@ export interface PersonaSpawn {
  * it is a file write on every spawn, and a runtime that takes the text inline
  * has no use for it.
  */
-export function resolvePersonaSpawn(
+export async function resolvePersonaSpawn(
   sessionId: string,
   id: string | null | undefined,
   agent: AgentDef | undefined,
   suggestFollowups?: boolean | null,
-  rules?: string,
-): PersonaSpawn | undefined {
-  const persona = id ? personas.get(id) : undefined;
+  rules?: Rule[],
+): Promise<PersonaSpawn | undefined> {
+  const rulesText = rules?.length ? rules.map((r) => r.content).join("\n\n") : undefined;
+  const persona = id ? await personas.get(id) : undefined;
   // A persona deleted under a live thread reads as none — see the schema's note
   // on why `sessions.persona_id` is not a foreign key.
   const base: PersonaSpawn | undefined = persona?.prompt
     ? {
         id: persona.id,
-        prompt: rules ? `${rules}\n\n${persona.prompt}` : persona.prompt,
+        prompt: rulesText ? `${rulesText}\n\n${persona.prompt}` : persona.prompt,
         thinking: persona.thinking,
       }
-    : rules
-      ? { id: "rules", prompt: rules, thinking: null }
+    : rulesText
+      ? { id: "rules", prompt: rulesText, thinking: null }
       : undefined;
   // Folded here rather than at the call site so the file below holds the same
   // text the inline doors carry — an agent that reads instructions off disk
@@ -445,8 +447,8 @@ export function withFollowupSuggestions(
     `personaSpawn` because it is consumed by the model/effort plumbing rather
     than by the spawn, and because "unchanged" has to stay distinguishable from
     "no persona". */
-export function personaEffort(id: string | null | undefined): string | undefined {
-  return (id ? personas.get(id)?.effort : null) ?? undefined;
+export async function personaEffort(id: string | null | undefined): Promise<string | undefined> {
+  return (id ? (await personas.get(id))?.effort : null) ?? undefined;
 }
 
 /* Where a persona's prompt goes when a runtime will only read one off disk.

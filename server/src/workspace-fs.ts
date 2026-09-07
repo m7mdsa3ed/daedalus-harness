@@ -126,8 +126,8 @@ const within = (root: string, path: string) => path === root || path.startsWith(
 
 /** The project's canonical `cwd`. Canonical, so a project rooted at a symlink
     does not fail its own containment check on every request. */
-export function projectRoot(projectId: string): string {
-  const project = getProject(projectId);
+export async function projectRoot(projectId: string): Promise<string> {
+  const project = await getProject(projectId);
   if (!project) throw fail(404, "unknown project");
   try {
     return realpathSync(project.cwd);
@@ -282,7 +282,7 @@ export async function listDir(
   path: string | undefined,
   options: ListOptions = {},
 ): Promise<WorkspaceListing> {
-  const root = projectRoot(projectId);
+  const root = await projectRoot(projectId);
   const dir = resolveInProject(root, path);
   const stat = await statOfAsync(dir);
   if (!stat.isDirectory()) throw fail(400, "not a directory");
@@ -421,7 +421,7 @@ export async function searchEntries(
   rawQuery: string | undefined,
   options: { limit?: number } = {},
 ): Promise<WorkspaceSearch> {
-  const root = projectRoot(projectId);
+  const root = await projectRoot(projectId);
   const query = (rawQuery ?? "").trim();
   const limit = Math.min(Math.max(options.limit ?? SEARCH_DEFAULT_LIMIT, 1), SEARCH_MAX_LIMIT);
 
@@ -514,7 +514,7 @@ async function looksBinary(path: string, size: number): Promise<boolean> {
 }
 
 export async function statFile(projectId: string, path: string): Promise<WorkspaceStat> {
-  const root = projectRoot(projectId);
+  const root = await projectRoot(projectId);
   const absolute = resolveInProject(root, path);
   const stat = await statOfAsync(absolute);
   const type = stat.isDirectory() ? "dir" : "file";
@@ -536,7 +536,7 @@ export async function statFile(projectId: string, path: string): Promise<Workspa
  * for them, and "here is what this is" is more useful than an error.
  */
 export async function readFile(projectId: string, path: string): Promise<WorkspaceFile> {
-  const root = projectRoot(projectId);
+  const root = await projectRoot(projectId);
   const absolute = resolveInProject(root, path);
   const stat = await statOfAsync(absolute);
   if (stat.isDirectory()) throw fail(400, "not a file");
@@ -577,7 +577,7 @@ export async function readFileBytes(
   projectId: string,
   path: string,
 ): Promise<{ bytes: Buffer; contentType: string; path: string }> {
-  const root = projectRoot(projectId);
+  const root = await projectRoot(projectId);
   const absolute = resolveInProject(root, path);
   const stat = await statOfAsync(absolute);
   if (stat.isDirectory()) throw fail(400, "not a file");
@@ -602,13 +602,13 @@ const IMAGE_TYPES: Record<string, string> = {
   svg: "image/svg+xml",
 };
 
-export function writeFile(
+export async function writeFile(
   projectId: string,
   path: string,
   content: string,
   options: WriteOptions = {},
-): WorkspaceStat {
-  const root = projectRoot(projectId);
+): Promise<WorkspaceStat> {
+  const root = await projectRoot(projectId);
   const absolute = resolveInProject(root, path);
   if (absolute === root) throw fail(400, "not a file");
 
@@ -645,12 +645,12 @@ export function writeFile(
   };
 }
 
-export function createEntry(
+export async function createEntry(
   projectId: string,
   path: string,
   type: "dir" | "file",
-): WorkspaceEntry {
-  const root = projectRoot(projectId);
+): Promise<WorkspaceEntry> {
+  const root = await projectRoot(projectId);
   const absolute = resolveInProject(root, path);
   if (absolute === root) throw fail(400, "cannot create the project root");
   if (existsSync(absolute)) throw fail(409, "already exists");
@@ -663,8 +663,8 @@ export function createEntry(
   return { name: absolute.split(sep).pop()!, path: relativePath(root, absolute), type };
 }
 
-export function renameEntry(projectId: string, from: string, to: string): WorkspaceEntry {
-  const root = projectRoot(projectId);
+export async function renameEntry(projectId: string, from: string, to: string): Promise<WorkspaceEntry> {
+  const root = await projectRoot(projectId);
   const source = resolveInProject(root, from);
   const target = resolveInProject(root, to);
   if (source === root || target === root) throw fail(400, "cannot rename the project root");
@@ -680,8 +680,8 @@ export function renameEntry(projectId: string, from: string, to: string): Worksp
   };
 }
 
-export function deleteEntry(projectId: string, path: string): { path: string } {
-  const root = projectRoot(projectId);
+export async function deleteEntry(projectId: string, path: string): Promise<{ path: string }> {
+  const root = await projectRoot(projectId);
   const absolute = resolveInProject(root, path);
   if (absolute === root) throw fail(400, "cannot delete the project root");
   statOf(absolute);

@@ -15,6 +15,7 @@ import type {
   TurnChanges,
   TurnTick,
   ThreadHold,
+  ThreadRetry,
   WireError,
 } from "@daedalus/protocol"
 import { api, wsUrl, type ServerSettings } from "./settings"
@@ -22,7 +23,7 @@ import { api, wsUrl, type ServerSettings } from "./settings"
 /** The hold, as both the `paused` event and `caught_up` state it — the
     protocol's own shape, re-exported so readers of this module need not know
     where it is spelled. */
-export type { ThreadHold }
+export type { ThreadHold, ThreadRetry }
 
 /**
  * How much of a thread's tail to ask for on a fresh attach, in **steps** (turns).
@@ -247,13 +248,22 @@ export interface ThreadCallbacks {
         `usage_update`s too, but only some of them: a window may hold none and
         a `load_earlier` page holds older ones, so this — which arrives last —
         is the reading to keep. */
-    context: acp.UsageUpdate | null
+    context: acp.UsageUpdate | null,
+    /** A retry the turn is waiting out, for the same reason the hold is here:
+        it is state, it is never journaled, and a backoff is exactly the window
+        a peer is most likely to attach in. Null means not retrying. */
+    retry: ThreadRetry | null
   ) => void
   /** The turn is held at a step boundary, or released. Absolute, live-only,
       to every peer — the one that asked included. Carries *why*: `"user"` is
       the pause toggle, `"error"` is a turn that failed and is waiting for a
       model change rather than ending — still an open turn, never a failure. */
   onPaused: (hold: ThreadHold) => void
+  /** The turn failed on something worth trying again and is waiting out a
+      backoff, or has stopped retrying (null). Absolute and live-only, to every
+      peer. The step before `onPaused` with an `"error"` hold: if the attempts
+      run out, this clears and that arrives in its place. */
+  onRetry: (retry: ThreadRetry | null) => void
   /** The journal position this device has folded up to, as it moves — so the
       cursor a reconnect resumes from describes what is actually on screen and
       not merely what was there when this socket attached. Raised on every
@@ -323,6 +333,9 @@ export class ThreadSocket {
       coming. Reset by every `attached`; 0/0 outside a replay. */
   private replayed = 0
   private replayTotal = 0
+  /** The seq the replay started at — the origin the progress bar counts from
+      (`replayTotal` is a span of the log, so `done` has to be one too). */
+  private replayFrom = 0
   /** The `loadEarlier` in flight, if any — see the re-entrancy note there. */
   private earlierInFlight: Promise<void> | null = null
   /**
@@ -559,6 +572,7 @@ export class ThreadSocket {
         // How much replay is coming, in events. Zero when the server said
         // nothing (an older one, which never had the field) — see onReplayProgress.
         this.replayTotal = Math.max(0, (event.to ?? 0) - event.from)
+        this.replayFrom = event.from
         this.replayed = 0
         // Only worth carrying the events when there is something to fold them
         // in front of; see `raw`.
@@ -594,7 +608,8 @@ export class ThreadSocket {
           event.queue ?? [],
           event.hold ?? { paused: false },
           event.staged ?? null,
-          event.context ?? null
+          event.context ?? null,
+          event.retry ?? null
         )
         return
       case "paused": {
@@ -602,6 +617,9 @@ export class ThreadSocket {
         this.callbacks.onPaused(hold)
         return
       }
+      case "retry":
+        this.callbacks.onRetry(event.retry)
+        return
       /* The replay, arriving whole. Unrolled through this same switch so there
          is no second parser: `catchingUp` is already true (the `attached` that
          precedes it set it), the callbacks see exactly what a one-frame-per-
@@ -615,8 +633,17 @@ export class ThreadSocket {
            screen agree. Clamped, because the log can grow between the total the
            server read at attach and the last frame it sends — a bar that says
            1.1 of 1 is worse than one that sits at full for a beat. */
+        /* Measured in seqs, not in events. The total is a span of the log
+           (`to - from`) and a frame's events no longer count one for one
+           against it — a run of streamed chunks arrives as the single event it
+           draws — so adding the frame's length crawled to a few percent and
+           then jumped when `caught_up` landed. The last event of the frame says
+           where the replay has actually got to, which is what the bar is
+           about. */
         if (this.replayTotal > 0) {
-          this.replayed = Math.min(this.replayTotal, this.replayed + event.events.length)
+          const last = event.events.at(-1)
+          const reached = typeof last?.seq === "number" ? last.seq + 1 - this.replayFrom : 0
+          this.replayed = Math.min(this.replayTotal, Math.max(this.replayed, reached))
           this.callbacks.onReplayProgress(this.replayed, this.replayTotal)
         }
         return
@@ -893,7 +920,13 @@ export class ThreadSocket {
     if (!this.raw) return // reattached under us; that replay is the authority
     const held = this.raw
     this.raw = [...page.events, ...held]
-    this.windowFrom -= page.events.length
+    /* Where the page starts is the server's to say, not this side's to count:
+       a page whose chunk runs came back merged holds fewer events than the
+       seqs it covers, and subtracting its length would leave the window inside
+       what was just folded — so the next page would ask for turns already on
+       screen and fold them in a second time. `before` is the fallback for a
+       server too old to state it, where one journaled event was one event. */
+    this.windowFrom = page.from ?? before - page.events.length
     this.earlier = page.earlier
     this.callbacks.onRewind()
     this.catchingUp = true

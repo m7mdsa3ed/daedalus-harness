@@ -12,11 +12,15 @@ import { profileUsage } from "../usage-api.js";
 import { getAgent, listAgents } from "../registry.js";
 import { defaultProfileFor, getProfile, listProfiles, profileSupports } from "../profiles.js";
 import { getProject } from "../projects.js";
-import { globalRules, setGlobalRules } from "../rules.js";
+import {
+  globalRules, projectRules, createRule, updateRule, deleteRule,
+} from "../rules.js";
+import { listThemes, createTheme, updateTheme, deleteTheme } from "../themes.js";
 import type { Push } from "../push.js";
 import { clearNotifications, listNotifications, markNotificationsRead, unreadNotifications } from "../notifications.js";
 import { addComposerHistory, clearComposerHistory, listComposerHistory } from "../composer-history.js";
 import type { SessionManager } from "../sessions.js";
+import { appVersion, changelog } from "../meta.js";
 import { bearerToken, workspace } from "./helpers.js";
 
 // Server-global web-search backend. This is the default a profile inherits when
@@ -48,8 +52,17 @@ const ComposerHistorySchema = z.object({
   threadTitle: z.string().nullish(),
 });
 
-/* The global rules block (rules.ts) — one resource, written whole. */
-const RulesSchema = z.object({ rules: z.string() });
+/* Individual rules — each has a title and content. */
+const RuleInputSchema = z.object({
+  projectId: z.string().nullable().optional().default(null),
+  title: z.string().min(1),
+  content: z.string().min(1),
+});
+const RuleUpdateSchema = z.object({
+  title: z.string().min(1).optional(),
+  content: z.string().min(1).optional(),
+  sortOrder: z.number().optional(),
+});
 
 /** Everything server-wide with no bigger home: health, the web-search backend
     config, transcript search, the knowledge base, backup, push registration,
@@ -65,6 +78,10 @@ export function miscRoutes(
     // `webSearch` is only whether the search API is configured — never the token.
     return c.json({ ok: true, name: "daedalus", authorized: token === config.token, webSearch: Boolean(readWebSearch()) });
   });
+
+  /* The deployment's version and parsed changelog — what Settings › General's
+     About group shows. Authed like every route under the global middleware. */
+  app.get("/api/meta", (c) => c.json({ version: appVersion(), changelog: changelog() }));
 
   app.get("/api/config/web-search", (c) => {
     const webSearch = readWebSearch();
@@ -85,46 +102,96 @@ export function miscRoutes(
     return c.json({ configured: true, ...webSearchResponse(saved) });
   });
 
-  /* Rules: the standing instruction block every thread spawns with, beneath
-     any project's own (rules.ts). */
-  app.get("/api/rules", (c) => c.json({ rules: globalRules() }));
+  /* Rules: standing instructions every thread spawns with, beneath
+     any project's own rules (rules.ts). Individual rules with titles
+     and content, composed into a single text block at spawn time. */
+  app.get("/api/rules/project/:projectId", async (c) => {
+    const projectId = c.req.param("projectId")
+    const project = await getProject(projectId)
+    if (!project) return c.json({ error: "unknown project" }, 404)
+    return c.json(await projectRules(projectId))
+  })
+  app.get("/api/rules", async (c) => c.json(await globalRules()))
+  app.post("/api/rules", async (c) => {
+    const parsed = RuleInputSchema.safeParse(await c.req.json())
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400)
+    return c.json(await createRule(parsed.data), 201)
+  })
+  app.put("/api/rules/:id", async (c) => {
+    const parsed = RuleUpdateSchema.safeParse(await c.req.json())
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400)
+    const updated = await updateRule(c.req.param("id"), parsed.data)
+    return updated ? c.json(updated) : c.json({ error: "not found" }, 404)
+  })
+  app.delete("/api/rules/:id", async (c) =>
+    (await deleteRule(c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404)
+  )
 
-  app.put("/api/rules", async (c) => {
-    const parsed = RulesSchema.safeParse(await c.req.json());
-    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-    return c.json({ rules: setGlobalRules(parsed.data.rules) });
-  });
+  /* Themes — the studio's saved user-made themes, stored server-side so a
+     theme follows the account and not the browser. The payload is the
+     client's own `CustomTheme` untranslated: three halves, each a record of
+     token → value, opaque here. The list is the gallery, the writes are the
+     editor's live write-through. */
+  const ThemeInputSchema = z.object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    light: z.record(z.string(), z.string()).default({}),
+    dark: z.record(z.string(), z.string()).default({}),
+    base: z.record(z.string(), z.string()).default({}),
+  })
+  const ThemeUpdateSchema = z.object({
+    name: z.string().min(1).optional(),
+    light: z.record(z.string(), z.string()).optional(),
+    dark: z.record(z.string(), z.string()).optional(),
+    base: z.record(z.string(), z.string()).optional(),
+  })
+
+  app.get("/api/themes", async (c) => c.json(await listThemes()))
+  app.post("/api/themes", async (c) => {
+    const parsed = ThemeInputSchema.safeParse(await c.req.json())
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400)
+    return c.json(await createTheme(parsed.data), 201)
+  })
+  app.put("/api/themes/:id", async (c) => {
+    const parsed = ThemeUpdateSchema.safeParse(await c.req.json())
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400)
+    const updated = await updateTheme(c.req.param("id"), parsed.data)
+    return updated ? c.json(updated) : c.json({ error: "not found" }, 404)
+  })
+  app.delete("/api/themes/:id", async (c) =>
+    (await deleteTheme(c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404)
+  )
 
   /* Full-text search over every thread's journaled transcript (see search.ts).
      Behind the same bearer middleware as the rest of /api. The query is
      sanitized server-side (ftsQuery) so raw FTS5 operators cannot 500, and the
      snippet brackets matches with private-use codepoints the client styles —
      never markup. */
-  app.get("/api/search", (c) => {
+  app.get("/api/search", async (c) => {
     const q = c.req.query("q")?.trim() ?? "";
     if (!q) return c.json({ results: [] });
     const limit = Number.parseInt(c.req.query("limit") ?? "", 10) || SEARCH_LIMIT;
-    return c.json({ results: searchEvents(q, limit) });
+    return c.json({ results: await searchEvents(q, limit) });
   });
 
   /* Knowledge base. The same table the `knowledge` MCP server reads, exposed as a
      REST resource so the user can see and edit it — per project below, and as
      one list across every project for Settings › Knowledge base. Missing
      project surfaces as a 404 via the `workspace()` wrapper. */
-  app.get("/api/knowledge", (c) => c.json(listAllKnowledge()));
+  app.get("/api/knowledge", async (c) => c.json(await listAllKnowledge()));
 
   app.get("/api/projects/:projectId/knowledge", (c) =>
-    workspace(c, () => listKnowledge(c.req.param("projectId"))),
+    workspace(c, async () => await listKnowledge(c.req.param("projectId"))),
   );
 
   app.post("/api/projects/:projectId/knowledge", async (c) => {
     const parsed = KnowledgeInputSchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-    return workspace(c, () => addKnowledge(c.req.param("projectId"), parsed.data));
+    return workspace(c, async () => await addKnowledge(c.req.param("projectId"), parsed.data));
   });
 
-  app.delete("/api/projects/:projectId/knowledge/:entryId", (c) =>
-    deleteKnowledge(c.req.param("projectId"), c.req.param("entryId"))
+  app.delete("/api/projects/:projectId/knowledge/:entryId", async (c) =>
+    (await deleteKnowledge(c.req.param("projectId"), c.req.param("entryId")))
       ? c.json({ ok: true })
       : c.json({ error: "no such knowledge entry" }, 404),
   );
@@ -135,12 +202,12 @@ export function miscRoutes(
      takes `?token=`, but a full-secret export URL is exactly the thing that ends
      up in browser history and proxy logs. `journals=0` leaves the transcripts
      out. Served as an attachment so a plain link downloads it. */
-  app.get("/api/backup", (c) => {
+  app.get("/api/backup", async (c) => {
     const header = c.req.header("authorization");
     if (!header?.startsWith("Bearer ") || header.slice(7) !== config.token) {
       return c.json({ error: "this route requires the Authorization header (no ?token=)" }, 401);
     }
-    const bundle = exportBundle({
+    const bundle = await exportBundle({
       includeSecrets: c.req.query("secrets") === "1",
       includeJournals: c.req.query("journals") !== "0",
     });
@@ -160,7 +227,7 @@ export function miscRoutes(
     if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
     const bundle = parsed.data;
     sessions.retireAll(mode === "replace" ? undefined : bundle.sessions.map((s) => s.id));
-    const summary = importBundle(bundle, mode);
+    const summary = await importBundle(bundle, mode);
     sessions.reload();
     console.log(`[backup] imported (${mode}):`, summary);
     return c.json(summary);
@@ -179,8 +246,8 @@ export function miscRoutes(
 
   /* Aggregate usage of the harness's own web-search MCP server: totals by tool
      and status, plus the most recent calls (`?limit=` caps the tail). */
-  app.get("/api/websearch/usage", (c) =>
-    c.json(getWebSearchUsage(Number(c.req.query("limit")) || 50)),
+  app.get("/api/websearch/usage", async (c) =>
+    c.json(await getWebSearchUsage(Number(c.req.query("limit")) || 50)),
   );
 
   /*
@@ -205,15 +272,15 @@ export function miscRoutes(
    * account's usage is the same in every directory, and requiring a project
    * would make the settings page depend on there being one.
    */
-  const quotaProject = (id?: string) => (id && getProject(id)) || quotaCwd();
+  const quotaProject = async (id?: string) => (id && await getProject(id)) || quotaCwd();
 
   app.get("/api/quota", async (c) => {
-    const project = quotaProject(c.req.query("projectId"));
+    const project = await quotaProject(c.req.query("projectId"));
     const refresh = c.req.query("refresh") === "1";
-    const probeable = listAgents().filter((agent) => agent.quotaProbe);
-    /* Stored profiles only — `listProfiles()` with no agents synthesizes no
+    const probeable = (await listAgents()).filter((agent) => agent.quotaProbe);
+    /* Stored profiles only — `await listProfiles()` with no agents synthesizes no
        virtual Defaults, and a Default never names a provider anyway. */
-    const providers = listProfiles().filter((profile) => profileUsage(profile));
+    const providers = (await listProfiles()).filter((profile) => profileUsage(profile));
     const [plans, agents] = await Promise.all([
       Promise.all(providers.map((profile) => getProfileQuota(profile, { refresh }))),
       Promise.all(
@@ -228,27 +295,27 @@ export function miscRoutes(
      before the `:agentId` route because `profile` would otherwise be read as an
      agent id. */
   app.get("/api/quota/profile/:profileId", async (c) => {
-    const profile = getProfile(c.req.param("profileId"));
+    const profile = await getProfile(c.req.param("profileId"));
     if (!profile) return c.json({ error: "unknown profile" }, 404);
     if (!profileUsage(profile)) return c.json({ error: "profile names no usage provider" }, 400);
     return c.json(await getProfileQuota(profile, { refresh: c.req.query("refresh") === "1" }));
   });
 
   app.get("/api/quota/:agentId", async (c) => {
-    const agent = getAgent(c.req.param("agentId"));
+    const agent = await getAgent(c.req.param("agentId"));
     if (!agent) return c.json({ error: "unknown agent" }, 404);
     /* No profileId means the Default one — the same machine-level reading the
        list route gives, so a caller that only knows the agent has a route. */
     const profileId = c.req.query("profileId");
-    const profile = profileId ? getProfile(profileId) : defaultProfileFor(agent.id, agent.name);
+    const profile = profileId ? await getProfile(profileId) : defaultProfileFor(agent.id, agent.name);
     if (!profile) return c.json({ error: "unknown profile" }, 404);
     if (!profileSupports(profile, agent.id)) return c.json({ error: "profile does not serve this agent" }, 400);
     return c.json(
-      await getQuota(agent, profile, quotaProject(c.req.query("projectId")), { refresh: c.req.query("refresh") === "1" }),
+      await getQuota(agent, profile, await quotaProject(c.req.query("projectId")), { refresh: c.req.query("refresh") === "1" }),
     );
   });
 
-  app.get("/api/push/config", (c) => c.json({ enabled: push.enabled, ...push.webConfig() }));
+  app.get("/api/push/config", async (c) => c.json({ enabled: push.enabled, ...push.webConfig() }));
   app.post("/api/push/register", async (c) => {
     const { token } = await c.req.json();
     if (typeof token !== "string" || !token) return c.json({ error: "token required" }, 400);
@@ -268,19 +335,19 @@ export function miscRoutes(
   /* ── the notification inbox (notifications.ts) ──
      The pill in the sidebar reads these. Listed newest first with the unread
      count beside them; read is acknowledged by id, or all at once. */
-  app.get("/api/notifications", (c) => {
+  app.get("/api/notifications", async (c) => {
     const limit = Number.parseInt(c.req.query("limit") ?? "", 10);
     return c.json({
-      items: listNotifications(Number.isFinite(limit) && limit > 0 ? limit : undefined),
-      unread: unreadNotifications(),
+      items: await listNotifications(Number.isFinite(limit) && limit > 0 ? limit : undefined),
+      unread: await unreadNotifications(),
     });
   });
 
   app.post("/api/notifications/read", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { ids?: unknown };
     const ids = Array.isArray(body.ids) ? body.ids.filter((x): x is string => typeof x === "string") : null;
-    markNotificationsRead(ids);
-    return c.json({ ok: true, unread: unreadNotifications() });
+    await markNotificationsRead(ids);
+    return c.json({ ok: true, unread: await unreadNotifications() });
   });
 
   /* Clear the whole inbox (a "clear" action in the pill), or only entries older
@@ -288,7 +355,7 @@ export function miscRoutes(
      is the explicit user gesture, never implied by opening the pill. */
   app.delete("/api/notifications", async (c) => {
     const before = Number.parseInt(c.req.query("before") ?? "", 10);
-    clearNotifications(Number.isFinite(before) ? before : undefined);
+    await clearNotifications(Number.isFinite(before) ? before : undefined);
     return c.json({ ok: true });
   });
 
@@ -296,9 +363,9 @@ export function miscRoutes(
      Global across every thread, which is the point: recall used to be the
      transcript of the thread you were standing in. Newest first, the order the
      panel lists and Up walks. */
-  app.get("/api/composer-history", (c) => {
+  app.get("/api/composer-history", async (c) => {
     const limit = Number.parseInt(c.req.query("limit") ?? "", 10);
-    return c.json({ items: listComposerHistory(Number.isFinite(limit) && limit > 0 ? limit : undefined) });
+    return c.json({ items: await listComposerHistory(Number.isFinite(limit) && limit > 0 ? limit : undefined) });
   });
 
   /* Written by the composer once a send has actually left. An exact repeat is
@@ -315,10 +382,10 @@ export function miscRoutes(
   /* Forget one line (`?id=`), everything older than `?before=` (ms), or the
      whole history. Like the inbox's delete, this is only ever an explicit
      gesture — history is lossy to remove and nothing implies it. */
-  app.delete("/api/composer-history", (c) => {
+  app.delete("/api/composer-history", async (c) => {
     const id = c.req.query("id");
     const before = Number.parseInt(c.req.query("before") ?? "", 10);
-    const removed = clearComposerHistory({ id: id || undefined, before: Number.isFinite(before) ? before : undefined });
+    const removed = await clearComposerHistory({ id: id || undefined, before: Number.isFinite(before) ? before : undefined });
     return c.json({ ok: true, removed });
   });
 }

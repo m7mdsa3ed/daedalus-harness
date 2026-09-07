@@ -51,21 +51,21 @@ export interface BlocksResult {
   notes: { name: string; delivery: Delivery; reason: string }[];
 }
 
-export function attachmentBlocks(opts: {
+export async function attachmentBlocks(opts: {
   refs: AttachmentRef[];
   caps: acp.PromptCapabilities | undefined;
   cwd: string;
   modalities: string[] | undefined;
   hasCatalog: boolean;
   forceLink?: boolean;
-}): BlocksResult {
+}): Promise<BlocksResult> {
   const result: BlocksResult = { blocks: [], textSuffix: "", notes: [] };
   if (opts.refs.length === 0) return result;
 
   /* The refs on the wire are what the client last saw; the rows are what is on
      disk now. A row that has since gone (a purge racing a queued drain) simply
      is not sent — the text still says what the user typed. */
-  const rows = listAttachments(opts.refs.map((ref) => ref.id));
+  const rows = await listAttachments(opts.refs.map((ref) => ref.id));
   /* Spent as it goes, and threaded down rather than checked once: the third
      image is the one that has to degrade, not all three or none. Server-side
      from the constant rather than trusted from the client. */

@@ -2,9 +2,9 @@
  *
  * This is the harness's own Drizzle path. The agent reaches
  * the SAME table through the `knowledge` MCP server subprocess, which opens the
- * DB directly via knowledge-db.ts (raw better-sqlite3, no harness internals).
- * Two code paths, one table — safe under WAL, and each stays consistent with its
- * own half of the harness.
+ * DB directly via knowledge-db.ts (raw `pg`, no harness internals).
+ * Two code paths, one table — two connections to one Postgres, and each stays
+ * consistent with its own half of the harness.
  *
  * Every query is scoped by project_id, so nothing a workspace learns leaks into
  * another. The routes that call these go through the `workspace()` wrapper, so a
@@ -30,13 +30,13 @@ export type KnowledgeEntry = typeof knowledgeTable.$inferSelect;
 
 const fail = (status: 404, message: string) => new WorkspaceError(message, status);
 
-export function listKnowledge(projectId: string): KnowledgeEntry[] {
-  if (!getProject(projectId)) throw fail(404, "unknown project");
-  return db
+export async function listKnowledge(projectId: string): Promise<KnowledgeEntry[]> {
+  if (!await getProject(projectId)) throw fail(404, "unknown project");
+  return await (await db
     .select()
     .from(knowledgeTable)
-    .where(eq(knowledgeTable.projectId, projectId))
-    .all()
+    .where(eq(knowledgeTable.projectId, projectId)))
+    
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
@@ -45,32 +45,31 @@ export function listKnowledge(projectId: string): KnowledgeEntry[] {
     rather than one workspace's slice. `projectName` is resolved here so the
     client needs no join; a project deleted since cascades its rows away, so
     the name is always found. */
-export function listAllKnowledge(): (KnowledgeEntry & { projectName: string })[] {
-  const names = new Map(listProjects().map((p) => [p.id, p.name]));
-  return db
+export async function listAllKnowledge(): Promise<(KnowledgeEntry & { projectName: string })[]> {
+  const names = new Map((await listProjects()).map((p) => [p.id, p.name]));
+  return await (await db
     .select()
-    .from(knowledgeTable)
-    .all()
+    .from(knowledgeTable))
+    
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .map((row) => ({ ...row, projectName: names.get(row.projectId) ?? row.projectId }));
 }
 
-export function addKnowledge(projectId: string, input: KnowledgeInput): KnowledgeEntry {
-  if (!getProject(projectId)) throw fail(404, "unknown project");
+export async function addKnowledge(projectId: string, input: KnowledgeInput): Promise<KnowledgeEntry> {
+  if (!await getProject(projectId)) throw fail(404, "unknown project");
   const id = randomUUID();
   const now = Date.now();
-  db.insert(knowledgeTable)
-    .values({ id, projectId, title: input.title, content: input.content, tags: input.tags, createdAt: now, updatedAt: now })
-    .run();
-  return db.select().from(knowledgeTable).where(eq(knowledgeTable.id, id)).get()!;
+  await db.insert(knowledgeTable)
+    .values({ id, projectId, title: input.title, content: input.content, tags: input.tags, createdAt: now, updatedAt: now });
+  return (await db.select().from(knowledgeTable).where(eq(knowledgeTable.id, id)).limit(1))[0]!;
 }
 
-export function deleteKnowledge(projectId: string, id: string): boolean {
+export async function deleteKnowledge(projectId: string, id: string): Promise<boolean> {
   // Scoped to project_id so an entry can never cross projects even if ids collide.
   return (
-    db
+    ((await db
       .delete(knowledgeTable)
       .where(and(eq(knowledgeTable.projectId, projectId), eq(knowledgeTable.id, id)))
-      .run().changes > 0
+      ).rowCount ?? 0) > 0
   );
 }

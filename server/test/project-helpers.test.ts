@@ -1,3 +1,4 @@
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,14 +22,14 @@ const { containedPath } = await import("../src/workspace-fs.js");
 
 try {
   mkdirSync(join(dir, "sub"));
-  const p1 = createProject({ name: "P1", cwd: dir, description: null });
-  const p2 = createProject({ name: "P2", cwd: dir, description: null });
+  const p1 = await createProject({ name: "P1", cwd: dir, description: null });
+  const p2 = await createProject({ name: "P2", cwd: dir, description: null });
 
   // 1. Initially empty
-  assert.deepEqual(listHelpers(p1.id), []);
+  assert.deepEqual((await listHelpers(p1.id)), []);
 
   // 2. Add
-  const h1 = addHelper(p1.id, { name: "Restart server", command: "echo restarted" });
+  const h1 = await addHelper(p1.id, { name: "Restart server", command: "echo restarted" });
   assert.equal(h1.name, "Restart server");
   assert.equal(h1.command, "echo restarted");
   assert.equal(h1.projectId, p1.id);
@@ -39,7 +40,7 @@ try {
   assert.equal(h1.confirm, false);
 
   // Every optional field round-trips, and an add+delete leaves counts alone.
-  const h1b = addHelper(p1.id, {
+  const h1b = await addHelper(p1.id, {
     name: "Risk",
     command: "echo risky",
     cwd: "sub",
@@ -47,27 +48,27 @@ try {
     description: "The risky one",
     confirm: true,
   });
-  const stored = getHelper(p1.id, h1b.id);
+  const stored = await getHelper(p1.id, h1b.id);
   assert.equal(stored?.cwd, "sub");
   assert.deepEqual(stored?.env, { K: "v", "empty-key": "" });
   assert.equal(stored?.description, "The risky one");
   assert.equal(stored?.confirm, true);
-  assert.equal(deleteHelper(p1.id, h1b.id), true);
+  assert.equal((await deleteHelper(p1.id, h1b.id)), true);
 
-  const h2 = addHelper(p1.id, { name: "Migrate", command: "echo migrated" });
-  const forP1 = listHelpers(p1.id);
+  const h2 = await addHelper(p1.id, { name: "Migrate", command: "echo migrated" });
+  const forP1 = await listHelpers(p1.id);
   assert.equal(forP1.length, 2);
-  const names = forP1.map((h) => h.name).sort();
+  const names = (await forP1).map((h) => h.name).sort();
   assert.deepEqual(names, ["Migrate", "Restart server"]);
 
   // 3. Project isolation
-  assert.deepEqual(listHelpers(p2.id), []);
+  assert.deepEqual((await listHelpers(p2.id)), []);
   const byProject = helpersByProject([p1.id, p2.id]);
-  assert.equal(byProject.get(p1.id)?.length, 2);
-  assert.equal(byProject.get(p2.id), undefined);
+  assert.equal((await byProject).get(p1.id)?.length, 2);
+  assert.equal((await byProject).get(p2.id), undefined);
 
   // 4. Update — options set, then cleared when the input leaves them out
-  const updated = updateHelper(p1.id, h1.id, {
+  const updated = await updateHelper(p1.id, h1.id, {
     name: "Restart backend",
     command: "echo ok",
     cwd: "sub",
@@ -77,9 +78,9 @@ try {
   assert.equal(updated?.name, "Restart backend");
   assert.equal(updated?.cwd, "sub");
   assert.equal(updated?.confirm, true);
-  assert.equal(getHelper(p1.id, h1.id)?.name, "Restart backend");
+  assert.equal((await getHelper(p1.id, h1.id))?.name, "Restart backend");
 
-  const cleared = updateHelper(p1.id, h1.id, { name: "Restart backend", command: "echo ok" });
+  const cleared = await updateHelper(p1.id, h1.id, { name: "Restart backend", command: "echo ok" });
   assert.equal(cleared?.cwd, null);
   assert.equal(cleared?.env, null);
   assert.equal(cleared?.description, null);
@@ -106,14 +107,14 @@ try {
   assert.equal(containedPath(root, "escape"), root);
 
   // 7. An env text a hand mangled degrades to "no extra env", not a crash
-  db.update(helpersTable).set({ env: "not json" }).where(eq(helpersTable.id, h1.id)).run();
-  assert.equal(getHelper(p1.id, h1.id)?.env, null);
-  db.update(helpersTable).set({ env: null }).where(eq(helpersTable.id, h1.id)).run();
+  await db.update(helpersTable).set({ env: "not json" }).where(eq(helpersTable.id, h1.id));
+  assert.equal((await getHelper(p1.id, h1.id))?.env, null);
+  await db.update(helpersTable).set({ env: null }).where(eq(helpersTable.id, h1.id));
 
   // 8. Delete
-  assert.equal(deleteHelper(p1.id, h1.id), true);
-  assert.equal(listHelpers(p1.id).length, 1);
-  assert.equal(getHelper(p1.id, h1.id), undefined);
+  assert.equal(await deleteHelper(p1.id, h1.id), true);
+  assert.equal((await listHelpers(p1.id)).length, 1);
+  assert.equal(await getHelper(p1.id, h1.id), undefined);
 
   console.log("project-helpers: 8 passed, 0 failed");
 } finally {

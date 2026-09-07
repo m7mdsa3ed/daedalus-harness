@@ -8,6 +8,7 @@
 //   - extractJsonOutput takes the last ```json fence, a bare fence, bare JSON,
 //     and refuses prose.
 // Run: pnpm test:workflow-schema
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 
 const {

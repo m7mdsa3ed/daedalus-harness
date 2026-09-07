@@ -66,7 +66,7 @@ export function ChatPanel({
     markFor(
       thread.phase,
       thread.turnActive,
-      !!(thread.permission || thread.elicitation),
+      thread.permissions.length > 0 || thread.elicitations.length > 0,
       !!meta?.lastTurnError
     )
   ]

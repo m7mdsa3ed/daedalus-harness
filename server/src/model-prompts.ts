@@ -57,26 +57,26 @@ export type ModelPromptInput = z.infer<typeof ModelPromptInputSchema>;
  * have this resource the moment it is listed there. Every write re-materializes
  * the JSON: the file is derived state, like the persona prompt files. */
 export const modelPrompts = {
-  list: (): ModelPromptDef[] =>
-    db.select().from(modelPromptsTable).orderBy(asc(modelPromptsTable.sortOrder), asc(modelPromptsTable.name)).all(),
-  get: (id: string): ModelPromptDef | undefined =>
-    db.select().from(modelPromptsTable).where(eq(modelPromptsTable.id, id)).get(),
-  create(input: ModelPromptInput): ModelPromptDef {
+  list: async (): Promise<ModelPromptDef[]> =>
+    await db.select().from(modelPromptsTable).orderBy(asc(modelPromptsTable.sortOrder), asc(modelPromptsTable.name)),
+  get: async (id: string): Promise<ModelPromptDef | undefined> =>
+    (await db.select().from(modelPromptsTable).where(eq(modelPromptsTable.id, id)).limit(1))[0],
+  async create(input: ModelPromptInput): Promise<ModelPromptDef> {
     const row: ModelPromptDef = { id: randomUUID(), seededVersion: 0, ...input };
-    db.insert(modelPromptsTable).values(row).run();
-    writeModelPromptsLibrary();
+    await db.insert(modelPromptsTable).values(row);
+    await writeModelPromptsLibrary();
     return row;
   },
-  update(id: string, input: ModelPromptInput): ModelPromptDef | undefined {
-    const existing = modelPrompts.get(id);
+  async update(id: string, input: ModelPromptInput): Promise<ModelPromptDef | undefined> {
+    const existing = await modelPrompts.get(id);
     if (!existing) return undefined;
-    db.update(modelPromptsTable).set(input).where(eq(modelPromptsTable.id, id)).run();
-    writeModelPromptsLibrary();
+    await db.update(modelPromptsTable).set(input).where(eq(modelPromptsTable.id, id));
+    await writeModelPromptsLibrary();
     return { ...existing, ...input };
   },
-  remove(id: string): boolean {
-    const removed = db.delete(modelPromptsTable).where(eq(modelPromptsTable.id, id)).run().changes > 0;
-    if (removed) writeModelPromptsLibrary();
+  async remove(id: string): Promise<boolean> {
+    const removed = ((await db.delete(modelPromptsTable).where(eq(modelPromptsTable.id, id))).rowCount ?? 0) > 0;
+    if (removed) await writeModelPromptsLibrary();
     return removed;
   },
 };
@@ -237,26 +237,26 @@ const SEED_MODEL_PROMPTS: SeedModelPrompt[] = [
  * The caller re-materializes the library file; this does not, so a boot that
  * seeds four rows still writes the file exactly once.
  */
-export function seedModelPrompts(): void {
+export async function seedModelPrompts(): Promise<void> {
   const applied =
-    db
+    (await db
       .select({ v: modelPromptsTable.seededVersion })
       .from(modelPromptsTable)
       .orderBy(desc(modelPromptsTable.seededVersion))
-      .get()?.v ?? 0;
+      .limit(1))[0]?.v ?? 0;
   for (const { since, introduced, ...row } of SEED_MODEL_PROMPTS) {
     if (since <= applied) continue;
-    const existing = modelPrompts.get(row.id);
+    const existing = await modelPrompts.get(row.id);
     if (existing) {
       // Offered before and still here: stamp it as carried this far and leave
       // every field alone. Nothing a release has added to a model prompt yet, so
       // there is no backfill hook — when there is one it belongs here, and it
       // may not touch name/match/prompt/enabled.
-      db.update(modelPromptsTable).set({ seededVersion: since }).where(eq(modelPromptsTable.id, row.id)).run();
+      await db.update(modelPromptsTable).set({ seededVersion: since }).where(eq(modelPromptsTable.id, row.id));
       continue;
     }
     if (introduced <= applied) continue; // deleted on purpose
-    db.insert(modelPromptsTable).values({ ...row, seededVersion: since }).run();
+    await db.insert(modelPromptsTable).values({ ...row, seededVersion: since });
   }
 }
 
@@ -279,9 +279,9 @@ export function modelPromptsFilePath(): string {
     the text. Names, order and the enabled flags are management, and the row's
     order is folded into the entry order here so precedence needs no sort key
     on the far side. */
-export function writeModelPromptsLibrary(): string {
-  const entries = modelPrompts
-    .list()
+export async function writeModelPromptsLibrary(): Promise<string> {
+  const entries = (await modelPrompts
+    .list())
     .filter((r) => r.enabled && r.match.trim() && r.prompt.trim())
     .map((r) => ({ match: r.match.trim(), prompt: r.prompt }));
   const body = JSON.stringify({ version: 1, entries }, null, 2);

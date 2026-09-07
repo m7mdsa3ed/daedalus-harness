@@ -12,6 +12,7 @@
 //   - `maxRunSeconds` cancels through the ordinary cancel path and records why
 //   - a session with no policy behaves exactly as it did before
 // Run: pnpm test:autonomy
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { rmSync } from "node:fs";
@@ -83,14 +84,14 @@ const project = {
   cwd: "/tmp/daedalus-test-autonomy/ws",
   description: null,
 };
-db.insert(schema.profiles)
+await db.insert(schema.profiles)
   .values({ id: "p1", name: "test", agents: { fake: {} }, baseUrl: "", apiKey: "", models: [], defaultModel: "", smallModel: "", logoUrl: "" } as never)
   .onConflictDoNothing()
-  .run();
-db.insert(schema.projects)
+  ;
+await db.insert(schema.projects)
   .values({ id: "w1", name: "test-ws", cwd: project.cwd, description: null, logoUrl: "" } as never)
   .onConflictDoNothing()
-  .run();
+  ;
 
 let passed = 0;
 const failures: string[] = [];
@@ -104,9 +105,9 @@ async function test(name: string, fn: () => void | Promise<void>) {
     console.log(`  ✗ ${name}\n    ${error instanceof Error ? error.stack : String(error)}`);
   }
 }
-const waitFor = async (predicate: () => boolean, what: string, ms = 10_000) => {
-  for (let i = 0; i < ms / 50 && !predicate(); i++) await new Promise((r) => setTimeout(r, 50));
-  assert.ok(predicate(), `timed out waiting for ${what}`);
+const waitFor = async (predicate: () => boolean | Promise<boolean>, what: string, ms = 10_000) => {
+  for (let i = 0; i < ms / 50 && !(await predicate()); i++) await new Promise((r) => setTimeout(r, 50));
+  assert.ok(await predicate(), `timed out waiting for ${what}`);
 };
 const settle = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -117,7 +118,7 @@ const opened: string[] = [];
     assertions are about counters and pending questions, and sharing a thread
     would make every one of them depend on the case before it. */
 async function thread(autonomy?: AutonomyPolicy) {
-  const session = manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, autonomy ? { autonomy } : {});
+  const session = await manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, autonomy ? { autonomy } : {});
   await session.bridge!.ready;
   const ws = new MockWs();
   assert.equal(await manager.attach(session.id, ws as never), null);

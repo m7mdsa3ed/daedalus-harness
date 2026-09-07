@@ -144,11 +144,11 @@ export interface CreateTerminalOptions {
   cwd?: string | null;
 }
 
-export function createTerminal(projectId: string, options: CreateTerminalOptions = {}): TerminalInfo {
+export async function createTerminal(projectId: string, options: CreateTerminalOptions = {}): Promise<TerminalInfo> {
   // Resolves the project and its cwd, and throws the 404 if either is gone.
-  const root = projectRoot(projectId);
+  const root = await projectRoot(projectId);
   const cwd = containedPath(root, options.cwd);
-  const project = getProject(projectId);
+  const project = await getProject(projectId);
 
   const existing = listTerminals(projectId);
   if (existing.length >= MAX_PER_PROJECT)

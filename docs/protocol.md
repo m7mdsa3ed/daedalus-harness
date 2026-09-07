@@ -154,9 +154,33 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   re-rendered once per frame, and that, not the range scan, was what made a long thread
   visibly rebuild itself. The byte budget is the half that matters for a thread full of
   terminal output or large diffs, where 500 events is a multi-megabyte frame held whole on
-  both ends. The frames are built from the payload column **as text** and put straight on
-  the socket: it is already the JSON the browser needs, so parsing it to re-serialize it
-  once per peer is work with no reader — and the scan is paged, so a replay costs a page of
+  both ends. **A run of streamed chunks is replayed as the one event it draws**
+  (`SessionJournal.coalescedPage`), which is where most of a long thread went: a model
+  streams its reasoning a few characters at a time and every delta is a journaled event, so
+  one turn on this install's largest thread is 81,686 `agent_thought_chunk`s holding 0.33MB
+  of text inside 15.1MB of envelope — an average of 4.1 characters each — and the client
+  folds every one of them straight back into the single item they came from (`appendText`).
+  Merged, that windowed replay is 545 events and 1.35MB in place of 82,978 and 17.9MB, and
+  the transcript is identical. **The merge is a read, never a write.** A journal that merged
+  on the way in would have to answer a socket resuming *inside* a run — the cursor is an
+  event count and a merged row is one row for many of them — and every way of answering that
+  either loses the run's tail or repeats its head; computed per request from rows nothing has
+  touched, a resume simply merges what it asked for and the run is cut exactly where the
+  cursor is. Postgres decides the boundaries (`lag` over a signature that is the whole event
+  minus its `seq` and its text, so a runtime that starts sending a new key on a chunk breaks
+  the run instead of being merged away), and the merged event stands at the **last** seq of
+  its run, because the client advances to `seq + 1` and everything up to there is now in it.
+  Two things downstream are therefore counted and not lengths: `EarlierPage.from` states
+  where a page begins (subtracting the page's length from the window left it short, and the
+  next page would fold turns already on screen a second time), and the replay progress bar
+  reads the last event's seq rather than adding up frame lengths. What is *not* merged still
+  comes off the payload column **as text** and goes straight on the socket: it is already the
+  JSON the browser needs, so parsing it to re-serialize it once per peer is work with no
+  reader — the `::text` cast sits inside the `case` that selects it, so a replay pays it for
+  the few hundred rows it sends rather than for every row it reads. `windowStart`'s byte
+  budget counts the same way (a chunk costs its text, not its envelope), because counting a
+  cost nothing pays withheld turns that would have fitted many times over. And the scan is
+  paged, so a replay costs a page of
   memory rather than the whole transcript, in **bytes as well as rows**: the DB page is
   sized from the last one's average event, since five hundred rows of terminal output is
   25MB fetched to emit five frames of five, which is the peak the paging exists to bound.
@@ -179,7 +203,13 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   compressed above 8KB (`perMessageDeflate`, `threshold`), which is the frames and not the
   streamed `update`s: a frame is self-similar JSON that deflates five to ten times over, so
   this buys window back rather than trimming it, while a few hundred bytes of streamed text
-  arriving thousands of times a turn would pay more for zlib than it saves.
+  arriving thousands of times a turn would pay more for zlib than it saves. **The HTTP
+  document is compressed too** (`hono/compress`, on `/replay`, `/earlier` and `/trace` and
+  nowhere else): the read moved off the socket and left the socket's compression behind, on
+  the most compressible bytes this server sends — 1.35MB of frames go out as 302KB, and on a
+  phone that is the whole of the wait. Scoped to those three because everything else under
+  `/api` is a small JSON object, and because a codec must not sit between a line and the
+  reader on the streaming routes.
   It is a container, not a sixth journaled kind: `attached`/`caught_up` still bracket it and
   `thread-socket.ts` unrolls it back through the same switch, so there is still one parser.
   It is **opt-in** (`?batch=1`, which `wsUrl` sets): a client that predates the shape would
@@ -579,6 +609,26 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   makes the next attempt different. Nothing recovers on its own: no model fallback, no
   Retry-After backoff. The two auto-retries for a transient stream error are unchanged and
   come first; the hold is what happens when they are spent.
+- **A retry is said out loud, because the silence was being read as work.** Those two
+  auto-retries used to be a line on the agent's stderr and nothing else: a thread would sit
+  for three seconds with the working line still shimmering under the name of a tool call that
+  had already failed, and if a retry worked the user never learned anything had happened. So
+  `turn.ts` announces each one as `_daedalus/session/retry` before the backoff — never after,
+  because the backoff *is* the silence being explained — carrying the attempt, the total, the
+  delay and the failure itself through the same `describeHold` split a hold uses. Absolute
+  and live-only exactly like the hold: `attempt: null` ends it, `caught_up` carries it
+  (`session-socket.ts` › `retryFields`), and **nothing about it is journaled** — a retry that
+  succeeded is not something a replay should redraw. The clearing notice is owed on every way
+  out of the loop, so it hangs off the turn's own `finally` rather than being paired with each
+  `return`, and the bridge clears it again at `settleTurn` for the runtime that dies
+  mid-backoff and never gets to. Out of retries, the notice is taken back *before* the
+  `paused` goes out: it is the same failure one step later, and two live states describing one
+  turn is one of them drawn over the other.
+- **The count is the harness's retries, not the provider's.** The AI SDK does its own
+  (`maxRetries`, 3 attempts by default) *inside* one `streamText` call, with no callback to
+  hang a notice on — they surface only inside the final message ("Failed after 3 attempts").
+  Reporting them per-attempt means owning the retry policy here with `maxRetries: 0`, which is
+  a change to what gets retried and not only to what gets said.
 - **One wait, two reasons.** `Session.held` is `paused || errorHold !== null` and `gate()`
   loops on it, so a new reason to hold never needs a new gate. `holdError()` **resolves**
   with `"released" | "cancelled"` and never throws — a throw would reach the turn's outer

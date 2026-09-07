@@ -14,6 +14,15 @@ function holdFields(session: Session): { hold?: ThreadHold } {
   return bridge?.paused ? { hold: bridge.hold() } : {};
 }
 
+/* And the retry the turn is waiting out, in the one shape the `retry` event
+   carries it. Of the four states handed over here this is the one most likely
+   to be true at the moment a peer attaches and least likely to be findable
+   anywhere else: a backoff is seconds of silence and is never journaled. */
+function retryFields(session: Session): { retry?: ThreadRetry } {
+  const retry = session.bridge?.retry;
+  return retry ? { retry } : {};
+}
+
 /* And the config change waiting for this turn's boundary, in the one shape the
    `staged_config` event carries it — same bargain as the hold above: it is
    current state, not history, so an attaching peer is handed it rather than
@@ -29,7 +38,7 @@ function stagedFields(session: Session): { staged?: StagedConfig } {
 function contextFields(session: Session): { context?: acp.UsageUpdate } {
   return session.context ? { context: session.context } : {};
 }
-import type { EarlierPage, PromptReply, StagedConfig, ThreadCommand, ThreadEvent, ThreadHold, WireError } from "./protocol.js";
+import type { EarlierPage, PromptReply, StagedConfig, ThreadCommand, ThreadEvent, ThreadHold, ThreadRetry, WireError } from "./protocol.js";
 
 /**
  * What the socket router needs from the SessionManager — a port, so this
@@ -48,11 +57,11 @@ export interface SocketHost {
     peer?: Peer,
     opts?: { steer?: boolean; attachmentIds?: string[]; forceLink?: boolean },
   ): Promise<PromptReply>;
-  queueAdd(id: string, text: string, attachmentIds?: string[]): PromptReply;
+  queueAdd(id: string, text: string, attachmentIds?: string[]): Promise<PromptReply>;
   queueSendNow(id: string, itemId?: string): Promise<{ turnId: string }>;
   queueSteer(id: string, itemId: string): Promise<{ turnId: string }>;
-  queueUpdate(id: string, itemId: string, text: string, attachmentIds?: string[]): void;
-  queueRemove(id: string, itemId: string): void;
+  queueUpdate(id: string, itemId: string, text: string, attachmentIds?: string[]): Promise<void>;
+  queueRemove(id: string, itemId: string): Promise<void>;
   queueClear(id: string): void;
   enrichError(session: Session, error: WireError): WireError;
 }
@@ -180,7 +189,7 @@ export class SessionSocket {
        the reasoning is written there. */
     const journal = this.host.journal;
     const window = opts.window && opts.window > 0 ? opts.window : 0;
-    const from = resumed ? cursor : journal.windowStart(session.id, window, REPLAY_WINDOW_BYTES);
+    const from = resumed ? cursor : await journal.windowStart(session.id, window, REPLAY_WINDOW_BYTES);
 
     this.send(peer, {
       ev: "attached",
@@ -191,7 +200,7 @@ export class SessionSocket {
       // cannot be outrun by a turn streaming while it connects.
       to,
       resumed,
-      earlier: resumed ? 0 : journal.countTurnsBefore(session.id, from),
+      earlier: resumed ? 0 : await journal.countTurnsBefore(session.id, from),
       archived: session.bridge === null,
       acpSessionId: session.liveAcpSessionId ?? session.acpSessionId ?? null,
       ...(session.historyLost ? { historyLost: session.historyLost } : {}),
@@ -199,7 +208,7 @@ export class SessionSocket {
          still behind `earlier` need ticks too, and nothing but the journal can
          name them. Omitted on a resume — the client already holds the thread
          and an absent list must not clear it. */
-      ...(!resumed ? { turns: journal.turnTicks(session.id) } : {}),
+      ...(!resumed ? { turns: await journal.turnTicks(session.id) } : {}),
     });
     /* Same events, same order, still inside the bracket — `batch` only decides
        how many frames carry them. One per event is a wake-up, a parse and a
@@ -207,7 +216,7 @@ export class SessionSocket {
        rebuild itself; a client that says it can unroll a chunk gets the whole
        replay in a handful of frames instead. Frames come out pre-serialized
        (see `replayFrames`), so they go straight onto the socket. */
-    for (const frame of journal.replayFrames(session.id, from, batch, to)) {
+    for await (const frame of journal.replayFrames(session.id, from, batch, to)) {
       /* The peer went away mid-replay. Without this the generator keeps paging
          SQLite and serializing frames for a socket nobody is on the other end
          of — the whole window, for nothing. */
@@ -228,8 +237,9 @@ export class SessionSocket {
       ev: "caught_up",
       cursor: to,
       promptActive: session.bridge?.promptActive ?? false,
-      queue: queueItems(session),
+      queue: await queueItems(session),
       ...holdFields(session),
+      ...retryFields(session),
       ...stagedFields(session),
       ...contextFields(session),
     });
@@ -277,7 +287,7 @@ export class SessionSocket {
     id: string,
     cursor = 0,
     opts: { window?: number } = {},
-  ): { refused: string } | { body: Generator<string> } {
+  ): { refused: string } | { body: AsyncGenerator<string> } {
     const session = this.host.getSession(id);
     // The three refusals the socket makes, verbatim — the client reads them
     // the same way (a thread with no archive revives instead).
@@ -289,11 +299,11 @@ export class SessionSocket {
     return { body: this.snapshotBody(session, cursor, opts) };
   }
 
-  private *snapshotBody(
+  private async *snapshotBody(
     session: Session,
     cursor: number,
     opts: { window?: number },
-  ): Generator<string> {
+  ): AsyncGenerator<string> {
     const to = session.eventCount;
     // Same clamp as `attach`: a cursor past the end of the log means the log
     // shrank under the client, and `from: 0` is its cue to rebuild.
@@ -301,23 +311,23 @@ export class SessionSocket {
     const resumed = cursor > 0;
     const journal = this.host.journal;
     const window = opts.window && opts.window > 0 ? opts.window : 0;
-    const from = resumed ? cursor : journal.windowStart(session.id, window, REPLAY_WINDOW_BYTES);
+    const from = resumed ? cursor : await journal.windowStart(session.id, window, REPLAY_WINDOW_BYTES);
 
     const attached: ThreadEvent = {
       ev: "attached",
       from,
       to,
       resumed,
-      earlier: resumed ? 0 : journal.countTurnsBefore(session.id, from),
+      earlier: resumed ? 0 : await journal.countTurnsBefore(session.id, from),
       archived: session.bridge === null,
       acpSessionId: session.liveAcpSessionId ?? session.acpSessionId ?? null,
       ...(session.historyLost ? { historyLost: session.historyLost } : {}),
       // Same table of contents as the socket attach below — see there.
-      ...(!resumed ? { turns: journal.turnTicks(session.id) } : {}),
+      ...(!resumed ? { turns: await journal.turnTicks(session.id) } : {}),
     };
     yield `{"attached":${JSON.stringify(attached)},"frames":[`;
     let first = true;
-    for (const frame of journal.replayFrames(session.id, from, true, to)) {
+    for await (const frame of journal.replayFrames(session.id, from, true, to)) {
       yield first ? frame : `,${frame}`;
       first = false;
     }
@@ -325,8 +335,9 @@ export class SessionSocket {
       ev: "caught_up",
       cursor: to,
       promptActive: session.bridge?.promptActive ?? false,
-      queue: queueItems(session),
+      queue: await queueItems(session),
       ...holdFields(session),
+      ...retryFields(session),
       ...stagedFields(session),
       ...contextFields(session),
     };
@@ -336,10 +347,10 @@ export class SessionSocket {
   /** One page of history, answered without a socket — the HTTP half of
       `load_earlier`, so a thread being read from its archive can page back
       without opening (or reviving) anything. */
-  earlierPage(id: string, before: number): EarlierPage | null {
+  async earlierPage(id: string, before: number): Promise<EarlierPage | null> {
     const session = this.host.getSession(id);
     if (!session || session.deletedAt !== null) return null;
-    return this.host.journal.earlierPage(session.id, before);
+    return await this.host.journal.earlierPage(session.id, before);
   }
 
   private onCommand(session: Session, peer: Peer, line: string): void {

@@ -553,20 +553,19 @@ export function getProfileQuota(profile: Profile, { refresh = false } = {}): Pro
 }
 
 /** The cache and the in-flight map around whichever reader was chosen. */
-function cached(key: string, refresh: boolean, read: () => Promise<QuotaSnapshot>): Promise<QuotaSnapshot> {
+async function cached(key: string, refresh: boolean, read: () => Promise<QuotaSnapshot>): Promise<QuotaSnapshot> {
   if (!refresh) {
-    const hit = db.select().from(agentQuotaTable).where(eq(agentQuotaTable.key, key)).get();
+    const hit = (await db.select().from(agentQuotaTable).where(eq(agentQuotaTable.key, key)).limit(1))[0];
     if (hit && Date.now() - hit.fetchedAt < QUOTA_TTL_MS) return Promise.resolve(hit.snapshot as QuotaSnapshot);
   }
   const running = inflight.get(key);
   if (running) return running;
 
   const pending = read()
-    .then((snapshot) => {
-      db.insert(agentQuotaTable)
+    .then(async (snapshot) => {
+      await db.insert(agentQuotaTable)
         .values({ key, snapshot, fetchedAt: snapshot.fetchedAt })
-        .onConflictDoUpdate({ target: agentQuotaTable.key, set: { snapshot, fetchedAt: snapshot.fetchedAt } })
-        .run();
+        .onConflictDoUpdate({ target: agentQuotaTable.key, set: { snapshot, fetchedAt: snapshot.fetchedAt } });
       return snapshot;
     })
     .finally(() => inflight.delete(key));
@@ -583,6 +582,6 @@ function cached(key: string, refresh: boolean, read: () => Promise<QuotaSnapshot
  * whose number lives at `<profile>:usage` would silently pin the card at
  * whatever the plan said five minutes ago.
  */
-export function invalidateQuota(profile: Profile, agentId: string): void {
-  db.delete(agentQuotaTable).where(eq(agentQuotaTable.key, keyFor(profile, agentId))).run();
+export async function invalidateQuota(profile: Profile, agentId: string): Promise<void> {
+  await db.delete(agentQuotaTable).where(eq(agentQuotaTable.key, keyFor(profile, agentId)));
 }

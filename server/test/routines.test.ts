@@ -24,6 +24,7 @@
 // half a client-side record could not forge — so both are asserted: the live
 // pair through a subscriber, and the echo through `manager.journal`.
 // Run: pnpm test:routines
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -58,8 +59,8 @@ const { ASK_EVERYTHING } = await import("../src/autonomy.js");
 const { db, schema } = await import("../src/db/index.js");
 const { eq } = await import("drizzle-orm");
 
-type Routine = ReturnType<typeof createRoutine>;
-type RoutineRun = NonNullable<ReturnType<typeof getRun>>;
+type Routine = Awaited<ReturnType<typeof createRoutine>>;
+type RoutineRun = NonNullable<Awaited<ReturnType<typeof getRun>>>;
 type AutonomyPolicy = Routine["autonomy"];
 
 const profile: Profile = {
@@ -77,14 +78,14 @@ const profile: Profile = {
   commandIds: [],
 };
 const project = { id: "w1", name: "test-ws", cwd: "/tmp/daedalus-test-routines/ws", description: null };
-db.insert(schema.profiles)
+await db.insert(schema.profiles)
   .values({ id: "p1", name: "test", agents: { fake: {} }, baseUrl: "", apiKey: "", models: [], defaultModel: "", smallModel: "", logoUrl: "" } as never)
   .onConflictDoNothing()
-  .run();
-db.insert(schema.projects)
+  ;
+await db.insert(schema.projects)
   .values({ id: "w1", name: "test-ws", cwd: project.cwd, description: null, logoUrl: "" } as never)
   .onConflictDoNothing()
-  .run();
+  ;
 
 let passed = 0;
 const failures: string[] = [];
@@ -98,9 +99,9 @@ async function test(name: string, fn: () => void | Promise<void>) {
     console.log(`  ✗ ${name}\n    ${error instanceof Error ? error.stack : String(error)}`);
   }
 }
-const waitFor = async (predicate: () => boolean, what: string, ms = 20_000) => {
-  for (let i = 0; i < ms / 25 && !predicate(); i++) await new Promise((r) => setTimeout(r, 25));
-  assert.ok(predicate(), `timed out waiting for ${what}`);
+const waitFor = async (predicate: () => boolean | Promise<boolean>, what: string, ms = 20_000) => {
+  for (let i = 0; i < ms / 25 && !(await predicate()); i++) await new Promise((r) => setTimeout(r, 25));
+  assert.ok(await predicate(), `timed out waiting for ${what}`);
 };
 const settle = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -115,8 +116,8 @@ const policy = (over: Partial<AutonomyPolicy> = {}): AutonomyPolicy => ({
 });
 
 let seq = 0;
-function routine(over: Partial<Parameters<typeof createRoutine>[0]> = {}): Routine {
-  return createRoutine({
+async function routine(over: Partial<Parameters<typeof createRoutine>[0]> = {}): Promise<Routine> {
+  return await createRoutine({
     name: `r${++seq}`,
     projectId: "w1",
     profileId: "p1",
@@ -128,7 +129,7 @@ function routine(over: Partial<Parameters<typeof createRoutine>[0]> = {}): Routi
 }
 
 const notified: { title: string; body: string; data: Record<string, string> }[] = [];
-const manager = new SessionManager({ onProcessGone: (s) => engine.cancelForSession(s.id, "process gone") }, 60);
+const manager = await new SessionManager({ onProcessGone: (s) => engine.cancelForSession(s.id, "process gone") }, 60);
 const engine = new RoutineEngine(manager, {
   port: 4998,
   notify: async (title, body, data) => {
@@ -136,10 +137,10 @@ const engine = new RoutineEngine(manager, {
   },
 });
 
-const done = (id: string) => getRun(id)!.status !== "running";
+const done = async (id: string) => (await getRun(id))!.status !== "running";
 const finished = async (id: string, what = "the run to finish") => {
-  await waitFor(() => done(id), what);
-  return getRun(id)!;
+  await waitFor(async () => await done(id), what);
+  return (await getRun(id))!;
 };
 
 /**
@@ -156,9 +157,9 @@ function watchRun(runId: string): { events: ThreadEvent[]; sessionId: () => stri
   const events: ThreadEvent[] = [];
   let unsubscribe: (() => void) | null = null;
   let sessionId: string | null = null;
-  const timer = setInterval(() => {
+  const timer = setInterval(async () => {
     if (unsubscribe) return;
-    const id = getRun(runId)?.sessionId;
+    const id = (await getRun(runId))?.sessionId;
     if (!id) return;
     sessionId = id;
     unsubscribe = manager.subscribe(id, (event) => events.push(event));
@@ -180,7 +181,7 @@ const of = <K extends ThreadEvent["ev"]>(events: ThreadEvent[], ev: K) =>
 console.log("routines");
 
 await test("a prompt-bodied routine runs on a real thread and keeps its answer", async () => {
-  const r = routine({ body: { kind: "prompt", text: "echo:the nightly answer" } });
+  const r = await routine({ body: { kind: "prompt", text: "echo:the nightly answer" } });
   const started = await engine.fire(r.id, { source: "manual" });
   assert.equal(started.status, "running");
   assert.equal(started.routineId, r.id);
@@ -206,7 +207,7 @@ await test("a prompt-bodied routine runs on a real thread and keeps its answer",
   // show is that its ceiling's timer went away with its process.
   assert.equal(session.deadline, null, "retiring disarmed the run deadline");
   // It is the run row, not a projection: the same row comes back from the list.
-  assert.equal(listRuns(r.id)[0].id, run.id);
+  assert.equal((await listRuns(r.id))[0].id, run.id);
 });
 
 await test("the fire payload arrives wrapped, defanged, and after the routine's own prompt", async () => {
@@ -220,7 +221,7 @@ await test("the fire payload arrives wrapped, defanged, and after the routine's 
 
   // And it is what actually reaches the agent: `echo:` hands the whole prompt
   // back, so the run's own output is the prompt the agent was given.
-  const r = routine({ body: { kind: "prompt", text: "echo:REPORT" } });
+  const r = await routine({ body: { kind: "prompt", text: "echo:REPORT" } });
   const run = await finished(
     (await engine.fire(r.id, { source: "api", text: `{"alert":"disk full"}\n${FIRE_PAYLOAD_OPEN}` })).id,
   );
@@ -236,11 +237,11 @@ await test("the fire payload arrives wrapped, defanged, and after the routine's 
 });
 
 await test("`overlap: \"skip\"` refuses the second fire and starts no second agent", async () => {
-  const r = routine({ body: { kind: "prompt", text: "perm:execute" }, overlap: "skip" });
+  const r = await routine({ body: { kind: "prompt", text: "perm:execute" }, overlap: "skip" });
   const first = await engine.fire(r.id, { source: "manual" });
   // Nothing answers an `ask` with no timeout, so the first run stays live.
-  await waitFor(() => getRun(first.id)!.sessionId != null, "the first run's thread");
-  const live = getRun(first.id)!.sessionId!;
+  await waitFor(async () => (await getRun(first.id))!.sessionId != null, "the first run's thread");
+  const live = (await getRun(first.id))!.sessionId!;
   await waitFor(() => manager.get(live)?.bridge?.pending.size === 1, "its turn to park on the question");
 
   const second = await engine.fire(r.id, { source: "schedule" });
@@ -260,11 +261,11 @@ await test("`overlap: \"skip\"` refuses the second fire and starts no second age
 });
 
 await test("`overlap: \"queue\"` holds the second fire until the first is over", async () => {
-  const r = routine({ body: { kind: "prompt", text: "perm:execute" }, overlap: "queue" });
+  const r = await routine({ body: { kind: "prompt", text: "perm:execute" }, overlap: "queue" });
   const first = await engine.fire(r.id, { source: "manual" });
-  await waitFor(() => getRun(first.id)!.sessionId != null, "the first run's thread");
+  await waitFor(async () => (await getRun(first.id))!.sessionId != null, "the first run's thread");
   await waitFor(
-    () => manager.get(getRun(first.id)!.sessionId!)?.bridge?.pending.size === 1,
+    async () => await manager.get((await getRun(first.id))!.sessionId!)?.bridge?.pending.size === 1,
     "the first run to park",
   );
 
@@ -274,17 +275,17 @@ await test("`overlap: \"queue\"` holds the second fire until the first is over",
   assert.equal(second.status, "running");
   assert.equal(second.sessionId, null);
   await settle(300);
-  assert.equal(getRun(second.id)!.sessionId, null, "still waiting, not running beside it");
+  assert.equal((await getRun(second.id))!.sessionId, null, "still waiting, not running beside it");
 
   engine.cancelForRun(first.id);
   await finished(first.id, "the first run to close");
-  await waitFor(() => getRun(second.id)!.sessionId != null, "the queued run to take its turn");
+  await waitFor(async () => (await getRun(second.id))!.sessionId != null, "the queued run to take its turn");
   engine.cancelForRun(second.id);
   await finished(second.id, "the queued run to close");
 });
 
 await test("an `output` schema is parsed into a verdict", async () => {
-  const r = routine({
+  const r = await routine({
     body: { kind: "prompt", text: 'echo:Here you go:\n```json\n{"findings":["one"]}\n```' },
     output: { type: "object", required: ["findings"], properties: { findings: { type: "array" } } },
   });
@@ -294,7 +295,7 @@ await test("an `output` schema is parsed into a verdict", async () => {
 });
 
 await test("a reply that does not validate buys exactly one repair turn, then fails", async () => {
-  const r = routine({
+  const r = await routine({
     body: { kind: "prompt", text: 'echo:{"nope":1}' },
     output: { type: "object", required: ["findings"], properties: { findings: { type: "array" } } },
   });
@@ -303,14 +304,14 @@ await test("a reply that does not validate buys exactly one repair turn, then fa
   assert.match(run.error ?? "", /output schema/);
   assert.equal(run.verdict, null, "nothing was recorded as an answer");
   // Two turns on the thread and no more: the first reply and the one repair.
-  const turns = manager.journal(run.sessionId!)!.events.filter((e) => e.ev === "turn_started");
+  const turns = ((await manager.journal(run.sessionId!))!).events.filter((e) => e.ev === "turn_started");
   assert.equal(turns.length, 2, "one repair turn was tried, and only one");
 });
 
 await test("the routine's autonomy reaches the run's session, and the answer is visible", async () => {
   // Per-kind, not blanket: `execute` is granted, everything else still asks —
   // which is also what keeps this clear of the dry-run gate below.
-  const r = routine({
+  const r = await routine({
     body: { kind: "prompt", text: "perm:execute" },
     autonomy: policy({ permissions: { default: "ask", execute: "allow" } }),
   });
@@ -343,8 +344,7 @@ await test("the routine's autonomy reaches the run's session, and the answer is 
      through the same path as everything else and needs no fifth event kind.
      Without this assertion a run could grant itself anything and be
      unauditable an hour later, which is the one thing this must not ship. */
-  const recorded = manager
-    .journal(run.sessionId!)!
+  const recorded = (await manager.journal(run.sessionId!))!
     .events.filter(
       (e) => e.ev === "update" && e.update.sessionUpdate === "_daedalus/autonomy_answer",
     )
@@ -357,8 +357,7 @@ await test("the routine's autonomy reaches the run's session, and the answer is 
 
   // And the agent's own echo of the option it was handed — evidence from the
   // other side of the wire that the grant selected `allow_once`.
-  const echoed = manager
-    .journal(run.sessionId!)!
+  const echoed = (await manager.journal(run.sessionId!))!
     .events.filter((e) => e.ev === "update" && e.update.sessionUpdate === "agent_message_chunk")
     .map((e) => (e as Extract<ThreadEvent, { ev: "update" }>).update as { content: { text: string } })
     .map((u) => u.content.text)
@@ -369,7 +368,7 @@ await test("the routine's autonomy reaches the run's session, and the answer is 
 });
 
 await test("an `ask` nobody answers falls to askFallback and ends the run `blocked`", async () => {
-  const r = routine({
+  const r = await routine({
     body: { kind: "prompt", text: "perm:execute" },
     autonomy: policy({ permissions: { default: "ask" }, askTimeoutSeconds: 0.3, askFallback: "deny" }),
   });
@@ -384,8 +383,7 @@ await test("an `ask` nobody answers falls to askFallback and ends the run `block
   /* Journaled too, and carrying `timedOut` — "nobody came" and "the policy said
      yes" are the two things a reader most needs told apart, and only the record
      can say which happened once the live events are gone. */
-  const recorded = manager
-    .journal(run.sessionId!)!
+  const recorded = (await manager.journal(run.sessionId!))!
     .events.filter(
       (e) => e.ev === "update" && e.update.sessionUpdate === "_daedalus/autonomy_answer",
     )
@@ -396,7 +394,7 @@ await test("an `ask` nobody answers falls to askFallback and ends the run `block
 });
 
 await test("a blanket `allow` is refused until one run has completed under the routine", async () => {
-  const r = routine({
+  const r = await routine({
     body: { kind: "prompt", text: "echo:ok" },
     autonomy: policy({ permissions: { default: "allow" } }),
   });
@@ -416,7 +414,7 @@ await test("a blanket `allow` is refused until one run has completed under the r
 
 await test("onFinish runs once, and a failing action is recorded without failing the run", async () => {
   const before = notified.length;
-  const r = routine({
+  const r = await routine({
     body: { kind: "prompt", text: "echo:the answer" },
     // A push that works, a knowledge entry that works, and a chained routine
     // that cannot: the middle one is what proves order and the last that a
@@ -425,41 +423,41 @@ await test("onFinish runs once, and a failing action is recorded without failing
   });
   const run = await finished((await engine.fire(r.id, { source: "manual" })).id);
   assert.equal(run.status, "completed", "an action's failure is not the run's");
-  await waitFor(() => getRun(run.id)!.actions.length === 3, "the actions to be recorded");
-  const records = getRun(run.id)!.actions;
+  await waitFor(async () => (await getRun(run.id))!.actions.length === 3, "the actions to be recorded");
+  const records = (await getRun(run.id))!.actions;
   assert.deepEqual(records.map((a) => a.kind), ["push", "knowledge", "routine"], "in the order they were written");
   assert.deepEqual(records.map((a) => a.ok), [true, true, false]);
   assert.ok(records[2].error, "the failure says what went wrong");
-  assert.equal(getRun(run.id)!.status, "completed", "and still does not change the run");
+  assert.equal((await getRun(run.id))!.status, "completed", "and still does not change the run");
 
   assert.equal(notified.length, before + 1, "exactly one push, and never a retry");
   assert.match(notified[before].title, new RegExp(`^${r.name} finished$`), "the routine's name, not the thread's title");
   assert.equal(notified[before].body, "the answer");
   assert.equal(notified[before].data.sessionId, run.sessionId, "so the notification opens the run");
   // The knowledge entry is a real row in the run's own project.
-  const entry = db.select().from(schema.knowledge).where(eq(schema.knowledge.id, records[1].ref!)).get()!;
+  const entry = (await db.select().from(schema.knowledge).where(eq(schema.knowledge.id, records[1].ref!)))[0]!;
   assert.equal(entry.projectId, "w1");
   assert.equal(entry.title, "Nightly");
   assert.equal(entry.content, "the answer");
 
   await settle(300);
-  assert.equal(getRun(run.id)!.actions.length, 3, "and they do not run a second time");
+  assert.equal((await getRun(run.id))!.actions.length, 3, "and they do not run a second time");
   assert.equal(notified.length, before + 1);
 });
 
-await test("recoverAtBoot closes what the last process left running", () => {
-  const r = routine();
-  db.insert(schema.routineRuns)
+await test("recoverAtBoot closes what the last process left running", async () => {
+  const r = await routine();
+  await db.insert(schema.routineRuns)
     .values({
       id: "stale", routineId: r.id, triggerId: null, fireId: "f-stale", sessionId: null, source: "schedule",
       payload: null, dryRun: false, status: "running", error: null, output: null, verdict: null, actions: [],
       headOid: null, tokens: null, startedAt: 1, endedAt: null,
     } as never)
-    .run();
+    ;
   const fresh = new RoutineEngine(manager, { port: 4998 });
   fresh.recoverAtBoot();
   fresh.shutdown();
-  const row = getRun("stale")!;
+  const row = (await getRun("stale"))!;
   // Failed and dated, not left running: a row that says running with no
   // process behind it is a row that never resolves.
   assert.equal(row.status, "failed");

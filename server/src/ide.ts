@@ -314,8 +314,8 @@ export type IdeTheme = z.infer<typeof IdeThemeSchema>;
 const THEME_KEYS = ["workbench.colorTheme", "workbench.colorCustomizations"] as const;
 
 /** Write the palette into the editor's user settings, keeping everything else. */
-export function applyIdeTheme(projectId: string, theme: IdeTheme): void {
-  projectRoot(projectId);
+export async function applyIdeTheme(projectId: string, theme: IdeTheme): Promise<void> {
+  await projectRoot(projectId);
   const userDir = join(DATA_DIR, "ide", projectId, "User");
   const file = join(userDir, "settings.json");
   let settings: Record<string, unknown> = {};
@@ -343,8 +343,8 @@ export function applyIdeTheme(projectId: string, theme: IdeTheme): void {
   writeFileSync(file, JSON.stringify(settings, null, 4) + "\n");
 }
 
-export function ideStatus(projectId: string): IdeStatus {
-  projectRoot(projectId);
+export async function ideStatus(projectId: string): Promise<IdeStatus> {
+  await projectRoot(projectId);
   return statusOf(projectId, instances.get(projectId));
 }
 
@@ -358,10 +358,10 @@ export function ideStatus(projectId: string): IdeStatus {
  * `ready` status means the iframe has something to load.
  */
 export async function startIde(projectId: string, theme?: IdeTheme): Promise<IdeStatus> {
-  const cwd = projectRoot(projectId);
+  const cwd = await projectRoot(projectId);
   /* Before the spawn, so the first paint is already in the palette; and for a
      running editor too, since the file is watched. */
-  if (theme) applyIdeTheme(projectId, theme);
+  if (theme) await applyIdeTheme(projectId, theme);
 
   const existing = instances.get(projectId);
   if (existing && existing.state !== "failed") return statusOf(projectId, existing);

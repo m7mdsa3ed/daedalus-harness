@@ -41,11 +41,21 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
     setPending(null)
   }
 
+  const handleKeyDown = React.useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" && !e.defaultPrevented) {
+        e.preventDefault()
+        settle(true)
+      }
+    },
+    [pending]
+  )
+
   return (
     <ConfirmCtx.Provider value={confirm}>
       {children}
       <ResponsiveDialog open={pending !== null} onOpenChange={(open) => !open && settle(false)}>
-        <ResponsiveDialogContent className="sm:max-w-md">
+        <ResponsiveDialogContent className="sm:max-w-md" onKeyDown={handleKeyDown}>
           <ResponsiveDialogHeader>
             <ResponsiveDialogTitle>{pending?.title}</ResponsiveDialogTitle>
           </ResponsiveDialogHeader>

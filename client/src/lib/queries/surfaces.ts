@@ -18,6 +18,19 @@ import {
 } from "@/lib/composer-history"
 import type { ServerSettings } from "@/lib/settings"
 import { useServer } from "@/lib/server-context"
+
+/* ── App meta ──
+   The deployment's version and changelog, for Settings › General's About
+   group. `staleTime` rather than the default because the answer only changes
+   on a deploy, and the settings page reads it on every mount. */
+export type ChangelogSection = { title: string; items: string[] }
+export type ChangelogEntry = { version: string; date: string | null; sections: ChangelogSection[] }
+export type AppMeta = { version: string; changelog: ChangelogEntry[] }
+
+export function useAppMeta() {
+  const settings = useServer()
+  return useApiQuery<AppMeta>(appMetaKey(settings), "/api/meta", { staleTime: 5 * 60_000 })
+}
 import {
   addKnowledge,
   deleteKnowledge,
@@ -38,6 +51,7 @@ import {
   agentQuotaKey,
   allKnowledgeKey,
   allQuotaKey,
+  appMetaKey,
   composerHistoryKey,
   notificationsKey,
   projectKnowledgeKey,

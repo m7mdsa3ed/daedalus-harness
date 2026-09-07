@@ -20,6 +20,7 @@ import type {
   SessionUpdate,
   ThreadEvent,
   ThreadHold,
+  ThreadRetry,
   WireError,
 } from "./protocol.js";
 import { optionFor, stanceFor, type AutonomyPolicy } from "./autonomy.js";
@@ -52,7 +53,7 @@ export const HANDSHAKE_TIMEOUT_MS = 25_000;
  * one the options probe spawns — build the same child, from the same three
  * inputs, so this is the one place that knows how.
  */
-export function spawnAgent(
+export async function spawnAgent(
   profile: Profile,
   agentId: string,
   project: Project,
@@ -81,8 +82,8 @@ export function spawnAgent(
       forever instead. Fail fast there. Meaningless to every other runtime,
       which reads none of these vars. */
   unattended?: boolean,
-): ChildProcessWithoutNullStreams {
-  const agent = getAgent(agentId);
+): Promise<ChildProcessWithoutNullStreams> {
+  const agent = await getAgent(agentId);
   if (!agent) throw new Error(`unknown agent: ${agentId}`);
   if (!profileSupports(profile, agentId)) {
     throw new Error(`profile "${profile.name}" is not configured for ${agentId}`);
@@ -164,6 +165,12 @@ const PAUSE_CAPABILITY = "daedalus/pause";
    arrive as a notification. Same capability, because the same runtimes can do
    both, and the same `paused` event out to the browser, carrying the reason. */
 const PAUSED_NOTIFICATION = "_daedalus/session/paused";
+/* And the step before it: a turn that failed and is trying again on its own,
+   which used to be a line on the agent's stderr and nothing else. The wait is
+   seconds of a thread that looks alive and says nothing, and if the retries
+   work the user never learns anything happened at all. Absolute and live-only
+   for the same reasons the hold is — a retry that succeeded is not history. */
+const RETRY_NOTIFICATION = "_daedalus/session/retry";
 
 /* The harness's own compaction trigger, spelled the same in
    `agent/src/compaction.ts`. ACP *reports* compaction — `compaction_update`
@@ -185,6 +192,17 @@ interface PausedParams {
 }
 
 const parsePausedParams = (params: unknown): PausedParams => (params ?? {}) as PausedParams;
+
+interface RetryParams {
+  sessionId?: string;
+  attempt?: number | null;
+  of?: number;
+  delayMs?: number;
+  message?: string;
+  detail?: string;
+}
+
+const parseRetryParams = (params: unknown): RetryParams => (params ?? {}) as RetryParams;
 
 /**
  * The subagent RFD's two updates are ahead of the SDK, and the SDK is not
@@ -375,7 +393,7 @@ export interface BridgeHost {
       `autonomy` is one: both the profile and the model change on a running
       agent now, so a value captured at spawn would describe the wrong provider
       by the time a queued message drained. */
-  deliveryContext(): { modalities: string[] | undefined; hasCatalog: boolean };
+  deliveryContext(): Promise<{ modalities: string[] | undefined; hasCatalog: boolean }>;
   /** A parked question fell through to `askFallback` — nobody came. Counted on
       the session rather than the bridge (which dies with the process) because
       it is what makes a run `blocked` rather than merely finished: the state a
@@ -385,7 +403,7 @@ export interface BridgeHost {
   /** Is there something queued that should follow a turn that ended cleanly?
       Read in the same tick as `turn_ended` is emitted, so the event can say
       `continued` about a drain that has not happened yet. */
-  hasQueued(): boolean;
+  hasQueued(): Promise<boolean>;
   /** The set of held steers changed (one was taken, or the step let them go),
       so the absolute `queue` event has to be said again — they are listed on
       it, flagged `steer`, until their `turn_started` lands. */
@@ -483,6 +501,12 @@ export class AcpBridge {
   /** When the current hold began — the clock the idle sweep reads, so a thread
       held with nobody reading it does not pin its process forever. */
   heldSince: number | null = null;
+  /** The attempt the turn is retrying on, or null when it is not retrying.
+      One step short of a hold and told the same way: absolute, live-only,
+      stated on `caught_up` so a peer that attaches mid-backoff is not left
+      watching a silent thread. Never journaled — a retry that worked is not
+      something a replay should say again. */
+  retry: ThreadRetry | null = null;
   readonly pending = new Map<string, PendingRequest>();
 
   private readonly host: BridgeHost;
@@ -574,6 +598,11 @@ export class AcpBridge {
          contract. */
       .onNotification(PAUSED_NOTIFICATION, parsePausedParams, (ctx) =>
         this.onAgentPaused(ctx.params),
+      )
+      /* The same, one step earlier and with nothing to answer either: the turn
+         is retrying, or has stopped retrying. */
+      .onNotification(RETRY_NOTIFICATION, parseRetryParams, (ctx) =>
+        this.onAgentRetry(ctx.params),
       )
       .connect(stream);
     this.ready = this.handshake(opts);
@@ -881,9 +910,25 @@ export class AcpBridge {
    * which config id carries the model is the agent's business — it can differ
    * between agents and across upgrades. Best-effort like the rest of restore: a
    * value the agent no longer offers costs the pick, not the thread.
+   *
+   * "Costs the pick" is the part that has to be *said*, though, and it used to
+   * be a `console.warn` and nothing else. The record kept naming a model the
+   * agent had refused (`Invalid params`), every menu drew it, every later revive
+   * offered it again — and the thread ran on the agent's own default, so the
+   * provider errors that came back read as "the model you picked is failing"
+   * when the model had never been taken at all. A refusal now moves the record
+   * to what the agent actually answers with, which is what the `spawn_config`
+   * at the end of the respawn then carries to every peer.
    */
   private async applyAgentOwned(state: { model?: string; effort?: string }): Promise<void> {
-    await this.setByCategory(state, "after the restart");
+    const placed = await this.setByCategory(state, "after the restart");
+    if (!state.model || placed.model) return;
+    /* Only where the agent has a model selector to be corrected *from*: one
+       that advertises none was never asked, so there is no answer of its own to
+       put in the record's place and the pick stays where it is. */
+    const selector = this.selectorFor("model");
+    if (!selector || selector.type !== "select") return;
+    this.host.onSpawnStateChange({ model: selector.currentValue });
   }
 
   /** The agent's own selector for a category, if it advertises one. */
@@ -1285,12 +1330,12 @@ export class AcpBridge {
    * so a prompt that fails is reported once, on `turn_ended`, rather than twice
    * in two shapes.
    */
-  prompt(
+  async prompt(
     text: string,
     origin: Peer | undefined,
     turnId: string,
     opts: { attachments?: AttachmentRef[]; forceLink?: boolean } = {},
-  ): { deferred: boolean } {
+  ): Promise<{ deferred: boolean }> {
     const sessionId = this.requireSession();
     const attachments = opts.attachments ?? [];
     /* The other peers never see this command (it goes to the agent, not to
@@ -1338,12 +1383,12 @@ export class AcpBridge {
     }
     /* Decided here, at send. Reading the files costs a `readFileSync` per
        attachment and the base64 is never held between turns. */
-    const attach = attachmentBlocks({
+    const attach = await attachmentBlocks({
       refs: attachments,
       caps: this.agentCapabilities.promptCapabilities,
       cwd: this.cwd,
       forceLink: opts.forceLink,
-      ...this.host.deliveryContext(),
+      ...(await this.host.deliveryContext()),
     });
     for (const note of attach.notes) {
       // Logged even on the happy branch: "sent as an image" is the line that
@@ -1375,8 +1420,8 @@ export class AcpBridge {
         prompt: [{ type: "text", text: outgoing }, ...blocks, ...mentionLinks(this.cwd, outgoing)],
       })
       .then(
-        (response) =>
-          this.settleTurn(response.usage ?? null, undefined, text, response.stopReason),
+        async (response) =>
+          await this.settleTurn(response.usage ?? null, undefined, text, response.stopReason),
         (error: unknown) => this.onPromptRejected(error, text),
       );
     return { deferred };
@@ -1397,15 +1442,15 @@ export class AcpBridge {
       this.held.push(text);
       return;
     }
-    this.settleTurn(null, this.host.enrichError(toWireError(error)), text);
+    void this.settleTurn(null, this.host.enrichError(toWireError(error)), text);
   }
 
-  private settleTurn(
+  private async settleTurn(
     usage: acp.Usage | null,
     error: WireError | undefined,
     text: string,
     stopReason?: acp.StopReason,
-  ): void {
+  ): Promise<void> {
     // Steering: a second prompt sent mid-turn keeps the turn open. Only the one
     // that empties the set ends it.
     if (--this.inflight > 0) return;
@@ -1414,6 +1459,10 @@ export class AcpBridge {
        rather than never. Ahead of the emit below for exactly that ordering. */
     this.openToolCalls.clear();
     this.flushSteers();
+    /* A turn that is over is not retrying. The agent clears its own notice on
+       the way out, but a runtime that died mid-backoff never gets to, and a
+       retry drawn over a finished turn would never come down. */
+    this.setRetry(null);
     /* Server-measured wall clock for the whole logical turn — the denominator
        output tokens/sec is drawn against. Read before clearing: steering joins
        a turn rather than opening one, so this covers every prompt in it. */
@@ -1435,7 +1484,7 @@ export class AcpBridge {
        with `stopReason: "cancelled"` — which is why the reason is read here and
        not only the error: a Stop must park the queue, not drain it. */
     const interrupted = error !== undefined || stopReason === "cancelled";
-    const continued = !interrupted && !this.closed && this.host.hasQueued();
+    const continued = !interrupted && !this.closed && (await this.host.hasQueued());
     this.host.emit({
       ev: "turn_ended",
       seq: 0,
@@ -1656,6 +1705,41 @@ export class AcpBridge {
     this.setHold(paused, params.reason ?? "user", error);
   }
 
+  /**
+   * The turn is retrying, or has stopped. Nothing is asked of us: like the
+   * hold, saying the state is the whole of the contract.
+   *
+   * The failure goes through `enrichError` exactly as a hold's does, so the
+   * agent's stderr is spliced in here too and the sentence a reader sees while
+   * the turn retries is the same one they would see if it ran out and held.
+   */
+  private onAgentRetry(params: RetryParams): void {
+    const attempt = params.attempt ?? null;
+    this.setRetry(
+      attempt === null
+        ? null
+        : {
+            attempt,
+            ...(params.of ? { of: params.of } : {}),
+            ...(params.delayMs ? { delayMs: params.delayMs } : {}),
+            error: this.host.enrichError({
+              code: -32603,
+              message: params.message || "the model provider returned an error",
+              ...(params.detail ? { data: { details: params.detail } } : {}),
+            }),
+          },
+    );
+  }
+
+  /** Absolute, so saying it twice is harmless — but a peer re-rendering the
+      composer for an unchanged retry is not, and a turn ending is allowed to
+      clear a retry that was never set. */
+  setRetry(retry: ThreadRetry | null): void {
+    if (this.retry === null && retry === null) return;
+    this.retry = retry;
+    this.host.emit({ ev: "retry", retry });
+  }
+
   private setHold(paused: boolean, reason: "user" | "error", error: WireError | null): void {
     const was = this.paused;
     const nextReason = paused ? reason : null;
@@ -1840,10 +1924,13 @@ export class AcpBridge {
             ? new Error(
                 "The held turn ended with the restart. Every step it finished is kept above; send the next message to go on from there.",
               )
-            : (reason ?? new Error("the agent process is gone")),
+            : (reason ??
+              new Error(
+                "This thread's agent process ended before it could answer. The conversation is kept — sending a message starts it again.",
+              )),
         ),
       );
-      for (const text of this.held.splice(0)) this.settleTurn(null, error, text);
+      for (const text of this.held.splice(0)) void this.settleTurn(null, error, text);
     }
     this.releaseIdle();
     this.connection.close(reason);
@@ -1914,8 +2001,14 @@ export class AcpBridge {
   }
 
   private requireSession(): string {
-    if (this.closed) throw new Error("the agent process is gone");
-    if (!this.acpSessionId) throw new Error("the agent never opened a session on this thread");
+    if (this.closed)
+      throw new Error(
+        "This thread's agent process is no longer running. The conversation is kept — sending a message starts it again.",
+      );
+    if (!this.acpSessionId)
+      throw new Error(
+        "The agent never opened a session on this thread, so there is nothing to send to. Restarting the agent is what creates one.",
+      );
     return this.acpSessionId;
   }
 }

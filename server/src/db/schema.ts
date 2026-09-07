@@ -1,5 +1,15 @@
 import { sql } from "drizzle-orm";
-import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import {
+  bigint,
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
 
 import type { AuthorizationServerMetadata } from "@modelcontextprotocol/sdk/shared/auth.js";
 
@@ -157,16 +167,16 @@ export interface AgentDiscovery {
   commands?: string[];
 }
 
-export const agents = sqliteTable("agents", {
+export const agents = pgTable("agents", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   command: text("command").notNull(),
-  args: text("args", { mode: "json" }).$type<string[]>().notNull(),
-  env: text("env", { mode: "json" }).$type<Record<string, string>>().notNull(),
+  args: jsonb("args").$type<string[]>().notNull(),
+  env: jsonb("env").$type<Record<string, string>>().notNull(),
   /** ACP config categories this agent can only take at spawn time, mapped to
       the session field that feeds its env template. Anything not listed here
       is applied live over `session/set_config_option` instead of respawning. */
-  spawnCategories: text("spawn_categories", { mode: "json" })
+  spawnCategories: jsonb("spawn_categories")
     .$type<Record<string, "model" | "effort">>(),
   /** How a model/effort/profile change reaches this agent *without* restarting
       it, when it can at all. `"acp"` = its own selector will take the profile's
@@ -178,7 +188,7 @@ export const agents = sqliteTable("agents", {
       when it has no such notion (see QuotaProbe in registry.ts). Declared with
       the agent for the same reason `spawnCategories` is: the *how to talk* is
       one of quota.ts's adapters, but the command to run is the user's. */
-  quotaProbe: text("quota_probe", { mode: "json" }).$type<QuotaProbe>(),
+  quotaProbe: jsonb("quota_probe").$type<QuotaProbe>(),
   /** Which door this runtime opens for a thread's persona (`personas.ts`):
       `"acp-meta"` = the ACP `_meta` block on session/new and session/load,
       `"env"` = a key in its own config template, filled from `{personaPrompt}`
@@ -201,16 +211,16 @@ export const agents = sqliteTable("agents", {
   workflowsVia: text("workflows_via").$type<"native">(),
   /** Where this runtime reads harness-projected skills, commands and the model
       allowlist from, inside the project's cwd. Null = nothing is projected. */
-  workspaceLayout: text("workspace_layout", { mode: "json" }).$type<WorkspaceLayout>(),
+  workspaceLayout: jsonb("workspace_layout").$type<WorkspaceLayout>(),
   /** The runtime's own tools a harness MCP server replaces, and how to switch
       them off. Null = its built-ins stay on beside ours. */
-  builtinTools: text("builtin_tools", { mode: "json" }).$type<BuiltinToolOverrides>(),
+  builtinTools: jsonb("builtin_tools").$type<BuiltinToolOverrides>(),
   /** How to ask this runtime's plain CLI for the built-in model catalog a
       generated one is modelled on. Null = no catalog is generated for it. */
-  catalogProbe: text("catalog_probe", { mode: "json" }).$type<CatalogProbe>(),
+  catalogProbe: jsonb("catalog_probe").$type<CatalogProbe>(),
   /** Where this runtime's own config lives on this machine, for the library's
       import. Null = there is nothing of its to read. */
-  discovery: text("discovery", { mode: "json" }).$type<AgentDiscovery>(),
+  discovery: jsonb("discovery").$type<AgentDiscovery>(),
   /** The shell line that puts this agent's binary on the machine, shown beside
       a row measured as missing (`agent-status.ts`). Null = we do not know one,
       which is the honest answer for an agent someone added. */
@@ -297,7 +307,7 @@ export interface ProfileUsage {
   apiKey?: string;
 }
 
-export const profiles = sqliteTable("profiles", {
+export const profiles = pgTable("profiles", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   /** Which agents this profile can spawn, and what differs per agent (see
@@ -306,7 +316,7 @@ export const profiles = sqliteTable("profiles", {
       a row that vanishes. Replaces the old single `agent_id` column — one
       provider (credentials + catalog) serves several runtimes, and binding it
       to one forced the same key and model list to be entered once per agent. */
-  agents: text("agents", { mode: "json" })
+  agents: jsonb("agents")
     .$type<Record<string, ProfileAgentLink>>()
     .notNull()
     .default({}),
@@ -323,20 +333,18 @@ export const profiles = sqliteTable("profiles", {
       provider mark). Null on rows from before the column existed — treated as
       "no logo", which falls back to the agent's own mark in the client. */
   logoUrl: text("logo_url"),
-  models: text("models", { mode: "json" }).$type<ModelDef[]>().notNull(),
+  models: jsonb("models").$type<ModelDef[]>().notNull(),
   /** How to read this provider's subscription usage (see ProfileUsage). Null on
       rows from before the column existed, and on every profile whose provider
       meters per token — which is most of them, and is why "no usage API" is the
       default rather than something to configure. */
-  usage: text("usage", { mode: "json" }).$type<ProfileUsage>(),
+  usage: jsonb("usage").$type<ProfileUsage>(),
   /** Opt out of Codex's "Model metadata for `…` not found. Defaulting to
       fallback metadata" notice when this profile's models run on it (see
       model-catalog.ts). Exactly one thing it means: the profile has already
       given the model its numbers, and the nag is dropped at the bridge before
       it can be journaled. False on rows from before the column existed. */
-  suppressModelMetadataWarning: integer("suppress_model_metadata_warning", {
-    mode: "boolean",
-  })
+  suppressModelMetadataWarning: boolean("suppress_model_metadata_warning")
     .notNull()
     .default(false),
   /* The web-search and knowledge opt-ins used to be columns here. They are
@@ -344,7 +352,7 @@ export const profiles = sqliteTable("profiles", {
      server — see BUILTIN_MCP in library.ts. */
 });
 
-export const projects = sqliteTable("projects", {
+export const projects = pgTable("projects", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   cwd: text("cwd").notNull(),
@@ -362,7 +370,7 @@ export const projects = sqliteTable("projects", {
     edit is live and a token is never cached in a row. */
 export type BuiltinMcp = "web-search" | "knowledge" | "workflow";
 
-export const mcpServers = sqliteTable("mcp_servers", {
+export const mcpServers = pgTable("mcp_servers", {
   id: text("id").primaryKey(),
   type: text("type", { enum: ["http", "stdio", "builtin"] }).notNull(),
   name: text("name").notNull(),
@@ -370,11 +378,11 @@ export const mcpServers = sqliteTable("mcp_servers", {
   builtin: text("builtin", { enum: ["web-search", "knowledge", "workflow"] }).$type<BuiltinMcp>(),
   // http
   url: text("url"),
-  headers: text("headers", { mode: "json" }).$type<NameValue[]>(),
+  headers: jsonb("headers").$type<NameValue[]>(),
   // stdio
   command: text("command"),
-  args: text("args", { mode: "json" }).$type<string[]>(),
-  env: text("env", { mode: "json" }).$type<NameValue[]>(),
+  args: jsonb("args").$type<string[]>(),
+  env: jsonb("env").$type<NameValue[]>(),
   /** How the row authenticates. "none" is a plain URL, possibly with static
       headers the user typed (a PAT). "oauth" means the tokens are in
       `mcp_oauth` and the agent is handed the shim's URL, never this one.
@@ -402,7 +410,7 @@ export type AuthServerMetadata = AuthorizationServerMetadata;
  * somebody renaming the server; and the cascade means deleting the server
  * takes the tokens with it, the same guarantee `profile_*`/`session_*` give.
  */
-export const mcpOauth = sqliteTable("mcp_oauth", {
+export const mcpOauth = pgTable("mcp_oauth", {
   mcpServerId: text("mcp_server_id")
     .primaryKey()
     .references(() => mcpServers.id, { onDelete: "cascade" }),
@@ -412,7 +420,7 @@ export const mcpOauth = sqliteTable("mcp_oauth", {
   resource: text("resource").notNull(),
   /** The authorization server chosen from PRM's list, and its cached metadata. */
   issuer: text("issuer").notNull(),
-  metadata: text("metadata", { mode: "json" }).$type<AuthServerMetadata>().notNull(),
+  metadata: jsonb("metadata").$type<AuthServerMetadata>().notNull(),
   /** From dynamic registration (RFC 7591). There is no out-of-band client id
       for a personal tool. `clientSecret` is null for a public client. */
   clientId: text("client_id").notNull(),
@@ -425,20 +433,20 @@ export const mcpOauth = sqliteTable("mcp_oauth", {
   refreshToken: text("refresh_token"),
   /** Unix ms. Null = no expiry was reported; treat as valid until a 401 says
       otherwise. */
-  expiresAt: integer("expires_at"),
+  expiresAt: bigint("expires_at", { mode: "number" }),
   /** Why the last attempt failed, so the row can say so instead of going quiet. */
   lastError: text("last_error"),
-  updatedAt: integer("updated_at").notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
 });
 
-export const skills = sqliteTable("skills", {
+export const skills = pgTable("skills", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   /** Directory on the server holding SKILL.md. */
   path: text("path").notNull(),
 });
 
-export const commands = sqliteTable("commands", {
+export const commands = pgTable("commands", {
   id: text("id").primaryKey(),
   /** Invocation name — becomes `/name`, and `<name>.md` on disk. */
   name: text("name").notNull(),
@@ -464,7 +472,7 @@ export const commands = sqliteTable("commands", {
  * release a row was offered in, so a persona added later reaches installs that
  * already exist and one the user deleted on purpose stays deleted.
  */
-export const personas = sqliteTable("personas", {
+export const personas = pgTable("personas", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
@@ -506,7 +514,7 @@ export const personas = sqliteTable("personas", {
  *
  * Not linked to profiles or threads: a row that matches, matches everywhere.
  */
-export const modelPrompts = sqliteTable("model_prompts", {
+export const modelPrompts = pgTable("model_prompts", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   /** Glob over the model id, matched case-insensitively. No `*` = exact id. */
@@ -514,7 +522,7 @@ export const modelPrompts = sqliteTable("model_prompts", {
   /** The instruction block, appended as a layer of the agent's system prompt. */
   prompt: text("prompt").notNull(),
   /** Off is not deleted: the row stays managed but stops matching. */
-  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  enabled: boolean("enabled").notNull().default(true),
   /** Declared order, used only to break a tie between equally specific matches. */
   sortOrder: integer("sort_order").notNull().default(0),
   /** 0 for the user's own; the seed release for a built-in. Same pair-of-versions
@@ -525,10 +533,51 @@ export const modelPrompts = sqliteTable("model_prompts", {
 
 /** Server-wide single-value settings that are data rather than bootstrap
     config: user-authored, so they travel in a backup (unlike `data/config.json`,
-    which exists only to boot from). One row per key; `rules.ts` owns `rules`. */
-export const appSettings = sqliteTable("app_settings", {
+    which exists only to boot from). One row per key. `appSettings` holds
+    bootstrap-only config (see config.ts) and nothing else now — the old
+    `rules` blob moved to the `rules` table below. */
+export const appSettings = pgTable("app_settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
+});
+
+/** An individual standing instruction rule. Global rules (null projectId)
+    apply to every thread; project-scoped rules (a projectId) apply to
+    threads spawned in that project. Both layers are composed by
+    `spawnRules` in rules.ts — global first, then project. Each rule
+    has a title and content so they can be managed individually rather
+    than as one blob of text. */
+export const rules = pgTable("rules", {
+  id: text("id").primaryKey(),
+  /** Null = a global rule; a project id = a project-scoped rule. */
+  projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  content: text("content").notNull(),
+  /** Declared order, used when composing the spawn block. */
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+}, (t) => [index("rules_project").on(t.projectId)]);
+
+/** A user-made theme, exactly as the studio edits it: the per-mode colour
+    halves `light`/`dark` and the mode-independent `base` (radius, the three
+    font roles, depth, tracking, blur, width — preset and font ids, never
+    resolved stacks). The payload is opaque here: nothing server-side needs to
+    know what a token means, only that a theme has a name and three halves.
+    Rows are the source of truth for the client's custom-theme store, so a
+    theme follows the account and not the browser — the gallery hydrates from
+    here and the studio writes through on every change, with localStorage only
+    a first-paint cache. */
+export const themes = pgTable("themes", {
+  /** The client's own id — the studio mints one when a theme is created and
+      every gallery/editor URL names it. */
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  light: jsonb("light").$type<Record<string, string>>().notNull(),
+  dark: jsonb("dark").$type<Record<string, string>>().notNull(),
+  base: jsonb("base").$type<Record<string, string>>().notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
 });
 
 /** A titled knowledge-base entry, keyed to a project. The agent's `knowledge`
@@ -537,7 +586,7 @@ export const appSettings = sqliteTable("app_settings", {
     (the "grep" contract — deliberately no vector index), ordered by recency.
     Titled where a bare note would have been a separate `memories` table — the
     two were the same thing, so they are one concept now. */
-export const knowledge = sqliteTable(
+export const knowledge = pgTable(
   "knowledge",
   {
     id: text("id").primaryKey(),
@@ -548,9 +597,9 @@ export const knowledge = sqliteTable(
     title: text("title").notNull(),
     content: text("content").notNull(),
     /** Optional tags, stored as a JSON string-array. */
-    tags: text("tags", { mode: "json" }).$type<string[]>(),
-    createdAt: integer("created_at").notNull(),
-    updatedAt: integer("updated_at").notNull(),
+    tags: jsonb("tags").$type<string[]>(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
   },
   (t) => [index("knowledge_project").on(t.projectId)],
 );
@@ -561,7 +610,7 @@ export const knowledge = sqliteTable(
    adds its own (the `session_*` tables below); the agent gets the union — see
    `SessionManager.effectiveLinks`. Projects used to carry these too and no
    longer do: a project is a directory. */
-export const profileMcpServers = sqliteTable(
+export const profileMcpServers = pgTable(
   "profile_mcp_servers",
   {
     profileId: text("profile_id")
@@ -574,7 +623,7 @@ export const profileMcpServers = sqliteTable(
   (t) => [primaryKey({ columns: [t.profileId, t.mcpServerId] })],
 );
 
-export const profileSkills = sqliteTable(
+export const profileSkills = pgTable(
   "profile_skills",
   {
     profileId: text("profile_id")
@@ -587,7 +636,7 @@ export const profileSkills = sqliteTable(
   (t) => [primaryKey({ columns: [t.profileId, t.skillId] })],
 );
 
-export const profileCommands = sqliteTable(
+export const profileCommands = pgTable(
   "profile_commands",
   {
     profileId: text("profile_id")
@@ -605,7 +654,7 @@ export const profileCommands = sqliteTable(
    Not links into the library and never seen by an agent: they are the user's
    own buttons, run in the project's cwd by `project-helpers.ts` and surfaced
    by `ProjectHeader`'s dropdown. */
-export const projectHelpers = sqliteTable(
+export const projectHelpers = pgTable(
   "project_helpers",
   {
     id: text("id").primaryKey(),
@@ -620,13 +669,13 @@ export const projectHelpers = sqliteTable(
     env: text("env"),
     description: text("description"),
     /** Ask before running — for the destructive ones. */
-    confirm: integer("confirm", { mode: "boolean" }).notNull().default(false),
-    createdAt: integer("created_at").notNull(),
+    confirm: boolean("confirm").notNull().default(false),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
   },
   (t) => [index("project_helpers_project").on(t.projectId)],
 );
 
-export const sessions = sqliteTable(
+export const sessions = pgTable(
   "sessions",
   {
     id: text("id").primaryKey(),
@@ -657,7 +706,7 @@ export const sessions = sqliteTable(
         unless turned off. A spawn input like the persona: every runtime reads
         its instructions only when a session is created or loaded, so toggling
         it costs a respawn — see `applyConfigLive`. */
-    suggestFollowups: integer("suggest_followups", { mode: "boolean" })
+    suggestFollowups: boolean("suggest_followups")
       .notNull()
       .default(true),
     title: text("title").notNull(),
@@ -668,10 +717,10 @@ export const sessions = sqliteTable(
         thread ends up with no pointer to anything at all — but it is the one id
         a later `session/new` is allowed to replace, and a load that refuses it
         is not a lost history, just a session the agent never flushed. */
-    acpSessionProvisional: integer("acp_session_provisional", { mode: "boolean" })
+    acpSessionProvisional: boolean("acp_session_provisional")
       .notNull()
       .default(false),
-    createdAt: integer("created_at").notNull(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
     /** Epoch ms of the last turn on this thread — what the sidebar orders by.
         Creation is not activity: a thread started weeks ago and picked up this
         morning belongs at the top, and ordering by `created_at` buried it under
@@ -679,7 +728,7 @@ export const sessions = sqliteTable(
         journaled `turn_started`/`turn_ended`, never per streamed event), and 0
         on a row written before the column existed — `reload` backfills those
         from the journal's own `max(at)`, falling back to `created_at`. */
-    lastActivityAt: integer("last_activity_at").notNull().default(0),
+    lastActivityAt: bigint("last_activity_at", { mode: "number" }).notNull().default(0),
     /** The failure the newest turn ended with, or null when it ended cleanly —
         the message alone, capped, because what a list can say about a thread is
         one line. Written on the same journaled `turn_ended` that bumps
@@ -707,10 +756,10 @@ export const sessions = sqliteTable(
         above, not per reading: a runtime reports twice per model request, and
         the row is one turn behind at worst — the live session answers from
         memory until then. */
-    context: text("context", { mode: "json" }).$type<acp.UsageUpdate>(),
+    context: jsonb("context").$type<acp.UsageUpdate>(),
     /** Epoch ms this thread was deleted; null = live. Deleted threads keep
         their row (and their acpSessionId) so a delete stays undoable. */
-    deletedAt: integer("deleted_at"),
+    deletedAt: bigint("deleted_at", { mode: "number" }),
     /** The thread this one is a workflow step of (`workflows.ts`), else null.
         Indexed, and NOT a foreign key like the three above — but for a different
         reason: an SQL cascade would delete the children's rows underneath the
@@ -757,7 +806,7 @@ export const sessions = sqliteTable(
  * points at a deleted run. Step threads themselves are ordinary `sessions`
  * rows carrying `parent_session_id`.
  */
-export const workflowRuns = sqliteTable(
+export const workflowRuns = pgTable(
   "workflow_runs",
   {
     id: text("id").primaryKey(),
@@ -765,15 +814,15 @@ export const workflowRuns = sqliteTable(
       .notNull()
       .references(() => sessions.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
-    definition: text("definition", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
-    inputs: text("inputs", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    definition: jsonb("definition").$type<Record<string, unknown>>().notNull(),
+    inputs: jsonb("inputs").$type<Record<string, unknown>>().notNull(),
     status: text("status", { enum: ["running", "paused", "completed", "failed", "cancelled"] })
       .$type<WorkflowRunStatus>()
       .notNull(),
     error: text("error"),
-    steps: text("steps", { mode: "json" }).$type<WorkflowStepRecord[]>().notNull(),
-    createdAt: integer("created_at").notNull(),
-    endedAt: integer("ended_at"),
+    steps: jsonb("steps").$type<WorkflowStepRecord[]>().notNull(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    endedAt: bigint("ended_at", { mode: "number" }),
   },
   (t) => [index("workflow_runs_parent").on(t.parentSessionId, t.createdAt)],
 );
@@ -848,7 +897,7 @@ export type RoutineOverlap = "skip" | "queue";
  *
  * Everything a `POST /api/sessions` body carries, this row stores — profile,
  * agent, project, model, effort, persona, config choices, links — because a
- * fire is literally `manager.create(...)` with those values and then one
+ * fire is literally `await manager.create(...)` with those values and then one
  * prompt. That is the constraint that keeps this small: **a routine must not be
  * able to start a thread the composer could not start.** A field a routine
  * needs and a draft does not means the draft is missing it.
@@ -863,7 +912,7 @@ export type RoutineOverlap = "skip" | "queue";
  * renamed away under it, and "this routine's project no longer exists" is a
  * sentence the UI can say where a vanished row is not.
  */
-export const routines = sqliteTable(
+export const routines = pgTable(
   "routines",
   {
     id: text("id").primaryKey(),
@@ -871,7 +920,7 @@ export const routines = sqliteTable(
     description: text("description"),
     /** False = every trigger is inert. The row is kept and listed — a disabled
         routine is a state, not a deletion, and its history stays readable. */
-    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    enabled: boolean("enabled").notNull().default(true),
     /** The workspace every run of this routine opens in. Not a foreign key: a
         deleted project must leave a routine the UI can say that about. */
     projectId: text("project_id").notNull(),
@@ -884,18 +933,18 @@ export const routines = sqliteTable(
     personaId: text("persona_id"),
     /** The draft's own picks against the agent's advertised selectors, replayed
         after `session/new` exactly as `POST /api/sessions` replays them. */
-    configChoices: text("config_choices", { mode: "json" })
+    configChoices: jsonb("config_choices")
       .$type<Record<string, string | boolean>>()
       .notNull()
       .default({}),
     /** Prompt or workflow — see RoutineBody. */
-    body: text("body", { mode: "json" }).$type<RoutineBody>().notNull(),
+    body: jsonb("body").$type<RoutineBody>().notNull(),
     /** An optional JSON schema for the run's answer: the same field a workflow
         step takes and compiled the same way, which buys the run one repair turn
         and then a structured `routine_runs.verdict`. Null means the status stays
         honest and bare — "the turn ended" and nothing more. */
-    output: text("output", { mode: "json" }).$type<Record<string, unknown>>(),
-    onFinish: text("on_finish", { mode: "json" }).$type<RoutineAction[]>().notNull().default([]),
+    output: jsonb("output").$type<Record<string, unknown>>(),
+    onFinish: jsonb("on_finish").$type<RoutineAction[]>().notNull().default([]),
     overlap: text("overlap", { enum: ["skip", "queue"] })
       .$type<RoutineOverlap>()
       .notNull()
@@ -903,13 +952,13 @@ export const routines = sqliteTable(
     /** How this routine's runs answer the agent (see autonomy.ts). Stored whole
         rather than spread into columns: it is one policy, always read together,
         and it is the shape the form edits. */
-    autonomy: text("autonomy", { mode: "json" }).$type<AutonomyPolicy>().notNull(),
+    autonomy: jsonb("autonomy").$type<AutonomyPolicy>().notNull(),
     /** One run has completed. A routine cannot be widened to a blanket `allow`
         until it has — the difference between an informed grant and a dismissed
         dialog, and it costs exactly this boolean. */
-    dryRunCompleted: integer("dry_run_completed", { mode: "boolean" }).notNull().default(false),
-    createdAt: integer("created_at").notNull(),
-    updatedAt: integer("updated_at").notNull(),
+    dryRunCompleted: boolean("dry_run_completed").notNull().default(false),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
   },
   (t) => [index("routines_project").on(t.projectId)],
 );
@@ -923,7 +972,7 @@ export type RoutineTriggerKind = "schedule" | "api" | "git";
  * door was used, which is also why a GitHub webhook receiver is a later phase
  * and not a later table.
  */
-export const routineTriggers = sqliteTable(
+export const routineTriggers = pgTable(
   "routine_triggers",
   {
     id: text("id").primaryKey(),
@@ -931,7 +980,7 @@ export const routineTriggers = sqliteTable(
       .notNull()
       .references(() => routines.id, { onDelete: "cascade" }),
     kind: text("kind", { enum: ["schedule", "api", "git"] }).$type<RoutineTriggerKind>().notNull(),
-    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    enabled: boolean("enabled").notNull().default(true),
     // ── schedule ──
     /** 5-field cron. Null for a one-off (`at_ms`) and for the other kinds.
         UI presets write cron expressions; there is no second representation. */
@@ -939,15 +988,15 @@ export const routineTriggers = sqliteTable(
     /** IANA zone the cron is read in. Null = the server's own. */
     tz: text("tz"),
     /** Epoch ms of a one-off fire; null for a recurring one. */
-    atMs: integer("at_ms"),
+    atMs: bigint("at_ms", { mode: "number" }),
     /** Checked at fire time, never at edit time. Today only
         `{gitChangedSince: "lastRun"}` — one HEAD read against what the last run
         recorded, which is the difference between a nightly review that reports
         on yesterday and one that says "nothing happened" thirty times. */
-    condition: text("condition", { mode: "json" }).$type<{ gitChangedSince?: "lastRun" }>(),
+    condition: jsonb("condition").$type<{ gitChangedSince?: "lastRun" }>(),
     /** Epoch ms of the next fire, stagger included, recomputed after each one.
         Null when this trigger has no clock. Indexed: it is what the sweep asks. */
-    nextFireAt: integer("next_fire_at"),
+    nextFireAt: bigint("next_fire_at", { mode: "number" }),
     // ── api ──
     /** sha-256 of the long-lived per-trigger token, never the token. This is
         the only stored credential in the harness that STARTS A PROCESS on the
@@ -957,20 +1006,20 @@ export const routineTriggers = sqliteTable(
     secretHash: text("secret_hash"),
     /** When the token was minted, so the UI can say how old the credential it
         cannot show is. Null when there is none. */
-    secretCreatedAt: integer("secret_created_at"),
+    secretCreatedAt: bigint("secret_created_at", { mode: "number" }),
     // ── git ──
     /** Branch whose HEAD moving fires this, or null for "any". */
     branch: text("branch"),
     /** Path globs; a change matching any of them fires. Empty = any path. */
-    paths: text("paths", { mode: "json" }).$type<string[]>().notNull().default([]),
+    paths: jsonb("paths").$type<string[]>().notNull().default([]),
     /** Debounce for the watcher, ms. */
     debounceMs: integer("debounce_ms").notNull().default(30_000),
     /** What the last evaluation recorded — the git oid a `gitChangedSince` or a
         `git` trigger compares against. Null until the first fire. */
     lastSeen: text("last_seen"),
-    lastFiredAt: integer("last_fired_at"),
+    lastFiredAt: bigint("last_fired_at", { mode: "number" }),
     lastError: text("last_error"),
-    createdAt: integer("created_at").notNull(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
   },
   (t) => [
     index("routine_triggers_routine").on(t.routineId),
@@ -1006,7 +1055,7 @@ export type RoutineRunStatus = "running" | "completed" | "failed" | "blocked" | 
  * N runs, and adding the grouping afterwards is a data rewrite of the one table
  * this feature accumulates rows in fastest.
  */
-export const routineRuns = sqliteTable(
+export const routineRuns = pgTable(
   "routine_runs",
   {
     id: text("id").primaryKey(),
@@ -1025,7 +1074,7 @@ export const routineRuns = sqliteTable(
     payload: text("payload"),
     /** True for a "Run now, forced to ask" — what clears `dry_run_completed`'s
         gate, and what makes a run's own autonomy differ from the routine's. */
-    dryRun: integer("dry_run", { mode: "boolean" }).notNull().default(false),
+    dryRun: boolean("dry_run").notNull().default(false),
     status: text("status", { enum: ["running", "completed", "failed", "blocked", "skipped"] })
       .$type<RoutineRunStatus>()
       .notNull(),
@@ -1040,10 +1089,10 @@ export const routineRuns = sqliteTable(
     /** The parsed, validated answer when the routine declared an `output`
         schema — the only thing on the row that is about the *work* rather than
         about the process, which is why it and not `status` is the list column. */
-    verdict: text("verdict", { mode: "json" }).$type<unknown>(),
+    verdict: jsonb("verdict").$type<unknown>(),
     /** What `onFinish` did, one entry per action, failures included. An action's
         failure is recorded and never fails the run. */
-    actions: text("actions", { mode: "json" })
+    actions: jsonb("actions")
       .$type<RoutineActionRecord[]>()
       .notNull()
       .default([]),
@@ -1051,8 +1100,8 @@ export const routineRuns = sqliteTable(
     headOid: text("head_oid"),
     /** Summed from the run's settled turns, for `maxRunTokens` and the digest. */
     tokens: integer("tokens"),
-    startedAt: integer("started_at").notNull(),
-    endedAt: integer("ended_at"),
+    startedAt: bigint("started_at", { mode: "number" }).notNull(),
+    endedAt: bigint("ended_at", { mode: "number" }),
   },
   (t) => [
     index("routine_runs_routine").on(t.routineId, t.startedAt),
@@ -1063,7 +1112,7 @@ export const routineRuns = sqliteTable(
 /** A routine's library links — the third owner `db/links.ts` predicted, and a
     descriptor there rather than a third copy of the queries. Same shape as
     `session_mcp_servers` down to the cascades. */
-export const routineMcpServers = sqliteTable(
+export const routineMcpServers = pgTable(
   "routine_mcp_servers",
   {
     routineId: text("routine_id")
@@ -1076,7 +1125,7 @@ export const routineMcpServers = sqliteTable(
   (t) => [primaryKey({ columns: [t.routineId, t.mcpServerId] })],
 );
 
-export const routineSkills = sqliteTable(
+export const routineSkills = pgTable(
   "routine_skills",
   {
     routineId: text("routine_id")
@@ -1089,7 +1138,7 @@ export const routineSkills = sqliteTable(
   (t) => [primaryKey({ columns: [t.routineId, t.skillId] })],
 );
 
-export const routineCommands = sqliteTable(
+export const routineCommands = pgTable(
   "routine_commands",
   {
     routineId: text("routine_id")
@@ -1123,7 +1172,7 @@ export const routineCommands = sqliteTable(
 /* And on a thread: what this one conversation was started with, on top of
    its profile's. Picked on the draft, kept for the thread's
    life so a revive spawns the same tools, and cascaded away with the row. */
-export const sessionMcpServers = sqliteTable(
+export const sessionMcpServers = pgTable(
   "session_mcp_servers",
   {
     sessionId: text("session_id")
@@ -1136,7 +1185,7 @@ export const sessionMcpServers = sqliteTable(
   (t) => [primaryKey({ columns: [t.sessionId, t.mcpServerId] })],
 );
 
-export const sessionSkills = sqliteTable(
+export const sessionSkills = pgTable(
   "session_skills",
   {
     sessionId: text("session_id")
@@ -1149,7 +1198,7 @@ export const sessionSkills = sqliteTable(
   (t) => [primaryKey({ columns: [t.sessionId, t.skillId] })],
 );
 
-export const sessionCommands = sqliteTable(
+export const sessionCommands = pgTable(
   "session_commands",
   {
     sessionId: text("session_id")
@@ -1162,7 +1211,7 @@ export const sessionCommands = sqliteTable(
   (t) => [primaryKey({ columns: [t.sessionId, t.commandId] })],
 );
 
-export const sessionEvents = sqliteTable(
+export const sessionEvents = pgTable(
   "session_events",
   {
     sessionId: text("session_id")
@@ -1179,13 +1228,13 @@ export const sessionEvents = sqliteTable(
         Stored as text and *read back as text* on the replay path: it is already
         the JSON the browser needs, so parsing it here only to stringify it again
         per peer is work with no reader. */
-    payload: text("payload", { mode: "json" }).$type<unknown>().notNull(),
+    payload: jsonb("payload").$type<unknown>().notNull(),
     /** Epoch ms this event was journaled. The log outlives its process now, so
         something has to say how old an archive is — this is what the retention
         sweep reads (`SessionManager.pruneJournals`). Defaulted in SQL rather
         than left nullable so the column can be added to a table that already
         has rows in it. */
-    at: integer("at").notNull().default(0),
+    at: bigint("at", { mode: "number" }).notNull().default(0),
   },
   (t) => [
     uniqueIndex("session_events_seq").on(t.sessionId, t.seq),
@@ -1245,7 +1294,7 @@ export const sessionEvents = sqliteTable(
  * store. Names are snapshotted because usage should remain intelligible after
  * a profile, project or thread is removed.
  */
-export const webSearchUsage = sqliteTable(
+export const webSearchUsage = pgTable(
   "web_search_usage",
   {
     id: text("id").primaryKey(),
@@ -1258,8 +1307,8 @@ export const webSearchUsage = sqliteTable(
     profileName: text("profile_name").notNull(),
     projectId: text("project_id").notNull(),
     projectName: text("project_name").notNull(),
-    startedAt: integer("started_at").notNull(),
-    completedAt: integer("completed_at"),
+    startedAt: bigint("started_at", { mode: "number" }).notNull(),
+    completedAt: bigint("completed_at", { mode: "number" }),
   },
   (t) => [
     uniqueIndex("web_search_usage_call").on(t.sessionId, t.toolCallId),
@@ -1289,7 +1338,7 @@ export const webSearchUsage = sqliteTable(
  * expanded (composer.tsx expands at the last moment), so recalling a line puts
  * the same short token back in the box rather than the document behind it.
  */
-export const composerHistory = sqliteTable(
+export const composerHistory = pgTable(
   "composer_history",
   {
     id: text("id").primaryKey(),
@@ -1302,7 +1351,7 @@ export const composerHistory = sqliteTable(
     /** Snapshotted like `notifications.threadTitle`, so a line stays
         intelligible after its thread is deleted. */
     threadTitle: text("thread_title"),
-    createdAt: integer("created_at").notNull(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
   },
   (t) => [
     index("composer_history_created").on(t.createdAt),
@@ -1312,9 +1361,9 @@ export const composerHistory = sqliteTable(
   ],
 );
 
-export const pushTokens = sqliteTable("push_tokens", {
+export const pushTokens = pgTable("push_tokens", {
   token: text("token").primaryKey(),
-  createdAt: integer("created_at").notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
 });
 
 /**
@@ -1331,7 +1380,7 @@ export const pushTokens = sqliteTable("push_tokens", {
  * thread is deleted. `session_id` is a plain id for navigation, not a foreign
  * key: nothing here should take a thread down with it.
  */
-export const notifications = sqliteTable(
+export const notifications = pgTable(
   "notifications",
   {
     id: text("id").primaryKey(),
@@ -1347,8 +1396,8 @@ export const notifications = sqliteTable(
     /** The notice's own line — the error message, the tool wanting permission. */
     body: text("body"),
     /** 1 once a client has marked it read; unread is what the pill counts. */
-    read: integer("read", { mode: "boolean" }).notNull().default(false),
-    createdAt: integer("created_at").notNull(),
+    read: boolean("read").notNull().default(false),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
   },
   (t) => [
     index("notifications_created").on(t.createdAt),
@@ -1361,11 +1410,11 @@ export const notifications = sqliteTable(
  * with (see probe.ts). Cached because the only way to ask is to spawn the agent
  * and throw it away, and the answer changes only when the agent or the cwd does.
  */
-export const agentOptions = sqliteTable("agent_options", {
+export const agentOptions = pgTable("agent_options", {
   /** `profileId:agentId:cwd` — cwd is in the key because it changes the answer. */
   key: text("key").primaryKey(),
-  options: text("options", { mode: "json" }).$type<unknown>().notNull(),
-  probedAt: integer("probed_at").notNull(),
+  options: jsonb("options").$type<unknown>().notNull(),
+  probedAt: bigint("probed_at", { mode: "number" }).notNull(),
 });
 
 /**
@@ -1382,11 +1431,11 @@ export const agentOptions = sqliteTable("agent_options", {
  * of the probe cache): a bundle restored onto another machine would be carrying
  * a stale reading of an account it may not even be logged into.
  */
-export const agentQuota = sqliteTable("agent_quota", {
+export const agentQuota = pgTable("agent_quota", {
   /** `profileId:agentId`. */
   key: text("key").primaryKey(),
-  snapshot: text("snapshot", { mode: "json" }).$type<unknown>().notNull(),
-  fetchedAt: integer("fetched_at").notNull(),
+  snapshot: jsonb("snapshot").$type<unknown>().notNull(),
+  fetchedAt: bigint("fetched_at", { mode: "number" }).notNull(),
 });
 
 /**
@@ -1396,7 +1445,7 @@ export const agentQuota = sqliteTable("agent_quota", {
  * row here rather than a timer in the client. `every_ms` is null for a one-shot:
  * it fires once and the row is gone, where a recurring row is kept and advanced.
  */
-export const scheduledMessages = sqliteTable(
+export const scheduledMessages = pgTable(
   "scheduled_messages",
   {
     id: text("id").primaryKey(),
@@ -1405,7 +1454,7 @@ export const scheduledMessages = sqliteTable(
       .references(() => sessions.id, { onDelete: "cascade" }),
     text: text("text").notNull(),
     /** Epoch ms of the next scheduled fire. */
-    nextAt: integer("next_at").notNull(),
+    nextAt: bigint("next_at", { mode: "number" }).notNull(),
     /** Recurrence interval in ms; null = one-shot. */
     everyMs: integer("every_ms"),
     /** 1 = the sweep delivers it; 0 = paused (kept, skipped). Integer rather
@@ -1413,13 +1462,13 @@ export const scheduledMessages = sqliteTable(
     enabled: integer("enabled").notNull().default(1),
     /** Epoch ms of the last sweep that could not deliver (missing/trashed
         thread); null once a delivery succeeds or the row is edited. */
-    skippedAt: integer("skipped_at"),
+    skippedAt: bigint("skipped_at", { mode: "number" }),
     /** Why the last skip happened, for GET /api/scheduled. */
     lastError: text("last_error"),
     /** Consecutive skips. Past MAX_SCHEDULE_SKIPS the sweep stops selecting
         the row instead of re-matching it every 15s forever; any PATCH resets. */
     skipCount: integer("skip_count").notNull().default(0),
-    createdAt: integer("created_at").notNull(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
   },
   (t) => [index("scheduled_next").on(t.nextAt)],
 );
@@ -1434,7 +1483,7 @@ export const scheduledMessages = sqliteTable(
  * would race the queue, and edit/remove/"send this one" are row operations.
  * Ordered by `position` (monotonic per session, like session_events.seq).
  */
-export const sessionQueue = sqliteTable(
+export const sessionQueue = pgTable(
   "session_queue",
   {
     id: text("id").primaryKey(),
@@ -1449,8 +1498,8 @@ export const sessionQueue = sqliteTable(
         bytes are already on disk under a row — the queue only needs the
         pointer. Null for every row written before attachments existed, which
         is what makes this a pure add. */
-    attachmentIds: text("attachment_ids", { mode: "json" }).$type<string[]>(),
-    createdAt: integer("created_at").notNull(),
+    attachmentIds: jsonb("attachment_ids").$type<string[]>(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
   },
   (t) => [index("session_queue_order").on(t.sessionId, t.position)],
 );
@@ -1471,7 +1520,7 @@ export const sessionQueue = sqliteTable(
  * the turn is still running). Dangling trees are gc'd by git eventually, and
  * a turn whose trees are gone reads as "unavailable", never as a crash.
  */
-export const sessionTurnChanges = sqliteTable(
+export const sessionTurnChanges = pgTable(
   "session_turn_changes",
   {
     sessionId: text("session_id")
@@ -1480,9 +1529,9 @@ export const sessionTurnChanges = sqliteTable(
     turnId: text("turn_id").notNull(),
     startTree: text("start_tree"),
     endTree: text("end_tree"),
-    files: text("files", { mode: "json" }).$type<ChangedFile[]>().notNull(),
-    startedAt: integer("started_at").notNull(),
-    endedAt: integer("ended_at"),
+    files: jsonb("files").$type<ChangedFile[]>().notNull(),
+    startedAt: bigint("started_at", { mode: "number" }).notNull(),
+    endedAt: bigint("ended_at", { mode: "number" }),
   },
   (t) => [primaryKey({ columns: [t.sessionId, t.turnId] })],
 );
@@ -1527,7 +1576,7 @@ export interface ChangedFile {
  * file is content's — so the sweep deletes bytes only when no row still
  * references that hash.
  */
-export const attachments = sqliteTable(
+export const attachments = pgTable(
   "attachments",
   {
     /** Client-minted UUID, like a session id. */
@@ -1539,8 +1588,8 @@ export const attachments = sqliteTable(
     mimeType: text("mime_type").notNull(),
     size: integer("size").notNull(),
     sha256: text("sha256").notNull(),
-    createdAt: integer("created_at").notNull(),
-    claimedAt: integer("claimed_at"),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    claimedAt: bigint("claimed_at", { mode: "number" }),
   },
   (t) => [index("attachments_session").on(t.sessionId), index("attachments_sha").on(t.sha256)],
 );
@@ -1551,7 +1600,7 @@ export const attachments = sqliteTable(
  * FTS5 table it tracks is not here — drizzle cannot model a virtual table —
  * and is created by `db/index.ts` at boot instead.
  */
-export const searchMeta = sqliteTable("search_meta", {
+export const searchMeta = pgTable("search_meta", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
 });
@@ -1594,7 +1643,7 @@ export interface ChecklistItem {
  * creates can never share one. `projectId` is a pointer at `projects.id` and
  * nothing more — a project's deletion leaves the board standing, unlinked.
  */
-export const boards = sqliteTable(
+export const boards = pgTable(
   "boards",
   {
     id: text("id").primaryKey(),
@@ -1611,12 +1660,12 @@ export const boards = sqliteTable(
     /** Per-board task counter — the next task gets this number. */
     nextNumber: integer("next_number").notNull().default(1),
     /** Field definitions a task on this board may carry values for. */
-    customFields: text("custom_fields", { mode: "json" })
+    customFields: jsonb("custom_fields")
       .$type<CustomFieldDef[]>()
       .notNull()
       .default([]),
-    createdAt: integer("created_at").notNull(),
-    updatedAt: integer("updated_at").notNull(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
   },
   (t) => [index("boards_order").on(t.order)],
 );
@@ -1641,7 +1690,7 @@ export const boards = sqliteTable(
  * in `status`, so the column changes meaning without a single row being
  * rewritten. Ids minted after that are UUIDs.
  */
-export const boardStatuses = sqliteTable(
+export const boardStatuses = pgTable(
   "board_statuses",
   {
     id: text("id").primaryKey(),
@@ -1656,8 +1705,8 @@ export const boardStatuses = sqliteTable(
     wipLimit: integer("wip_limit"),
     /** Left-to-right position on the board. */
     order: integer("order").notNull().default(0),
-    createdAt: integer("created_at").notNull(),
-    updatedAt: integer("updated_at").notNull(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
   },
   (t) => [index("board_statuses_board_order").on(t.boardId, t.order)],
 );
@@ -1668,21 +1717,21 @@ export const boardStatuses = sqliteTable(
  * one moves its unfinished tasks to wherever the closer said (backlog or the
  * next sprint) — `boards.ts: completeSprint`.
  */
-export const sprints = sqliteTable(
+export const sprints = pgTable(
   "sprints",
   {
     id: text("id").primaryKey(),
     boardId: text("board_id").notNull(),
     name: text("name").notNull(),
     goal: text("goal"),
-    startAt: integer("start_at"),
-    endAt: integer("end_at"),
+    startAt: bigint("start_at", { mode: "number" }),
+    endAt: bigint("end_at", { mode: "number" }),
     state: text("state", { enum: ["planned", "active", "closed"] })
       .notNull()
       .default("planned"),
     order: integer("order").notNull().default(0),
-    createdAt: integer("created_at").notNull(),
-    updatedAt: integer("updated_at").notNull(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
   },
   (t) => [index("sprints_board_order").on(t.boardId, t.order)],
 );
@@ -1700,7 +1749,7 @@ export interface BoardViewConfig {
 }
 
 /** A saved view on a board — a layout plus the filters it was saved with. */
-export const boardViews = sqliteTable(
+export const boardViews = pgTable(
   "board_views",
   {
     id: text("id").primaryKey(),
@@ -1709,10 +1758,10 @@ export const boardViews = sqliteTable(
     kind: text("kind", { enum: ["board", "list", "table", "calendar", "timeline"] })
       .notNull()
       .default("board"),
-    config: text("config", { mode: "json" }).$type<BoardViewConfig>().notNull().default({}),
+    config: jsonb("config").$type<BoardViewConfig>().notNull().default({}),
     order: integer("order").notNull().default(0),
-    createdAt: integer("created_at").notNull(),
-    updatedAt: integer("updated_at").notNull(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
   },
   (t) => [index("board_views_board_order").on(t.boardId, t.order)],
 );
@@ -1731,7 +1780,7 @@ export const boardViews = sqliteTable(
  * way by the parent's `type`. `completedAt` is stamped when the task enters a
  * `done`-category column and cleared when it leaves one.
  */
-export const tasks = sqliteTable(
+export const tasks = pgTable(
   "tasks",
   {
     id: text("id").primaryKey(),
@@ -1755,7 +1804,7 @@ export const tasks = sqliteTable(
       .notNull()
       .default("medium"),
     /** Free text tag names, stored as a JSON string-array. */
-    labels: text("labels", { mode: "json" }).$type<string[]>().notNull().default([]),
+    labels: jsonb("labels").$type<string[]>().notNull().default([]),
     /** Who it is assigned to; free text (no user system yet). */
     assignee: text("assignee"),
     /** → `tasks.id` of the epic or parent task; null = top level. */
@@ -1765,23 +1814,23 @@ export const tasks = sqliteTable(
     /** Story points / effort estimate; null = unestimated. */
     estimate: integer("estimate"),
     /** Epoch ms planned start; null = none. Timeline draws start→due. */
-    startAt: integer("start_at"),
+    startAt: bigint("start_at", { mode: "number" }),
     /** Epoch ms due timestamp; null = no due date. */
-    dueAt: integer("due_at"),
+    dueAt: bigint("due_at", { mode: "number" }),
     /** Epoch ms the task entered a done column; null = open. */
-    completedAt: integer("completed_at"),
+    completedAt: bigint("completed_at", { mode: "number" }),
     /** Archived tasks are hidden from every view unless asked for. Null reads
         as false — see `number` for why it is nullable. */
-    archived: integer("archived", { mode: "boolean" }),
-    checklist: text("checklist", { mode: "json" }).$type<ChecklistItem[]>().notNull().default([]),
+    archived: boolean("archived"),
+    checklist: jsonb("checklist").$type<ChecklistItem[]>().notNull().default([]),
     /** Custom field values keyed by `CustomFieldDef.id`. */
-    custom: text("custom", { mode: "json" }).$type<Record<string, unknown>>().notNull().default({}),
+    custom: jsonb("custom").$type<Record<string, unknown>>().notNull().default({}),
     /** Sticky note for within-column ordering on the kanban. */
     note: text("note"),
     /** Position within the column, for a stable manual order. */
     order: integer("order").notNull().default(0),
-    createdAt: integer("created_at").notNull(),
-    updatedAt: integer("updated_at").notNull(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
   },
   (t) => [
     index("tasks_board_order").on(t.boardId, t.statusId, t.order),
@@ -1791,15 +1840,15 @@ export const tasks = sqliteTable(
 );
 
 /** A comment on a task. `author` is free text, like `assignee`. */
-export const taskComments = sqliteTable(
+export const taskComments = pgTable(
   "task_comments",
   {
     id: text("id").primaryKey(),
     taskId: text("task_id").notNull(),
     body: text("body").notNull(),
     author: text("author"),
-    createdAt: integer("created_at").notNull(),
-    updatedAt: integer("updated_at").notNull(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
   },
   (t) => [index("task_comments_task").on(t.taskId, t.createdAt)],
 );
@@ -1809,22 +1858,22 @@ export const taskComments = sqliteTable(
  * actually changed, plus `created`, `commented`, `linked` and `archived`
  * markers, so the detail panel can show a history without diffing rows.
  */
-export const taskActivity = sqliteTable(
+export const taskActivity = pgTable(
   "task_activity",
   {
     id: text("id").primaryKey(),
     taskId: text("task_id").notNull(),
-    at: integer("at").notNull(),
+    at: bigint("at", { mode: "number" }).notNull(),
     field: text("field").notNull(),
-    from: text("from", { mode: "json" }).$type<unknown>(),
-    to: text("to", { mode: "json" }).$type<unknown>(),
+    from: jsonb("from").$type<unknown>(),
+    to: jsonb("to").$type<unknown>(),
   },
   (t) => [index("task_activity_task").on(t.taskId, t.at)],
 );
 
 /** A directed relation between two tasks: `from` blocks / relates to /
     duplicates `to`. `relates` is read symmetrically. */
-export const taskLinks = sqliteTable(
+export const taskLinks = pgTable(
   "task_links",
   {
     id: text("id").primaryKey(),
@@ -1833,7 +1882,7 @@ export const taskLinks = sqliteTable(
     kind: text("kind", { enum: ["blocks", "relates", "duplicates"] })
       .notNull()
       .default("relates"),
-    createdAt: integer("created_at").notNull(),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
   },
   (t) => [index("task_links_from").on(t.fromId), index("task_links_to").on(t.toId)],
 );

@@ -23,10 +23,17 @@
 
    Edits write through on every change, so if you are wearing the theme you are
    editing the whole app repaints under the picker. "Revert" restores the
-   snapshot taken on open, which is the undo that live editing owes you. */
+   snapshot taken on open, which is the undo that live editing owes you.
+
+   Themes are not device-local any more: the studio's store write-through also
+   reaches the server (`lib/custom-theme-sync`), so a saved theme follows the
+   account and not the browser — the chip in the editor's header reports whether
+   the server has the latest edit. */
 import * as React from "react"
 import {
   Check,
+  CloudOff,
+  CloudUpload,
   Copy,
   Palette,
   Pencil,
@@ -96,6 +103,7 @@ import {
   type FontRole,
 } from "@/lib/fonts"
 import { BUILTIN_THEMES, useCustomThemes, useTheme } from "@/lib/theme"
+import { subscribeSyncStatus, syncStatusSnapshot, type SyncStatus } from "@/lib/custom-theme-sync"
 import { cn } from "@/lib/utils"
 import { settingsPath } from "@/lib/router"
 import { FormPageHeader } from "@/components/settings/primitives"
@@ -118,43 +126,54 @@ export function ThemeGallery() {
   }
 
   return (
-    <div className="grid grid-cols-2 gap-2 p-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-      {BUILTIN_THEMES.map(({ value, label, note }) => (
-        <ThemeCard
-          key={value}
-          label={label}
-          note={note}
-          themeValue={value}
-          selected={colorTheme === value}
-          onSelect={() => setColorTheme(value)}
-        />
-      ))}
-      {customThemes.map((theme) => {
-        const value = customThemeValue(theme.id)
-        return (
+    <>
+      <div className="flex items-baseline justify-between gap-2 p-2">
+        <p className="text-xs font-medium text-muted-foreground">
+          {BUILTIN_THEMES.length} built-in
+          {customThemes.length > 0 ? `· ${customThemes.length} saved on this server` : ""}
+        </p>
+        <p className="min-w-0 truncate text-[11px] text-muted-foreground">
+          Built-ins ship with the app; your themes are saved to the server and followed across devices.
+        </p>
+      </div>
+      <div className="grid grid-cols-2 gap-2 p-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        {BUILTIN_THEMES.map(({ value, label, note }) => (
           <ThemeCard
-            key={theme.id}
-            label={theme.name}
+            key={value}
+            label={label}
+            note={note}
             themeValue={value}
             selected={colorTheme === value}
             onSelect={() => setColorTheme(value)}
-            onEdit={() => {
-              setColorTheme(value)
-              void navigate(`/settings/appearance/themes/${encodeURIComponent(theme.id)}`)
-            }}
           />
-        )
-      })}
-      <button
-        type="button"
-        onClick={() => create(colorTheme)}
-        title="Copy the current theme into a new editable one"
-        className="flex min-h-24 flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed text-xs font-medium text-muted-foreground transition-colors hover:border-ring/60 hover:bg-accent/40 hover:text-foreground"
-      >
-        <Plus className="size-4" />
-        New theme
-      </button>
-    </div>
+        ))}
+        {customThemes.map((theme) => {
+          const value = customThemeValue(theme.id)
+          return (
+            <ThemeCard
+              key={theme.id}
+              label={theme.name}
+              themeValue={value}
+              selected={colorTheme === value}
+              onSelect={() => setColorTheme(value)}
+              onEdit={() => {
+                setColorTheme(value)
+                void navigate(`/settings/appearance/themes/${encodeURIComponent(theme.id)}`)
+              }}
+            />
+          )
+        })}
+        <button
+          type="button"
+          onClick={() => create(colorTheme)}
+          title="Copy the current theme into a new editable one"
+          className="flex min-h-24 flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed text-xs font-medium text-muted-foreground transition-colors hover:border-ring/60 hover:bg-accent/40 hover:text-foreground"
+        >
+          <Plus className="size-4" />
+          New theme
+        </button>
+      </div>
+    </>
   )
 }
 
@@ -251,9 +270,9 @@ function ThemeCard({
           size="icon-sm"
           title={`Edit ${label}`}
           onClick={onEdit}
-          className="absolute top-2 right-2 bg-card/70 opacity-0 backdrop-blur transition-opacity group-hover/theme:opacity-100 focus-visible:opacity-100"
+          className="absolute top-2 right-2 bg-card/70 opacity-70 backdrop-blur transition-opacity hover:opacity-100 focus-visible:opacity-100"
         >
-          <Pencil />
+          <Pencil className="size-3.5" />
         </Button>
       )}
     </div>
@@ -407,11 +426,9 @@ const PREVIEW_MODES: readonly { id: PreviewMode; label: string }[] = [
 
 function PreviewPane({
   theme,
-  warnings,
   worn,
 }: {
   theme: CustomTheme
-  warnings: number
   worn: boolean
 }) {
   const { resolved } = useTheme()
@@ -462,13 +479,53 @@ function PreviewPane({
         Changes apply immediately
         {worn ? " — you are wearing this theme" : ""}.
       </p>
-      {warnings > 0 && (
-        <Badge variant="destructive" className="w-fit">
-          <TriangleAlert />
-          {warnings} pair{warnings === 1 ? "" : "s"} below AA
-        </Badge>
-      )}
     </div>
+  )
+}
+
+const SYNC_CHIP: Record<
+  SyncStatus,
+  { title: string; hint: string; className: string }
+> = {
+  synced: {
+    title: "Saved",
+    hint: "Every change is saved to this server, so the theme follows the account and not the browser.",
+    className: "border-border text-muted-foreground",
+  },
+  syncing: {
+    title: "Saving…",
+    hint: "Writing your changes to the server.",
+    className: "border-primary/40 text-foreground",
+  },
+  offline: {
+    title: "Not synced",
+    hint: "The server is unreachable — edits stay on this device and are retried when it recovers.",
+    className: "border-destructive/50 text-destructive",
+  },
+}
+
+/** The write-through state of this theme's server row: saved, currently
+    flushing, or held locally because the server is unreachable. Owned by the
+    sync bridge (lib/custom-theme-sync), which is mounted at the app root, so a
+    theme being edited anywhere — this page, or another tab — reports the same
+    truth. */
+function ThemeSyncChip() {
+  const status = React.useSyncExternalStore(subscribeSyncStatus, syncStatusSnapshot, syncStatusSnapshot)
+  const chip = SYNC_CHIP[status]
+  const Icon = status === "syncing" ? CloudUpload : status === "offline" ? CloudOff : Check
+  const trigger = (
+    <span
+      className={cn("flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-medium", chip.className)}
+    >
+      <Icon className={cn("size-3", status === "syncing" && "animate-pulse")} />
+      {chip.title}
+    </span>
+  )
+  return (
+    <Tooltip>
+      <TooltipTrigger render={trigger} />
+      <TooltipContent>{chip.hint}</TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -535,7 +592,8 @@ function ThemeEditor({
     if (!theme) return
     const ok = await confirm({
       title: `Delete "${theme.name}"?`,
-      description: "The theme is removed from this device. Themes are not synced.",
+      description:
+        "The theme is deleted from the server, so it disappears everywhere it is synced. This cannot be undone.",
       confirmLabel: "Delete",
       destructive: true,
     })
@@ -553,9 +611,27 @@ function ThemeEditor({
     <>
       <FormPageHeader
         title={`Edit ${theme.name}`}
-        description="Type, shape and colour, for light and dark together. Changes apply immediately on this device."
+        description="Type, shape and colour, for light and dark together. Changes apply immediately and are saved to this server."
         onBack={onClose}
       />
+
+      {/* The theme's live state, at a glance: whether the server has the latest
+          edit, and how many contrast pairs fall short of AA — the two things
+          that are true of the theme no matter which tab you are on. Warnings
+          live here rather than under the preview so they survive the scroll. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <ThemeSyncChip />
+        {warnings > 0 && (
+          <Badge
+            variant="destructive"
+            className="w-fit"
+            title={`${warnings} foreground/surface pair${warnings === 1 ? "" : "s"} fall below WCAG AA body-text contrast in one mode or the other.`}
+          >
+            <TriangleAlert className="size-3" />
+            {warnings} pair{warnings === 1 ? "" : "s"} below AA
+          </Badge>
+        )}
+      </div>
 
       {/* The preview column grows with the frame rather than staying a fixed
           thumbnail: this page runs at the settings frame's full width
@@ -685,7 +761,7 @@ function ThemeEditor({
             controls and sticky from lg up, where it can stay in view for the
             whole length of the Color tab. */}
         <aside className="order-first min-w-0 lg:order-none lg:sticky lg:top-2 lg:max-h-[calc(var(--panel-h,100svh)-1rem)] lg:overflow-y-auto lg:pb-2">
-          <PreviewPane theme={theme} warnings={warnings} worn={worn} />
+          <PreviewPane theme={theme} worn={worn} />
         </aside>
       </div>
     </>

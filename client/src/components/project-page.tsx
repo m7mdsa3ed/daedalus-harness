@@ -281,7 +281,7 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
     thread. The live thread is the truth about a running turn, and
     `promptActive` is the only signal for one this client has never connected. */
 function threadStatus(session: SessionMeta, thread: ThreadState | undefined): ThreadActivity {
-  const waiting = !!thread && !!(thread.permission || thread.elicitation)
+  const waiting = !!thread && !!(thread.permissions.length > 0 || thread.elicitations.length > 0)
   return markFor(
     thread?.phase ?? IDLE_PHASE,
     thread?.turnActive ?? session.promptActive,

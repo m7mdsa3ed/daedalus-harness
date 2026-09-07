@@ -94,67 +94,66 @@ const toColumns = (input: HelperInput) => ({
   confirm: input.confirm === true,
 });
 
-export function listHelpers(projectId: string): HelperCommand[] {
-  return db
+export async function listHelpers(projectId: string): Promise<HelperCommand[]> {
+  return await (await db
     .select()
     .from(helpersTable)
-    .where(eq(helpersTable.projectId, projectId))
-    .all()
+    .where(eq(helpersTable.projectId, projectId)))
+    
     .map(rowToHelper)
     .sort((a, b) => a.createdAt - b.createdAt || a.name.localeCompare(b.name));
 }
 
 /** Every project's helpers, grouped — one query for the project list, which
     embeds them, rather than one per project. */
-export function helpersByProject(projectIds: string[]): Map<string, HelperCommand[]> {
+export async function helpersByProject(projectIds: string[]): Promise<Map<string, HelperCommand[]>> {
   const out = new Map<string, HelperCommand[]>();
   if (projectIds.length === 0) return out;
-  const rows = db
+  const rows = await (await db
     .select()
     .from(helpersTable)
-    .where(inArray(helpersTable.projectId, projectIds))
-    .all()
+    .where(inArray(helpersTable.projectId, projectIds)))
+    
     .map(rowToHelper)
     .sort((a, b) => a.createdAt - b.createdAt || a.name.localeCompare(b.name));
   for (const row of rows) out.set(row.projectId, [...(out.get(row.projectId) ?? []), row]);
   return out;
 }
 
-export function getHelper(projectId: string, helperId: string): HelperCommand | undefined {
-  const row = db
+export async function getHelper(projectId: string, helperId: string): Promise<HelperCommand | undefined> {
+  const row = (await db
     .select()
     .from(helpersTable)
     .where(and(eq(helpersTable.projectId, projectId), eq(helpersTable.id, helperId)))
-    .get();
+    .limit(1))[0];
   return row ? rowToHelper(row) : undefined;
 }
 
-export function addHelper(projectId: string, input: HelperInput): HelperCommand {
+export async function addHelper(projectId: string, input: HelperInput): Promise<HelperCommand> {
   const id = randomUUID();
-  db.insert(helpersTable)
-    .values({ id, projectId, ...toColumns(input), createdAt: Date.now() })
-    .run();
-  return getHelper(projectId, id)!;
+  await db.insert(helpersTable)
+    .values({ id, projectId, ...toColumns(input), createdAt: Date.now() });
+  return (await getHelper(projectId, id))!;
 }
 
-export function updateHelper(
+export async function updateHelper(
   projectId: string,
   helperId: string,
   input: HelperInput,
-): HelperCommand | undefined {
-  const changed = db
+): Promise<HelperCommand | undefined> {
+  const changed = ((await db
     .update(helpersTable)
     .set(toColumns(input))
     .where(and(eq(helpersTable.projectId, projectId), eq(helpersTable.id, helperId)))
-    .run().changes;
+    ).rowCount ?? 0);
   return changed > 0 ? getHelper(projectId, helperId) : undefined;
 }
 
-export function deleteHelper(projectId: string, helperId: string): boolean {
+export async function deleteHelper(projectId: string, helperId: string): Promise<boolean> {
   return (
-    db
+    ((await db
       .delete(helpersTable)
       .where(and(eq(helpersTable.projectId, projectId), eq(helpersTable.id, helperId)))
-      .run().changes > 0
+      ).rowCount ?? 0) > 0
   );
 }

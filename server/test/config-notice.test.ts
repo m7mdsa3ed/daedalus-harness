@@ -5,6 +5,7 @@
 // drawn during it. An idle change stays a silent `session_config`.
 // Run: pnpm test:config-notice (DAEDALUS_DATA_DIR is set by the npm script —
 // static imports are hoisted, so setting it here would be too late).
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { mkdirSync, rmSync } from "node:fs";
@@ -31,7 +32,7 @@ const { SessionManager } = await import("../src/sessions.js");
 {
   const { eq } = await import("drizzle-orm");
   const { db, agents: agentsTable } = await import("../src/db/index.js");
-  db.update(agentsTable).set({ personaVia: "acp-meta" }).where(eq(agentsTable.id, "fake")).run();
+  await db.update(agentsTable).set({ personaVia: "acp-meta" }).where(eq(agentsTable.id, "fake"));
 }
 
 class MockWs extends EventEmitter {
@@ -78,13 +79,13 @@ const project = {
 const send = (ws: MockWs, command: ThreadCommand) =>
   ws.emit("message", Buffer.from(JSON.stringify(command)));
 
-const waitFor = async (predicate: () => boolean, what: string) => {
-  for (let i = 0; i < 100 && !predicate(); i++) await new Promise((r) => setTimeout(r, 50));
-  assert.ok(predicate(), `timed out waiting for ${what}`);
+const waitFor = async (predicate: () => boolean | Promise<boolean>, what: string) => {
+  for (let i = 0; i < 100 && !(await predicate()); i++) await new Promise((r) => setTimeout(r, 50));
+  assert.ok(await predicate(), `timed out waiting for ${what}`);
 };
 
 const manager = new SessionManager({}, 1);
-const session = manager.create(profile, "fake", project);
+const session = await manager.create(profile, "fake", project);
 await session.bridge!.ready;
 
 const a = new MockWs();
@@ -187,7 +188,7 @@ assert.deepEqual(
   expected,
 );
 assert.deepEqual(
-  manager.journal(session.id)!.events.filter((e) => e.ev === "config_notice"),
+  ((await manager.journal(session.id))!).events.filter((e) => e.ev === "config_notice"),
   c.of("config_notice"),
   "the replay is the log",
 );

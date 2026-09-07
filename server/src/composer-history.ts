@@ -54,11 +54,11 @@ const row = (r: typeof historyTable.$inferSelect): ComposerHistoryEntry => ({
  * said this" and a phrase sent daily occupies one line instead of thirty. That
  * also makes the call idempotent enough for two devices racing the same send.
  */
-export function addComposerHistory(entry: {
+export async function addComposerHistory(entry: {
   text: string;
   sessionId?: string | null;
   threadTitle?: string | null;
-}): ComposerHistoryEntry | null {
+}): Promise<ComposerHistoryEntry | null> {
   const text = entry.text.trim().slice(0, MAX_TEXT);
   // An attachment-only send has no words to recall.
   if (!text) return null;
@@ -71,21 +71,21 @@ export function addComposerHistory(entry: {
     createdAt: Date.now(),
   };
 
-  db.transaction((tx) => {
-    tx.delete(historyTable).where(eq(historyTable.text, text)).run();
-    tx.insert(historyTable).values(value).run();
+  await db.transaction(async (tx) => {
+    await tx.delete(historyTable).where(eq(historyTable.text, text));
+    await tx.insert(historyTable).values(value);
     /* Trim to the cap by keeping the newest ids rather than deleting by age:
-       an `OFFSET` delete is what SQLite will not take directly, and the newest
-       N is the thing actually being defended. */
-    const keep = tx
-      .select({ id: historyTable.id })
-      .from(historyTable)
-      .orderBy(desc(historyTable.createdAt), desc(historyTable.id))
-      .limit(HISTORY_LIMIT)
-      .all()
-      .map((r) => r.id);
+       an `OFFSET` delete is not a thing either dialect takes directly, and the
+       newest N is what is actually being defended. */
+    const keep = (
+      await tx
+        .select({ id: historyTable.id })
+        .from(historyTable)
+        .orderBy(desc(historyTable.createdAt), desc(historyTable.id))
+        .limit(HISTORY_LIMIT)
+    ).map((r) => r.id);
     if (keep.length >= HISTORY_LIMIT) {
-      tx.delete(historyTable).where(notInArray(historyTable.id, keep)).run();
+      await tx.delete(historyTable).where(notInArray(historyTable.id, keep));
     }
   });
 
@@ -94,22 +94,27 @@ export function addComposerHistory(entry: {
 
 /** The newest `limit` prompts, newest first — the order the panel lists and
     the order Up walks (from the end). */
-export function listComposerHistory(limit: number = HISTORY_LIMIT): ComposerHistoryEntry[] {
-  return db
+export async function listComposerHistory(limit: number = HISTORY_LIMIT): Promise<ComposerHistoryEntry[]> {
+  return await (await db
     .select()
     .from(historyTable)
     .orderBy(desc(historyTable.createdAt), desc(historyTable.id))
-    .limit(Math.min(limit, HISTORY_LIMIT))
-    .all()
+    .limit(Math.min(limit, HISTORY_LIMIT)))
+    
     .map(row);
 }
 
 /** Forget one entry (`id`), everything older than `before` (ms), or — with
     neither — the whole history. Returns how many rows went. */
-export function clearComposerHistory(opts: { id?: string; before?: number } = {}): number {
-  if (opts.id) return db.delete(historyTable).where(eq(historyTable.id, opts.id)).run().changes;
-  if (opts.before !== undefined) {
-    return db.delete(historyTable).where(lt(historyTable.createdAt, opts.before)).run().changes;
+export async function clearComposerHistory(
+  opts: { id?: string; before?: number } = {},
+): Promise<number> {
+  if (opts.id) {
+    return (await db.delete(historyTable).where(eq(historyTable.id, opts.id))).rowCount ?? 0;
   }
-  return db.delete(historyTable).run().changes;
+  if (opts.before !== undefined) {
+    const gone = await db.delete(historyTable).where(lt(historyTable.createdAt, opts.before));
+    return gone.rowCount ?? 0;
+  }
+  return (await db.delete(historyTable)).rowCount ?? 0;
 }

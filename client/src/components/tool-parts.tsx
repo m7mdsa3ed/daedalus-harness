@@ -15,8 +15,10 @@ import type * as acp from "@daedalus/acp"
 import {
   ArrowLeftRightIcon,
   BrainIcon,
+  CheckIcon,
   ChevronRightIcon,
   ClipboardListIcon,
+  CopyIcon,
   CornerDownRightIcon,
   FileTextIcon,
   GlobeIcon,
@@ -44,6 +46,8 @@ import {
 import type { ToolItem } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { useViewOptionsContext } from "@/lib/view-options"
+import { writeClipboard } from "@/lib/clipboard"
+import { useCoarsePointer } from "@/hooks/use-mobile"
 
 export const KIND_LABELS: Record<string, string> = {
   read: "read",
@@ -219,6 +223,49 @@ const MarkdownLink = ({
     <a {...props} href={href} />
   )
 
+/* A fenced code block floats a copy affordance over its corner. The text is
+   read off the rendered <pre> at click time — rehype-highlight has already
+   split it into spans, and a streaming tail keeps rewriting them, so a
+   snapshot taken earlier would be stale. Hidden until hover for a fine
+   pointer (a transcript is dense with blocks); always shown for touch, which
+   has no hover. */
+const MarkdownPre = ({
+  node: _node,
+  ...props
+}: React.ComponentProps<"pre"> & { node?: unknown }) => {
+  const coarse = useCoarsePointer()
+  const [copied, setCopied] = React.useState(false)
+  const ref = React.useRef<HTMLPreElement>(null)
+
+  const copy = async () => {
+    try {
+      await writeClipboard(ref.current?.textContent ?? "")
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      /* Clipboard is permission-gated; the code is on screen either way. */
+    }
+  }
+
+  return (
+    <div className="group/code relative">
+      <pre ref={ref} {...props} />
+      <button
+        type="button"
+        aria-label={copied ? "Copied" : "Copy code"}
+        title={copied ? "Copied" : "Copy"}
+        onClick={() => void copy()}
+        className={cn(
+          "absolute top-1.5 right-1.5 flex size-6 items-center justify-center rounded-md border border-border/60 bg-popover/90 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:text-foreground focus-visible:outline-hidden",
+          coarse ? "opacity-100" : "opacity-0 group-hover/code:opacity-100 focus-visible:opacity-100",
+        )}
+      >
+        {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+      </button>
+    </div>
+  )
+}
+
 const MARKDOWN_COMPONENTS = {
   table: ({ node: _node, ...props }: React.ComponentProps<"table"> & { node?: unknown }) => (
     <div className="harness-table">
@@ -226,6 +273,7 @@ const MARKDOWN_COMPONENTS = {
     </div>
   ),
   a: MarkdownLink,
+  pre: MarkdownPre,
 } as never
 
 const INLINE_MARKDOWN_COMPONENTS = {

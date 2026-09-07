@@ -3,7 +3,7 @@ import { eq, inArray } from "drizzle-orm";
 import { DATA_DIR, type FcmConfig } from "./config.js";
 import { db, pushTokens, routineRuns, routines } from "./db/index.js";
 
-const listTokens = (): string[] => db.select({ token: pushTokens.token }).from(pushTokens).all().map((r) => r.token);
+const listTokens = async (): Promise<string[]> => await (await db.select({ token: pushTokens.token }).from(pushTokens)).map((r) => r.token);
 
 /** FCM's own cap on one `sendEachForMulticast` call. */
 const MULTICAST_LIMIT = 500;
@@ -38,20 +38,20 @@ function webpushTopic(title: string, sessionId: string | undefined): string {
  * Failures are swallowed: a notification that cannot name its routine is worth
  * strictly more than no notification at all.
  */
-function routineNameFor(sessionId: string | undefined): string | null {
+async function routineNameFor(sessionId: string | undefined): Promise<string | null> {
   if (!sessionId) return null;
   try {
-    const run = db
+    const run = (await db
       .select({ routineId: routineRuns.routineId })
       .from(routineRuns)
       .where(eq(routineRuns.sessionId, sessionId))
-      .get();
+      .limit(1))[0];
     if (!run) return null;
-    const routine = db
+    const routine = (await db
       .select({ name: routines.name })
       .from(routines)
       .where(eq(routines.id, run.routineId))
-      .get();
+      .limit(1))[0];
     return routine?.name ?? null;
   } catch {
     return null;
@@ -72,15 +72,15 @@ export class Push {
     return this.fcm ? { firebase: this.fcm.webConfig, vapidKey: this.fcm.vapidKey } : null;
   }
 
-  registerToken(token: string): void {
+  async registerToken(token: string): Promise<void> {
     // Re-registering the same device is the common case, not an error.
-    db.insert(pushTokens).values({ token, createdAt: Date.now() }).onConflictDoNothing().run();
+    await db.insert(pushTokens).values({ token, createdAt: Date.now() }).onConflictDoNothing();
   }
 
   /** Stop sending to one device. The counterpart to `registerToken`: without it
       turning notifications off in the client is a preference nothing acts on. */
-  unregisterToken(token: string): void {
-    db.delete(pushTokens).where(eq(pushTokens.token, token)).run();
+  async unregisterToken(token: string): Promise<void> {
+    await db.delete(pushTokens).where(eq(pushTokens.token, token));
   }
 
   async send(rawTitle: string, body: string, data: Record<string, string>): Promise<void> {
@@ -98,7 +98,7 @@ export class Push {
        say whose question it is — and so the `Topic` below is hashed from the
        rewritten title, which keeps two routines' notifications from collapsing
        onto each other while a phone is unreachable. */
-    const routine = routineNameFor(data.sessionId);
+    const routine = await routineNameFor(data.sessionId);
     const title = routine ? `${routine} — ${rawTitle}` : rawTitle;
     if (!this.messaging) {
       const { initializeApp, cert } = await import("firebase-admin/app");
@@ -110,7 +110,7 @@ export class Push {
         initializeApp({ credential: cert(isAbsolute(path) ? path : join(DATA_DIR, "..", path)) }),
       );
     }
-    const tokens = listTokens();
+    const tokens = await listTokens();
     if (tokens.length === 0) return;
     const dead: string[] = [];
     // `sendEachForMulticast` rejects outright above MULTICAST_LIMIT, so an
@@ -150,6 +150,6 @@ export class Push {
         }
       }
     }
-    if (dead.length) db.delete(pushTokens).where(inArray(pushTokens.token, dead)).run();
+    if (dead.length) await db.delete(pushTokens).where(inArray(pushTokens.token, dead));
   }
 }

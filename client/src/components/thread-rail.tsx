@@ -1,6 +1,7 @@
 /* ── Turn rail ──
-   A column of thin tick marks along the composer's trailing edge, one per
-   turn: hover to preview it, click to jump to it. On a touch screen the same
+   A column of thin tick marks along the transcript's left edge, centred in
+   it, one per turn: hover to preview it, click to jump to it. On a touch
+   screen the same
    strip is a scrubber — press it, and the tick under your finger lights up
    with its card; slide, and the selection walks the marks one detent at a
    time (the card names each as it passes); let go, and the transcript jumps
@@ -325,11 +326,13 @@ export function ThreadRail({
       <div
         ref={hostRef}
         aria-label="Turns"
-        /* Absolute along the card's right edge, bottom-anchored just above the
-           Send button: the rail adds no size to the composer. `pointer-events-none`
-           keeps the band from eating textarea taps — only the strip itself takes
-           the pointer. */
-        className="pointer-events-none absolute bottom-11 right-1 top-2 z-20 flex w-5 flex-col items-center"
+        /* Absolute against the transcript's left edge, centred in it: the rail
+           adds no size to the view and rides above the scroll without scrolling
+           with it. The height is bounded (a fraction of the view, capped) so a
+           long thread still fits and the strip's own overflow travel has a
+           track to work. `pointer-events-none` keeps the band from eating
+           transcript taps — only the strip itself takes the pointer. */
+        className="pointer-events-none absolute left-1 top-1/2 z-20 h-[min(70%,28rem)] w-5 -translate-y-1/2 flex flex-col items-center"
       >
         {/* The popover's anchor — the Positioner measures this element's rect
             to place the card, and needs real DOM to anchor to (a controlled
@@ -444,13 +447,13 @@ export function ThreadRail({
       {/* The native popover, anchored to the rail band: its Positioner flips
           the side and shifts the card off the window edges, so no half of the
           message can end up under the window whatever the tick — above the
-          keyboard, beside the composer, in one line of props instead of a
-          measurement loop. `modal={false}` and pointer-events off: it is a
+          keyboard, beside the rail, in one line of props instead of a
+          measurement loop. `modal={false}` and pointer events off: it is a
           readout, not a dialog — the scrub's own capture owns the pointer and
           a tap must still reach the tick beneath. Content swaps as the
           selection walks the detents; the positioner tracks the band. */}
       <PopoverContent
-        side="left"
+        side="right"
         align="center"
         sideOffset={8}
         className="pointer-events-none w-64 max-w-[70vw] border-border/60 bg-popover/95 p-2 text-xs shadow-md backdrop-blur-sm"

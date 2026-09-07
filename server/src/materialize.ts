@@ -135,8 +135,8 @@ function readManifest(path: string): string[] {
   }
 }
 
-function materializeSkills(skillsDir: string, skillIds: string[]): void {
-  const all = skillLibrary.list();
+async function materializeSkills(skillsDir: string, skillIds: string[]): Promise<void> {
+  const all = await skillLibrary.list();
   const paths = all.filter((s) => skillIds.includes(s.id)).map((s) => s.path);
   mkdirSync(skillsDir, { recursive: true });
   const manifestPath = join(skillsDir, SKILLS_MANIFEST);
@@ -197,8 +197,8 @@ function renderCommand(command: CommandDef, layout: WorkspaceLayout): string {
   return `${frontmatter}\n${MANAGED_MARKER}\n\n${command.content}\n`;
 }
 
-function materializeCommands(commandsDir: string, commandIds: string[], layout: WorkspaceLayout): void {
-  const linked = commandLibrary.list().filter((c) => commandIds.includes(c.id));
+async function materializeCommands(commandsDir: string, commandIds: string[], layout: WorkspaceLayout): Promise<void> {
+  const linked = (await commandLibrary.list()).filter((c) => commandIds.includes(c.id));
   mkdirSync(commandsDir, { recursive: true });
   for (const entry of readdirSync(commandsDir)) {
     if (!entry.endsWith(".md")) continue;

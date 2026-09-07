@@ -64,6 +64,24 @@ import { ChevronDownIcon } from "lucide-react"
 import { useCoarsePointer } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
 
+/* ── Chip badge ──
+   A small count or indicator that sits at the end of a chip label. Used to
+   surface live counts (queued messages, attachments, subagents) without
+   requiring the row to be open. Renders as a tiny pill with a number inside. */
+function ChipBadge({ count, className }: { count?: number; className?: string }) {
+  if (count == null || count <= 0) return null
+  return (
+    <span
+      className={cn(
+        "inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary/15 px-1 text-[9px] font-semibold tabular-nums leading-none text-primary",
+        className
+      )}
+    >
+      {count > 99 ? "99+" : count}
+    </span>
+  )
+}
+
 /** What a row tells the strip about itself, so the strip can speak for it. */
 type StripSummary = {
   id: string
@@ -75,6 +93,10 @@ type StripSummary = {
   icon?: React.ComponentType<{ className?: string }>
   /** Takes the rail while present — the row is a question, not a status. */
   urgent?: boolean
+  /** Optional numeric badge shown at the end of the chip. Rows that track
+      counts (attachments, queued messages, subagents) pass their count here
+      so the rail surface shows it even when the row is closed. */
+  badge?: number
 }
 
 /** A summary, plus where the row that reported it is mounted. */
@@ -98,6 +120,7 @@ const SUMMARY_ORDER = [
   "agents",
   "queue",
   "attachments",
+  "pastes",
   "history",
   "slash",
   "mention",
@@ -164,11 +187,12 @@ export function useStripSummary(summary: StripSummary | null) {
   const label = summary?.label
   const icon = summary?.icon
   const urgent = summary?.urgent
+  const badge = summary?.badge
 
   React.useEffect(() => {
     if (!strip || !id) return
-    strip.register({ id, label: label ?? "", icon, urgent, slot })
-  }, [strip, id, label, icon, urgent, slot])
+    strip.register({ id, label: label ?? "", icon, urgent, badge, slot })
+  }, [strip, id, label, icon, urgent, badge, slot])
 
   /* Unregistering is its own effect keyed on the id alone: folded into the one
      above it would drop the row off the rail and re-add it on every label
@@ -210,6 +234,7 @@ export function ComposerStrip({ className, children, ...props }: React.Component
         current.label === entry.label &&
         current.icon === entry.icon &&
         current.urgent === entry.urgent &&
+        current.badge === entry.badge &&
         current.slot === entry.slot
       ) {
         return prev
@@ -394,7 +419,7 @@ export function ComposerStrip({ className, children, ...props }: React.Component
               // px-1.5: half the strip's own gutter, because the chips carry
               // the other half in their own padding and a chip's wash should
               // start where a row's text starts.
-              "relative flex items-center gap-1 overflow-x-auto px-1.5 py-1.5",
+              "relative flex items-center gap-1 overflow-x-auto px-1.5 py-1",
               "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             )}
           >
@@ -402,7 +427,7 @@ export function ComposerStrip({ className, children, ...props }: React.Component
               <span
                 aria-hidden
                 className={cn(
-                  "pointer-events-none absolute left-0 top-0 rounded-lg bg-accent",
+                  "pointer-events-none absolute left-0 top-0 rounded-md bg-accent shadow-sm",
                   !pill.first && "harness-strip-pill"
                 )}
                 style={{
@@ -428,17 +453,24 @@ export function ComposerStrip({ className, children, ...props }: React.Component
                   aria-label={entry.label}
                   onClick={() => setPicked(open && !entry.urgent ? null : entry.id)}
                   className={cn(
-                    "harness-strip-chip relative z-10 flex min-w-0 shrink-0 items-center gap-1.5 rounded-lg text-[11px] transition-colors",
-                    coarse ? "h-8 px-2.5" : "h-6 px-2",
+                    "harness-strip-chip relative z-10 flex min-w-0 shrink-0 items-center gap-1 rounded-md text-[11px] transition-all duration-150",
+                    coarse ? "h-8 px-3" : "h-[1.625rem] px-2.5",
                     open
-                      ? "text-foreground"
-                      : "text-muted-foreground hover:bg-accent/40 hover:text-foreground",
+                      ? "bg-accent text-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
                     // The waiting row keeps its colour on the rail: "3 commands"
                     // while you are arrow-keying through them is not a status.
                     entry.urgent && "text-primary"
                   )}
                 >
-                  {entry.icon && <entry.icon className="size-3 shrink-0" />}
+                  {entry.icon && (
+                    <entry.icon
+                      className={cn(
+                        "size-3 shrink-0 transition-colors",
+                        open ? "text-foreground" : "text-muted-foreground"
+                      )}
+                    />
+                  )}
                   {/* In a narrow panel the rail has room for one set of words,
                       and four labels sharing it truncated all four into
                       initials. So the open chip — and any row actually waiting
@@ -447,12 +479,15 @@ export function ComposerStrip({ className, children, ...props }: React.Component
                       reads in full from `@panel-sm` up. */}
                   <span
                     className={cn(
-                      "max-w-40 min-w-0 truncate",
+                      "max-w-36 min-w-0 truncate font-medium",
                       !open && !entry.urgent && "hidden @panel-sm:inline"
                     )}
                   >
                     {entry.label}
                   </span>
+                  {entry.badge != null && entry.badge > 0 && (
+                    <ChipBadge count={entry.badge} />
+                  )}
                   {open && (
                     <ChevronDownIcon
                       aria-hidden
@@ -502,6 +537,8 @@ export function ComposerStrip({ className, children, ...props }: React.Component
     </StripContext.Provider>
   )
 }
+
+export { ChipBadge }
 
 /** One shelf entry. Rows divide themselves so the strip stays layout-only.
  *

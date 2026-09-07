@@ -20,8 +20,10 @@ import type { SessionStore } from "./persistence.js";
 import { PROVIDER_OPTIONS_KEY, type ModelFactory } from "./provider.js";
 import {
   PAUSED_NOTIFICATION,
+  RETRY_NOTIFICATION,
   type ErrorHold,
   type PausedNotification,
+  type RetryNotification,
   type Release,
 } from "./hold.js";
 import type { Session } from "./session.js";
@@ -107,6 +109,18 @@ export async function handlePrompt(
       process.stderr.write(`compaction failed: ${errorText(err)}\n`);
       return false;
     }
+  };
+
+  /* Whether a retry has been announced and not yet taken back. The notice is
+     absolute, so the clearing one is owed exactly where one went out — and it
+     is owed on *every* way out, including the throw, which is why this lives
+     outside the try and is swept by its `finally` rather than paired with each
+     `return`. */
+  let retryAnnounced = false;
+  const clearRetry = async (): Promise<void> => {
+    if (!retryAnnounced) return;
+    retryAnnounced = false;
+    await notifyRetry(ctx, { sessionId: session.id, attempt: null });
   };
 
   try {
@@ -314,6 +328,10 @@ export async function handlePrompt(
              result is a message most providers refuse outright. */
           settled = settledPrefix(generated);
         } else {
+          /* The attempt worked, so whatever was said about retrying is over —
+             taken back here rather than at the return, because a mid-turn
+             compaction carries on round the loop without one. */
+          await clearRetry();
           /* Persisted only now that the attempt is known to have produced an
              answer — and on the failing path, only down to the last settled
              step (`rollback`). Written before the check, a failed attempt left
@@ -360,8 +378,20 @@ export async function handlePrompt(
 
       if (isRetriableStreamError(failure) && attempt < MAX_STREAM_RETRIES) {
         attempt++;
+        const delayMs = STREAM_RETRY_BASE_MS * 2 ** (attempt - 1);
         process.stderr.write(`stream retry ${attempt}/${MAX_STREAM_RETRIES}\n`);
-        await new Promise((r) => setTimeout(r, STREAM_RETRY_BASE_MS * 2 ** (attempt - 1)));
+        /* Said before the wait, not after it: the backoff is most of the
+           silence, and a notice that arrives when the next attempt starts
+           explains a pause that has already happened. */
+        retryAnnounced = true;
+        await notifyRetry(ctx, {
+          sessionId: session.id,
+          attempt,
+          of: MAX_STREAM_RETRIES,
+          delayMs,
+          ...describeHold(failure),
+        });
+        await new Promise((r) => setTimeout(r, delayMs));
         continue;
       }
 
@@ -370,6 +400,10 @@ export async function handlePrompt(
          or the profile, which the harness can do on the running process. The
          next pass re-reads `session.modelId`, so the change is the whole of
          what makes the retry different. */
+      /* Out of retries, so the retry notice is not merely stale — the hold
+         about to go out is the same failure said again, and two live states
+         describing one turn is one of them drawn over the other. */
+      await clearRetry();
       if (!session.holdOnError) throw failure;
       const release = await holdForFailure(ctx, session, failure, abort.signal);
       if (release === "released") {
@@ -392,6 +426,9 @@ export async function handlePrompt(
   } finally {
     session.turnActive = false;
     session.abort = null;
+    /* Whatever ended the turn — an answer, a throw, a cancel — it is not
+       retrying any more. Fire-and-forget: this block must not become async. */
+    void clearRetry();
     /* Steering that arrived too late to join a step still becomes context the
        next turn sees, rather than words that vanish. */
     if (session.steerQueue.length) {
@@ -436,6 +473,17 @@ async function notifyPaused(ctx: acp.AgentContext, params: PausedNotification): 
     await ctx.notify(PAUSED_NOTIFICATION, params as unknown as never);
   } catch {
     // The connection is going away; `close()` on the other side settles the turn.
+  }
+}
+
+/** The same bargain for a retry: best-effort, because a retry nobody could be
+    told about is still a retry and throwing here would end the turn on the
+    reporting rather than on the failure. */
+async function notifyRetry(ctx: acp.AgentContext, params: RetryNotification): Promise<void> {
+  try {
+    await ctx.notify(RETRY_NOTIFICATION, params as unknown as never);
+  } catch {
+    // See `notifyPaused`.
   }
 }
 

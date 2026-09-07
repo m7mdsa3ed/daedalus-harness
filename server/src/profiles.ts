@@ -10,7 +10,7 @@ import {
   type ProfileAgentLink,
   type ProfileUsage,
 } from "./db/index.js";
-import { PROFILE_LINKS, emptyLinks, linksOf, readLinks, writeLinks } from "./db/links.js";
+import { PROFILE_LINKS, emptyLinks, linksOf, readLinks, writeLinks, type LinkSet } from "./db/links.js";
 
 // A profile is the PROVIDER configuration used in a session (credentials,
 // models); the workspace side lives in projects.ts. It is not bound to one
@@ -168,7 +168,7 @@ export function profileBaseUrl(profile: Profile, agentId: string): string {
 
 /** A row plus its links, with the nullable columns read back as the empty
     strings the schema defaults them to. */
-function toProfile(row: Record<string, unknown>, links = linksOf(PROFILE_LINKS, row.id as string)): Profile {
+function toProfile(row: Record<string, unknown>, links: LinkSet): Profile {
   const { id, ...rest } = row;
   return {
     ...links,
@@ -185,9 +185,9 @@ function toProfile(row: Record<string, unknown>, links = linksOf(PROFILE_LINKS, 
 }
 
 /** Stored profiles only. `listProfiles` is what the API and spawning use. */
-function storedProfiles(): Profile[] {
-  const rows = db.select().from(profilesTable).all();
-  const links = readLinks(PROFILE_LINKS, rows.map((r) => r.id));
+async function storedProfiles(): Promise<Profile[]> {
+  const rows = await db.select().from(profilesTable);
+  const links = await readLinks(PROFILE_LINKS, rows.map((r) => r.id));
   return rows.map((row) => toProfile(row, links.get(row.id) ?? emptyLinks()));
 }
 
@@ -199,17 +199,17 @@ function storedProfiles(): Profile[] {
  * the only way back to it once a profile exists would otherwise be deleting the
  * profile. It sorts first because it is the baseline the others depart from.
  */
-export function listProfiles(agents: { id: string; name?: string }[] = []): Profile[] {
+export async function listProfiles(agents: { id: string; name?: string }[] = []): Promise<Profile[]> {
   const virtual = agents.map((agent) => defaultProfileFor(agent.id, agent.name));
-  return [...virtual, ...storedProfiles()];
+  return [...virtual, ...(await storedProfiles())];
 }
 
-export function getProfile(id: string): Profile | undefined {
+export async function getProfile(id: string): Promise<Profile | undefined> {
   if (isVirtualProfile(id)) {
     return defaultProfileFor(id.slice(DEFAULT_PROFILE_PREFIX.length));
   }
-  const row = db.select().from(profilesTable).where(eq(profilesTable.id, id)).get();
-  return row ? toProfile(row) : undefined;
+  const row = (await db.select().from(profilesTable).where(eq(profilesTable.id, id)).limit(1))[0];
+  return row ? toProfile(row, await linksOf(PROFILE_LINKS, id)) : undefined;
 }
 
 /** Secrets never leave the server: each key is replaced by a boolean the client
@@ -233,13 +233,13 @@ function columnsOf(profile: Profile) {
   return columns;
 }
 
-export function createProfile(input: ProfileInput): Profile {
+export async function createProfile(input: ProfileInput): Promise<Profile> {
   const profile: Profile = { id: randomUUID(), ...input };
-  db.transaction((tx) => {
-    tx.insert(profilesTable).values(columnsOf(profile)).run();
-    writeLinks(tx, PROFILE_LINKS, profile.id, profile);
+  await db.transaction(async (tx) => {
+    await tx.insert(profilesTable).values(columnsOf(profile));
+    await writeLinks(tx, PROFILE_LINKS, profile.id, profile);
   });
-  return getProfile(profile.id)!;
+  return (await getProfile(profile.id))!;
 }
 
 /** The usage block as saved, with an empty `apiKey` reading as "keep the stored
@@ -253,9 +253,9 @@ function keepUsageKey(next: ProfileInput["usage"], previous: ProfileUsage | null
   return { ...next, apiKey: next.apiKey || previous?.apiKey || "" };
 }
 
-export function updateProfile(id: string, input: ProfileInput): Profile | undefined {
+export async function updateProfile(id: string, input: ProfileInput): Promise<Profile | undefined> {
   if (isVirtualProfile(id)) return undefined;
-  const existing = db.select().from(profilesTable).where(eq(profilesTable.id, id)).get();
+  const existing = (await db.select().from(profilesTable).where(eq(profilesTable.id, id)).limit(1))[0];
   if (!existing) return undefined;
   // Empty apiKey in an update means "keep the stored key" (the client never sees it).
   const updated: Profile = {
@@ -264,24 +264,24 @@ export function updateProfile(id: string, input: ProfileInput): Profile | undefi
     apiKey: input.apiKey || existing.apiKey,
     usage: keepUsageKey(input.usage, existing.usage),
   };
-  db.transaction((tx) => {
-    tx.update(profilesTable).set(columnsOf(updated)).where(eq(profilesTable.id, id)).run();
-    writeLinks(tx, PROFILE_LINKS, id, updated);
+  await db.transaction(async (tx) => {
+    await tx.update(profilesTable).set(columnsOf(updated)).where(eq(profilesTable.id, id));
+    await writeLinks(tx, PROFILE_LINKS, id, updated);
     /* The probe cache is keyed `profileId:agentId:cwd`, and the answer depends
        on what was just edited (a new base URL is a new gateway catalog, a new
        key may change what it serves). A stale row would keep answering the
        draft menu until someone found `?refresh=1`. */
-    tx.delete(agentOptionsTable).where(like(agentOptionsTable.key, `${id}:%`)).run();
+    await tx.delete(agentOptionsTable).where(like(agentOptionsTable.key, `${id}:%`));
     /* Same argument, and it did not apply before this profile could name a usage
        provider: the quota cache expires on a TTL because a quota moves on its
        own, but an edit to the credentials or the provider makes the cached
        number an answer about a different account, which no TTL covers. */
-    tx.delete(agentQuotaTable).where(like(agentQuotaTable.key, `${id}:%`)).run();
+    await tx.delete(agentQuotaTable).where(like(agentQuotaTable.key, `${id}:%`));
   });
-  return getProfile(id);
+  return await getProfile(id);
 }
 
-export function deleteProfile(id: string): boolean {
+export async function deleteProfile(id: string): Promise<boolean> {
   if (isVirtualProfile(id)) return false;
-  return db.delete(profilesTable).where(eq(profilesTable.id, id)).run().changes > 0;
+  return ((await db.delete(profilesTable).where(eq(profilesTable.id, id))).rowCount ?? 0) > 0;
 }

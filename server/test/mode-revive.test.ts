@@ -2,6 +2,7 @@
 // process to copy from, the respawn restores the recorded mode instead of
 // coming back on the agent's default.
 // Run: DAEDALUS_DATA_DIR=/tmp/daedalus-test-mode-revive tsx test/mode-revive.test.ts
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { rmSync } from "node:fs";
@@ -68,15 +69,15 @@ const project = {
 const send = (ws: MockWs, command: ThreadCommand) =>
   ws.emit("message", Buffer.from(JSON.stringify(command)));
 
-const waitFor = async (predicate: () => boolean, what: string) => {
-  for (let i = 0; i < 100 && !predicate(); i++) await new Promise((r) => setTimeout(r, 50));
-  assert.ok(predicate(), `timed out waiting for ${what}`);
+const waitFor = async (predicate: () => boolean | Promise<boolean>, what: string) => {
+  for (let i = 0; i < 100 && !(await predicate()); i++) await new Promise((r) => setTimeout(r, 50));
+  assert.ok(await predicate(), `timed out waiting for ${what}`);
 };
 
 const manager = new SessionManager({}, 1);
 
 // A draft pick applies right after session/new and is recorded on the thread.
-const session = manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, {
+const session = await manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, {
   modeId: "acceptEdits",
 });
 await session.bridge!.ready;

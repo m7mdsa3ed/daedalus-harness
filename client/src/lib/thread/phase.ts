@@ -491,34 +491,66 @@ export function markFor(
 }
 
 /**
- * The line at the foot of a transcript that is not ready yet, and the bar under
- * it when there is a number behind the wait.
+ * The line at the foot of a transcript that is not ready yet, the sentence
+ * under it saying what that means, and the bar when there is a number behind
+ * the wait.
  *
  * Each phase says what it is actually doing, where the old line inferred a stage
  * from `draft` plus the presence of a replay total and got it wrong in both
  * directions: it said "Spawning the agent…" for a draft that was already past
  * the spawn, and it blamed "a long conversation" for a wait that was frequently
  * the network.
+ *
+ * `detail` is mandatory, and that is the point. Every one of these headlines is
+ * a term of art — spawning, reviving, replaying, attaching are four distinct
+ * things to this codebase and one thing ("it is thinking about something") to a
+ * reader, who is left to guess whether the wait is their fault, whether
+ * anything was lost, and whether it is going to end. The sentence answers those
+ * three, so a phase cannot be added without saying what it means. `slowLine`
+ * replaces it once the wait has gone on long enough to need a different
+ * sentence.
  */
 export function startingLine(
   phase: ConnPhase
-): { text: string; bar?: { done: number; total: number } } | null {
+): { text: string; detail: string; bar?: { done: number; total: number } } | null {
   switch (phase.kind) {
     case "starting":
-      return { text: "Spawning the agent…" }
+      return {
+        text: "Spawning the agent…",
+        detail:
+          "The agent runs as its own program. The server is launching it and agreeing what it can do, which is the slow part of a new thread.",
+      }
     case "reviving":
-      return { text: "Restarting the agent…" }
+      return {
+        text: "Restarting the agent…",
+        detail:
+          "This thread's agent had stopped — threads nobody is reading are retired to free the process, and a server restart ends them all. Nothing was lost: it is being started again and told the conversation so far.",
+      }
     case "loading":
-      return { text: "Reading this conversation…" }
+      return {
+        text: "Reading this conversation…",
+        detail:
+          "Fetching the transcript from the server. Nothing is connected yet, because reading a thread does not need a running agent.",
+      }
     case "replaying":
       return {
         text: "Loading this conversation…",
+        detail:
+          "Rebuilding the transcript from the server's record of it, oldest message first. A long conversation takes a moment.",
         bar: phase.total > 0 ? { done: phase.done, total: phase.total } : undefined,
       }
     case "attaching":
-      return { text: "Connecting…" }
+      return {
+        text: "Connecting…",
+        detail:
+          "The transcript is up to date. This is the live connection opening behind it — the one that carries new messages as the agent writes them.",
+      }
     case "reconnecting":
-      return { text: `Reconnecting — attempt ${phase.attempt} of ${phase.max}…` }
+      return {
+        text: `Reconnecting — attempt ${phase.attempt} of ${phase.max}…`,
+        detail:
+          "The connection to the server dropped. The agent keeps working either way, so this reattaches to the thread rather than restarting anything.",
+      }
     default:
       return null
   }
@@ -556,13 +588,16 @@ export function describePhase(phase: ConnPhase): string {
   }
 }
 
-/** The second line a wait is allowed to add once it has gone on long enough to
-    need explaining. Null when the phase already carries a number. */
+/** What a wait says *beside* its `startingLine` detail once it has gone on
+    long enough that "is this ever going to end" joins "what this means" as the
+    reader's question. Null when the phase already carries a number the reader
+    can watch move, which answers that on its own. */
 export function slowLine(phase: ConnPhase): string | null {
   switch (phase.kind) {
     case "starting":
-    case "reviving":
       return "Still starting — the first launch of an agent can take a while."
+    case "reviving":
+      return "Still restarting — starting the agent again can take a while."
     case "loading":
     case "attaching":
       return "Still connecting — the server hasn't sent this thread's history yet."

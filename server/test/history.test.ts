@@ -4,6 +4,7 @@
 // first, removing files the target did not have, and a no-op onto HEAD's own
 // tree. Against a real repository under DATA_DIR.
 // Run: pnpm test:history
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -44,7 +45,7 @@ writeFileSync(join(root, "b.txt"), "b\n");
 git("add", "-A");
 git("commit", "-q", "-m", "Add b and a line");
 
-const project = createProject({ name: "history", cwd: root, description: null, logoUrl: "" });
+const project = await createProject({ name: "history", cwd: root, description: null, logoUrl: "" });
 
 await test("log lists newest first with shortstat", async () => {
   const commits = await log(project.id);
@@ -105,7 +106,7 @@ await test("log on a repository with no commits is empty", async () => {
   rmSync(bare, { recursive: true, force: true });
   mkdirSync(bare, { recursive: true });
   execFileSync("git", ["init", "-q"], { cwd: bare });
-  const p = createProject({ name: "empty", cwd: bare, description: null, logoUrl: "" });
+  const p = await createProject({ name: "empty", cwd: bare, description: null, logoUrl: "" });
   try {
     assert.deepEqual(await log(p.id), []);
   } finally {

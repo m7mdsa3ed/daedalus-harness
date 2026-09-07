@@ -41,6 +41,17 @@ export interface ServerConfig {
   token: string;
   host: string;
   port: number;
+  /**
+   * The Postgres the harness stores everything in.
+   *
+   * `DATABASE_URL` wins over the file, for the same reason `DAEDALUS_HOST` and
+   * `DAEDALUS_PORT` do: a process manager or a container decides where the
+   * database is, and it must not need this file edited — or rewritten under a
+   * second instance reading the same data dir. Unset everywhere falls back to
+   * a local server and the `daedalus` database, which is what a first run on a
+   * developer machine wants.
+   */
+  databaseUrl: string;
   /** Minutes a session survives with no client attached before its process is killed. */
   sessionIdleMinutes: number;
   /** Days a *retired* thread's event log is kept so the transcript can be read
@@ -70,7 +81,7 @@ export interface ServerConfig {
 }
 
 /*
- * Everything else the harness stores now lives in SQLite (see db/schema.ts).
+ * Everything else the harness stores now lives in Postgres (see db/schema.ts).
  * config.json stays a file on purpose: it is bootstrap — the port and host the
  * server binds to, the token it prints, the path to a Firebase service account —
  * and it is the one thing a person edits by hand, sometimes to recover a server
@@ -82,6 +93,18 @@ export interface ServerConfig {
  * (db/index.ts).
  */
 const CONFIG_PATH = join(DATA_DIR, "config.json");
+
+/** No credentials and a local server: a first run should not have to be
+    configured before it can boot. Anything else is `DATABASE_URL`. */
+export const DEFAULT_DATABASE_URL = "postgres://postgres@localhost:5432/daedalus";
+
+/** The connection string, without loading (or seeding a token into) the rest
+    of the config: `db/index.ts` runs before anything else and must not be the
+    thing that writes config.json. Env wins over the file. */
+export function databaseUrl(): string {
+  const existing = readJson<Partial<ServerConfig>>(CONFIG_PATH, {});
+  return process.env.DATABASE_URL ?? existing.databaseUrl ?? DEFAULT_DATABASE_URL;
+}
 
 export function readJson<T>(path: string, fallback: T): T {
   // A torn write leaves the file unparseable; the previous good copy is next to
@@ -117,6 +140,8 @@ export function loadConfig(): ServerConfig {
     // reading the same data dir. Everything else stays the file's.
     host: process.env.DAEDALUS_HOST ?? existing.host ?? "0.0.0.0",
     port: Number(process.env.DAEDALUS_PORT ?? process.env.PORT) || existing.port || 8791,
+    databaseUrl:
+      process.env.DATABASE_URL ?? existing.databaseUrl ?? DEFAULT_DATABASE_URL,
     sessionIdleMinutes: existing.sessionIdleMinutes ?? 30,
     sessionJournalRetentionDays: existing.sessionJournalRetentionDays ?? 30,
     ...(existing.mcpOauthRedirectBase ? { mcpOauthRedirectBase: existing.mcpOauthRedirectBase } : {}),
@@ -125,7 +150,13 @@ export function loadConfig(): ServerConfig {
   };
   // Seeding a token writes the file; write what the file says, not the env
   // override, so a pm2 port does not become the on-disk default.
-  if (!existing.token) writeJson(CONFIG_PATH, { ...config, host: existing.host ?? "0.0.0.0", port: existing.port ?? 8791 });
+  if (!existing.token)
+    writeJson(CONFIG_PATH, {
+      ...config,
+      host: existing.host ?? "0.0.0.0",
+      port: existing.port ?? 8791,
+      databaseUrl: existing.databaseUrl ?? DEFAULT_DATABASE_URL,
+    });
   return config;
 }
 

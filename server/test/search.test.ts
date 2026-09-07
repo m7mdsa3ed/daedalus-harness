@@ -9,6 +9,7 @@
 //   - deleteSearchIndex drops a session's rows (revive/purge path).
 //   - backfillSearchIndex indexes pre-existing journal rows exactly once.
 // Run: pnpm test:search
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -81,26 +82,26 @@ await test("ftsQuery neutralizes FTS5 syntax", () => {
 
 // An empty database: the backfill marks itself done, so the rows the tests
 // index by hand below are never double-indexed by a second walk.
-await test("backfill on an empty journal is a no-op that marks done", () => {
-  backfillSearchIndex();
-  backfillSearchIndex(); // idempotent
+await test("backfill on an empty journal is a no-op that marks done", async () => {
+  (await backfillSearchIndex());
+  (await backfillSearchIndex()); // idempotent
 });
 
 const now = Date.now();
-const session = (id: string, title: string, projectId: string, deletedAt: number | null = null) =>
-  db.insert(schema.sessions).values({
+const session = async (id: string, title: string, projectId: string, deletedAt: number | null = null) =>
+  await db.insert(schema.sessions).values({
     id, profileId: "prof", projectId, agentId: "fake-echo", model: "", effort: "",
     title, createdAt: now, deletedAt,
-  }).run();
+  });
 
-db.insert(schema.projects).values({ id: "proj-1", name: "Harness", cwd: "/tmp" }).run();
+await db.insert(schema.projects).values({ id: "proj-1", name: "Harness", cwd: "/tmp" });
 session("s-alpha", "Login fixes", "proj-1");
 session("s-beta", "Deploy notes", "proj-none");
 session("s-gone", "Trashed", "proj-1", now);
 
-const journal = (sessionId: string, seq: number, payload: object, at: number) => {
+const journal = async (sessionId: string, seq: number, payload: object, at: number) => {
   const kind = (payload as { ev: string }).ev;
-  db.insert(schema.sessionEvents).values({ sessionId, seq, kind, payload, at }).run();
+  await db.insert(schema.sessionEvents).values({ sessionId, seq, kind, payload, at });
   indexEventRow(db, { sessionId, seq, kind, payload, at });
 };
 
@@ -109,56 +110,56 @@ journal("s-alpha", 1, chunk("agent_message_chunk", "the login redirect loops bec
 journal("s-beta", 0, chunk("agent_message_chunk", "deploy went fine, no login issues at all"), now - 1000);
 journal("s-gone", 0, chunk("agent_message_chunk", "login secrets of a trashed thread"), now - 500);
 
-await test("searchEvents: shape, markers, resolution, order, trash filter", () => {
-  const results = searchEvents("login");
+await test("searchEvents: shape, markers, resolution, order, trash filter", async () => {
+  const results = await searchEvents("login");
   assert.ok(results.length >= 3, `expected hits, got ${results.length}`);
   // Newest first: s-beta's event is the most recent live one.
   assert.equal(results[0].sessionId, "s-beta");
   assert.equal(results[0].projectName, "", "unknown project resolves to empty, not a throw");
-  const alpha = results.find((r) => r.sessionId === "s-alpha" && r.seq === 1);
+  const alpha = (await results).find((r) => r.sessionId === "s-alpha" && r.seq === 1);
   assert.ok(alpha, "agent prose is searchable");
   assert.equal(alpha!.title, "Login fixes");
   assert.equal(alpha!.projectId, "proj-1");
   assert.equal(alpha!.projectName, "Harness");
   assert.ok(alpha!.snippet.includes(`${SNIPPET_START}login${SNIPPET_END}`), `marked snippet, got: ${alpha!.snippet}`);
-  assert.ok(!results.some((r) => r.sessionId === "s-gone"), "trashed threads are not searched");
+  assert.ok(!(await results).some((r) => r.sessionId === "s-gone"), "trashed threads are not searched");
 });
 
-await test("prefix search and operator input", () => {
-  assert.ok(searchEvents("redir").some((r) => r.sessionId === "s-alpha"), "last term matches as a prefix");
+await test("prefix search and operator input", async () => {
+  assert.ok((await searchEvents("redir")).some((r) => r.sessionId === "s-alpha"), "last term matches as a prefix");
   // Raw operators must not throw — merely match or not.
-  assert.doesNotThrow(() => searchEvents('"login AND (NEAR'));
-  assert.deepEqual(searchEvents('""'), []);
+  assert.doesNotThrow(async () => (await searchEvents('"login AND (NEAR')));
+  assert.deepEqual((await searchEvents('""')), []);
 });
 
-await test("one thread cannot fill the page", () => {
+await test("one thread cannot fill the page", async () => {
   for (let seq = 2; seq < 12; seq++) {
     journal("s-alpha", seq, chunk("agent_message_chunk", `still poking at login attempt ${seq}`), now - 100 + seq);
   }
-  const hits = searchEvents("login").filter((r) => r.sessionId === "s-alpha");
+  const hits = (await searchEvents("login")).filter((r) => r.sessionId === "s-alpha");
   assert.equal(hits.length, 3);
 });
 
-await test("deleteSearchIndex drops a session's rows", () => {
+await test("deleteSearchIndex drops a session's rows", async () => {
   deleteSearchIndex(["s-alpha"]);
-  assert.ok(!searchEvents("login").some((r) => r.sessionId === "s-alpha"));
-  assert.ok(searchEvents("deploy").some((r) => r.sessionId === "s-beta"), "other sessions untouched");
+  assert.ok(!(await searchEvents("login")).some((r) => r.sessionId === "s-alpha"));
+  assert.ok((await searchEvents("deploy")).some((r) => r.sessionId === "s-beta"), "other sessions untouched");
 });
 
 await test("backfill indexes journal rows the index has never seen, once", async () => {
   const { sql } = await import("drizzle-orm");
   session("s-old", "Archived wisdom", "proj-1");
-  db.insert(schema.sessionEvents).values({
+  await db.insert(schema.sessionEvents).values({
     sessionId: "s-old", seq: 0, kind: "update",
     payload: chunk("agent_message_chunk", "an ancient zanzibar reference"), at: now,
-  }).run();
+  });
   // Reset the marker the way an upgraded install arrives: rows exist, no index.
-  db.run(sql`delete from search_meta where key = 'fts_backfill'`);
-  db.run(sql`delete from session_events_fts`);
-  backfillSearchIndex();
-  assert.equal(searchEvents("zanzibar").length, 1);
-  backfillSearchIndex(); // marked done — must not double-index
-  assert.equal(searchEvents("zanzibar").length, 1);
+  await db.execute(sql`delete from search_meta where key = 'fts_backfill'`);
+  await db.execute(sql`delete from session_events_fts`);
+  await backfillSearchIndex();
+  assert.equal((await searchEvents("zanzibar")).length, 1);
+  await backfillSearchIndex(); // marked done — must not double-index
+  assert.equal((await searchEvents("zanzibar")).length, 1);
 });
 
 if (failures.length) {

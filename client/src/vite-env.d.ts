@@ -20,3 +20,8 @@ interface NotificationOptions {
   vibrate?: number | number[]
   timestamp?: number
 }
+
+/** The app's version, defined by vite.config.ts from the root package.json —
+    the build this device is running, shown beside the server's in Settings ›
+    General's About group. */
+declare const __APP_VERSION__: string

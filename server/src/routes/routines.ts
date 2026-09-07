@@ -68,22 +68,22 @@ const FireInput = z.object({
 export function routineRoutes(app: Hono, deps: { engine: RoutineEngine }): void {
   const { engine } = deps;
 
-  app.get("/api/routines", (c) => c.json(listRoutines()));
+  app.get("/api/routines", async (c) => c.json(await listRoutines()));
 
   app.post("/api/routines", async (c) => {
     const parsed = RoutineInputSchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-    return routine(c, () => createRoutine(parsed.data), 201);
+    return routine(c, async () => await createRoutine(parsed.data), 201);
   });
 
   app.patch("/api/routines/:id", async (c) => {
     const parsed = RoutinePatchSchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-    return routine(c, () => updateRoutine(c.req.param("id"), parsed.data));
+    return routine(c, async () => await updateRoutine(c.req.param("id"), parsed.data));
   });
 
-  app.delete("/api/routines/:id", (c) =>
-    deleteRoutine(c.req.param("id")) ? c.json({ ok: true }) : c.json({ error: "unknown routine" }, 404),
+  app.delete("/api/routines/:id", async (c) =>
+    (await deleteRoutine(c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "unknown routine" }, 404),
   );
 
   /* Run now. Answers as soon as the run row exists, not when the run is over —
@@ -135,31 +135,31 @@ export function routineRoutes(app: Hono, deps: { engine: RoutineEngine }): void 
   app.patch("/api/routines/triggers/:id", async (c) => {
     const parsed = TriggerPatchSchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-    return routine(c, () => triggerView(updateTrigger(c.req.param("id"), parsed.data)));
+    return routine(c, async () => triggerView(await updateTrigger(c.req.param("id"), parsed.data)));
   });
 
-  app.delete("/api/routines/triggers/:id", (c) =>
-    deleteTrigger(c.req.param("id")) ? c.json({ ok: true }) : c.json({ error: "unknown trigger" }, 404),
+  app.delete("/api/routines/triggers/:id", async (c) =>
+    (await deleteTrigger(c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "unknown trigger" }, 404),
   );
 
   /* Mint or rotate the trigger's long-lived token. The token is in the answer
      and nowhere else — only its sha-256 is stored — so a client that does not
      show it here cannot show it later, and a rotation is a new mint. */
   app.post("/api/routines/triggers/:id/token", (c) =>
-    routine(c, () => ({ token: mintTriggerToken(c.req.param("id")) })),
+    routine(c, async () => ({ token: await mintTriggerToken(c.req.param("id")) })),
   );
 
   /* Take the token away without deleting the trigger: a rotation the user
      backed out of, or one they believe leaked. The trigger stays, inert to
      everything outside this process. */
   app.delete("/api/routines/triggers/:id/token", (c) =>
-    routine(c, () => {
-      revokeTriggerToken(c.req.param("id"));
+    routine(c, async () => {
+      await revokeTriggerToken(c.req.param("id"));
       return { ok: true };
     }),
   );
 
-  app.get("/api/routines/:id/triggers", (c) => c.json(listTriggers(c.req.param("id")).map(triggerView)));
+  app.get("/api/routines/:id/triggers", async (c) => c.json((await listTriggers(c.req.param("id"))).map(triggerView)));
 
   /* A new trigger is created with a null clock on purpose (see routines.ts):
      null is inert, and the scheduler's sweep is the one thing that knows when
@@ -167,7 +167,7 @@ export function routineRoutes(app: Hono, deps: { engine: RoutineEngine }): void 
   app.post("/api/routines/:id/triggers", async (c) => {
     const parsed = TriggerInputSchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-    return routine(c, () => triggerView(createTrigger(c.req.param("id"), parsed.data)), 201);
+    return routine(c, async () => triggerView(await createTrigger(c.req.param("id"), parsed.data)), 201);
   });
 
   /*
@@ -205,7 +205,7 @@ export function routineRoutes(app: Hono, deps: { engine: RoutineEngine }): void 
     const path = c.req.param("key");
     const header = c.req.header("authorization");
     const bearer = header?.startsWith("Bearer ") ? header.slice(7) : "";
-    const auth = engine.authorizeFire(c.req.param("routineId"), {
+    const auth = await engine.authorizeFire(c.req.param("routineId"), {
       key: path,
       // The path segment is tried as a token too: a caller outside this process
       // has no boot key, and the path is the only place some webhook senders

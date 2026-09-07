@@ -52,6 +52,9 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { renderMenuItems, type MenuItemSpec } from "@/components/item-context-menu"
 import { MENU_ROW, MENU_WIDTH, MenuRow } from "@/components/menu-row"
+import { ChangelogDialog } from "@/components/changelog-dialog"
+import { useAppMeta } from "@/lib/queries"
+import { releaseUnseen, useSeenRelease } from "@/lib/whats-new"
 import { useConfirm } from "@/components/confirm-dialog"
 import { SessionSettingsDialog } from "@/components/session-settings"
 import { WorkspaceLayoutItems, WorkspacePanelItems } from "@/components/workspace/panel-items"
@@ -318,7 +321,10 @@ export function ThreadHeaderMenu({
   const navigate = useNavigate()
   const settings = useServer()
   const [viewSettings, setViewSettings] = React.useState(false)
+  const [whatsNewOpen, setWhatsNewOpen] = React.useState(false)
   const [refreshing, setRefreshing] = React.useState(false)
+  const meta = useAppMeta()
+  const seenRelease = useSeenRelease()
   const sessionId = session?.id
   const pins = usePins()
   const projects = useProjects()
@@ -518,6 +524,7 @@ export function ThreadHeaderMenu({
         </DropdownMenuContent>
       </DropdownMenu>
       <SessionSettingsDialog open={viewSettings} onOpenChange={setViewSettings} />
+      <ChangelogDialog open={whatsNewOpen} onOpenChange={setWhatsNewOpen} />
     </>
   )
 }

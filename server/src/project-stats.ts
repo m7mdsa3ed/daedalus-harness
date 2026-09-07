@@ -78,12 +78,12 @@ export interface ProjectStats {
 
 /** Every session row of the project, trashed and steps included: the ids the
     journal, queue and schedule tables are keyed by. */
-function sessionIdsOf(projectId: string): string[] {
-  return db
+async function sessionIdsOf(projectId: string): Promise<string[]> {
+  return await (await db
     .select({ id: sessionsTable.id })
     .from(sessionsTable)
-    .where(eq(sessionsTable.projectId, projectId))
-    .all()
+    .where(eq(sessionsTable.projectId, projectId)))
+    
     .map((row) => row.id);
 }
 
@@ -94,11 +94,11 @@ const countOf = (rows: { n: number }[]): number => rows[0]?.n ?? 0;
  * that does not exist, so the route can hand it to the same `workspace()`
  * wrapper every other project-scoped read uses.
  */
-export function projectStats(projectId: string, now = Date.now()): ProjectStats {
-  const project = getProject(projectId);
+export async function projectStats(projectId: string, now = Date.now()): Promise<ProjectStats> {
+  const project = await getProject(projectId);
   if (!project) throw new WorkspaceError("unknown project", 404);
 
-  const rows = db
+  const rows = await db
     .select({
       id: sessionsTable.id,
       agentId: sessionsTable.agentId,
@@ -108,8 +108,7 @@ export function projectStats(projectId: string, now = Date.now()): ProjectStats 
       parentSessionId: sessionsTable.parentSessionId,
     })
     .from(sessionsTable)
-    .where(eq(sessionsTable.projectId, projectId))
-    .all();
+    .where(eq(sessionsTable.projectId, projectId));
 
   /* One pass. Everything below is a tally over the same rows — the counts, the
      created-at extremes and the per-agent/per-profile breakdowns — and
@@ -141,7 +140,7 @@ export function projectStats(projectId: string, now = Date.now()): ProjectStats 
   /* An empty `inArray` is not a query drizzle will build, and a project with no
      threads at all is the ordinary state of a new one — so the journal half is
      skipped rather than guarded inside each query. */
-  const journal = ids.length > 0 ? journalStats(ids, now) : emptyJournal();
+  const journal = ids.length > 0 ? await journalStats(ids, now) : emptyJournal();
 
   return {
     projectId,
@@ -157,50 +156,50 @@ export function projectStats(projectId: string, now = Date.now()): ProjectStats 
     byAgent: ranked(byAgentCounts),
     byProfile: ranked(byProfileCounts),
     knowledge: countOf(
-      db
+      await db
         .select({ n: sql<number>`count(*)` })
         .from(knowledgeTable)
         .where(eq(knowledgeTable.projectId, projectId))
-        .all(),
+        ,
     ),
     /* `web_search_usage` snapshots its own project id (it has to outlive the
        project it names), so this one does not go through the id list. */
     webSearch: {
       searches: countOf(
-        db
+        await db
           .select({ n: sql<number>`count(*)` })
           .from(webSearchUsage)
           .where(and(eq(webSearchUsage.projectId, projectId), eq(webSearchUsage.tool, "search")))
-          .all(),
+          ,
       ),
       fetches: countOf(
-        db
+        await db
           .select({ n: sql<number>`count(*)` })
           .from(webSearchUsage)
           .where(and(eq(webSearchUsage.projectId, projectId), eq(webSearchUsage.tool, "fetch")))
-          .all(),
+          ,
       ),
     },
     scheduled:
       ids.length > 0
         ? {
             total: countOf(
-              db
+              await db
                 .select({ n: sql<number>`count(*)` })
                 .from(scheduledMessages)
                 .where(inArray(scheduledMessages.sessionId, ids))
-                .all(),
+                ,
             ),
             enabled: countOf(
-              db
+              await db
                 .select({ n: sql<number>`count(*)` })
                 .from(scheduledMessages)
                 .where(and(inArray(scheduledMessages.sessionId, ids), eq(scheduledMessages.enabled, 1)))
-                .all(),
+                ,
             ),
           }
         : { total: 0, enabled: 0 },
-    workflows: ids.length > 0 ? workflowStats(ids) : { total: 0, running: 0, failed: 0 },
+    workflows: ids.length > 0 ? await workflowStats(ids) : { total: 0, running: 0, failed: 0 },
   };
 }
 
@@ -212,28 +211,33 @@ const emptyJournal = () => ({
 
 /** The three readings that come out of `session_events`, in one place because
     they share the id list and the same index. */
-function journalStats(ids: string[], now: number): ReturnType<typeof emptyJournal> {
+async function journalStats(ids: string[], now: number): Promise<ReturnType<typeof emptyJournal>> {
   const turns = countOf(
-    db
+    await db
       .select({ n: sql<number>`count(*)` })
       .from(sessionEvents)
       .where(and(inArray(sessionEvents.sessionId, ids), eq(sessionEvents.kind, "turn_started")))
-      .all(),
+      ,
   );
-  const last = db
-    .select({ at: sql<number | null>`max(${sessionEvents.at})` })
-    .from(sessionEvents)
-    .where(inArray(sessionEvents.sessionId, ids))
-    .all()[0]?.at;
+  const last = (
+    await db
+      .select({ at: sql<number | null>`max(${sessionEvents.at})` })
+      .from(sessionEvents)
+      .where(inArray(sessionEvents.sessionId, ids))
+  )[0]?.at;
 
-  /* Grouped in SQLite rather than in JS: a busy project's month is tens of
-     thousands of rows and none of them is wanted here except as a count.
-     `unixepoch`/`localtime` puts a turn in the day the person who took it was
-     living in — a UTC bucket cuts every evening in half for half the world. */
+  /* Grouped in the database rather than in JS: a busy project's month is tens
+     of thousands of rows and none of them is wanted here except as a count.
+     The stamp is epoch milliseconds, so it goes through `to_timestamp` and
+     then into the *server's* local zone — a turn belongs to the day the person
+     who took it was living in, and a UTC bucket cuts every evening in half for
+     half the world. (SQLite spelled this `date(at/1000, 'unixepoch',
+     'localtime')`; Postgres has no such function and answered the whole
+     project-stats call with a query error instead.) */
   const since = now - ACTIVITY_DAYS * DAY_MS;
-  const activity = db
+  const activity = await db
     .select({
-      day: sql<string>`date(${sessionEvents.at} / 1000, 'unixepoch', 'localtime')`,
+      day: sql<string>`to_char(to_timestamp(${sessionEvents.at} / 1000.0)::date, 'YYYY-MM-DD')`,
       turns: sql<number>`count(*)`,
     })
     .from(sessionEvents)
@@ -245,19 +249,17 @@ function journalStats(ids: string[], now: number): ReturnType<typeof emptyJourna
       ),
     )
     .groupBy(sql`1`)
-    .orderBy(sql`1`)
-    .all();
+    .orderBy(sql`1`);
 
   return { turns, lastActivityAt: last ?? null, activity };
 }
 
-function workflowStats(ids: string[]): ProjectStats["workflows"] {
-  const rows = db
+async function workflowStats(ids: string[]): Promise<ProjectStats["workflows"]> {
+  const rows = await db
     .select({ status: workflowRuns.status, n: sql<number>`count(*)` })
     .from(workflowRuns)
     .where(inArray(workflowRuns.parentSessionId, ids))
-    .groupBy(workflowRuns.status)
-    .all();
+    .groupBy(workflowRuns.status);
   const at = (status: string) => rows.find((row) => row.status === status)?.n ?? 0;
   return {
     total: rows.reduce((sum, row) => sum + row.n, 0),

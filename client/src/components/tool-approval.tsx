@@ -332,10 +332,20 @@ function PlanApproval({
 /**
  * The transcript's permission card: what stopped the turn, what is being asked
  * for, the evidence, the answers. Rendered at the tail of the flow while
- * `thread.permission` is set, and gone the moment it is answered — by this
+ * `thread.permissions` is set, and gone the moment it is answered — by this
  * device or another.
  */
-export function InlineApproval({ permission }: { permission: PendingPermission | null }) {
+export function InlineApproval({
+  permission,
+  autofocus = true,
+}: {
+  permission: PendingPermission | null
+  /** Whether this card may take focus. A stack of parked asks renders one card
+      per request and the hotkeys answer the oldest, so only the head of the
+      stack focuses — and when an earlier card is answered, the next one's
+      `autofocus` flips true and the effect hands focus to it. */
+  autofocus?: boolean
+}) {
   /* Codex asks "Implement this plan?" as a `switch_mode` permission whose
      `rawInput.plan` is the whole markdown proposal, and Claude Code asks the
      same thing as `ExitPlanMode`. Read before the hooks below, because the
@@ -357,6 +367,7 @@ export function InlineApproval({ permission }: { permission: PendingPermission |
   React.useEffect(() => {
     if (!requestId) return
     setOpen(isPlan)
+    if (!autofocus) return
     if (isTypingTarget(document.activeElement)) return
     const target =
       optionsRef.current?.querySelector<HTMLButtonElement>("[data-primary-option]") ??
@@ -365,7 +376,7 @@ export function InlineApproval({ permission }: { permission: PendingPermission |
     // `isPlan` is a property of this request, so it cannot change under a
     // stable id — it is read, not depended on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [requestId])
+  }, [requestId, autofocus])
   if (!permission) return null
   if (plan !== null) {
     return (

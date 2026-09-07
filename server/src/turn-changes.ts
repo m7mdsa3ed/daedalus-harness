@@ -58,13 +58,12 @@ export class TurnChangesRecorder {
     const work = (async () => {
       const dir = await this.repoDirOf(sessionId);
       const tree = dir ? await git.snapshotTree(dir).catch(warn("start snapshot")) ?? null : null;
-      db.insert(sessionTurnChanges)
+      await db.insert(sessionTurnChanges)
         .values({ sessionId, turnId, startTree: tree, endTree: null, files: [], startedAt, endedAt: null })
         .onConflictDoUpdate({
           target: [sessionTurnChanges.sessionId, sessionTurnChanges.turnId],
           set: { startTree: tree },
-        })
-        .run();
+        });
       this.deps.emit(sessionId, {
         turnId,
         files: [],
@@ -86,20 +85,19 @@ export class TurnChangesRecorder {
     const started = this.starting.get(key);
     this.starting.delete(key);
     void (async () => {
-      const startTree = started ? await started : this.row(sessionId, turnId)?.startTree ?? null;
+      const startTree = started ? await started : (await this.row(sessionId, turnId))?.startTree ?? null;
       const dir = await this.repoDirOf(sessionId);
       const endTree = dir && startTree ? await git.snapshotTree(dir).catch(warn("end snapshot")) ?? null : null;
       const files = dir && startTree && endTree ? await git.diffTrees(dir, startTree, endTree).catch(warn("diff")) ?? [] : [];
       const endedAt = Date.now();
-      const existing = this.row(sessionId, turnId);
+      const existing = await this.row(sessionId, turnId);
       const startedAt = existing?.startedAt ?? endedAt;
-      db.insert(sessionTurnChanges)
+      await db.insert(sessionTurnChanges)
         .values({ sessionId, turnId, startTree, endTree, files, startedAt, endedAt })
         .onConflictDoUpdate({
           target: [sessionTurnChanges.sessionId, sessionTurnChanges.turnId],
           set: { endTree, files, endedAt },
-        })
-        .run();
+        });
       this.deps.emit(sessionId, {
         turnId,
         files,
@@ -111,13 +109,13 @@ export class TurnChangesRecorder {
   }
 
   /** Every recorded turn of a thread, oldest first. */
-  list(sessionId: string): TurnChanges[] {
-    return db
+  async list(sessionId: string): Promise<TurnChanges[]> {
+    return await (await db
       .select()
       .from(sessionTurnChanges)
       .where(eq(sessionTurnChanges.sessionId, sessionId))
-      .orderBy(sessionTurnChanges.startedAt)
-      .all()
+      .orderBy(sessionTurnChanges.startedAt))
+      
       .map((row) => ({
         turnId: row.turnId,
         files: row.files,
@@ -172,7 +170,7 @@ export class TurnChangesRecorder {
          compares an unborn branch against. */
       return { dir, from: head ?? EMPTY_TREE, to };
     }
-    const row = this.row(sessionId, scope.turnId);
+    const row = await this.row(sessionId, scope.turnId);
     if (!row?.startTree) return { unavailable: "This turn was not measured — the project was not a repository when it ran." };
     if (!(await git.hasObject(dir, row.startTree)))
       return { unavailable: "This turn's snapshot has been pruned by git and can no longer be compared." };
@@ -180,20 +178,20 @@ export class TurnChangesRecorder {
     return { dir, from: row.startTree, to };
   }
 
-  private row(sessionId: string, turnId: string) {
-    return db
+  private async row(sessionId: string, turnId: string) {
+    return (await db
       .select()
       .from(sessionTurnChanges)
       .where(and(eq(sessionTurnChanges.sessionId, sessionId), eq(sessionTurnChanges.turnId, turnId)))
-      .get();
+      .limit(1))[0];
   }
 
   /** The tree the worktree was photographed as when `turnId` began — a
       rewind's file half restores to it. Null when the turn was never
       measured (no repository at the time, or the row is gone); the caller
       refuses on that rather than guessing. */
-  startTreeOf(sessionId: string, turnId: string): string | null {
-    return this.row(sessionId, turnId)?.startTree ?? null;
+  async startTreeOf(sessionId: string, turnId: string): Promise<string | null> {
+    return (await this.row(sessionId, turnId))?.startTree ?? null;
   }
 
   /**
@@ -206,12 +204,11 @@ export class TurnChangesRecorder {
    * A missing target row is a no-op, not an error: the turn may never have
    * been measured, or an earlier rewind may already have taken it.
    */
-  pruneFrom(sessionId: string, turnId: string): void {
-    const target = this.row(sessionId, turnId);
+  async pruneFrom(sessionId: string, turnId: string): Promise<void> {
+    const target = await this.row(sessionId, turnId);
     if (!target) return;
-    db.delete(sessionTurnChanges)
-      .where(and(eq(sessionTurnChanges.sessionId, sessionId), gte(sessionTurnChanges.startedAt, target.startedAt)))
-      .run();
+    await db.delete(sessionTurnChanges)
+      .where(and(eq(sessionTurnChanges.sessionId, sessionId), gte(sessionTurnChanges.startedAt, target.startedAt)));
   }
 
 

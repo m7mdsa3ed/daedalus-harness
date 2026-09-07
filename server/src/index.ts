@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
+import { compress } from "hono/compress";
 import { cors } from "hono/cors";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { WebSocketServer, type WebSocket } from "ws";
@@ -40,7 +41,7 @@ const config = loadConfig();
 // Index whatever was journaled before the FTS table existed. Once (a marker in
 // search_meta), incremental, and before the server listens — so nothing is
 // streaming into the journal while it walks. New events index at flush time.
-backfillSearchIndex();
+await backfillSearchIndex();
 /* Before anything can spawn: `{gatewayUrl}` in an agent's env is resolved at
    spawn from what this hands out, and a spawn that predates it would go to the
    gateway direct (correct, but without the shim's repair). */
@@ -53,22 +54,22 @@ configureMcpShim({ port: config.port });
 await adoptOrphans();
 // Adds only the built-in agents this install has never been offered; a user's
 // edits and deletions are left alone. See registry.seedAgents.
-seedAgents();
+await seedAgents();
 // Same rules, same reasons: only the personas this install has never been
 // offered, and never over a row the user has edited. See personas.seedPersonas.
-seedPersonas();
+await seedPersonas();
 /* Same rules again for the model-prompt library, then the file the runtime
    reads. The write is unconditional and not the seed's: the library is derived
    state, and a boot after a hand-edited `data/` — or after an import, which
    writes rows straight into the table — must leave the file agreeing with the
    database whether or not anything was seeded. */
-seedModelPrompts();
-writeModelPromptsLibrary();
+await seedModelPrompts();
+await writeModelPromptsLibrary();
 /* The tasks board's first board and its four columns, seeded only into an
    install that has none. This is also the boards migration: the seeded column
    ids are the exact strings pre-boards tasks hold in `tasks.status`, so those
    rows become legible without being rewritten. See boards.ensureDefaultBoard. */
-ensureDefaultBoard();
+await ensureDefaultBoard();
 const push = new Push(config.fcm);
 /** Thread title, with the failure's own message appended when there is one. */
 const pushBody = (title: string, error?: unknown): string => {
@@ -92,16 +93,16 @@ let routines: RoutineEngine | null = null;
 let routineGitTriggers: RoutineGitTriggers | null = null;
 const sessions = new SessionManager(
   {
-    onPermissionRequest: (s) => {
-      addNotification("permission", s);
+    onPermissionRequest: async (s) => {
+      await addNotification("permission", s);
       push.send("Permission needed", s.title, { sessionId: s.id, event: "permissionNeeded" }).catch(console.error);
     },
-    onElicitationRequest: (s) => {
-      addNotification("question", s);
+    onElicitationRequest: async (s) => {
+      await addNotification("question", s);
       push.send("The agent has a question", s.title, { sessionId: s.id, event: "questionAsked" }).catch(console.error);
     },
-    onTurnEnd: (s, error) => {
-      addNotification(error ? "turn_failed" : "turn_finished", s, failureDetail(error));
+    onTurnEnd: async (s, error) => {
+      await addNotification(error ? "turn_failed" : "turn_finished", s, failureDetail(error));
       push
         .send(error ? "Turn failed" : "Turn finished", pushBody(s.title, error), {
           sessionId: s.id,
@@ -191,6 +192,26 @@ app.use("/api/*", async (c, next) => {
   if (token !== config.token) return c.json({ error: "unauthorized" }, 401);
   return next();
 });
+
+/**
+ * The three journal reads, compressed.
+ *
+ * A transcript is opened over HTTP now (`GET /api/sessions/:id/replay`), and
+ * that document is the most compressible thing this server sends: the same
+ * envelope keys over and over, one per streamed delta — which is the same
+ * observation `perMessageDeflate` on the WebSocket below was already made for,
+ * on the same bytes, before the read moved off the socket and left its
+ * compression behind. Measured on this install's largest thread the body goes
+ * from 17.9MB to 788KB, and on a phone that is the whole of the wait.
+ *
+ * Scoped to these three paths rather than `/api/*`: everything else here is a
+ * small JSON object where a compression pass is a cost with nothing to show
+ * for it, and the streaming routes (the terminal, the watch streams) must not
+ * have a codec sitting between a line and the reader.
+ */
+app.use("/api/sessions/:id/replay", compress());
+app.use("/api/sessions/:id/earlier", compress());
+app.use("/api/sessions/:id/trace", compress());
 
 /* The routes, by domain (src/routes/). Registered after the middleware so
    everything under /api is behind the token; /api/health exempts itself above,

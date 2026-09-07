@@ -42,13 +42,24 @@ import { useApiQuery, useApiMutation } from "./helpers"
 
 const EMPTY = [] as never[]
 
+/** `data`, but only when it is the list the caller asked for.
+
+   The query cache is persisted (`queries/persist.ts`), and a dump is
+   rehydrated *before* the refetch that would correct it — so one bad body,
+   written to storage once, is restored on every load until something replaces
+   it. A `{}` where a list belongs then reaches the consumers as
+   `x.find is not a function`, which is a white screen rather than a wrong
+   list. Empty is what "not yet" already draws here, and the read behind it
+   lands a moment later. */
+const list = <T,>(data: unknown): T[] => (Array.isArray(data) ? (data as T[]) : (EMPTY as T[]))
+
 const CATALOG_STALE_MS = 60_000
 
 export function useProfiles(): Profile[] {
   const settings = useServer()
-  return useApiQuery<Profile[]>(profilesKey(settings), "/api/profiles", {
+  return list<Profile>(useApiQuery<Profile[]>(profilesKey(settings), "/api/profiles", {
     staleTime: CATALOG_STALE_MS,
-  }).data ?? (EMPTY as Profile[])
+  }).data)
 }
 
 /** The coding-plan presets (`GET /api/profile-presets`). Read lazily — only
@@ -60,14 +71,14 @@ export function useProfilePresets(): { presets: ProfilePreset[]; loading: boolea
   const query = useApiQuery<{ presets: ProfilePreset[] }>(profilePresetsKey(settings), "/api/profile-presets", {
     staleTime: 10 * 60_000,
   })
-  return { presets: query.data?.presets ?? (EMPTY as ProfilePreset[]), loading: query.isPending, error: query.error }
+  return { presets: list<ProfilePreset>(query.data?.presets), loading: query.isPending, error: query.error }
 }
 
 export function useAgents(): AgentDef[] {
   const settings = useServer()
-  return useApiQuery<AgentDef[]>(agentsKey(settings), "/api/agents", {
+  return list<AgentDef>(useApiQuery<AgentDef[]>(agentsKey(settings), "/api/agents", {
     staleTime: CATALOG_STALE_MS,
-  }).data ?? (EMPTY as AgentDef[])
+  }).data)
 }
 
 /** Install state and reported versions of every agent, read once per page
@@ -96,60 +107,99 @@ export function useAgentsStatus(): {
 
 export function useProjects(): Project[] {
   const settings = useServer()
-  return useApiQuery<Project[]>(projectsKey(settings), "/api/projects", {
+  return list<Project>(useApiQuery<Project[]>(projectsKey(settings), "/api/projects", {
     staleTime: CATALOG_STALE_MS,
-  }).data ?? (EMPTY as Project[])
+  }).data)
 }
 
 export function useMcpServers(): McpServerDef[] {
   const settings = useServer()
-  return useApiQuery<McpServerDef[]>(mcpServersKey(settings), "/api/mcp-servers", {
+  return list<McpServerDef>(useApiQuery<McpServerDef[]>(mcpServersKey(settings), "/api/mcp-servers", {
     staleTime: CATALOG_STALE_MS,
-  }).data ?? (EMPTY as McpServerDef[])
+  }).data)
 }
 
 export function useSkills(): SkillDef[] {
   const settings = useServer()
-  return useApiQuery<SkillDef[]>(skillsKey(settings), "/api/skills", {
+  return list<SkillDef>(useApiQuery<SkillDef[]>(skillsKey(settings), "/api/skills", {
     staleTime: CATALOG_STALE_MS,
-  }).data ?? (EMPTY as SkillDef[])
+  }).data)
 }
 
 export function useCommands(): CommandDef[] {
   const settings = useServer()
-  return useApiQuery<CommandDef[]>(commandsKey(settings), "/api/commands", {
+  return list<CommandDef>(useApiQuery<CommandDef[]>(commandsKey(settings), "/api/commands", {
     staleTime: CATALOG_STALE_MS,
-  }).data ?? (EMPTY as CommandDef[])
+  }).data)
 }
 
 export function usePersonas(): Persona[] {
   const settings = useServer()
-  return useApiQuery<Persona[]>(personasKey(settings), "/api/personas", {
+  return list<Persona>(useApiQuery<Persona[]>(personasKey(settings), "/api/personas", {
     staleTime: CATALOG_STALE_MS,
-  }).data ?? (EMPTY as Persona[])
+  }).data)
 }
 
 export function useModelPrompts(): ModelPrompt[] {
   const settings = useServer()
-  return useApiQuery<ModelPrompt[]>(modelPromptsKey(settings), "/api/model-prompts", {
+  return list<ModelPrompt>(useApiQuery<ModelPrompt[]>(modelPromptsKey(settings), "/api/model-prompts", {
     staleTime: CATALOG_STALE_MS,
-  }).data ?? (EMPTY as ModelPrompt[])
+  }).data)
 }
 
-/** The global rules block — "" while unset and until the first read lands. */
-export function useRules(): string {
-  const settings = useServer()
-  return useApiQuery<{ rules: string }>(rulesKey(settings), "/api/rules", {
-    staleTime: CATALOG_STALE_MS,
-  }).data?.rules ?? ""
+/** A single rule row. */
+export interface Rule {
+  id: string
+  projectId: string | null
+  title: string
+  content: string
+  sortOrder: number
+  createdAt: number
+  updatedAt: number
 }
 
-/** Store the global rules block. The input is the whole text. */
-export function useSaveRules() {
+/** All global rules. */
+export function useRules(): Rule[] {
   const settings = useServer()
-  return useApiMutation<{ rules: string }, { rules: string }>(
+  return list<Rule>(
+    useApiQuery<Rule[]>(rulesKey(settings), "/api/rules", { staleTime: CATALOG_STALE_MS }).data,
+  )
+}
+
+/** Project rules for a given project. */
+export function useProjectRules(projectId: string): Rule[] {
+  const settings = useServer()
+  return list<Rule>(
+    useApiQuery<Rule[]>(rulesKey(settings).concat([projectId]), `/api/rules/project/${projectId}`, {
+      staleTime: CATALOG_STALE_MS,
+    }).data,
+  )
+}
+
+/** Create a new rule. */
+export function useCreateRule() {
+  const settings = useServer()
+  return useApiMutation<{ projectId: string | null; title: string; content: string }, Rule>(
     [rulesKey(settings)],
-    (s, input) => api(s, "/api/rules", { method: "PUT", body: JSON.stringify(input) }),
+    (s, input) => api(s, "/api/rules", { method: "POST", body: JSON.stringify(input) }),
+  )
+}
+
+/** Update an existing rule. */
+export function useUpdateRule() {
+  const settings = useServer()
+  return useApiMutation<{ id: string; title?: string; content?: string; sortOrder?: number }, Rule>(
+    [rulesKey(settings)],
+    (s, input) => api(s, `/api/rules/${input.id}`, { method: "PUT", body: JSON.stringify(input) }),
+  )
+}
+
+/** Delete a rule. */
+export function useDeleteRule() {
+  const settings = useServer()
+  return useApiMutation<{ id: string }, { ok: boolean }>(
+    [rulesKey(settings)],
+    (s, input) => api(s, `/api/rules/${input.id}`, { method: "DELETE" }),
   )
 }
 

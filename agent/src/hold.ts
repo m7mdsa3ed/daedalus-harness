@@ -19,6 +19,15 @@
  */
 
 export const PAUSE_METHOD = "_daedalus/session/pause";
+/** Agent → client, and the same story as the hold one step earlier: a turn
+    that failed and is *trying again on its own*. Without it the only account
+    of a retry was a line on stderr, which nobody sees until the retries run
+    out and the whole thing arrives at once as a held turn — a thread that sat
+    silent for seconds with the working line still saying whatever tool it had
+    been running. Live-only and absolute, like the hold: `attempt: null` is
+    "not retrying", and nothing about it is journaled, because a retry that
+    succeeded is not something a replay should redraw. */
+export const RETRY_NOTIFICATION = "_daedalus/session/retry";
 export const RESUME_METHOD = "_daedalus/session/resume";
 /** Agent → client. The one direction the pause pair never had: a hold this end
     took on its own, which the harness could not otherwise learn about. */
@@ -51,6 +60,28 @@ export interface PausedNotification {
   sessionId: string;
   paused: boolean;
   reason?: HoldReason;
+  message?: string;
+  detail?: string;
+}
+
+/**
+ * A failed attempt that is about to be tried again. Absolute: each one states
+ * the whole of where the retrying has got to, and `attempt: null` clears it.
+ *
+ * `message`/`detail` are the failure being retried, split the way `ErrorHold`
+ * splits a hold's — the same sentence, said while there is still a chance it
+ * fixes itself rather than after the turn has stopped.
+ */
+export interface RetryNotification {
+  sessionId: string;
+  /** Which attempt is about to run, 1-based. `null` ends the retrying —
+      the attempt worked, the turn ended, or it ran out and took a hold. */
+  attempt: number | null;
+  /** How many retries there are in total, so a reader can say "1 of 2". */
+  of?: number;
+  /** How long until it starts. The backoff is the whole of the silence this
+      exists to explain, so it travels rather than being guessed at. */
+  delayMs?: number;
   message?: string;
   detail?: string;
 }

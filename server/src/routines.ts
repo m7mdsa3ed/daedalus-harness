@@ -4,7 +4,7 @@
  * A routine is everything a `POST /api/sessions` body carries — profile, agent,
  * project, model, effort, persona, config choices, library links — plus the
  * ways it fires and what happens to the answer. A fire is literally
- * `manager.create(...)` with those values and then one prompt. That is the
+ * `await manager.create(...)` with those values and then one prompt. That is the
  * constraint the whole feature is built around: **a routine must not be able to
  * start a thread the composer could not start.** A field a routine needs and a
  * draft does not means the draft is missing it, and it gets added there first.
@@ -66,6 +66,7 @@ import {
 import {
   emptyLinks,
   linksOf,
+  readLinks,
   writeLinks,
   type LinkSet,
   type LinkTables,
@@ -304,28 +305,29 @@ export type TriggerPatch = z.infer<typeof TriggerPatchSchema>;
 // CRUD
 // ---------------------------------------------------------------------------
 
-export function listRoutines(): Routine[] {
-  const rows = db.select().from(routinesTable).orderBy(asc(routinesTable.name)).all();
-  return rows.map((row) => ({ ...row, links: linksOf(ROUTINE_LINKS, row.id) }));
+export async function listRoutines(): Promise<Routine[]> {
+  const rows = await db.select().from(routinesTable).orderBy(asc(routinesTable.name));
+  const links = await readLinks(ROUTINE_LINKS, rows.map((r) => r.id));
+  return rows.map((row) => ({ ...row, links: links.get(row.id) ?? emptyLinks() }));
 }
 
-export function getRoutine(id: string): Routine | undefined {
-  const row = db.select().from(routinesTable).where(eq(routinesTable.id, id)).get();
-  return row ? { ...row, links: linksOf(ROUTINE_LINKS, row.id) } : undefined;
+export async function getRoutine(id: string): Promise<Routine | undefined> {
+  const row = (await db.select().from(routinesTable).where(eq(routinesTable.id, id)).limit(1))[0];
+  return row ? { ...row, links: await linksOf(ROUTINE_LINKS, row.id) } : undefined;
 }
 
 /** Like `getRoutine`, but 404s. Every write path wants this. */
-function requireRoutine(id: string): Routine {
-  const routine = getRoutine(id);
+async function requireRoutine(id: string): Promise<Routine> {
+  const routine = await getRoutine(id);
   if (!routine) throw new RoutineError("unknown routine", 404);
   return routine;
 }
 
-export function createRoutine(input: RoutineInput): Routine {
+export async function createRoutine(input: RoutineInput): Promise<Routine> {
   const id = randomUUID();
   const now = Date.now();
-  db.transaction((tx) => {
-    tx.insert(routinesTable)
+  await db.transaction(async (tx) => {
+    await tx.insert(routinesTable)
       .values({
         id,
         name: input.name,
@@ -346,16 +348,15 @@ export function createRoutine(input: RoutineInput): Routine {
         dryRunCompleted: false,
         createdAt: now,
         updatedAt: now,
-      })
-      .run();
-    writeLinks(tx, ROUTINE_LINKS, id, linksOf_(input));
+      });
+    await writeLinks(tx, ROUTINE_LINKS, id, linksOf_(input));
   });
-  return getRoutine(id)!;
+  return (await getRoutine(id))!;
 }
 
-export function updateRoutine(id: string, patch: RoutinePatch): Routine {
-  const current = requireRoutine(id);
-  db.transaction((tx) => {
+export async function updateRoutine(id: string, patch: RoutinePatch): Promise<Routine> {
+  const current = await requireRoutine(id);
+  await db.transaction(async (tx) => {
     const set: Partial<RoutineRow> = { updatedAt: Date.now() };
     if (patch.name !== undefined) set.name = patch.name;
     if (patch.description !== undefined) set.description = patch.description;
@@ -372,20 +373,20 @@ export function updateRoutine(id: string, patch: RoutinePatch): Routine {
     if (patch.onFinish !== undefined) set.onFinish = patch.onFinish;
     if (patch.overlap !== undefined) set.overlap = patch.overlap;
     if (patch.autonomy !== undefined) set.autonomy = patch.autonomy as AutonomyPolicy;
-    tx.update(routinesTable).set(set).where(eq(routinesTable.id, id)).run();
+    await tx.update(routinesTable).set(set).where(eq(routinesTable.id, id));
     /* Links are replaced only when the patch mentions them at all — a PATCH
        that names none must leave them alone, where a blanket write would take
        every one of them away. All three travel together because the three sets
        are one picker on screen. */
     if (patch.mcpServerIds || patch.skillIds || patch.commandIds) {
-      writeLinks(tx, ROUTINE_LINKS, id, {
+      await writeLinks(tx, ROUTINE_LINKS, id, {
         mcpServerIds: patch.mcpServerIds ?? current.links.mcpServerIds,
         skillIds: patch.skillIds ?? current.links.skillIds,
         commandIds: patch.commandIds ?? current.links.commandIds,
       });
     }
   });
-  return getRoutine(id)!;
+  return (await getRoutine(id))!;
 }
 
 /** Delete the routine. Its triggers, its runs and its links cascade in SQL; the
@@ -393,29 +394,29 @@ export function updateRoutine(id: string, patch: RoutinePatch): Routine {
     can still open, and deleting the saved config is not a statement about the
     work it did. Live runs are cancelled first, because their sessions would
     otherwise write into a routine row that no longer exists. */
-export function deleteRoutine(id: string): boolean {
-  const deleted = db.delete(routinesTable).where(eq(routinesTable.id, id)).run().changes > 0;
+export async function deleteRoutine(id: string): Promise<boolean> {
+  const deleted = ((await db.delete(routinesTable).where(eq(routinesTable.id, id))).rowCount ?? 0) > 0;
   if (deleted) active?.forgetFires(id);
   return deleted;
 }
 
-export function listTriggers(routineId: string): RoutineTrigger[] {
-  return db
+export async function listTriggers(routineId: string): Promise<RoutineTrigger[]> {
+  return await db
     .select()
     .from(triggersTable)
     .where(eq(triggersTable.routineId, routineId))
     .orderBy(asc(triggersTable.createdAt))
-    .all();
+    ;
 }
 
-export function getTrigger(id: string): RoutineTrigger | undefined {
-  return db.select().from(triggersTable).where(eq(triggersTable.id, id)).get();
+export async function getTrigger(id: string): Promise<RoutineTrigger | undefined> {
+  return (await db.select().from(triggersTable).where(eq(triggersTable.id, id)).limit(1))[0];
 }
 
-export function createTrigger(routineId: string, input: TriggerInput): RoutineTrigger {
+export async function createTrigger(routineId: string, input: TriggerInput): Promise<RoutineTrigger> {
   requireRoutine(routineId);
   const id = randomUUID();
-  db.insert(triggersTable)
+  await db.insert(triggersTable)
     .values({
       id,
       routineId,
@@ -440,13 +441,12 @@ export function createTrigger(routineId: string, input: TriggerInput): RoutineTr
       lastFiredAt: null,
       lastError: null,
       createdAt: Date.now(),
-    })
-    .run();
-  return getTrigger(id)!;
+    });
+  return (await getTrigger(id))!;
 }
 
-export function updateTrigger(id: string, patch: TriggerPatch): RoutineTrigger {
-  const current = getTrigger(id);
+export async function updateTrigger(id: string, patch: TriggerPatch): Promise<RoutineTrigger> {
+  const current = await getTrigger(id);
   if (!current) throw new RoutineError("unknown trigger", 404);
   const set: Partial<RoutineTrigger> = {};
   for (const key of ["kind", "enabled", "cron", "tz", "atMs", "condition", "branch", "paths", "debounceMs"] as const) {
@@ -457,12 +457,12 @@ export function updateTrigger(id: string, patch: TriggerPatch): RoutineTrigger {
      does not know what "next" means for a cron expression, and a stale slot
      would fire the old schedule once more before correcting itself. */
   if (patch.cron !== undefined || patch.tz !== undefined || patch.atMs !== undefined) set.nextFireAt = null;
-  db.update(triggersTable).set(set).where(eq(triggersTable.id, id)).run();
-  return getTrigger(id)!;
+  await db.update(triggersTable).set(set).where(eq(triggersTable.id, id));
+  return (await getTrigger(id))!;
 }
 
-export function deleteTrigger(id: string): boolean {
-  return db.delete(triggersTable).where(eq(triggersTable.id, id)).run().changes > 0;
+export async function deleteTrigger(id: string): Promise<boolean> {
+  return ((await db.delete(triggersTable).where(eq(triggersTable.id, id))).rowCount ?? 0) > 0;
 }
 
 /**
@@ -475,25 +475,23 @@ export function deleteTrigger(id: string): boolean {
  * this process holds, because the boot key it would otherwise need is a
  * credential that changes every restart.
  */
-export function mintTriggerToken(triggerId: string): string {
-  const trigger = getTrigger(triggerId);
+export async function mintTriggerToken(triggerId: string): Promise<string> {
+  const trigger = await getTrigger(triggerId);
   if (!trigger) throw new RoutineError("unknown trigger", 404);
   const token = randomBytes(32).toString("base64url");
-  db.update(triggersTable)
+  await db.update(triggersTable)
     .set({ secretHash: sha256(token), secretCreatedAt: Date.now() })
-    .where(eq(triggersTable.id, triggerId))
-    .run();
+    .where(eq(triggersTable.id, triggerId));
   return token;
 }
 
 /** Take the token away without deleting the trigger — a rotation the user
     aborted, or a token they believe leaked. The trigger stays, inert to
     everything outside this process. */
-export function revokeTriggerToken(triggerId: string): void {
-  db.update(triggersTable)
+export async function revokeTriggerToken(triggerId: string): Promise<void> {
+  await db.update(triggersTable)
     .set({ secretHash: null, secretCreatedAt: null })
-    .where(eq(triggersTable.id, triggerId))
-    .run();
+    .where(eq(triggersTable.id, triggerId));
 }
 
 /**
@@ -506,11 +504,11 @@ export function revokeTriggerToken(triggerId: string): void {
  * loop is not cut short on a match, so the time this takes says nothing about
  * which trigger matched or whether one did.
  */
-export function verifyTriggerSecret(routineId: string, token: string): RoutineTrigger | null {
+export async function verifyTriggerSecret(routineId: string, token: string): Promise<RoutineTrigger | null> {
   if (!token) return null;
   const digest = sha256(token);
   let hit: RoutineTrigger | null = null;
-  for (const trigger of listTriggers(routineId)) {
+  for (const trigger of (await listTriggers(routineId))) {
     if (!trigger.enabled || !trigger.secretHash) continue;
     if (safeEqual(digest, trigger.secretHash)) hit = trigger;
   }
@@ -520,11 +518,10 @@ export function verifyTriggerSecret(routineId: string, token: string): RoutineTr
 /** What the sweep writes back after a fire it decided on. Here rather than in
     the scheduler so every write to these columns goes through one place, and
     so the engine can clear `last_error` on a fire that worked. */
-export function markTriggerFired(triggerId: string, at: number, nextFireAt: number | null, lastSeen?: string | null): void {
-  db.update(triggersTable)
+export async function markTriggerFired(triggerId: string, at: number, nextFireAt: number | null, lastSeen?: string | null): Promise<void> {
+  await db.update(triggersTable)
     .set({ lastFiredAt: at, nextFireAt, lastError: null, ...(lastSeen === undefined ? {} : { lastSeen }) })
-    .where(eq(triggersTable.id, triggerId))
-    .run();
+    .where(eq(triggersTable.id, triggerId));
 }
 
 /** Roll a trigger's clock without claiming it fired.
@@ -535,49 +532,47 @@ export function markTriggerFired(triggerId: string, at: number, nextFireAt: numb
     never happened, and leaving `next_fire_at` in the past would make the slot
     due again fifteen seconds later, forever. Clears `last_error`, since
     arriving here at all means the expression parsed. */
-export function markTriggerArmed(triggerId: string, nextFireAt: number | null, lastSeen?: string | null): void {
-  db.update(triggersTable)
+export async function markTriggerArmed(triggerId: string, nextFireAt: number | null, lastSeen?: string | null): Promise<void> {
+  await db.update(triggersTable)
     .set({ nextFireAt, lastError: null, ...(lastSeen === undefined ? {} : { lastSeen }) })
-    .where(eq(triggersTable.id, triggerId))
-    .run();
+    .where(eq(triggersTable.id, triggerId));
 }
 
 /** Why this trigger could not be evaluated — a project that has moved, a repo
     that cannot be read. Recorded on the trigger and not as a run: nothing ran. */
-export function markTriggerError(triggerId: string, error: string | null, nextFireAt?: number | null): void {
-  db.update(triggersTable)
+export async function markTriggerError(triggerId: string, error: string | null, nextFireAt?: number | null): Promise<void> {
+  await db.update(triggersTable)
     .set({ lastError: error, ...(nextFireAt === undefined ? {} : { nextFireAt }) })
-    .where(eq(triggersTable.id, triggerId))
-    .run();
+    .where(eq(triggersTable.id, triggerId));
 }
 
 /** One routine's runs, newest first. */
-export function listRuns(routineId: string, limit = 50): RoutineRun[] {
-  return db
+export async function listRuns(routineId: string, limit = 50): Promise<RoutineRun[]> {
+  return await db
     .select()
     .from(runsTable)
     .where(eq(runsTable.routineId, routineId))
     .orderBy(desc(runsTable.startedAt))
     .limit(limit)
-    .all();
+    ;
 }
 
-export function getRun(id: string): RoutineRun | undefined {
-  return db.select().from(runsTable).where(eq(runsTable.id, id)).get();
+export async function getRun(id: string): Promise<RoutineRun | undefined> {
+  return (await db.select().from(runsTable).where(eq(runsTable.id, id)).limit(1))[0];
 }
 
 /** The last run of this routine that got as far as recording a git oid — what
     a `gitChangedSince: "lastRun"` condition compares this project's HEAD
     against. Null when the routine has never run against a repo, which is why
     the first fire of such a trigger always goes through. */
-export function lastRunHeadOid(routineId: string): string | null {
-  const row = db
+export async function lastRunHeadOid(routineId: string): Promise<string | null> {
+  const row = (await db
     .select({ headOid: runsTable.headOid })
     .from(runsTable)
     .where(and(eq(runsTable.routineId, routineId), eq(runsTable.status, "completed")))
     .orderBy(desc(runsTable.startedAt))
     .limit(1)
-    .get();
+    )[0];
   return row?.headOid ?? null;
 }
 
@@ -607,7 +602,7 @@ const exec = promisify(execFile);
  * failed read would let a moved directory silently disable a routine.
  */
 export async function projectHeadOid(projectId: string): Promise<string | null> {
-  const project = getProject(projectId);
+  const project = await getProject(projectId);
   if (!project) return null;
   try {
     const { stdout } = await exec("git", ["--no-optional-locks", "rev-parse", "HEAD"], {
@@ -631,13 +626,13 @@ export async function projectHeadOid(projectId: string): Promise<string | null> 
  * A run list that quietly has no row for last night cannot be told apart from a
  * sweep that never ran.
  */
-export function recordSkippedRun(
+export async function recordSkippedRun(
   routineId: string,
   opts: { source: RoutineSource; triggerId?: string | null; reason: string; headOid?: string | null },
-): RoutineRun {
+): Promise<RoutineRun> {
   const id = randomUUID();
   const now = Date.now();
-  db.insert(runsTable)
+  await db.insert(runsTable)
     .values({
       id,
       routineId,
@@ -660,9 +655,8 @@ export function recordSkippedRun(
       tokens: null,
       startedAt: now,
       endedAt: now,
-    })
-    .run();
-  return getRun(id)!;
+    });
+  return (await getRun(id))!;
 }
 
 // ---------------------------------------------------------------------------
@@ -674,7 +668,7 @@ export function recordSkippedRun(
     `WorkflowUrlSource`, so the two engines do not import each other and either
     can be stood in for in a test. */
 export interface WorkflowHost {
-  start(parent: Session, definition: unknown, inputs?: unknown): { id: string };
+  start(parent: Session, definition: unknown, inputs?: unknown): Promise<{ id: string }>;
   wait(runId: string, timeoutMs: number): Promise<WorkflowRunSummary | null>;
   cancel(runId: string, reason?: string): boolean;
 }
@@ -757,9 +751,9 @@ export class RoutineEngine {
   }
 
   /** The routine a `/rt/<key>/<routineId>` path speaks for, or null. */
-  resolveCaller(key: string, routineId: string): Routine | null {
+  async resolveCaller(key: string, routineId: string): Promise<Routine | null> {
     if (!safeEqual(key, this.key)) return null;
-    return getRoutine(routineId) ?? null;
+    return (await getRoutine(routineId)) ?? null;
   }
 
   /**
@@ -771,13 +765,13 @@ export class RoutineEngine {
    * needs — a credential that changes on every restart is not one it can hold.
    * The rate limit applies to both, because the door is the same door.
    */
-  authorizeFire(
+  async authorizeFire(
     routineId: string,
     credentials: { key?: string; token?: string },
-  ): { ok: true; routine: Routine; triggerId: string | null } | { ok: false; status: 404 | 429; error: string } {
-    const viaKey = credentials.key ? this.resolveCaller(credentials.key, routineId) : null;
-    const trigger = credentials.token ? verifyTriggerSecret(routineId, credentials.token) : null;
-    const routine = viaKey ?? (trigger ? getRoutine(routineId) : null);
+  ): Promise<{ ok: true; routine: Routine; triggerId: string | null } | { ok: false; status: 404 | 429; error: string }> {
+    const viaKey = credentials.key ? await this.resolveCaller(credentials.key, routineId) : null;
+    const trigger = credentials.token ? await verifyTriggerSecret(routineId, credentials.token) : null;
+    const routine = viaKey ?? (trigger ? await getRoutine(routineId) : null);
     /* A bad key, a bad token and an unknown routine are one answer. Telling a
        caller that the routine exists but the credential was wrong is telling an
        unauthenticated caller which ids are real. */
@@ -844,7 +838,7 @@ export class RoutineEngine {
       chainDepth?: number;
     },
   ): Promise<RunView> {
-    const routine = requireRoutine(routineId);
+    const routine = await requireRoutine(routineId);
     const fireId = randomUUID();
     const run: RunState = {
       id: randomUUID(),
@@ -870,10 +864,10 @@ export class RoutineEngine {
     };
     this.insert(run);
 
-    const refusal = this.preflight(run) ?? (await this.quotaFloor(run));
+    const refusal = (await this.preflight(run)) ?? (await this.quotaFloor(run));
     if (refusal) {
-      this.close(run, "skipped", refusal);
-      return getRun(run.id)!;
+      await this.close(run, "skipped", refusal);
+      return (await getRun(run.id))!;
     }
 
     this.runs.set(run.id, run);
@@ -884,21 +878,21 @@ export class RoutineEngine {
        that stalls behind it. */
     const previous = routine.overlap === "queue" ? this.overlapChain.get(routineId) : undefined;
     const chain = (previous ?? Promise.resolve())
-      .catch(() => {})
-      .then(() => this.drive(run));
+      .catch(async () => {})
+      .then(async () => this.drive(run));
     if (routine.overlap === "queue") {
       this.overlapChain.set(routineId, chain);
-      void chain.finally(() => {
+      void chain.finally(async () => {
         if (this.overlapChain.get(routineId) === chain) this.overlapChain.delete(routineId);
       });
     }
     void chain;
-    return getRun(run.id)!;
+    return (await getRun(run.id))!;
   }
 
   /** The synchronous refusals, in the order they cost least to check. Returns
       the reason a `skipped` row should carry, or null to go ahead. */
-  private preflight(run: RunState): string | null {
+  private async preflight(run: RunState): Promise<string | null> {
     const routine = run.routine;
     if (!routine.enabled) return "the routine is disabled";
     /* A blanket `allow` is a standing grant to run any command the agent
@@ -910,8 +904,8 @@ export class RoutineEngine {
     if (!routine.dryRunCompleted && !run.dryRun && blanketAllow(routine.autonomy)) {
       return "this routine grants blanket `allow` and has not completed a run yet — run it once forced to ask first";
     }
-    if (!getProfile(routine.profileId)) return "this routine's profile no longer exists";
-    if (!getProject(routine.projectId)) return "this routine's project no longer exists";
+    if (!(await getProfile(routine.profileId))) return "this routine's profile no longer exists";
+    if (!(await getProject(routine.projectId))) return "this routine's project no longer exists";
     if (routine.body.kind === "workflow" && !this.workflows) return "the workflow engine is not available";
     if (run.chainDepth > MAX_CHAIN_DEPTH) return `routine chaining stopped at ${MAX_CHAIN_DEPTH} deep`;
     /* `skip` is the default and it is what stops a nightly review that has
@@ -940,9 +934,9 @@ export class RoutineEngine {
   private async quotaFloor(run: RunState): Promise<string | null> {
     const floor = run.routine.autonomy.minQuotaPercent;
     if (!floor) return null;
-    const agent = getAgent(run.routine.agentId);
-    const profile = getProfile(run.routine.profileId);
-    const project = getProject(run.routine.projectId);
+    const agent = await getAgent(run.routine.agentId);
+    const profile = await getProfile(run.routine.profileId);
+    const project = await getProject(run.routine.projectId);
     if (!agent || !profile || !project) return null;
     try {
       const quota = await getQuota(agent, profile, project);
@@ -967,17 +961,17 @@ export class RoutineEngine {
     /* Re-checked after the queue wait: everything `preflight` decided was true
        minutes ago, and the routine may have been disabled, the project moved,
        or the machine filled up while this fire sat behind another. */
-    const refusal = this.preflight(run);
+    const refusal = await this.preflight(run);
     if (refusal) {
-      this.close(run, "skipped", refusal);
+      await this.close(run, "skipped", refusal);
       return;
     }
     this.liveRuns += 1;
     let session: Session | null = null;
     let unsubscribe = () => {};
     try {
-      const profile = getProfile(run.routine.profileId)!;
-      const project = getProject(run.routine.projectId)!;
+      const profile = (await getProfile(run.routine.profileId))!;
+      const project = (await getProject(run.routine.projectId))!;
       /* The whole fire, in one statement: everything a `POST /api/sessions`
          body carries, off the routine's own columns. `parentSessionId` stays
          unset — a routine has no parent thread, and `routine_runs` is what
@@ -985,7 +979,7 @@ export class RoutineEngine {
          it, because the handshake and the first prompt are in flight by the
          time this returns and a question can arrive before the next statement
          runs. */
-      session = this.manager.create(
+      session = await this.manager.create(
         profile,
         run.routine.agentId,
         project,
@@ -1161,7 +1155,7 @@ export class RoutineEngine {
        there is no prompt of ours to append it to, and a definition that wants
        it says `{{inputs.payload}}` — which is the same opt-in the prompt body's
        preamble asks for, expressed the way a workflow expresses everything. */
-    const started = host.start(session, body.definition, run.payload ? { payload: run.payload } : {});
+    const started = await host.start(session, body.definition, run.payload ? { payload: run.payload } : {});
     const seconds = run.routine.autonomy.maxRunSeconds;
     const budget = seconds > 0 ? Math.min(seconds * 1000, WORKFLOW_WAIT_CAP_MS) : WORKFLOW_WAIT_CAP_MS;
     const view = await Promise.race([
@@ -1170,7 +1164,7 @@ export class RoutineEngine {
     ]);
     if (!view || view.status === "running") {
       host.cancel(started.id, "the routine run ended");
-      this.close(run, "failed", run.error ?? "the workflow did not finish in time");
+      await this.close(run, "failed", run.error ?? "the workflow did not finish in time");
       return;
     }
     /* The run's answer is the last step to finish — for a phased definition
@@ -1226,7 +1220,7 @@ export class RoutineEngine {
 
   /** Finish the run: status, actions, row. Idempotent — a cancel racing a
       settle must not run the finish actions twice. */
-  private close(run: RunState, status: RoutineRunStatus, error: string | null, opts: { retire?: Session | null } = {}): void {
+  private async close(run: RunState, status: RoutineRunStatus, error: string | null, opts: { retire?: Session | null } = {}): Promise<void> {
     if (terminal(run.status)) return;
     run.status = status;
     run.error = error;
@@ -1238,7 +1232,7 @@ export class RoutineEngine {
        `skipped` row, which is a run that did not happen. */
     if (status === "completed" || status === "blocked") {
       if (!run.routine.dryRunCompleted) {
-        db.update(routinesTable).set({ dryRunCompleted: true }).where(eq(routinesTable.id, run.routine.id)).run();
+        await db.update(routinesTable).set({ dryRunCompleted: true }).where(eq(routinesTable.id, run.routine.id));
       }
     }
     if (run.sessionId && run.routine.onFinish.length) void this.finish(run);
@@ -1274,8 +1268,8 @@ export class RoutineEngine {
   // ---- lifecycle ----
 
   /** One routine's runs, live rows included (they are the same rows). */
-  runsOf(routineId: string, limit = 50): RunView[] {
-    return listRuns(routineId, limit);
+  async runsOf(routineId: string, limit = 50): Promise<RunView[]> {
+    return await listRuns(routineId, limit);
   }
 
   private liveFor(routineId: string): RunState[] {
@@ -1318,13 +1312,12 @@ export class RoutineEngine {
    * the run's thread is still there to read, which is what makes this honest
    * rather than a loss.
    */
-  recoverAtBoot(): void {
-    const rows = db.select().from(runsTable).where(eq(runsTable.status, "running")).all();
+  async recoverAtBoot(): Promise<void> {
+    const rows = await db.select().from(runsTable).where(eq(runsTable.status, "running"));
     if (rows.length === 0) return;
-    db.update(runsTable)
+    await db.update(runsTable)
       .set({ status: "failed", error: "server restarted", endedAt: Date.now() })
-      .where(eq(runsTable.status, "running"))
-      .run();
+      .where(eq(runsTable.status, "running"));
     console.log(`[routines] closed ${rows.length} run(s) interrupted by the restart`);
   }
 
@@ -1337,8 +1330,8 @@ export class RoutineEngine {
 
   // ---- rows ----
 
-  private insert(run: RunState): void {
-    db.insert(runsTable)
+  private async insert(run: RunState): Promise<void> {
+    await db.insert(runsTable)
       .values({
         id: run.id,
         routineId: run.routine.id,
@@ -1357,12 +1350,11 @@ export class RoutineEngine {
         tokens: null,
         startedAt: run.startedAt,
         endedAt: null,
-      })
-      .run();
+      });
   }
 
-  private persist(run: RunState): void {
-    db.update(runsTable)
+  private async persist(run: RunState): Promise<void> {
+    await db.update(runsTable)
       .set({
         sessionId: run.sessionId,
         status: run.status,
@@ -1374,8 +1366,7 @@ export class RoutineEngine {
         tokens: run.tokens || null,
         endedAt: run.endedAt,
       })
-      .where(eq(runsTable.id, run.id))
-      .run();
+      .where(eq(runsTable.id, run.id));
   }
 }
 

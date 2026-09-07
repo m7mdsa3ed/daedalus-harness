@@ -9,6 +9,7 @@
 // segment in it, and the difference between the prefix itself and a request
 // underneath it.
 // Run: pnpm test:ide
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { mkdirSync, rmSync } from "node:fs";
 

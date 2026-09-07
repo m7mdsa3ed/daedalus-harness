@@ -13,6 +13,7 @@
 //     a step is never handed the workflow server
 //   - the parent's process going away cancels its runs
 // Run: pnpm test:workflow
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { rmSync } from "node:fs";
@@ -81,11 +82,11 @@ const profile: Profile = {
   commandIds: [],
 };
 const project = { id: "w1", name: "test-ws", cwd: "/tmp/daedalus-test-workflow/ws", description: null };
-db.insert(schema.profiles)
+await db.insert(schema.profiles)
   .values({ id: "p1", name: "test", agents: { fake: {} }, baseUrl: "", apiKey: "", models: [], defaultModel: "", smallModel: "", logoUrl: "" } as never)
   .onConflictDoNothing()
-  .run();
-db.insert(schema.projects).values({ id: "w1", name: "test-ws", cwd: project.cwd, description: null, logoUrl: "" } as never).onConflictDoNothing().run();
+  ;
+await db.insert(schema.projects).values({ id: "w1", name: "test-ws", cwd: project.cwd, description: null, logoUrl: "" } as never).onConflictDoNothing();
 
 let passed = 0;
 const failures: string[] = [];
@@ -99,9 +100,9 @@ async function test(name: string, fn: () => void | Promise<void>) {
     console.log(`  ✗ ${name}\n    ${error instanceof Error ? error.stack : String(error)}`);
   }
 }
-const waitFor = async (predicate: () => boolean, what: string, ms = 10_000) => {
-  for (let i = 0; i < ms / 50 && !predicate(); i++) await new Promise((r) => setTimeout(r, 50));
-  assert.ok(predicate(), `timed out waiting for ${what}`);
+const waitFor = async (predicate: () => boolean | Promise<boolean>, what: string, ms = 10_000) => {
+  for (let i = 0; i < ms / 50 && !(await predicate()); i++) await new Promise((r) => setTimeout(r, 50));
+  assert.ok(await predicate(), `timed out waiting for ${what}`);
 };
 
 let runner: InstanceType<typeof WorkflowRunner>;
@@ -109,7 +110,7 @@ const manager = new SessionManager({ onProcessGone: (s) => runner?.cancelForPare
 runner = new WorkflowRunner(manager, { port: 4999 });
 manager.setWorkflowRunner(runner);
 
-const parent = manager.create(profile, "fake", project);
+const parent = await manager.create(profile, "fake", project);
 await parent.bridge!.ready;
 const ws = new MockWs();
 assert.equal(await manager.attach(parent.id, ws as never), null);
@@ -118,7 +119,7 @@ const updatesOf = (w: MockWs, kind: string) => w.of("update").filter((e) => e.up
 console.log("workflow");
 
 await test("a pipeline with a parallel pair renders templates over inputs and outputs", async () => {
-  const view = runner.start(
+  const view = await runner.start(
     parent,
     {
       name: "pipe",
@@ -149,7 +150,7 @@ await test("a pipeline with a parallel pair renders templates over inputs and ou
   }
   assert.ok(manager.list().find((s) => s.id === step("a").sessionId)?.parentSessionId === parent.id, "list() reports the link");
   // The row is the durable record.
-  assert.equal(runner.status(view.id)?.status, "completed");
+  assert.equal((await runner.status(view.id))?.status, "completed");
 });
 
 await test("the run is mirrored into the parent's transcript, live and on replay", async () => {
@@ -193,7 +194,7 @@ await test("a step's token usage rides the parent's log, without its turn", asyn
 });
 
 await test("phases are a barrier, and every spawn carries the outline", async () => {
-  const view = runner.start(parent, {
+  const view = await runner.start(parent, {
     name: "phased",
     phases: [
       { name: "research", steps: [{ name: "a", prompt: "echo:A" }, { name: "b", prompt: "echo:B" }] },
@@ -221,7 +222,7 @@ await test("phases are a barrier, and every spawn carries the outline", async ()
 });
 
 await test("a flat definition's outline is one unnamed phase", async () => {
-  const view = runner.start(parent, { name: "flat", steps: [{ name: "only", prompt: "echo:x" }] });
+  const view = await runner.start(parent, { name: "flat", steps: [{ name: "only", prompt: "echo:x" }] });
   const done = (await runner.wait(view.id, 20_000))!;
   assert.equal(done.status, "completed", done.error ?? "");
   assert.equal(done.steps[0].phase, null);
@@ -233,7 +234,7 @@ await test("a flat definition's outline is one unnamed phase", async () => {
 
 await test("a JSON step validates, repairs once, and fails on the second miss", async () => {
   const schemaSpec = { type: "object", required: ["findings"], properties: { findings: { type: "array" } } };
-  const ok = runner.start(parent, {
+  const ok = await runner.start(parent, {
     name: "json",
     steps: [
       { name: "j", prompt: 'echo:Here you go:\n```json\n{"findings":["one"]}\n```', output: { schema: schemaSpec } },
@@ -245,7 +246,7 @@ await test("a JSON step validates, repairs once, and fails on the second miss", 
   assert.deepEqual(done.steps[0].output, { findings: ["one"] });
   assert.equal(done.steps[1].output, "one");
 
-  const bad = runner.start(parent, { name: "json-bad", steps: [{ name: "j", prompt: 'echo:{"nope":1}', output: { schema: schemaSpec } }] });
+  const bad = await runner.start(parent, { name: "json-bad", steps: [{ name: "j", prompt: 'echo:{"nope":1}', output: { schema: schemaSpec } }] });
   const failed = (await runner.wait(bad.id, 20_000))!;
   assert.equal(failed.status, "failed");
   assert.equal(failed.steps[0].status, "failed");
@@ -254,7 +255,7 @@ await test("a JSON step validates, repairs once, and fails on the second miss", 
 });
 
 await test("a failing step skips its dependents while its sibling finishes", async () => {
-  const view = runner.start(parent, {
+  const view = await runner.start(parent, {
     name: "partial",
     steps: [
       { name: "bad", prompt: "please fail" },
@@ -273,9 +274,9 @@ await test("a failing step skips its dependents while its sibling finishes", asy
 });
 
 await test("cancel interrupts a parked step and retires its thread", async () => {
-  const view = runner.start(parent, { name: "park", steps: [{ name: "ask", prompt: "needs permission" }] });
-  await waitFor(() => runner.status(view.id)?.steps[0].sessionId != null && manager.get(runner.status(view.id)!.steps[0].sessionId!)?.bridge?.promptActive === true, "the step's turn to park");
-  const childId = runner.status(view.id)!.steps[0].sessionId!;
+  const view = await runner.start(parent, { name: "park", steps: [{ name: "ask", prompt: "needs permission" }] });
+  await waitFor(async () => (await runner.status(view.id))?.steps[0].sessionId != null && manager.get((await runner.status(view.id))!.steps[0].sessionId!)?.bridge?.promptActive === true, "the step's turn to park");
+  const childId = (await runner.status(view.id))!.steps[0].sessionId!;
   assert.equal(runner.cancel(view.id), true);
   const done = (await runner.wait(view.id, 5_000))!;
   assert.equal(done.status, "cancelled");
@@ -285,20 +286,20 @@ await test("cancel interrupts a parked step and retires its thread", async () =>
 });
 
 await test("pause holds the run, resume carries it on", async () => {
-  const view = runner.start(parent, {
+  const view = await runner.start(parent, {
     name: "hold",
     steps: [
       { name: "a", prompt: "needs permission" },
       { name: "b", prompt: "echo:B", dependsOn: ["a"] },
     ],
   });
-  const stepOf = (n: string) => runner.status(view.id)!.steps.find((s) => s.name === n)!;
-  await waitFor(() => stepOf("a").sessionId != null && manager.get(stepOf("a").sessionId!)?.bridge?.promptActive === true, "a to park");
-  const child = manager.get(stepOf("a").sessionId!)!;
+  const stepOf = async (n: string) => ((await runner.status(view.id))!).steps.find((s) => s.name === n)!;
+  await waitFor(async () => (await stepOf("a")).sessionId != null && manager.get((await stepOf("a")).sessionId!)?.bridge?.promptActive === true, "a to park");
+  const child = manager.get((await stepOf("a")).sessionId!)!;
   assert.equal(runner.resume(view.id), false, "a running run is not resumed");
   assert.equal(runner.pause(view.id), true);
   assert.equal(runner.pause(view.id), false, "a held run is not paused twice");
-  assert.equal(runner.status(view.id)!.status, "paused");
+  assert.equal((await runner.status(view.id))!.status, "paused");
   // The stamp names the thread the run belongs to, and the hold is said on it.
   const spawn = updatesOf(ws, "subagent_spawned").find((e) => (e.update as { subagentSessionId: string }).subagentSessionId === child.id)!;
   assert.equal(((spawn.update as unknown as { _meta: { daedalus: { workflow: { sessionId: string } } } })._meta.daedalus.workflow.sessionId), parent.id);
@@ -309,12 +310,12 @@ await test("pause holds the run, resume carries it on", async () => {
   // Its question is answered; the step completes — and its dependent does not start.
   const pending = child.bridge!.pendingEvents()[0] as { requestId: string; request: { options: { optionId: string }[] } };
   child.bridge!.answer(pending.requestId, { outcome: { outcome: "selected", optionId: pending.request.options[0].optionId } });
-  await waitFor(() => stepOf("a").status === "completed", "a to complete under the hold");
+  await waitFor(async () => (await stepOf("a")).status === "completed", "a to complete under the hold");
   await new Promise((r) => setTimeout(r, 400));
-  assert.equal(stepOf("b").status, "pending", "b did not start while paused");
-  assert.equal(runner.status(view.id)!.status, "paused");
+  assert.equal((await stepOf("b")).status, "pending", "b did not start while paused");
+  assert.equal((await runner.status(view.id))!.status, "paused");
   assert.equal(runner.statusFor("someone-else", view.id), null, "a run is only its thread's");
-  assert.equal(runner.statusFor(parent.id, view.id)?.id, view.id);
+  assert.equal((await runner.statusFor(parent.id, view.id))?.id, view.id);
   assert.equal(runner.resume(view.id), true);
   const done = (await runner.wait(view.id, 20_000))!;
   assert.equal(done.status, "completed", done.error ?? "");
@@ -323,14 +324,14 @@ await test("pause holds the run, resume carries it on", async () => {
 });
 
 await test("a paused run can be cancelled and a step's clock stands still while held", async () => {
-  const view = runner.start(parent, { name: "hold-cancel", steps: [{ name: "ask", prompt: "needs permission", timeoutSec: 1 }] });
-  await waitFor(() => runner.status(view.id)?.steps[0].sessionId != null && manager.get(runner.status(view.id)!.steps[0].sessionId!)?.bridge?.promptActive === true, "the step's turn to park");
-  const childId = runner.status(view.id)!.steps[0].sessionId!;
+  const view = await runner.start(parent, { name: "hold-cancel", steps: [{ name: "ask", prompt: "needs permission", timeoutSec: 1 }] });
+  await waitFor(async () => (await runner.status(view.id))?.steps[0].sessionId != null && manager.get((await runner.status(view.id))!.steps[0].sessionId!)?.bridge?.promptActive === true, "the step's turn to park");
+  const childId = (await runner.status(view.id))!.steps[0].sessionId!;
   assert.equal(runner.pause(view.id), true);
   // Past the step's own timeout: a clock that kept running would have failed it.
   await new Promise((r) => setTimeout(r, 1_300));
-  assert.equal(runner.status(view.id)!.status, "paused");
-  assert.equal(runner.status(view.id)!.steps[0].status, "running");
+  assert.equal((await runner.status(view.id))!.status, "paused");
+  assert.equal((await runner.status(view.id))!.steps[0].status, "running");
   assert.equal(runner.cancel(view.id), true);
   const done = (await runner.wait(view.id, 5_000))!;
   assert.equal(done.status, "cancelled");
@@ -345,20 +346,20 @@ await test("the loopback key resolves the caller and a step may not start a work
   assert.equal(runner.resolveCaller(key, parent.id), parent);
   assert.equal(runner.resolveCaller("0".repeat(key.length), parent.id), null);
   assert.equal(runner.resolveCaller(key, "nope"), null);
-  const child = manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, { parentSessionId: parent.id, title: "step" });
+  const child = await manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, { parentSessionId: parent.id, title: "step" });
   await child.bridge!.ready;
   assert.throws(() => runner.start(child, { name: "x", steps: [{ name: "a", prompt: "echo:x" }] }), (e: unknown) => e instanceof WorkflowError && e.status === 409);
   manager.retire(child);
 });
 
-await test("a step is never handed the workflow server", () => {
+await test("a step is never handed the workflow server", async () => {
   mcpServers.ensureBuiltin("workflow");
   const links = { mcpServerIds: ["builtin:workflow"] };
-  const { servers: top } = mcpServersFor(links, project, getConfig(), workflowServer(parent, runner));
+  const { servers: top } = await mcpServersFor(links, project, getConfig(), workflowServer(parent, runner));
   assert.equal(top.length, 1);
   assert.equal(top[0].name, "workflow");
   assert.ok((top[0] as { env: { name: string; value: string }[] }).env.some((e) => e.name === "WORKFLOW_URL" && e.value.endsWith(`/${parent.id}`)));
-  assert.equal(mcpServersFor(links, project, getConfig(), null).servers.length, 0);
+  assert.equal((await mcpServersFor(links, project, getConfig(), null)).servers.length, 0);
 });
 
 await test("bad definitions are refused before anything spawns", () => {
@@ -368,29 +369,29 @@ await test("bad definitions are refused before anything spawns", () => {
 });
 
 await test("the parent's process going away cancels its runs", async () => {
-  const view = runner.start(parent, { name: "orphan", steps: [{ name: "ask", prompt: "needs permission" }] });
-  await waitFor(() => runner.status(view.id)?.steps[0].sessionId != null, "the step to spawn");
+  const view = await runner.start(parent, { name: "orphan", steps: [{ name: "ask", prompt: "needs permission" }] });
+  await waitFor(async () => (await runner.status(view.id))?.steps[0].sessionId != null, "the step to spawn");
   manager.retire(parent);
   const done = (await runner.wait(view.id, 5_000))!;
   assert.equal(done.status, "cancelled");
   assert.match(done.error ?? "", /process gone/);
 });
 
-await test("recoverAtBoot closes what the last process left running", () => {
-  db.insert(schema.workflowRuns)
+await test("recoverAtBoot closes what the last process left running", async () => {
+  await db.insert(schema.workflowRuns)
     .values({
       id: "stale", parentSessionId: parent.id, name: "stale", definition: {}, inputs: {}, status: "running", error: null,
       steps: [{ name: "s", status: "running", sessionId: "gone", attempt: 1, output: null, error: null, startedAt: 1, endedAt: null }],
       createdAt: 1, endedAt: null,
     })
-    .run();
+    ;
   const before = updatesOf(ws, "subagent_state_update").length;
   new WorkflowRunner(manager, { port: 4999 }).recoverAtBoot();
-  const row = db.select().from(schema.workflowRuns).where(eq(schema.workflowRuns.id, "stale")).get()!;
+  const row = (await db.select().from(schema.workflowRuns).where(eq(schema.workflowRuns.id, "stale")))[0]!;
   assert.equal(row.status, "failed");
   assert.equal(row.steps[0].status, "failed");
   // The parent is retired but its log is not: the disconnect is journaled.
-  assert.equal(manager.journal(parent.id)!.events.filter((e) => e.ev === "update" && e.update.sessionUpdate === "subagent_state_update").length, before + 1);
+  assert.equal(((await manager.journal(parent.id))!).events.filter((e) => e.ev === "update" && e.update.sessionUpdate === "subagent_state_update").length, before + 1);
 });
 
 // ── scripts ───────────────────────────────────────────────────────────────
@@ -398,7 +399,7 @@ await test("recoverAtBoot closes what the last process left running", () => {
 // below is what a declarative definition cannot express.
 
 await test("a script fans out over what a first agent found, as real threads on one card", async () => {
-  const view = runner.startScript(
+  const view = await runner.startScript(
     parent,
     `export const meta = {
        name: 'fanout',
@@ -448,7 +449,7 @@ await test("a script fans out over what a first agent found, as real threads on 
 });
 
 await test("a script parses schema output, and a failed agent is a null inside parallel", async () => {
-  const view = runner.startScript(
+  const view = await runner.startScript(
     parent,
     `export const meta = { name: 'mixed', description: 'schema and failure' }
      const ok = await agent('echo:take it:\\n\\u0060\\u0060\\u0060json\\n{"n":1}\\n\\u0060\\u0060\\u0060', {
@@ -474,7 +475,7 @@ await test("a script parses schema output, and a failed agent is a null inside p
 });
 
 await test("an unguarded agent failure fails the run; cancel stops one mid-flight", async () => {
-  const bad = runner.startScript(
+  const bad = await runner.startScript(
     parent,
     `export const meta = { name: 'boom', description: 'unguarded failure' }
      await agent('please fail', { label: 'only' })
@@ -483,12 +484,12 @@ await test("an unguarded agent failure fails the run; cancel stops one mid-fligh
   const failed = await runner.wait(bad.id, 30_000);
   assert.equal(failed?.status, "failed", "a bare await that throws fails the run");
 
-  const long = runner.startScript(
+  const long = await runner.startScript(
     parent,
     `export const meta = { name: 'slow', description: 'parks' }
      await agent('needs permission', { label: 'parked' })`,
   );
-  await waitFor(() => (runner.status(long.id)?.steps ?? []).some((s) => s.status === "running"), "the script's agent to start");
+  await waitFor(async () => ((await runner.status(long.id))?.steps ?? []).some((s) => s.status === "running"), "the script's agent to start");
   assert.equal(runner.cancel(long.id, "by hand"), true);
   const stopped = await runner.wait(long.id, 20_000);
   assert.equal(stopped?.status, "cancelled");
@@ -497,11 +498,11 @@ await test("an unguarded agent failure fails the run; cancel stops one mid-fligh
      So the settling is awaited rather than assumed — the same order the
      declarative engine's cancel has. */
   await waitFor(
-    () => (runner.status(long.id)?.steps ?? []).every((s) => s.status !== "running"),
+    async () => ((await runner.status(long.id))?.steps ?? []).every((s) => s.status !== "running"),
     "the script's agent to close itself",
   );
-  const settled = runner.status(long.id)!;
-  assert.deepEqual(settled.steps.map((s) => s.status), ["cancelled"], "cancelling the run cancels its agents");
+  const settled = (await runner.status(long.id))!;
+  assert.deepEqual((await settled).steps.map((s) => s.status), ["cancelled"], "cancelling the run cancels its agents");
   await waitFor(() => manager.get(settled.steps[0].sessionId!)?.exited === true, "the agent's thread to retire");
 });
 
@@ -516,7 +517,7 @@ await test("a script is refused what it may not do", async () => {
     (e: unknown) => e instanceof WorkflowError,
     "meta must be a literal, or the run could not be named before it runs",
   );
-  const child = manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, {
+  const child = await manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, {
     parentSessionId: parent.id,
   });
   assert.throws(
@@ -526,7 +527,7 @@ await test("a script is refused what it may not do", async () => {
   );
   manager.retire(child);
   // The clock ban is the sandbox's, but it has to reach the run's own error.
-  const clock = runner.startScript(parent, "export const meta = { name: 'clock', description: 'reads a clock' }\nreturn Date.now()");
+  const clock = await runner.startScript(parent, "export const meta = { name: 'clock', description: 'reads a clock' }\nreturn Date.now()");
   const done = await runner.wait(clock.id, 20_000);
   assert.equal(done?.status, "failed");
   assert.match(done!.error ?? "", /unreplayable/);

@@ -163,7 +163,7 @@ export async function proxyMcpRequest(req: Request): Promise<Response> {
   /* A wrong key and an unknown server answer the same way, deliberately: a
      404 that distinguishes them is an oracle for guessing either. */
   if (!shim || !safeKeyEqual(parsed.key, shim.key)) return notFound("unknown mcp key");
-  const server = mcpLibrary.list().find((s) => s.id === parsed.serverId);
+  const server = (await mcpLibrary.list()).find((s) => s.id === parsed.serverId);
   if (!server || server.type !== "http") return notFound("unknown mcp server");
 
   const token = await accessTokenFor(server.id);
@@ -226,7 +226,7 @@ export async function proxyMcpRequest(req: Request): Promise<Response> {
      agent reports a failure rather than hanging. */
   if (upstream.status === 401) {
     void upstream.body?.cancel();
-    const row = mcpOauth.get(server.id);
+    const row = await mcpOauth.get(server.id);
     let renewed: string | null = null;
     if (row?.refreshToken) {
       try {

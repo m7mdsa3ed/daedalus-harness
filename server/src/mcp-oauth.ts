@@ -241,29 +241,28 @@ export async function registerMcpClient(
 /* ── The store ── */
 
 export const mcpOauth = {
-  get: (mcpServerId: string): McpOauthRow | undefined =>
-    db.select().from(mcpOauthTable).where(eq(mcpOauthTable.mcpServerId, mcpServerId)).get(),
+  get: async (mcpServerId: string): Promise<McpOauthRow | undefined> =>
+    (await db.select().from(mcpOauthTable).where(eq(mcpOauthTable.mcpServerId, mcpServerId)).limit(1))[0],
 
-  all: (): McpOauthRow[] => db.select().from(mcpOauthTable).all(),
+  all: async (): Promise<McpOauthRow[]> => await db.select().from(mcpOauthTable),
 
   /** Insert or replace the whole connection row. Every writer here goes
       through one statement so `updatedAt` cannot be forgotten. */
-  put(row: Omit<McpOauthRow, "updatedAt">): McpOauthRow {
+  async put(row: Omit<McpOauthRow, "updatedAt">): Promise<McpOauthRow> {
     const full = { ...row, updatedAt: Date.now() };
-    db.insert(mcpOauthTable).values(full).onConflictDoUpdate({ target: mcpOauthTable.mcpServerId, set: full }).run();
+    await db.insert(mcpOauthTable).values(full).onConflictDoUpdate({ target: mcpOauthTable.mcpServerId, set: full });
     return full;
   },
 
-  patch(mcpServerId: string, patch: Partial<Omit<McpOauthRow, "mcpServerId">>): McpOauthRow | undefined {
-    db.update(mcpOauthTable)
+  async patch(mcpServerId: string, patch: Partial<Omit<McpOauthRow, "mcpServerId">>): Promise<McpOauthRow | undefined> {
+    await db.update(mcpOauthTable)
       .set({ ...patch, updatedAt: Date.now() })
-      .where(eq(mcpOauthTable.mcpServerId, mcpServerId))
-      .run();
+      .where(eq(mcpOauthTable.mcpServerId, mcpServerId));
     return mcpOauth.get(mcpServerId);
   },
 
-  remove: (mcpServerId: string): boolean =>
-    db.delete(mcpOauthTable).where(eq(mcpOauthTable.mcpServerId, mcpServerId)).run().changes > 0,
+  remove: async (mcpServerId: string): Promise<boolean> =>
+    ((await db.delete(mcpOauthTable).where(eq(mcpOauthTable.mcpServerId, mcpServerId))).rowCount ?? 0) > 0,
 };
 
 /** How the row's state reads to the client. Tokens themselves never leave the
@@ -284,9 +283,9 @@ export type McpAuthState =
     than as a retry after a 401. */
 export const EXPIRY_SLACK_MS = 60_000;
 
-export function authStateOf(serverId: string, auth: "none" | "oauth"): McpAuthState {
+export async function authStateOf(serverId: string, auth: "none" | "oauth"): Promise<McpAuthState> {
   if (auth !== "oauth") return { kind: "none" };
-  const row = mcpOauth.get(serverId);
+  const row = await mcpOauth.get(serverId);
   if (!row || !row.accessToken) {
     return {
       kind: "oauth",
@@ -314,8 +313,8 @@ export function authStateOf(serverId: string, auth: "none" | "oauth"): McpAuthSt
 /** Is this server ready to be advertised to an agent? The one question spawn
     asks — an unauthorized server is not offered at all, following the rule the
     built-in web-search row already sets. */
-export function isConnected(serverId: string): boolean {
-  const row = mcpOauth.get(serverId);
+export async function isConnected(serverId: string): Promise<boolean> {
+  const row = await mcpOauth.get(serverId);
   return !!row?.accessToken && (row.expiresAt === null || row.expiresAt > Date.now() || !!row.refreshToken);
 }
 
@@ -408,7 +407,7 @@ export async function completeAuthorization(
     redirectUri,
     resource: new URL(row.resource),
   });
-  return mcpOauth.patch(row.mcpServerId, tokenColumns(tokens, row))!;
+  return (await mcpOauth.patch(row.mcpServerId, tokenColumns(tokens, row)))!;
 }
 
 /**
@@ -434,10 +433,10 @@ export function refreshTokens(row: McpOauthRow): Promise<McpOauthRow> {
         refreshToken: row.refreshToken,
         resource: new URL(row.resource),
       });
-      return mcpOauth.patch(row.mcpServerId, tokenColumns(tokens, row))!;
+      return (await mcpOauth.patch(row.mcpServerId, tokenColumns(tokens, row)))!;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      mcpOauth.patch(row.mcpServerId, { lastError: `refresh failed: ${detail}` });
+      await mcpOauth.patch(row.mcpServerId, { lastError: `refresh failed: ${detail}` });
       throw error;
     }
   })().finally(() => refreshing.delete(row.mcpServerId));
@@ -452,7 +451,7 @@ export function refreshTokens(row: McpOauthRow): Promise<McpOauthRow> {
  * refuse more confusingly.
  */
 export async function accessTokenFor(serverId: string): Promise<string | null> {
-  let row = mcpOauth.get(serverId);
+  let row = await mcpOauth.get(serverId);
   if (!row) return null;
   const stale = row.expiresAt !== null && row.expiresAt - EXPIRY_SLACK_MS <= Date.now();
   if (!row.accessToken || stale) {
@@ -474,7 +473,7 @@ export async function accessTokenFor(serverId: string): Promise<string | null> {
  * un-disconnectable.
  */
 export async function disconnectServer(serverId: string): Promise<{ revoked: boolean; error: string | null }> {
-  const row = mcpOauth.get(serverId);
+  const row = await mcpOauth.get(serverId);
   if (!row) return { revoked: false, error: null };
   let revoked = false;
   let error: string | null = null;
@@ -511,11 +510,14 @@ export async function disconnectServer(serverId: string): Promise<{ revoked: boo
 /** Every `http` row that is marked `oauth`, with its connection state — what
     the list route reports beside each server. One query for the rows and one
     for the connections, not one per row. */
-export function authStates(): Map<string, McpAuthState> {
-  const rows = db
+export async function authStates(): Promise<Map<string, McpAuthState>> {
+  const rows = await db
     .select({ id: mcpServersTable.id, auth: mcpServersTable.auth })
     .from(mcpServersTable)
-    .where(and(eq(mcpServersTable.type, "http"), eq(mcpServersTable.auth, "oauth")))
-    .all();
-  return new Map(rows.map((r) => [r.id, authStateOf(r.id, r.auth)]));
+    .where(and(eq(mcpServersTable.type, "http"), eq(mcpServersTable.auth, "oauth")));
+  return new Map(
+    await Promise.all(
+      rows.map(async (r): Promise<[string, McpAuthState]> => [r.id, await authStateOf(r.id, r.auth)]),
+    ),
+  );
 }

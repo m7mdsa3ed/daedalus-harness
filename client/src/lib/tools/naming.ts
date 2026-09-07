@@ -137,6 +137,38 @@ export function toolDisplayName(name: string): string {
   return mcp.tool ? `${mcp.server} · ${mcp.tool}` : mcp.server
 }
 
+/* ACP's kinds that cannot have written to the worktree: they read, they look
+   something up, they think. Everything else may have — `edit`, `delete` and
+   `move` say so, `execute` runs a shell that can `sed`, and `other` is the
+   protocol saying *nothing* (Claude Code files every MCP tool under it), which
+   is not the same as saying "harmless". The set is deliberately the
+   read-only one rather than the writing one: a kind nobody anticipated — a
+   future ACP verb, an MCP server that writes files — lands on "may have
+   touched something", because a chip that appears over nothing is a smaller
+   lie than one that hides real work. */
+const READONLY_KINDS: ReadonlySet<ToolKind> = new Set([
+  "read",
+  "search",
+  "fetch",
+  "think",
+  "switch_mode",
+])
+
+/**
+ * Whether this call could have changed a file. Read off ACP's `kind` alone
+ * (through `toolKindOf`, so a runtime that omits it still gets an answer from
+ * its tool's name) — no vendor tool name is spelled here, and a new runtime's
+ * writer needs no edit as long as it declares a kind.
+ *
+ * Used to gate the transcript's "N files changed" chip: the *measurement* is
+ * git's and stays whole-worktree, but a turn that only read and searched
+ * cannot be the author of a diff, and in a cwd shared with another thread or
+ * the user's own editor it would otherwise claim one.
+ */
+export function couldTouchFiles(item: Pick<ToolItem, "title" | "toolKind" | "meta">): boolean {
+  return !READONLY_KINDS.has(toolKindOf(item))
+}
+
 // ─── Vendor identity ─────────────────────────────────────────────────────────
 
 /* Everything below reads *which tool this was*, not just what ACP called it.

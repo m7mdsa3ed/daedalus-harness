@@ -18,8 +18,8 @@ import type { AttachmentRef, QueuedMessage } from "./protocol.js";
  * `turn_ended` it has to follow.
  */
 
-export function listQueue(sessionId: string): QueuedMessage[] {
-  const rows = db
+export async function listQueue(sessionId: string): Promise<QueuedMessage[]> {
+  const rows = await db
     .select({
       id: queueTable.id,
       text: queueTable.text,
@@ -28,22 +28,23 @@ export function listQueue(sessionId: string): QueuedMessage[] {
     })
     .from(queueTable)
     .where(eq(queueTable.sessionId, sessionId))
-    .orderBy(asc(queueTable.position))
-    .all();
+    .orderBy(asc(queueTable.position));
   /* The rows carry ids; the wire carries refs, so a queued message can draw its
      chips with nothing else fetched. Resolved here rather than stored, because
      a name or a size is the attachment row's to state and copying it into the
      queue row would be a second answer that can drift. */
-  return rows.map((row) => {
-    const ids = row.attachmentIds ?? [];
-    const attachments = ids.length > 0 ? listAttachments(ids).map(refOf) : [];
-    return {
-      id: row.id,
-      text: row.text,
-      createdAt: row.createdAt,
-      ...(attachments.length > 0 ? { attachments } : {}),
-    };
-  });
+  return await Promise.all(
+    rows.map(async (row) => {
+      const ids = row.attachmentIds ?? [];
+      const attachments = ids.length > 0 ? (await listAttachments(ids)).map(refOf) : [];
+      return {
+        id: row.id,
+        text: row.text,
+        createdAt: row.createdAt,
+        ...(attachments.length > 0 ? { attachments } : {}),
+      };
+    }),
+  );
 }
 
 /** The ids a queued message carries — what a drain hands the prompt path. */
@@ -65,21 +66,21 @@ function requireText(text: string, attachments: AttachmentRef[] = []): string {
   return trimmed;
 }
 
-export function enqueue(
+export async function enqueue(
   sessionId: string,
   text: string,
   attachments: AttachmentRef[] = [],
-): QueuedMessage {
+): Promise<QueuedMessage> {
   const body = requireText(text, attachments);
   const row = {
     id: randomUUID(),
     sessionId,
-    position: nextPosition(sessionId),
+    position: await nextPosition(sessionId),
     text: body,
     attachmentIds: attachments.length > 0 ? attachments.map((ref) => ref.id) : null,
     createdAt: Date.now(),
   };
-  db.insert(queueTable).values(row).run();
+  await db.insert(queueTable).values(row);
   return {
     id: row.id,
     text: row.text,
@@ -88,58 +89,57 @@ export function enqueue(
   };
 }
 
-function nextPosition(sessionId: string): number {
-  const row = db
+async function nextPosition(sessionId: string): Promise<number> {
+  const row = (await db
     .select({ max: sql<number | null>`max(${queueTable.position})` })
     .from(queueTable)
     .where(eq(queueTable.sessionId, sessionId))
-    .get();
+    .limit(1))[0];
   return (row?.max ?? 0) + 1;
 }
 
 /** `attachmentIds` omitted means "leave them alone"; an empty array clears
     them, which is how a queued item's chip is removed. */
-export function updateQueued(
+export async function updateQueued(
   sessionId: string,
   itemId: string,
   text: string,
   attachmentIds?: string[],
-): boolean {
-  const kept = attachmentIds === undefined ? undefined : listAttachments(attachmentIds).map(refOf);
+): Promise<boolean> {
+  const kept = attachmentIds === undefined ? undefined : (await listAttachments(attachmentIds)).map(refOf);
   const existing = kept
     ? kept
-    : listQueue(sessionId).find((item) => item.id === itemId)?.attachments ?? [];
+    : (await listQueue(sessionId)).find((item) => item.id === itemId)?.attachments ?? [];
   const body = requireText(text, existing);
   return (
-    db
+    ((await db
       .update(queueTable)
       .set({
         text: body,
         ...(kept ? { attachmentIds: kept.length > 0 ? kept.map((ref) => ref.id) : null } : {}),
       })
       .where(sql`${queueTable.id} = ${itemId} and ${queueTable.sessionId} = ${sessionId}`)
-      .run().changes > 0
+      ).rowCount ?? 0) > 0
   );
 }
 
-export function removeQueued(sessionId: string, itemId: string): boolean {
+export async function removeQueued(sessionId: string, itemId: string): Promise<boolean> {
   return (
-    db
+    ((await db
       .delete(queueTable)
       .where(sql`${queueTable.id} = ${itemId} and ${queueTable.sessionId} = ${sessionId}`)
-      .run().changes > 0
+      ).rowCount ?? 0) > 0
   );
 }
 
-export function removeQueuedMany(sessionId: string, ids: string[]): void {
+export async function removeQueuedMany(sessionId: string, ids: string[]): Promise<void> {
   if (ids.length === 0) return;
-  db.delete(queueTable)
-    .where(sql`${queueTable.sessionId} = ${sessionId} and ${inArray(queueTable.id, ids)}`)
-    .run();
+  await db.delete(queueTable)
+    .where(sql`${queueTable.sessionId} = ${sessionId} and ${inArray(queueTable.id, ids)}`);
 }
 
-export function clearQueue(sessionId: string): void {
-  db.delete(queueTable).where(eq(queueTable.sessionId, sessionId)).run();
+export async function clearQueue(sessionId: string): Promise<void> {
+  await db.delete(queueTable).where(eq(queueTable.sessionId, sessionId));
 }
 
 /** What a drain sends: every queued text, in order, as one prompt. The items

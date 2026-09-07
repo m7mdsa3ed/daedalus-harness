@@ -6,7 +6,7 @@
      │ New thread · Build · Tasks · …                  fixed nav, icon + label, always there
       ├ Pinned                             the ones you said matter
       │ Recents                            the newest few, flat — a shortcut,
-      │                                    running turns first
+      │                                    running turns always among them
      │ Projects                           one folder per project, ALL its
      │   ▸ harness              + ·       threads, by period; + starts one *in* it
      │   ▸ website
@@ -342,7 +342,8 @@ function useThreadStatuses(): Map<string, ThreadStatus> {
     const next = new Map<string, ThreadStatus>()
     for (const session of state.sessions) {
       const thread = state.threads[session.id] as LiveThreadState | undefined
-      const waiting = !!thread && (!!thread.permission || !!thread.elicitation)
+      const waiting =
+        !!thread && (thread.permissions.length > 0 || thread.elicitations.length > 0)
       const running = thread?.turnActive ?? session.promptActive
       /* A thread this client has never connected has no phase of its own, and
          `idle` is the honest reading for it — the server's `promptActive` is
@@ -439,15 +440,28 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
        most likely to be looked for — was the one missing from where it lives.
        By project: no Recents at all, which is the view for someone who thinks
        in projects rather than in time. */
-    /* By creation date, ascending — the oldest threads at the top of Recents. */
+    /* Newest first, by creation date — and running is a reason to be *in*
+       Recents, never a reason to be at the top of it. A thread's status is only
+       truly known once this client has connected to it (`useThreadStatuses`
+       falls back to the server's `promptActive`, a snapshot refetched on
+       bootstrap and mutations), so a running block at the top re-sorted the
+       list the moment you clicked a row and the connection corrected a stale
+       reading — the one list position you were reading from moved under the
+       click that opened it. Membership can still change on that correction; the
+       order of what is drawn cannot. */
     const isRunning = (session: SessionMeta) => statuses.get(session.id) === "running"
     const rest = [...live].sort((a, b) => b.createdAt - a.createdAt)
     const running = rest.filter(isRunning)
-    const idle = rest.filter((session) => !isRunning(session))
-    const recent =
-      view.sort === "recent"
-        ? [...running, ...idle.slice(0, Math.max(RECENT_COUNT - running.length, 0))]
-        : []
+    /* Every running thread keeps its place, whatever its age — that is what
+       Recents replaced the old Running tier with, and burying the turn that is
+       happening now is the thing the tier existed to prevent. The rest fill
+       what is left, so the count is what it always was. */
+    const shown = new Set(running.map((session) => session.id))
+    for (const session of rest) {
+      if (shown.size >= Math.max(RECENT_COUNT, running.length)) break
+      shown.add(session.id)
+    }
+    const recent = view.sort === "recent" ? rest.filter((session) => shown.has(session.id)) : []
     return { live, trashed, pinned, recent, filed: newestFirst }
   }, [sessions, statuses, pins, view.filter, view.sort])
 

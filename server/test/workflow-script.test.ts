@@ -5,6 +5,7 @@
 // the script layer decides (the API's contracts, the caps, the clock ban, what
 // a thrown thunk does) is checked here in-process.
 // Run: pnpm test:workflow-script
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import {
   SCRIPT_LIMITS,

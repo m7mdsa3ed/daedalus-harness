@@ -136,60 +136,59 @@ function toRow(id: string, input: McpServerInput): typeof mcpServersTable.$infer
 }
 
 export const mcpServers = {
-  list: (): McpServerDef[] => db.select().from(mcpServersTable).all().map(toDef),
-  create(input: McpServerInput): McpServerDef {
+  list: async (): Promise<McpServerDef[]> => await (await db.select().from(mcpServersTable)).map(toDef),
+  async create(input: McpServerInput): Promise<McpServerDef> {
     // A built-in goes through `ensureBuiltin`: it has one id, not a fresh one.
     if (input.type === "builtin") return mcpServers.ensureBuiltin(input.builtin);
     const row = toRow(randomUUID(), input);
-    db.insert(mcpServersTable).values(row).run();
+    await db.insert(mcpServersTable).values(row);
     return toDef(row as McpRow);
   },
   /** Put one of the harness's own servers in the library — the "inject"
       action on the MCP page. Idempotent by fixed id: asking twice is one row,
       and a row the user renamed keeps its name. */
-  ensureBuiltin(kind: BuiltinMcp): McpServerDef {
+  async ensureBuiltin(kind: BuiltinMcp): Promise<McpServerDef> {
     const { id, name } = BUILTIN_MCP[kind];
-    db.insert(mcpServersTable)
+    await db.insert(mcpServersTable)
       .values(toRow(id, { type: "builtin", name, builtin: kind }))
-      .onConflictDoNothing()
-      .run();
-    return toDef(db.select().from(mcpServersTable).where(eq(mcpServersTable.id, id)).get()!);
+      .onConflictDoNothing();
+    return toDef((await db.select().from(mcpServersTable).where(eq(mcpServersTable.id, id)).limit(1))[0]!);
   },
-  update(id: string, input: McpServerInput): McpServerDef | undefined {
+  async update(id: string, input: McpServerInput): Promise<McpServerDef | undefined> {
     const row = toRow(id, input);
-    const changed = db.update(mcpServersTable).set(row).where(eq(mcpServersTable.id, id)).run().changes;
+    const changed = ((await db.update(mcpServersTable).set(row).where(eq(mcpServersTable.id, id))).rowCount ?? 0);
     return changed > 0 ? toDef(row as McpRow) : undefined;
   },
-  remove: (id: string): boolean =>
-    db.delete(mcpServersTable).where(eq(mcpServersTable.id, id)).run().changes > 0,
+  remove: async (id: string): Promise<boolean> =>
+    ((await db.delete(mcpServersTable).where(eq(mcpServersTable.id, id))).rowCount ?? 0) > 0,
 };
 
 export const commands = {
-  list: (): CommandDef[] => db.select().from(commandsTable).all(),
-  create(input: CommandInput): CommandDef {
+  list: async (): Promise<CommandDef[]> => await db.select().from(commandsTable),
+  async create(input: CommandInput): Promise<CommandDef> {
     const command: CommandDef = { id: randomUUID(), ...input };
-    db.insert(commandsTable).values(command).run();
+    await db.insert(commandsTable).values(command);
     return command;
   },
-  update(id: string, input: CommandInput): CommandDef | undefined {
-    const changed = db.update(commandsTable).set(input).where(eq(commandsTable.id, id)).run().changes;
+  async update(id: string, input: CommandInput): Promise<CommandDef | undefined> {
+    const changed = ((await db.update(commandsTable).set(input).where(eq(commandsTable.id, id))).rowCount ?? 0);
     return changed > 0 ? { id, ...input } : undefined;
   },
-  remove: (id: string): boolean =>
-    db.delete(commandsTable).where(eq(commandsTable.id, id)).run().changes > 0,
+  remove: async (id: string): Promise<boolean> =>
+    ((await db.delete(commandsTable).where(eq(commandsTable.id, id))).rowCount ?? 0) > 0,
 };
 
 export const skills = {
-  list: (): SkillDef[] => db.select().from(skillsTable).all(),
-  create(input: SkillInput): SkillDef {
+  list: async (): Promise<SkillDef[]> => await db.select().from(skillsTable),
+  async create(input: SkillInput): Promise<SkillDef> {
     const skill: SkillDef = { id: randomUUID(), ...input };
-    db.insert(skillsTable).values(skill).run();
+    await db.insert(skillsTable).values(skill);
     return skill;
   },
-  update(id: string, input: SkillInput): SkillDef | undefined {
-    const changed = db.update(skillsTable).set(input).where(eq(skillsTable.id, id)).run().changes;
+  async update(id: string, input: SkillInput): Promise<SkillDef | undefined> {
+    const changed = ((await db.update(skillsTable).set(input).where(eq(skillsTable.id, id))).rowCount ?? 0);
     return changed > 0 ? { id, ...input } : undefined;
   },
-  remove: (id: string): boolean =>
-    db.delete(skillsTable).where(eq(skillsTable.id, id)).run().changes > 0,
+  remove: async (id: string): Promise<boolean> =>
+    ((await db.delete(skillsTable).where(eq(skillsTable.id, id))).rowCount ?? 0) > 0,
 };

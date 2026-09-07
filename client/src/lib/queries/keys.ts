@@ -25,11 +25,13 @@ export const skillsKey = (s: ServerSettings) => scope(s).concat(["skills"])
 export const commandsKey = (s: ServerSettings) => scope(s).concat(["commands"])
 export const personasKey = (s: ServerSettings) => scope(s).concat(["personas"])
 export const modelPromptsKey = (s: ServerSettings) => scope(s).concat(["model-prompts"])
-/** The global rules block (`GET`/`PUT /api/rules`) — one value, not a list. */
+/** The rules list (`GET /api/rules`) and individual rule CRUD. */
 export const rulesKey = (s: ServerSettings) => scope(s).concat(["rules"])
 /** The coding-plan presets a new profile starts from — read once per session,
     since the list is the server build's and the catalogs are models.dev's. */
 export const profilePresetsKey = (s: ServerSettings) => scope(s).concat(["profile-presets"])
+/** The deployment's app version and parsed changelog (`GET /api/meta`). */
+export const appMetaKey = (s: ServerSettings) => scope(s).concat(["app-meta"])
 
 /* Automations (Phase 3 moves these out of the reducer). */
 export const scheduledKey = (s: ServerSettings) => scope(s).concat(["scheduled"])

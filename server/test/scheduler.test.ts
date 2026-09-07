@@ -10,6 +10,7 @@
 //     twice fires once. This is the bug nobody debugs, because it happens twice
 //     a year and is gone by the time anyone looks.
 // Run: pnpm test:routine-triggers
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 
 const { fnv1a, nextSlot, staggerMs } = await import("../src/scheduler.js");

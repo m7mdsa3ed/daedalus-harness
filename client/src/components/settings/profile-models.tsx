@@ -11,12 +11,12 @@ import { Input } from "@/components/ui/input"
 import {
   Combobox,
   ComboboxContent,
+  ComboboxEmpty,
   ComboboxInput,
   ComboboxItem,
   ComboboxList,
   ComboboxTrigger,
 } from "@/components/ui/combobox"
-import { Textarea } from "@/components/ui/textarea"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -42,7 +42,6 @@ export interface ModelRow {
   maxOutputTokens: string
   /** Comma-separated effort levels; empty = the model has no effort control. */
   efforts: string
-  description: string
   pricingInput: string
   pricingOutput: string
   modalities: string
@@ -59,7 +58,6 @@ export const blankModelRow = (): ModelRow => ({
   contextWindow: "",
   maxOutputTokens: "",
   efforts: "",
-  description: "",
   pricingInput: "",
   pricingOutput: "",
   modalities: "",
@@ -77,7 +75,6 @@ export const candidateToRow = (candidate: ModelCandidate): ModelRow => ({
   contextWindow: candidate.contextWindow ? String(candidate.contextWindow) : "",
   maxOutputTokens: candidate.maxOutputTokens ? String(candidate.maxOutputTokens) : "",
   efforts: candidate.reasoningEfforts.join(", "),
-  description: candidate.description ?? "",
   pricingInput: candidate.pricing ? String(candidate.pricing.input) : "",
   pricingOutput: candidate.pricing ? String(candidate.pricing.output) : "",
   modalities: (candidate.modalities ?? []).join(", "),
@@ -92,7 +89,6 @@ export const toModelRows = (models: {
   contextWindow?: number
   maxOutputTokens?: number
   reasoningEfforts: string[]
-  description?: string
   pricing?: { input: number; output: number }
   modalities?: string[]
   devRef?: string
@@ -106,7 +102,6 @@ export const toModelRows = (models: {
     contextWindow: m.contextWindow ? String(m.contextWindow) : "",
     maxOutputTokens: m.maxOutputTokens ? String(m.maxOutputTokens) : "",
     efforts: m.reasoningEfforts.join(", "),
-    description: m.description ?? "",
     pricingInput: m.pricing ? String(m.pricing.input) : "",
     pricingOutput: m.pricing ? String(m.pricing.output) : "",
     modalities: (m.modalities ?? []).join(", "),
@@ -122,7 +117,6 @@ export function rowsToModels(rows: ModelRow[]) {
     contextWindow?: number
     maxOutputTokens?: number
     reasoningEfforts: string[]
-    description?: string
     pricing?: { input: number; output: number }
     modalities?: string[]
     devRef?: string
@@ -149,7 +143,6 @@ export function rowsToModels(rows: ModelRow[]) {
         .split(/[,\s]+/)
         .map((e) => e.trim().toLowerCase())
         .filter(Boolean),
-      ...(row.description.trim() ? { description: row.description.trim() } : {}),
       ...(row.pricingInput.trim() &&
       row.pricingOutput.trim() &&
       pricingInput > 0 &&
@@ -231,6 +224,10 @@ export function ModelsSection({
   const [editingUid, setEditingUid] = React.useState<string | null>(null)
   const [importing, setImporting] = React.useState(false)
 
+  /* The groups this profile already uses — the dropdown's stock, in first-seen
+     order. A name typed that isn't here becomes a group by being saved. */
+  const groups = [...new Set(rows.map((r) => r.group.trim()).filter(Boolean))]
+
   const patch = (uid: string, p: Partial<ModelRow>) => {
     // Editing the id invalidates the metadata's provenance: it described the
     // old id, and a stale devRef would survive an id it never matched.
@@ -261,7 +258,7 @@ export function ModelsSection({
                     <button
                       type="button"
                       className="flex min-w-0 flex-1 items-start gap-3 text-left sm:items-center"
-                      title={row.description.trim() || row.id}
+                      title={row.id}
                       onClick={() => setEditingUid(editingUid === row.uid ? null : row.uid)}
                     >
                       <EntityIcon
@@ -347,6 +344,7 @@ export function ModelsSection({
                     <ModelEditorFields
                       row={row}
                       isDefault={isDefault}
+                      groups={groups}
                       onSetDefault={() => onSetDefault(row.uid)}
                       settings={settings}
                       onPatch={(p) => patch(row.uid, p)}
@@ -400,12 +398,15 @@ export function ModelsSection({
 function ModelEditorFields({
   row,
   isDefault,
+  groups,
   onSetDefault,
   settings,
   onPatch,
 }: {
   row: ModelRow
   isDefault: boolean
+  /** Group names already used by this profile's rows — the picker's stock. */
+  groups: string[]
   onSetDefault: () => void
   settings: ServerSettings
   onPatch: (patch: Partial<ModelRow>) => void
@@ -512,16 +513,6 @@ function ModelEditorFields({
           />
         </Field>
         <div className="sm:col-span-2">
-          <Field label="Description">
-            <Textarea
-              rows={2}
-              value={row.description}
-              onChange={(e) => onPatch({ description: e.target.value })}
-              className="text-xs"
-            />
-          </Field>
-        </div>
-        <div className="sm:col-span-2">
           <Field label="Icon URL" hint="Optional — shown in the composer trigger when this model is selected.">
             <div className="flex items-center gap-2">
               <EntityIcon
@@ -539,18 +530,56 @@ function ModelEditorFields({
           </Field>
         </div>
         <div className="sm:col-span-2">
-          <Field label="Group" hint="Models with the same group appear under a shared heading in the picker.">
-            <Input
-              value={row.group}
-              onChange={(e) => onPatch({ group: e.target.value })}
-              placeholder="e.g. Frontier, Mid-tier, Legacy"
-              className="text-xs"
-            />
+          <Field
+            label="Group"
+            hint="Pick one this profile already uses, or type a new name. Models sharing a group appear under a shared heading in the picker."
+          >
+            <GroupPicker row={row} groups={groups} onPatch={onPatch} />
           </Field>
         </div>
       </div>
       <ModelsDevMatch row={row} settings={settings} onPatch={onPatch} />
     </div>
+  )
+}
+
+/* ── group picker ──
+   One control, both ways in: the dropdown lists the groups this profile
+   already uses, and the field itself stays editable, so typing a name that
+   matches nothing is how a new group is added. It is a combobox rather than a
+   select because the value is free text — a group exists because a model
+   carries it, never as a row of its own. */
+
+function GroupPicker({
+  row,
+  groups,
+  onPatch,
+}: {
+  row: ModelRow
+  groups: string[]
+  onPatch: (patch: Partial<ModelRow>) => void
+}) {
+  return (
+    <Combobox
+      items={groups}
+      inputValue={row.group}
+      onInputValueChange={(value) => onPatch({ group: typeof value === "string" ? value : "" })}
+      onValueChange={(group: string | null) => {
+        if (group !== null) onPatch({ group })
+      }}
+    >
+      <ComboboxInput placeholder="e.g. Frontier, Mid-tier, Legacy" className="w-full" />
+      <ComboboxContent>
+        <ComboboxList>
+          {groups.map((group) => (
+            <ComboboxItem key={group} value={group}>
+              {group}
+            </ComboboxItem>
+          ))}
+        </ComboboxList>
+        <ComboboxEmpty>No groups yet — type a name and saving the model creates it.</ComboboxEmpty>
+      </ComboboxContent>
+    </Combobox>
   )
 }
 
@@ -630,7 +659,6 @@ function ModelsDevMatch({
       contextWindow: hit.contextWindow ? String(hit.contextWindow) : "",
       maxOutputTokens: hit.maxOutputTokens ? String(hit.maxOutputTokens) : "",
       efforts: (hit.reasoningEfforts ?? []).join(", "),
-      description: hit.description ?? "",
       pricingInput: hit.pricing ? String(hit.pricing.input) : "",
       pricingOutput: hit.pricing ? String(hit.pricing.output) : "",
       modalities: (hit.modalities ?? []).join(", "),

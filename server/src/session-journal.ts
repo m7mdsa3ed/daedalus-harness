@@ -33,24 +33,34 @@ export class SessionJournal {
   constructor(private db: DbHandle = defaultDb) {}
 
   /**
-   * Journaled events not yet written to SQLite.
+   * Journaled events not yet written to Postgres.
    *
    * The seq is assigned synchronously in `append` and the row is written a
    * tick later, which is safe because nothing reads the log through anything but
    * `flush` first — and worth doing because a streaming turn is thousands
-   * of events. One INSERT each is one transaction each: cheap individually under
-   * WAL, but the surrounding work (building the statement, serializing the
+   * of events. One INSERT each is one transaction each: cheap individually,
+   * but the surrounding work (building the statement, serializing the
    * payload) is per-event too, and a turn's worth of it lands on the same tick
    * as the fan-out the browser is waiting for. Batched, a turn is a handful of
    * commits and the serialization happens off the emit path.
    *
-   * The exposure is one tick of events on a hard crash. That was already the
-   * bargain (`synchronous = NORMAL` trades the fsync for the OS's word), and the
-   * journal is a cache for reading, not the conversation — the agent still has
-   * that, and a revive re-reads it.
+   * The exposure is one tick of events on a hard crash. That was always the
+   * bargain, and the journal is a cache for reading, not the conversation — the
+   * agent still has that, and a revive re-reads it.
    */
   private pendingWrites: (typeof eventsTable.$inferInsert)[] = [];
   private flushScheduled = false;
+  /**
+   * The flush currently in the air, or null.
+   *
+   * The driver is asynchronous now, so two flushes can overlap where the
+   * SQLite one could not: a read's `await this.flush()` lands on the same tick
+   * as the `setImmediate` one an append scheduled, and both take the same rows
+   * off `pendingWrites`. Chaining on this makes the second wait for the first
+   * — which is also what makes `await flush()` mean what every reader below
+   * assumes it means: *the log is written*, not *a write has started*.
+   */
+  private flushing: Promise<void> | null = null;
 
   /** Append one event to the session's log and stamp it with its seq. */
   append(session: JournalOwner, event: ThreadEvent): ThreadEvent {
@@ -65,7 +75,7 @@ export class SessionJournal {
     });
     if (!this.flushScheduled) {
       this.flushScheduled = true;
-      setImmediate(() => this.flush()).unref();
+      setImmediate(() => void this.flush()).unref();
     }
     return stamped;
   }
@@ -76,18 +86,30 @@ export class SessionJournal {
    * recent events — and on the next tick after an append, so an idle server is
    * never holding one.
    */
-  flush(): void {
+  flush(): Promise<void> {
     this.flushScheduled = false;
+    const previous = this.flushing ?? Promise.resolve();
+    const next = previous.then(() => this.flushOnce());
+    this.flushing = next;
+    // Whoever finishes last clears the chain, so an idle journal is not holding
+    // a settled promise for the life of the process.
+    void next.finally(() => {
+      if (this.flushing === next) this.flushing = null;
+    });
+    return next;
+  }
+
+  private async flushOnce(): Promise<void> {
     if (this.pendingWrites.length === 0) return;
     const rows = this.pendingWrites;
     this.pendingWrites = [];
     try {
-      this.db.transaction((tx) => {
+      await this.db.transaction(async (tx) => {
         for (const row of rows) {
-          tx.insert(eventsTable).values(row).run();
+          await tx.insert(eventsTable).values(row);
           // The search index rides the same commit: a streaming turn indexes
           // at the flush cadence, and a rolled-back event indexes nothing.
-          indexEventRow(tx, row);
+          await indexEventRow(tx, row);
         }
       });
     } catch {
@@ -103,11 +125,11 @@ export class SessionJournal {
          setImmediate, with no caller to catch it. */
       for (const row of rows) {
         try {
-          this.db.insert(eventsTable).values(row).run();
+          await this.db.insert(eventsTable).values(row);
           // Only after the event landed — a row refused above (its session
-          // purged between append and flush) must not leave an FTS orphan,
-          // since the virtual table has no foreign key to cascade it away.
-          indexEventRow(this.db, row);
+          // purged between append and flush) must not leave an index orphan,
+          // since the index table has no foreign key to cascade it away.
+          await indexEventRow(this.db, row);
         } catch (error) {
           console.error(
             `[journal] dropped event ${row.seq} of session ${row.sessionId.slice(0, 8)}`,
@@ -121,14 +143,14 @@ export class SessionJournal {
   /** Events in `[from, from + limit)`, in order. A range scan on (session_id,
       seq). Parsed — the replay path deliberately does not use this; see
       `replayFrames`. */
-  eventsFrom(sessionId: string, from: number, limit?: number): JournaledEvent[] {
-    this.flush();
+  async eventsFrom(sessionId: string, from: number, limit?: number): Promise<JournaledEvent[]> {
+    await this.flush();
     const query = this.db
       .select({ payload: eventsTable.payload })
       .from(eventsTable)
       .where(and(eq(eventsTable.sessionId, sessionId), gte(eventsTable.seq, from)))
       .orderBy(asc(eventsTable.seq));
-    const rows = limit === undefined ? query.all() : query.limit(limit).all();
+    const rows = limit === undefined ? await query : await query.limit(limit);
     return rows.map((row) => row.payload as JournaledEvent);
   }
 
@@ -136,9 +158,9 @@ export class SessionJournal {
       page — the trace view's pages, read backwards so a long thread opens at
       its tail. The replay path reads payloads only; the trace wants the `at`
       column too, so it selects the row rather than the payload column. */
-  trace(sessionId: string, before: number, limit: number): TraceEvent[] {
-    this.flush();
-    const rows = this.db
+  async trace(sessionId: string, before: number, limit: number): Promise<TraceEvent[]> {
+    await this.flush();
+    const rows = await this.db
       .select({
         seq: eventsTable.seq,
         kind: eventsTable.kind,
@@ -148,8 +170,7 @@ export class SessionJournal {
       .from(eventsTable)
       .where(and(eq(eventsTable.sessionId, sessionId), lt(eventsTable.seq, before)))
       .orderBy(desc(eventsTable.seq))
-      .limit(limit)
-      .all();
+      .limit(limit);
     /* Read newest-first for the scan, reversed so the view reads the page the
        way it reads the thread: oldest at the top. */
     return rows.reverse().map((row) => ({
@@ -160,27 +181,168 @@ export class SessionJournal {
     }));
   }
 
+  /* ---- coalescing ---- */
+
+  /**
+   * A journaled event that is one delta of a streamed run: an
+   * `agent_message_chunk` or `agent_thought_chunk` carrying text.
+   *
+   * These are the rows a replay is made of and almost none of its meaning. A
+   * model streams its reasoning a few characters at a time, and every delta is
+   * journaled as a whole event — on this install's largest thread, one turn is
+   * 81,686 thought chunks holding 0.33MB of text inside 15.1MB of envelope, an
+   * average of 4.1 characters each. The client folds every one of them back
+   * into the single item they came from (`appendText`), so the entire cost is
+   * paid to rebuild something the log already knows the shape of.
+   */
+  private static readonly RUN_CHUNK = sql`kind = 'update'
+      and payload->'update'->>'sessionUpdate' in ('agent_message_chunk', 'agent_thought_chunk')
+      and payload->'update'->'content'->>'type' = 'text'`;
+
+  /**
+   * What makes two chunks the same run: everything about the event except its
+   * `seq` and the text itself.
+   *
+   * Spelled as three fragments rather than a list of fields because the list is
+   * the thing that goes stale — a runtime that starts sending a new key on a
+   * chunk (`messageId` was one, `_meta` another) would otherwise merge two
+   * chunks that differ in it. Each fragment serializes only what is left after
+   * the text is removed, so the comparison never touches the bytes it exists to
+   * avoid moving: the top level minus `seq` and `update` (`ev`,
+   * `historyReplay`, a subagent's `sessionId`), the update minus its content
+   * (`sessionUpdate`, `messageId`, `_meta`), and the content minus its text
+   * (`type`, `annotations`, its own `_meta`).
+   */
+  private static readonly RUN_SIGNATURE = sql`(payload - 'seq' - 'update')::text
+      || ((payload->'update') - 'content')::text
+      || ((payload->'update'->'content') - 'text')::text`;
+
+  /**
+   * One page of the log, with each run of streamed chunks merged into the one
+   * event it draws.
+   *
+   * The merge is computed per request from rows nothing has touched, which is
+   * the whole reason it is done here and not at `append`. A journal that
+   * merged on the way in would have to answer a socket resuming *inside* a run
+   * — the cursor is an event count, and a merged row is one row for many of
+   * them — and every way of answering that either loses the tail of the run or
+   * repeats its head. Reading from `from` forward, a resume simply merges what
+   * it is asking for: the run is cut where the cursor is, exactly.
+   *
+   * Postgres decides the boundaries (`lag` over the signature), so the only
+   * rows that ship their envelope are the ones that open a run and the ones
+   * that are not runs at all — the rest send their text and 32 bytes of
+   * comparison. On that same thread the page goes from 17.9MB to 1.3MB, and
+   * from 82,978 events to 282: the transcript is identical, and it is the
+   * client's `JSON.parse` and 82,978 reducer folds that stop happening.
+   */
+  private async coalescedPage(
+    sessionId: string,
+    from: number,
+    limit: number,
+  ): Promise<{ rows: number; bytes: number; events: string[] }> {
+    const page = await this.db.execute<{ seq: number; txt: string | null; body: string | null }>(sql`
+      select seq, txt,
+             /* The envelope, and only where one is needed: a row that is not a
+                chunk at all, or the first chunk of a run. A continuation ships
+                its text alone. The case is out here, past the subquery, so the
+                cast a replay used to pay for on every row is evaluated only for
+                the few hundred that are actually sent. */
+             case when sig is null or sig is distinct from lag(sig) over (order by seq)
+                  then payload::text end as body
+        from (
+          select seq, payload,
+                 case when ${SessionJournal.RUN_CHUNK} then ${SessionJournal.RUN_SIGNATURE} end as sig,
+                 case when ${SessionJournal.RUN_CHUNK} then payload->'update'->'content'->>'text' end as txt
+            from session_events
+           where session_id = ${sessionId} and seq >= ${from}
+           order by seq
+           limit ${limit}
+        ) chunks
+       order by seq
+    `);
+
+    const events: string[] = [];
+    let bytes = 0;
+    /* The open run's head, still parsed, and the text it has collected. Held
+       apart from `template` so a run that hits the size cap can be closed and
+       reopened from the same envelope — its continuations carry no envelope of
+       their own and would otherwise have nothing to be folded into. */
+    let run: { head: JournaledEvent; texts: string[]; lastSeq: number; size: number } | null = null;
+    let template: string | null = null;
+    const close = () => {
+      if (!run) return;
+      /* The merged event stands at the seq of its LAST chunk, because the
+         client advances its cursor to `seq + 1` and everything up to that seq
+         is now in this event. Stamping the run's first seq would make a
+         reconnect ask for chunks it already holds. */
+      const head = run.head as JournaledEvent & { seq: number; update: { content: { text: string } } };
+      head.seq = run.lastSeq;
+      head.update.content.text = run.texts.join("");
+      events.push(JSON.stringify(head));
+      run = null;
+    };
+    for (const row of page.rows) {
+      if (row.body !== null) bytes += row.body.length;
+      if (row.txt !== null) bytes += row.txt.length;
+      // Not a chunk: it ends whatever run was open and goes out as it is.
+      if (row.txt === null) {
+        close();
+        template = null;
+        if (row.body !== null) events.push(row.body);
+        continue;
+      }
+      // A chunk carrying an envelope opens a run; one without continues the
+      // open one, or reopens the template a size cut just closed.
+      if (row.body !== null) {
+        close();
+        template = row.body;
+      }
+      if (!run) {
+        if (template === null) continue; // unreachable: a page's first row always ships a body
+        run = { head: JSON.parse(template) as JournaledEvent, texts: [], lastSeq: row.seq, size: 0 };
+      }
+      run.texts.push(row.txt);
+      run.lastSeq = row.seq;
+      run.size += row.txt.length;
+      /* A run is still bounded. A turn that thinks for an hour is one item on
+         screen either way, but it must not become one string this process
+         holds whole, and a frame is cut on this budget anyway. */
+      if (run.size >= REPLAY_CHUNK_BYTES) close();
+    }
+    close();
+    return { rows: page.rows.length, bytes, events };
+  }
+
   /**
    * The replay, as frames ready to put on a socket.
    *
-   * Two things are deliberate here. The rows come back as **text**, not as
-   * parsed objects: the payload column already holds exactly the JSON the
-   * browser needs, so parsing it to re-serialize it once per peer is work with
-   * no reader. And the scan is **paged**, so a long thread's replay is bounded
-   * by a page rather than by the thread — `.all()` over the whole range put the
-   * entire transcript in memory at attach time, which is the cost the table was
-   * introduced to remove, merely moved from steady-state to connect-time.
+   * Three things are deliberate here. Runs of streamed chunks are **merged**
+   * into the event they draw (`coalescedPage`) — the transcript is the same and
+   * the wire is two orders of magnitude smaller. Everything else comes back as
+   * **text**, not as parsed objects: the payload column already holds exactly
+   * the JSON the browser needs, so parsing it to re-serialize it once per peer
+   * is work with no reader. And the scan is **paged**, so a long thread's
+   * replay is bounded by a page rather than by the thread — `.all()` over the
+   * whole range put the entire transcript in memory at attach time, which is
+   * the cost the table was introduced to remove, merely moved from
+   * steady-state to connect-time.
    *
    * A frame is cut on whichever budget runs out first, count or bytes. Bytes is
    * the one that matters for a thread full of terminal output or large diffs;
    * count is what keeps a chatty-but-small thread from being one frame.
    */
-  *replayFrames(sessionId: string, from: number, batch: boolean, to?: number): Generator<string> {
-    this.flush();
+  async *replayFrames(
+    sessionId: string,
+    from: number,
+    batch: boolean,
+    to?: number,
+  ): AsyncGenerator<string> {
+    await this.flush();
     let cursor = from;
     let frame: string[] = [];
     let bytes = 0;
-    /* How many rows to ask SQLite for at a time. It starts at the frame's own
+    /* How many rows to ask Postgres for at a time. It starts at the frame's own
        count budget and then follows what the thread turns out to be made of:
        the frame cut already knows a page of events can be worth far more than
        `REPLAY_CHUNK_BYTES`, and the DB page — which is where the memory
@@ -206,37 +368,36 @@ export class SessionJournal {
          buffer. Unbounded when the caller names none. */
       const limit = to === undefined ? pageSize : Math.min(pageSize, to - cursor);
       if (limit <= 0) break;
-      const page = this.db
-        .select({ payload: sql<string>`cast(${eventsTable.payload} as text)` })
-        .from(eventsTable)
-        .where(and(eq(eventsTable.sessionId, sessionId), gte(eventsTable.seq, cursor)))
-        .orderBy(asc(eventsTable.seq))
-        .limit(limit)
-        .all();
-      if (page.length === 0) break;
-      cursor += page.length;
-      const pageBytes = page.reduce((sum, row) => sum + row.payload.length, 0);
+      /* Rows in, events out — a page of chunk deltas comes back as the handful
+         of events it draws, and everything else comes back as the text it is
+         stored as (`coalescedPage`). `rows` is what the cursor moves by, and it
+         is still the row count rather than the event count: seq is a position
+         in the log, and merging is something this read does to what it sends,
+         never to what the log holds. */
+      const page = await this.coalescedPage(sessionId, cursor, limit);
+      if (page.rows === 0) break;
+      cursor += page.rows;
       pageSize = Math.max(
         8,
-        Math.min(REPLAY_CHUNK_SIZE, Math.ceil((2 * REPLAY_CHUNK_BYTES) / Math.max(1, pageBytes / page.length))),
+        Math.min(REPLAY_CHUNK_SIZE, Math.ceil((2 * REPLAY_CHUNK_BYTES) / Math.max(1, page.bytes / page.rows))),
       );
-      for (const row of page) {
+      for (const event of page.events) {
         // A client that did not ask for bulk gets the events one at a time; it
         // would drop a `replay` frame it does not know, and `caught_up` rides
         // inside that frame, so the thread would never finish connecting.
         if (!batch) {
-          yield row.payload;
+          yield event;
           continue;
         }
-        if (frame.length >= REPLAY_CHUNK_SIZE || bytes + row.payload.length > REPLAY_CHUNK_BYTES) {
+        if (frame.length >= REPLAY_CHUNK_SIZE || bytes + event.length > REPLAY_CHUNK_BYTES) {
           yield* cut();
         }
-        frame.push(row.payload);
-        bytes += row.payload.length;
+        frame.push(event);
+        bytes += event.length;
       }
       // Short page: the range is exhausted. Compared against the limit that was
       // actually used, not the constant — the page size moves now.
-      if (page.length < limit) break;
+      if (page.rows < limit) break;
     }
     yield* cut();
   }
@@ -249,31 +410,36 @@ export class SessionJournal {
       so a replay or a page is whole turns, never a cut inside one. */
 
   /** The `turn_started` seqs strictly before `before`, newest first, capped at
-      `limit`. */
-  private turnStartsBefore(sessionId: string, before: number, limit: number): number[] {
-    this.flush();
-    return this.db
+      `limit`. `before` omitted means the newest ones, unbounded — and that is
+      why it is an omission rather than a sentinel: `seq` is a 32-bit column,
+      so a `MAX_SAFE_INTEGER` upper bound is out of range for the type and the
+      query is rejected before it can match anything. */
+  private async turnStartsBefore(
+    sessionId: string,
+    before: number | undefined,
+    limit: number,
+  ): Promise<number[]> {
+    await this.flush();
+    const rows = await this.db
       .select({ seq: eventsTable.seq })
       .from(eventsTable)
       .where(and(
         eq(eventsTable.sessionId, sessionId),
         eq(eventsTable.kind, "turn_started"),
-        lt(eventsTable.seq, before),
+        ...(before === undefined ? [] : [lt(eventsTable.seq, before)]),
       ))
       .orderBy(desc(eventsTable.seq))
-      .limit(limit)
-      .all()
-      .map((row) => row.seq);
+      .limit(limit);
+    return rows.map((row) => row.seq);
   }
 
   /** How many turns the log holds. */
-  turnCount(sessionId: string): number {
-    this.flush();
-    const row = this.db
+  async turnCount(sessionId: string): Promise<number> {
+    await this.flush();
+    const [row] = await this.db
       .select({ count: sql<number>`count(*)` })
       .from(eventsTable)
-      .where(and(eq(eventsTable.sessionId, sessionId), eq(eventsTable.kind, "turn_started")))
-      .get();
+      .where(and(eq(eventsTable.sessionId, sessionId), eq(eventsTable.kind, "turn_started")));
     return Number(row?.count ?? 0);
   }
 
@@ -290,9 +456,9 @@ export class SessionJournal {
    * child's session id on the event and are skipped — the rail counts the
    * thread's own answers, the way it skips `parentId` items client-side.
    */
-  turnTicks(sessionId: string): TurnTick[] {
-    this.flush();
-    const rows = this.db
+  async turnTicks(sessionId: string): Promise<TurnTick[]> {
+    await this.flush();
+    const rows = await this.db
       .select({ payload: eventsTable.payload })
       .from(eventsTable)
       .where(
@@ -303,7 +469,7 @@ export class SessionJournal {
              diffs and terminal pages, fetched whole and JSON.parsed here only
              to be dropped by the loop below. The `like` is a superset of what
              the loop keeps (every chunk names the discriminant in its payload)
-             and it is decided inside SQLite, over bytes, instead of in V8 over
+             and it is decided inside Postgres, over bytes, instead of in V8 over
              objects: on this install's largest thread it is 1.2k rows in place
              of 97k, and ~50ms in place of ~300ms of the attach. Everything the
              loop refuses — a subagent's chunks, a non-text content block — it
@@ -313,13 +479,12 @@ export class SessionJournal {
             eq(eventsTable.kind, "turn_started"),
             and(
               eq(eventsTable.kind, "update"),
-              sql`${eventsTable.payload} like '%agent_message_chunk%'`,
+              sql`${eventsTable.payload}::text like '%agent_message_chunk%'`,
             ),
           ),
         ),
       )
-      .orderBy(asc(eventsTable.seq))
-      .all();
+      .orderBy(asc(eventsTable.seq));
     const ticks: TurnTick[] = [];
     for (const row of rows) {
       const event = row.payload as JournaledEvent;
@@ -365,29 +530,29 @@ export class SessionJournal {
    * chunk — and the caller refuses on it rather than forking at nothing.
    *
    * Null on the whole call: no such turn in this log (the route answers 404).
-   * The `turnId` is inside the payload, not a column, so the lookups go
-   * through `json_extract` — turn boundaries are the one place a value other
-   * than `seq`/`kind` has to be queried, and the table has no index worth
-   * adding a generated column for at a rate of one rewind per click.
+   * The `turnId` is inside the payload, not a column, so the lookups reach it
+   * with `->>` — turn boundaries are the one place a value other than
+   * `seq`/`kind` has to be queried, and the table has no index worth adding an
+   * expression index for at a rate of one rewind per click.
    */
-  rewindPoint(
+  async rewindPoint(
     sessionId: string,
     turnId: string,
-  ): { turnSeq: number; before: { messageId: string | null } | null } | null {
-    this.flush();
-    const turnSeq = this.db
+  ): Promise<{ turnSeq: number; before: { messageId: string | null } | null } | null> {
+    await this.flush();
+    const [started] = await this.db
       .select({ seq: eventsTable.seq })
       .from(eventsTable)
       .where(
         and(
           eq(eventsTable.sessionId, sessionId),
           eq(eventsTable.kind, "turn_started"),
-          sql`json_extract(${eventsTable.payload}, '$.turnId') = ${turnId}`,
+          sql`${eventsTable.payload}->>'turnId' = ${turnId}`,
         ),
-      )
-      .get()?.seq;
+      );
+    const turnSeq = started?.seq;
     if (turnSeq === undefined) return null;
-    const prev = this.db
+    const [prev] = await this.db
       .select({ payload: eventsTable.payload })
       .from(eventsTable)
       .where(
@@ -398,22 +563,20 @@ export class SessionJournal {
         ),
       )
       .orderBy(desc(eventsTable.seq))
-      .limit(1)
-      .get();
+      .limit(1);
     if (!prev) return { turnSeq, before: null };
     const prevTurnId = (prev.payload as { turnId?: string } | null)?.turnId;
     if (!prevTurnId) return { turnSeq, before: { messageId: null } };
-    const ended = this.db
+    const [ended] = await this.db
       .select({ payload: eventsTable.payload })
       .from(eventsTable)
       .where(
         and(
           eq(eventsTable.sessionId, sessionId),
           eq(eventsTable.kind, "turn_ended"),
-          sql`json_extract(${eventsTable.payload}, '$.turnId') = ${prevTurnId}`,
+          sql`${eventsTable.payload}->>'turnId' = ${prevTurnId}`,
         ),
-      )
-      .get();
+      );
     const lastMessageId = (ended?.payload as { lastMessageId?: string } | null)?.lastMessageId;
     return { turnSeq, before: { messageId: lastMessageId ?? null } };
   }
@@ -435,62 +598,62 @@ export class SessionJournal {
    * without ever producing an assistant chunk — and the caller refuses on it
    * rather than forking at nothing. Null on the whole call: no such turn.
    */
-  forkPoint(sessionId: string, turnId: string): { turnSeq: number; messageId: string | null } | null {
-    this.flush();
-    const turnSeq = this.db
+  async forkPoint(
+    sessionId: string,
+    turnId: string,
+  ): Promise<{ turnSeq: number; messageId: string | null } | null> {
+    await this.flush();
+    const [started] = await this.db
       .select({ seq: eventsTable.seq })
       .from(eventsTable)
       .where(
         and(
           eq(eventsTable.sessionId, sessionId),
           eq(eventsTable.kind, "turn_started"),
-          sql`json_extract(${eventsTable.payload}, '$.turnId') = ${turnId}`,
+          sql`${eventsTable.payload}->>'turnId' = ${turnId}`,
         ),
-      )
-      .get()?.seq;
+      );
+    const turnSeq = started?.seq;
     if (turnSeq === undefined) return null;
-    const ended = this.db
+    const [ended] = await this.db
       .select({ payload: eventsTable.payload })
       .from(eventsTable)
       .where(
         and(
           eq(eventsTable.sessionId, sessionId),
           eq(eventsTable.kind, "turn_ended"),
-          sql`json_extract(${eventsTable.payload}, '$.turnId') = ${turnId}`,
+          sql`${eventsTable.payload}->>'turnId' = ${turnId}`,
         ),
-      )
-      .get();
+      );
     const lastMessageId = (ended?.payload as { lastMessageId?: string } | null)?.lastMessageId;
     return { turnSeq, messageId: lastMessageId ?? null };
   }
 
   /** How many turns lie before `before`. */
-  countTurnsBefore(sessionId: string, before: number): number {
-    this.flush();
-    const row = this.db
+  async countTurnsBefore(sessionId: string, before: number): Promise<number> {
+    await this.flush();
+    const [row] = await this.db
       .select({ count: sql<number>`count(*)` })
       .from(eventsTable)
       .where(and(
         eq(eventsTable.sessionId, sessionId),
         eq(eventsTable.kind, "turn_started"),
         lt(eventsTable.seq, before),
-      ))
-      .get();
+      ));
     return Number(row?.count ?? 0);
   }
 
   /** The seq of the `index`-th `turn_started` (0-based, oldest first), or null
       when the log has fewer than `index + 1` turns. */
-  turnStartAt(sessionId: string, index: number): number | null {
-    this.flush();
-    const row = this.db
+  async turnStartAt(sessionId: string, index: number): Promise<number | null> {
+    await this.flush();
+    const [row] = await this.db
       .select({ seq: eventsTable.seq })
       .from(eventsTable)
       .where(and(eq(eventsTable.sessionId, sessionId), eq(eventsTable.kind, "turn_started")))
       .orderBy(asc(eventsTable.seq))
       .offset(index)
-      .limit(1)
-      .get();
+      .limit(1);
     return row?.seq ?? null;
   }
 
@@ -507,8 +670,8 @@ export class SessionJournal {
    * same payloads; the window simply never had one.
    *
    * The steps are applied first, so the byte pass never scans more than the
-   * step window would have sent anyway, and it reads `seq`/`kind`/`length()`
-   * rather than the payloads themselves — the size of the replay is measured
+   * step window would have sent anyway, and it reads `seq`/`kind`/the payload's
+   * *size* rather than the payloads themselves — the size of the replay is measured
    * without materializing it. The window function accumulates each row's tail
    * (descending order, default frame), and the answer is the *oldest*
    * `turn_started` whose tail still fits.
@@ -518,30 +681,39 @@ export class SessionJournal {
    * re-folds into a half turn the reducer never saw opened), so one enormous
    * turn is sent whole and the budget is missed rather than the rule broken.
    */
-  windowStart(sessionId: string, steps: number, maxBytes: number): number {
+  async windowStart(sessionId: string, steps: number, maxBytes: number): Promise<number> {
     if (steps <= 0) return 0;
-    this.flush();
-    const skip = this.turnCount(sessionId) - steps;
-    const stepFloor = skip > 0 ? this.turnStartAt(sessionId, skip) ?? 0 : 0;
-    const row = this.db
-      .all<{ seq: number }>(sql`
+    await this.flush();
+    const skip = (await this.turnCount(sessionId)) - steps;
+    const stepFloor = skip > 0 ? (await this.turnStartAt(sessionId, skip)) ?? 0 : 0;
+    /* The bytes the replay will actually put on the socket, which since
+       `coalescedPage` is no longer the bytes the row holds: a run of chunk
+       deltas is sent as its text with one envelope in front of the whole run,
+       so counting each delta's envelope here measured a cost nothing pays and
+       withheld turns that would have fitted many times over. Everything else is
+       still `octet_length(payload::text)` — it is sent verbatim. The derived
+       table is named because Postgres requires it to be. */
+    const result = await this.db.execute<{ seq: number }>(sql`
         select seq from (
           select seq, kind,
-                 sum(length(payload)) over (order by seq desc) as tail
+                 sum(case when ${SessionJournal.RUN_CHUNK}
+                          then coalesce(octet_length(payload->'update'->'content'->>'text'), 0)
+                          else octet_length(payload::text) end)
+                   over (order by seq desc) as tail
             from session_events
            where session_id = ${sessionId} and seq >= ${stepFloor}
-        )
+        ) tails
         where kind = 'turn_started' and tail <= ${maxBytes}
         order by seq asc
         limit 1
-      `)
-      .at(0);
+      `);
+    const row = result.rows.at(0);
     /* Not one whole turn fits: send the newest on its own. A window of no turns
        at all would be a blank transcript for a thread that has one, and there
        is nothing below the floor to fall back to. */
     const cut = row
       ? Math.max(stepFloor, row.seq)
-      : this.turnStartsBefore(sessionId, Number.MAX_SAFE_INTEGER, 1).at(0) ?? stepFloor;
+      : (await this.turnStartsBefore(sessionId, undefined, 1)).at(0) ?? stepFloor;
     /* The cut is made only when a turn is genuinely being withheld. Jumping to
        the first turn of the window unconditionally looks equivalent and is not:
        a log need not begin with a `turn_started`, because a revive clears it and
@@ -551,7 +723,7 @@ export class SessionJournal {
        lie behind it), so nothing would offer it back either. Same rule as
        `earlierPage`: the window that reaches the oldest turn takes the head
        along, which is the only way that head is ever read. */
-    return this.countTurnsBefore(sessionId, cut) === 0 ? 0 : cut;
+    return (await this.countTurnsBefore(sessionId, cut)) === 0 ? 0 : cut;
   }
 
   /** The page of whole turns immediately before `before`, plus how many turns
@@ -563,27 +735,45 @@ export class SessionJournal {
    * a page of its own — the page that reaches the oldest turn takes it, which
    * is also the only way it is ever reachable. `earlier` is turns, so it is 0
    * either way and the client stops asking at the same point. */
-  earlierPage(sessionId: string, before: number): EarlierPage {
-    if (before <= 0) return { events: [], earlier: 0 };
-    const starts = this.turnStartsBefore(sessionId, before, EARLIER_PAGE_STEPS).reverse();
-    const earlier = starts.length === 0 ? 0 : this.countTurnsBefore(sessionId, starts[0]);
+  async earlierPage(sessionId: string, before: number): Promise<EarlierPage> {
+    if (before <= 0) return { events: [], from: 0, earlier: 0 };
+    const starts = (await this.turnStartsBefore(sessionId, before, EARLIER_PAGE_STEPS)).reverse();
+    const earlier = starts.length === 0 ? 0 : await this.countTurnsBefore(sessionId, starts[0]);
     // No turns left behind this page: whatever precedes it is that head, and
     // it belongs to the oldest turn shown rather than being stranded below it.
     const first = starts.length === 0 || earlier === 0 ? 0 : starts[0];
-    if (first >= before) return { events: [], earlier: 0 };
-    return { events: this.eventsFrom(sessionId, first, before - first), earlier };
+    if (first >= before) return { events: [], from: before, earlier: 0 };
+    /* Through the replay's own reader, unbatched — a page of history is the
+       same events a replay of that range would send, chunk runs merged and all,
+       and the button that asks for it is paging back through turns of exactly
+       the kind windowing withheld. Parsed here because `EarlierPage` is a JSON
+       body rather than a stream of pre-serialized frames; after the merge that
+       is a few hundred objects rather than the tens of thousands
+       `eventsFrom` used to hand back. */
+    const events: JournaledEvent[] = [];
+    for await (const line of this.replayFrames(sessionId, first, false, before)) {
+      events.push(JSON.parse(line) as JournaledEvent);
+    }
+    return { events, from: first, earlier };
   }
 
   /** Wipe one session's log — its buffered rows included — and zero its
       counter. The revive path (`respawnNow`) is the caller that matters. */
-  clear(session: JournalOwner): void {
+  async clear(session: JournalOwner): Promise<void> {
     /* Drop this session's buffered rows rather than writing them: they belong
        to the log being thrown away, and landing them after the delete would
        leave orphans that the next append then collides with on seq. */
     this.pendingWrites = this.pendingWrites.filter((row) => row.sessionId !== session.id);
-    this.db.delete(eventsTable).where(eq(eventsTable.sessionId, session.id)).run();
-    deleteSearchIndex([session.id]);
+    await this.db.delete(eventsTable).where(eq(eventsTable.sessionId, session.id));
+    /* The counter is the correctness half and the index is a cache, so the
+       cache is never allowed to cost the counter: a failed delete here used to
+       skip the reset below, and the conversation the respawn then reloaded was
+       journaled from the old high-water mark — a transcript every client is
+       told to attach to from 0, starting at seq 56 with nothing before it. */
     session.eventCount = 0;
+    await deleteSearchIndex([session.id]).catch((error) =>
+      console.warn(`[${session.id.slice(0, 8)}] couldn't drop the search index of a cleared log`, error),
+    );
   }
 
   /**
@@ -601,14 +791,14 @@ export class SessionJournal {
    * `max(seq)` rides the (session_id, seq) index and `max(at)` the
    * (session_id, at) one, both index-only.
    */
-  private perSessionMax(agg: SQL): Map<string, number> {
-    const rows = this.db.all<{ id: string; value: number | null }>(sql`
-      select s.id as id,
-             (select ${agg} from session_events e where e.session_id = s.id) as value
+  private async perSessionMax(agg: SQL): Promise<Map<string, number>> {
+    const rows = await this.db.execute<{ id: string; value: number | null }>(sql`
+      select s.id as "id",
+             (select ${agg} from session_events e where e.session_id = s.id) as "value"
         from sessions s
     `);
     const out = new Map<string, number>();
-    for (const row of rows) if (row.value !== null) out.set(row.id, row.value);
+    for (const row of rows.rows) if (row.value !== null) out.set(row.id, Number(row.value));
     return out;
   }
 
@@ -617,8 +807,8 @@ export class SessionJournal {
       bookkeeping: `append` stamps from it and the (session_id, seq) index is
       unique, so a count that restarted at 0 would collide on the first event
       of the revive. */
-  nextSeqBySession(): Map<string, number> {
-    this.flush();
+  async nextSeqBySession(): Promise<Map<string, number>> {
+    await this.flush();
     return this.perSessionMax(sql`max(seq) + 1`);
   }
 
@@ -627,8 +817,8 @@ export class SessionJournal {
       column, so ordering by activity is right for threads that existed before
       anything recorded it. One query at boot, not per thread — see
       `perSessionMax` for why it is not a GROUP BY. */
-  lastActivityBySession(): Map<string, number> {
-    this.flush();
+  async lastActivityBySession(): Promise<Map<string, number>> {
+    await this.flush();
     return this.perSessionMax(sql`max(at)`);
   }
 
@@ -638,19 +828,19 @@ export class SessionJournal {
    * Returns the session ids whose archives were dropped, so the manager can
    * zero their counters.
    */
-  prune(cutoff: number, liveIds: string[]): string[] {
-    this.flush();
-    const stale = this.db
+  async prune(cutoff: number, liveIds: string[]): Promise<string[]> {
+    await this.flush();
+    const rows = await this.db
       .select({ sessionId: eventsTable.sessionId, newest: sql<number>`max(${eventsTable.at})` })
       .from(eventsTable)
       .groupBy(eventsTable.sessionId)
-      .having(sql`max(${eventsTable.at}) < ${cutoff}`)
-      .all()
+      .having(sql`max(${eventsTable.at}) < ${cutoff}`);
+    const stale = rows
       .map((row) => row.sessionId)
       .filter((id) => !liveIds.includes(id));
     if (stale.length > 0) {
-      this.db.delete(eventsTable).where(inArray(eventsTable.sessionId, stale)).run();
-      deleteSearchIndex(stale);
+      await this.db.delete(eventsTable).where(inArray(eventsTable.sessionId, stale));
+      await deleteSearchIndex(stale);
       console.log(`[journal] dropped ${stale.length} retired thread archive(s)`);
     }
     return stale;

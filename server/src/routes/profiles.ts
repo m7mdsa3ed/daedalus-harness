@@ -28,8 +28,8 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
      default for the row, which is exactly the question "is there something to
      reset to". A row someone added by hand has no answer and is not offered
      one. */
-  app.get("/api/agents", (c) =>
-    c.json(listAgents().map((agent) => ({ ...agent, builtIn: isBuiltInAgent(agent.id) }))),
+  app.get("/api/agents", async (c) =>
+    c.json((await listAgents()).map((agent) => ({ ...agent, builtIn: isBuiltInAgent(agent.id) }))),
   );
   /* An agent row is a runtime definition, and its spawn command is a contract
      with a binary somebody else ships — so only the user's half is writable
@@ -43,32 +43,32 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
      after an install that just ran. Registered before `/:id` so the literal
      wins. */
   app.get("/api/agents/status", async (c) =>
-    c.json(await getAgentsStatus(listAgents(), { refresh: c.req.query("refresh") === "1" })),
+    c.json(await getAgentsStatus(await listAgents(), { refresh: c.req.query("refresh") === "1" })),
   );
   const agentCrud = crud(AgentInputSchema);
   app.put(
     "/api/agents/:id",
-    agentCrud.update((id, data) => {
+    agentCrud.update(async (id, data) => {
       evictAgentStatus(id);
-      return updateAgent(id, data);
+      return await updateAgent(id, data);
     }),
   );
-  app.post("/api/agents/:id/reset", (c) => {
-    const restored = resetAgent(c.req.param("id"));
+  app.post("/api/agents/:id/reset", async (c) => {
+    const restored = await resetAgent(c.req.param("id"));
     if (restored) evictAgentStatus(restored.id);
     return restored ? c.json(restored) : c.json({ error: "not found" }, 404);
   });
 
   // Agents are passed in so an agent with no profile of its own still gets one
   // (virtual, never stored) — see defaultProfileFor.
-  app.get("/api/profiles", (c) => c.json(listProfiles(listAgents()).map(redact)));
+  app.get("/api/profiles", async (c) => c.json((await listProfiles(await listAgents())).map(redact)));
   /* The coding plans a new profile can start from (profile-presets.ts), each
      with its catalog read from models.dev. Never a failure: a preset whose
      catalog could not be read says so and keeps its URLs. Only the agents this
      install registers are offered on a preset — the form would otherwise save
      a link to a runtime that does not exist here. */
   app.get("/api/profile-presets", async (c) => {
-    const known = new Set(listAgents().map((a) => a.id));
+    const known = new Set((await listAgents()).map((a) => a.id));
     const presets = await resolveProfilePresets();
     return c.json({
       presets: presets.map((preset) => ({
@@ -78,12 +78,12 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     });
   });
   const profileCrud = crud(ProfileInputSchema);
-  app.post("/api/profiles", profileCrud.create((data) => redact(createProfile(data))));
-  app.put("/api/profiles/:id", profileCrud.update((id, data) => {
-    const updated = updateProfile(id, data);
+  app.post("/api/profiles", profileCrud.create(async (data) => redact(await createProfile(data))));
+  app.put("/api/profiles/:id", profileCrud.update(async (id, data) => {
+    const updated = await updateProfile(id, data);
     return updated && redact(updated);
   }));
-  app.delete("/api/profiles/:id", (c) => {
+  app.delete("/api/profiles/:id", async (c) => {
     const id = c.req.param("id");
     /* A profile a live thread still spawns from must not vanish under it — the
        thread would keep its profileId and every revive would 404. Trashed
@@ -99,7 +99,7 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
         409,
       );
     }
-    return deleteProfile(id) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404);
+    return (await deleteProfile(id)) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404);
   });
 
   /**
@@ -109,18 +109,18 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
    * there is no cheaper way to ask.
    */
   app.post("/api/profiles/:id/options", async (c) => {
-    const profile = getProfile(c.req.param("id"));
+    const profile = await getProfile(c.req.param("id"));
     if (!profile) return c.json({ error: "unknown profile" }, 404);
     const { projectId, agentId: askedAgent } = await c.req.json();
     // Which of the profile's agents to ask. Optional only when the profile
     // names exactly one (the virtual Default always does).
     const agentId = resolveProfileAgent(profile, askedAgent);
-    if (!agentId || !getAgent(agentId)) {
+    if (!agentId || !await getAgent(agentId)) {
       return c.json({ error: "unknown agent for this profile" }, 404);
     }
     // No falling back to "some other project": the cwd is part of the answer, so
     // probing a different one returns a menu that quietly does not apply here.
-    const project = getProject(projectId);
+    const project = await getProject(projectId);
     if (!project) return c.json({ error: "unknown project" }, 404);
     const refresh = c.req.query("refresh") === "1";
     return c.json(await probeAgentOptions(profile, agentId, project, { refresh }));
@@ -139,7 +139,7 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     let baseUrl = body.baseUrl?.trim() ?? "";
     let apiKey = body.apiKey ?? "";
     if (!baseUrl || !apiKey) {
-      const profile = getProfile(c.req.param("id"));
+      const profile = await getProfile(c.req.param("id"));
       if (profile) {
         baseUrl = baseUrl || profile.baseUrl;
         apiKey = apiKey || profile.apiKey;

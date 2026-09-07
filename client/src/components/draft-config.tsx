@@ -440,6 +440,7 @@ export function DraftConfigPopover({
                      has one, a neutral glyph otherwise, so rows without art
                      align with those that have it. */
                   icon: <ModelIcon iconUrl={m.iconUrl} className="size-4" />,
+                  group: m.group || undefined,
                 })),
               ]}
               onSelect={(value) =>

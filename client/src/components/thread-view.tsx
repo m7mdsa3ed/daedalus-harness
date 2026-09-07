@@ -32,6 +32,7 @@ import { useDock } from "@/components/workspace/dock"
 import { requestIde } from "@/lib/ide/open"
 import { useServer } from "@/lib/server-context"
 import { sessionChanges, type TurnChanges } from "@/lib/workspace/git-api"
+import { couldTouchFiles } from "@/lib/tools"
 import { InlineElicitation } from "./elicitation-form"
 import { InlineApproval, primaryPermissionOption } from "./tool-approval"
 import { InlineHeldTurn } from "./held-turn"
@@ -41,6 +42,7 @@ import { buildRows, isAnswerItem, rowTailId, type Row } from "@/lib/transcript-r
 import { PromptSuggestions } from "./prompt-suggestions"
 import { turnSuggestions } from "@/lib/suggestions"
 import { Composer, type ComposerHandle } from "./composer"
+import { ThreadRail } from "./thread-rail"
 import { RewindDialog, type RewindScope } from "./rewind-dialog"
 import { useAgents } from "@/lib/queries/catalog"
 
@@ -185,9 +187,31 @@ function withTurnDuration(
   return after
 }
 
+/**
+ * Whether a turn could be the author of a diff: did it run a single tool that
+ * was not a read, a search, a fetch or a thought (`couldTouchFiles`)?
+ *
+ * The measurement itself is git's and stays whole-worktree — that is the whole
+ * point of it, since a `sed` in a shell changes the project as much as an Edit
+ * call and only the worktree sees both. But git measures a *window*, not an
+ * author: everything that lands between the two snapshots is attributed to
+ * whichever turn was open, so a cwd shared with a second thread, an editor or
+ * a build ends up handing a turn that only searched the web a chip claiming
+ * seventy files. This is the one thing the transcript knows and git cannot,
+ * and it is used only to decide whether to *draw* the chip.
+ *
+ * Subagent rows are counted, not skipped: they carry a `parentId`, but a
+ * child's Edit is the parent turn's change, and the launching step is itself
+ * an unclassified call so the turn qualifies either way.
+ */
+function turnCouldTouchFiles(turn: ThreadItem[]): boolean {
+  return turn.some((item) => item.kind === "tool" && couldTouchFiles(item))
+}
+
 /** What each finished turn did to the worktree, keyed by the row it ends on
     — same walk as `withTurnUsage`, same footer slot. A turn that changed
-    nothing (or was not measured) draws nothing. */
+    nothing (or was not measured), or that ran nothing that could have written
+    a file, draws nothing. */
 function withTurnChanges(
   items: ThreadItem[],
   turnActive: boolean,
@@ -200,7 +224,9 @@ function withTurnChanges(
     const head = turn[0]
     const turnId = head.kind === "user" ? head.turnId : undefined
     const changes = turnId ? turnChanges[turnId] : undefined
-    if (changes && changes.ended && changes.files.length > 0) after.set(tailId, changes)
+    if (!changes || !changes.ended || changes.files.length === 0) continue
+    if (!turnCouldTouchFiles(turn)) continue
+    after.set(tailId, changes)
   }
   return after
 }
@@ -313,7 +339,11 @@ function useThreadKeys({
   actions: Actions
   enabled: boolean
 }) {
-  const { permission, elicitation, turnActive } = thread
+  const { permissions, elicitations, turnActive } = thread
+  /* The head of each queue is the ask the hotkeys answer — Escape, the digits
+     and Enter all speak for the oldest card; the rest wait their turn. */
+  const permission = permissions[0]
+  const elicitation = elicitations[0]
 
   useHotkey(
     KEYS.escape,
@@ -680,10 +710,9 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
        row taller than the thread and scroll the whole pane. */
     <MessageScrollerProvider autoScroll={options.autoScroll}>
     {/* The Provider sits at the grid root rather than around the transcript:
-        the rail lives in the composer card now, and it needs the scroller's
-        `scrollToMessage`/`currentAnchorId` as much as the transcript does.
-        The provider renders no DOM of its own — context only — so this
-        changes nothing about the layout. */}
+        the turn rail needs the scroller's `scrollToMessage`/`currentAnchorId`
+        as much as the transcript does. The provider renders no DOM of its own
+        — context only — so this changes nothing about the layout. */}
     <div
       ref={rootRef}
       data-empty={empty || undefined}
@@ -947,15 +976,18 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   </div>
                 </MessageScrollerItem>
               )}
-              {thread.permission && (
-                <MessageScrollerItem messageId="permission">
+              {thread.permissions.map((pending, index) => (
+                <MessageScrollerItem
+                  key={pending.requestId}
+                  messageId={`permission:${pending.requestId}`}
+                >
                   <div className="harness-item-in">
                     <div className="py-1">
-                      <InlineApproval permission={thread.permission} />
+                      <InlineApproval permission={pending} autofocus={index === 0} />
                     </div>
                   </div>
                 </MessageScrollerItem>
-              )}
+              ))}
               {/* The card rides the soft keyboard while a field within it is
                   being answered. It is the transcript's live tail, resting on
                   the margin above the docked composer — so when the composer
@@ -965,15 +997,19 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   the lifted glass and the keys together, and settles back the
                   moment it does not. A transform, so the transcript itself
                   never moves with it. */}
-              {thread.elicitation && (
-                <MessageScrollerItem messageId="elicitation" className={KEYBOARD_LIFT_FOCUSED}>
+              {thread.elicitations.map((pending) => (
+                <MessageScrollerItem
+                  key={pending.requestId}
+                  messageId={`elicitation:${pending.requestId}`}
+                  className={KEYBOARD_LIFT_FOCUSED}
+                >
                   <div className="harness-item-in">
                     <div className="py-1">
-                      <InlineElicitation elicitation={thread.elicitation} />
+                      <InlineElicitation elicitation={pending} />
                     </div>
                   </div>
                 </MessageScrollerItem>
-              )}
+              ))}
             </MessageScrollerContent>
             </StepTokensProvider>
             </ViewOptionsContext.Provider>
@@ -993,6 +1029,18 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                 "z-30 data-[direction=end]:bottom-[calc(var(--composer-dock-h,14rem)+1rem)]",
             )}
           />
+          {/* The turn rail: one tick per turn, riding the transcript's left
+              edge as an absolute overlay, centred in the view — a sibling of
+              the viewport, so it does not scroll with the content. Under the
+              reader's Turn rail toggle, and the rail draws nothing under two
+              turns, so a short thread pays for it only in a hook call. */}
+          {options.turnRail && visible.length > 0 && (
+            <ThreadRail
+              items={visible}
+              turns={thread.turns}
+              onEnsureTurn={(turnId, seq) => actions.loadUntilTurn(sessionId, turnId, seq)}
+            />
+          )}
         </MessageScroller>
       {/* min-w-0, and it is load-bearing: a grid item's automatic minimum is
           `min-content`, so the composer's row was as wide as the widest
@@ -1060,10 +1108,6 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
           thread={thread}
           meta={meta}
           delivery={delivery}
-          railItems={visible}
-          railTurns={thread.turns}
-          onEnsureTurn={(turnId, seq) => actions.loadUntilTurn(sessionId, turnId, seq)}
-          showRail={options.turnRail}
         />
       </div>
       {/* The spacer that collapses. Nothing renders in it — its whole job is to
@@ -1168,7 +1212,7 @@ function StartingLine({ phase }: { phase: ConnPhase }) {
         <Logo working className="size-4 shrink-0" />
         <span className="harness-shimmer min-w-0 truncate text-xs leading-6">{line.text}</span>
       </div>
-      {bar ? (
+      {bar && (
         <div className="flex max-w-xs items-center gap-2 pl-6 pt-1.5">
           <Progress
             value={bar.done}
@@ -1179,9 +1223,20 @@ function StartingLine({ phase }: { phase: ConnPhase }) {
             {Math.min(99, Math.floor((bar.done / bar.total) * 100))}%
           </span>
         </div>
-      ) : (
-        slowText && <div className="pl-6 pt-1 text-xs text-muted-foreground">{slowText}</div>
       )}
+      {/* Always said, not only once the wait is slow. Every headline above is a
+          word this codebase means something precise by and the reader does not
+          — "Restarting the agent…" is the whole of what a person had to work
+          out for themselves — so the sentence under it is the answer to "what
+          is this, and did I lose anything". When the wait runs long, `slowLine`
+          answers the question that replaces it — whether this will end at all —
+          as a sentence *added*, never one taken over: the detail is the only
+          thing that says nothing was lost, and dropping it at exactly the
+          moment the reader starts to worry is backwards. */}
+      <div className="max-w-prose pl-6 pt-1 text-xs leading-relaxed text-muted-foreground">
+        {line.detail}
+        {slowText && <span className="mt-1 block">{slowText}</span>}
+      </div>
     </div>
   )
 }

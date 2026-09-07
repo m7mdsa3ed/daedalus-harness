@@ -429,8 +429,8 @@ await new Promise<void>((r) => server.once("listening", r));
 const shimPort = (server.address() as { port: number }).port;
 configureGatewayShim({ port: shimPort });
 
-db.delete(profilesTable).run();
-db.insert(profilesTable)
+await db.delete(profilesTable);
+await db.insert(profilesTable)
   .values({
     id: "gw-test",
     name: "gw",
@@ -440,7 +440,7 @@ db.insert(profilesTable)
     models: [],
     defaultModel: "",
   } as never)
-  .run();
+  ;
 
 const base = gatewayUrlFor("gw-test", "claude-code", "x");
 
@@ -566,7 +566,7 @@ let thread: GatewaySession = {
   effort: "",
   rewriteModel: false,
 };
-setGatewaySessionResolver((id) => (id === "sess-1" ? thread : undefined));
+setGatewaySessionResolver(async (id) => (id === "sess-1" ? thread : undefined));
 const sessionBase = gatewayUrlFor("gw-test", "codex", "x", "sess-1");
 
 await test("a thread forwards untouched until its model has actually moved", async () => {

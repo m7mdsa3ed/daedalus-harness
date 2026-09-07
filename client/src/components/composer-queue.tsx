@@ -80,7 +80,7 @@ export function ComposerQueue({
   const editable = items.filter((item) => !item.steer)
   useStripSummary(
     count > 0
-      ? { id: "queue", icon: ListOrderedIcon, label: count === 1 ? "1 queued" : `${count} queued` }
+      ? { id: "queue", icon: ListOrderedIcon, label: count === 1 ? "1 queued" : `${count} queued`, badge: count }
       : null
   )
   if (count === 0) return null

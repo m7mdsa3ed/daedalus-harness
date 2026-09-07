@@ -19,6 +19,7 @@
 // capture, the codex payload follows `codex app-server generate-json-schema`'s
 // GetAccountRateLimitsResponse and the codex refusal is its verbatim error.
 // Run: pnpm test:quota
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 
 const { parseClaudeUsage, foldCodexQuota } = await import("../src/quota.js");

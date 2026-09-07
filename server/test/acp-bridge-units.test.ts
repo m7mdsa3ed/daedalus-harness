@@ -16,6 +16,7 @@
 // imported through tsx — a function that moves or is renamed fails this test
 // loudly at extraction rather than silently testing nothing.
 // Run: pnpm test:acp-units
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

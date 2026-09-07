@@ -3,6 +3,7 @@
 // multi-peer arbitration and the failure paths.
 // Run: pnpm test (DAEDALUS_DATA_DIR is set by the npm script — static
 // imports are hoisted, so setting it here would be too late).
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -48,7 +49,7 @@ const { SessionManager } = await import("../src/sessions.js");
 {
   const { eq } = await import("drizzle-orm");
   const { db, agents: agentsTable } = await import("../src/db/index.js");
-  db.update(agentsTable).set({ personaVia: "acp-meta" }).where(eq(agentsTable.id, "fake")).run();
+  await db.update(agentsTable).set({ personaVia: "acp-meta" }).where(eq(agentsTable.id, "fake"));
 }
 
 class MockWs extends EventEmitter {
@@ -103,16 +104,16 @@ const project = {
 const send = (ws: MockWs, command: ThreadCommand) =>
   ws.emit("message", Buffer.from(JSON.stringify(command)));
 
-const waitFor = async (predicate: () => boolean, what: string) => {
-  for (let i = 0; i < 100 && !predicate(); i++) await new Promise((r) => setTimeout(r, 50));
-  assert.ok(predicate(), `timed out waiting for ${what}`);
+const waitFor = async (predicate: () => boolean | Promise<boolean>, what: string) => {
+  for (let i = 0; i < 100 && !(await predicate()); i++) await new Promise((r) => setTimeout(r, 50));
+  assert.ok(await predicate(), `timed out waiting for ${what}`);
 };
 
 const manager = new SessionManager({}, 1);
 
 // --- the handshake happens server-side, before anyone attaches ---
 
-const session = manager.create(profile, "fake", project);
+const session = await manager.create(profile, "fake", project);
 await session.bridge!.ready;
 assert.equal(session.liveAcpSessionId, "acp-123", "the server ran session/new itself");
 // It is recorded straight away — a thread that keeps no id at all is a thread
@@ -148,8 +149,10 @@ assert.ok(ws1.of("update").length > 0, "the transcript streamed");
 // claude-agent-acp's: the child's prose is sent only to a client that claimed
 // `_meta["subagent-transcript"]` at initialize, so seeing it at all is the
 // assertion that the handshake did — and that `_meta` reaches the host whole.
-const meta = (e: { update: { _meta?: unknown } }) =>
-  (e.update._meta as { claudeCode?: { parentToolUseId?: string } } | undefined)?.claudeCode;
+const meta = (e: { update: unknown }) =>
+  ((e.update as { _meta?: unknown })._meta as { claudeCode?: { parentToolUseId?: string } } | undefined)
+    ?.claudeCode;
+
 assert.ok(
   ws1.of("update").some((e) => e.update.sessionUpdate === "agent_message_chunk" && meta(e)?.parentToolUseId === "t7"),
   "a subagent's prose arrives, attributed to its Task",
@@ -226,7 +229,7 @@ const ws2 = new MockWs();
 assert.equal(await manager.attach(session.id, ws2 as never, 0), null, "attach should succeed");
 const journaled = (ws: MockWs) =>
   ws.events.filter((e) => e.ev === "update" || e.ev === "session_config" || e.ev === "turn_started" || e.ev === "turn_ended");
-assert.deepEqual(journaled(ws2), manager.journal(session.id)!.events, "a replay is the log");
+assert.deepEqual(journaled(ws2), (await manager.journal(session.id))!.events, "a replay is the log");
 assert.ok(
   ws2.of("update").some((e) => e.sessionId === "sub-1"),
   "a child's session id is journaled with its update, so a replay nests it again",
@@ -250,7 +253,7 @@ const batched = ws2b.of("replay");
 assert.equal(batched.length, 1, "one chunk holds a log this short");
 assert.deepEqual(
   batched.flatMap((r) => r.events),
-  manager.journal(session.id)!.events,
+  (await manager.journal(session.id))!.events,
   "the batched replay is the same log the one-at-a-time replay sent",
 );
 assert.equal(ws2b.of("caught_up")[0].cursor, session.eventCount);
@@ -396,7 +399,7 @@ assert.equal(ended[1].continued, undefined, "the drained turn is followed by not
 assert.equal(a.of("turn_started").at(-1)!.text, "queued one!\n\nqueued two", "combined, blank-line separated");
 assert.equal(b.of("turn_started").at(-1)!.text, "queued one!\n\nqueued two", "…on every peer");
 assert.deepEqual(lastQueue(a), [], "the queue is empty after the drain");
-const journalAfterDrain = manager.journal(session.id)!.events;
+const journalAfterDrain = (await manager.journal(session.id))!.events;
 const continuedAt = journalAfterDrain.findIndex((e) => e.ev === "turn_ended" && e.continued);
 assert.equal(journalAfterDrain[continuedAt + 1].ev, "turn_started", "the drain is journaled right after the turn it follows");
 
@@ -480,8 +483,7 @@ assert.deepEqual(
   "the agent compacts only because the handshake said we can render it",
 );
 assert.ok(
-  manager
-    .journal(session.id)!
+  (await manager.journal(session.id))!
     .events.some(
       (e) => e.ev === "update" && e.update.sessionUpdate === "compaction_update",
     ),
@@ -519,7 +521,7 @@ await manager.respawn(session.id, { ...profile, name: "test2", defaultModel: "m2
 assert.equal(session.model, "m2");
 assert.equal(session.exited, false);
 assert.ok(session.eventCount > 0, "the load replay refilled the log it cleared");
-const reloaded = manager.journal(session.id)!;
+const reloaded = (await manager.journal(session.id))!;
 assert.ok(
   reloaded.events.some((e) => e.ev === "update" && e.historyReplay),
   "the conversation came back as history, not as news",
@@ -627,7 +629,7 @@ assert.equal(manager.list().find((s) => s.id === session.id), undefined, "purge 
 // agent is blocked on it, and nothing else would ever ask again. It is not in
 // the log at all: it lives in the bridge's pending map, for exactly as long as
 // the agent is waiting.
-const reloading = manager.create(profile, "fake", project);
+const reloading = await manager.create(profile, "fake", project);
 await reloading.bridge!.ready;
 const before = new MockWs();
 assert.equal(await manager.attach(reloading.id, before as never, 0), null, "attach should succeed");
@@ -672,7 +674,7 @@ assert.equal(reloading.bridge, null, "purge retires the bridge with the process"
 
 // The log is a table, so a replay reaching further back than anything held in
 // memory has to come back whole and in order.
-const logged = manager.create(profile, "fake", project);
+const logged = await manager.create(profile, "fake", project);
 await logged.bridge!.ready;
 const bulk = new MockWs();
 assert.equal(await manager.attach(logged.id, bulk as never, 0), null, "attach should succeed");
@@ -680,15 +682,15 @@ for (let i = 0; i < 25; i++) {
   send(bulk, { id: 100 + i, cmd: "prompt", text: `turn ${i}` });
   await waitFor(() => bulk.of("turn_ended").length === i + 1, `turn ${i}`);
 }
-const log = manager.journal(logged.id)!;
+const log = (await manager.journal(logged.id))!;
 assert.equal(log.cursor, log.events.length, "cursor is the event count");
 assert.deepEqual(
-  log.events.map((e) => (e as { seq: number }).seq),
+  (await log).events.map((e) => (e as { seq: number }).seq),
   [...Array(log.events.length).keys()],
   "every event, in order",
 );
 assert.deepEqual(
-  log.events.filter((e) => e.ev === "turn_started").map((e) => e.text),
+  (await log).events.filter((e) => e.ev === "turn_started").map((e) => e.text),
   [...Array(25).keys()].map((i) => `turn ${i}`),
   "…including a user message per turn",
 );
@@ -724,7 +726,7 @@ class SlowWs extends MockWs {
   }
 }
 
-const interleaved = manager.create(profile, "fake", project);
+const interleaved = await manager.create(profile, "fake", project);
 await interleaved.bridge!.ready;
 await manager.prompt(interleaved.id, "before the replay");
 const beforeCount = interleaved.eventCount;
@@ -770,10 +772,10 @@ assert.ok(manager.purge(interleaved.id));
 // what lets an idle-retired thread be opened and read without spawning an agent
 // to re-narrate it — the log is a cache for reading, and only a revive (which
 // is about to re-narrate the conversation for real) clears it.
-const archivedCursor = manager.journal(logged.id)!.cursor;
+const archivedCursor = (await manager.journal(logged.id))!.cursor;
 assert.ok(archivedCursor > 0, "the thread has a log to keep");
 manager.retire(manager.get(logged.id)!);
-assert.equal(manager.journal(logged.id)!.cursor, archivedCursor, "retiring keeps the log");
+assert.equal((await manager.journal(logged.id))!.cursor, archivedCursor, "retiring keeps the log");
 const reader = new MockWs();
 assert.equal(await manager.attach(logged.id, reader as never, 0), null, "an archive can be attached to");
 const attached = reader.of("attached")[0];
@@ -792,7 +794,7 @@ assert.equal(
 {
   const { eq } = await import("drizzle-orm");
   const { db, sessions: sessionsTable } = await import("../src/db/index.js");
-  const row = db.select().from(sessionsTable).where(eq(sessionsTable.id, logged.id)).get();
+  const row = (await db.select().from(sessionsTable).where(eq(sessionsTable.id, logged.id)))[0];
   assert.deepEqual(
     row?.context,
     { sessionUpdate: "usage_update", used: 12_000, size: 200_000 },
@@ -812,8 +814,7 @@ assert.match(String(reader.of("reply")[0].error?.message), /no running agent/);
 // …except paging back through it, which is a read. Pages are cut in **steps**
 // (turns): `before` and `from` are always the seq of a `turn_started`, and a
 // page is whole turns however many events each one journaled.
-const turnStarts = manager
-  .journal(logged.id)!
+const turnStarts = (await manager.journal(logged.id))!
   .events.filter((e) => e.ev === "turn_started")
   .map((e) => (e as { seq: number }).seq);
 assert.equal(turnStarts.length, 25);
@@ -868,16 +869,18 @@ assert.equal(tailPage.earlier, 0);
    socket's own attach, word for word: same window, same frames, same
    `caught_up`. If the two ever drift the client folds one of them through a
    dispatch written for the other. */
-const snapshot = (id: string, cursor = 0, opts: { window?: number } = {}) => {
+const snapshot = async (id: string, cursor = 0, opts: { window?: number } = {}) => {
   const result = manager.snapshot(id, cursor, opts);
   if ("refused" in result) return result;
-  return JSON.parse([...result.body].join("")) as {
+  const body: string[] = [];
+  for await (const frame of result.body) body.push(frame);
+  return JSON.parse(body.join("")) as {
     attached: Extract<ThreadEvent, { ev: "attached" }>;
     frames: Extract<ThreadEvent, { ev: "replay" }>[];
     caughtUp: Extract<ThreadEvent, { ev: "caught_up" }>;
   };
 };
-const doc = snapshot(logged.id, 0, { window: 5 });
+const doc = await snapshot(logged.id, 0, { window: 5 });
 assert.ok(!("refused" in doc));
 assert.deepEqual(doc.attached, windowAttach, "the HTTP bracket is the socket's attach");
 assert.deepEqual(
@@ -894,7 +897,7 @@ assert.equal(
 
 // A resume asks for the delta and gets no window — same rule as the socket's,
 // which is why the client keeps the window it already folded.
-const delta = snapshot(logged.id, doc.attached.to);
+const delta = await snapshot(logged.id, doc.attached.to);
 assert.ok(!("refused" in delta));
 assert.equal(delta.attached.resumed, true, "a cursor is a resume");
 assert.equal(delta.attached.from, doc.attached.to);
@@ -908,7 +911,7 @@ assert.deepEqual(
 );
 
 // The three refusals are the socket's, so the client reads them the same way.
-assert.deepEqual(snapshot("no-such-thread"), { refused: "no such thread on this server" });
+assert.deepEqual(await snapshot("no-such-thread"), { refused: "no such thread on this server" });
 
 // --- a log that does not begin with a turn is not windowed away ---
 
@@ -926,7 +929,7 @@ assert.deepEqual(snapshot("no-such-thread"), { refused: "no such thread on this 
   // for that: a few turns against a window of 60 withholds nothing, and the
   // replay has to be the whole log — head included — rather than starting at
   // that first turn.
-  const small = manager.create(profile, "fake", project);
+  const small = await manager.create(profile, "fake", project);
   await small.bridge!.ready;
   const smallBulk = new MockWs();
   assert.equal(await manager.attach(small.id, smallBulk as never, 0), null, "attach should succeed");
@@ -934,8 +937,7 @@ assert.deepEqual(snapshot("no-such-thread"), { refused: "no such thread on this 
     send(smallBulk, { id: 500 + i, cmd: "prompt", text: `turn ${i}` });
     await waitFor(() => smallBulk.of("turn_ended").length === i + 1, `small turn ${i}`);
   }
-  const smallStarts = manager
-    .journal(small.id)!
+  const smallStarts = (await manager.journal(small.id))!
     .events.filter((e) => e.ev === "turn_started")
     .map((e) => (e as { seq: number }).seq);
   assert.ok(smallStarts.length >= 2, "the small log has turns");
@@ -946,7 +948,7 @@ assert.deepEqual(snapshot("no-such-thread"), { refused: "no such thread on this 
   assert.equal(whole.of("attached")[0].earlier, 0, "…and withholds nothing");
   assert.equal(
     whole.of("replay").flatMap((r) => r.events).length,
-    manager.journal(small.id)!.cursor,
+    (await manager.journal(small.id))!.cursor,
     "…which is every event, including the ones before the first turn",
   );
   // The small thread's rows would trip the cascade assertion at the end of the
@@ -977,8 +979,7 @@ for (let i = 0; i < 6; i += 1) {
   } as never);
 }
 fat.flush();
-const fatStarts = manager
-  .journal(logged.id)!
+const fatStarts = (await manager.journal(logged.id))!
   .events.filter((e) => e.ev === "turn_started")
   .map((e) => (e as { seq: number }).seq);
 const capped = new MockWs();
@@ -988,20 +989,19 @@ assert.ok(fatStarts.includes(cappedAttach.from), "the cut is still a turn bounda
 assert.ok(cappedAttach.earlier > 0, "…and says how many turns it withheld");
 // The budget is honoured, and honoured *maximally* — one more turn would bust
 // it. A cut that merely fits is also what "send nothing" would be.
-const sizeFrom = (seq: number) =>
-  manager
-    .journal(logged.id)!
+const sizeFrom = async (seq: number) =>
+  (await manager.journal(logged.id))!
     .events.filter((e) => (e as { seq: number }).seq >= seq)
     .reduce((n, e) => n + JSON.stringify(e).length, 0);
-assert.ok(sizeFrom(cappedAttach.from) <= REPLAY_WINDOW_BYTES, "the replay fits the byte budget");
+assert.ok(await sizeFrom(cappedAttach.from) <= REPLAY_WINDOW_BYTES, "the replay fits the byte budget");
 const oneMore = fatStarts[fatStarts.indexOf(cappedAttach.from) - 1];
-assert.ok(oneMore !== undefined && sizeFrom(oneMore) > REPLAY_WINDOW_BYTES, "…and only just");
+assert.ok(oneMore !== undefined && await sizeFrom(oneMore) > REPLAY_WINDOW_BYTES, "…and only just");
 
 // `attached` states where the replay ends as well as where it starts: the
 // client counts what it unrolls against it, which is the difference between a
 // progress bar and an apology. Same number `caught_up` carries, read in the
 // same tick so the two cannot disagree.
-assert.equal(cappedAttach.to, manager.journal(logged.id)!.cursor, "attached says how far it runs");
+assert.equal(cappedAttach.to, (await manager.journal(logged.id))!.cursor, "attached says how far it runs");
 assert.equal(capped.of("caught_up")[0].cursor, cappedAttach.to);
 
 // --- the queue outlives the process ---
@@ -1009,7 +1009,7 @@ assert.equal(capped.of("caught_up")[0].cursor, cappedAttach.to);
 // A parked queue is a row, not process state: a fresh manager reads it back,
 // hands it over on attach, and lets it be edited with no agent to spawn.
 const { enqueue, listQueue } = await import("../src/queue.js");
-const parked = enqueue(logged.id, "after restart");
+const parked = await enqueue(logged.id, "after restart");
 const restarted = new SessionManager({}, 1);
 const survivor = new MockWs();
 assert.equal(await restarted.attach(logged.id, survivor as never, 0), null, "an archive can be attached to");
@@ -1020,10 +1020,10 @@ assert.deepEqual(
 );
 send(survivor, { id: 70, cmd: "queue_update", itemId: parked.id, text: "after restart!" });
 await waitFor(() => survivor.of("reply").some((r) => r.id === 70), "a parked queue is editable with no process");
-assert.equal(listQueue(logged.id)[0].text, "after restart!");
+assert.equal((await listQueue(logged.id))[0].text, "after restart!");
 send(survivor, { id: 71, cmd: "queue_remove", itemId: parked.id });
 await waitFor(() => survivor.of("queue").at(-1)?.items.length === 0, "…and emptied");
-assert.deepEqual(listQueue(logged.id), []);
+assert.deepEqual((await listQueue(logged.id)), []);
 
 // Soft delete keeps the row and refuses new attachments; restore undoes it.
 assert.ok(manager.softDelete(logged.id));
@@ -1037,7 +1037,7 @@ assert.equal(manager.journal(logged.id), undefined, "purge forgets the thread");
 // --- a refused session/load must not cost the thread its history ---
 
 // The thread has a conversation the agent knows about...
-const orphan = manager.create(profile, "fake", project);
+const orphan = await manager.create(profile, "fake", project);
 await orphan.bridge!.ready;
 const orphanWs = new MockWs();
 await manager.attach(orphan.id, orphanWs as never);
@@ -1080,7 +1080,7 @@ assert.ok(manager.purge(orphan.id));
 // definition, so a refusal to load it strands nothing. It is replaced without
 // argument, and it is NOT reported as lost history — otherwise every thread
 // killed before its first turn finished would come back wearing an error.
-const unproven = manager.create(profile, "fake", project);
+const unproven = await manager.create(profile, "fake", project);
 await unproven.bridge!.ready;
 assert.equal(unproven.acpSessionProvisional, true);
 unproven.acpSessionId = "acp-gone";
@@ -1092,7 +1092,7 @@ assert.ok(manager.purge(unproven.id));
 
 // --- persistence across a restart ---
 
-const session2 = manager.create(profile, "fake", project);
+const session2 = await manager.create(profile, "fake", project);
 await session2.bridge!.ready;
 /* Stop the first manager's process for this thread before standing the second
    one up. A restart is one manager replacing another, not two of them sharing a
@@ -1122,7 +1122,7 @@ assert.ok(manager.purge(session2.id));
 // Purging cascades: no orphan event rows are left behind for any session.
 const { db, sessionEvents } = await import("../src/db/index.js");
 assert.equal(
-  db.select().from(sessionEvents).all().length,
+  (await db.select().from(sessionEvents)).length,
   0,
   "event rows cascade with the session",
 );
@@ -1197,19 +1197,19 @@ assert.deepEqual(JSON.parse(spec.env.C), { model_context_window: 200_000 });
 // this install had never been offered — the case the old "seed only when the
 // file is empty" rule could never reach. Seeding again adds nothing.
 const { listAgents, seedAgents } = await import("../src/registry.js");
-assert.ok(listAgents().some((a) => a.id === "fake"), "the imported agent survived");
+assert.ok((await listAgents()).some((a) => a.id === "fake"), "the imported agent survived");
 seedAgents();
-const seeded = listAgents();
-assert.ok(seeded.some((a) => a.id === "opencode"), "a built-in reaches an install that has rows");
-assert.ok(seeded.some((a) => a.id === "fake"), "seeding leaves the user's own agents alone");
+const seeded = await listAgents();
+assert.ok((await seeded).some((a) => a.id === "opencode"), "a built-in reaches an install that has rows");
+assert.ok((await seeded).some((a) => a.id === "fake"), "seeding leaves the user's own agents alone");
 seedAgents();
-assert.equal(listAgents().length, seeded.length, "seeding twice adds nothing");
+assert.equal((await listAgents()).length, seeded.length, "seeding twice adds nothing");
 
 // Library deletions cascade into the profiles that linked them, instead of
 // leaving an id behind for a reader to filter out.
 const { mcpServers } = await import("../src/library.js");
 const { createProfile, getProfile } = await import("../src/profiles.js");
-const server1 = mcpServers.create({ type: "stdio", name: "s1", command: "true", args: [], env: [] });
+const server1 = await mcpServers.create({ type: "stdio", name: "s1", command: "true", args: [], env: [] });
 const profileInput = {
   name: "linked",
   agents: { fake: {} },
@@ -1224,33 +1224,33 @@ const profileInput = {
   skillIds: [],
   commandIds: [],
 };
-const linkedProfile = createProfile(profileInput);
-assert.deepEqual(getProfile(linkedProfile.id)!.mcpServerIds, [server1.id]);
+const linkedProfile = await createProfile(profileInput);
+assert.deepEqual((await getProfile(linkedProfile.id))!.mcpServerIds, [server1.id]);
 mcpServers.remove(server1.id);
-assert.deepEqual(getProfile(linkedProfile.id)!.mcpServerIds, [], "the link went with the server");
+assert.deepEqual((await getProfile(linkedProfile.id))!.mcpServerIds, [], "the link went with the server");
 // A stale id in a request links nothing rather than failing the whole write.
-const staleProfile = createProfile({ ...profileInput, name: "stale", mcpServerIds: ["gone"] });
-assert.deepEqual(getProfile(staleProfile.id)!.mcpServerIds, []);
+const staleProfile = await createProfile({ ...profileInput, name: "stale", mcpServerIds: ["gone"] });
+assert.deepEqual((await getProfile(staleProfile.id))!.mcpServerIds, []);
 
 // The Codex fallback-metadata opt-out is one of the stored columns: a profile
 // created with it reads it back, an update can turn it off, and a profile that
 // predates it (or omits it) reads as off.
-const quietProfile = createProfile({ ...profileInput, name: "quiet", suppressModelMetadataWarning: true });
-assert.equal(getProfile(quietProfile.id)!.suppressModelMetadataWarning, true);
+const quietProfile = await createProfile({ ...profileInput, name: "quiet", suppressModelMetadataWarning: true });
+assert.equal((await getProfile(quietProfile.id))!.suppressModelMetadataWarning, true);
 const { updateProfile } = await import("../src/profiles.js");
 updateProfile(quietProfile.id, { ...profileInput, name: "quiet" });
-assert.equal(getProfile(quietProfile.id)!.suppressModelMetadataWarning, false, "absent means off");
+assert.equal((await getProfile(quietProfile.id))!.suppressModelMetadataWarning, false, "absent means off");
 
 // A profile that opted out of Codex's fallback-metadata notice never sees it,
 // and one that did not still does: the bridge drops the update before it is
 // forwarded or journaled, so the quiet thread's transcript is clean.
 const fakeWarnAgent = "fake-warn";
-const quietwarn = manager.create(
+const quietwarn = await manager.create(
   { ...profile, id: "p-quietwarn", name: "quiet-warn", agents: { fake: {}, "fake-warn": {} }, suppressModelMetadataWarning: true },
   fakeWarnAgent,
   project,
 );
-const loudwarn = manager.create(
+const loudwarn = await manager.create(
   { ...profile, id: "p-loudwarn", name: "loud-warn", agents: { fake: {}, "fake-warn": {} }, suppressModelMetadataWarning: false },
   fakeWarnAgent,
   project,
@@ -1274,7 +1274,7 @@ assert.equal(mentionsFallback(loudWarnWs), true, "a profile that did not opt out
 // respawn — and a respawn ends in `session/load`, which is what carries the new
 // instructions onto the *existing* conversation instead of an empty one.
 const { personas } = await import("../src/personas.js");
-const persona = personas.create({
+const persona = await personas.create({
   name: "Terse",
   description: "",
   prompt: "Answer in one line.",
@@ -1294,7 +1294,7 @@ const metaLog = (): { method: string; meta: Record<string, any> | null }[] =>
 // A thread with no persona says nothing about one: `_meta` carries no
 // systemPrompt at all, rather than an empty append the agent would still apply.
 const beforePlain = metaLog().length;
-const plain = manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, {
+const plain = await manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, {
   suggestFollowups: false,
 });
 await plain.bridge!.ready;
@@ -1308,7 +1308,7 @@ assert.equal(plainMeta!.meta?.claudeCode?.options?.thinking, undefined, "…and 
 // the plain thread above already turns it off; this one must too, or the
 // append below is persona + trailer and says nothing about either.
 const mark = metaLog().length;
-const styled = manager.create(
+const styled = await manager.create(
   profile,
   "fake",
   project,
@@ -1372,7 +1372,7 @@ const notifying = new SessionManager(
   { onTurnEnd: (s) => pushed.push(s.id) },
   1,
 );
-const frozen = notifying.create(profile, "fake", project);
+const frozen = await notifying.create(profile, "fake", project);
 await frozen.bridge!.ready;
 const phone = new MockWs();
 assert.equal(await notifying.attach(frozen.id, phone as never), null);

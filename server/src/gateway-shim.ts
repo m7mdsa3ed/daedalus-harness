@@ -137,9 +137,9 @@ export interface GatewaySession {
   rewriteModel: boolean;
 }
 
-type SessionResolver = (sessionId: string) => GatewaySession | undefined;
+type SessionResolver = (sessionId: string) => Promise<GatewaySession | undefined>;
 
-let resolveSession: SessionResolver = () => undefined;
+let resolveSession: SessionResolver = async () => undefined;
 
 /** The SessionManager hands its live state over at construction; until it does,
     a session-scoped URL resolves to nothing and 404s — which is what a test
@@ -559,10 +559,10 @@ export async function proxyGatewayRequest(req: Request): Promise<Response> {
      the thread's *current* provider answers — that is what makes moving a
      thread between profiles instant. A profile-scoped one (the probe) is the
      older, static case and stays exactly as it was. */
-  const thread = parsed.kind === "s" ? resolveSession(parsed.id) : undefined;
+  const thread = parsed.kind === "s" ? await resolveSession(parsed.id) : undefined;
   if (parsed.kind === "s" && !thread) return notFound("unknown thread");
   const agentId = thread?.agentId ?? parsed.agentId;
-  const profile = getProfile(thread?.profileId ?? parsed.id);
+  const profile = await getProfile(thread?.profileId ?? parsed.id);
   const baseUrl = profile ? profileBaseUrl(profile, agentId) : "";
   if (!baseUrl) return notFound("that profile has no base URL");
 

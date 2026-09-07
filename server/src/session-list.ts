@@ -127,7 +127,7 @@ async function runListing(
     throw error;
   });
 
-  return listing.sessions.length ? { ...listing, sessions: markExisting(listing.sessions) } : listing;
+  return listing.sessions.length ? { ...listing, sessions: await markExisting(listing.sessions) } : listing;
 }
 
 function toImportable(info: acp.SessionInfo): ImportableSession {
@@ -142,16 +142,15 @@ function toImportable(info: acp.SessionInfo): ImportableSession {
 /** One query for the whole page: which of these the harness already holds.
     Deleted threads count — a conversation sitting in Trash must read as Trash
     rather than be offered for a second import that would duplicate it. */
-function markExisting(list: ImportableSession[]): ImportableSession[] {
-  const rows = db
+async function markExisting(list: ImportableSession[]): Promise<ImportableSession[]> {
+  const rows = await db
     .select({
       id: sessionsTable.id,
       acpSessionId: sessionsTable.acpSessionId,
       deletedAt: sessionsTable.deletedAt,
     })
     .from(sessionsTable)
-    .where(inArray(sessionsTable.acpSessionId, list.map((s) => s.acpSessionId)))
-    .all();
+    .where(inArray(sessionsTable.acpSessionId, list.map((s) => s.acpSessionId)));
   const byAcpId = new Map(rows.map((row) => [row.acpSessionId, row]));
   return list.map((session) => {
     const row = byAcpId.get(session.acpSessionId);

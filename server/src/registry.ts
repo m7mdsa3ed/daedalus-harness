@@ -336,6 +336,24 @@ function withOpencodeBypass(env: Record<string, string>): Record<string, string>
   };
 }
 
+/** Prefix the top-level `model` field with the `opencode/` provider id when the
+    template still names a bare `{env:DAEDALUS_OPENCODE_MODEL}` (seed 21).
+    OpenCode resolves a model against `provider/<id>`, so a bare id is a
+    `ProviderModelNotFoundError` and the thread hangs in the loading state.
+    The match is exact on the seeded substring so a user-customised template
+    (e.g. `model: "{model}"`) is left alone — only the seed's own unprefixed
+    form is rewritten. */
+function withOpencodeModelPrefix(env: Record<string, string>): Record<string, string> {
+  const template = env.OPENCODE_CONFIG_CONTENT;
+  if (!template) return env;
+  const unprefixed = '"model":"{env:DAEDALUS_OPENCODE_MODEL}"';
+  if (!template.includes(unprefixed)) return env;
+  return {
+    ...env,
+    OPENCODE_CONFIG_CONTENT: template.replace(unprefixed, '"model":"opencode/{env:DAEDALUS_OPENCODE_MODEL}"'),
+  };
+}
+
 /**
  * The quota probes seed 10 adds, by agent id.
  *
@@ -821,10 +839,20 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // skills already worked by accident, because it also reads `.claude/skills`
     // for compatibility and that is where the harness wrote them; its commands
     // never did, because nothing reads `.claude/commands` but Claude Code.
-    since: 20,
+    // Seed 21 prefixes the `model` field with `opencode/`. OpenCode resolves a
+    // model only against `provider/<id>` (opencode.ai/docs/providers); a bare
+    // id in the top-level `model` is a `ProviderModelNotFoundError`, so a thread
+    // on any profile with a `defaultModel` hangs in the loading state. The
+    // Default profile's empty `defaultModel` prunes the field and dodges this,
+    // which is why only custom profiles looked broken. The `opencode/` key is
+    // the provider id already in the template below — they have to move
+    // together, and a user who renames the provider by hand keeps them in
+    // sync themselves. Backfill rewrites only the literal unprefixed substring
+    // so a customised template (e.g. `model: "{model}"`) is left alone.
+    since: 21,
     introduced: 1,
     backfill: (existing) => ({
-      env: withOpencodeBypass(withOpencodePersonaKey(existing.env)),
+      env: withOpencodeBypass(withOpencodePersonaKey(withOpencodeModelPrefix(existing.env))),
       personaVia: existing.personaVia ?? "env",
       subagentFeed: existing.subagentFeed ?? "opencode-http",
       ...backfill20(existing),
@@ -842,7 +870,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
       DAEDALUS_OPENCODE_BASE_URL: "{baseUrl?https://api.opencode.ai}",
       DAEDALUS_OPENCODE_MODEL: "{model}",
       OPENCODE_CONFIG_CONTENT:
-        '{"permission":"allow","instructions":["{personaFile}"],"model":"{env:DAEDALUS_OPENCODE_MODEL}","provider":{"opencode":{"npm":"@ai-sdk/openai-compatible","name":"OpenCode","options":{"baseURL":"{env:DAEDALUS_OPENCODE_BASE_URL}","apiKey":"{env:DAEDALUS_OPENCODE_API_KEY}"}}}}',
+        '{"permission":"allow","instructions":["{personaFile}"],"model":"opencode/{env:DAEDALUS_OPENCODE_MODEL}","provider":{"opencode":{"npm":"@ai-sdk/openai-compatible","name":"OpenCode","options":{"baseURL":"{env:DAEDALUS_OPENCODE_BASE_URL}","apiKey":"{env:DAEDALUS_OPENCODE_API_KEY}"}}}}',
     },
   },
   {
@@ -923,13 +951,13 @@ const DEFAULT_AGENTS: SeedAgent[] = [
  * Two things fall out of that: a user's edits to a built-in are never
  * overwritten, and a built-in they deliberately deleted does not come back.
  */
-export function seedAgents(): void {
+export async function seedAgents(): Promise<void> {
   const applied =
-    db.select({ v: agentsTable.seededVersion }).from(agentsTable).orderBy(desc(agentsTable.seededVersion)).get()
+    (await db.select({ v: agentsTable.seededVersion }).from(agentsTable).orderBy(desc(agentsTable.seededVersion)).limit(1))[0]
       ?.v ?? 0;
   for (const { since, introduced, backfill, ...agent } of DEFAULT_AGENTS) {
     if (since <= applied) continue;
-    const existing = db.select().from(agentsTable).where(eq(agentsTable.id, agent.id)).get();
+    const existing = (await db.select().from(agentsTable).where(eq(agentsTable.id, agent.id)).limit(1))[0];
     if (!existing) {
       /* This install was already offered this agent in an earlier release and
          does not have it, so it was deleted — the one case the whole
@@ -939,7 +967,7 @@ export function seedAgents(): void {
          Nothing is stamped either: there is no row to carry a version, and the
          re-check next boot is a no-op. */
       if (introduced <= applied) continue;
-      db.insert(agentsTable)
+      await db.insert(agentsTable)
         .values({
           ...agent,
           spawnCategories: agent.spawnCategories ?? null,
@@ -956,8 +984,7 @@ export function seedAgents(): void {
           install: agent.install ?? null,
           icon: agent.icon ?? null,
           seededVersion: since,
-        })
-        .run();
+        });
       continue;
     }
     /* The row is older than this seed release — an install that already had
@@ -967,7 +994,7 @@ export function seedAgents(): void {
        harness loses someone's gateway configuration. A release that adds a
        single key inside one of them says so with `backfill`. */
     const added = backfill?.(existing);
-    db.update(agentsTable)
+    await db.update(agentsTable)
       .set({
         seededVersion: since,
         spawnCategories: existing.spawnCategories ?? agent.spawnCategories ?? null,
@@ -985,8 +1012,7 @@ export function seedAgents(): void {
         icon: existing.icon ?? agent.icon ?? null,
         ...added,
       })
-      .where(eq(agentsTable.id, agent.id))
-      .run();
+      .where(eq(agentsTable.id, agent.id));
     /* The probe's cached answer was recorded by the old spawn, and a release
        that rewrites the env is exactly what changes it — a real catalog is what
        makes Codex advertise an effort selector for a gateway model at all. So
@@ -995,12 +1021,12 @@ export function seedAgents(): void {
        adds a field *beside* the env has changed nothing the agent would answer
        differently. (Seed 10 adds the quota probe, but both its rows share a
        backfill that also recomputes the env, so they still re-probe once.) */
-    if (added?.env) db.delete(agentOptions).where(like(agentOptions.key, `%:${agent.id}:%`)).run();
+    if (added?.env) await db.delete(agentOptions).where(like(agentOptions.key, `%:${agent.id}:%`));
   }
 }
 
-export function listAgents(): AgentDef[] {
-  return db.select().from(agentsTable).all();
+export async function listAgents(): Promise<AgentDef[]> {
+  return await db.select().from(agentsTable);
 }
 
 /**
@@ -1037,25 +1063,25 @@ export type AgentInput = z.infer<typeof AgentInputSchema>;
    after a backfill and `updateProfile` evicts on save. Without this an edited
    command keeps answering the draft menu from the old binary until someone
    finds `?refresh=1`. */
-function evictProbeCache(id: string): void {
-  db.delete(agentOptions).where(like(agentOptions.key, `%:${id}:%`)).run();
+async function evictProbeCache(id: string): Promise<void> {
+  await db.delete(agentOptions).where(like(agentOptions.key, `%:${id}:%`));
 }
 
 /** Write the user's half of an agent row. A live thread keeps the process it
     already has — the edit reaches it at its next spawn, like every other change
     to how an agent is launched. */
-export function updateAgent(id: string, input: AgentInput): AgentDef | undefined {
-  const existing = db.select().from(agentsTable).where(eq(agentsTable.id, id)).get();
+export async function updateAgent(id: string, input: AgentInput): Promise<AgentDef | undefined> {
+  const existing = (await db.select().from(agentsTable).where(eq(agentsTable.id, id)).limit(1))[0];
   if (!existing) return undefined;
   /* `?? null` and not the spread's own `undefined`: Drizzle drops an undefined
      from a `.set()`, and a cleared install line or icon has to actually
      clear — an omitted key would silently keep the seed's. */
-  db.update(agentsTable)
+  await db
+    .update(agentsTable)
     .set({ ...input, install: input.install ?? null, icon: input.icon ?? null })
-    .where(eq(agentsTable.id, id))
-    .run();
+    .where(eq(agentsTable.id, id));
   evictProbeCache(id);
-  return getAgent(id);
+  return await getAgent(id);
 }
 
 /** Put a built-in back the way it ships, for the edit that turned out to be
@@ -1069,12 +1095,12 @@ export function updateAgent(id: string, input: AgentInput): AgentDef | undefined
     do. `seededVersion` is deliberately not among them: it is how far the seed
     has carried this install, not part of the agent's definition, and rewinding
     it would make the next boot replay backfills the row has already had. */
-export function resetAgent(id: string): AgentDef | undefined {
+export async function resetAgent(id: string): Promise<AgentDef | undefined> {
   const seed = DEFAULT_AGENTS.find((a) => a.id === id);
   if (!seed) return undefined;
-  const existing = db.select().from(agentsTable).where(eq(agentsTable.id, id)).get();
+  const existing = (await db.select().from(agentsTable).where(eq(agentsTable.id, id)).limit(1))[0];
   if (!existing) return undefined;
-  db.update(agentsTable)
+  await db.update(agentsTable)
     .set({
       name: seed.name,
       command: seed.command,
@@ -1094,10 +1120,9 @@ export function resetAgent(id: string): AgentDef | undefined {
       install: seed.install ?? null,
       icon: seed.icon ?? null,
     })
-    .where(eq(agentsTable.id, id))
-    .run();
+    .where(eq(agentsTable.id, id));
   evictProbeCache(id);
-  return getAgent(id);
+  return await getAgent(id);
 }
 
 /** Whether this id is one this release ships a default for — what tells the UI
@@ -1106,8 +1131,8 @@ export function isBuiltInAgent(id: string): boolean {
   return DEFAULT_AGENTS.some((a) => a.id === id);
 }
 
-export function getAgent(id: string): AgentDef | undefined {
-  return db.select().from(agentsTable).where(eq(agentsTable.id, id)).get();
+export async function getAgent(id: string): Promise<AgentDef | undefined> {
+  return (await db.select().from(agentsTable).where(eq(agentsTable.id, id)).limit(1))[0];
 }
 
 /**

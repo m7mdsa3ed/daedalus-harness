@@ -67,7 +67,9 @@ export function MenuRow({
     parts.push(
       <DropdownMenuRadioItem key={choice.value} value={choice.value}>
         {choice.icon}
-        <span className="truncate">{choice.name}</span>
+        <span className="flex min-w-0 flex-col">
+          <span className="truncate">{choice.name}</span>
+        </span>
       </DropdownMenuRadioItem>,
     )
     return parts
@@ -83,7 +85,7 @@ export function MenuRow({
         </span>
       </DropdownMenuSubTrigger>
       <DropdownMenuPortal>
-        <DropdownMenuSubContent>
+        <DropdownMenuSubContent className="max-w-80">
           <DropdownMenuRadioGroup
             value={value}
             onValueChange={(next) => {

@@ -76,6 +76,34 @@ function publish(next: WindowControlsOverlayState) {
   const root = document.documentElement
   if (next.visible) root.dataset.windowControlsOverlay = "true"
   else delete root.dataset.windowControlsOverlay
+  /* ── The caption buttons, as three numbers ──
+     `env(titlebar-area-*)` says the same thing to CSS, and index.css keeps it
+     as the fallback — but only the API answers in the two cases the band's
+     right end was running under the buttons regardless:
+
+     - the title bar area is the window less the overlay, so the overlay's
+       width is only `100vw - width - x` while the *viewport* is the window.
+       A visible scrollbar, a zoom level, a fractional device pixel ratio: any
+       of them and that subtraction is short by a few pixels of exactly the
+       thing being cleared.
+     - the buttons are not always on the right. On a left-handed caption band
+       `x` is their width and the arithmetic above collapses to zero, which is
+       the correct clearance on the wrong side.
+
+     So both ends are published, measured off the rect, and the rules pad by
+     whichever is theirs. Removed with the overlay, so nothing keeps a stale
+     reservation once the OS title bar is back. */
+  const rect = next.visible ? next.rect : null
+  const px = (value: number) => `${Math.max(0, Math.round(value))}px`
+  if (rect) {
+    root.style.setProperty("--wco-inset-left", px(rect.x))
+    root.style.setProperty("--wco-inset-right", px(window.innerWidth - (rect.x + rect.width)))
+    root.style.setProperty("--wco-titlebar-h", px(rect.height))
+  } else {
+    root.style.removeProperty("--wco-inset-left")
+    root.style.removeProperty("--wco-inset-right")
+    root.style.removeProperty("--wco-titlebar-h")
+  }
   for (const listener of listeners) listener()
 }
 
@@ -97,9 +125,15 @@ export function installWindowControlsOverlay(): () => void {
   const update = () => publish(read())
   api.addEventListener("geometrychange", update)
   mq.addEventListener("change", update)
+  /* The right-hand inset is the rect against `innerWidth`, so it is stale the
+     moment the window is resized. `geometrychange` covers that in Chromium, but
+     it is one event from one engine holding up a number the tab band lays out
+     by — and a resize listener costs a rect read at the same rate. */
+  window.addEventListener("resize", update)
   return () => {
     api.removeEventListener("geometrychange", update)
     mq.removeEventListener("change", update)
+    window.removeEventListener("resize", update)
   }
 }
 

@@ -192,14 +192,14 @@ function flush(projectId: string): void {
  * is silently a no-op forever and whatever it was watching for simply stops
  * happening, with nothing anywhere saying so.
  */
-export function watchProject(
+export async function watchProject(
   projectId: string,
   listener: Listener,
   onClose?: () => void,
-): () => void {
+): Promise<() => void> {
   let entry = watches.get(projectId);
   if (!entry) {
-    const root = projectRoot(projectId);
+    const root = await projectRoot(projectId);
     const created: ProjectWatch = {
       watcher: watchTree(
         root,

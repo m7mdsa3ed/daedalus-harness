@@ -40,17 +40,17 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       skillIds,
       commandIds,
     } = await c.req.json();
-    const profile = getProfile(profileId);
+    const profile = await getProfile(profileId);
     if (!profile) return c.json({ error: "unknown profile" }, 404);
     // The thread is a (profile, agent) pair. `agentId` may be left out only when
     // the profile names one agent — the virtual Default, or an older client. A
     // virtual profile is resolved from its id, so an id naming an agent that
     // does not exist would otherwise reach spawn and fail there instead.
     const agentId = resolveProfileAgent(profile, askedAgent);
-    if (!agentId || !getAgent(agentId)) {
+    if (!agentId || !await getAgent(agentId)) {
       return c.json({ error: "unknown agent for this profile" }, 404);
     }
-    const project = getProject(projectId);
+    const project = await getProject(projectId);
     if (!project) return c.json({ error: "unknown project" }, 404);
     // The client mints the id so it can route to the thread before this call is
     // made. Anything it sends still has to be a UUID and still has to be free —
@@ -65,7 +65,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     // ids link nothing (db/links.ts), so nothing here has to be validated.
     const ids = (v: unknown): string[] =>
       Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-    const session = sessions.create(profile, agentId, project, model, effort, id, configChoices, {
+    const session = await sessions.create(profile, agentId, project, model, effort, id, configChoices, {
       mcpServerIds: ids(mcpServerIds),
       skillIds: ids(skillIds),
       commandIds: ids(commandIds),
@@ -106,13 +106,13 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
    */
   app.post("/api/sessions/importable", async (c) => {
     const { profileId, agentId: askedAgent, projectId } = await c.req.json();
-    const profile = getProfile(profileId);
+    const profile = await getProfile(profileId);
     if (!profile) return c.json({ error: "unknown profile" }, 404);
     const agentId = resolveProfileAgent(profile, askedAgent);
-    if (!agentId || !getAgent(agentId)) {
+    if (!agentId || !await getAgent(agentId)) {
       return c.json({ error: "unknown agent for this profile" }, 404);
     }
-    const project = getProject(projectId);
+    const project = await getProject(projectId);
     if (!project) return c.json({ error: "unknown project" }, 404);
     return c.json(await listAgentSessions(profile, agentId, project));
   });
@@ -134,10 +134,10 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       skillIds,
       commandIds,
     } = await c.req.json();
-    const profile = getProfile(profileId);
+    const profile = await getProfile(profileId);
     if (!profile) return c.json({ error: "unknown profile" }, 404);
     const agentId = resolveProfileAgent(profile, askedAgent);
-    if (!agentId || !getAgent(agentId)) {
+    if (!agentId || !await getAgent(agentId)) {
       return c.json({ error: "unknown agent for this profile" }, 404);
     }
     if (!Array.isArray(asked) || asked.length === 0) {
@@ -171,7 +171,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
         skipped.push({ acpSessionId, reason: "already imported" });
         continue;
       }
-      const project = getProject(entry?.projectId);
+      const project = await getProject(entry?.projectId);
       if (!project) {
         skipped.push({ acpSessionId, reason: "unknown project" });
         continue;
@@ -206,16 +206,16 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     // fault in the logs.
     if (session.deletedAt !== null) return c.json({ error: "session deleted" }, 409);
     const { profileId, agentId: askedAgent, model, effort } = await c.req.json();
-    const profile = getProfile(profileId ?? session.profileId);
+    const profile = await getProfile(profileId ?? session.profileId);
     if (!profile) return c.json({ error: "unknown profile" }, 404);
     // The agent stays what it was unless the caller says otherwise — a profile
     // change is new credentials, not a new runtime — and whichever it is, the
     // profile has to be configured for it.
     const agentId = askedAgent ?? session.agentId;
-    if (!profileSupports(profile, agentId) || !getAgent(agentId)) {
+    if (!profileSupports(profile, agentId) || !await getAgent(agentId)) {
       return c.json({ error: "unknown agent for this profile" }, 404);
     }
-    const project = getProject(session.projectId);
+    const project = await getProject(session.projectId);
     if (!project) return c.json({ error: "unknown project" }, 404);
     await sessions.respawn(session.id, profile, agentId, project, model, effort);
     return c.json({
@@ -272,13 +272,13 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       ...staged,
       ...body,
     };
-    const profile = getProfile(profileId ?? session.profileId);
+    const profile = await getProfile(profileId ?? session.profileId);
     if (!profile) return c.json({ error: "unknown profile" }, 404);
     const agentId = askedAgent ?? session.agentId;
-    if (!profileSupports(profile, agentId) || !getAgent(agentId)) {
+    if (!profileSupports(profile, agentId) || !await getAgent(agentId)) {
       return c.json({ error: "unknown agent for this profile" }, 404);
     }
-    const project = getProject(session.projectId);
+    const project = await getProject(session.projectId);
     if (!project) return c.json({ error: "unknown project" }, 404);
     const result = await sessions.applyConfig(
       session.id,
@@ -407,8 +407,8 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     }
     const body = result.body;
     const stream = new ReadableStream<Uint8Array>({
-      pull(controller) {
-        const next = body.next();
+      async pull(controller) {
+        const next = await body.next();
         if (next.done) controller.close();
         else controller.enqueue(new TextEncoder().encode(next.value));
       },
@@ -424,10 +424,10 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
      `load_earlier`. Paging back is a read of the journal — an archived thread
      is where it mostly happens — so it must not cost a socket any more than it
      costs a spawn. */
-  app.get("/api/sessions/:id/earlier", (c) => {
+  app.get("/api/sessions/:id/earlier", async (c) => {
     const before = Number(c.req.query("before") ?? 0);
     if (!Number.isFinite(before)) return c.json({ error: "before must be a number" }, 400);
-    const page = sessions.earlierPage(c.req.param("id"), before);
+    const page = await sessions.earlierPage(c.req.param("id"), before);
     return page ? c.json(page) : c.json({ error: "not found" }, 404);
   });
 
@@ -438,7 +438,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
      usually is — an archive far longer than a screenful is opened at its tail,
      not walked from the beginning. Live-only events (permissions, the queue,
      quota) are deliberately not here: only the five journaled kinds are. */
-  app.get("/api/sessions/:id/trace", (c) => {
+  app.get("/api/sessions/:id/trace", async (c) => {
     const rawBefore = c.req.query("before");
     const before = rawBefore === undefined ? 0 : Number(rawBefore);
     if (!Number.isFinite(before)) return c.json({ error: "before must be a number" }, 400);
@@ -446,7 +446,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     const limit = Number.isFinite(rawLimit)
       ? Math.min(Math.max(1, Math.round(rawLimit)), TRACE_PAGE_LIMIT)
       : TRACE_PAGE_LIMIT;
-    const page = sessions.trace(c.req.param("id"), before, limit);
+    const page = await sessions.trace(c.req.param("id"), before, limit);
     return page ? c.json(page) : c.json({ error: "not found" }, 404);
   });
 
@@ -465,10 +465,10 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
      against the disk, or `uncommitted` for HEAD against the disk. Staging,
      discarding and committing go through the project's git routes: the
      review panel is a view over one repository, and those already exist. */
-  app.get("/api/sessions/:id/changes", (c) => {
+  app.get("/api/sessions/:id/changes", async (c) => {
     const id = c.req.param("id");
     if (!sessions.get(id)) return c.json({ error: "not found" }, 404);
-    return c.json({ turns: sessions.turnChanges.list(id) });
+    return c.json({ turns: await sessions.turnChanges.list(id) });
   });
 
   const scopeOf = (raw: string | undefined): Scope | null => {
@@ -496,9 +496,9 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
 
   // Delete is reversible by default: the process dies, the thread stays in the
   // list marked deleted. `?purge=1` is the irreversible one.
-  app.delete("/api/sessions/:id", (c) => {
+  app.delete("/api/sessions/:id", async (c) => {
     const purge = c.req.query("purge") === "1";
-    const ok = purge ? sessions.purge(c.req.param("id")) : sessions.softDelete(c.req.param("id"));
+    const ok = purge ? await sessions.purge(c.req.param("id")) : await sessions.softDelete(c.req.param("id"));
     return ok ? c.json({ ok: true }) : c.json({ error: "not found" }, 404);
   });
 
@@ -553,10 +553,10 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     if (session.deletedAt !== null) return c.json({ error: "session deleted" }, 409);
     const parsed = EnhanceSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) return c.json({ error: "text is required" }, 400);
-    const profile = parsed.data.profileId ? getProfile(parsed.data.profileId) : getProfile(session.profileId);
+    const profile = parsed.data.profileId ? await getProfile(parsed.data.profileId) : await getProfile(session.profileId);
     if (!profile) return c.json({ error: "unknown profile" }, 404);
     const agentId = session.agentId;
-    if (!profileSupports(profile, agentId) || !getAgent(agentId)) {
+    if (!profileSupports(profile, agentId) || !await getAgent(agentId)) {
       return c.json({ error: "unknown agent for this profile" }, 404);
     }
     const enhanced = await enhancePrompt(profile, {
@@ -580,13 +580,13 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
   app.post("/api/enhance", async (c) => {
     const parsed = DraftEnhanceSchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) return c.json({ error: "text and profileId are required" }, 400);
-    const profile = getProfile(parsed.data.profileId);
+    const profile = await getProfile(parsed.data.profileId);
     if (!profile) return c.json({ error: "unknown profile" }, 404);
     // The agent only decides which per-agent base URL is NOT used (see
     // `enhance.ts`): resolution still 404s when it names nothing usable, so a
     // profile that serves no installed runtime is not offered it silently.
     const agentId = resolveProfileAgent(profile, parsed.data.agentId);
-    if (!agentId || !getAgent(agentId)) {
+    if (!agentId || !await getAgent(agentId)) {
       return c.json({ error: "unknown agent for this profile" }, 404);
     }
     const enhanced = await enhancePrompt(profile, {

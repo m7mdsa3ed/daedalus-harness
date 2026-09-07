@@ -28,6 +28,7 @@
 // actually honors — and the debounce case drives the window with worktree
 // path events, which stay reliable.
 // Run: pnpm test:git-trigger
+import "./require-temp-data.js";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -68,11 +69,11 @@ const { RoutineGitTriggers } = await import("../src/routine-git-trigger.js");
 const { stopWatching } = await import("../src/workspace-watch.js");
 const { ASK_EVERYTHING } = await import("../src/autonomy.js");
 
-db.insert(schema.projects)
+await db.insert(schema.projects)
   .values({ id: "w1", name: "ws", cwd: repo, description: null, logoUrl: "" } as never)
-  .run();
+  ;
 
-const routine = createRoutine({
+const routine = await createRoutine({
   name: "on-push",
   projectId: "w1",
   profileId: "p1",
@@ -80,7 +81,7 @@ const routine = createRoutine({
   body: { kind: "prompt", text: "review the change" },
   autonomy: { ...ASK_EVERYTHING, askTimeoutSeconds: 0, maxRunSeconds: 0 },
 });
-const trigger = createTrigger(routine.id, { kind: "git", debounceMs: 1_000 });
+const trigger = await createTrigger(routine.id, { kind: "git", debounceMs: 1_000 });
 
 /** What reached the engine. `fire` is stubbed: everything past the decision —
     run rows, overlap, quota — is routines.test.ts's, and this file's whole job
@@ -115,9 +116,9 @@ async function test(name: string, fn: () => void | Promise<void>) {
   }
 }
 const settle = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const waitFor = async (predicate: () => boolean, what: string, ms = 8_000) => {
-  for (let i = 0; i < ms / 25 && !predicate(); i++) await settle(25);
-  assert.ok(predicate(), `timed out waiting for ${what}`);
+const waitFor = async (predicate: () => boolean | Promise<boolean>, what: string, ms = 8_000) => {
+  for (let i = 0; i < ms / 25 && !(await predicate()); i++) await settle(25);
+  assert.ok(await predicate(), `timed out waiting for ${what}`);
 };
 /** Long enough for a watcher batch (120ms) plus the 1s debounce floor plus the
     async evaluation to have run — what "no fire" has to outwait to mean it. */
@@ -143,7 +144,7 @@ await test("a commit fires once, with the branch parsed off the ref path and the
   assert.match(fire.opts.text ?? "", /Branches that moved: .*\bmain\b/);
   assert.doesNotMatch(fire.opts.text ?? "", / in /, "the project's own repo has no directory suffix");
   assert.equal(fire.opts.headOid, await head(), "the second opinion travels with the fire");
-  const row = getTrigger(trigger.id)!;
+  const row = (await getTrigger(trigger.id))!;
   assert.ok(row.lastFiredAt, "the row remembers it fired");
   assert.equal(row.lastSeen, fire.opts.headOid, "what the next churn is confirmed against");
   assert.equal(row.nextFireAt, null, "a git trigger has no clock for the scheduler to read");
@@ -224,7 +225,7 @@ await test("a sub-repository's ref names its directory and skips the root oid ve
   fresh();
   const before = fires.length;
   const rootHead = await head();
-  assert.equal(getTrigger(trigger.id)!.lastSeen, rootHead, "the veto WOULD bite if it were consulted");
+  assert.equal((await getTrigger(trigger.id))!.lastSeen, rootHead, "the veto WOULD bite if it were consulted");
   await git(["commit", "--allow-empty", "-m", "sub work"], sub);
   await waitFor(() => fires.length > before, "the sub-repo fire");
   const fire = fires[before];

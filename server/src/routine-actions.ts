@@ -126,7 +126,7 @@ async function runOne(
         ? JSON.stringify(ctx.verdict, null, 2)
         : ctx.output;
       if (!content.trim()) throw new Error("the run produced no answer to record");
-      const entry = addKnowledge(ctx.projectId, {
+      const entry = await addKnowledge(ctx.projectId, {
         title: cut(action.title || ctx.routineName, TITLE_MAX),
         content: cut(content, KNOWLEDGE_MAX),
         tags: ["routine"],
@@ -139,8 +139,8 @@ async function runOne(
          write resolves one — a named status wins, else the named board's first
          column, else the default board's — rather than hardcoding "todo",
          which is a seeded id a user is free to rename or delete. */
-      const statusId = action.statusId ?? (action.boardId ? firstStatusId(action.boardId) : undefined);
-      const task = createTask({
+      const statusId = action.statusId ?? (action.boardId ? await firstStatusId(action.boardId) : undefined);
+      const task = await createTask({
         title: cut(action.title || `${ctx.routineName}: ${firstLine(ctx.output) || ctx.status}`, TITLE_MAX),
         description: cut(ctx.output, NOTE_MAX * 4) || null,
         boardId: action.boardId,

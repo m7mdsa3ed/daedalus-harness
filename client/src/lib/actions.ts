@@ -57,6 +57,16 @@ const postJson = <T,>(settings: ServerSettings, path: string, body: unknown): Pr
    before it did. */
 const CONFIG_COALESCE_MS = 450
 
+/* …and longer for a batch that moves the **profile**, because that pick is
+   never the whole change: moving profile clears the model (the id names a model
+   the new provider does not serve), so the model row underneath it has to be
+   picked again — and at 450ms the two landed as two requests and two respawns,
+   the second one seconds behind the first. The flush that matters is still the
+   menu closing, which every surface that picks does explicitly; this is only
+   the fallback for a menu left open, so it is set by how long it takes to read
+   a model list rather than by how long a pause means "done". */
+const CONFIG_PROFILE_COALESCE_MS = 3000
+
 /** The fields `POST /api/sessions/:id/config` moves. Absent means unchanged;
     `""` is a real value everywhere it appears (no persona, the profile's
     default model, no effort). */
@@ -375,7 +385,10 @@ export function useActions(settings: ServerSettings) {
          Undo, and it must not be re-read per pick or a second pick would record
          the first one's result as the thing to go back to. */
       const before = held?.before ?? previousConfig(meta, patch)
-      const timer = setTimeout(() => void flushThreadConfig(meta.id), CONFIG_COALESCE_MS)
+      const timer = setTimeout(
+        () => void flushThreadConfig(meta.id),
+        patch.profileId !== undefined ? CONFIG_PROFILE_COALESCE_MS : CONFIG_COALESCE_MS
+      )
       configBuffer.set(meta.id, { meta, patch, context, before, timer })
     }
 
@@ -407,7 +420,19 @@ export function useActions(settings: ServerSettings) {
           action: {
             label: "Apply now",
             onClick: () => {
-              void sendThreadConfig(held.meta, {}, held.context, { defer: false }).catch(() => {})
+              /* The change itself, sent back explicitly — never an empty patch.
+                 The request body names profile, model and effort on every call
+                 (it falls back to the row for what the caller did not pick), so
+                 `{}` here described the settings the thread is already on and
+                 the route's `{...staged, ...body}` merge let them overwrite the
+                 very change this button exists to take: a restart that undid
+                 the pick it was offering to apply. The server's own staged
+                 patch is the authority; what this device asked for stands in
+                 for a socket that has not carried it back yet. */
+              const staged = getState().threads[held.meta.id]?.stagedConfig ?? held.patch
+              void sendThreadConfig(held.meta, staged, held.context, { defer: false }).catch(
+                () => {}
+              )
             },
           },
         })
@@ -904,6 +929,47 @@ export function useActions(settings: ServerSettings) {
              just before an attach vanished with no restoration at all. */
         }
         const conn = threads.for(sessionId)
+        /* Steering — a prompt sent while a turn is already running — is why this
+           is read BEFORE anything below lights the indicator. If this send
+           fails, it may only take back the indicator it turned on itself: a
+           steer that never reaches the agent leaves the turn it was aimed at
+           still running, and clearing the indicator there loses it until a
+           reload (the server is still `promptActive`, so `caught_up` puts it
+           straight back — which is exactly the "refresh brings it back" shape of
+           the bug).
+
+           Read before `ready` as well as before the dispatch, which is the one
+           thing this loses: `ready` may attach to a process another peer has
+           since put to work, and this will not have heard yet. That case is
+           already answered rather than newly broken — the prompt below comes
+           back `{queued}` and the optimistic bubble comes off there. */
+        const alreadyRunning = getState().threads[sessionId]?.turnActive ?? false
+        /* A message typed into a running turn is QUEUED, not steered, unless
+           asked otherwise. No bubble and no indicator for it: the `queue` event
+           draws the row, and when the turn ends the drained prompt comes back
+           as a `turn_started` with no origin — so this device draws the bubble
+           then, exactly like every other peer. If the turn ended before this
+           server saw this, `queue_add` drains at once and the same holds. */
+        const queueing = !draft && alreadyRunning && !opts.steer
+        /* Drawn BEFORE `ready`, for the same reason a draft's is drawn before
+           its create: `ready` is not a lookup, it is however long it takes to
+           get a process and a socket under this thread — a retired agent is
+           respawned and narrates the whole conversation back through
+           `session/load`, which is seconds. The composer has already cleared
+           the box by now, so a message held until that landed was a message
+           that existed nowhere at all, under a thread saying "Restarting the
+           agent…".
+
+           Safe because the attach that follows no longer eats it: a non-resumed
+           attach carries this device's own `local` untagged rows across the
+           reset and puts them back with the replay (lib/thread/carry.ts). That
+           is what a draft has relied on since it started drawing early, and it
+           was the only thing keeping this send behind the round trip. */
+        if (!draft && !queueing) {
+          dispatch({ type: "user-message", id: sessionId, text, local: true, attachments })
+          if (text) dispatch({ type: "session-title", id: sessionId, title: text.slice(0, 60) })
+          dispatch({ type: "turn-active", id: sessionId, active: true })
+        }
         /* Not "is there a socket" but "make there be one". Every reason there
            might not be — an open nobody has asked for yet, one half way
            through, a process that was retired, a ladder mid-backoff, a thread
@@ -924,24 +990,19 @@ export function useActions(settings: ServerSettings) {
              prompt-failure branch below does. Left on, it spins forever on a
              thread that is not working on anything. */
           if (draft) dispatch({ type: "turn-active", id: sessionId, active: false })
+          else if (!queueing) {
+            /* Nothing reached the server, so the optimism above comes back off
+               — the draft's own create-failure branch, one thread older. A
+               bubble left standing here is a message that was never sent,
+               drawn as one that was, and `recordUnsent` is already putting the
+               words where they can be sent again. */
+            dispatch({ type: "drop-user-message", id: sessionId })
+            dispatch({ type: "turn-active", id: sessionId, active: false })
+          }
           recordUnsent(error, "Couldn't send the message")
           throw error
         }
-        /* Steering — a prompt sent while a turn is already running — is why this
-           is read BEFORE the dispatch below. If this send fails, it may only
-           take back the indicator it turned on itself: a steer that never
-           reaches the agent leaves the turn it was aimed at still running, and
-           clearing the indicator there loses it until a reload (the server is
-           still `promptActive`, so `caught_up` puts it straight back — which is
-           exactly the "refresh brings it back" shape of the bug). */
-        const alreadyRunning = getState().threads[sessionId]?.turnActive ?? false
-        /* A message typed into a running turn is QUEUED, not steered, unless
-           asked otherwise. No bubble and no indicator here: the `queue` event
-           draws the row, and when the turn ends the drained prompt comes back
-           as a `turn_started` with no origin — so this device draws the bubble
-           then, exactly like every other peer. If the turn ended before this
-           server saw this, `queue_add` drains at once and the same holds. */
-        if (!draft && alreadyRunning && !opts.steer) {
+        if (queueing) {
           try {
             await thread.queueAdd(text, attachmentIds)
           } catch (error) {
@@ -949,11 +1010,6 @@ export function useActions(settings: ServerSettings) {
             throw error
           }
           return
-        }
-        /* A draft already dispatched its optimistic bubble above — only emit
-           it for threads that were already live. */
-        if (!draft) {
-          dispatch({ type: "user-message", id: sessionId, text, local: true, attachments })
         }
         /* Re-asserted for a draft rather than skipped, like the indicator
            below: the create's refresh swapped the draft row — the one carrying
@@ -967,15 +1023,15 @@ export function useActions(settings: ServerSettings) {
            already put the message on screen — so it lights its own indicator.
            `turn_ended` is what clears it, here and everywhere else.
 
-           Re-asserted for a draft rather than skipped, even though it was lit
-           before the create above: `ready` has just opened the thread, and a
-           non-resumed attach replaces the transcript with `emptyThread`, whose
-           `turnActive` is false. The bubble survives that (carry.ts) and this
-           does not, so the first message of a new thread ran its whole turn with
-           no working indicator at all. `caught_up` cannot cover it either — it
-           only relights the indicator when the SERVER says `promptActive`, and
-           the prompt below has not been sent yet. Idempotent, so the ordinary
-           path pays nothing for it. */
+           Re-asserted rather than skipped, even though every path above has
+           already lit it: `ready` has just opened the thread, and a non-resumed
+           attach replaces the transcript with `emptyThread`, whose `turnActive`
+           is false. The bubble survives that (carry.ts) and this does not, so
+           the first message of a new thread — and every message that had to
+           revive one — ran its whole turn with no working indicator at all.
+           `caught_up` cannot cover it either: it only relights the indicator
+           when the SERVER says `promptActive`, and the prompt below has not
+           been sent yet. Idempotent, so the ordinary path pays nothing for it. */
         dispatch({ type: "turn-active", id: sessionId, active: true })
         try {
           /* Resolves when the server has dispatched the prompt, not when the

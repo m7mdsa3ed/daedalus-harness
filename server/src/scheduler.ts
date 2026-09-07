@@ -52,11 +52,11 @@ export interface ScheduledMessageInput {
   everyMs?: number | null;
 }
 
-export function listScheduled(): ScheduledMessage[] {
-  return db.select().from(scheduledTable).orderBy(asc(scheduledTable.nextAt)).all();
+export async function listScheduled(): Promise<ScheduledMessage[]> {
+  return await db.select().from(scheduledTable).orderBy(asc(scheduledTable.nextAt));
 }
 
-export function createScheduled(input: ScheduledMessageInput): ScheduledMessage {
+export async function createScheduled(input: ScheduledMessageInput): Promise<ScheduledMessage> {
   const row: ScheduledMessage = {
     id: randomUUID(),
     sessionId: input.sessionId,
@@ -69,7 +69,7 @@ export function createScheduled(input: ScheduledMessageInput): ScheduledMessage 
     skipCount: 0,
     createdAt: Date.now(),
   };
-  db.insert(scheduledTable).values(row).run();
+  await db.insert(scheduledTable).values(row);
   return row;
 }
 
@@ -86,19 +86,19 @@ export interface ScheduledPatch {
  * touching the row is the signal that whatever made it undeliverable (a
  * trashed thread, a typo'd time) has been dealt with, so the sweep tries again.
  */
-export function updateScheduled(id: string, patch: ScheduledPatch): ScheduledMessage | undefined {
+export async function updateScheduled(id: string, patch: ScheduledPatch): Promise<ScheduledMessage | undefined> {
   const set: Partial<ScheduledMessage> = { skippedAt: null, lastError: null, skipCount: 0 };
   if (patch.text !== undefined) set.text = patch.text;
   if (patch.nextAt !== undefined) set.nextAt = patch.nextAt;
   if (patch.everyMs !== undefined) set.everyMs = patch.everyMs;
   if (patch.enabled !== undefined) set.enabled = patch.enabled ? 1 : 0;
-  const changed = db.update(scheduledTable).set(set).where(eq(scheduledTable.id, id)).run().changes;
+  const changed = ((await db.update(scheduledTable).set(set).where(eq(scheduledTable.id, id))).rowCount ?? 0);
   if (changed === 0) return undefined;
-  return db.select().from(scheduledTable).where(eq(scheduledTable.id, id)).get();
+  return (await db.select().from(scheduledTable).where(eq(scheduledTable.id, id)).limit(1))[0];
 }
 
-export function deleteScheduled(id: string): boolean {
-  return db.delete(scheduledTable).where(eq(scheduledTable.id, id)).run().changes > 0;
+export async function deleteScheduled(id: string): Promise<boolean> {
+  return ((await db.delete(scheduledTable).where(eq(scheduledTable.id, id))).rowCount ?? 0) > 0;
 }
 
 /**
@@ -118,29 +118,27 @@ export function deleteScheduled(id: string): boolean {
  */
 export const MAX_SCHEDULE_SKIPS = 20;
 
-function deliver(row: ScheduledMessage, manager: SessionManager): void {
+async function deliver(row: ScheduledMessage, manager: SessionManager): Promise<void> {
   const session = manager.get(row.sessionId);
   if (!session || session.deletedAt !== null) {
-    db.update(scheduledTable)
+    await db.update(scheduledTable)
       .set({
         skippedAt: Date.now(),
         lastError: session ? "the thread is in the trash" : "the thread no longer exists",
         skipCount: row.skipCount + 1,
       })
-      .where(eq(scheduledTable.id, row.id))
-      .run();
+      .where(eq(scheduledTable.id, row.id));
     return;
   }
 
   if (row.everyMs !== null) {
     let nextAt = row.nextAt + row.everyMs;
     while (nextAt <= Date.now()) nextAt += row.everyMs;
-    db.update(scheduledTable)
+    await db.update(scheduledTable)
       .set({ nextAt, skippedAt: null, lastError: null, skipCount: 0 })
-      .where(eq(scheduledTable.id, row.id))
-      .run();
+      .where(eq(scheduledTable.id, row.id));
   } else {
-    db.delete(scheduledTable).where(eq(scheduledTable.id, row.id)).run();
+    await db.delete(scheduledTable).where(eq(scheduledTable.id, row.id));
   }
 
   void fire(row.sessionId, row.text, manager);
@@ -163,8 +161,8 @@ async function fire(sessionId: string, text: string, manager: SessionManager): P
     }
     // Idle-retired or pre-restart: revive the way the client's "open a closed
     // thread" does — respawn + session/load — then send.
-    const profile = getProfile(session.profileId);
-    const project = getProject(session.projectId);
+    const profile = await getProfile(session.profileId);
+    const project = await getProject(session.projectId);
     if (!profile || !project) return;
     await manager.respawn(sessionId, profile, session.agentId, project, session.model, session.effort);
     const revived = manager.get(sessionId);
@@ -338,12 +336,11 @@ async function sweepRoutines(): Promise<void> {
      seconds. */
   if (!engine) return;
 
-  const triggers = db
+  const triggers = await db
     .select()
     .from(triggersTable)
     .where(and(eq(triggersTable.kind, "schedule"), eq(triggersTable.enabled, true)))
-    .orderBy(asc(triggersTable.nextFireAt), asc(triggersTable.createdAt))
-    .all();
+    .orderBy(asc(triggersTable.nextFireAt), asc(triggersTable.createdAt));
 
   const now = Date.now();
   for (const trigger of triggers) {
@@ -365,29 +362,29 @@ async function sweepRoutines(): Promise<void> {
  * that null is answered, which is also why a user fixing a bad expression heals
  * on the next tick with no further action.
  */
-function arm(trigger: RoutineTrigger, now: number): void {
+async function arm(trigger: RoutineTrigger, now: number): Promise<void> {
   const slot = nextSlot(trigger, now);
   if (slot.error) {
     /* Written only when it changed. The same trigger is re-evaluated every
        fifteen seconds and the same message would otherwise be an UPDATE a
        thousand times an hour saying nothing new. */
-    if (trigger.lastError !== slot.error) markTriggerError(trigger.id, slot.error);
+    if (trigger.lastError !== slot.error) await markTriggerError(trigger.id, slot.error);
     return;
   }
   /* A null with no error is a trigger that legitimately has no clock — a
      one-off that has already fired. Leave it exactly as it is; writing would
      only clear a `last_error` nothing set. */
   if (slot.at === null) return;
-  markTriggerArmed(trigger.id, slot.at);
+  await markTriggerArmed(trigger.id, slot.at);
 }
 
 /** One due trigger: roll its clock forward, then decide whether anything runs. */
 async function fireTrigger(engine: RoutineEngine, trigger: RoutineTrigger, now: number): Promise<void> {
-  const routine = getRoutine(trigger.routineId);
+  const routine = await getRoutine(trigger.routineId);
   /* The row cascades with its routine, so this is the deleted-mid-sweep window
      and nothing more. Stop the clock rather than re-reading it every tick. */
   if (!routine) {
-    markTriggerArmed(trigger.id, null);
+    await markTriggerArmed(trigger.id, null);
     return;
   }
 
@@ -404,7 +401,7 @@ async function fireTrigger(engine: RoutineEngine, trigger: RoutineTrigger, now: 
      and a nightly routine somebody switched off in March should not have
      written two hundred rows saying so by September. */
   if (!routine.enabled) {
-    markTriggerArmed(trigger.id, next.at);
+    await markTriggerArmed(trigger.id, next.at);
     return;
   }
 
@@ -413,12 +410,12 @@ async function fireTrigger(engine: RoutineEngine, trigger: RoutineTrigger, now: 
   let headOid: string | null = null;
   if (trigger.condition?.gitChangedSince === "lastRun") {
     headOid = await projectHeadOid(routine.projectId);
-    const seen = lastRunHeadOid(routine.id);
+    const seen = await lastRunHeadOid(routine.id);
     /* Both halves have to be known. A null on either side is the first run
        against this project, or a directory that is not a repository — neither
        of which can say "nothing changed", so the fire goes ahead. */
     if (headOid !== null && seen !== null && headOid === seen) {
-      recordSkippedRun(routine.id, {
+      await recordSkippedRun(routine.id, {
         source: "schedule",
         triggerId: trigger.id,
         reason: "nothing has changed in the project since the last run",
@@ -427,7 +424,7 @@ async function fireTrigger(engine: RoutineEngine, trigger: RoutineTrigger, now: 
       /* The clock advances normally. A skip is not an error and not a backoff:
          the trigger is due again at its next ordinary slot, and the run list
          says in words why last night produced nothing. */
-      markTriggerArmed(trigger.id, next.at, headOid);
+      await markTriggerArmed(trigger.id, next.at, headOid);
       return;
     }
   }
@@ -439,12 +436,12 @@ async function fireTrigger(engine: RoutineEngine, trigger: RoutineTrigger, now: 
        work the moment a routine had several triggers. `fire` answers as soon as
        the run row exists, so a thirty-minute review does not hold the loop. */
     await engine.fire(routine.id, { source: "schedule", triggerId: trigger.id, headOid });
-    markTriggerFired(trigger.id, now, next.at, headOid);
+    await markTriggerFired(trigger.id, now, next.at, headOid);
   } catch (error) {
     /* `fire` only throws for an unknown routine; everything it decides is a
        `skipped` row. Recorded on the trigger with the clock still rolled
        forward, so one bad night does not stop the schedule. */
-    markTriggerError(trigger.id, describe(error), next.at);
+    await markTriggerError(trigger.id, describe(error), next.at);
   }
 }
 
@@ -460,9 +457,9 @@ let timer: ReturnType<typeof setInterval> | null = null;
 /** Start the delivery sweep. Idempotent; one loop for the whole process. */
 export function startScheduler(manager: SessionManager): void {
   if (timer) return;
-  const sweep = () => {
+  const sweep = async () => {
     try {
-      const due = db
+      const due = await db
         .select()
         .from(scheduledTable)
         .where(and(
@@ -470,8 +467,7 @@ export function startScheduler(manager: SessionManager): void {
           eq(scheduledTable.enabled, 1),
           lt(scheduledTable.skipCount, MAX_SCHEDULE_SKIPS),
         ))
-        .orderBy(asc(scheduledTable.nextAt))
-        .all();
+        .orderBy(asc(scheduledTable.nextAt));
       for (const row of due) deliver(row, manager);
     } catch (error) {
       console.error("[scheduler] sweep failed", error);

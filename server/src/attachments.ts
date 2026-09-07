@@ -87,12 +87,12 @@ function safeName(name: string): string {
  * The id is the client's, like a session id, so a retry after a failed response
  * is a no-op on the wire rather than a second file.
  */
-export function putAttachment(opts: {
+export async function putAttachment(opts: {
   id: string;
   name: string;
   mimeType: string;
   bytes: Buffer;
-}): AttachmentRow {
+}): Promise<AttachmentRow> {
   if (!/^[0-9a-f-]{36}$/i.test(opts.id)) throw new HttpError("an attachment id must be a UUID", 400);
   if (opts.bytes.length === 0) throw new HttpError("that file is empty", 400);
   if (opts.bytes.length > MAX_ATTACHMENT_BYTES) {
@@ -104,7 +104,7 @@ export function putAttachment(opts: {
      arrived, or after a failed upload the chip offered a retry for. It is a
      no-op rather than a second file. A *different* id carrying the same bytes
      is a new row over the file that is already here. */
-  const existing = getAttachment(opts.id);
+  const existing = await getAttachment(opts.id);
   if (existing && existing.sha256 === sha256) return existing;
   if (existing) throw new HttpError("that attachment id is already taken by another file", 409);
 
@@ -122,17 +122,17 @@ export function putAttachment(opts: {
     createdAt: Date.now(),
     claimedAt: null,
   };
-  db.insert(table).values(row).run();
+  await db.insert(table).values(row);
   return row;
 }
 
-export function getAttachment(id: string): AttachmentRow | undefined {
-  return db.select().from(table).where(eq(table.id, id)).get();
+export async function getAttachment(id: string): Promise<AttachmentRow | undefined> {
+  return (await db.select().from(table).where(eq(table.id, id)).limit(1))[0];
 }
 
-export function listAttachments(ids: string[]): AttachmentRow[] {
+export async function listAttachments(ids: string[]): Promise<AttachmentRow[]> {
   if (ids.length === 0) return [];
-  const rows = db.select().from(table).where(inArray(table.id, ids)).all();
+  const rows = await db.select().from(table).where(inArray(table.id, ids));
   const byId = new Map(rows.map((row) => [row.id, row]));
   // The caller's order is the order the user attached them in, which is the
   // order the prompt names them in.
@@ -162,13 +162,13 @@ export function readAttachment(row: AttachmentRow): Buffer | undefined {
  * fine. The drop is warned about, because a silent drop with no trace is the
  * failure mode this codebase's error convention exists to avoid.
  */
-export function claimAttachments(ids: string[], sessionId: string): AttachmentRef[] {
+export async function claimAttachments(ids: string[], sessionId: string): Promise<AttachmentRef[]> {
   if (ids.length === 0) return [];
   const capped = ids.slice(0, MAX_ATTACHMENTS);
   if (capped.length < ids.length) {
     console.warn(`[attachments] ${sessionId}: dropped ${ids.length - capped.length} past the cap of ${MAX_ATTACHMENTS}`);
   }
-  const rows = listAttachments(capped);
+  const rows = await listAttachments(capped);
   const kept: AttachmentRow[] = [];
   const dropped: string[] = [];
   for (const id of capped) {
@@ -189,10 +189,9 @@ export function claimAttachments(ids: string[], sessionId: string): AttachmentRe
   const now = Date.now();
   const unclaimed = kept.filter((row) => row.sessionId === null).map((row) => row.id);
   if (unclaimed.length > 0) {
-    db.update(table)
+    await db.update(table)
       .set({ sessionId, claimedAt: now })
-      .where(inArray(table.id, unclaimed))
-      .run();
+      .where(inArray(table.id, unclaimed));
   }
   return kept.map(refOf);
 }
@@ -201,17 +200,17 @@ export function claimAttachments(ids: string[], sessionId: string): AttachmentRe
  * Delete rows and — only when nothing else still points at the same content —
  * the bytes underneath. A claim is a thread's, a file is content's.
  */
-export function deleteAttachments(ids: string[]): void {
+export async function deleteAttachments(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
-  const rows = listAttachments(ids);
+  const rows = await listAttachments(ids);
   if (rows.length === 0) return;
-  db.delete(table).where(inArray(table.id, rows.map((row) => row.id))).run();
+  await db.delete(table).where(inArray(table.id, rows.map((row) => row.id)));
   for (const row of rows) {
-    const stillReferenced = db
+    const stillReferenced = (await db
       .select({ id: table.id })
       .from(table)
       .where(and(eq(table.sha256, row.sha256), ne(table.id, row.id)))
-      .get();
+      .limit(1))[0];
     if (stillReferenced) continue;
     try {
       rmSync(attachmentPath(row.sha256), { force: true });
@@ -223,20 +222,20 @@ export function deleteAttachments(ids: string[]): void {
 
 /** The ids every one of these threads has claimed — the keep-set for the
     materialised-file sweep (attachment-blocks.ts). */
-export function claimedAttachmentIds(sessionIds: string[]): string[] {
+export async function claimedAttachmentIds(sessionIds: string[]): Promise<string[]> {
   if (sessionIds.length === 0) return [];
-  return db
+  return await (await db
     .select({ id: table.id })
     .from(table)
-    .where(inArray(table.sessionId, sessionIds))
-    .all()
+    .where(inArray(table.sessionId, sessionIds)))
+    
     .map((row) => row.id);
 }
 
 /** Everything a thread claimed — what `purge` takes with the row. */
-export function deleteSessionAttachments(sessionId: string): void {
-  const rows = db.select({ id: table.id }).from(table).where(eq(table.sessionId, sessionId)).all();
-  deleteAttachments(rows.map((row) => row.id));
+export async function deleteSessionAttachments(sessionId: string): Promise<void> {
+  const rows = await db.select({ id: table.id }).from(table).where(eq(table.sessionId, sessionId));
+  await deleteAttachments(rows.map((row) => row.id));
 }
 
 /**
@@ -246,24 +245,23 @@ export function deleteSessionAttachments(sessionId: string): void {
  * as long as its thread is: the journaled `turn_started` refs are what make a
  * replayed user bubble still show what was attached.
  */
-export function sweepAttachments(): number {
-  const stale = db
+export async function sweepAttachments(): Promise<number> {
+  const stale = await db
     .select({ id: table.id })
     .from(table)
-    .where(and(isNull(table.sessionId), lt(table.createdAt, Date.now() - UNCLAIMED_TTL_MS)))
-    .all();
-  deleteAttachments(stale.map((row) => row.id));
+    .where(and(isNull(table.sessionId), lt(table.createdAt, Date.now() - UNCLAIMED_TTL_MS)));
+  await deleteAttachments(stale.map((row) => row.id));
 
   /* A row whose bytes are gone can never answer, and it is what a restored
      backup is full of — but only the *unclaimed* ones are swept here. A claimed
      row is what draws a chip in a replayed transcript, and a chip that says
      "missing" is honest where a chip that is simply absent makes the transcript
      lie about what the user sent. */
-  const orphans = db
+  const orphans = await (await db
     .select({ id: table.id, sha256: table.sha256 })
     .from(table)
-    .where(isNull(table.sessionId))
-    .all()
+    .where(isNull(table.sessionId)))
+    
     .filter((row) => {
       try {
         return !statSync(attachmentPath(row.sha256)).isFile();
@@ -271,11 +269,11 @@ export function sweepAttachments(): number {
         return true;
       }
     });
-  deleteAttachments(orphans.map((row) => row.id));
+  await deleteAttachments(orphans.map((row) => row.id));
   return stale.length + orphans.length;
 }
 
 /** How many rows exist — the one number the backup page and tests want. */
-export function countAttachments(): number {
-  return db.select({ n: sql<number>`count(*)` }).from(table).get()?.n ?? 0;
+export async function countAttachments(): Promise<number> {
+  return (await db.select({ n: sql<number>`count(*)` }).from(table).limit(1))[0]?.n ?? 0;
 }

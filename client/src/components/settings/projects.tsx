@@ -146,7 +146,6 @@ export function ProjectForm({
     cwd: project?.cwd ?? "",
     description: project?.description ?? "",
     logoUrl: project?.logoUrl ?? "",
-    rules: project?.rules ?? "",
   }))
   const [busy, setBusy] = React.useState(false)
   const [saveError, setSaveError] = React.useState<InlineError | null>(null)
@@ -163,7 +162,6 @@ export function ProjectForm({
         cwd: form.cwd === "/" ? form.cwd : form.cwd.replace(/\/+$/, ""),
         description: form.description.trim() || null,
         logoUrl: form.logoUrl.trim(),
-        rules: form.rules.trim() || null,
       }
       if (project) {
         await api(settings, `/api/projects/${project.id}`, { method: "PUT", body: JSON.stringify(payload) })
@@ -217,18 +215,6 @@ export function ProjectForm({
               className="font-mono text-xs"
             />
           </div>
-        </Field>
-        <Field
-          label="Rules"
-          hint="Standing instructions every thread spawned in this project starts with — on top of the global rules (Settings › Rules), beneath the thread's persona. A change reaches a live thread when it respawns."
-        >
-          <Textarea
-            value={form.rules}
-            onChange={(e) => set({ rules: e.target.value })}
-            rows={5}
-            className="font-mono text-xs"
-            placeholder="This is the staging repo — never commit, never push. …"
-          />
         </Field>
       </FormSection>
       <FormActions busy={busy} onCancel={() => onDone(false)} error={saveError} />

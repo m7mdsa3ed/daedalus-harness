@@ -17,16 +17,14 @@ export const ProjectInputSchema = z.object({
   /** Optional — a URL. Empty means "no logo of its own"; the client draws
       the project's initial instead. */
   logoUrl: z.string().optional().default(""),
-  /** Standing rules every thread here starts with (rules.ts) — the project
-      layer, beneath the global block and above the persona. Null = none. */
-  rules: z.string().nullable().default(null),
 });
 
 /** The *input* shape, so `logoUrl` is optional to callers — routes parse it
     through the schema (which defaults it) and internal callers may omit it. */
 export type ProjectInput = z.input<typeof ProjectInputSchema>;
 /** `helpers` is optional in the type only so internal stubs need not carry
-    it — every row the API answers has the array attached. */
+    it — every row the API answers has the array attached. Project rules
+    are stored in the `rules` table (rules.ts), not as a column here. */
 export type Project = ProjectInput & { id: string; helpers?: HelperCommand[] };
 
 /** The column is nullable (rows predate it); the API says "" for "none",
@@ -37,45 +35,44 @@ const rowToProject = (row: typeof projectsTable.$inferSelect, helpers: HelperCom
   helpers,
 });
 
-/** The row an input maps to — one place, so create and update cannot drift. */
+/** The row an input maps to — one place, so create and update cannot drift.
+    Project rules are stored in the `rules` table (rules.ts), not here. */
 const columns = (input: ProjectInput) => ({
   name: input.name,
   cwd: input.cwd,
   description: input.description ?? null,
   logoUrl: input.logoUrl ?? "",
-  rules: input.rules ?? null,
 });
 
-export function listProjects(): Project[] {
-  const rows = db.select().from(projectsTable).all();
-  const helpers = helpersByProject(rows.map((r) => r.id));
+export async function listProjects(): Promise<Project[]> {
+  const rows = await db.select().from(projectsTable);
+  const helpers = await helpersByProject(rows.map((r) => r.id));
   return rows.map((row) => rowToProject(row, helpers.get(row.id) ?? []));
 }
 
-export function getProject(id: string): Project | undefined {
-  const row = db.select().from(projectsTable).where(eq(projectsTable.id, id)).get();
-  return row ? rowToProject(row, listHelpers(id)) : undefined;
+export async function getProject(id: string): Promise<Project | undefined> {
+  const row = (await db.select().from(projectsTable).where(eq(projectsTable.id, id)).limit(1))[0];
+  return row ? rowToProject(row, await listHelpers(id)) : undefined;
 }
 
-export function createProject(input: ProjectInput): Project {
+export async function createProject(input: ProjectInput): Promise<Project> {
   const id = randomUUID();
-  db.insert(projectsTable)
-    .values({ id, ...columns(input) })
-    .run();
-  return getProject(id)!;
+  await db.insert(projectsTable)
+    .values({ id, ...columns(input) });
+  return (await getProject(id))!;
 }
 
-export function updateProject(id: string, input: ProjectInput): Project | undefined {
-  const changed = db
+export async function updateProject(id: string, input: ProjectInput): Promise<Project | undefined> {
+  const changed = ((await db
     .update(projectsTable)
     .set(columns(input))
     .where(eq(projectsTable.id, id))
-    .run().changes;
-  return changed > 0 ? getProject(id) : undefined;
+    ).rowCount ?? 0);
+  return changed > 0 ? await getProject(id) : undefined;
 }
 
 /** Everything keyed to the project (knowledge, sessions' rows) goes with it —
     that is the cascades' job, not this function's. */
-export function deleteProject(id: string): boolean {
-  return db.delete(projectsTable).where(eq(projectsTable.id, id)).run().changes > 0;
+export async function deleteProject(id: string): Promise<boolean> {
+  return ((await db.delete(projectsTable).where(eq(projectsTable.id, id))).rowCount ?? 0) > 0;
 }
