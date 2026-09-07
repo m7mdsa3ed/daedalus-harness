@@ -26,7 +26,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ProjectIcon } from "@/components/entity-icon"
-import { COLOR_DOT, sprintsOf, statusesOf, viewsOf, type Board, type BoardStatus, type BoardView, type Sprint } from "@/lib/boards"
+import { COLOR_DOT, listsOf, sprintsOf, statusesOf, viewsOf, type Board, type BoardList, type BoardStatus, type BoardView, type Sprint } from "@/lib/boards"
 import { taskKey, type ReorderEntry, type Task, type TaskInput } from "@/lib/tasks-board"
 import {
   DEFAULT_VIEW,
@@ -286,7 +286,7 @@ export function BoardWorkspace({ location }: { location: BoardLocation }) {
 
   const tasksQuery = useTasksQuery()
   const tasks = React.useMemo(() => tasksQuery.data ?? [], [tasksQuery.data])
-  const { boards, statuses: allStatuses, sprints: allSprints, views: allViews, loaded } = useBoards()
+  const { boards, statuses: allStatuses, sprints: allSprints, views: allViews, lists: allLists, loaded } = useBoards()
   const createTaskMut = useCreateTask()
   const updateTaskMut = useUpdateTask()
   const deleteTaskMut = useDeleteTask()
@@ -314,6 +314,7 @@ export function BoardWorkspace({ location }: { location: BoardLocation }) {
   const statuses = React.useMemo(() => (board ? statusesOf(allStatuses, board.id) : []), [allStatuses, board])
   const sprints = React.useMemo(() => (board ? sprintsOf(allSprints, board.id) : []), [allSprints, board])
   const savedViews = React.useMemo(() => (board ? viewsOf(allViews, board.id) : []), [allViews, board])
+  const lists = React.useMemo(() => (board ? listsOf(allLists, board.id) : []), [allLists, board])
   const boardTasks = React.useMemo(() => tasks.filter((t) => t.boardId === boardId), [tasks, boardId])
   const counts = React.useMemo(() => {
     const m = new Map<string, number>()
@@ -478,6 +479,7 @@ export function BoardWorkspace({ location }: { location: BoardLocation }) {
     board,
     statuses,
     sprints,
+    lists,
     tasks: visible,
     allTasks: boardTasks,
     view,

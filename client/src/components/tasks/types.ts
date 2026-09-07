@@ -2,7 +2,7 @@
    same props: the board and its rows, the visible (filtered, sorted) tasks,
    the full list for resolving parents, and the verbs — so a view never talks
    to the query cache itself and the page is the one place that does. */
-import type { Board, BoardStatus, Sprint } from "@/lib/boards"
+import type { Board, BoardList, BoardStatus, Sprint } from "@/lib/boards"
 import type { Task, TaskInput } from "@/lib/tasks-board"
 import type { ViewState } from "@/lib/tasks-view"
 import type { CardContext } from "./task-card"
@@ -11,6 +11,7 @@ export interface ViewProps {
   board: Board
   statuses: BoardStatus[]
   sprints: Sprint[]
+  lists: BoardList[]
   /** The tasks the current filters and sort let through. */
   tasks: Task[]
   /** Every task on the board, filters or not — for parents, children, epics. */

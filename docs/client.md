@@ -629,7 +629,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   declares `--container-panel-sm: 40rem` / `--container-panel-md: 48rem` — deliberately the
   pixel values of `sm:`/`md:`, since the variants they replace were written against those.
   So layout that needs *room* (the workflow table's activity column, the queue rows that
-  wrap their actions, the strip's inset and its collapsed labels, the turn rail) is
+  wrap their actions, the strip's inset, the turn rail) is
   `@panel-sm:`/`@panel-md:` now. Touch targets, the terminal's soft key bar and
   Enter-inserts-a-newline stay on `useIsMobile` and plain media queries, because a narrow
   panel on a desktop is still driven by a mouse; and viewport-centred things (the dialog
@@ -996,13 +996,28 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   alone lets the small pieces in and then *warns* about `ts.worker` — and vite-plugin-pwa
   treats that warning as a failed build. Offline, the IDE is the one surface that does not
   open.
-- **A turn's changes open as a tab, not as a panel of their own.** The "N files changed" chip
-  under a turn (`TurnChangesChip` in `thread-view.tsx`) opens the IDE and requests the scope;
-  **whether it is drawn at all is the transcript's one contribution to a measurement that is
+- **Reviewing a turn is source control, narrowed.** The "N files changed" chip under a turn
+  (`TurnChangesChip` in `thread-view.tsx`) opens the IDE and hands it a *filter*:
+  `requestIde({kind:"review", …})` writes the turn's paths into `lib/ide/scm-filter.ts`, the
+  panel switches to its source-control view, and that view draws only those files under a
+  banner naming them, with "Show everything" to drop it. It was a tab of its own
+  (`changes-tab.tsx`, a second file tree and a Monaco diff over the turn's two trees) and that
+  is exactly what was wrong with it: the same files, in a surface that could not stage,
+  discard or commit any of them, next door to the view that could.
+  **The narrowing is one derivation, not a filtered render** — `RepoSection` filters the
+  *status object* once, so the groups, the header count, the commit button and "stage all"
+  all describe what is on screen. A filtered render would have left a button reading
+  "Stage all 12" over three visible rows.
+  It filters `git status`, so it shows the turn's files **that are still uncommitted**: a turn
+  whose work has since been committed narrows to nothing, and the section says "None of these
+  files are uncommitted here" rather than "clean", which would be a claim about the whole
+  worktree. The filter is per project, ephemeral (never `idePrefs`, which is for standing
+  choices) and re-asked by nonce, so clicking a second chip re-opens a side view you closed.
+  **Whether the chip is drawn at all is the transcript's one contribution to a measurement that is
   otherwise entirely git's.** The snapshots bracket a *window*, and everything landing in that
   window is attributed to whichever turn was open — a second thread on the same cwd, the
   user's own editor, a dev server writing something that is not gitignored. The recorded row
-  keeps all of it (it is what the review panel and a rewind read), but the chip asks
+  keeps all of it (it is what a rewind reads), but the chip asks
   `turnCouldTouchFiles` first: did the turn run one tool whose ACP `kind` is not `read`,
   `search`, `fetch`, `think` or `switch_mode` (`couldTouchFiles` in `lib/tools/naming.ts`)? A
   turn that only searched the web cannot have written a file, and used to be handed the
@@ -1013,12 +1028,10 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   Subagent rows count too: they carry a `parentId`, but a child's Edit is the parent turn's
   change. Nothing here spells a vendor tool name — a new runtime's writer is free as long as
   it declares a kind.
-  Once the tab is open, `changes-tab.tsx` draws the files as a tree (twelve files across four directories is
-  unreadable as twelve full paths) and a Monaco diff per file, both sides read whole from
-  `GET /api/sessions/:id/changes/file` — the before side from the turn's start tree, the after
-  side from its end tree once it has ended and from the working file while it is still
-  running. Staging, discarding and committing are not here: they act on the worktree as it is
-  now, which is the source-control view's subject and not this one's.
+  The scope's own reads — `GET /api/sessions/:id/changes/files|patch|file`, the turn's two
+  trees compared directly — are still served and no longer called by anything: they are what a
+  turn-scoped diff would need if one is ever wanted again. What the client reads from the
+  session is the per-turn summary (`sessionChanges`) the chips are drawn from.
 - **The editor wears the app's palette, and the conversion is the browser's.** Monaco's theme
   format takes a hex string per key; the app's palette is `oklch()` and `color-mix()`. So each
   token is resolved by painting it into a 1×1 canvas and reading the pixel back — the one

@@ -29,6 +29,7 @@ import {
   skills as skillsTable,
   boards as boardsTable,
   boardViews as boardViewsTable,
+  boardLists as boardListsTable,
   type BoardViewConfig,
   sprints as sprintsTable,
   taskActivity as taskActivityTable,
@@ -540,6 +541,18 @@ const BoardViewRow = z.object({
   updatedAt: int,
 });
 
+const BoardListRow = z.object({
+  id: str.min(1),
+  boardId: str.min(1),
+  name: str,
+  color: optStr,
+  order: int.default(0),
+  group: optStr,
+  collapsed: z.boolean().default(false),
+  createdAt: int,
+  updatedAt: int,
+});
+
 const TaskCommentRow = z.object({
   id: str.min(1),
   taskId: str.min(1),
@@ -594,9 +607,13 @@ const TaskRow = z.preprocess(
     priority: z.enum(["lowest", "low", "medium", "high", "urgent"]).default("medium"),
     labels: z.array(str).default([]),
     assignee: optStr,
+    assignees: z.array(str).default([]),
+    listId: optStr,
     parentId: optStr,
     sprintId: optStr,
     estimate: int.nullish(),
+    timeEstimate: int.nullish(),
+    timeTracked: int.nullish(),
     startAt: int.nullish(),
     dueAt: int.nullish(),
     completedAt: int.nullish(),
@@ -686,6 +703,7 @@ export const BundleSchema = z.object({
   boardStatuses: z.array(BoardStatusRow).default([]),
   sprints: z.array(SprintRow).default([]),
   boardViews: z.array(BoardViewRow).default([]),
+  boardLists: z.array(BoardListRow).default([]),
   tasks: z.array(TaskRow).default([]),
   taskComments: z.array(TaskCommentRow).default([]),
   taskActivity: z.array(TaskActivityRow).default([]),
@@ -779,8 +797,9 @@ export async function exportBundle(opts: ExportOptions): Promise<Bundle> {
     boardViews: await (await db
       .select()
       .from(boardViewsTable))
-      
+
       .map((v) => ({ ...v, config: v.config as Record<string, unknown> })),
+    boardLists: await db.select().from(boardListsTable),
     tasks: await db.select().from(tasksTable),
     taskComments: await db.select().from(taskCommentsTable),
     taskActivity: await db.select().from(taskActivityTable),
@@ -806,7 +825,7 @@ export type ImportMode = "merge" | "replace";
 
 export type ImportSummary = Record<
   | "agents" | "profiles" | "mcpServers" | "mcpOauth" | "skills" | "commands" | "personas" | "modelPrompts" | "projects" | "projectHelpers" | "knowledge" | "settings"
-  | "rules" | "themes" | "sessions" | "queue" | "scheduled" | "workflowRuns" | "events" | "boards" | "boardStatuses" | "sprints" | "boardViews" | "tasks" | "taskComments" | "taskActivity" | "taskLinks"
+  | "rules" | "themes" | "sessions" | "queue" | "scheduled" | "workflowRuns" | "events" | "boards" | "boardStatuses" | "sprints" | "boardViews" | "boardLists" | "tasks" | "taskComments" | "taskActivity" | "taskLinks"
   | "routines" | "routineTriggers" | "routineRuns"
   | "webSearchUsage" | "pushTokens" | "notifications" | "composerHistory",
   number
@@ -892,7 +911,7 @@ function keepPairs(incoming: NameValue[] | null | undefined, existing: NameValue
 export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<ImportSummary> {
   const summary: ImportSummary = {
     agents: 0, profiles: 0, mcpServers: 0, mcpOauth: 0, skills: 0, commands: 0, personas: 0, modelPrompts: 0, projects: 0, projectHelpers: 0, knowledge: 0, settings: 0,
-    rules: 0, themes: 0, sessions: 0, queue: 0, scheduled: 0, workflowRuns: 0, events: 0, boards: 0, boardStatuses: 0, sprints: 0, boardViews: 0, tasks: 0, taskComments: 0, taskActivity: 0, taskLinks: 0,
+    rules: 0, themes: 0, sessions: 0, queue: 0, scheduled: 0, workflowRuns: 0, events: 0, boards: 0, boardStatuses: 0, sprints: 0, boardViews: 0, boardLists: 0, tasks: 0, taskComments: 0, taskActivity: 0, taskLinks: 0,
     routines: 0, routineTriggers: 0, routineRuns: 0,
     webSearchUsage: 0, pushTokens: 0, notifications: 0, composerHistory: 0,
     orphaned: 0, missingSecrets: false,
@@ -917,7 +936,7 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
         personasTable, modelPromptsTable,
         // A root of its own: its triggers, runs and links all cascade from it.
         routinesTable,
-        agentsTable, taskLinksTable, taskActivityTable, taskCommentsTable, tasksTable, boardViewsTable, sprintsTable, boardStatusesTable, boardsTable, usageTable, pushTokensTable,
+        agentsTable, taskLinksTable, taskActivityTable, taskCommentsTable, tasksTable, boardViewsTable, boardListsTable, sprintsTable, boardStatusesTable, boardsTable, usageTable, pushTokensTable,
         notificationsTable,
         composerHistoryTable,
         agentOptionsTable,
@@ -1238,15 +1257,26 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
     summary.boardViews = bundle.boardViews.length;
     upsertChunked(
       tx,
+      boardListsTable,
+      "id",
+      bundle.boardLists.map((l) => ({ ...l, group: l.group ?? null })),
+    );
+    summary.boardLists = bundle.boardLists.length;
+    upsertChunked(
+      tx,
       tasksTable,
       "id",
       bundle.tasks.map((t) => ({
         ...t,
         description: t.description ?? null,
         assignee: t.assignee ?? null,
+        assignees: t.assignees ?? [],
+        listId: t.listId ?? null,
         parentId: t.parentId ?? null,
         sprintId: t.sprintId ?? null,
         estimate: t.estimate ?? null,
+        timeEstimate: t.timeEstimate ?? null,
+        timeTracked: t.timeTracked ?? null,
         startAt: t.startAt ?? null,
         dueAt: t.dueAt ?? null,
         completedAt: t.completedAt ?? null,

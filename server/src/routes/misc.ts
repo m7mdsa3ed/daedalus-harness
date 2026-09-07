@@ -52,15 +52,16 @@ const ComposerHistorySchema = z.object({
   threadTitle: z.string().nullish(),
 });
 
-/* Individual rules — each has a title and content. */
+/* Individual rules — each has a title and content. Content may be
+   empty on creation (the inline editor fills it in immediately). */
 const RuleInputSchema = z.object({
   projectId: z.string().nullable().optional().default(null),
   title: z.string().min(1),
-  content: z.string().min(1),
+  content: z.string(),
 });
 const RuleUpdateSchema = z.object({
   title: z.string().min(1).optional(),
-  content: z.string().min(1).optional(),
+  content: z.string().optional(),
   sortOrder: z.number().optional(),
 });
 

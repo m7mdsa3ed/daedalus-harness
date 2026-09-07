@@ -6,7 +6,6 @@ import {
   CheckIcon,
   ChevronDownIcon,
   CircleDashedIcon,
-  ListChecksIcon,
   LoaderCircleIcon,
 } from "lucide-react"
 
@@ -350,8 +349,6 @@ interface ChecklistRowData {
  * was asked for.
  */
 function ChecklistCollapsible({
-  summaryId,
-  summaryLabel,
   percent,
   completed,
   total,
@@ -359,8 +356,6 @@ function ChecklistCollapsible({
   running,
   rows,
 }: {
-  summaryId: string
-  summaryLabel: string
   percent: number
   completed: number
   total: number
@@ -368,25 +363,18 @@ function ChecklistCollapsible({
   running: boolean
   rows: ChecklistRowData[]
 }) {
-  /* Open when the shelf's rail picked this row: the chip already said "Todos
-     2/5", so what it opens onto is the steps. Flat shelf, own default. */
-  const [open, setOpen] = useStripDisclosure()
+  /* Closed by default: the collapsed line already says which step and how far,
+     which is what a glance wants, and the steps are one click away. */
+  const [open, setOpen] = useState(false)
   const done = completed === total
-  /* On the strip's collapsed line this is a count, not a step: "Plan 2/5" is
-     what a glance wants, and the step it is on is one click away. */
-  useStripSummary({
-    id: summaryId,
-    icon: ListChecksIcon,
-    label: `${summaryLabel} ${completed}/${total}`,
-  })
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="w-full">
       <CollapsibleTrigger
         render={
           <button
             type="button"
-            /* px-2: the strip's own gutter, the one DraftScopeRow sits in — a
-               row on the shelf should start where the other row starts. */
+            /* px-2: the shelf's own gutter — every row on it starts on the
+               same column, and on the same one as the scope band below. */
             className="flex w-full items-center gap-2 px-2 py-1.5 text-left transition-colors hover:bg-accent/40"
           />
         }
@@ -483,22 +471,27 @@ function ChecklistCollapsible({
  * The agent's checklist, when it arrives through a tool call instead of ACP's
  * `plan` channel. Claude Code's `TodoWrite` and OpenCode's `todowrite` both
  * send the list as tool *input* and return nothing worth reading, and neither
- * maps to ACP's `plan` channel — so without this the shelf has no surface for
- * the most-repeated call in a long thread. A real ACP plan is NOT drawn here:
- * it arrives as its own session update, at its own point in the conversation,
- * so the transcript draws it in place (`PlanStep`). This one has no such point
- * — it is the input of a call the agent makes over and over, and stacking a row
- * per revision is what the shelf exists to avoid.
+ * maps to ACP's `plan` channel — so without this the most-repeated call in a
+ * long thread has no surface at all. A real ACP plan is NOT drawn here: it
+ * arrives as its own session update, at its own point in the conversation, so
+ * the transcript draws it in place (`PlanStep`). This one has no such point —
+ * it is the input of a call the agent makes over and over, and stacking a row
+ * per revision is what one collapsed checklist exists to avoid.
  *
  * `toolViewOf` is the single place that says "this call IS a todo list"; the
  * newest such call wins, so an agent revising its list mid-turn replaces the
- * shelf in place rather than stacking a row for every revision.
+ * list in place rather than stacking a row for every revision.
+ *
+ * Split from the component because the caller draws the card: the checklist
+ * lives at the foot of the transcript now, and an item in the scroller that
+ * renders nothing still reserves its intrinsic size. The reader answers "is
+ * there one", the component draws it, and the scan runs once.
  */
-export function ComposerTodo({ thread }: { thread: ThreadState }) {
+export function threadTodos(thread: ThreadState): ChecklistRowData[] | null {
   const todoItem = [...thread.items]
     .reverse()
     // Not a subagent's: a child's checklist is its own, drawn in its rail,
-    // and letting it win here handed the composer shelf to whichever worker
+    // and letting it win here handed the checklist to whichever worker
     // wrote last.
     .find((item): item is ToolItem => item.kind === "tool" && !item.parentId && toolViewOf(item) === "todos")
   /* Claude Code's ACP adapter now sends TodoWrite as an ACP `plan` update
@@ -510,8 +503,10 @@ export function ComposerTodo({ thread }: { thread: ThreadState }) {
         .reverse()
         .find((item): item is PlanItem => item.kind === "plan" && !item.parentId && item.entries.length > 0)
   const todos = todoItem ? extractTodos(todoItem) : planItem ? planItem.entries : null
-  if (!todos || todos.length === 0) return null
+  return todos && todos.length > 0 ? todos : null
+}
 
+export function ComposerTodo({ todos }: { todos: ChecklistRowData[] }) {
   const total = todos.length
   const completed = todos.filter((todo) => todo.status === "completed").length
   const current = todos.find((todo) => todo.status === "in_progress")
@@ -520,8 +515,6 @@ export function ComposerTodo({ thread }: { thread: ThreadState }) {
 
   return (
     <ChecklistCollapsible
-      summaryId="todos"
-      summaryLabel="Todos"
       percent={percent}
       completed={completed}
       total={total}

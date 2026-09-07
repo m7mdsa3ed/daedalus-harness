@@ -29,58 +29,21 @@ export function gitFileAt(
   )
 }
 
-/* ── The review panel's reads and writes ──
-   What a turn did is the *session's* question (the trees are recorded per
-   turn, server turn-changes.ts); staging and committing are the *project's*
-   (the existing git routes). The panel talks to both through here. */
+/* ── What a turn did ──
+   The per-turn summary the transcript's chips draw, and the one thing the
+   client reads from the session's own changes routes. The scope's *files*,
+   *patch* and per-file *sides* are still served (`/changes/files|patch|file`)
+   and nothing here calls them any more: reviewing a turn is source control
+   narrowed to its paths (`lib/ide/scm-filter.ts`), which reads `git status`
+   through the project's git routes below and can act on what it shows. */
 
 export type { ChangedFile, TurnChanges } from "@daedalus/protocol"
-import type { ChangedFile, TurnChanges } from "@daedalus/protocol"
-
-/** `uncommitted` (HEAD → worktree, untracked files included) or `turn:<id>`. */
-export type ReviewScope = string
+import type { TurnChanges } from "@daedalus/protocol"
 
 const session = (sessionId: string) => `/api/sessions/${encodeURIComponent(sessionId)}/changes`
 
 export function sessionChanges(settings: ServerSettings, sessionId: string, signal?: AbortSignal) {
   return api<{ turns: TurnChanges[] }>(settings, session(sessionId), { signal })
-}
-
-export function changedFiles(
-  settings: ServerSettings,
-  sessionId: string,
-  scope: ReviewScope,
-  signal?: AbortSignal
-): Promise<{ files: ChangedFile[]; unavailable?: string }> {
-  const search = new URLSearchParams({ scope })
-  return api(settings, `${session(sessionId)}/files?${search}`, { signal })
-}
-
-/** One side of one file under a scope, whole — what a diff editor puts on its
-    left (`before`) or right (`after`). A path the tree does not have is
-    `missing`, not an error: an added file has no before, a deleted one no
-    after. */
-export function changeFileSide(
-  settings: ServerSettings,
-  sessionId: string,
-  scope: ReviewScope,
-  path: string,
-  side: "before" | "after",
-  signal?: AbortSignal
-): Promise<{ content: string; missing: boolean; unavailable?: string }> {
-  const search = new URLSearchParams({ scope, path, side })
-  return api(settings, `${session(sessionId)}/file?${search}`, { signal })
-}
-
-export function changePatch(
-  settings: ServerSettings,
-  sessionId: string,
-  scope: ReviewScope,
-  path: string,
-  signal?: AbortSignal
-): Promise<{ patch: string; unavailable?: string }> {
-  const search = new URLSearchParams({ scope, path })
-  return api(settings, `${session(sessionId)}/patch?${search}`, { signal })
 }
 
 export interface GitFileState {

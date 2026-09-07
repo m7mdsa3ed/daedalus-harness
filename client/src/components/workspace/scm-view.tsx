@@ -44,6 +44,7 @@ import {
   ArrowTurnBackwardIcon,
   Archive02Icon,
   Clock01Icon,
+  FilterIcon,
   Folder01Icon,
   FolderTreeIcon,
   GitBranchIcon,
@@ -76,6 +77,7 @@ import { PanelEmptyState, PanelNotice, PanelToolbar } from "@/components/workspa
 import { useCoarsePointer } from "@/hooks/use-mobile"
 import { describeError } from "@/lib/errors"
 import { idePrefs, setIdePref, type FileLayout } from "@/lib/ide/prefs"
+import type { ScmFilter } from "@/lib/ide/scm-filter"
 import { useServer } from "@/lib/server-context"
 import { cn } from "@/lib/utils"
 import { basename } from "@/lib/workspace/fs-api"
@@ -152,10 +154,19 @@ interface RepoState {
 
 export function ScmView({
   projectId,
+  filter,
+  onClearFilter,
   onOpenDiff,
   onOpenFile,
 }: {
   projectId: string
+  /** Show only these paths, under a banner saying why (`lib/ide/scm-filter.ts`
+      — a turn's changed files). The working set underneath is untouched: this
+      narrows what is *drawn*, and every count, the commit button and "stage
+      all" follow the narrowing, because a button that says "Stage all 12" over
+      three visible rows is a lie. */
+  filter?: ScmFilter | null
+  onClearFilter?: () => void
   /** `path` is project-relative — see `projectPath`. Both sides are named: a
       staged row is HEAD ↔ index, an unstaged one index ↔ worktree. */
   onOpenDiff: (path: string, left: Comparison, right: Comparison) => void
@@ -327,6 +338,21 @@ export function ScmView({
         <IconAction label="Refresh" icon={RefreshIcon} onClick={refreshAll} />
       </PanelToolbar>
 
+      {/* What the view is currently being asked, and the way back to all of it.
+          Above the repositories rather than inside one: the question spans
+          them, and the answer per repository is a section that may be empty. */}
+      {filter && (
+        <div className="flex items-center gap-2 border-b border-border/60 bg-primary/5 px-2 py-1.5">
+          <HugeiconsIcon icon={FilterIcon} strokeWidth={2} className="size-3.5 shrink-0 text-primary" />
+          <span className="min-w-0 flex-1 truncate text-[11px] text-primary">{filter.label}</span>
+          {onClearFilter && (
+            <Button variant="ghost" size="xs" className="shrink-0 text-[11px]" onClick={onClearFilter}>
+              Show everything
+            </Button>
+          )}
+        </div>
+      )}
+
       <ScrollArea className="min-h-0 flex-1">
         <div className="pb-2">
           {repos.map((repo) => (
@@ -335,6 +361,7 @@ export function ScmView({
               projectId={projectId}
               repo={repo}
               state={states[repo.path]}
+              filter={filter ?? null}
               layout={layout}
               /* One repository has nothing to choose between, so it is always
                  open and its header carries no name and no disclosure — only
@@ -368,6 +395,7 @@ function RepoSection({
   projectId,
   repo,
   state,
+  filter,
   layout,
   collapsible,
   open,
@@ -380,6 +408,7 @@ function RepoSection({
   projectId: string
   repo: GitRepo
   state: RepoState | undefined
+  filter: ScmFilter | null
   layout: FileLayout
   collapsible: boolean
   open: boolean
@@ -408,7 +437,24 @@ function RepoSection({
   /* A commit is the one thing that changes the log while the panel is open. */
   const [commits, setCommits] = React.useState(0)
 
-  const status = state?.status ?? null
+  /* The narrowing happens **once**, here, and everything below reads the
+     narrowed status: the groups, the counts, the commit button's "stage all",
+     the header badge. Filtering at the row level instead would leave the
+     buttons describing files nobody can see — the reason this is a derivation
+     and not four `.filter()`s. What the server sent is kept intact in `state`,
+     so clearing the filter costs no round trip. */
+  const status = React.useMemo(() => {
+    const raw = state?.status ?? null
+    if (!raw || !filter) return raw
+    const keep = (files: GitFileState[]) => files.filter((file) => filter.paths.has(file.path))
+    return {
+      ...raw,
+      conflicted: keep(raw.conflicted),
+      staged: keep(raw.staged),
+      unstaged: keep(raw.unstaged),
+      untracked: keep(raw.untracked),
+    }
+  }, [state?.status, filter])
   const count = status ? changeCount(status) : null
 
   const write = React.useCallback(
@@ -681,7 +727,15 @@ function RepoSection({
               This directory is no longer a git repository.
             </p>
           ) : groups.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-muted-foreground">The worktree is clean.</p>
+            <p className="px-3 py-2 text-xs text-muted-foreground">
+              {filter
+                ? /* Not "clean": the worktree may be full of other work. What
+                     is true is that none of the files asked about are still
+                     uncommitted here — committed since, or another
+                     repository's. */
+                  "None of these files are uncommitted here."
+                : "The worktree is clean."}
+            </p>
           ) : (
             <div className="p-1">
               {groups.map((group) => (

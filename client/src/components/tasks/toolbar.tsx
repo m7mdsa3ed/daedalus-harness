@@ -73,12 +73,11 @@ const MODES: { id: WorkspaceMode; label: string; icon: React.ComponentType<{ cla
   { id: "sprints", label: "Sprints", icon: Rocket },
 ]
 
-const TOOL =
-  "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-
-function ModeSwitch({ mode, onChange }: { mode: WorkspaceMode; onChange: (m: WorkspaceMode) => void }) {
+/* ── ClickUp-style view tabs ──
+   Prominent pill buttons with icons, the active one highlighted. */
+function ViewTabs({ mode, onChange }: { mode: WorkspaceMode; onChange: (m: WorkspaceMode) => void }) {
   return (
-    <div className="inline-flex shrink-0 items-center gap-0.5 rounded-4xl border bg-muted/30 p-0.5 text-xs font-medium" aria-label="View">
+    <div className="inline-flex shrink-0 items-center gap-0.5 rounded-xl border bg-muted/40 p-0.5" aria-label="View">
       {MODES.map(({ id, label, icon: Icon }) => (
         <button
           key={id}
@@ -87,12 +86,14 @@ function ModeSwitch({ mode, onChange }: { mode: WorkspaceMode; onChange: (m: Wor
           aria-pressed={mode === id}
           title={label}
           className={cn(
-            "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-4xl px-2 py-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            mode === id ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+            "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            mode === id
+              ? "bg-background text-foreground shadow-sm ring-1 ring-border"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground",
           )}
         >
           <Icon className="size-3.5 shrink-0" />
-          <span className="hidden @panel-md:inline">{label}</span>
+          <span className="hidden @panel-sm:inline">{label}</span>
         </button>
       ))}
     </div>
@@ -145,6 +146,7 @@ const DUE_OPTIONS: { id: DueWindow; label: string }[] = [
   { id: "none", label: "No date" },
 ]
 
+/** The filter popover — same shape as before but with a cleaner header. */
 export function FilterPopover({
   filters,
   onChange,
@@ -168,7 +170,7 @@ export function FilterPopover({
     <Popover>
       <PopoverTrigger
         render={
-          <button type="button" className={cn(TOOL, count > 0 && "border-primary/40 text-primary")}>
+          <button type="button" className={cn("inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-dashed px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-solid hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", count > 0 && "border-solid border-primary/40 bg-primary/5 text-primary")}>
             <Filter className="size-3.5" />
             <span className="hidden @panel-sm:inline">Filter</span>
             {count > 0 && <span className="rounded-pill bg-primary px-1.5 text-[10px] text-primary-foreground">{count}</span>}
@@ -276,6 +278,264 @@ export function FilterPopover({
   )
 }
 
+/** ClickUp-style filter pill: shows the active filter with a remove button. */
+function FilterPill({
+  label,
+  onRemove,
+  children,
+}: {
+  label: string
+  onRemove: () => void
+  children?: React.ReactNode
+}) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-pill border border-primary/30 bg-primary/5 px-2 py-0.5 text-xs font-medium text-primary">
+      {children}
+      <span className="max-w-[8rem] truncate">{label}</span>
+      <button type="button" onClick={onRemove} aria-label={`Remove ${label}`} className="-mr-0.5 ml-0.5 rounded-full hover:bg-primary/15">
+        <X className="size-3" />
+      </button>
+    </span>
+  )
+}
+
+/** Extract the active filter pills from the filter state. */
+function ActiveFilterPills({
+  filters,
+  onChange,
+  statuses,
+}: {
+  filters: TaskFilters
+  onChange: (next: TaskFilters) => void
+  statuses: BoardStatus[]
+}) {
+  const pills: React.ReactNode[] = []
+  const removeStr = (key: "assignees" | "labels", value: string) => {
+    onChange({ ...filters, [key]: (filters[key] as string[]).filter((v) => v !== value) })
+  }
+  const removeArr = (key: "statusIds", value: string) => {
+    onChange({ ...filters, [key]: filters[key].filter((v) => v !== value) })
+  }
+  const removePrio = (value: TaskPriority) => {
+    onChange({ ...filters, priorities: filters.priorities.filter((v) => v !== value) })
+  }
+  const removeType = (value: TaskType) => {
+    onChange({ ...filters, types: filters.types.filter((v) => v !== value) })
+  }
+
+  for (const sid of filters.statusIds) {
+    const s = statuses.find((x) => x.id === sid)
+    if (s) pills.push(<FilterPill key={`status-${sid}`} label={s.name} onRemove={() => removeArr("statusIds", sid)}><span className={cn("size-1.5 rounded-full", s.color ? COLOR_DOT[s.color] : "bg-muted-foreground/40")} /></FilterPill>)
+  }
+  for (const p of filters.priorities) {
+    pills.push(<FilterPill key={`p-${p}`} label={PRIORITY_LABEL[p]} onRemove={() => removePrio(p)}><PriorityIcon priority={p} className="size-3" /></FilterPill>)
+  }
+  for (const t of filters.types) {
+    pills.push(<FilterPill key={`t-${t}`} label={TYPE_LABEL[t]} onRemove={() => removeType(t)}><TypeIcon type={t} className="size-3" /></FilterPill>)
+  }
+  for (const a of filters.assignees) {
+    pills.push(<FilterPill key={`a-${a}`} label={a || "Unassigned"} onRemove={() => removeStr("assignees", a)}><AssigneeAvatar name={a || null} size="xs" /></FilterPill>)
+  }
+  for (const l of filters.labels) {
+    pills.push(<FilterPill key={`l-${l}`} label={l} onRemove={() => removeStr("labels", l)}><LabelChip label={l} /></FilterPill>)
+  }
+  if (filters.due !== "any") {
+    const dueLabel = DUE_OPTIONS.find((d) => d.id === filters.due)?.label ?? filters.due
+    pills.push(<FilterPill key="due" label={dueLabel} onRemove={() => onChange({ ...filters, due: "any" })} />)
+  }
+  if (filters.archived !== "hide") {
+    pills.push(<FilterPill key="archived" label={filters.archived === "only" ? "Archived only" : "Include archived"} onRemove={() => onChange({ ...filters, archived: "hide" })} />)
+  }
+
+  if (pills.length === 0) return null
+  return <div className="flex flex-wrap items-center gap-1">{pills}</div>
+}
+
+/** ClickUp-style sort button: icon + label + direction indicator. */
+function SortButton({
+  view,
+  onChange,
+  sortable,
+}: {
+  view: ViewState
+  onChange: (patch: Partial<ViewState>) => void
+  sortable: boolean
+}) {
+  if (!sortable) return null
+  const active = view.sortBy !== "manual"
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <button type="button" className={cn("inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", active && "border-primary/30 bg-primary/5 text-primary")}>
+            <ArrowUpDown className="size-3.5" />
+            <span className="hidden @panel-sm:inline">
+              {SORT_LABEL[view.sortBy]}
+              {active && (view.sortDir === "asc" ? " ↑" : " ↓")}
+            </span>
+          </button>
+        }
+      />
+      <DropdownMenuContent align="start" className="w-44">
+        <DropdownMenuRadioGroup value={view.sortBy} onValueChange={(v) => onChange({ sortBy: v as SortBy })}>
+          <DropdownMenuLabel>Sort by</DropdownMenuLabel>
+          {SORT_BYS.map((s) => (
+            <DropdownMenuRadioItem key={s} value={s}>
+              {SORT_LABEL[s]}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuRadioGroup value={view.sortDir} onValueChange={(v) => onChange({ sortDir: v as "asc" | "desc" })}>
+          <DropdownMenuRadioItem value="asc">Ascending</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="desc">Descending</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/** ClickUp-style group button. */
+function GroupButton({
+  view,
+  onChange,
+  groupable,
+}: {
+  view: ViewState
+  onChange: (patch: Partial<ViewState>) => void
+  groupable: boolean
+}) {
+  if (!groupable) return null
+  const active = view.groupBy !== "none"
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <button type="button" className={cn("inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", active && "border-primary/30 bg-primary/5 text-primary")}>
+            <Group className="size-3.5" />
+            <span className="hidden @panel-sm:inline">{GROUP_LABEL[view.groupBy]}</span>
+          </button>
+        }
+      />
+      <DropdownMenuContent align="start" className="w-44">
+        <DropdownMenuRadioGroup value={view.groupBy} onValueChange={(v) => onChange({ groupBy: v as GroupBy })}>
+          <DropdownMenuLabel>Group by</DropdownMenuLabel>
+          {GROUP_BYS.map((g) => (
+            <DropdownMenuRadioItem key={g} value={g}>
+              {g === "none" ? "Status (default)" : GROUP_LABEL[g]}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/** ClickUp-style columns button (table view only). */
+function ColumnsButton({
+  view,
+  onChange,
+}: {
+  view: ViewState
+  onChange: (patch: Partial<ViewState>) => void
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <button type="button" className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <Columns3 className="size-3.5" />
+            <span className="hidden @panel-sm:inline">Columns</span>
+          </button>
+        }
+      />
+      <DropdownMenuContent align="start" className="w-44">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Columns</DropdownMenuLabel>
+          {TABLE_COLUMNS.map((c) => (
+            <DropdownMenuCheckboxItem
+              key={c}
+              checked={view.columns.includes(c)}
+              onCheckedChange={(checked) =>
+                onChange({
+                  columns: checked
+                    ? TABLE_COLUMNS.filter((x) => x === c || view.columns.includes(x))
+                    : view.columns.filter((x) => x !== c),
+                })
+              }
+            >
+              {COLUMN_LABEL[c as TableColumn]}
+            </DropdownMenuCheckboxItem>
+          ))}
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/** Saved views dropdown — ClickUp-style bookmark button. */
+function SavedViewsButton({
+  savedViews,
+  activeViewId,
+  onPickView,
+  onSaveView,
+  onDeleteView,
+}: {
+  savedViews: BoardView[]
+  activeViewId: string | null
+  onPickView: (view: BoardView | null) => void
+  onSaveView: () => void
+  onDeleteView: (view: BoardView) => void
+}) {
+  const active = !!activeViewId
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <button type="button" className={cn("inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", active && "border-primary/30 bg-primary/5 text-primary")}>
+            <Bookmark className="size-3.5" />
+            <span className="hidden @panel-sm:inline">{savedViews.find((v) => v.id === activeViewId)?.name ?? "Views"}</span>
+          </button>
+        }
+      />
+      <DropdownMenuContent align="start" className="w-56">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Saved views</DropdownMenuLabel>
+          {savedViews.length === 0 && <p className="px-2 py-1.5 text-xs text-muted-foreground">None yet — set up filters, then save.</p>}
+          {savedViews.map((v) => (
+            <DropdownMenuItem key={v.id} onClick={() => onPickView(v)}>
+              {v.id === activeViewId ? <Check className="size-4 text-primary" /> : <span className="size-4" />}
+              <span className="flex-1 truncate">{v.name}</span>
+              <span className="text-[10px] uppercase text-muted-foreground">{v.kind}</span>
+              <button
+                type="button"
+                aria-label={`Delete view ${v.name}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onDeleteView(v)
+                }}
+                className="grid size-5 place-items-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 className="size-3" />
+              </button>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={onSaveView}>
+          <Plus className="size-4" /> {activeViewId ? "Update / save as…" : "Save current view…"}
+        </DropdownMenuItem>
+        {activeViewId && (
+          <DropdownMenuItem onClick={() => onPickView(null)}>
+            <X className="size-4" /> Leave view
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/** The full ClickUp-style toolbar: view tabs + filter/search + controls. */
 export function Toolbar({
   mode,
   onMode,
@@ -317,27 +577,15 @@ export function Toolbar({
   const sortable = mode !== "board" && mode !== "calendar" && mode !== "timeline"
   return (
     <div className="flex flex-col gap-2 border-b px-3 py-2 sm:px-4">
-      {/* Row 1 on a phone: the mode switch and the primary action share the
-          first line, the search takes its own full-width second line — a
-          flex-wrap layout would squeeze the search to nothing instead. */}
+      {/* Row 1: View tabs + search + new task */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="order-1">
-          <ModeSwitch mode={mode} onChange={onMode} />
-        </div>
-        <button
-          type="button"
-          onClick={onNewTask}
-          className="order-2 ml-auto inline-flex h-8 shrink-0 items-center gap-1.5 rounded-4xl bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:order-3"
-        >
-          <Plus className="size-4" />
-          <span className="hidden min-[380px]:inline">New task</span>
-        </button>
-        <div className="relative order-3 w-full min-w-0 sm:order-2 sm:w-auto sm:max-w-xs sm:flex-1">
+        <ViewTabs mode={mode} onChange={onMode} />
+        <div className="relative min-w-0 flex-1 sm:max-w-xs">
           <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={view.filters.query}
             onChange={(e) => onChange({ filters: { ...view.filters, query: e.target.value } })}
-            placeholder="Search key, title, labels…"
+            placeholder="Search tasks…"
             aria-label="Search tasks"
             className="h-8 pl-8 text-xs"
           />
@@ -347,149 +595,28 @@ export function Toolbar({
             </button>
           )}
         </div>
-      </div>
-      {/* Row 2 degrades to a scrollable strip on a phone rather than wrapping
-          onto three lines; the pickers portal, so the scroll clips nothing. */}
-      <div className="flex flex-wrap items-center gap-1.5 max-sm:flex-nowrap max-sm:overflow-x-auto">
-        <FilterPopover filters={view.filters} onChange={(filters) => onChange({ filters })} statuses={statuses} sprints={sprints} epics={epics} facets={facets} boardKey={boardKey} />
-
-        {groupable && (
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <button type="button" className={cn(TOOL, view.groupBy !== "none" && "border-primary/40 text-primary")}>
-                  <Group className="size-3.5" />
-                  <span className="hidden @panel-sm:inline">{view.groupBy === "none" ? "Group" : GROUP_LABEL[view.groupBy]}</span>
-                </button>
-              }
-            />
-            <DropdownMenuContent align="start" className="w-44">
-              {/* The label is Base UI's Menu.GroupLabel: it reads its group from
-                  context and throws outside one, so it sits inside the radio
-                  group it names rather than loose in the content. */}
-              <DropdownMenuRadioGroup value={view.groupBy} onValueChange={(v) => onChange({ groupBy: v as GroupBy })}>
-                <DropdownMenuLabel>Group by</DropdownMenuLabel>
-                {GROUP_BYS.map((g) => (
-                  <DropdownMenuRadioItem key={g} value={g}>
-                    {g === "none" ? "Status (default)" : GROUP_LABEL[g]}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-
-        {sortable && (
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <button type="button" className={cn(TOOL, view.sortBy !== "manual" && "border-primary/40 text-primary")}>
-                  <ArrowUpDown className="size-3.5" />
-                  <span className="hidden @panel-sm:inline">
-                    {SORT_LABEL[view.sortBy]}
-                    {view.sortBy !== "manual" && (view.sortDir === "asc" ? " ↑" : " ↓")}
-                  </span>
-                </button>
-              }
-            />
-            <DropdownMenuContent align="start" className="w-44">
-              <DropdownMenuRadioGroup value={view.sortBy} onValueChange={(v) => onChange({ sortBy: v as SortBy })}>
-                <DropdownMenuLabel>Sort by</DropdownMenuLabel>
-                {SORT_BYS.map((s) => (
-                  <DropdownMenuRadioItem key={s} value={s}>
-                    {SORT_LABEL[s]}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-              <DropdownMenuSeparator />
-              <DropdownMenuRadioGroup value={view.sortDir} onValueChange={(v) => onChange({ sortDir: v as "asc" | "desc" })}>
-                <DropdownMenuRadioItem value="asc">Ascending</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="desc">Descending</DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-
-        {mode === "table" && (
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <button type="button" className={TOOL}>
-                  <Columns3 className="size-3.5" />
-                  <span className="hidden @panel-sm:inline">Columns</span>
-                </button>
-              }
-            />
-            <DropdownMenuContent align="start" className="w-44">
-              <DropdownMenuGroup>
-                <DropdownMenuLabel>Columns</DropdownMenuLabel>
-                {TABLE_COLUMNS.map((c) => (
-                  <DropdownMenuCheckboxItem
-                    key={c}
-                    checked={view.columns.includes(c)}
-                    onCheckedChange={(checked) =>
-                      onChange({
-                        columns: checked
-                          ? TABLE_COLUMNS.filter((x) => x === c || view.columns.includes(x))
-                          : view.columns.filter((x) => x !== c),
-                      })
-                    }
-                  >
-                    {COLUMN_LABEL[c as TableColumn]}
-                  </DropdownMenuCheckboxItem>
-                ))}
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <button type="button" className={cn(TOOL, activeViewId && "border-primary/40 text-primary")}>
-                <Bookmark className="size-3.5" />
-                <span className="hidden @panel-sm:inline">{savedViews.find((v) => v.id === activeViewId)?.name ?? "Views"}</span>
-              </button>
-            }
-          />
-          <DropdownMenuContent align="start" className="w-56">
-            <DropdownMenuGroup>
-              <DropdownMenuLabel>Saved views</DropdownMenuLabel>
-              {savedViews.length === 0 && <p className="px-2 py-1.5 text-xs text-muted-foreground">None yet — set up filters, then save.</p>}
-              {savedViews.map((v) => (
-                <DropdownMenuItem key={v.id} onClick={() => onPickView(v)}>
-                  {v.id === activeViewId ? <Check className="size-4 text-primary" /> : <span className="size-4" />}
-                  <span className="flex-1 truncate">{v.name}</span>
-                  <span className="text-[10px] uppercase text-muted-foreground">{v.kind}</span>
-                  <button
-                    type="button"
-                    aria-label={`Delete view ${v.name}`}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onDeleteView(v)
-                    }}
-                    className="grid size-5 place-items-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                  >
-                    <Trash2 className="size-3" />
-                  </button>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={onSaveView}>
-              <Plus className="size-4" /> {activeViewId ? "Update / save as…" : "Save current view…"}
-            </DropdownMenuItem>
-            {activeViewId && (
-              <DropdownMenuItem onClick={() => onPickView(null)}>
-                <X className="size-4" /> Leave view
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
-
         <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">
           {visible === total ? `${total} tasks` : `${visible} of ${total}`}
         </span>
+        <button
+          type="button"
+          onClick={onNewTask}
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Plus className="size-4" />
+          <span className="hidden min-[380px]:inline">New task</span>
+        </button>
+      </div>
+
+      {/* Row 2: Filter pill bar + group/sort/columns + saved views */}
+      <div className="flex flex-wrap items-center gap-1.5 max-sm:flex-nowrap max-sm:overflow-x-auto">
+        <FilterPopover filters={view.filters} onChange={(filters) => onChange({ filters })} statuses={statuses} sprints={sprints} epics={epics} facets={facets} boardKey={boardKey} />
+        <ActiveFilterPills filters={view.filters} onChange={(filters) => onChange({ filters })} statuses={statuses} />
+        <span className="h-4 w-px bg-border shrink-0" />
+        <GroupButton view={view} onChange={onChange} groupable={groupable} />
+        <SortButton view={view} onChange={onChange} sortable={sortable} />
+        {mode === "table" && <ColumnsButton view={view} onChange={onChange} />}
+        <SavedViewsButton savedViews={savedViews} activeViewId={activeViewId} onPickView={onPickView} onSaveView={onSaveView} onDeleteView={onDeleteView} />
       </div>
     </div>
   )

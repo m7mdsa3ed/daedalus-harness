@@ -112,6 +112,18 @@ export interface BoardView {
   updatedAt: number
 }
 
+export interface BoardList {
+  id: string
+  boardId: string
+  name: string
+  color: BoardColor | null
+  order: number
+  group: string | null
+  collapsed: boolean
+  createdAt: number
+  updatedAt: number
+}
+
 /** Dot/tint classes per palette token. Kept here rather than in the components
     so a new token is one edit, and expressed as literal class names because
     Tailwind cannot see a template string. */
@@ -160,6 +172,7 @@ export interface BoardsPayload {
   statuses: BoardStatus[]
   sprints: Sprint[]
   views: BoardView[]
+  lists: BoardList[]
 }
 
 /** One board's columns, left to right. */
@@ -173,6 +186,10 @@ export function sprintsOf(all: Sprint[], boardId: string): Sprint[] {
 
 export function viewsOf(all: BoardView[], boardId: string): BoardView[] {
   return all.filter((v) => v.boardId === boardId).sort((a, b) => a.order - b.order)
+}
+
+export function listsOf(all: BoardList[], boardId: string): BoardList[] {
+  return all.filter((l) => l.boardId === boardId).sort((a, b) => a.order - b.order)
 }
 
 // ---- verbs ----
@@ -334,4 +351,41 @@ export async function updateView(settings: ServerSettings, id: string, input: Vi
 
 export async function deleteView(settings: ServerSettings, id: string): Promise<void> {
   await api<{ ok: boolean }>(settings, `/api/views/${encodeURIComponent(id)}`, { method: "DELETE" })
+}
+
+// ---- lists ----
+
+export interface ListInput {
+  name?: string
+  color?: BoardColor | null
+  group?: string | null
+}
+
+export async function createList(
+  settings: ServerSettings,
+  boardId: string,
+  input: ListInput & { name: string },
+): Promise<BoardList> {
+  return api<BoardList>(settings, `/api/boards/${encodeURIComponent(boardId)}/lists`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+}
+
+export async function updateList(settings: ServerSettings, id: string, input: ListInput & { order?: number; collapsed?: boolean }): Promise<BoardList> {
+  return api<BoardList>(settings, `/api/lists/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  })
+}
+
+export async function deleteList(settings: ServerSettings, id: string): Promise<void> {
+  await api<{ ok: boolean }>(settings, `/api/lists/${encodeURIComponent(id)}`, { method: "DELETE" })
+}
+
+export async function reorderLists(settings: ServerSettings, boardId: string, ids: string[]): Promise<void> {
+  await api<BoardList[]>(settings, `/api/boards/${encodeURIComponent(boardId)}/lists/reorder`, {
+    method: "POST",
+    body: JSON.stringify({ ids }),
+  })
 }

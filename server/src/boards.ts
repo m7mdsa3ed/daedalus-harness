@@ -19,6 +19,7 @@ import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
 import { z } from "zod";
 
 import {
+  boardLists,
   boardStatuses,
   boardViews,
   boards,
@@ -37,6 +38,7 @@ export type Board = typeof boards.$inferSelect;
 export type BoardStatus = typeof boardStatuses.$inferSelect;
 export type Sprint = typeof sprints.$inferSelect;
 export type BoardView = typeof boardViews.$inferSelect;
+export type BoardList = typeof boardLists.$inferSelect;
 
 /** The board every install starts with, and the one legacy tasks already name. */
 export const DEFAULT_BOARD_ID = "default";
@@ -174,6 +176,29 @@ export const CreateViewSchema = z.object({
 export const UpdateViewSchema = CreateViewSchema.partial()
   .extend({ order: z.number().int().min(0).optional() })
   .refine((patch) => Object.keys(patch).length > 0, "nothing to update");
+
+// ---- lists ----
+
+export const CreateListSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  color: Color,
+  group: z.string().trim().max(60).nullable().optional(),
+});
+
+export const UpdateListSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120).optional(),
+    color: Color,
+    order: z.number().int().min(0).optional(),
+    group: z.string().trim().max(60).nullable().optional(),
+    collapsed: z.boolean().optional(),
+  })
+  .refine((patch) => Object.keys(patch).length > 0, "nothing to update");
+
+export const ReorderListsSchema = z.object({ ids: z.array(z.string().min(1)).max(64) });
+
+export type CreateListInput = z.infer<typeof CreateListSchema>;
+export type UpdateListInput = z.infer<typeof UpdateListSchema>;
 
 export type CreateBoardInput = z.infer<typeof CreateBoardSchema>;
 export type UpdateBoardInput = z.infer<typeof UpdateBoardSchema>;
@@ -498,6 +523,7 @@ export async function deleteBoard(id: string): Promise<boolean> {
     await conn().delete(boardStatuses).where(eq(boardStatuses.boardId, id));
     await conn().delete(sprints).where(eq(sprints.boardId, id));
     await conn().delete(boardViews).where(eq(boardViews.boardId, id));
+    await conn().delete(boardLists).where(eq(boardLists.boardId, id));
     await conn().delete(boards).where(eq(boards.id, id));
   });
   return true;
@@ -791,6 +817,90 @@ export async function deleteView(id: string): Promise<boolean> {
   return ((await conn().delete(boardViews).where(eq(boardViews.id, id))).rowCount ?? 0) > 0;
 }
 
+// ---- lists ----
+
+export async function listLists(boardId: string): Promise<BoardList[]> {
+  return await conn()
+    .select()
+    .from(boardLists)
+    .where(eq(boardLists.boardId, boardId))
+    .orderBy(asc(boardLists.order), asc(boardLists.createdAt));
+}
+
+export async function listAllLists(): Promise<BoardList[]> {
+  return await conn()
+    .select()
+    .from(boardLists)
+    .orderBy(asc(boardLists.boardId), asc(boardLists.order), asc(boardLists.createdAt));
+}
+
+export async function getList(id: string): Promise<BoardList | undefined> {
+  return (await conn().select().from(boardLists).where(eq(boardLists.id, id)).limit(1))[0];
+}
+
+export async function createList(boardId: string, input: CreateListInput): Promise<BoardList> {
+  if (!(await getBoard(boardId))) throw new BoardError("unknown board", 404);
+  const id = randomUUID();
+  const now = Date.now();
+  const existing = (await listLists(boardId)).length;
+  await conn().insert(boardLists)
+    .values({
+      id,
+      boardId,
+      name: input.name,
+      color: input.color ?? null,
+      group: input.group ?? null,
+      order: existing,
+      collapsed: false,
+      createdAt: now,
+      updatedAt: now,
+    });
+  return (await getList(id))!;
+}
+
+export async function updateList(id: string, input: UpdateListInput): Promise<BoardList | null> {
+  const list = await getList(id);
+  if (!list) return null;
+  const patch: Partial<BoardList> = { updatedAt: Date.now() };
+  if (input.name !== undefined) patch.name = input.name;
+  if (input.color !== undefined) patch.color = input.color;
+  if (input.order !== undefined) patch.order = input.order;
+  if (input.group !== undefined) patch.group = input.group;
+  if (input.collapsed !== undefined) patch.collapsed = input.collapsed;
+  await conn().update(boardLists).set(patch).where(eq(boardLists.id, id));
+  return (await getList(id)) ?? null;
+}
+
+export async function reorderLists(boardId: string, ids: string[]): Promise<BoardList[]> {
+  const existing = await listLists(boardId);
+  const known = new Set(existing.map((l) => l.id));
+  const ordered = [...ids.filter((id) => known.has(id))];
+  for (const list of existing) if (!ordered.includes(list.id)) ordered.push(list.id);
+  const now = Date.now();
+  await transaction(async () => {
+    for (const [index, id] of ordered.entries()) {
+      await conn().update(boardLists)
+        .set({ order: index, updatedAt: now })
+        .where(eq(boardLists.id, id));
+    }
+  });
+  return await listLists(boardId);
+}
+
+export async function deleteList(id: string): Promise<boolean> {
+  const list = await getList(id);
+  if (!list) return false;
+  const now = Date.now();
+  await transaction(async () => {
+    // Unlist the tasks that were in this list rather than deleting them.
+    await conn().update(tasksTable)
+      .set({ listId: null, updatedAt: now })
+      .where(eq(tasksTable.listId, id));
+    await conn().delete(boardLists).where(eq(boardLists.id, id));
+  });
+  return true;
+}
+
 // ---- repair ----
 
 /**
@@ -814,6 +924,7 @@ export async function reconcileTaskStatuses(): Promise<number> {
     if (first) fallback.set(board.id, first);
   }
   const sprintIds = new Set((await listAllSprints()).map((s) => s.id));
+  const listIds = new Set((await listAllLists()).map((l) => l.id));
   const defaultBoard = (await listBoards())[0];
   let repaired = 0;
   const now = Date.now();
@@ -830,6 +941,7 @@ export async function reconcileTaskStatuses(): Promise<number> {
       }
       if (task.sprintId && !sprintIds.has(task.sprintId)) patch.sprintId = null;
       if (task.parentId && !taskIds.has(task.parentId)) patch.parentId = null;
+      if (task.listId && !listIds.has(task.listId)) patch.listId = null;
       if (Object.keys(patch).length === 0) continue;
       await conn().update(tasksTable)
         .set({ ...patch, updatedAt: now })

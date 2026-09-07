@@ -1,9 +1,11 @@
-/* ── The queue, on the strip ──
+/* ── The queue, at the foot of the transcript ──
    Messages typed while the agent was busy, waiting for the turn to end. They
-   belong to the *turn* rather than to the message being typed, which is what
-   the strip is for — and they are the user's own words, not the agent's
-   state, so this is its own file rather than a third checklist in
-   composer-status.
+   belong to the *turn* rather than to the message being typed, which is why
+   they are read where the turn is (`thread-view.tsx`, under the working line)
+   and no longer folded behind a 14px sliver on the composer's shelf — a list
+   of the user's own sentences was the wrong thing to hide. They are the user's
+   words and not the agent's state, so this is its own file rather than a third
+   checklist in composer-status.
 
    Two bands, like the plan: a collapsed row that says how many are waiting
    and shows the one that goes next, with the two actions that apply to the
@@ -55,7 +57,6 @@ import type { Actions } from "@/lib/actions"
 import type { ThreadState } from "@/lib/store"
 import { formatBytes } from "@/lib/attachments"
 import { cn } from "@/lib/utils"
-import { useStripDisclosure, useStripSummary } from "./composer-strip"
 
 /* Taller on a phone, where it is a thumb rather than a cursor. */
 const ROW_BUTTON = "h-7 shrink-0 gap-1 rounded-md px-2 text-[11px] sm:h-6"
@@ -70,19 +71,14 @@ export function ComposerQueue({
   thread: ThreadState
   actions: Actions
 }) {
-  /* Open when the shelf's rail picked the queue — the chip already says how
-     many are waiting, so the row it opens onto is the messages themselves. */
-  const [open, setOpen] = useStripDisclosure()
+  /* Closed by default — the header row already says how many are waiting and
+     which one goes next, which is the whole of a glance. */
+  const [open, setOpen] = React.useState(false)
   const items = thread.queue
   const count = items.length
   /* A held steer is listed but already sent: "send all" and "clear" have
      nothing to do with it, so they act — and light up — on the rest. */
   const editable = items.filter((item) => !item.steer)
-  useStripSummary(
-    count > 0
-      ? { id: "queue", icon: ListOrderedIcon, label: count === 1 ? "1 queued" : `${count} queued`, badge: count }
-      : null
-  )
   if (count === 0) return null
 
   /* A failed connection can act on nothing; an archived thread has no process

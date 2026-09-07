@@ -1636,7 +1636,7 @@ export interface ChecklistItem {
 }
 
 /**
- * A board — one project of work, owning its columns, sprints and views.
+ * A board — one project of work, owning its columns, sprints, lists and views.
  *
  * `key` is the prefix of every task key on it (`DAE-42`); `nextNumber` is the
  * counter that mints the number, bumped inside the create transaction so two
@@ -1767,6 +1767,29 @@ export const boardViews = pgTable(
 );
 
 /**
+ * A list within a board — the ClickUp-style grouping between a board and its
+ * tasks. A board owns many lists; a task optionally belongs to one. Lists
+ * provide the collapsible sections that list view draws and that the board
+ * rail shows as a tree under each board. Null listId = "unlisted" (backlog).
+ */
+export const boardLists = pgTable(
+  "board_lists",
+  {
+    id: text("id").primaryKey(),
+    boardId: text("board_id").notNull(),
+    name: text("name").notNull(),
+    color: text("color"),
+    order: integer("order").notNull().default(0),
+    /** An optional folder/group heading above this list. */
+    group: text("group"),
+    collapsed: boolean("collapsed").notNull().default(false),
+    createdAt: bigint("created_at", { mode: "number" }).notNull(),
+    updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+  },
+  (t) => [index("board_lists_board_order").on(t.boardId, t.order)],
+);
+
+/**
  * A task on a board.
  *
  * Standalone: a genuinely top-level resource, not scoped to a session or
@@ -1786,6 +1809,8 @@ export const tasks = pgTable(
     id: text("id").primaryKey(),
     /** → `boards.id`. Column name predates the table. */
     boardId: text("board").notNull().default("default"),
+    /** → `board_lists.id`; null = unlisted (backlog). */
+    listId: text("list_id"),
     /** Per-board sequence; null on rows written before keys existed (backfilled at
         boot). Nullable on purpose, like `archived`: drizzle-kit reads a NOT NULL
         column whose default is `0`/`false` as having no default and plans a
@@ -1805,14 +1830,20 @@ export const tasks = pgTable(
       .default("medium"),
     /** Free text tag names, stored as a JSON string-array. */
     labels: jsonb("labels").$type<string[]>().notNull().default([]),
-    /** Who it is assigned to; free text (no user system yet). */
+    /** Legacy single assignee; kept for backward compatibility. */
     assignee: text("assignee"),
+    /** ClickUp-style multi-assignee list; `assignee` is the first entry. */
+    assignees: jsonb("assignees").$type<string[]>().notNull().default([]),
     /** → `tasks.id` of the epic or parent task; null = top level. */
     parentId: text("parent_id"),
     /** → `sprints.id`; null = backlog. */
     sprintId: text("sprint_id"),
     /** Story points / effort estimate; null = unestimated. */
     estimate: integer("estimate"),
+    /** Time estimate in minutes; null = none. */
+    timeEstimate: integer("time_estimate"),
+    /** Time tracked in minutes; null = none. Updated by the timer widget. */
+    timeTracked: integer("time_tracked"),
     /** Epoch ms planned start; null = none. Timeline draws start→due. */
     startAt: bigint("start_at", { mode: "number" }),
     /** Epoch ms due timestamp; null = no due date. */
@@ -1836,6 +1867,7 @@ export const tasks = pgTable(
     index("tasks_board_order").on(t.boardId, t.statusId, t.order),
     index("tasks_board_number").on(t.boardId, t.number),
     index("tasks_parent").on(t.parentId),
+    index("tasks_list").on(t.listId),
   ],
 );
 

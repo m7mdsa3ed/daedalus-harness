@@ -262,11 +262,10 @@ export function PasteChip({ paste, onRemove }: { paste: Paste; onRemove: () => v
 /* ── Paste chips on the strip ──
    Long pastes are parked as tokens in the textarea and shown as chips. They
    used to live inside the composer card (above the textarea), but that put
-   them outside the strip's unified collapse/rail system. Moving them into the
-   strip means pastes and files are managed in one place: when both are present
-   the strip holds one rail of two chips, and when only pastes exist the strip
-   shows them flat without a rail — exactly the same model as everything else
-   on the shelf. */
+   them outside the shelf's pile. Moving them into the strip means pastes and
+   files are managed in one place: when both are present they are two cards on
+   the pile, and when only pastes exist theirs is the one card and the shelf is
+   just that row — exactly the same model as everything else on the shelf. */
 export function ComposerPastes({
   pastes,
   onRemove,

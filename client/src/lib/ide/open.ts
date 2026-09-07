@@ -15,11 +15,15 @@
 
    The panel is opened by the caller: the IDE cannot open itself. */
 import { openTab } from "./editors"
+import { setScmFilter } from "./scm-filter"
 
 export type IdeRequest =
   | { kind: "file"; projectId: string; path: string; line?: number; endLine?: number }
   | { kind: "diff"; projectId: string; path: string }
-  | { kind: "changes"; projectId: string; sessionId: string; scope: string }
+  /** Show source control, narrowed to these paths — a turn's "N files changed".
+      Not a tab: the answer is the working set, which is a *view*, not a
+      document, and the panel switches to it rather than opening anything. */
+  | { kind: "review"; projectId: string; label: string; paths: string[] }
 
 export function requestIde(request: IdeRequest): void {
   switch (request.kind) {
@@ -46,12 +50,8 @@ export function requestIde(request: IdeRequest): void {
          happened to the file since the last commit, staged or not. */
       openTab(request.projectId, { kind: "diff", path: request.path, left: "head", right: "worktree" })
       return
-    case "changes":
-      openTab(request.projectId, {
-        kind: "changes",
-        sessionId: request.sessionId,
-        scope: request.scope,
-      })
+    case "review":
+      setScmFilter(request.projectId, { label: request.label, paths: request.paths })
       return
   }
 }

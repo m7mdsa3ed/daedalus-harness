@@ -35,6 +35,8 @@ export interface Task {
   id: string
   /** → `Board.id`. */
   boardId: string
+  /** → `BoardList.id`; null = unlisted. */
+  listId: string | null
   /** Per-board sequence; with the board's key it is the task's `KEY-n`. Null
       only on a row the server has not numbered yet (it does so at boot). */
   number: number | null
@@ -45,12 +47,19 @@ export interface Task {
   statusId: TaskStatus
   priority: TaskPriority
   labels: string[]
+  /** Legacy single assignee. */
   assignee: string | null
+  /** ClickUp-style multi-assignee. */
+  assignees: string[]
   /** → `Task.id` of the epic or parent task; null = top level. */
   parentId: string | null
   /** → `Sprint.id`; null = backlog. */
   sprintId: string | null
   estimate: number | null
+  /** Time estimate in minutes; null = none. */
+  timeEstimate: number | null
+  /** Time tracked in minutes; null = none. */
+  timeTracked: number | null
   startAt: number | null
   dueAt: number | null
   completedAt: number | null
@@ -68,14 +77,18 @@ export interface TaskInput {
   title?: string
   description?: string | null
   boardId?: string
+  listId?: string | null
   statusId?: TaskStatus
   type?: TaskType
   priority?: TaskPriority
   labels?: string[]
   assignee?: string | null
+  assignees?: string[]
   parentId?: string | null
   sprintId?: string | null
   estimate?: number | null
+  timeEstimate?: number | null
+  timeTracked?: number | null
   startAt?: number | null
   dueAt?: number | null
   archived?: boolean
@@ -93,9 +106,13 @@ export type BulkPatch = Pick<
   | "priority"
   | "labels"
   | "assignee"
+  | "assignees"
   | "parentId"
   | "sprintId"
   | "estimate"
+  | "timeEstimate"
+  | "timeTracked"
+  | "listId"
   | "startAt"
   | "dueAt"
   | "archived"

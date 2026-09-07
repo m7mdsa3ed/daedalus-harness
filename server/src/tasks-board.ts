@@ -61,14 +61,18 @@ const TaskFields = z.object({
   title: z.string().trim().min(1).max(500),
   description: z.string().max(50_000).optional().nullable(),
   boardId: z.string().min(1).optional(),
+  listId: z.string().min(1).optional().nullable(),
   statusId: z.string().min(1).optional(),
   type: z.enum(TASK_TYPES).optional(),
   priority: z.enum(TASK_PRIORITIES).optional(),
   labels: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
   assignee: z.string().trim().max(200).optional().nullable(),
+  assignees: z.array(z.string().trim().max(200)).max(20).optional(),
   parentId: z.string().min(1).optional().nullable(),
   sprintId: z.string().min(1).optional().nullable(),
   estimate: z.number().int().min(0).max(10_000).optional().nullable(),
+  timeEstimate: z.number().int().min(0).max(100_000).optional().nullable(),
+  timeTracked: z.number().int().min(0).max(100_000).optional().nullable(),
   startAt: z.number().int().min(0).optional().nullable(),
   dueAt: z.number().int().min(0).optional().nullable(),
   archived: z.boolean().optional(),
@@ -96,9 +100,13 @@ export const BulkUpdateSchema = z.object({
     priority: true,
     labels: true,
     assignee: true,
+    assignees: true,
     parentId: true,
     sprintId: true,
     estimate: true,
+    timeEstimate: true,
+    timeTracked: true,
+    listId: true,
     startAt: true,
     dueAt: true,
     archived: true,
@@ -253,10 +261,12 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
       .where(eq(boardsTable.id, boardId));
     // A fresh task lands at the end of its column unless told otherwise.
     const order = input.order ?? (await columnTail(boardId, statusId));
+    const assignees = input.assignees ?? (input.assignee ? [input.assignee] : []);
     await conn().insert(tasksTable)
       .values({
         id,
         boardId,
+        listId: input.listId ?? null,
         number,
         type: input.type ?? "task",
         title: input.title,
@@ -265,9 +275,12 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
         priority: input.priority ?? "medium",
         labels: input.labels ?? [],
         assignee: input.assignee ?? null,
+        assignees,
         parentId: input.parentId ?? null,
         sprintId: input.sprintId ?? null,
         estimate: input.estimate ?? null,
+        timeEstimate: input.timeEstimate ?? null,
+        timeTracked: input.timeTracked ?? null,
         startAt: input.startAt ?? null,
         dueAt: input.dueAt ?? null,
         completedAt: status.category === "done" ? now : null,
@@ -293,9 +306,13 @@ const TRACKED: (keyof Task)[] = [
   "priority",
   "labels",
   "assignee",
+  "assignees",
   "parentId",
   "sprintId",
   "estimate",
+  "timeEstimate",
+  "timeTracked",
+  "listId",
   "startAt",
   "dueAt",
   "archived",
@@ -333,6 +350,10 @@ export async function updateTask(id: string, input: UpdateTaskInput): Promise<Ta
   if (input.priority !== undefined) patch.priority = input.priority;
   if (input.labels !== undefined) patch.labels = input.labels;
   if (input.assignee !== undefined) patch.assignee = input.assignee;
+  if (input.assignees !== undefined) patch.assignees = input.assignees;
+  if (input.listId !== undefined) patch.listId = input.listId;
+  if (input.timeEstimate !== undefined) patch.timeEstimate = input.timeEstimate;
+  if (input.timeTracked !== undefined) patch.timeTracked = input.timeTracked;
   if (input.parentId !== undefined) {
     if (input.parentId) await assertParent(input.parentId, boardId, id);
     patch.parentId = input.parentId;

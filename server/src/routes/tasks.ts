@@ -6,32 +6,40 @@ import {
   BoardError,
   CompleteSprintSchema,
   CreateBoardSchema,
+  CreateListSchema,
   CreateSprintSchema,
   CreateStatusSchema,
   CreateViewSchema,
+  ReorderListsSchema,
   ReorderStatusesSchema,
   UpdateBoardSchema,
+  UpdateListSchema,
   UpdateSprintSchema,
   UpdateStatusSchema,
   UpdateViewSchema,
   completeSprint,
   createBoard,
+  createList,
   createSprint,
   createStatus,
   createView,
   deleteBoard,
+  deleteList,
   deleteSprint,
   deleteStatus,
   deleteView,
   getBoard,
+  listAllLists,
   listAllSprints,
   listAllStatuses,
   listAllViews,
   listBoards,
   listStatuses,
+  reorderLists,
   reorderStatuses,
   startSprint,
   updateBoard,
+  updateList,
   updateSprint,
   updateStatus,
   updateView,
@@ -133,6 +141,7 @@ export function taskRoutes(app: Hono, deps: { sessions: SessionManager; tasks: T
       statuses: await listAllStatuses(),
       sprints: await listAllSprints(),
       views: await listAllViews(),
+      lists: await listAllLists(),
     }),
   );
 
@@ -230,6 +239,29 @@ export function taskRoutes(app: Hono, deps: { sessions: SessionManager; tasks: T
 
   app.delete("/api/views/:id", async (c) =>
     (await deleteView(c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404),
+  );
+
+  /* ── Lists ──
+     Grouping within a board: collapsible sections in list view, folders in the
+     sidebar. A task's `listId` points here; deleting a list unlists its tasks
+     rather than deleting them. */
+  app.post("/api/boards/:id/lists", async (c) => {
+    const parsed = CreateListSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    return guard(c, async () => c.json(await createList(c.req.param("id"), parsed.data), 201));
+  });
+
+  app.post("/api/boards/:id/lists/reorder", async (c) => {
+    const parsed = ReorderListsSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    if (!await getBoard(c.req.param("id"))) return c.json({ error: "not found" }, 404);
+    return c.json(await reorderLists(c.req.param("id"), parsed.data.ids));
+  });
+
+  app.patch("/api/lists/:id", crud(UpdateListSchema, { lenientJson: true }).update(updateList));
+
+  app.delete("/api/lists/:id", async (c) =>
+    (await deleteList(c.req.param("id"))) ? c.json({ ok: true }) : c.json({ error: "not found" }, 404),
   );
 
   /* ── Tasks ──

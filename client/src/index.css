@@ -793,61 +793,54 @@
 }
 
 /* ── The composer shelf ──
-   Four movements, one curve (the same ease-out the collapsible above uses, so
+   Three movements, one curve (the same ease-out the collapsible above uses, so
    a checklist opening *inside* the shelf reads as the same material as the
    shelf opening). The shelf sits under the composer in the layout, so all of
-   this moves the transcript above it — which is why the panel is the slowest
-   of the four and everything else lands under it.
+   this moves the transcript above it — which is why the box is the slowest of
+   the three and everything else lands under it.
 
    `harness-strip-panel` is the shelf's height, driven from a measured number
    in `composer-strip.tsx` rather than from `content` or a Base UI variable:
-   what it animates between is two *open rows*, not just open and closed, and
-   no automatic height knows the row it is about to become. */
+   what it animates between is two *front cards*, not just open and closed, and
+   no automatic height knows the card it is about to become. */
 .harness-strip-panel {
   transition: height 280ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* The rail's active pill, sliding from chip to chip. Transform and width
-   rather than `left`: the rail scrolls sideways, and the two are the pair the
-   compositor can carry. A box-shadow gives the pill a subtle lift that
-   distinguishes it from a flat background fill. */
-.harness-strip-pill {
+/* A card in the pile. `transform` is the whole of where it sits — lift and
+   scale, both set inline — so bringing one forward is one compositor move and
+   never a reflow of the rows around it. `height` rides along because every
+   card is normalised to the front one's, so a checklist gaining a step grows
+   the cards behind it in step with the box.
+
+   Nothing else here may write `transform` on this element: the pile's position
+   lives there, and an animation that set it would drop the card to the bottom
+   of the stack for its duration. */
+.harness-strip-card {
   transition:
-    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    width 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    height 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1);
+    transform 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    height 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 200ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* A chip arriving with its row. Mount-only — chips are keyed by summary id, so
-   a label ticking from 2/5 to 3/5 reuses the node and this does not replay. */
-@keyframes harness-strip-chip-in {
-  from { opacity: 0; transform: scale(0.92) translateY(2px); }
-  to { opacity: 1; transform: none; }
-}
-.harness-strip-chip {
-  animation: harness-strip-chip-in 200ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
-}
-
-/* The row taking the panel. Attribute-driven, not mount-driven: the slots stay
-   mounted (they are what register the chips), so what starts this is a hidden
-   slot becoming the open one — which is exactly the moment the animation is
-   for, including a switch straight from one row to another. It rises a little
-   less than a transcript item does: the panel underneath it is already moving,
-   and two travels on one object read as a bounce. */
+/* The row arriving in front. Attribute-driven, not mount-driven: the bodies
+   stay mounted (their rows are what register the slivers), so what starts this
+   is a hidden body becoming the front one — exactly the moment the animation is
+   for, including a switch straight from one card to another. Opacity only: the
+   card underneath it is already travelling, and two motions on one object read
+   as a bounce. */
 @keyframes harness-strip-in {
-  from { opacity: 0; transform: translateY(3px); }
-  to { opacity: 1; transform: none; }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
-[data-strip-slot][data-active] {
+[data-strip-body][data-front] {
   animation: harness-strip-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {
   .harness-strip-panel,
-  .harness-strip-pill { transition: none; }
-  .harness-strip-chip,
-  [data-strip-slot][data-active] { animation: none; }
+  .harness-strip-card { transition: none; }
+  [data-strip-body][data-front] { animation: none; }
 }
 
 /* A live mark: a soft primary halo breathing behind a dot (plan entries). */
@@ -1148,10 +1141,10 @@ html[data-window-controls-overlay="true"] {
 }
 
 /* A transcript item entering the list — a new row, a streamed tool step, a
-   workflow step starting. It *rises* in: a fade with a small upward translate,
-   transform and opacity and nothing else. That restraint is the point
-   (DESIGN.md: no layout animation while streaming): the row occupies its final
-   space from the first frame, so `scrollHeight` — the thing the autoscroll pin
+   workflow step starting. It *rises* in: a fade with a small upward translate
+   and a touch of blur — paint properties and nothing else. That restraint is
+   the point (DESIGN.md: no layout animation while streaming): the row occupies
+   its final space from the first frame, so `scrollHeight` — the thing the autoscroll pin
    chases (hooks/use-follow-stream) — is exact the moment the row mounts rather
    than a moving target for the length of the entrance, and a row inserted
    mid-list (a step joining a run's rail) does not spend its entrance easing
@@ -1163,17 +1156,40 @@ html[data-window-controls-overlay="true"] {
    reuses the node and this does not replay on every token).
    Fill-mode is `backwards`: the from-state applies before the animation
    starts, and when it ends every keyframe property reverts to the stylesheet
-   — no lingering transform, so a settled item clips nothing (step rows hang
-   hover washes past the wrapper's edge) and costs nothing. The wrapper is a
+   — no lingering transform and no lingering `filter`, so a settled item clips
+   nothing (step rows hang hover washes past the wrapper's edge), keeps no
+   compositing layer, and costs nothing. That the blur does not outlive the
+   entrance is the whole reason it is affordable here at all: the sweep bounds
+   its own blur to a short ramp because those spans *keep* theirs, and a
+   permanent layer per element is a different bill from a transient one — the
+   rows off-screen during a replay are skipped outright by the
+   `content-visibility` rule above and never paint it. The wrapper is a
    plain div: an earlier version was a grid that animated its row track, and
    the grid kept deciding the *width* of rows too (an implicit column sizes to
    min-content, which un-truncated long commands) — block layout cannot. */
 @keyframes harness-item-in {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; filter: blur(2px); transform: translateY(10px); }
+  to { opacity: 1; filter: blur(0); transform: translateY(0); }
 }
 .harness-item-in {
   animation: harness-item-in 480ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  /* The stagger counts the *batch that mounted*, never the row's place in the
+     list — `--item-i` is what the call site counted as new this render, so a
+     step arriving on its own carries 0 and rises the moment it lands. Index
+     would have been the obvious thing to pass and the wrong one: the sixth
+     step of a slow run would sit blank for 300ms waiting its turn in a queue
+     of one. It only bites where a burst mounts in a single frame — a replay,
+     or a folded run opened onto the twenty steps it was hiding — which is the
+     case the unstaggered version drew as one block sliding up together.
+
+     Capped, because a `backwards` delay is invisibility: uncapped, a replayed
+     two-hundred-step run would hold its tail blank for twelve seconds. Past
+     the cap the rows share the last bucket and land together, which is the
+     right failure — a burst that long is scrolled past, not watched.
+
+     Nothing below repeats this: both motion escapes say `animation: none`, and
+     that is the shorthand, so it resets the delay along with the name. */
+  animation-delay: calc(min(var(--item-i, 0), 6) * 60ms);
 }
 
 /* The entrance for content whose *space* already exists — a workflow step
@@ -1189,10 +1205,54 @@ html[data-window-controls-overlay="true"] {
   animation: harness-fade-in 360ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 
+/* ── A run's rail drawing itself ──
+   The line down a group of steps is borders on two pseudo-elements, not a
+   stroke (`RAIL_ELBOW` / `RAIL_TAIL` / `RAIL_THROUGH`, thread-items) — so there
+   is no dash offset to animate and `clip-path` is the draw: an inset clipped to
+   the box's top edge, opening downward, which reveals a border in the direction
+   it was drawn in.
+
+   On the elbow that is the whole gesture and it is free. The L is one bordered
+   box: the vertical run is its left edge, the curve and the turn into the icon
+   are its bottom. Opening top-to-bottom therefore draws *down, then around*,
+   with no second keyframe and no knowledge of the radius — the rounded corner
+   simply arrives when the clip reaches it.
+
+   Both pseudos, both on the step's own `--item-i`, so the rail grows a row at a
+   time down the run instead of appearing whole. There is deliberately no extra
+   offset between a step's elbow and its tail: the elbow ends at 14px where the
+   tail begins, and the row below starts its own elbow one stagger step later —
+   the continuity is the cascade between rows, not a delay inside each one.
+   Chaining them per row would double every row's cost and turn a six-step run
+   into four seconds of drawing.
+
+   Quicker than the row it carries (320ms against 480ms): the line arrives and
+   the step settles onto it, which is the order that reads as the rail holding
+   the row rather than chasing it. `backwards` for the reason the entrance needs
+   it too — through the stagger's delay the line has to be as absent as the row
+   it is waiting for, or every rail in the run paints at full length on frame
+   one and only the steps cascade. */
+@keyframes harness-rail-draw {
+  from { clip-path: inset(0 0 100% 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+.harness-rail-draw::before,
+.harness-rail-draw::after {
+  animation: harness-rail-draw 320ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation-delay: calc(min(var(--item-i, 0), 6) * 60ms);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .harness-item-in,
   .harness-fade-in,
   .t-stream-w {
+    animation: none;
+  }
+  /* Named separately from the classes above: these are the pseudo-elements'
+     animations, and `.harness-rail-draw` itself has none to cancel. Left out,
+     a reader on reduced motion still watched every rail draw. */
+  .harness-rail-draw::before,
+  .harness-rail-draw::after {
     animation: none;
   }
   /* The edge family has no animation to cancel — its softness is a resting
@@ -1218,6 +1278,10 @@ html[data-window-controls-overlay="true"] {
    in it. */
 [data-slot="message-scroller-content"][data-motion="calm"] .harness-item-in,
 [data-slot="message-scroller-content"][data-motion="calm"] .harness-fade-in {
+  animation: none;
+}
+[data-slot="message-scroller-content"][data-motion="calm"] .harness-rail-draw::before,
+[data-slot="message-scroller-content"][data-motion="calm"] .harness-rail-draw::after {
   animation: none;
 }
 /* Belt and braces for the reveal: `resolveStreamEffect` already stops the

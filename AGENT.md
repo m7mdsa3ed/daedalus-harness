@@ -317,8 +317,10 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   fetched or thought draws nothing, because in a cwd shared with another thread, an editor or
   a build it would otherwise claim their diff. The gate is a **read-only allowlist** — an
   unrecognised kind still draws — and it decides only what is drawn, never what is recorded.
-  Staging, discarding and committing belong to the source-control view, because they act on
-  the worktree as it is now and not on a scope.
+  **Reviewing a turn is source control narrowed to its paths** (`lib/ide/scm-filter.ts`), not a
+  surface of its own: the files are already where they can be staged, discarded and committed,
+  and a second list that could do none of that was the changes tab this replaced. The
+  narrowing is one derivation of the status, so every count and every "stage all" follows it.
 - A project's own page reads its settled half from one `/stats` call, on mount and by Refresh
   and **never on a timer**. **Turns, not events**, are counted; a tile skeletons rather than
   zeroes. **Header carries a "Run" dropdown** for the project's custom helper commands

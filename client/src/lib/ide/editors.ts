@@ -37,15 +37,7 @@ export interface DiffTab {
   right: Comparison
 }
 
-/** A turn's files, or everything uncommitted — the "N files changed" chip. */
-export interface ChangesTab {
-  kind: "changes"
-  sessionId: string
-  /** `turn:<id>` or `uncommitted`. */
-  scope: string
-}
-
-export type TabBody = FileTab | DiffTab | ChangesTab
+export type TabBody = FileTab | DiffTab
 
 export interface Tab {
   /** Stable, derived from the body: opening the same thing twice focuses it. */
@@ -93,8 +85,6 @@ export function tabId(body: TabBody): string {
       return `file:${body.path}`
     case "diff":
       return `diff:${body.left}:${body.right}:${body.path}`
-    case "changes":
-      return `changes:${body.sessionId}:${body.scope}`
   }
 }
 

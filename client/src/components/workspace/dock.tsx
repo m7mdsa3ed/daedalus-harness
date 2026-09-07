@@ -27,6 +27,7 @@ import "dockview-react/dist/styles/dockview.css"
 
 import { ChatPanel } from "@/components/workspace/chat-panel"
 import { forgetProjectEditors } from "@/lib/ide/editors"
+import { forgetScmFilter } from "@/lib/ide/scm-filter"
 import { IdePanel } from "@/components/workspace/ide-panel"
 import { PanelContainer } from "@/components/workspace/panel-container"
 import { PanelTab } from "@/components/workspace/panel-tab"
@@ -709,7 +710,10 @@ export function useWorkspaceDock(): DockController {
           if (gone) {
             guardsRef.current.delete(panel.id)
             forgetPanelPin(panel.id)
-            if (descriptor.kind === "ide") forgetProjectEditors(descriptor.projectId)
+            if (descriptor.kind === "ide") {
+              forgetProjectEditors(descriptor.projectId)
+              forgetScmFilter(descriptor.projectId)
+            }
             api.removePanel(panel)
           }
         }

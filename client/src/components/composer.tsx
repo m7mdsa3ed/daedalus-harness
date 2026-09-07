@@ -1,17 +1,31 @@
 /* ── Composer ──
    The box, the shelf above it and the toolbar beneath. One component for every
-   surface that takes a prompt: the thread view and the build page (which
-   drafts a thread it has not opened yet — see `build-page.tsx`).
+   surface that takes a prompt.
 
-   The card is two rows and nothing else. The textarea on top, and under it one
-   toolbar that reads left to right as *what goes in → where it goes → what
-   happens*: the "+" menu (attach, photo, mention, command, code block), the
-   model/config cluster, then the counters and the actions, ending on a filled
-   Send. Every control on the row is the same shape and chrome-less except the
-   two that carry meaning by colour: Send is primary, Stop is destructive.
-   The scale follows the pointer — 24px (`icon-xs`) under a mouse, 32px
-   (`icon-sm`) under a finger, where the same row had to double as a touch
-   target (`useCoarsePointer`, see below).
+   ── The card is three bands ──
+   **The scope band on top** — where this thread runs, what it carries, and how
+   full its window is: project · tools · … · the context ring. It is the band
+   that does not change when the thread starts. Both halves used to be
+   draft-only rows on the shelf, which meant the project vanished at the moment
+   it started mattering: while you were typing the *first* message you could see
+   which directory the agent would edit, and from the second message on you
+   could not. A started thread's project is fixed (it is the cwd) so it reads
+   out rather than picks, and the tools menu already knew how to do both. The
+   ring at the end is the same `ContextIndicator` the tab wears, opening upward.
+
+   **The textarea.** **Then one toolbar** that reads left to right as *what goes
+   in → who answers → what happens*: the "+" menu (attach, photo, mention,
+   command, code block), the model/config cluster, then the counters and the
+   actions, ending on a filled Send. Every control on the row is the same shape
+   and chrome-less except the two that carry meaning by colour: Send is primary,
+   Stop is destructive. The scale follows the pointer — 24px (`icon-xs`) under a
+   mouse, 32px (`icon-sm`) under a finger, where the same row had to double as a
+   touch target (`useCoarsePointer`, see below).
+
+   Nothing else is in the card. The shelf above it (`ComposerStrip`) holds every
+   *state you consult while typing* — the queue, the checklist, the running
+   subagents, attachments, pastes — and it tucks its bottom edge behind the
+   scope band, so what is transient stacks above what is permanent.
 
    What used to be five separate buttons (attach, voice, pause, stop, send)
    competing for a row that is 300px wide on a phone is now a menu on the left
@@ -65,14 +79,12 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { Shortcut } from "@/components/shortcut"
-import { ComposerAgents, ComposerTodo } from "@/components/composer-status"
+import { ComposerAgents, ContextIndicator } from "@/components/composer-status"
 import { ComposerAttachments, ComposerPastes, type AttachmentDelivery } from "@/components/composer-attachments"
 import { ComposerHistoryDialog } from "@/components/composer-history-dialog"
-import { ComposerQueue } from "@/components/composer-queue"
 import { ComposerStrip, ComposerStripItem } from "@/components/composer-strip"
 import { DraftConfigPopover, DraftScopeRow } from "@/components/draft-config"
 import { SessionConfigPopover } from "@/components/session-config"
-import { ThreadToolsMenu } from "@/components/thread-tools"
 import { FileMentionMenu, useFileMentions } from "@/components/file-mentions"
 import {
   HARNESS_COMMANDS,
@@ -121,14 +133,6 @@ import { holdOf } from "@/lib/thread/hold"
 import { formatTokens } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 
-/** The strip's scope row, as a caller outside the thread may want it drawn —
-    see `DraftScopeRow`. The build page swaps the project half for its own
-    starter picker; the agent half is always the agent half. */
-export interface ComposerScope {
-  hideProject?: boolean
-  leading?: React.ReactNode
-}
-
 /* Past this the prompt is long enough that its size is worth a reading, and
    the expand toggle is worth a slot on the row. Both are about the same
    question — "is this more than a sentence" — so they share one answer. */
@@ -160,7 +164,6 @@ export function Composer({
      in one tree would be two subscriptions to the same absolute state. */
   delivery,
   beforeSend,
-  scope,
   placeholder,
   ref,
 }: {
@@ -173,7 +176,6 @@ export function Composer({
       (or a throw) puts them back in the box and sends nothing. While it runs
       the send button shows busy. The build page scaffolds the project here. */
   beforeSend?: (text: string) => Promise<boolean>
-  scope?: ComposerScope
   /** Overrides the idle placeholder only; the lock and queue notes still win. */
   placeholder?: string
   ref?: React.Ref<ComposerHandle>
@@ -698,7 +700,34 @@ export function Composer({
           )}
         </div>
       )}
-      <ComposerStrip>
+      <ComposerStrip
+        /* ── The scope row ──
+           Where this thread runs, what it carries, how full it is — the shelf's
+           floor, under whatever the turn has put on it. It survives the first
+           message: the row is the same either side of it, only the project
+           stops being a choice. The ring is here rather than on the send row
+           because context occupancy is a fact about the thread, not a control.
+           Nothing without a `meta`, which is a thread the server has not
+           answered for yet. */
+        footer={
+          meta && (
+            <DraftScopeRow
+              meta={meta}
+              actions={actions}
+              editable={draft}
+              trailing={
+                <ContextIndicator
+                  thread={thread}
+                  meta={meta}
+                  actions={actions}
+                  side="top"
+                  size="icon-xs"
+                />
+              }
+            />
+          )
+        }
+      >
         {/* Read from the journal, with no agent behind it. Said rather than
             enforced: the composer stays live because sending is what revives
             the thread (see actions.send), and a box you cannot type into would
@@ -712,33 +741,12 @@ export function Composer({
             <span>This thread's agent isn't running. Sending a message starts it again.</span>
           </ComposerStripItem>
         )}
-        {/* Where it runs and who answers, before either is settled. They belong
-            on the shelf rather than in the settings menu: picking a different
-            agent changes what every option under it even means, and a thread
-            started in the wrong project is started in the wrong directory. */}
-        {draft && meta && (
-          <ComposerStripItem>
-            {/* Registers its own summary — the names it prints are the ones it
-                already looks up. */}
-            <DraftScopeRow
-              meta={meta}
-              actions={actions}
-              hideProject={scope?.hideProject}
-              leading={scope?.leading}
-            />
-          </ComposerStripItem>
-        )}
-        {/* The agent's checklist when it arrives as a tool call rather than an
-            ACP plan. The ACP plan itself is NOT here: it is a running account of
-            the work, so it belongs in the transcript with the work — the shelf
-            keeps the list a runtime sends as tool input, which has nowhere else
-            to go. */}
-        <ComposerTodo thread={thread} />
-        {/* How many subagents are out working, while any are. */}
+        {/* How many subagents are out working, while any are. The checklist and
+            the queue used to sit here too; they are the *turn's*, not the
+            message's, so they are drawn at the tail of the transcript with
+            everything else the turn is doing (`thread-view.tsx`). What is left
+            on this shelf is about the message being typed right now. */}
         <ComposerAgents thread={thread} />
-        {/* What is waiting for this turn to end. The user's own words, so
-            they are editable in place until the moment they go. */}
-        <ComposerQueue sessionId={sessionId} thread={thread} actions={actions} />
         {/* What is riding along with the message but is not in the box: a file. */}
         <ComposerAttachments
           attachments={files.attachments}
@@ -748,7 +756,7 @@ export function Composer({
         />
         {/* Long pastes, parked as tokens in the textarea, shown as chips.
             Moved from inside the card to the strip so pastes and files are
-            managed in the same rail. */}
+            managed on the same shelf. */}
         <ComposerPastes pastes={shownPastes} onRemove={removePaste} />
         {/* Says what the box is showing and how to get back out of it — without
             it, a recalled prompt is indistinguishable from one you typed. */}
@@ -994,31 +1002,16 @@ export function Composer({
             }}
           />
           <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {/* Before the session exists the profile catalog is the only thing
-                that knows the choices; after it, the agent is. Two controls,
-                one slot — see CLAUDE.md's rule about which owns the model. */}
+            {/* Who answers. Before the session exists the profile catalog is the
+                only thing that knows the choices; after it, the agent is. Two
+                controls, one slot — see CLAUDE.md's rule about which owns the
+                model. The kit this thread carries is NOT here: it moved to the
+                scope band above, beside the project, where it is the same
+                read-out on a started thread that it is a picker on a draft. */}
             {draft && meta ? (
               <DraftConfigPopover meta={meta} actions={actions} />
             ) : (
-              <>
-                <SessionConfigPopover sessionId={sessionId} actions={actions} thread={thread} />
-                {/* The kit picked on the draft, still said once the thread is
-                    running: the links were written at create and are what a
-                    revive spawns with, so this is a read-out rather than the
-                    picker the strip carried. It draws nothing when the thread
-                    carries no tools. */}
-                {meta && (
-                  <ThreadToolsMenu
-                    meta={meta}
-                    actions={actions}
-                    editable={false}
-                    /* The strip's own dimensions are the strip's; in the
-                       composer row it wears the same 24px, chrome-less shape
-                       as the config trigger beside it. */
-                    className="h-6 gap-1 px-1.5 text-[11px] hover:bg-transparent hover:text-foreground data-popup-open:bg-transparent [&_svg]:size-3.5"
-                  />
-                )}
-              </>
+              <SessionConfigPopover sessionId={sessionId} actions={actions} thread={thread} />
             )}
           </div>
           {/* How long the prompt is, once that is worth knowing. The token

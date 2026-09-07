@@ -4,7 +4,8 @@ import { ChevronUp, GitCompare } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Logo } from "@/components/ui/logo"
-import { ActivityIndicator } from "@/components/composer-status"
+import { ActivityIndicator, ComposerTodo, threadTodos } from "@/components/composer-status"
+import { ComposerQueue } from "@/components/composer-queue"
 import { useAttachmentDelivery, wentInline } from "@/components/composer-attachments"
 import {
   MessageScroller,
@@ -26,7 +27,7 @@ import { useDispatch, useSessionMeta, useThread, threadIsEmpty, type ThreadItem,
 import { useLocation } from "react-router"
 import { useViewOptions, ViewOptionsContext } from "@/lib/view-options"
 import { useFollowStream } from "@/hooks/use-follow-stream"
-import { cn } from "@/lib/utils"
+import { cn, stagger } from "@/lib/utils"
 import { StepTokensProvider, TokenSummary } from "./token-usage"
 import { useDock } from "@/components/workspace/dock"
 import { requestIde } from "@/lib/ide/open"
@@ -252,42 +253,20 @@ function withTurnSuggestions(
   return after
 }
 
-/** The chip's two halves: bring the IDE panel up, and ask it for the turn.
-    `requestIde` writes the tab into the IDE's own store, so the order does not
-    matter and a first-ever open works the same as one into a panel that is
-    already there. Git's count, not the transcript's — a shell command that
-    edited a file is in it, an edit tool that declared one is in it once. */
-function openTurnChanges(
-  dock: ReturnType<typeof useDock>,
-  sessionId: string,
-  projectId: string | undefined,
-  scope: string
-): void {
-  if (!projectId) return
-  dock.openPanel({ kind: "ide", projectId }, { direction: "right" })
-  requestIde({ kind: "changes", projectId, sessionId, scope })
-}
-
-function TurnChangesChip({
-  sessionId,
-  projectId,
-  turn,
-}: {
-  sessionId: string
-  projectId: string | undefined
-  turn: TurnChanges
-}) {
-  const dock = useDock()
+/** What a turn did, under the turn that did it — and the way to review it.
+    Git's count, not the transcript's: a shell command that edited a file is in
+    it, an edit tool that declared one is in it once. Clicking it opens source
+    control narrowed to these files, which is where they can be read *and*
+    staged, discarded or committed. */
+function TurnChangesChip({ turn, onOpen }: { turn: TurnChanges; onOpen: (turn: TurnChanges) => void }) {
   const added = turn.files.reduce((n, f) => n + f.additions, 0)
   const removed = turn.files.reduce((n, f) => n + f.deletions, 0)
   return (
     <button
       type="button"
-      onClick={() =>
-        openTurnChanges(dock, sessionId, projectId, `turn:${turn.turnId}`)
-      }
+      onClick={() => onOpen(turn)}
+      title="Review this turn's changes in source control"
       className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2 py-0.5 font-mono text-[11px] text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-      title="Review this turn's changes"
     >
       <GitCompare className="size-3" />
       {turn.files.length} {turn.files.length === 1 ? "file" : "files"} changed
@@ -406,6 +385,13 @@ function useThreadKeys({
 
 const OPTION_DIGITS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
 
+/* The card the checklist and the queue are read on at the foot of the flow.
+   Plainer than `AgentRequestCard` on purpose: that one is tinted because the
+   agent is *waiting on you*, and neither of these is a question — one is the
+   work ahead, the other is what goes next. Both were rows on a shelf, in a
+   gutter the width of a sliver; here they have the transcript's own column. */
+const TAIL_CARD = "overflow-hidden rounded-xl border border-border/60 bg-surface/50"
+
 /** A transcript, addressed by the pair that names it. The panel above hands
     the key down (see workspace/chat-panel): every store read, every action and
     every device-local draft below is keyed by it, because a bare session id is
@@ -418,6 +404,15 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
   const dispatch = useDispatch()
   const thread = useThread(sessionId)
   const hold = holdOf(thread)
+  /* The checklist at the foot of the transcript, or null. Read here rather
+     than inside the card, because the card's slot in the scroller reserves an
+     intrinsic size whether or not anything renders into it. */
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the one field it reads
+  const todos = React.useMemo(() => threadTodos(thread), [thread.items])
+  /* Safe unconditionally: a transcript only ever exists inside a chat panel
+     (`workspace/chat-panel.tsx`), which is inside the dock. The composer does
+     not do this itself — it is also the build page's, where there is none. */
+  const dock = useDock()
   /* An interrupt is resumable only while it is the last thing that happened:
      the turn is over, the agent is still there, and nothing has been said
      since. Anything older is history, and history does not get a button. */
@@ -616,6 +611,30 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
   const [rewindBusy, setRewindBusy] = React.useState(false)
   const agents = useAgents()
   const meta = useSessionMeta(sessionId)
+  /* Reviewing a turn is the IDE's source-control view, narrowed to the files
+     that turn touched (`lib/ide/scm-filter.ts`). Not a surface of its own: what
+     you want after reading "7 files changed" is the working set — staging,
+     discarding and the commit box already around it — and a second list of the
+     same files that could do none of those is what the changes tab was.
+
+     The narrowing is by path against `git status`, so it shows the turn's
+     files *that are still uncommitted*. A turn whose work has been committed
+     since filters down to nothing, and the view says so rather than pretending
+     the turn changed nothing. */
+  const openChanges = React.useCallback(
+    (turn: TurnChanges) => {
+      const projectId = meta?.projectId
+      if (!projectId) return
+      dock.openPanel({ kind: "ide", projectId }, { direction: "right" })
+      requestIde({
+        kind: "review",
+        projectId,
+        label: `${turn.files.length} ${turn.files.length === 1 ? "file" : "files"} from this turn`,
+        paths: turn.files.map((file) => file.path),
+      })
+    },
+    [dock, meta?.projectId]
+  )
   /* The agent's rewind door: absent/false = the conversation half is not
      offered on this thread, and files are restored on their own. Read off the
      catalog like every other agent capability — the server still refuses what
@@ -838,8 +857,19 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   )}
                   {/* The entrance wrapper (index.css): one per row, so the
                       divider and the Sources strip sit beside it — each mounts
-                      at its own moment and rises in on its own. */}
-                  <div className="harness-item-in">
+                      at its own moment and rises in on its own.
+
+                      The `stagger` numbers below are this row's footer read top
+                      to bottom, and they are hand-written because that is what
+                      they are: five fixed slots, not a list. They cost nothing
+                      in the case they mostly run in — the answer mounts alone,
+                      long before the turn ends, so its 0 is the only one asked
+                      for. They earn themselves at the two moments the footer
+                      arrives *together*: the end of a turn, when sources, the
+                      token figure, the changes chip and the follow-ups all
+                      resolve on one frame, and a replay, where the whole row is
+                      one mount. Both used to land as a single block. */}
+                  <div className="harness-item-in" style={stagger(0)}>
                     <RowView
                       row={row}
                       onContinue={resumable === row.id ? resume : undefined}
@@ -897,18 +927,18 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                     />
                   </div>
                   {options.showSources && sourcesFor(row) && (
-                    <div className="harness-item-in">
+                    <div className="harness-item-in" style={stagger(1)}>
                       <SourcesStrip turn={sourcesFor(row)!} />
                     </div>
                   )}
                   {options.showTokens && usageFor(row) && (
-                    <div className="harness-item-in -ml-1">
+                    <div className="harness-item-in -ml-1" style={stagger(2)}>
                       <TokenSummary usage={usageFor(row)!} label="This turn" durationMs={durationFor(row)} />
                     </div>
                   )}
                   {changesFor(row) && (
-                    <div className="harness-item-in mt-1">
-                      <TurnChangesChip sessionId={sessionId} projectId={meta?.projectId} turn={changesFor(row)!} />
+                    <div className="harness-item-in mt-1" style={stagger(3)}>
+                      <TurnChangesChip turn={changesFor(row)!} onOpen={openChanges} />
                     </div>
                   )}
                   {/* The model's closing follow-ups, under the answer that
@@ -920,7 +950,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                       its imperative handle, so the box stays the box's own
                       state. */}
                   {suggestionsFor(row) && (
-                    <div className="harness-item-in mt-1">
+                    <div className="harness-item-in mt-1" style={stagger(4)}>
                       <PromptSuggestions
                         suggestions={suggestionsFor(row)!.prompts}
                         onPick={(prompt) => composerApiRef.current?.fill(prompt)}
@@ -953,9 +983,43 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   pause keeps the line, because it has no card. */}
               {thread.turnActive && !startingLine(thread.phase) && !hold.byError && (
                 <MessageScrollerItem messageId="working">
-                  <div className="harness-item-in">
+                  {/* The turn's foot is its own five-slot cascade, counted from
+                      the working line down: these mount together far more often
+                      than the row footer above does — a turn that starts with a
+                      plan and a queue behind it raises three of them on one
+                      frame, and a hold raises the fourth over the top. */}
+                  <div className="harness-item-in" style={stagger(0)}>
                     <div className="py-0.5">
                       <ActivityIndicator thread={thread} />
+                    </div>
+                  </div>
+                </MessageScrollerItem>
+              )}
+              {/* The work the turn has ahead of it, and the words waiting
+                  behind it. Both were rows on the composer's shelf, folded
+                  behind a 14px sliver — which is the wrong home for either: a
+                  checklist is a running account of the turn, and a queue is a
+                  list of the user's own sentences. They are the *turn's*, so
+                  they are read where the turn is, at its foot, in the flow that
+                  already holds the working line above them. The shelf keeps
+                  only what is about the message being typed.
+
+                  Above the three cards below, not among them: those are things
+                  the turn has STOPPED on and want the last word. */}
+              {todos && (
+                <MessageScrollerItem messageId="todos">
+                  <div className="harness-item-in py-1" style={stagger(1)}>
+                    <div className={TAIL_CARD}>
+                      <ComposerTodo todos={todos} />
+                    </div>
+                  </div>
+                </MessageScrollerItem>
+              )}
+              {thread.queue.length > 0 && (
+                <MessageScrollerItem messageId="queue">
+                  <div className="harness-item-in py-1" style={stagger(2)}>
+                    <div className={TAIL_CARD}>
+                      <ComposerQueue sessionId={sessionId} thread={thread} actions={actions} />
                     </div>
                   </div>
                 </MessageScrollerItem>
@@ -969,7 +1033,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   stopped on. */}
               {hold.byError && (
                 <MessageScrollerItem messageId="held">
-                  <div className="harness-item-in">
+                  <div className="harness-item-in" style={stagger(3)}>
                     <div className="py-1">
                       <InlineHeldTurn sessionId={sessionId} actions={actions} thread={thread} />
                     </div>
@@ -981,7 +1045,11 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                   key={pending.requestId}
                   messageId={`permission:${pending.requestId}`}
                 >
-                  <div className="harness-item-in">
+                  {/* Continuing the foot's count rather than restarting it, and
+                      the one place here that is a real list: two approvals
+                      arriving at once are two rows, so they cascade past each
+                      other the way a run's steps do. */}
+                  <div className="harness-item-in" style={stagger(4 + index)}>
                     <div className="py-1">
                       <InlineApproval permission={pending} autofocus={index === 0} />
                     </div>

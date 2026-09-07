@@ -27,7 +27,7 @@ import { FilesIcon, GitCompareIcon, SearchIcon, XIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useConfirm } from "@/components/confirm-dialog"
-import { ChangesTab } from "@/components/workspace/changes-tab"
+import { setScmFilter, useScmFilter } from "@/lib/ide/scm-filter"
 import { DiffTab } from "@/components/workspace/diff-tab"
 import { FileExplorer } from "@/components/workspace/file-explorer"
 import { FileSearch } from "@/components/workspace/file-search"
@@ -76,8 +76,6 @@ function titleOf(tab: Tab): string {
       return basename(tab.body.path)
     case "diff":
       return `${basename(tab.body.path)} (diff)`
-    case "changes":
-      return tab.body.scope === "uncommitted" ? "Uncommitted changes" : "Turn changes"
   }
 }
 
@@ -92,6 +90,20 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
   const active = editors.tabs.find((tab) => tab.id === editors.activeId) ?? null
   const [side, setSide] = React.useState<SideView>("explorer")
   const [sideOpen, setSideOpen] = React.useState(true)
+
+  /* A review asked for from a transcript ("7 files changed"): source control,
+     narrowed to those paths. It arrives as a *filter* rather than a tab, so
+     what brings it on screen is this — the panel showing the view that answers
+     it. Keyed on the nonce, so asking again after closing the side view opens
+     it again, and a filter that is merely still set does not fight the reader
+     who navigated away from it. */
+  const scmFilter = useScmFilter(projectId)
+  const nonce = scmFilter?.nonce
+  React.useEffect(() => {
+    if (nonce === undefined) return
+    setSide("scm")
+    setSideOpen(true)
+  }, [nonce])
 
   /* ── One pane at a time when there is room for one ──
      Below `NARROW` the sidebar and the editor cannot share the width — a
@@ -251,7 +263,15 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
             />
           )}
           {side === "search" && <FileSearch projectId={projectId} onOpenFile={openFile} />}
-          {side === "scm" && <ScmView projectId={projectId} onOpenDiff={openDiff} onOpenFile={openFile} />}
+          {side === "scm" && (
+            <ScmView
+              projectId={projectId}
+              filter={scmFilter}
+              onClearFilter={() => setScmFilter(projectId, null)}
+              onOpenDiff={openDiff}
+              onOpenFile={openFile}
+            />
+          )}
         </div>
       )}
 
@@ -300,7 +320,7 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
                     type="button"
                     onClick={() => activateTab(projectId, tab.id)}
                     className="min-w-0 max-w-40 truncate py-1.5"
-                    title={tab.body.kind === "changes" ? titleOf(tab) : tab.body.path}
+                    title={tab.body.path}
                   >
                     {titleOf(tab)}
                   </button>
@@ -353,9 +373,6 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
                       left={tab.body.left}
                       right={tab.body.right}
                     />
-                  )}
-                  {tab.body.kind === "changes" && (
-                    <ChangesTab sessionId={tab.body.sessionId} scope={tab.body.scope} />
                   )}
                 </div>
               </div>

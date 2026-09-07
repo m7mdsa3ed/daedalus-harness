@@ -6,27 +6,32 @@
    links, children) is its own key, invalidated by anything that touches it. */
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 
-import type { Board, BoardStatus, BoardView, Sprint, ViewKind } from "@/lib/boards"
+import type { Board, BoardList, BoardStatus, BoardView, Sprint, ViewKind } from "@/lib/boards"
 import {
   completeSprint,
   createBoard,
+  createList,
   createSprint,
   createStatus,
   createView,
   deleteBoard,
+  deleteList,
   deleteSprint,
   deleteStatus,
   deleteView,
   fetchBoards,
+  reorderLists,
   reorderStatuses,
   startSprint,
   updateBoard,
+  updateList,
   updateSprint,
   updateStatus,
   updateView,
   type BoardInput,
   type BoardViewConfig,
   type CompleteSprintResult,
+  type ListInput,
   type SprintInput,
   type StatusInput,
 } from "@/lib/boards"
@@ -73,6 +78,7 @@ export function useBoards() {
     statuses: query.data?.statuses ?? (EMPTY as BoardStatus[]),
     sprints: query.data?.sprints ?? (EMPTY as Sprint[]),
     views: query.data?.views ?? (EMPTY as BoardView[]),
+    lists: query.data?.lists ?? (EMPTY as BoardList[]),
     /** False until the first load answers — the page must not decide a board
         is empty (and offer to seed one) before it has heard from the server. */
     loaded: query.isSuccess,
@@ -92,6 +98,7 @@ export function useBoardsEnabled(enabled: boolean) {
   return {
     boards: query.data?.boards ?? (EMPTY as Board[]),
     statuses: query.data?.statuses ?? (EMPTY as BoardStatus[]),
+    lists: query.data?.lists ?? (EMPTY as BoardList[]),
     loaded: query.isSuccess,
   }
 }
@@ -400,4 +407,38 @@ export function useUpdateView() {
 export function useDeleteView() {
   const invalidate = useBoardKeys(false)
   return useApiMutation<string, void>([], (settings, id) => deleteView(settings, id), invalidate)
+}
+
+// ---- lists ----
+
+export function useCreateList() {
+  const invalidate = useBoardKeys(false)
+  return useApiMutation<{ boardId: string; input: ListInput & { name: string } }, BoardList>(
+    [],
+    (settings, { boardId, input }) => createList(settings, boardId, input),
+    invalidate,
+  )
+}
+
+export function useUpdateList() {
+  const invalidate = useBoardKeys(false)
+  return useApiMutation<{ id: string; input: ListInput & { order?: number; collapsed?: boolean } }, BoardList>(
+    [],
+    (settings, { id, input }) => updateList(settings, id, input),
+    invalidate,
+  )
+}
+
+export function useDeleteList() {
+  const invalidate = useBoardKeys(true)
+  return useApiMutation<string, void>([], (settings, id) => deleteList(settings, id), invalidate)
+}
+
+export function useReorderLists() {
+  const invalidate = useBoardKeys(false)
+  return useApiMutation<{ boardId: string; ids: string[] }, void>(
+    [],
+    (settings, { boardId, ids }) => reorderLists(settings, boardId, ids),
+    invalidate,
+  )
 }
