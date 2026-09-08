@@ -52,6 +52,7 @@
   --color-foreground: var(--foreground);
   --color-card: var(--card);
   --color-composer: var(--composer);
+  --color-shelf: var(--shelf);
   --color-surface: var(--surface);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
@@ -175,7 +176,12 @@
   --sidebar-ring: oklch(0.708 0 0);
   --scrollbar-thumb: color-mix(in oklch, var(--foreground) 18%, transparent);
   --scrollbar-thumb-hover: color-mix(in oklch, var(--foreground) 28%, transparent);
-  --scrollbar-track: color-mix(in oklch, var(--muted) 45%, transparent);
+  /* No track. A 6px lane of `--muted` down the side of every scrollable box is
+     a second edge on a surface that already has one — and on the transparent
+     ones (the transcript, a panel, anything over the app's blur) it was a bar
+     of solid colour where the design says there is nothing. The thumb is the
+     scrollbar; the track is the room it moves in. */
+  --scrollbar-track: transparent;
 
   /* ── The composer's own surface ──
      It is a card sitting ON the page, and in a light palette --card is usually
@@ -188,6 +194,22 @@
      has the separation (--card is lighter than --background there), so it
      stays exactly --card. */
   --composer: var(--card);
+
+  /* ── The shelf's own surface ──
+     The pile of cards tucked behind the composer, and it has to be a *different*
+     colour from the composer or the seam between them does not exist. It wore
+     `--surface`, which is the page's ground: in a light palette that resolves
+     to `--card` and so does `--composer`, which made the shelf, the composer
+     and the page one flat band — the tuck was drawn and invisible.
+
+     Derived from the composer rather than picked, so every generated palette
+     gets it for nothing — and **darker than the composer in both modes**, which
+     is two declarations and not one: "darker" is toward the text in a light
+     palette and toward the *background* in a dark one, where `--composer` is
+     already the lighter of the two tones. Mixing toward the foreground in both
+     would have lightened the shelf in dark mode, which is the composer's job,
+     not the thing behind it. This one is light's; `.dark` overrides it below. */
+  --shelf: color-mix(in oklch, var(--composer) 84%, var(--foreground) 16%);
 
   /* ── The main surface ──
      What the thread (and every page) sits on, inside the sidebar's tinted
@@ -246,6 +268,12 @@
 
 .dark {
   --surface: var(--background);
+  /* Darker than the composer here too, and that means the other direction:
+     `--composer` is the *lighter* of the two tones in every dark palette, so a
+     step back from it is a step toward the background. (Toward the foreground —
+     light's answer — would have lifted the shelf in front of the box it is
+     tucked behind.) */
+  --shelf: color-mix(in oklch, var(--composer) 55%, var(--background) 45%);
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -280,7 +308,7 @@
   --sidebar-ring: oklch(0.556 0 0);
   --scrollbar-thumb: color-mix(in oklch, var(--foreground) 22%, transparent);
   --scrollbar-thumb-hover: color-mix(in oklch, var(--foreground) 34%, transparent);
-  --scrollbar-track: color-mix(in oklch, var(--muted) 50%, transparent);
+  --scrollbar-track: transparent;
 
   /* Brighter on black: the same hues dialled up a step so they carry in the
      dark the way the muted greys do. */
@@ -804,6 +832,10 @@
    what it animates between is two *front cards*, not just open and closed, and
    no automatic height knows the card it is about to become. */
 .harness-strip-panel {
+  /* Unlayered, so it outranks Tailwind's utilities layer — and it is the
+     *shorthand*, which resets `transition-property` outright. Anything this
+     element is to transition has to be in this list; a `transition-*` utility
+     on the element itself will not run. */
   transition: height 280ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -1517,7 +1549,12 @@ html .dockview-theme-light,
 html .dockview-theme-abyss {
   --dv-group-view-background-color: transparent;
   --dv-tabs-and-actions-container-background-color: transparent;
-  --dv-tabs-and-actions-container-height: 36px;
+  /* One strip height everywhere, and it is the app header's row: a group in the
+     header's band and a group docked under it are the same bar, so a shorter
+     one below reads as a lesser thing rather than as another group of the same
+     kind. It used to be 36px here and the row's height only in the band, which
+     is the two of them disagreeing by 12px down the middle of a split. */
+  --dv-tabs-and-actions-container-height: var(--app-header-row-h);
   --dv-tabs-and-actions-container-font-size: 12px;
   --dv-activegroup-visiblepanel-tab-background-color: transparent;
   --dv-activegroup-hiddenpanel-tab-background-color: transparent;
@@ -1528,6 +1565,19 @@ html .dockview-theme-abyss {
   --dv-inactivegroup-visiblepanel-tab-color: var(--foreground);
   --dv-inactivegroup-hiddenpanel-tab-color: var(--muted-foreground);
   --dv-tab-divider-color: transparent;
+  /* The line between two views, and dockview's own mechanism for it
+     (`.dv-view:not(:first-child)::before`) rather than a border on the strip:
+     it is drawn on every view but the first, so it is one declaration for a
+     stack *and* a row — the top edge of a group docked below, the left edge of
+     one split beside. A strip's own `border-top` would have to ask which of
+     those it was and would still know nothing about the group above it.
+
+     It was briefly transparent, on the grounds that the strip in the header's
+     band drew no edge and a docked one did. That was the wrong half to change:
+     the two strips are the same bar now (same height, same tabs, same
+     material), and *between two views* is exactly where the app should say
+     something. The band has no line above it because there is no second view up
+     there — it is the first. */
   --dv-separator-border: var(--border);
   --dv-drag-over-background-color: color-mix(in oklch, var(--primary) 14%, transparent);
   --dv-drag-over-border-color: var(--primary);
@@ -1540,8 +1590,12 @@ html .dockview-theme-abyss {
   --dv-tab-border-radius: 0;
 }
 
+/* No rule under the strip. A strip in the header's band never drew one (the
+   blur is its edge) and a docked one did, so the same tabs sat on a line in one
+   place and on nothing in the other. The tabs are the strip now — a filled one
+   says where you are, and a line under a row of floating rounded chips is a
+   second edge for a bar that has none. */
 html .dv-tabs-and-actions-container {
-  border-bottom: 1px solid var(--border);
   padding: 0 4px;
   gap: 2px;
 }
@@ -1592,12 +1646,9 @@ html .dv-groupview > .dv-tabs-and-actions-container {
    three-way split reserves nothing for a toggle and a bell that are nowhere
    near it. The 4px is the strip's own gutter, kept on both ends. */
 html .dv-groupview[data-header-band] {
-  --dv-tabs-and-actions-container-height: var(--app-header-row-h);
-}
-
-html .dv-groupview[data-header-band] {
   /* Names the containing block for the strip below. The group is already this
-     box (it fills its view), so this only makes it say so. */
+     box (it fills its view), so this only makes it say so. The band's height is
+     not set here any more — every strip is the header's row now. */
   position: relative;
 }
 
@@ -1621,9 +1672,6 @@ html .dv-groupview[data-header-band] > .dv-tabs-and-actions-container {
      of the strip's own on top of it. */
   padding-left: var(--dock-band-left, 0px);
   padding-right: var(--dock-band-right, 0px);
-  /* The header draws no rule — its blur is its edge — so a strip standing in
-     its band must not draw one across it. Strips below the header keep theirs. */
-  border-bottom: none;
   /* The strip spans its whole group at z-40, so its reserved ends sit *over*
      the header's own controls. Without this they swallow every click meant for
      the bell, the ⋯ menu and the sidebar toggle. */
@@ -1646,17 +1694,6 @@ html .dv-groupview[data-header-band] > .dv-tabs-and-actions-container > .dv-void
   -webkit-app-region: drag;
 }
 
-/* And the slack inside a full-width tab, for the same reason and against the
-   same rule. With one tab the strip *is* the tab, so there is no void left to
-   drag by — the empty run is inside a tab, and a tab is `no-drag` because it
-   has to be pressable. This is the one part of it that never needs to be: a tab
-   with slack is the only tab in its group, so it is already active and a press
-   here would activate nothing. Nested `drag` inside `no-drag` re-adds the rect,
-   the way the sidebar's brand row and its buttons already work. */
-html .dv-groupview[data-header-band] .panel-tab-chip [data-tab-space] {
-  -webkit-app-region: drag;
-}
-
 html .dv-groupview[data-header-band] > .dv-tabs-and-actions-container > * {
   pointer-events: auto;
   /* On the desktop build this row is the window's titlebar
@@ -1670,13 +1707,31 @@ html .dv-groupview[data-header-band] > .dv-tabs-and-actions-container > * {
   -webkit-app-region: no-drag;
 }
 
-/* The actions at the end of the strip (new tab, split). `dv-right-actions` is
-   laid out after the void that absorbs the leftover width, so it stays pinned
-   to the end rather than drifting along behind the last tab. */
+/* ── The + follows the last tab ──
+   Dockview builds the strip as [tabs][void][right actions], where the void is
+   the run of emptiness that absorbs the leftover width — so anything in the
+   actions slot sits at the far right of the group, an inch of nothing away from
+   the tabs it acts on. A browser puts its + against the last tab, which is
+   where the hand already is.
+
+   Moving the *void* rather than the actions, because `order` reshuffles flex
+   items and only one of them has to move: everything else stays at the default
+   0 and keeps its DOM order, so this is [tabs][actions][void] with a single
+   declaration and no wrapper, no second actions slot and nothing patched into
+   dockview's own tree. The void is still the last thing in the row, which is
+   what it is for — it is the window's drag region in the header's band. */
+html .dv-void-container {
+  order: 1;
+}
+
 html .dv-right-actions-container {
   align-items: center;
   display: flex;
   height: 100%;
+  /* Never squeezed: the tabs are the flexible thing in this row, and a + that
+     shrank to nothing at eight tabs is the one control that has to be reachable
+     at eight tabs. */
+  flex-shrink: 0;
 }
 
 html .dv-tab {
@@ -1684,64 +1739,231 @@ html .dv-tab {
   display: flex;
   height: 100%;
   padding: 0;
-  /* Dockview's tabs are `flex-shrink: 0`, which is right for a strip whose
-     answer to "too many" is to scroll. Ours carry controls at their far end —
-     the reading, the ⋮, the close — and a tab that can only grow puts them past
-     the strip's edge the moment a title is long, where the only way to reach
-     them is a horizontal scroll on a bar with no scrollbar to speak of. So the
-     tab gives way instead: the title truncates (it already can), and what the
-     tab is *for* stays on screen.
+  /* ── A browser's sizing ──
+     One width for a tab whether it is alone or one of nine: it grows to a
+     ceiling and then every tab shares what is left, which is the behaviour that
+     makes a strip readable as it fills up. Dockview's own tabs are
+     `flex-shrink: 0` — right for a strip whose only answer to "too many" is to
+     scroll, wrong for ours, which carries the ⋮ and the close at the tab's far
+     end and would push them past the strip's edge the moment a title is long.
 
-     The floor is what keeps this from being dockview's problem in reverse — at
-     eight tabs, shrinking without one would leave eight slivers rather than a
-     strip that scrolls. Below it the container scrolls as it always did, and
-     the tab list at the strip's end is the way back to what scrolled off. */
-  flex-shrink: 1;
-  min-width: 11rem;
+     The ceiling is wider than a browser's 240px on purpose: what a tab here has
+     to hold apart from its neighbours is a thread's name, and a thread is named
+     after what it is doing rather than after a domain. Two of them truncated to
+     the same first three words are two identical tabs.
+
+     The floor is what keeps this from being the opposite problem: past about
+     seven tabs, shrinking without one leaves slivers rather than a strip that
+     scrolls. Below it the container scrolls as it always did, and the tab list
+     at the strip's end is the way back to what scrolled off. */
+  flex: 1 1 19rem;
+  max-width: 19rem;
+  min-width: 7rem;
+}
+
+/* ── Narrow: one title, the rest are marks ──
+   On a phone only the tab you are on says its name; every other one shrinks to
+   its mark — a kind's glyph, or a chat's initials. Four titles sharing a 360px
+   strip are four tabs truncated to "Fix th…", which is four identical tabs.
+
+   **All of it is here rather than in `panel-tab.tsx`, and that is what makes it
+   move.** The first version branched on `useIsMobile()` and rendered either a
+   mark or a title: React replaced one element with another, so the swap was a
+   frame, not a transition — there is nothing to interpolate between two
+   different nodes. Both are in the DOM now and this collapses whichever the tab
+   is not, which is a width and an opacity, and those animate.
+
+   Keyed on dockview's own `dv-active-tab`/`dv-inactive-tab` — the class it
+   already toggles on the element that owns the width — so nothing has to be
+   told twice and the width and the contents cannot disagree about which tab is
+   which mid-flight. */
+@media (max-width: 767px) {
+  /* Every tab grows; what differs is the ceiling. Transitioning the *cap*
+     rather than the basis is what makes the two tabs cross over smoothly: a
+     `flex-grow` that jumped 0 → 1 would resolve to the new width in one frame,
+     however long the transition on the basis was. 24rem is past any phone, so
+     the active tab is really bounded by the strip. */
+  html .dv-tab {
+    flex: 1 1 auto;
+    min-width: 2.75rem;
+    max-width: 24rem;
+    transition: max-width 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  html .dv-tab.dv-inactive-tab {
+    max-width: 2.75rem;
+  }
+
+  /* The chip loses the row's padding as it narrows, so the mark ends centred in
+     a square rather than pushed against one edge on the way. */
+  html .dv-tab.dv-inactive-tab .panel-tab-chip {
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  html .panel-tab-chip {
+    transition:
+      padding 240ms cubic-bezier(0.22, 1, 0.36, 1),
+      background-color 200ms,
+      color 200ms;
+  }
+
+  /* The mark: full width on a tab that is not in front, nothing on the one that
+     is. `width` and not `display`, because `display` is the one property that
+     cannot be transitioned into. The opacity runs faster than the width and
+     leads it, so the letters are gone before the box that held them finishes
+     closing — a mark fading *while* it slides is what reads as a smear. */
+  html .panel-tab-chip [data-tab-mark] {
+    width: 1.5rem;
+    opacity: 1;
+    transition:
+      width 240ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 140ms ease-out 60ms;
+  }
+
+  html .dv-tab.dv-active-tab .panel-tab-chip [data-tab-mark] {
+    width: 0;
+    opacity: 0;
+    transition:
+      width 240ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 100ms ease-in;
+  }
+
+  /* The title is the mirror of it, and deliberately *late*: it fades in over
+     the second half of the widening, so a name never appears in a box too
+     narrow to hold it and then reflows. Going the other way it leaves at once,
+     which is the same rule — no text in a closing box. */
+  html .dv-tab.dv-inactive-tab .panel-tab-chip [data-tab-title] {
+    opacity: 0;
+    transition: opacity 100ms ease-in;
+  }
+
+  html .dv-tab.dv-active-tab .panel-tab-chip [data-tab-title] {
+    opacity: 1;
+    transition: opacity 160ms ease-out 120ms;
+  }
+
+  /* The controls go with the title. They are hidden, not unmounted, for the
+     same reason as everything else here: a node leaving the DOM takes its width
+     with it in one frame. */
+  html .dv-tab.dv-inactive-tab .panel-tab-chip [data-tab-action],
+  html .dv-tab.dv-inactive-tab .panel-tab-chip button {
+    width: 0;
+    opacity: 0;
+    pointer-events: none;
+    transition:
+      width 240ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 100ms ease-in;
+  }
+}
+
+/* Off the phone the mark does not exist at all — no width, no transition, and
+   nothing for a wide strip to reserve. */
+@media (min-width: 768px) {
+  html .panel-tab-chip [data-tab-mark] {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html .dv-tab,
+  html .panel-tab-chip,
+  html .panel-tab-chip [data-tab-mark],
+  html .panel-tab-chip [data-tab-title],
+  html .panel-tab-chip [data-tab-action] {
+    transition: none;
+  }
 }
 
 /* ── How a tab is drawn, in every strip ──
-   **Per badge, never as one slab.** The tab holds two answers — the project it
-   runs in and the thread itself — and wrapping both in a single filled box drew
-   a second bar across the strip, one long pill with its own blur. The app
-   header's occupants have always been separate capsules for the same reason
-   (`HEADER_BADGE`), so the tab's are too: the chip carries no ground at all and
-   each badge inside takes one.
+   **One slab, rounded on all four corners**, sitting in the strip with air
+   above and below it. Not the browser's own shape — the top-rounded tab flared
+   into the panel at the bottom was tried and is not what this strip wants: the
+   flare only means anything against a filled toolbar, and everything under
+   these tabs is transparent by design. Rounded all round is what every other
+   surface in the app is, and the selection is carried by the ground alone.
 
-   **And in every strip, not only the one in the header's band.** This was
-   scoped to `[data-header-band]` on the grounds that there is no glass under a
-   strip docked over a terminal — which is true of the *surface* and irrelevant
-   to the *tab*: with a split, the top group drew capsules and the bottom drew
-   one filled chip, so the same panel was two different objects depending on
-   where its group happened to be docked. A tab is a tab. What differs between
-   the two places is what is behind the blur, which is the point of a blur. */
+   What came before drew a ground *per occupant* — a frosted capsule around the
+   title, one around each control — which is right for the app header's own
+   controls (`HEADER_BADGE`, separate capsules on a shared line) and wrong for a
+   tab: a tab is one object, and five pills sharing a row read as five.
 
-/* `--composer`, which is the composer card's own ground (`bg-composer/70`,
-   components/composer.tsx) — the band and the composer are the two frosted
+   **In every strip, not only the one in the header's band.** With a split, the
+   top group would otherwise draw one thing and the bottom another, so the same
+   panel would be two different objects depending on where its group happened to
+   be docked. A tab is a tab. What differs between the two places is what is
+   behind the blur, which is the point of a blur.
+
+   The ground is `--composer`, the composer card's own (`bg-composer/70`,
+   components/composer.tsx): the band and the composer are the two frosted
    surfaces the transcript runs between, so they are the same material or they
-   are two. No ring: a hairline around every badge drew boxes on a bar whose
-   whole point is that it has no edges.
-
-   **Every tab, not only the focused one.** A badge that appears on click reads
-   as part of the selection rather than as the shape a tab has; with the ground
-   always there, focus is the same surface at more weight, and the tabs beside
-   it are still visibly the same object.
-
-   **And every occupant, not only the labels.** The tab's own controls — the
-   reading, the ⋮ and the close — take it too, so the row is capsules end to end
-   rather than capsules followed by three bare glyphs. `button` and not a third
-   hook: the chip holds exactly these three, and a rule that has to be
-   remembered when a fourth is added is a rule that will not be. Hover still
-   darkens, through the ghost variant's own `bg-accent` painted over this. */
-html .panel-tab-chip [data-tab-badge],
-html .panel-tab-chip button {
-  background-color: color-mix(in oklch, var(--composer) 40%, transparent);
+   are two. */
+/* **Every tab has a ground, not only the focused one.** A surface that appears
+   when a tab is clicked reads as part of the selection rather than as the shape
+   a tab has, and a strip of bare labels beside one filled chip is one tab and
+   some text. Three weights of the same material instead: the tab you are on,
+   the tab you are pointing at, and the rest. Focus is then the *same* surface
+   at more weight, and the tabs beside it are visibly the same object. */
+/* `.header-chip` is the app header's own controls — the sidebar toggle and the
+   view-settings sliders (`lib/header-chrome.ts`). They are here, with the tabs
+   and out of the same values, because when a group joins the header's band they
+   are literally on the same line as these tabs: a pill of `--background` beside
+   a rounded rectangle of `--composer` is two materials pretending to be one
+   bar. Unlayered on purpose — it has to beat the button's own `rounded-4xl`,
+   which a `rounded-lg` utility would not. */
+html .panel-tab-chip,
+html .header-chip {
+  border-radius: var(--radius);
+  background-color: color-mix(in oklch, var(--composer) 35%, transparent);
   backdrop-filter: blur(var(--app-blur, 14px));
 }
 
-html .panel-tab-chip[data-active] [data-tab-badge],
-html .panel-tab-chip[data-active] button {
+html .panel-tab-chip:not([data-active]):hover,
+html .header-chip:hover {
+  background-color: color-mix(in oklch, var(--composer) 55%, transparent);
+}
+
+html .panel-tab-chip[data-active] {
   background-color: color-mix(in oklch, var(--composer) 80%, transparent);
+}
+
+/* ── The tab's own controls: the ⋮ and the close ──
+   Neither is drawn until you point at the tab. A strip where every tab carries
+   a permanent ✕ and a permanent ⋮ is a strip of things to be careful around,
+   and the width the two of them cost is width the title wanted. They stay in
+   the DOM rather than being conditionally rendered, so the title's truncation
+   does not shift under the pointer as they appear, they stay reachable by
+   keyboard (`:focus-visible`), and where there is no pointer to hover with they
+   are simply always there.
+
+   **The close is the one exception, and only on the active tab** — closing what
+   you are looking at is the gesture a tab strip is asked for most, and the
+   active tab has the width to spare because it is the one you are reading. The
+   ⋮ takes no such exemption: it is a *menu*, nothing on it is urgent, and a
+   permanent ⋮ on the tab in front of you is a second thing beside the ✕ to
+   mis-click. It is found by pointing at the tab, or by right-clicking it.
+
+   `[aria-expanded]` is the ⋮ holding itself open: the menu is a popover, so the
+   pointer leaves the tab to reach it, and a trigger that faded out under the
+   list it opened would look like the menu had come from nowhere. The pin is not
+   here at all — it is a *state*, not an action, and a pinned tab that looked
+   like any other until you pointed at it is the one thing pinning is for. */
+html .panel-tab-chip [data-tab-action] {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+html .panel-tab-chip:hover [data-tab-action],
+html .panel-tab-chip [data-tab-action]:focus-visible,
+html .panel-tab-chip [data-tab-action="menu"][aria-expanded="true"],
+html .panel-tab-chip[data-active] [data-tab-action="close"] {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  html .panel-tab-chip [data-tab-action] {
+    opacity: 1;
+  }
 }
 
 

@@ -112,12 +112,14 @@ const persona = await personas.create({
   effort: null,
   sortOrder: 0,
 });
-const result = await manager.applyConfig(session.id, {
-  profile,
-  agentId: "fake",
-  project,
-  personaId: persona.id,
-});
+// `defer: false` is what asks for the restart itself: a process-costing change
+// is otherwise staged and taken by the next spawn (see staged-config.test.ts).
+// This test is about what that restart does to the journal.
+const result = await manager.applyConfig(
+  session.id,
+  { profile, agentId: "fake", project, personaId: persona.id },
+  { defer: false },
+);
 assert.equal(result.live, false, "a persona change cannot be applied live");
 assert.equal(session.personaId, persona.id, "the row moved");
 
@@ -167,7 +169,11 @@ await fresh.bridge!.ready;
 fresh.eventCount = 0;
 const quiet = new MockWs();
 assert.equal(await manager.attach(fresh.id, quiet as never), null);
-await manager.applyConfig(fresh.id, { profile, agentId: "fake", project, personaId: persona.id });
+await manager.applyConfig(
+  fresh.id,
+  { profile, agentId: "fake", project, personaId: persona.id },
+  { defer: false },
+);
 assert.deepEqual(
   quiet.of("restart").map((e) => [e.state, e.kept]),
   [

@@ -1,5 +1,5 @@
 import * as React from "react"
-import { AppWindowIcon, Check, ChevronDown, ChevronLeft, GitBranch, SearchIcon, ServerIcon, Settings2 } from "lucide-react"
+import { AppWindowIcon, Check, ChevronDown, ChevronLeft, GitBranch, SearchIcon, ServerIcon, Settings2, SlidersHorizontalIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -11,11 +11,11 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { CommandPalette, useCommandPalette } from "@/components/command-palette"
 import { ImportThreadsDialog } from "@/components/import-threads"
+import { SessionSettingsDialog } from "@/components/session-settings"
 import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
 import { Logo } from "@/components/ui/logo"
 import { LandingPage } from "@/components/landing/landing-page"
 import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
-import { ThreadHeaderMenu } from "@/components/thread-menu"
 import { ProjectIcon } from "@/components/entity-icon"
 import { NotificationBell } from "@/components/notifications/bell"
 import { NotificationsInboxPage } from "@/components/notifications/page"
@@ -56,7 +56,6 @@ import {
   settingsRootPath,
   threadPath,
 } from "@/lib/router"
-import { consumeNewTab, markNewTab } from "@/lib/session-tabs"
 import { consumeQueuedPanels } from "@/lib/workspace/pending-panels"
 import { useShortcut } from "@/hooks/use-hotkey"
 import { useChord } from "@/lib/keybindings"
@@ -216,6 +215,9 @@ export function AppShell({
     ? sessions.find((s) => s.id === active.forkedFromSessionId)
     : undefined
   const ready = !loading && projects.length > 0 && profiles.length > 0
+  /* The header's own dialog — device-global, so it belongs to the shell rather
+     than to any route or dock group under it. */
+  const [viewSettings, setViewSettings] = React.useState(false)
   const dock = useWorkspaceDock()
   const currentProjectId = inProject ? location.pathname.split("/")[2] : undefined
   const currentProject = projects.find((p) => p.id === currentProjectId)
@@ -280,7 +282,15 @@ export function AppShell({
     if (location.search) void navigate(threadPath(sessionId), { replace: true }) // legacy ?session=
     const meta = sessions.find((s) => s.id === sessionId)
     if (meta) {
-      dock.openChat(sessionId, { newTab: consumeNewTab() })
+      /* Always a tab of its own. Opening a thread used to *replace* the chat
+         you were reading — the sidebar as navigation — and a new tab was the
+         opt-in a ⌘-click or a menu row asked for. It is the other way round
+         now: a thread you opened is a thread you meant to keep, and the one
+         thing that closed a transcript you were mid-way through was clicking
+         the next one. An already-open thread is still focused, not duplicated
+         (`openPanel` answers on the panel id), so this only ever adds a tab
+         for a thread that had none. */
+      dock.openChat(sessionId, { newTab: true })
       /* Panels a page without a dock asked to open beside this thread. After
          the chat, so they split against it. */
       for (const entry of consumeQueuedPanels()) dock.openPanel(entry.panel, entry.options)
@@ -315,7 +325,12 @@ export function AppShell({
   const handleDockReady = React.useCallback(
     (api: DockviewApi) => {
       dock.onReady(api)
-      if (routeSessionRef.current) dock.openChat(routeSessionRef.current)
+      /* Same bargain as the route effect above, and it has to be said here too:
+         the dock is unmounted while the landing console is up, so sending the
+         first message from it remounts the dock, restores the saved layout and
+         lands here — where an open without `newTab` would have the brand-new
+         thread replace whatever chat was in front of you before. */
+      if (routeSessionRef.current) dock.openChat(routeSessionRef.current, { newTab: true })
     },
     [dock]
   )
@@ -432,14 +447,12 @@ export function AppShell({
 
   /* The + on the tab strip — the one caller that still opens an empty thread,
      because a new *tab* has to be a panel and the landing page is a route, not
-     a panel kind. `markNewTab` is the one-shot flag the route effect reads when
-     it opens the panel, so "new tab" is decided here and honoured there. The
-     draft it mints is still invisible to every list until it is sent. */
+     a panel kind. The draft it mints is still invisible to every list until it
+     is sent, and the route effect gives it its own tab like any other thread. */
   const newThreadInTab = () => {
     if (!ready) return openSettings("projects")
     const id = openDraftThread()
     if (!id) return openSettings("projects")
-    markNewTab()
     void navigate(threadPath(id))
   }
 
@@ -497,7 +510,15 @@ export function AppShell({
      focused. */
   const threadMain = sessionId ? (
     <div className="flex min-h-0 flex-1">
-      <WorkspaceDock actions={actions} dock={dock} onReady={handleDockReady} />
+      <WorkspaceDock
+        actions={actions}
+        dock={dock}
+        onReady={handleDockReady}
+        /* The strip's + opens what the header menu's rows open, through the one
+           `openWorkspacePanel` every other surface calls. */
+        onNewTab={newThreadInTab}
+        onOpenPanel={openWorkspacePanel}
+      />
     </div>
   ) : (
     <LandingPage
@@ -564,21 +585,12 @@ export function AppShell({
                 <SearchIcon />
               </Button>
               <NotificationBell />
-              {/* The app's one menu — the workspace's panels and arrangements,
-                  and how transcripts are drawn on this device. Nothing in it is
-                  about a route or a dock group, which is why it can stand on
-                  the one surface that is neither. */}
-              {!inSettings && !inSchedule && !inRoutines && !inBoard && !inNotifications && !inTrace && (
-                <ThreadHeaderMenu
-                  actions={actions}
-                  session={active}
-                  project={effectiveProject}
-                  onNewTab={newThreadInTab}
-                  onOpenPanel={openWorkspacePanel}
-                  onOpenInNewTab={(thread) => dock.openChat(thread.id, { newTab: true })}
-                  dock={dock}
-                />
-              )}
+              {/* No ⋯ here any more. What it held has gone to the surface each
+                  half belongs to: opening a thread or a panel is the tab
+                  strip's + (`workspace/tab-actions`), and how transcripts are
+                  drawn on this device is the gear beside the sidebar toggle —
+                  a device setting, next to the app's other device control,
+                  rather than the last row of a list of everything. */}
             </div>
           </div>
         </SidebarHeader>
@@ -805,6 +817,22 @@ export function AppShell({
             className="absolute inset-x-0 top-0 -z-10"
           />
           <SidebarTrigger className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")} />
+          {/* How transcripts are drawn, on this device — beside the one other
+              control that is also this device's and not this route's. It was
+              the last row of the sidebar's ⋯ menu, which is a list you read to
+              reach one thing you already had in mind. */}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="View settings"
+            title="How transcripts are drawn, on this device"
+            className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")}
+            onClick={() => setViewSettings(true)}
+          >
+            {/* Sliders, not a cog: a cog in this app means the *server's*
+                settings route, and this opens a device's drawing preferences. */}
+            <SlidersHorizontalIcon className="size-4" />
+          </Button>
           <div className="flex min-w-0 flex-1 items-center justify-between gap-2 sm:gap-3">
             {/* Named, like the header itself, so the dock can measure it: a tab
                 strip standing in this row has to reserve the width of whatever
@@ -1027,6 +1055,10 @@ export function AppShell({
       {/* Owned here rather than by the palette, which unmounts as soon as a
           command runs. The project page mounts its own, scoped to itself. */}
       <ImportThreadsDialog open={importing} onOpenChange={setImporting} actions={actions} />
+      {/* Opened by the sliders beside the sidebar toggle. Here rather than
+          beside that button so it is not unmounted with a header that some
+          routes draw differently. */}
+      <SessionSettingsDialog open={viewSettings} onOpenChange={setViewSettings} />
     </SidebarProvider>
   )
 }

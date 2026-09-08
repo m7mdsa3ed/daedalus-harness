@@ -79,7 +79,12 @@ import {
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { Shortcut } from "@/components/shortcut"
-import { AgentsIndicator, ContextIndicator, TodoIndicator } from "@/components/composer-status"
+import {
+  AgentsIndicator,
+  ChangesIndicator,
+  ContextIndicator,
+  TodoIndicator,
+} from "@/components/composer-status"
 import { ComposerAttachments, ComposerPastes, type AttachmentDelivery } from "@/components/composer-attachments"
 import { ComposerHistoryDialog } from "@/components/composer-history-dialog"
 import { ComposerStrip, ComposerStripItem } from "@/components/composer-strip"
@@ -129,6 +134,7 @@ import type { SessionMeta } from "@/lib/settings"
 import { KEYS, formatChord, matchesChord } from "@/lib/shortcuts"
 import { bannerFor, composerLock } from "@/lib/thread/phase"
 import type { ThreadState } from "@/lib/store"
+import type { TurnChanges } from "@/lib/workspace/git-api"
 import { holdOf } from "@/lib/thread/hold"
 import { formatTokens } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
@@ -152,6 +158,10 @@ function selectionOf(el: HTMLTextAreaElement | null, fallback: number): [number,
 export interface ComposerHandle {
   /** Fill the box like a history recall: replaced, unsent, caret at the end. */
   fill(prompt: string): void
+  /** Whether a `fill` would replace anything. Escape's take-back asks first:
+      the message it hands back has already left the queue by the time it
+      arrives, so it must never land on top of something typed since. */
+  isEmpty(): boolean
 }
 
 export function Composer({
@@ -163,8 +173,11 @@ export function Composer({
      the same answer (see `wentInline`), and two `useAttachmentDelivery` calls
      in one tree would be two subscriptions to the same absolute state. */
   delivery,
+  changes,
+  onOpenChanges,
   beforeSend,
   placeholder,
+  autoFocus,
   ref,
 }: {
   sessionId: string
@@ -172,12 +185,21 @@ export function Composer({
   thread: ThreadState
   meta?: SessionMeta
   delivery: AttachmentDelivery
+  /** The newest turn that wrote to the worktree, already gated by the
+      transcript (`withTurnChanges`) — the composer holds no opinion about
+      which turn qualifies, only about where the reading is drawn. */
+  changes?: TurnChanges
+  onOpenChanges?: (turn: TurnChanges) => void
   /** Awaited between "the words have been taken" and the send itself; `false`
       (or a throw) puts them back in the box and sends nothing. While it runs
       the send button shows busy. The build page scaffolds the project here. */
   beforeSend?: (text: string) => Promise<boolean>
   /** Overrides the idle placeholder only; the lock and queue notes still win. */
   placeholder?: string
+  /** Take the caret without being the routed thread — the landing console,
+      whose route is `/` and whose only purpose is this box. Still refused on
+      touch, and still only for a draft. */
+  autoFocus?: boolean
   ref?: React.Ref<ComposerHandle>
 }) {
   const navigate = useNavigate()
@@ -515,17 +537,20 @@ export function Composer({
      — only a draft (an existing thread is opened to read at least as often as
        to write to, and stealing focus there scrolls a phone to the bottom);
      — only while this thread is the routed one, since the dock keeps every
-       opened transcript mounted and a background panel must not grab the caret;
+       opened transcript mounted and a background panel must not grab the caret
+       — or while the caller says so (`autoFocus`), which is the landing
+       console: its draft is never the routed thread (the route is `/`), so it
+       was the one new thread whose box the user had to click into;
      — never on touch, where focusing raises the keyboard over the screen the
        user has just arrived at.
      After a frame: dockview moves focus itself as it activates a new panel,
      and the later mover wins. */
   const routed = currentThreadId(location.pathname, location.search) === sessionId
   React.useEffect(() => {
-    if (!draft || !routed || isMobile) return
+    if (!draft || isMobile || !(routed || autoFocus)) return
     const frame = requestAnimationFrame(() => composerRef.current?.focus())
     return () => cancelAnimationFrame(frame)
-  }, [sessionId, draft, routed, isMobile])
+  }, [sessionId, draft, routed, autoFocus, isMobile])
 
   const mentions = useFileMentions({
     text,
@@ -607,7 +632,11 @@ export function Composer({
     },
     [mentions.requestCaret]
   )
-  React.useImperativeHandle(ref, () => ({ fill: applySuggestion }), [applySuggestion])
+  React.useImperativeHandle(
+    ref,
+    () => ({ fill: applySuggestion, isEmpty: () => text.trim() === "" }),
+    [applySuggestion, text]
+  )
 
   /* A long paste is parked rather than pasted: the token goes in at the caret
      and the body waits in the sidecar until send. Below the threshold nothing
@@ -722,17 +751,19 @@ export function Composer({
               actions={actions}
               editable={draft}
               /* The readings, in one cluster at the row's end: how far the
-                 checklist has got, how many workers are out, how full the
-                 window is. Three answers of the same *kind* — one number that
-                 is true of the thread right now, glanced at constantly and
-                 read in full rarely — so they are one shape (a 24px trigger
-                 over a popover) in one place, rather than a card on a shelf
-                 each. Every one of them draws nothing when it has nothing to
-                 say, so an idle thread's cluster is the ring alone. */
+                 checklist has got, how many workers are out, what the last
+                 turn wrote, how full the window is. Four answers of the same
+                 *kind* — one number that is true of the thread right now,
+                 glanced at constantly and read in full rarely — so they are
+                 one shape (a 24px trigger over a popover) in one place, rather
+                 than a card on a shelf each. Every one of them draws nothing
+                 when it has nothing to say, so an idle thread's cluster is the
+                 ring alone. */
               trailing={
                 <>
                   <TodoIndicator thread={thread} />
                   <AgentsIndicator thread={thread} />
+                  <ChangesIndicator changes={changes} onOpen={onOpenChanges} />
                   <ContextIndicator
                     thread={thread}
                     meta={meta}
@@ -1110,7 +1141,17 @@ export function Composer({
               variant="ghost"
               size={iconSize}
               className="shrink-0 rounded-full bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive"
-              onClick={() => actions.stop(sessionId).catch(() => {})}
+              /* Stop and Escape are the same gesture, so they answer the same
+                 way: a message the user has not seen land comes back into the
+                 box rather than staying parked in a queue nothing will drain.
+                 Only into an empty one — see `ComposerHandle.isEmpty`. */
+              onClick={() =>
+                actions
+                  .stop(sessionId, {
+                    ...(text.trim() === "" ? { onReclaim: applySuggestion } : {}),
+                  })
+                  .catch(() => {})
+              }
               title="Stop"
             >
               <Square className="size-3.5 fill-current" />

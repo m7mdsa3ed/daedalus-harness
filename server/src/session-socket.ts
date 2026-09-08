@@ -38,7 +38,7 @@ function stagedFields(session: Session): { staged?: StagedConfig } {
 function contextFields(session: Session): { context?: acp.UsageUpdate } {
   return session.context ? { context: session.context } : {};
 }
-import type { EarlierPage, PromptReply, StagedConfig, ThreadCommand, ThreadEvent, ThreadHold, ThreadRetry, WireError } from "./protocol.js";
+import type { CancelReply, EarlierPage, PromptReply, StagedConfig, ThreadCommand, ThreadEvent, ThreadHold, ThreadRetry, WireError } from "./protocol.js";
 
 /**
  * What the socket router needs from the SessionManager — a port, so this
@@ -63,6 +63,7 @@ export interface SocketHost {
   queueUpdate(id: string, itemId: string, text: string, attachmentIds?: string[]): Promise<void>;
   queueRemove(id: string, itemId: string): Promise<void>;
   queueClear(id: string): void;
+  stopTurn(id: string, reclaim: boolean): Promise<CancelReply>;
   enrichError(session: Session, error: WireError): WireError;
 }
 
@@ -450,7 +451,11 @@ export class SessionSocket {
         this.run(session, peer, command.id, () => this.host.queueSteer(session.id, command.itemId));
         return;
       case "cancel":
-        this.run(session, peer, command.id, () => bridge.cancel());
+        /* Not `bridge.cancel()` directly: a `reclaim` cancel has to take the
+           un-landed message back BEFORE the settle behind the cancel flushes
+           it into the transcript, and those two steps belong together on this
+           side of the wire — see `SessionQueue.stop`. */
+        this.run(session, peer, command.id, () => this.host.stopTurn(session.id, command.reclaim === true));
         return;
       case "pause":
         this.run(session, peer, command.id, () => bridge.pause());

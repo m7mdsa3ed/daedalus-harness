@@ -300,10 +300,12 @@ export function useActions(settings: ServerSettings) {
         throw error
       }
       if (reply.staged) {
-        /* Held for the turn's boundary. The `staged_config` event says the same
-           to every peer including this one, but only over a socket — so it is
-           applied from the answer as well, and the overlay that was standing in
-           for it goes at the same time. */
+        /* Held for the next spawn — which for an idle thread is the next send,
+           and is now the ordinary answer rather than the mid-turn exception.
+           The `staged_config` event says the same to every peer including this
+           one, but only over a socket — so it is applied from the answer as
+           well, and the overlay that was standing in for it goes at the same
+           time. */
         dispatch({ type: "staged-config", id: meta.id, config: reply.staged })
         dispatch({ type: "pending-config", id: meta.id, patch: null })
         return "staged"
@@ -398,8 +400,15 @@ export function useActions(settings: ServerSettings) {
      * Called when the settings menu closes — the moment the user is done
      * picking — and by the debounce above for the menu that stays open. Safe to
      * call with nothing buffered, which is most of the times a menu closes.
+     *
+     * `silent` is the send path's: a pick made a moment before Enter is flushed
+     * by the send itself (`send`, below), and a toast saying when the change
+     * will apply is noise on top of the message that is applying it.
      */
-    const flushThreadConfig = async (sessionId: string): Promise<void> => {
+    const flushThreadConfig = async (
+      sessionId: string,
+      opts: { silent?: boolean } = {}
+    ): Promise<void> => {
       const held = configBuffer.get(sessionId)
       if (!held) return
       if (held.timer) clearTimeout(held.timer)
@@ -415,7 +424,14 @@ export function useActions(settings: ServerSettings) {
         return
       }
       if (outcome === "staged") {
-        toast("Applying when this turn ends", {
+        if (opts.silent) return
+        /* Not "when this turn ends" any more: nothing is waiting for a
+           boundary. A change that costs the process is taken by the next spawn,
+           and for a thread nobody is sending to that is no spawn at all — so
+           what the reader needs to know is which of their own actions will
+           spend it. "Apply now" is the escape hatch for anyone who would rather
+           pay it up front. */
+        toast("Applies when you next send", {
           description: describeConfig(held.patch, catalog.profiles()),
           action: {
             label: "Apply now",
@@ -981,6 +997,21 @@ export function useActions(settings: ServerSettings) {
            live connection to its agent — revive it and send again": a statement
            about this device's bookkeeping, dressed up as one about the thread,
            telling the user to press a button the client could press itself. */
+        /* A pick made a moment ago is sent before the message it was made for.
+           `changeThreadConfig` debounces the POST (400ms, 800ms for a profile),
+           so choosing a model and hitting Enter straight after used to start
+           the turn on the old settings and land the change *behind* it — which
+           now matters much more than it did, because the server no longer takes
+           a process-costing change when it is picked: it stages it, and the
+           next prompt is what flushes it. A patch still sitting in this buffer
+           is one the server has not been told about at all.
+
+           Silent, because the toast it would otherwise raise says when the
+           change will apply, and the answer is "the message you just sent".
+           Drawn after the optimistic bubble on purpose: `send` has already put
+           the words on screen, and a round trip in front of that is a composer
+           that clears into nothing. */
+        await flushThreadConfig(sessionId, { silent: true })
         let thread
         try {
           thread = await conn.ready()
@@ -1135,11 +1166,10 @@ export function useActions(settings: ServerSettings) {
        * Change how this thread is worked on.
        *
        * Always costs the process — no runtime we ship will take a persona on a
-       * running one — so this is the change most likely to come back `staged`:
-       * asked for mid-turn it waits at the turn's boundary, which is the next
-       * moment any runtime would read it. `""` is a real value and means no
-       * persona; model and profile are left alone, because a persona says
-       * nothing about either.
+       * running one — so this always comes back `staged`, whether or not a turn
+       * is running: the next spawn is the next moment any runtime would read
+       * it. `""` is a real value and means no persona; model and profile are
+       * left alone, because a persona says nothing about either.
        */
       changeThreadPersona(meta: SessionMeta, personaId: string): void {
         changeThreadConfig(meta, { personaId }, "Couldn't change how this thread works")
@@ -1160,8 +1190,8 @@ export function useActions(settings: ServerSettings) {
       },
 
       /**
-       * Take the change the server is holding for this turn's boundary now,
-       * turn and all — the staged card's "Apply now".
+       * Take the staged change now rather than on the next send — the staged
+       * card's "Apply now", turn and all if one is running.
        *
        * The staged patch is sent back explicitly rather than left to the route
        * to fill in: the request body names model and effort on every call (it
@@ -1344,8 +1374,25 @@ export function useActions(settings: ServerSettings) {
         await postJson(settings, `/api/sessions/${sessionId}/workflows/${runId}/${paused ? "pause" : "resume"}`, {})
       },
 
-      async stop(sessionId: string) {
-        await known(sessionId)?.live?.cancel()
+      /**
+       * Stop the running turn.
+       *
+       * `onReclaim` is the composer offering to take back the message the user
+       * has not seen land yet — the newest queued row, or a steer the running
+       * step never read. Escape is one gesture, so the take-back and the
+       * cancel are one call: the server takes the words back BEFORE the settle
+       * behind the cancel would flush a held steer into the transcript, which
+       * two round trips from here could not guarantee.
+       *
+       * Offered, never assumed: a caller with nowhere to put the words leaves
+       * it unset and the queue is untouched, because a message removed with
+       * nobody to hold it is a message the user lost. Nothing comes back when
+       * a step boundary got there first — the words landed, and the transcript
+       * is where they are.
+       */
+      async stop(sessionId: string, opts: { onReclaim?: (text: string) => void } = {}) {
+        const reply = await known(sessionId)?.live?.cancel(!!opts.onReclaim)
+        if (reply?.reclaimed) opts.onReclaim?.(reply.reclaimed.text)
         /* The agent writes its own "[Request interrupted by user]" turn, but
            only the session/load replay surfaces it — without this the rule (and
            the Continue button on it) would not appear until a reload. */

@@ -72,8 +72,14 @@ export function ChatPanel({
   ]
   usePublishPanelStatus(api.id, status)
 
+  /* Only ever *forward*: a session this client has not heard of yet is not a
+     reason to rename its tab. The dock restores titles from its own layout
+     (dockview serializes them) before the session list has loaded, so writing
+     the placeholder unconditionally renamed every restored tab to "Thread" and
+     only repaired it if the list arrived — a slow or failed bootstrap left the
+     placeholder on screen for good. */
   React.useEffect(() => {
-    api.setTitle(meta?.title || "Thread")
+    if (meta?.title) api.setTitle(meta.title)
   }, [api, meta?.title])
 
   /* What makes a path or a source in a tool call clickable — shared with every

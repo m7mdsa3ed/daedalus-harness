@@ -2,19 +2,25 @@
    what makes `dock.closePanel` the only way a panel closes — and therefore the
    only place a dirty editor gets asked.
 
-   What it draws is deliberately little: the thread's name, its context ring,
-   and the two controls that act on the tab itself. The project it runs in is
-   NOT among them — it moved to the composer's scope band, where it is a name
-   and not a mark that drops its label below `sm`. A panel's
-   *reading* (`lib/workspace/panel-status`) is not among them — it is on the
-   strip's tab list, where a panel you cannot see is the one you need it for.
-   On the face it was a third mark competing with two logos for one line of
-   text, in a row that already carries the context ring.
+   ── One slab, rounded ──
+   The chip is the tab: one rounded surface with air around it, filled when it
+   is the panel you are looking at (`index.css`, `.panel-tab-chip`). The capsule
+   design that came before drew a ground *per occupant*, which is right for the
+   app header's own controls and wrong here — a tab is one object, and three
+   frosted pills sharing a line read as three.
 
-   (It is still the panel's own answer and never a glyph a panel prefixes onto
-   its title: that made the reading part of the title — nothing else could have
-   one, it could not be coloured, and a screen reader read it as a stray
-   character.) */
+   What it draws is deliberately little: the kind's glyph, the title, and the
+   close. The project it runs in is NOT among them — it is the composer's scope
+   band, where it is a name and not a mark that drops its label below `sm`. The
+   context reading is not among them either: it is the composer's footer
+   cluster, said once, in front of the thread it is true of. A tab that carried
+   it subscribed every strip to a value written on every streamed token.
+
+   A panel's *reading* (`lib/workspace/panel-status`) is on the strip's tab list,
+   where a panel you cannot see is the one you need it for. (It is still the
+   panel's own answer and never a glyph a panel prefixes onto its title: that
+   made the reading part of the title — nothing else could have one, it could not
+   be coloured, and a screen reader read it as a stray character.) */
 import * as React from "react"
 import type { IDockviewPanelHeaderProps } from "dockview-react"
 import { useNavigate } from "react-router"
@@ -32,7 +38,6 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { ContextIndicator } from "@/components/composer-status"
 import { MENU_WIDTH } from "@/components/menu-row"
 import {
   ItemContextMenu,
@@ -40,39 +45,16 @@ import {
   type MenuItemSpec,
 } from "@/components/item-context-menu"
 import { PanelIcon } from "@/components/workspace/panel-kinds"
-import { useDock, useDockActions } from "@/components/workspace/dock"
+import { useDock } from "@/components/workspace/dock"
 import { reportError } from "@/lib/errors"
 import { useProjects } from "@/lib/queries/catalog"
 import { settingsFormPath, threadPath } from "@/lib/router"
-import { useSessionMeta, useThread } from "@/lib/store"
+import { useSessionMeta } from "@/lib/store"
 import { useRunHelper } from "@/lib/workspace/use-run-helper"
 import { usePanelPinned } from "@/lib/workspace/panel-pins"
 import { PANEL_SPECS, isPanelKind, parsePanel } from "@/lib/workspace/panels"
+import { initialsOf } from "@/lib/tasks-view"
 import { cn } from "@/lib/utils"
-
-/**
- * The thread's context reading, on its own tab.
- *
- * Its own component for the reason the header's was: `useThread` is written on
- * every streamed token, and a tab that subscribed to it would redraw its whole
- * strip — every sibling tab included — thousands of times a turn to move one
- * ring. Nothing above this line reads a thread.
- */
-function TabContextRing({ sessionId }: { sessionId: string }) {
-  const actions = useDockActions()
-  const thread = useThread(sessionId)
-  const meta = useSessionMeta(sessionId)
-  return (
-    <ContextIndicator
-      thread={thread}
-      meta={meta}
-      actions={actions}
-      side="bottom"
-      size="icon-xs"
-      triggerClassName="size-6 rounded-lg"
-    />
-  )
-}
 
 export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProps) {
   const dock = useDock()
@@ -80,13 +62,13 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
   const runHelper = useRunHelper(dock)
   const descriptor = parsePanel(api.component, params)
   /* The thread's row, for the project it belongs to. A row keeps its identity
-     unless it changes (see `useSessionMeta`), so this is not the streamed
-     subscription `TabContextRing` is careful about. */
+     unless it changes (see `useSessionMeta`), so this is not a subscription to
+     anything a turn writes. */
   const chatSessionId = descriptor?.kind === "chat" ? descriptor.sessionId : ""
   const meta = useSessionMeta(chatSessionId)
   const projects = useProjects()
-  /* Not drawn on the face any more — the composer's scope band says it. Still
-     looked up, because "Project commands" below is this thread's project's. */
+  /* Not drawn on the face — the composer's scope band says it. Still looked up,
+     because "Project commands" below is this thread's project's. */
   const project = meta ? projects.find((p) => p.id === meta.projectId) : undefined
   const [active, setActive] = React.useState(api.isActive)
   const [closable, setClosable] = React.useState(false)
@@ -127,6 +109,24 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
   const fallbackTitle = isPanelKind(api.component) ? PANEL_SPECS[api.component].defaultTitle : "Panel"
   const title = api.title ?? fallbackTitle
 
+  /* ── Narrow: one title, the rest are marks ──
+     On a phone only the tab you are on says its name. Four titles sharing a
+     360px strip are four tabs truncated to "Fix th…", which is four identical
+     tabs — a mark is short enough to be *whole*, and a whole thing can be told
+     apart and pressed. The one you are reading keeps its name, because that is
+     the tab whose name you are using.
+
+     None of that is decided here. It is `index.css`, keyed on dockview's own
+     `dv-active-tab`/`dv-inactive-tab`, because it has to *animate*: switching
+     tabs collapses one title to its mark and opens the other out, and a
+     transition needs one element changing rather than two elements swapping. */
+
+  /* One list, two surfaces: the right-click menu (long-press on a touch screen,
+     which Base UI's context menu handles) and the ⋮ beside the close. A context
+     menu is a gesture you have to already know is there, and on a touch screen
+     it competes with the drag that reorders the tab — the ⋮ is how the menu is
+     *found*. It costs the tab nothing while you are not pointing at it, because
+     it appears on the same terms the close does (`index.css`). */
   const items: MenuItemSpec[] = [
     /* Close comes first and names *this* tab, so a pinned panel still has a way
        out — the bulk closes below are the ones pinning is a defence against. */
@@ -195,159 +195,129 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
 
   return (
     <ItemContextMenu items={items}>
-      {/* `flex-1`, not `w-full`: in a content-sized tab it does nothing, and in
-          the full-width one (`singleTabMode`, dockview grows the tab itself) it
-          fills — one rule for both, and no percentage resolved against a parent
-          whose width is its child's. */}
-      <div className="flex h-full min-w-0 flex-1 items-center py-1">
+      {/* Air on all four sides: the chip is a rounded surface *in* the strip,
+          not a shape cut out of it, so it needs the room its corners imply. The
+          0.5rem of side padding is the gap between one tab and the next. */}
+      <div className="flex h-full min-w-0 flex-1 items-center px-0.5 py-1">
         <div
-          /* The two hooks a tab standing in the app header's band is restyled
-             by (`index.css`): in that row it wears the header's frosted ground
-             instead of --muted, because everything else on the line is a
-             capsule. Published rather than decided here — whether a tab is in
-             the band is its *group's* answer, and subscribing a tab to the
-             dock's layout to restyle itself would be a second measurement of
-             something `workspace/dock.tsx` already knows. */
+          /* The hook the shape hangs off (`index.css`): the radius, and the
+             frosted ground the active tab takes. Published rather than decided
+             here — whether a tab is in the app header's band is its *group's*
+             answer, and subscribing a tab to the dock's layout to restyle itself
+             would be a second measurement of something `workspace/dock.tsx`
+             already knows. */
           data-active={active || undefined}
+          title={title}
           className={cn(
-            /* `h-8` — the sidebar toggle's own height (`icon-sm`), because
-               they stand on the same line: a tab shorter than the control
-               beside it reads as a strip tucked under the header rather than
-               as the header's own row. The chip is layout and ink; what is
-               drawn is the badges inside it (`index.css`), the same way in
-               every strip. */
-            "panel-tab-chip flex h-8 min-w-0 flex-1 items-center gap-1 rounded-lg px-1 text-xs transition-colors",
-            /* Ink only. The ground belongs to the badges inside, in every strip
-               (`index.css`) — a chip filled with --muted around capsules that
-               have their own surface is two grounds for one tab. */
+            /* `h-8` — the height of the sidebar toggle and the view-settings
+               sliders beside it (`HEADER_CHIP`), because in the header's band
+               all three stand on the same line: a tab shorter than the controls
+               next to it reads as a strip tucked under the header rather than
+               as the header's own row. */
+            "panel-tab-chip flex h-8 min-w-0 flex-1 items-center gap-1.5 px-2.5 text-xs transition-colors",
             active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
           )}
         >
-          {/* ── One vocabulary, everywhere ──
-              `p-1` is the sidebar toggle's own padding — 4px around a 16px mark
-              — so a badge and the button beside it are the same 24px box on the
-              same line, which is the difference between one bar of chrome and
-              two things that happen to be next to each other. The extra right
-              padding is the only asymmetry, and it is the label's: text needs
-              room before a 10px corner that an icon, centred in its own square,
-              does not.
+          {/* A chat tab carries no mark. It wore its runtime's logo, a project
+              logo and a status dot — three marks for one line of text, when the
+              thing a reader needs to tell two tabs apart is the *name*. Every
+              other kind keeps its glyph: an IDE tab with no mark is just a
+              word. */}
+          {descriptor?.kind !== "chat" && (
+            <PanelIcon panel={descriptor} className="size-3.5 shrink-0" />
+          )}
+          {/* ── The mark a narrow tab shrinks to ──
+              Drawn always and *hidden by CSS* off the phone, rather than
+              swapped in by a `useIsMobile()` branch here. That branch was the
+              whole reason the change could not be animated: React replaced one
+              element with another, and there is nothing for a transition to
+              interpolate between two different nodes. Both live in the DOM now,
+              and `index.css` collapses whichever one this tab is not — which is
+              a width and an opacity, both of which animate.
 
-              One badge, one answer: the thread itself. The project used to lead
-              the row, and it is a better fact than a tab can carry — it is
-              *where the edits land*, which is worth a name and not a 14px mark
-              that drops its name below `sm`. It is the composer's scope band
-              now (`composer.tsx`), in front of the thread it is true of and
-              legible at every width, so the tab does not say it twice. */}
-          {/* The thread: its name, and nothing beside it. A chat tab wore its
-              runtime's logo, a project logo and a status dot — three marks for
-              one line of text, when the thing a reader needs to tell two tabs
-              apart is the *name*. A panel that is not a chat keeps its kind's
-              glyph: an IDE tab with no mark at all is just a word. */}
-          <span
-            data-tab-badge
-            className="flex min-w-0 items-center gap-1.5 rounded-lg p-1 pr-2"
-          >
-            {descriptor?.kind !== "chat" && <PanelIcon panel={descriptor} className="size-3.5" />}
-            {/* One line, capped, ellipsis past it. Content-sized because a badge
-                that stretched to the tab's width drew a frosted bar the length
-                of the band for a five-word title: the room a full-width tab has
-                is space *after* the name, not a longer name. */}
-            <span data-tab-title className="max-w-40 min-w-0 truncate">
-              {title}
+              Only a chat needs one: every other kind has its glyph above, and
+              that glyph *is* its mark. */}
+          {descriptor?.kind === "chat" && (
+            <span data-tab-mark aria-hidden className="grid place-items-center overflow-hidden">
+              <span className="text-[10px] font-semibold tracking-tight">{initialsOf(title)}</span>
             </span>
+          )}
+          <span data-tab-title className="min-w-0 flex-1 truncate">
+            {title}
           </span>
-          {/* The slack a full-width tab has, as an element rather than as an
-              auto margin — because in the band it belongs to the *window*.
-
-              With one tab the strip is the tab (dockview's `singleTabMode`), so
-              the run of emptiness a user reaches for to move the window is
-              inside it, and a tab has to be `no-drag` to stay pressable. This
-              hands that run back: `index.css` marks it a drag region, which
-              costs nothing, since the only tab that has slack is the one that
-              is already active and a press here activates nothing. */}
-          {/* `self-stretch` is load-bearing, not tidiness: the chip centres its
-              children, so an empty span is a box of zero height — and Chromium
-              builds the window's draggable region out of *rects*, discarding
-              anything with no area. The region was being computed correctly and
-              was 0px tall. */}
-          <span data-tab-space aria-hidden className="min-w-0 flex-1 self-stretch" />
-          {/* The badges stay the size of what they say and the slack falls
-              before this, so the reading and the close sit at the tab's own end,
-              under the app's right gutter, rather than trailing the name. */}
-          <span className="flex shrink-0 items-center gap-1">
-            {/* The reading of the thread this tab *is*, on every chat tab and
-                not only the focused one: how full a context is stays true while
-                you are reading something else, and a mark that appears when a
-                tab is clicked reads as part of the selection rather than as a
-                fact about the thread. */}
-            {chatSessionId && <TabContextRing sessionId={chatSessionId} />}
-            {/* The same list the right-click opens, on a button of its own.
-                A context menu is a gesture you have to already know is there —
-                and on a touch screen it is a long-press, which competes with
-                the drag that reorders the tab. The ⋮ is how the menu is *found*,
-                and it is the app's mark for "more of this thing" wherever one
-                is offered; `items` is built once above and both surfaces render
-                it, so neither can drift from the other. */}
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label={`Actions for ${title}`}
-                    className="size-6 rounded-lg text-muted-foreground hover:text-foreground"
-                    onPointerDown={(event) => event.stopPropagation()}
-                  >
-                    <MoreVerticalIcon className="size-3.5" />
-                  </Button>
-                }
-              />
-              <DropdownMenuContent align="end" className={MENU_WIDTH}>
-                {renderMenuItems(items, {
-                  Item: DropdownMenuItem,
-                  Separator: DropdownMenuSeparator,
-                  Sub: DropdownMenuSub,
-                  SubTrigger: DropdownMenuSubTrigger,
-                  SubContent: DropdownMenuSubContent,
-                })}
-              </DropdownMenuContent>
-            </DropdownMenu>
-            {/* A pinned tab trades its close button for the pin that undoes the
-                pinning — the same width, and the gesture that got you here is
-                the gesture that gets you back. It is why a pinned tab cannot be
-                closed by a stray click, which is most of the point of pinning. */}
-            {pinned ? (
+          {/* Kept in the DOM on a narrow tab too, and hidden by the same rule:
+              they are what the tab shrinks *past*, and unmounting them would
+              make the width jump a step before the transition started. */}
+          {/* The same list the right-click opens, on a button of its own — and
+              `items` is built once above, so the two surfaces cannot drift. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  data-tab-action="menu"
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-label={`Actions for ${title}`}
+                  className="size-5 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  <MoreVerticalIcon className="size-3.5" />
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="end" className={MENU_WIDTH}>
+              {renderMenuItems(items, {
+                Item: DropdownMenuItem,
+                Separator: DropdownMenuSeparator,
+                Sub: DropdownMenuSub,
+                SubTrigger: DropdownMenuSubTrigger,
+                SubContent: DropdownMenuSubContent,
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {/* A pinned tab trades its close for the pin that undoes the pinning —
+              the same width, and the gesture that got you here gets you back. It
+              is why a pinned tab cannot be closed by a stray click, which is
+              most of the point of pinning. It is also the one control that is
+              always drawn: it is a *state*, not an action, and a pin that only
+              appeared on hover would leave a pinned tab looking like any other. */}
+          {pinned ? (
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label={`Unpin ${title}`}
+              className="size-5 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation()
+                dock.togglePin(api.id)
+              }}
+            >
+              <PinOffIcon className="size-3" />
+            </Button>
+          ) : (
+            closable && (
+              /* Shown on the active tab and on hover, and on a touch screen
+                 always (`index.css`) — a browser's rule, and the reason a tab
+                 with a long title spends its width on the title. It stays in the
+                 DOM either way so the title's truncation does not shift under
+                 the pointer, and `:focus-visible` brings it back for a keyboard. */
               <Button
+                data-tab-action="close"
                 size="icon-xs"
                 variant="ghost"
-                aria-label={`Unpin ${title}`}
-                className="size-6 rounded-lg text-muted-foreground hover:text-foreground"
+                aria-label="Close tab"
+                className="size-5 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={(event) => {
                   event.stopPropagation()
-                  dock.togglePin(api.id)
+                  void dock.closePanel(api.id)
                 }}
               >
-                <PinOffIcon className="size-3" />
+                <XIcon className="size-3" />
               </Button>
-            ) : (
-              closable && (
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label="Close tab"
-                  className="size-6 rounded-lg text-muted-foreground hover:text-foreground"
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    void dock.closePanel(api.id)
-                  }}
-                >
-                  <XIcon className="size-3" />
-                </Button>
-              )
-            )}
-          </span>
+            )
+          )}
         </div>
       </div>
     </ItemContextMenu>

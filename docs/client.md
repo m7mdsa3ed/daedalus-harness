@@ -526,11 +526,13 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   and a fact that is *always* true is not a card in it — the project spent its life as a card
   nobody brought forward and then stopped being drawn at all. It stacks **above the footer**.
 - **The readings are one cluster at the end of the footer, one shape each**
-  (`TodoIndicator`, `AgentsIndicator`, `ContextIndicator` in `components/composer-status.tsx`,
+  (`TodoIndicator`, `AgentsIndicator`, `ChangesIndicator`, `ContextIndicator` in
+  `components/composer-status.tsx`,
   passed as `DraftScopeRow`'s `trailing`). They answer the same *kind* of question — one number
   that is true of the thread right now, glanced at constantly and read in full rarely — so each
   is a 24px trigger over a popover: the checklist's ring and its steps, the running-subagent
-  count and their names and elapsed times, the context ring and the turn's numbers. Each draws
+  count and their names and elapsed times, the changed-file count and the paths with their
+  +/− and a "Review in source control" button, the context ring and the turn's numbers. Each draws
   nothing when it has nothing to say, so an idle thread's cluster is the ring alone. The
   checklist and the agent count have been a card on the shelf (folded behind a 14px sliver) and
   a card at the foot of the transcript (a screenful of scrolling from view); both were the
@@ -872,6 +874,24 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   board is this panel moved, exactly as another file is the IDE moved, and boards belong to
   the server rather than to a project — which is why it is the one kind that opens with no
   project and the one the prune cannot call stale.
+- **Opening a thread opens a tab.** The dock's `replace` — a same-kind open with no
+  direction and no `newTab` takes the place of the panel it opened from — used to include
+  chats, which made the sidebar read as navigation: click the next thread and the one you
+  were reading closed. It is the other way round now (`{ newTab: true }` at both doors: the
+  route effect and `handleDockReady`). A thread you opened is a thread you meant to keep, and
+  `openPanel` keys on `panelId`, so an already-open thread is focused rather than duplicated
+  — the flag only decides what happens to a thread that has no panel yet. **Both** doors have
+  to say it: the dock is unmounted while the landing console is up (`threadMain` swaps it for
+  `LandingPage`), so sending the first message from `/` remounts the dock, restores the saved
+  layout and arrives at `handleDockReady` — where an open without the flag had the brand-new
+  thread eat whatever chat was in front of you. This retired `lib/session-tabs.ts` (the
+  one-shot "open the next one in a tab" flag), the ⌘-click on a sidebar row and the row menu's
+  "Open in new tab", all three of which now name the plain click.
+- **A tab's title is only ever written forward.** `ChatPanel` sets it from `sessions`, and
+  **skips the write when the store has no row yet** — dockview serializes titles, so a
+  restored layout already knows every tab's name, and writing the `PANEL_SPECS` placeholder
+  unconditionally renamed all of them to "Thread" for the width of bootstrap. A session list
+  that loaded slowly showed it as a flash; one that failed left it there for good.
 - **What a panel is doing is data, published by the panel and drawn by the tab**
   (`lib/workspace/panel-status.ts`, `components/workspace/panel-status-dot.tsx`). It used to
   be a glyph the chat panel prefixed onto its own title, which made the reading part of the
@@ -1059,8 +1079,9 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   alone lets the small pieces in and then *warns* about `ts.worker` — and vite-plugin-pwa
   treats that warning as a failed build. Offline, the IDE is the one surface that does not
   open.
-- **Reviewing a turn is source control, narrowed.** The "N files changed" chip under a turn
-  (`TurnChangesChip` in `thread-view.tsx`) opens the IDE and hands it a *filter*:
+- **Reviewing a turn is source control, narrowed.** The "N files changed" reading in the
+  composer footer's end cluster (`ChangesIndicator` in `composer-status.tsx`, fed the newest
+  gated turn by `thread-view.tsx`) opens the IDE and hands it a *filter*:
   `requestIde({kind:"review", …})` writes the turn's paths into `lib/ide/scm-filter.ts`, the
   panel switches to its source-control view, and that view draws only those files under a
   banner naming them, with "Show everything" to drop it. It was a tab of its own

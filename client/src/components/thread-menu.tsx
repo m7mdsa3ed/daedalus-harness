@@ -112,15 +112,16 @@ export function threadMenuItems(
   session: SessionMeta,
   pinned: boolean,
   handlers: {
-    openInNewTab: () => void
     onRename: (session: SessionMeta) => void
     onDelete: (session: SessionMeta) => void
   }
 ): MenuItemSpec[] {
+  /* No "Open in new tab": opening a thread IS opening a tab now (see the route
+     effect in `app-shell`), so the row would have been a second name for the
+     click that opened the menu. */
   return [
     renameItem(session, handlers.onRename),
     pinItem(session, pinned),
-    { label: "Open in new tab", icon: <ExternalLink />, onClick: handlers.openInNewTab },
     { label: "Copy link", icon: <LinkIcon />, onClick: () => copyThreadLink(session) },
     { type: "separator" },
     deleteItem(session, handlers.onDelete),

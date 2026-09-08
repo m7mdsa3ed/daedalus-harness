@@ -1,6 +1,7 @@
 import type * as acp from "@daedalus/acp"
 import type {
   AttachmentRef,
+  CancelReply,
   CompactReply,
   EarlierPage,
   HistoryLost,
@@ -770,8 +771,18 @@ export class ThreadSocket {
     }))) as PromptReply
   }
 
-  async cancel(): Promise<void> {
-    await this.request((id) => ({ id, cmd: "cancel" }))
+  /** Stop the running turn. `reclaim` also asks for the newest message that
+      has not landed — a queued row, or a steer the running step never read —
+      to be taken back and handed here, so the caller can put it in the
+      composer. `reclaimed` absent means there was nothing to take. Only a
+      caller with somewhere to put the words may ask: the message is gone from
+      the queue by the time this resolves. */
+  async cancel(reclaim = false): Promise<CancelReply> {
+    return (await this.request((id) => ({
+      id,
+      cmd: "cancel",
+      ...(reclaim ? { reclaim: true } : {}),
+    }))) as CancelReply
   }
 
   /** Hold the turn at its next step boundary — only on a runtime whose

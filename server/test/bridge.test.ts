@@ -1355,7 +1355,13 @@ assert.deepEqual(
 // Dropping it is a real value, not an omission: the next spawn says nothing
 // about a system prompt again.
 const dropped = metaLog().length;
-await manager.applyConfig(styled.id, { profile, agentId: "fake", project, personaId: "" });
+// `defer: false`, because a change that costs the process is staged now and
+// taken by the next spawn — and this asserts on the spawn itself.
+await manager.applyConfig(
+  styled.id,
+  { profile, agentId: "fake", project, personaId: "" },
+  { defer: false },
+);
 assert.equal(styled.personaId, "", "the row records that the thread has no persona now");
 const droppedMeta = metaLog().slice(dropped).find((e) => e.meta);
 assert.equal(droppedMeta?.meta?.systemPrompt, undefined, "and the agent is told nothing about one");

@@ -60,7 +60,7 @@ export const ThreadRow = React.memo(function ThreadRow({
   trash: boolean
   active: boolean
   pinned: boolean
-  onOpen: (session: SessionMeta, newTab?: boolean) => void
+  onOpen: (session: SessionMeta) => void
   onRename: (session: SessionMeta) => void
   onDelete: (session: SessionMeta) => void
   onRestore: (session: SessionMeta) => void
@@ -72,7 +72,6 @@ export const ThreadRow = React.memo(function ThreadRow({
       trash
         ? trashMenuItems(session, onRestore, onPurge)
         : threadMenuItems(session, pinned, {
-            openInNewTab: () => onOpen(session, true),
             onRename,
             onDelete,
           }),
@@ -132,7 +131,7 @@ export const ThreadRow = React.memo(function ThreadRow({
         <SidebarMenuButton
           size="sm"
           isActive={active}
-          onClick={(event) => onOpen(session, event.metaKey || event.ctrlKey)}
+          onClick={() => onOpen(session)}
           /* A finger resting on the row must not raise the browser's own
              callout or native context menu — the one context menu is Base
              UI's, opened on long press. */

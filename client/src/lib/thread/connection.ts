@@ -27,6 +27,11 @@ const RECONNECT_MAX_DELAY_MS = 8000
     spare; past that something is refusing rather than taking time, and the loop
     stops on no-progress before it ever gets here anyway. */
 const READY_ROUNDS = 4
+/** The longest a kept restart may hold the open chain before it is let go
+    anyway — see `holdForRestart`. A spawn plus a `session/load` of a long
+    conversation is seconds; this is the socket-died-in-between floor, not a
+    budget anything is expected to reach. */
+const RESTART_HOLD_MS = 60_000
 
 /** `revive: true` means "this thread needs a running agent, and a socket to it"
     — spawn one rather than serving its journal read-only, and attach rather
@@ -142,6 +147,24 @@ export class ThreadConnection {
    * settled world, which is the only state in which they can answer.
    */
   private chain: Promise<unknown> = Promise.resolve()
+  /**
+   * Ends the chain link a *kept* restart holds — see `onRestart`.
+   *
+   * A restart that keeps the journal never opens anything: the socket stays
+   * attached and the phase goes straight back to `live`. That is the point of
+   * it, and it is also what took `reviving` off the chain. `ready()`'s default
+   * case waits for a phase it did not start by awaiting `settled()`, on the
+   * documented grounds that every such phase is raised inside `openNow` and so
+   * "the chain really does own it" — which stopped being true the moment
+   * `markReviving("config")` started being raised from a socket callback.
+   * `settled()` then resolved in the same tick, the loop saw no progress and
+   * every send during a config restart threw "stuck waiting for the agent to
+   * restart on the new settings".
+   *
+   * So the restart takes a link of its own. `ready()` needs no change, and
+   * neither does anything else that waits on `settled()`.
+   */
+  private restartDone: (() => void) | null = null
   /**
    * Whether the last read said a turn was running.
    *
@@ -368,8 +391,12 @@ export class ThreadConnection {
              other way out of this phase was an open that a React effect had not
              run yet. Opening is what the effect would have done, and doing it
              here makes the send's own hand-off deterministic rather than a race
-             with React's commit. (`reviving` is deliberately not included: it is
-             raised inside `openNow`, so the chain really does own it.) */
+             with React's commit. (`reviving` is deliberately not included: the
+             chain really does own it — raised inside `openNow` for a revive,
+             and held by `holdForRestart` for the config restart that opens
+             nothing at all. That second half is what the kept-journal restart
+             had to add: without it this phase was owned by nobody and every
+             send during a settings change reported the thread as stuck.) */
           if (this.phase.kind === "starting") await this.openFromStore({ revive: true })
           break
       }
@@ -472,6 +499,41 @@ export class ThreadConnection {
       () => {},
       () => {}
     )
+  }
+
+  /**
+   * Hold the open chain until a kept restart says it is over.
+   *
+   * The timeout is not a policy, it is a floor: the server states `ready` or
+   * `failed` for every restart it starts, but a socket that dies in between
+   * states neither — and a chain link nobody resolves is a thread that can
+   * never be opened again. Generous, because a respawn is a spawn plus a
+   * `session/load` of the whole conversation.
+   */
+  private holdForRestart(): void {
+    this.endRestartHold()
+    /* The gate is built HERE, not inside a `run` callback. `run` would not
+       construct it until whatever is already on the chain had finished — so a
+       restart arriving during an open would leave `restartDone` unset when
+       `ready` came, nothing would resolve it, and the chain would sit on the
+       timeout instead of being let go. Built synchronously, the resolver exists
+       from this line on and the chain merely waits for a promise that may
+       already be settled by the time it gets there. */
+    const gate = new Promise<void>((resolve) => {
+      this.restartDone = resolve
+      setTimeout(resolve, RESTART_HOLD_MS)
+    })
+    this.chain = this.chain.then(
+      () => gate,
+      () => gate
+    )
+  }
+
+  /** Let the chain go, however the restart ended — including not at all. */
+  private endRestartHold(): void {
+    const done = this.restartDone
+    this.restartDone = null
+    done?.()
   }
 
   private run<T>(fn: () => Promise<T>): Promise<T> {
@@ -862,6 +924,11 @@ export class ThreadConnection {
   /** Drop the socket but keep what this device knows (the cursor above all), so
       re-opening is a delta rather than a rebuild. */
   detach(): void {
+    /* A restart is reported on the socket, so a socket that is going away is
+       one that will never say `ready` or `failed`. Holding the chain past that
+       would stall every later open behind `holdForRestart`'s timeout — which
+       exists as a floor, not as something anything should routinely wait out. */
+    this.endRestartHold()
     this.socket?.close()
     this.socket = null
     this.apply({ type: "detached" })
@@ -888,6 +955,8 @@ export class ThreadConnection {
   destroy(): void {
     this.disposed = true
     this.clearRecovery()
+    // …which releases any restart hold: a chain link nobody resolves would
+    // outlive the object holding it.
     this.detach()
     this.cursor = 0
   }
@@ -1175,9 +1244,16 @@ export class ThreadConnection {
           /* The user asked for this by changing a setting — not a thread whose
              agent had stopped, which is the other caller of this. */
           this.markReviving("config")
+          /* …and on the kept path nothing else will: no open runs, so the chain
+             would be idle under a phase that says a process is being replaced,
+             and `ready()` would read that as a thread stuck in `reviving`. The
+             other path is fine as it always was — its `openFromStore` below is
+             the chain link. */
+          if (kept) this.holdForRestart()
           return
         }
         if (state === "failed") {
+          // The hold is released by the `detach()` at the end of this branch.
           this.restarting = false
           /* `settle: false`: the restart failing says nothing about whether the
              agent's turn is over, and the thread now needs reviving — which the
@@ -1202,6 +1278,10 @@ export class ThreadConnection {
         if (kept) {
           this.restarting = false
           this.apply({ type: "socket-live" })
+          /* Last, so anything the hold was making wait — a send that arrived
+             mid-restart, which is now allowed to (`composerLock`) — resumes
+             against a connection that is already `live`. */
+          this.endRestartHold()
           return
         }
         /* The log WAS cleared under this socket, so the cursor names nothing

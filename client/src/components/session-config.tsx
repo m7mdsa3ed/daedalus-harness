@@ -167,12 +167,13 @@ export function SessionConfigPopover({
 
   /* The same settings as one string, for the collapsed trigger's tooltip and
      its accessible name — and what is true about them that the values alone
-     cannot say: a pick that has not landed yet, or one waiting for the turn to
-     end. Both are states of the *settings*, so they belong in the settings'
-     own sentence rather than in a badge somewhere else. */
+     cannot say: a pick that has not landed yet, or one waiting for the send
+     that will spend the spawn. Both are states of the *settings*, so they
+     belong in the settings' own sentence rather than in a badge somewhere
+     else. */
   const triggerLabel = [
     [persona?.name, modelLabel, effortLabel, modeLabel].filter(Boolean).join(" · "),
-    meta.configPending ? "— applying…" : meta.configStaged ? "— when this turn ends" : "",
+    meta.configPending ? "— applying…" : meta.configStaged ? "— when you next send" : "",
   ]
     .filter(Boolean)
     .join(" ")
@@ -251,8 +252,8 @@ export function SessionConfigPopover({
             {/* The chip already shows the value that was picked (the overlay is
                 what it reads); this is the half the value cannot say — whether
                 it is true yet. A spinner while the change is in flight, a clock
-                while it waits for the turn to end, and nothing at all the rest
-                of the time, which is almost always. */}
+                while it waits for the send that will spend the spawn, and
+                nothing at all the rest of the time. */}
             {meta.configPending ? (
               <Loader2Icon className="size-3 shrink-0 animate-spin" />
             ) : meta.configStaged ? (
@@ -266,16 +267,21 @@ export function SessionConfigPopover({
         {/* What is waiting, and the two things that can be done about it.
             First, because it describes every row underneath it: those rows are
             already drawing the staged values, and without this they would look
-            like settings that had simply been applied. */}
+            like settings that had simply been applied.
+
+            This is the resting state now, not a warning. A change that costs
+            the process is staged the moment it is picked and taken by the next
+            spawn — so it reads as information about when, and "Apply now" only
+            has a cost worth naming while a turn is actually running. */}
         {thread.stagedConfig && (
           <>
             <DropdownMenuGroup>
               <DropdownMenuLabel className="text-muted-foreground">
-                Applies when this turn ends
+                Applies when you next send
               </DropdownMenuLabel>
               <DropdownMenuItem onClick={() => void actions.applyStagedConfig(row)}>
                 <ClockIcon className="size-4" />
-                Apply now — stops the turn
+                {thread.turnActive ? "Apply now — stops the turn" : "Apply now"}
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() =>

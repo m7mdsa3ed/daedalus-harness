@@ -95,12 +95,30 @@ export function WorkspacePanelItems({
   onNewTab,
   onOpen,
   canOpenPanels,
+  flat,
 }: {
   onNewTab: () => void
   onOpen: (kind: PanelKind) => void
   /** False with no thread routed: there is no project to open a panel for. */
   canOpenPanels: boolean
+  /** Open the panel rows out in place instead of behind "Open a panel ▸".
+      For the tab strip's +, where the menu *is* the question the submenu asks:
+      a button meaning "open something" that answers with one row and a sideways
+      list is a hop for nothing. In the header's menu the submenu stays, because
+      there these rows share a list with everything else the thread can do. */
+  flat?: boolean
 }) {
+  const panels = OPENABLE.map((entry) => (
+    <PanelRow
+      key={entry.kind}
+      icon={PANEL_ICONS[entry.kind]}
+      label={entry.label}
+      hint={entry.hint}
+      shortcut={entry.shortcut}
+      onClick={() => onOpen(entry.kind)}
+    />
+  ))
+
   return (
     <DropdownMenuGroup>
       <PanelRow
@@ -110,7 +128,13 @@ export function WorkspacePanelItems({
         shortcut="newThread"
         onClick={onNewTab}
       />
-      {canOpenPanels && (
+      {canOpenPanels && flat && (
+        <>
+          <DropdownMenuSeparator />
+          {panels}
+        </>
+      )}
+      {canOpenPanels && !flat && (
         <DropdownMenuSub>
           <DropdownMenuSubTrigger className={MENU_ROW}>
             <MenuRow
@@ -121,18 +145,7 @@ export function WorkspacePanelItems({
           </DropdownMenuSubTrigger>
           {/* Same sizing as the menu that holds it: a submenu is anchored to
               its trigger row, so without this the hints would wrap. */}
-          <DropdownMenuSubContent className={MENU_WIDTH}>
-            {OPENABLE.map((entry) => (
-              <PanelRow
-                key={entry.kind}
-                icon={PANEL_ICONS[entry.kind]}
-                label={entry.label}
-                hint={entry.hint}
-                shortcut={entry.shortcut}
-                onClick={() => onOpen(entry.kind)}
-              />
-            ))}
-          </DropdownMenuSubContent>
+          <DropdownMenuSubContent className={MENU_WIDTH}>{panels}</DropdownMenuSubContent>
         </DropdownMenuSub>
       )}
     </DropdownMenuGroup>

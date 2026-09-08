@@ -1,13 +1,19 @@
-/* The right-hand end of a tab strip: the group's tab list, and nothing else.
+/* The right-hand end of a tab strip: the + and the group's tab list.
 
-   The + moved to the app header (`workspace/panel-items`), because a per-group
-   copy meant a split dock had two of them with no obvious answer to which one
-   you press, and the strip is the first thing to get cramped on a narrow screen
-   — which is exactly where an affordance for opening panels matters most, there
-   being no keyboard. Split went the other way and simply left: the strip stands
-   in the app header's own band now, where every pixel is shared with the app's
-   controls, and splitting is asked for by name in the palette (which says which
-   group it means) or by its chord.
+   The + is back, and it is the browser's affordance — the one control every tab
+   strip has ever had, at the end of the tabs, where a reader who wants another
+   one looks first. It went to the app header once because a split dock has one
+   per group with no obvious answer to which you press; the answer it has now is
+   that there is no ambiguity to resolve — a + on *this* strip opens into *this*
+   group, which is the same thing every tab beside it is about. Its rows are
+   `WorkspacePanelItems`, the header menu's own, so the two cannot drift; the
+   openers come down through the dock (`useDockOpeners`) because which project a
+   panel belongs to is `app-shell`'s answer, not a strip's.
+
+   Split went the other way and simply left: the strip stands in the app
+   header's own band, where every pixel is shared with the app's controls, and
+   splitting is asked for by name in the palette (which says which group it
+   means) or by its chord.
 
    The tab list is the opposite case, and belongs here for the same reason the +
    does not: it is *about this group*. Once tabs stop fitting, the strip scrolls
@@ -16,7 +22,7 @@
    one is doing (`panel-status`) rather than only what it is called. */
 import * as React from "react"
 import type { IDockviewHeaderActionsProps, IDockviewPanel } from "dockview-react"
-import { ChevronDownIcon, PinIcon, XIcon } from "lucide-react"
+import { ChevronDownIcon, PinIcon, PlusIcon, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -26,9 +32,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { MENU_WIDTH } from "@/components/menu-row"
 import { PANEL_ICONS } from "@/components/workspace/panel-kinds"
 import { PanelStatusDot } from "@/components/workspace/panel-status-dot"
-import { useDock } from "@/components/workspace/dock"
+import { WorkspacePanelItems } from "@/components/workspace/panel-items"
+import { useDock, useDockOpeners } from "@/components/workspace/dock"
 import { usePanelPinned } from "@/lib/workspace/panel-pins"
 import { usePanelStatus } from "@/lib/workspace/panel-status"
 import { PANEL_SPECS, isPanelKind } from "@/lib/workspace/panels"
@@ -78,14 +86,48 @@ function TabRow({ panel, onClose }: { panel: IDockviewPanel; onClose: () => void
 
 export function TabActions({ panels }: IDockviewHeaderActionsProps) {
   const dock = useDock()
-  /* Below `LIST_FROM` there is nothing here at all — no split button any more,
-     so the row is the list or it is empty. Splitting is the palette's row and
-     its chord: a button that has to be reached for in a strip that is now the
-     app header's own band was the widest thing in it and the least asked for. */
-  if (panels.length < LIST_FROM) return null
+  const { onNewTab, onOpenPanel } = useDockOpeners()
 
   return (
     <div className="flex h-full items-center gap-0.5 pr-1 pl-0.5">
+      {onNewTab && (
+        <DropdownMenu>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      aria-label="Open something in this group"
+                      className="size-6 text-muted-foreground hover:text-foreground"
+                    >
+                      <PlusIcon className="size-3.5" />
+                    </Button>
+                  }
+                />
+              }
+            />
+            <TooltipContent side="bottom">New thread or panel</TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent align="end" className={MENU_WIDTH}>
+            {/* Flat: the + already asked "open what?", so answering with one
+                row and a submenu is a hop for nothing. The rows themselves are
+                the header menu's, unchanged. */}
+            <WorkspacePanelItems
+              flat
+              onNewTab={onNewTab}
+              onOpen={(kind) => onOpenPanel?.(kind)}
+              canOpenPanels={!!onOpenPanel}
+            />
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+      {/* Below `LIST_FROM` the list is a button that does nothing for you — the
+          tabs are all on screen. The + stays either way, which is the whole
+          reason this row no longer returns null. */}
+      {panels.length >= LIST_FROM && (
       <DropdownMenu>
         <Tooltip>
           <TooltipTrigger
@@ -117,6 +159,7 @@ export function TabActions({ panels }: IDockviewHeaderActionsProps) {
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
+      )}
     </div>
   )
 }

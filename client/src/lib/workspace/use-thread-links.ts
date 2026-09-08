@@ -36,10 +36,9 @@ export function useThreadLinksFor(sessionId: string): ThreadLinks | null {
       projectId,
       /* Everything opened *from* a transcript asks for the side, because the
          thread is what you are reading it against — a file the agent named, a
-         diff of what it wrote, a page it cited. On a phone that is a tab in
-         front of the thread instead, and once the IDE has a group of its own
-         the next file lands in it: both are `openPanel`'s call, not this one's
-         (see SPLIT_MIN_WIDTH). */
+         diff of what it wrote, a page it cited. Where it actually lands is
+         `openPanel`'s call and not this one's: a tab beside the thread, the way
+         every panel opens now. Splitting is asked for by name (`splitActive`). */
       openFile: (path, line, endLine) => {
         /* Two halves: the dock brings the IDE on screen, and the request opens
            the tab inside it. `requestIde` writes to the IDE's own tab store, so

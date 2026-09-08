@@ -6,7 +6,6 @@ import { SidebarMenu, SidebarMenuItem, useSidebar } from "@/components/ui/sideba
 import { useThreadRowActions } from "@/components/thread-menu"
 import type { Actions } from "@/lib/actions"
 import { currentThreadId, threadPath } from "@/lib/router"
-import { markNewTab } from "@/lib/session-tabs"
 import { usePins } from "@/lib/pins"
 import { activityAt, type SessionMeta } from "@/lib/settings"
 import { periodLabel } from "@/lib/time"
@@ -66,9 +65,8 @@ export const ThreadList = React.memo(function ThreadList({
     onLeave: () => void navigate("/"),
   })
 
-  const open = React.useCallback((session: SessionMeta, newTab = false) => {
+  const open = React.useCallback((session: SessionMeta) => {
     if (isMobile) setOpenMobile(false)
-    if (newTab) markNewTab()
     void navigate(threadPath(session.id))
   }, [isMobile, setOpenMobile, navigate])
 

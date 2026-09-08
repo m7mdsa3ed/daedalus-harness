@@ -159,17 +159,23 @@ export interface ThreadRetry {
  * A spawn-config change asked for and not yet applied — the shape both the
  * `staged_config` event and `caught_up` carry.
  *
- * The harness stages a change instead of taking it when the change costs the
- * process and a turn is running: the alternative is killing work in flight to
- * move a setting the next turn is what will read anyway. Absent fields are
- * unchanged, exactly as `POST /api/sessions/:id/config` reads them, and the
- * whole object is replaced rather than merged on the wire — two picks made
- * before the boundary are one staged change, not two.
+ * The harness stages a change instead of taking it whenever the change costs
+ * the process: a spawn is what reads these values, so a spawn is what should
+ * pay for them, and the next one takes the patch — the revive behind a send,
+ * a rewind, the restart route, or the one `prompt` makes happen when a turn
+ * finds a patch outstanding. Absent fields are unchanged, exactly as
+ * `POST /api/sessions/:id/config` reads them, and the whole object is replaced
+ * rather than merged on the wire — two picks made before it lands are one
+ * staged change, not two.
  *
- * In memory only, on the server and on the client alike. Its whole lifetime is
- * the running turn it is waiting behind: a server that restarts has killed that
- * turn, and a staged change nobody is going to reach the boundary of is a
- * setting that silently moves days later.
+ * Never an agent: that is a different runtime rather than a setting on this
+ * one, and a respawn onto another binary ends in a `session/load` of an id
+ * that lives in the old runtime's store. `applyConfig` refuses to stage one.
+ *
+ * In memory only, on the server and on the client alike. A server that restarts
+ * drops the patch and the thread stays on its old settings; `caught_up`
+ * normalises `staged ?? null`, so a reattach clears the banner rather than
+ * leaving a ghost of a change that is never going to happen.
  */
 export interface StagedConfig {
   profileId?: string;
@@ -498,6 +504,16 @@ export type PromptReply =
   | { turnId: string; deferred?: boolean }
   | { queued: true; itemId: string };
 
+/**
+ * What `cancel` answers with. `reclaimed` is present only for a `reclaim`
+ * cancel that actually took something back — the message is gone from the
+ * queue by then, so a caller that asked for one and gets it MUST put the words
+ * somewhere (the composer). Absent means there was nothing un-landed to take:
+ * an ordinary stop, or a steer whose step boundary arrived first, which is the
+ * whole of "unless a new step already read it".
+ */
+export type CancelReply = { reclaimed?: QueuedMessage };
+
 /** What `compact` answers with. `deferred` means a turn was running and the
     request was booked for its next step boundary — the only place a turn can be
     summarized without losing the step in flight — so the summary is not in place
@@ -534,7 +550,11 @@ export type ThreadCommand =
           as file paths" action on a turn that died with inline blocks in it. */
       forceLink?: boolean;
     }
-  | { id: number; cmd: "cancel" }
+  /** Stop the running turn. `reclaim` also takes back the newest message that
+      has not landed yet — a queued row, or a steer the running step has not
+      reached — and answers with it, so the caller can put the words back in
+      the composer. Answered with `CancelReply`. */
+  | { id: number; cmd: "cancel"; reclaim?: boolean }
   /** Hold the turn at its next step boundary / let it go on. Only an agent
       whose `session_config` said `canPause` (the harness's own runtime, over
       `_daedalus/session/pause`); ACP itself has only `session/cancel`. Answered

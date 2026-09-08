@@ -160,6 +160,10 @@ function LandingComposer({ actions }: { actions: Actions }) {
             thread={thread}
             meta={meta}
             delivery={delivery}
+            /* This page is the box: nothing else on it can be typed into, and
+               its draft is not the routed thread, so the composer's own rule
+               (focus a routed draft) never fired here. */
+            autoFocus
             /* Awaited after the words have been taken and before the send, so
                the route changes while `actions.send` is still in flight — the
                order `startThread` has always used: the thread is already

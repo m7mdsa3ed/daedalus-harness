@@ -121,11 +121,13 @@ export function DraftScopeRow({
   const divider = <span aria-hidden className="h-3.5 w-px shrink-0 bg-border" />
 
   return (
-    /* py-0.5, not the shelf's py-1.5: every control in here is already h-6, so
+    /* py-1, not the shelf's py-1.5: every control in here is already h-6, so
        the padding is the only slack there is, and this row is under the pile on
        every thread — four pixels here is four pixels off the transcript for the
-       whole life of the app. */
-    <div className="flex min-w-0 items-center gap-1 px-2 py-0.5">
+       whole life of the app. Half a step rather than none, because the row now
+       carries four readings at its end and h-6 controls edge to edge read as a
+       band rather than as a floor. */
+    <div className="flex min-w-0 items-center gap-1 px-2 py-1">
       {editable ? (
         <PickerMenu
           icon={<ProjectIcon project={project} className="size-3.5" />}

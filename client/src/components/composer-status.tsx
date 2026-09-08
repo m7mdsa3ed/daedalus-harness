@@ -5,6 +5,7 @@ import {
   CheckCircle2Icon,
   CheckIcon,
   CircleDashedIcon,
+  GitCompareIcon,
   LoaderCircleIcon,
 } from "lucide-react"
 
@@ -14,7 +15,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { formatReset, peakWindow, planReadable, quotaStatusText, quotaTone } from "@/lib/quota"
 import type { Actions } from "@/lib/actions"
 import type { SessionMeta } from "@/lib/settings"
-import { extractSubagent, extractTodos, toolHeading, toolViewOf } from "@/lib/tools"
+import { extractSubagent, extractTodos, shortPath, toolHeading, toolViewOf } from "@/lib/tools"
+import type { ChangedFile, TurnChanges } from "@/lib/workspace/git-api"
 import { activeSubagents, buildRows } from "@/lib/transcript-rows"
 import { useAgents, useProfiles } from "@/lib/queries/catalog"
 import { useStoreSelect, type PlanItem, type ThreadState, type ToolItem } from "@/lib/store"
@@ -560,6 +562,138 @@ export function AgentsIndicator({ thread }: { thread: ThreadState }) {
             </li>
           ))}
         </ul>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+/* Git's own letter for a changed file, and the tone the app already gives that
+   outcome elsewhere. A letter rather than four icons: A/M/D/R is the shortest
+   thing that is unambiguous, and this list is read at 12px beside a path. */
+const FILE_STATUS: Record<ChangedFile["status"], { letter: string; tone: string }> = {
+  added: { letter: "A", tone: "text-emerald-600 dark:text-emerald-400" },
+  modified: { letter: "M", tone: "text-amber-600 dark:text-amber-400" },
+  deleted: { letter: "D", tone: "text-destructive" },
+  renamed: { letter: "R", tone: "text-sky-600 dark:text-sky-400" },
+}
+
+/** The two figures, in the one place they are spelled. */
+function DiffCount({ added, removed }: { added: number; removed: number }) {
+  return (
+    <span className="shrink-0 font-mono text-[11px] tabular-nums">
+      <span className="text-emerald-600 dark:text-emerald-400">+{added}</span>{" "}
+      <span className="text-destructive">−{removed}</span>
+    </span>
+  )
+}
+
+/**
+ * What the last turn that wrote anything did to the worktree, beside the
+ * checklist, the workers and the context ring.
+ *
+ * It was a chip in the transcript, under the turn that earned it — which put
+ * the same reading in a different place every turn and scrolled it out of view
+ * the moment the next answer arrived. It is the same *kind* of answer as the
+ * three beside it: one number that is true of the thread right now, glanced at
+ * constantly and read in full rarely. So it is the same shape (a 24px trigger
+ * over a popover) in the same cluster, and the file list — which is what a
+ * chip could never show without a second surface — is what the popover holds.
+ *
+ * `changes` is already gated by the caller (`withTurnChanges` +
+ * `turnCouldTouchFiles` in thread-view): git measures a *window*, not an
+ * author, so a turn that only read or searched is never handed one. Nothing
+ * about that bargain moved here.
+ */
+export function ChangesIndicator({
+  changes,
+  onOpen,
+}: {
+  changes?: TurnChanges
+  /** Open source control narrowed to these paths. Absent outside a workspace,
+      where there is no dock to put the review in. */
+  onOpen?: (turn: TurnChanges) => void
+}) {
+  const [open, setOpen] = useState(false)
+  if (!changes || changes.files.length === 0) return null
+
+  const count = changes.files.length
+  const added = changes.files.reduce((n, f) => n + f.additions, 0)
+  const removed = changes.files.reduce((n, f) => n + f.deletions, 0)
+  const label = `${count} ${count === 1 ? "file" : "files"} changed`
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="relative shrink-0 rounded-lg text-muted-foreground hover:text-foreground"
+            title={`${label} — +${added} −${removed}`}
+            aria-label={label}
+          >
+            <GitCompareIcon className="size-3.5" />
+            {/* The count rides the mark, the way the subagent count does — the
+                cluster is a row of 24px squares and a number beside one would
+                make this the only control wider than it is tall. Secondary and
+                not primary: a settled fact, not something still running. */}
+            <span className="absolute -end-0.5 -top-0.5 grid size-3 place-items-center rounded-full bg-secondary text-[8px] font-semibold tabular-nums text-secondary-foreground">
+              {count > 9 ? "9+" : count}
+            </span>
+          </Button>
+        }
+      />
+      <PopoverContent align="end" side="top" className="w-80 gap-2">
+        <div className="flex items-baseline justify-between gap-2">
+          <p className="font-medium">{label}</p>
+          <DiffCount added={added} removed={removed} />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          What the last turn that wrote anything did to the worktree — git's count, not the
+          transcript's, so a shell command that edited a file is in it.
+        </p>
+        <ul className="-mx-1 max-h-[min(50svh,20rem)] space-y-0.5 overflow-y-auto overscroll-contain px-1">
+          {changes.files.map((file) => (
+            <li key={file.path} className="flex items-baseline gap-2 text-xs">
+              <span
+                className={cn("w-3 shrink-0 text-center font-mono font-semibold", FILE_STATUS[file.status].tone)}
+                title={file.status}
+              >
+                {FILE_STATUS[file.status].letter}
+              </span>
+              {/* shortPath, not truncate: a path clipped at the end loses the
+                  filename, which is the only part being scanned for. */}
+              <span
+                className="min-w-0 flex-1 truncate font-mono text-foreground"
+                title={file.from ? `${file.from} → ${file.path}` : file.path}
+              >
+                {shortPath(file.path, 40)}
+              </span>
+              {file.binary ? (
+                <span className="shrink-0 text-[11px] text-muted-foreground">binary</span>
+              ) : (
+                <DiffCount added={file.additions} removed={file.deletions} />
+              )}
+            </li>
+          ))}
+        </ul>
+        {/* Reviewing is source control narrowed to these paths — the files land
+            where they can be staged, discarded and committed, which a second
+            read-only list of the same names could never do. */}
+        {onOpen && (
+          <Button
+            size="xs"
+            variant="outline"
+            className="w-full"
+            onClick={() => {
+              setOpen(false)
+              onOpen(changes)
+            }}
+          >
+            <GitCompareIcon className="size-3.5" />
+            Review in source control
+          </Button>
+        )}
       </PopoverContent>
     </Popover>
   )

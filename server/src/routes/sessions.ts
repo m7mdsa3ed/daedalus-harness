@@ -237,11 +237,14 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
    * Three answers, not two.
    *
    * A live change answers `{live: true}` and every socket stays exactly where
-   * it was. One that costs the process while a turn is running is **staged** —
-   * `{live: false, staged}` — and taken at that turn's own boundary, which is
-   * the next moment the setting would be read anyway; `defer: false` is the
-   * caller's "now, and never mind the turn". Anything else restarts, and
-   * answers `{live: false, restarting: true}` *before* the restart rather than
+   * it was. One that costs the process is **staged** — `{live: false, staged}`
+   * — and taken by the next spawn, which for a thread nobody is sending to is
+   * no spawn at all; the turn that needs it is what makes one happen. That is
+   * now the common answer, not the mid-turn exception it started as.
+   *
+   * `{live: false, restarting: true}` is left for the two callers that ask for
+   * the restart itself — `defer: false` ("Apply now") and an agent change,
+   * which is never staged — and it is answered *before* the restart rather than
    * after it: the decision is immediate, the spawn → `session/load` → restore
    * that follows is seconds, and holding the answer open across it left the
    * browser with a blocked request and every other device with nothing at all.

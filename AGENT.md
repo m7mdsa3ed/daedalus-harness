@@ -152,10 +152,20 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **Being env at spawn does not mean being env forever.** `POST /api/sessions/:id/config` is
   the one door; it answers `{live}` and falls through to respawn when it cannot. **Respawn is
   atomic and server-side**, never driven from the browser.
-- **A change that costs the process is staged, never taken out of a running turn** — held in
-  `session.stagedConfig`, flushed at that turn's own boundary (never a `continued` one), and
-  fanned as the absolute live-only `staged_config`. **A held turn is never staged**: it is
-  stopped *waiting* for the change. `defer:false` is the only "now, and never mind the turn".
+- **A change that costs the process is staged when it is picked, and the next spawn takes
+  it** — held in `session.stagedConfig`, fanned as the absolute live-only `staged_config`.
+  **Two mechanisms, no third and no timer**: `respawnNow` *folds* the patch into any spawn
+  that happens anyway (the revive behind a send, a rewind, the restart route) as a value
+  substitution — never by re-entering `applyConfig`, which recurses into a second spawn — and
+  `prompt` flushes it before starting a turn, which is the one door every turn comes through.
+  A **queue drain never flushes** (it calls `startTurn` directly) and neither does a **steer**
+  (`!promptActive` is the test), so the old `continued` rule survives: no restart between two
+  messages the user sent together. Never staged: `defer:false`, a **held** turn (stopped
+  *waiting* for the change), and an **agent** change — a different runtime, whose `session/load`
+  would name an id in the *old* one's store. **A flush that fails re-stages and refuses to
+  send**; a patch whose profile went stale is dropped with a notice, never thrown inside a
+  prompt. There is no `turn_ended` flush: a turn ending is not a reason to respawn for a user
+  who is still reading.
 - **The route answers the decision, not the restart.** `{restarting:true}`, and the sequence
   reports itself as `restart` started/ready/failed to **every** peer — a device that was not
   holding the menu used to fold the reload's re-narration in as news. Answering early is
@@ -181,6 +191,13 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **A message typed into a running turn is queued, not steered — and the queue is the
   server's.** Steering is explicit (`prompt {steer:true}`, ⌘⇧Enter). The `queue` event is
   absolute and reaches every peer including the origin.
+- **Escape stops the turn and takes back the message that has not landed** (`cancel
+  {reclaim:true}`), newest first and one only, back into an empty composer. Atomic and
+  server-side, and **the take-back comes before the cancel**: a settle is a step boundary, and
+  `flushSteers` would draw the held steer's bubble. A queued row never left the server; a held
+  steer is unwound only while it is still held (`takeSteer`) — **past its boundary nothing
+  comes back**, which is never a reason to reach for an older message. Opt-in, because the
+  message leaves the queue: only a caller with somewhere to put the words may ask.
 - **Claude Code reaches a profile's gateway through the harness's own shim**
   (`server/src/gateway-shim.ts`), which forwards byte for byte and makes exactly one repair.
   **The key in the path is the credential** — minted per boot, never stored.
@@ -245,7 +262,14 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   a draft** — `isListed`, not `isTopLevel`, is what the sidebar, Recents, the project page,
   the palette and the schedule form filter by. The tab strip's `+` is the one exception left
   (a tab has to be a panel, and the landing page is a route), with the project page's queued
-  terminal/IDE behind it — both open a draft because they need a dock.
+  terminal/IDE behind it — both open a draft because they need a dock. **It takes the caret
+  itself** — a draft's composer is focused when it is the routed thread or when the caller
+  says so (`autoFocus`, which is the console's, whose route is `/`); never on touch.
+- **Opening a thread opens a tab, never replacing the one you were reading** — `newTab` at
+  both doors (the route effect *and* `handleDockReady`, because the dock is unmounted while
+  the landing console is up). An open thread is focused, not duplicated. **A tab's title is
+  only written forward**: dockview serializes titles, so a chat with no session row yet keeps
+  the restored one rather than being renamed to the placeholder.
 - **Sidebar order and the period a row is filed under are `activityAt` — the last turn, never
   `createdAt`. Reading is not activity.** Pinned and Recents are shortcuts, not places.
 - **Everything with a face is drawn by `components/entity-icon.tsx`.** No component draws a
@@ -258,6 +282,19 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   message behind "+", what governs *how it sends* behind the chevron beside Send. Touch
   targets follow `useCoarsePointer` (the device); what Enter means follows `useIsMobile`
   (the width).
+- **The composer is one width, and it does not move.** Narrowing it while unfocused and
+  giving the width back on `:focus-within` was tried and removed: every box in the unit —
+  the shelf, the card, the notices, the scope row — measures against
+  `--harness-composer-width`, so the whole unit breathes on every click in and out of the
+  textarea, which is motion the reader did not ask for at the exact moment they are aiming
+  at something.
+- **The shelf has a surface of its own** (`--shelf`, `bg-shelf`), derived from `--composer`
+  and **darker than it in both modes — which is two declarations, not one**: darker is toward
+  the foreground in a light palette and toward the *background* in a dark one, where
+  `--composer` is already the lighter of the two tones. It wore `--surface`, which is the
+  *page's* ground and resolves to the same thing `--composer` does in a light palette, so the
+  shelf, the composer and the page were one flat band with an invisible tuck between them.
+  Derived, never picked, so every generated palette gets it for nothing.
 - **The shelf has a floor and a pile, and the floor is what is permanently true.** Project,
   tools and the context ring are `ComposerStrip`'s `footer` (`DraftScopeRow`) — always drawn,
   never a card, on **both** sides of the first message: a started thread's project only stops
@@ -268,8 +305,9 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **The pile is only what is about the message being typed** — attachments, parked pastes, the
   history notice, the two completers, the archive notice.
 - **A reading of the thread is a 24px trigger over a popover, in the footer's end cluster** —
-  the checklist's progress, the running-subagent count, the context ring (`TodoIndicator`,
-  `AgentsIndicator`, `ContextIndicator`). One kind of question, one shape, one place; each
+  the checklist's progress, the running-subagent count, what the last turn wrote, the context
+  ring (`TodoIndicator`, `AgentsIndicator`, `ChangesIndicator`, `ContextIndicator`). One kind
+  of question, one shape, one place; each
   draws nothing when it has nothing to say. A popover is a fixed surface, so those lists scroll
   without taking room from the transcript. **A floating summary pill over the composer was
   tried and removed** — see `docs/client.md`.
@@ -324,12 +362,58 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   the library beside it that only exports `start` (`editor.worker.start.js`): pointed at the
   latter the worker boots, answers nothing, and every worker-backed feature dies quietly —
   the visible one being the diff, which drew both files whole with nothing marked changed.
-- **A tab strip carries only what is about its own group** — the tab list, split, and the
-  context ring of the thread in its `activePanel`. The app's single controls (the bell, the ⋯
-  menu) live beside the palette trigger in the sidebar header, because the sidebar does not
-  split and is on every route; only the sidebar toggle stays elected to one strip
-  (`lib/workspace/dock-chrome`). **Splitting has no chord** — it is the strip's button and the
-  palette's row, both of which name the group they act on.
+- **A tab is one slab, rounded on all four sides** (`.panel-tab-chip`, `index.css`), and
+  **every tab has a ground** — three weights of one material: the tab you are on, the one you
+  are pointing at, the rest. A surface that only appears on click reads as the selection
+  rather than as the shape a tab has. (A browser's shape — top-rounded, flared into the panel
+  — was tried and removed: the flare only reads against a filled toolbar, and everything under
+  these tabs is transparent by design.) It carries its kind's glyph, its title, and the ⋮ and
+  close, **both of which appear on hover** (always where there is no pointer, and the ⋮ holds
+  itself visible while its menu is open) — **not** the thread's context reading, which the
+  composer's footer says once. The ⋮ and the right-click menu render one `items` array, so
+  they cannot drift. Sizing is a browser's — one width whether it is alone or one of nine, so
+  **no `singleTabMode`** — but wider than a browser's, because a thread is named after what it
+  is doing, and the emptiness beside a lone tab is the void container's to drag the window by.
+- **Every strip is the app header's own row** (`--dv-tabs-and-actions-container-height`): a
+  strip in the band and a strip docked under it are the same bar, and a shorter one below
+  reads as a lesser thing rather than as another group of the same kind. **What separates two
+  groups is the split view's own line** (`--dv-separator-border`), never a border on a strip —
+  it is drawn on every view but the first, so one declaration covers a stack and a row alike,
+  and the banded strip has nothing above it because it *is* the first.
+- **A tab strip carries what is about its own group** — the **+** and the tab list, **against
+  the last tab and not at the strip's end** (`.dv-void-container { order: 1 }`, which moves
+  the one flex item that has to move and leaves dockview's tree alone). The + is the browser's
+  affordance and opens into *this* group, which is what makes a per-group copy unambiguous; its rows are `WorkspacePanelItems`, the same array the header menu rendered,
+  passed `flat` because the button already asked the submenu's question. **The openers come
+  down through `useDockOpeners`**, never re-derived in the strip: which project a panel
+  belongs to is `app-shell`'s answer, and every surface calls the one `openWorkspacePanel`.
+  The bell and the palette trigger stay in the sidebar header, which does not split and is on
+  every route.
+- **On a narrow screen only the active tab says its name** — every other tab is its mark: the
+  kind's glyph, or for a chat the **initials of its title** (`initialsOf`, the assignee
+  avatar's). Four titles truncated to "Fix th…" are four identical tabs. **It is entirely
+  `index.css`, keyed on dockview's `dv-active-tab`/`dv-inactive-tab`, because it has to
+  animate**: the mark and the title are both always in the DOM and the CSS collapses whichever
+  the tab is not (a width and an opacity, which interpolate). Branching on `useIsMobile()` in
+  the component was the first version and could never move — React swaps one element for
+  another, and there is nothing between two different nodes to transition. For the same reason
+  nothing here is unmounted: a node leaving takes its width in one frame. **Transition the
+  width *cap*, never the flex basis** — a `flex-grow` that jumps 0→1 resolves in one frame no
+  matter what the basis is doing.
+- **The app header's controls are the tab's material *and its height*** (`.header-chip` beside
+  `.panel-tab-chip` in `index.css`; `HEADER_CHIP` carries `size-8`, the tab's `h-8`): the
+  sidebar toggle, the view-settings sliders and that group's tabs are one row whenever a group
+  joins the band, so a pill of `--background` at 24px next to a rounded rectangle of
+  `--composer` at 32px is two bars pretending to be one. **There is no ⋯ menu**
+  — what it held went to the surface each half belongs to: opening a thread or a panel is the
+  strip's +, and how transcripts are drawn on this device is the sliders beside the sidebar
+  toggle, which is the app's other device-level control.
+- **Opening a panel never splits the dock** — every kind arrives the way a new thread does, a
+  tab beside what you are looking at, and `OpenPanelOptions.direction` is read as "do not
+  replace what is in front of me" and nothing more. It used to split when the window was wide
+  and no group of that kind existed yet, so the same click cut the dock in half the first time
+  and opened a tab the second, rearranging a layout the reader had built. **Splitting is asked
+  for by name**: `splitActive` (the chord, the palette row), which says which panel it moves.
 - **A panel kind is a surface, and a surface that reads the URL cannot be one** — the board
   panel keeps "which board, which task" in its descriptor (`lib/tasks-location.ts`), never in
   the route. **What a panel is doing is data the panel publishes and the tab draws**
@@ -365,11 +449,15 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   chunk name from the service worker's precache.
 - **A turn's changes are measured by git, never read off the transcript** — tree snapshots at
   `turn_started`/`turn_ended` through a scratch index; **the real index is never touched**.
-  **What git measures is a window, not an author**, so the *chip* is gated on the transcript
+  **What git measures is a window, not an author**, so the *reading* is gated on the transcript
   (`couldTouchFiles`, ACP `kind` and no vendor name): a turn that only read, searched,
   fetched or thought draws nothing, because in a cwd shared with another thread, an editor or
   a build it would otherwise claim their diff. The gate is a **read-only allowlist** — an
   unrecognised kind still draws — and it decides only what is drawn, never what is recorded.
+  **It is drawn in the footer's end cluster, not under the turn** (`ChangesIndicator`): it is
+  the newest gated turn's, which is a reading of the thread and belongs where the other three
+  are, and the file list a chip could never hold is what its popover is for. `ThreadView` picks
+  the turn (the last value of `withTurnChanges`) — the composer holds no opinion about which.
   **Reviewing a turn is source control narrowed to its paths** (`lib/ide/scm-filter.ts`), not a
   surface of its own: the files are already where they can be staged, discarded and committed,
   and a second list that could do none of that was the changes tab this replaced. The

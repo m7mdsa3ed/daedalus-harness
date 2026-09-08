@@ -44,6 +44,7 @@ import {
   JOURNALED_EVENTS,
   type AttachmentRef,
   type HistoryLost,
+  type CancelReply,
   type PromptReply,
   type StagedConfig,
   type ThreadEvent,
@@ -984,12 +985,11 @@ export class SessionManager {
           ? event.error.message.slice(0, LAST_ERROR_MAX)
           : null;
       this.persist(session);
-      /* And the boundary a staged config change has been waiting for. Here
-         rather than beside the turn waiters because this is the one place both
-         ends of a turn are seen exactly once, journaled, in order — and it
-         reads `continued`, which is the difference between a boundary and the
-         gap between two messages the user sent together. */
-      if (event.ev === "turn_ended") this.flushStaged(session, event.continued === true);
+      /* A staged change used to be flushed here, at `turn_ended`. It is not any
+         more: the change is taken by the next *spawn* (`respawnNow` folds it)
+         and by the next *turn* (`prompt` flushes it), never by the end of the
+         last one. Restarting the agent the moment a turn ended spent a spawn on
+         a user who was still reading the answer. */
     }
     const out = JOURNALED.has(event.ev) ? this.log.append(session, event) : event;
     const subs = this.subscribers.get(session.id);
@@ -1715,14 +1715,21 @@ export class SessionManager {
    * Two things it does NOT do any more, both of which were paid for by the
    * person holding the menu:
    *
-   *  - **It does not stop a running turn to move a setting.** A change that
-   *    costs the process, asked for mid-turn, is *staged*: held in
-   *    `session.stagedConfig` and applied at the turn's own boundary, which is
-   *    the next moment the value would be read anyway. The client used to ask
-   *    "restart the agent? the running turn stops" and offer two answers, both
-   *    bad. `defer: false` is the explicit "now, and never mind the turn", and
-   *    a **held** turn is never staged — a turn stopped on a rate limit is
-   *    waiting for exactly this change (see the `paused` event).
+   *  - **It does not restart anything when the setting is picked.** A change
+   *    that costs the process is *staged* — held in `session.stagedConfig` —
+   *    and the next **spawn** takes it: `respawnNow` folds the patch into
+   *    whatever spawn happens next, and `prompt` makes one happen when a turn
+   *    finds a patch outstanding. Two mechanisms, no third, no timer.
+   *
+   *    This used to be the mid-turn case only, and it was the smaller half. The
+   *    other half respawned on the spot — which on a *retired* thread woke a
+   *    process for nobody, and then paid for a second spawn when the next
+   *    message revived it, and on a live one restarted the agent for a user who
+   *    was still reading. `defer: false` is the explicit "now, and never mind
+   *    what it costs"; a **held** turn is never staged (it is stopped *waiting*
+   *    for this change — see the `paused` event); and an **agent** change is
+   *    never staged either, because it is a different runtime rather than a
+   *    setting on this one.
    *  - **It does not hold its answer open across the restart.** The respawn is
    *    spawn → `session/load` → restore, which is seconds; the decision above
    *    it is immediate. So the decision is answered and the sequence runs on,
@@ -1761,13 +1768,32 @@ export class SessionManager {
       this.noteConfig(session, before, await this.configLabels(session));
       return { live: true };
     }
-    /* Nothing live could be done, so this costs the process. If a turn is
-       running, that cost is the turn — so hold the change at its boundary
-       instead of taking it, unless the caller has said otherwise or the turn is
-       held (a held turn is stopped *waiting* for a model change; staging one
-       behind a boundary it will never reach is a change that never happens). */
+    /* Nothing live could be done, so this costs the process — and a change that
+       costs the process is not taken when it is picked. It is **staged**: held
+       in `session.stagedConfig`, and the next spawn is what takes it
+       (`respawnNow` folds the patch; `prompt` flushes it before starting a
+       turn). Staging used to be the mid-turn case alone, and the idle case
+       respawned on the spot — which on a *retired* thread woke a process up for
+       nobody, and then paid for a second spawn when the next message revived it.
+       Now the pick costs nothing and the send costs one spawn.
+
+       Three exclusions, and only three:
+        - `defer: false` — the menu's "Apply now", which is the whole of "now,
+          and never mind what it costs";
+        - a **held** turn, which is stopped *waiting* for a model change (see
+          the `paused` event): staging one behind a boundary it will never reach
+          is a change that never happens;
+        - an **agent** change, which is not a setting on this process but a
+          different runtime. `StagedConfig` cannot carry one — a mid-turn agent
+          change used to be staged and then silently dropped at flush — and it
+          must not learn to: a respawn onto another binary ends in a
+          `session/load` of an id that lives in the *old* runtime's store, so
+          the conversation is lost while the transcript still shows it. Nothing
+          drives this from the UI (a started thread's agent is fixed at draft
+          time); the guard is here so a script or a workflow cannot either. */
     const bridge = session.bridge;
-    if (opts.defer !== false && bridge?.promptActive && !bridge.paused) {
+    const movesAgent = next.agentId !== session.agentId;
+    if (opts.defer !== false && !bridge?.paused && !movesAgent) {
       return { live: false, staged: this.stageConfig(session, next) };
     }
     /* The row moves before the respawn rather than being passed to it, because
@@ -1896,10 +1922,15 @@ export class SessionManager {
   // ---- staged config ----
 
   /* A change is staged as a patch, not as a whole configuration: two picks made
-     before the boundary are one staged change (the second merges into the
-     first), and a field nobody touched stays whatever the row says at flush
-     time. Every one of these emits, because `staged_config` is absolute and
-     every peer draws from it. */
+     before it lands are one staged change (the second merges into the first),
+     and a field nobody touched stays whatever the row says at flush time. Every
+     one of these emits, because `staged_config` is absolute and every peer draws
+     from it — which is the whole reason they all go through `setStaged`. */
+
+  private setStaged(session: Session, staged: StagedConfig | null): void {
+    session.stagedConfig = staged;
+    this.emit(session, { ev: "staged_config", config: staged });
+  }
 
   private stageConfig(
     session: Session,
@@ -1913,8 +1944,7 @@ export class SessionManager {
       ...(next.personaId !== undefined ? { personaId: next.personaId } : {}),
       ...(next.suggestFollowups !== undefined ? { suggestFollowups: next.suggestFollowups } : {}),
     };
-    session.stagedConfig = staged;
-    this.emit(session, { ev: "staged_config", config: staged });
+    this.setStaged(session, staged);
     return staged;
   }
 
@@ -1922,8 +1952,7 @@ export class SessionManager {
       path that has just made one meaningless. */
   clearStaged(session: Session): void {
     if (!session.stagedConfig) return;
-    session.stagedConfig = null;
-    this.emit(session, { ev: "staged_config", config: null });
+    this.setStaged(session, null);
   }
 
   /** Drop only the fields a live change has just placed, so what is left still
@@ -1949,8 +1978,7 @@ export class SessionManager {
     if (applied.model !== undefined) delete rest.model;
     if (applied.effort !== undefined) delete rest.effort;
     if (Object.keys(rest).length === 0) return this.clearStaged(session);
-    session.stagedConfig = rest;
-    this.emit(session, { ev: "staged_config", config: rest });
+    this.setStaged(session, rest);
   }
 
   /** What a client asks for when it presses "Apply now" on a staged change, and
@@ -1960,51 +1988,70 @@ export class SessionManager {
   }
 
   /**
-   * The turn ended, so the change waiting behind it can be taken.
+   * Take the staged change now, and answer only once the process is on it.
    *
-   * Deliberately not awaited by the caller and deliberately off the emit tick:
-   * this respawns, and the settle path it hangs off is also what drains the
-   * queue. A turn that is `continued` — the queue draining straight into
-   * another one — is not a boundary anybody is waiting at, so the change stays
-   * staged for the *next* one rather than restarting the agent between two
-   * messages the user sent together.
+   * This is the send path's half of "the next turn takes it" — the other half
+   * is `respawnNow`, which folds the patch into any spawn that happens for some
+   * other reason (a revive, a rewind, the restart route). Between the two there
+   * is no third mechanism and no timer: a staged change is taken when a spawn
+   * happens, and a turn that finds one staged makes that spawn happen.
+   *
+   * It used to be a turn *boundary* that took it, fired off the `turn_ended`
+   * event and deliberately not awaited. That flush is gone. It restarted the
+   * agent the instant a turn ended, for a user who might then read the answer
+   * for ten minutes and never reply — and, being unawaited, it could not tell
+   * anybody that it had failed.
    */
-  private flushStaged(session: Session, continued: boolean): void {
+  private async flushStagedNow(session: Session): Promise<void> {
     const staged = session.stagedConfig;
-    if (!staged || continued) return;
-    setTimeout(async () => {
-      /* Re-read: everything about this may have moved while the tick was
-         pending — the thread deleted, another turn started, the change
-         cancelled or applied by hand from another device. */
-      const current = this.sessions.get(session.id);
-      if (!current || current.deletedAt !== null) return;
-      if (current.stagedConfig !== staged) return;
-      if (current.bridge?.promptActive) return;
-      const profile = await getProfile(staged.profileId ?? current.profileId);
-      const project = await getProject(current.projectId);
-      if (!profile || !project) return this.clearStaged(current);
-      this.clearStaged(current);
-      /* What the row is on stands in for anything the patch does not name —
-         except across a profile move, where the row's model and effort name a
-         model of the profile being left. There "unnamed" means "let the new
-         profile's default resolve", which is what `applyConfig` does with "".*/
-      const moving = profile.id !== current.profileId;
-      void this.applyConfig(
-        current.id,
+    if (!staged) return;
+    const profile = await getProfile(staged.profileId ?? session.profileId);
+    const project = await getProject(session.projectId);
+    /* Validated here and not only where it was picked: a profile can be edited,
+       deleted, or have this agent taken off it between the pick and the send.
+       Dropped with a row saying so rather than thrown — this runs inside a
+       prompt, and a setting nobody is watching must not fail a message that is
+       fine. */
+    if (!profile || !project || !profileSupports(profile, session.agentId)) {
+      this.clearStaged(session);
+      session.bridge?.noteConfigChange(
+        "Profile",
+        undefined,
+        "staged change dropped — that profile can no longer run this agent",
+      );
+      return;
+    }
+    /* What the row is on stands in for anything the patch does not name —
+       except across a profile move, where the row's model and effort name a
+       model of the profile being left. There "unnamed" means "let the new
+       profile's default resolve", which is what `applyConfig` does with "". */
+    const moving = profile.id !== session.profileId;
+    const model = staged.model ?? (moving ? "" : session.model);
+    const effort = staged.effort ?? (moving ? "" : session.effort);
+    try {
+      await this.applyConfig(
+        session.id,
         {
           profile,
-          agentId: current.agentId,
+          agentId: session.agentId,
           project,
-          model: staged.model ?? (moving ? "" : current.model),
-          effort: staged.effort ?? (moving ? "" : current.effort),
+          model,
+          effort,
           ...(staged.personaId !== undefined ? { personaId: staged.personaId } : {}),
           ...(staged.suggestFollowups !== undefined ? { suggestFollowups: staged.suggestFollowups } : {}),
         },
         { defer: false },
-      ).catch((error) => {
-        console.warn(`[${current.id.slice(0, 8)}] staged config could not be applied:`, error);
-      });
-    }, 0).unref();
+      );
+    } catch (error) {
+      /* The spawn or the load failed, so the thread is not on the settings this
+         message was meant for. `applyConfig` drops the patch *before* it
+         restarts — so that a peer reattaching at `ready` cannot be handed a
+         stale one — which makes putting it back this path's job. It has to go
+         back: the pick would otherwise be lost by the one failure the user is
+         actually watching, and the send is about to fail with it. */
+      if (session.stagedConfig !== staged) this.setStaged(session, staged);
+      throw error;
+    }
   }
 
   /* ── Saying what changed ───────────────────────────────────────────────────
@@ -2179,6 +2226,12 @@ export class SessionManager {
    * passes it, and only after checking that the log is actually holding that
    * conversation; a rewind must NOT, because clearing and refilling the journal
    * is how it truncates.
+   *
+   * Every caller also, and silently, **takes whatever change is staged**: a
+   * spawn is what reads these settings, so a spawn is what applies the patch
+   * waiting for one. Callers pass the row's own values and get the user's
+   * newest ones — which is why a send on a retired thread costs one spawn now
+   * and not two. See the fold at the top of `respawnNow`.
    */
   async respawn(
     id: string,
@@ -2234,8 +2287,59 @@ export class SessionManager {
       throw new Error(
         "This thread is in Trash. Restore it from the thread list before changing or starting it.",
       );
-    /* Whatever was waiting for a turn boundary belonged to the process being
-       replaced — and the one coming up is spawned on settings newer than it. */
+    /* A change that costs the process was staged when it was picked, and this
+       is a spawn — so the settings it comes up on are the staged ones. Folded
+       as a *value substitution*, never by re-entering `applyConfig`: that path
+       comes back through `restartWith` → `respawn` and spends two spawns on one
+       revive (the inner call terminates, because the patch is gone by then, but
+       the process has already been replaced twice).
+
+       Every caller gets it without knowing: the revive behind a send on a
+       retired thread, the scheduler's, a rewind's cut, the restart route. That
+       is the difference between one spawn on the next send and today's two —
+       an idle pick used to respawn on the spot, and the send then revived the
+       thread it had just woken up.
+
+       `restartWith` never sees a patch here: `applyConfig` drops it before it
+       announces the restart, so the fold below is a no-op on that path and the
+       notices it would duplicate are `restartWith`'s own. */
+    const staged = session.stagedConfig;
+    const stagedBefore = staged ? await this.configLabels(session) : null;
+    let spawnProfile = profile;
+    let spawnModel = model;
+    let spawnEffort = effort;
+    if (staged) {
+      /* Re-validated at fold time rather than trusted from the pick: the
+         profile may have been edited, deleted or had this agent taken off it
+         since. A patch that no longer names a usable profile falls back to the
+         one the caller asked for — a revive must not fail because a setting
+         nobody is watching went stale. */
+      const picked = staged.profileId ? await getProfile(staged.profileId) : profile;
+      const usable = picked && profileSupports(picked, agentId) ? picked : profile;
+      /* Across a profile move the row's model names a model of the profile
+         being *left*, so "unnamed" means "let the new profile's default
+         resolve" — `""`, exactly as `applyConfig` reads it. */
+      const moving = usable.id !== session.profileId;
+      spawnProfile = usable;
+      spawnModel = modelFor(session, usable, staged.model ?? (moving ? "" : model));
+      spawnEffort = staged.effort ?? (moving ? "" : effort);
+      /* A persona that names an effort applies it — the same rule `applyConfig`
+         states, and it has to be repeated here rather than inherited, because
+         this path is a substitution and never re-enters that method. Only when
+         the persona is *moving*, and only under an effort the patch does not
+         name itself: picking a persona is a statement about how to work, and
+         the effort row underneath stays the user's. */
+      const movingPersona =
+        staged.personaId !== undefined && staged.personaId !== session.personaId;
+      if (movingPersona && staged.effort === undefined) {
+        spawnEffort = (await personaEffort(staged.personaId)) ?? spawnEffort;
+      }
+      /* The row moves before the spawn rather than being passed to it, because
+         a persona is not a spawn argument the way model and effort are: `start`
+         reads it off the session. Same bargain as `applyConfig`'s. */
+      if (staged.personaId !== undefined) session.personaId = staged.personaId;
+      if (staged.suggestFollowups !== undefined) session.suggestFollowups = staged.suggestFollowups;
+    }
     this.clearStaged(session);
     /* Captured while the old process is still up — it is the only thing that
        knows how the agent was configured. A thread with no live process
@@ -2253,10 +2357,10 @@ export class SessionManager {
     session.bridge = null; // stale generation from here on
     oldBridge?.close(new Error("respawning"));
     if (!session.exited) oldProc?.kill();
-    session.profileId = profile.id;
+    session.profileId = spawnProfile.id;
     session.agentId = agentId;
-    session.model = model || profile.defaultModel || "";
-    session.effort = effort ?? "";
+    session.model = spawnModel || spawnProfile.defaultModel || "";
+    session.effort = spawnEffort ?? "";
     /* The load replays the entire conversation as fresh updates, so everything
        already journaled is about to be said again. There are two ways to answer
        that duplicate, and which one is taken is the difference between a
@@ -2282,7 +2386,7 @@ export class SessionManager {
     else await this.log.clear(session);
     resetStderr(session);
     try {
-      const bridge = await this.start(session, profile, project, model, effort, {
+      const bridge = await this.start(session, spawnProfile, project, spawnModel, spawnEffort, {
         load: session.acpSessionId ? { acpSessionId: session.acpSessionId } : undefined,
         restore,
         ...(choices && Object.keys(choices).length > 0 ? { configChoices: choices } : {}),
@@ -2300,6 +2404,27 @@ export class SessionManager {
       /* The load is over either way it went, and a flag left standing would
          silence the next turn's updates. */
       session.quietLoad = false;
+    }
+    /* A fold moved settings nobody has announced yet — `restartWith` says what
+       it moved because it knows, and this spawn happened for some other reason
+       entirely (a send reviving the thread, a rewind, the restart route). Said
+       here, after the load, for `restartWith`'s own reason: before it, a clear
+       would take the rows straight back out again. */
+    if (stagedBefore) {
+      this.noteConfig(session, stagedBefore, await this.configLabels(session));
+      /* …and what the thread ended up on, absolute, for every peer — including
+         the model a cleared one resolved to out of the new profile's defaults.
+         `restartWith` sends the same event for the same reason; the two are
+         mutually exclusive, since a patch it folded is one that path had
+         already dropped. */
+      this.emit(session, {
+        ev: "spawn_config",
+        profileId: session.profileId,
+        model: session.model,
+        effort: session.effort,
+        personaId: session.personaId,
+        suggestFollowups: session.suggestFollowups,
+      });
     }
     return session;
   }
@@ -2578,7 +2703,7 @@ export class SessionManager {
   ): Promise<PromptReply> {
     const session = this.sessions.get(id);
     if (!session) throw new Error("this thread has no running agent");
-    const bridge = await this.whenSpawnable(session);
+    let bridge = await this.whenSpawnable(session);
     /* Claimed before the turn starts, so a row exists to sweep against — and
        before the queue branch too, since a queued message's attachments are
        just as much this thread's as a sent one's. Unknown or foreign ids are
@@ -2588,6 +2713,24 @@ export class SessionManager {
       const item = await enqueue(session.id, text, attachments);
       this.queue.emitQueue(session);
       return { queued: true, itemId: item.id };
+    }
+    /* A change picked since the last message is taken here, before the turn it
+       was picked for. This is the one door every turn comes through — the
+       socket's send, the scheduler, routines, autonomy — so nothing runs on
+       settings the user has already moved off.
+
+       `!promptActive` is what keeps a **steer** out of it: past the queue
+       branch, a live turn means this prompt is joining one, and that is not a
+       new turn to flush at. The queue's own drain never reaches here at all —
+       it calls `startTurn` directly — which preserves the old `continued` rule:
+       no restart between two messages the user sent together.
+
+       Awaited, and the bridge re-read afterwards: the flush replaced the
+       process, so `session.bridge` is a different object by now and prompting
+       the one above would be talking to a killed child. */
+    if (session.stagedConfig && !bridge.promptActive) {
+      await this.flushStagedNow(session);
+      bridge = await this.whenSpawnable(session);
     }
     return await this.startTurn(session, bridge, text, peer, { attachments, forceLink: opts.forceLink });
   }
@@ -2660,6 +2803,12 @@ export class SessionManager {
 
   async queueClear(id: string): Promise<void> {
     await this.queue.clear(this.requireSession(id));
+  }
+
+  /** Stop the running turn. `reclaim` also hands back the newest message that
+      has not landed — see `SessionQueue.stop` for why the two are one call. */
+  stopTurn(id: string, reclaim: boolean): Promise<CancelReply> {
+    return this.queue.stop(this.requireSession(id), reclaim);
   }
 
   queueSteer(id: string, itemId: string): Promise<{ turnId: string }> {
@@ -2868,6 +3017,7 @@ export class SessionManager {
     queueUpdate: (id, itemId, text, attachmentIds) => this.queueUpdate(id, itemId, text, attachmentIds),
     queueRemove: (id, itemId) => this.queueRemove(id, itemId),
     queueClear: (id) => this.queueClear(id),
+    stopTurn: (id, reclaim) => this.stopTurn(id, reclaim),
     enrichError: (session, error) => enrichError(session, error),
   });
 

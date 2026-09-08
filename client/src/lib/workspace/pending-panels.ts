@@ -3,7 +3,7 @@
    build page, the project overview — cannot open a panel beside the thread
    it is about to navigate to: `openPanel` before the dock has mounted is a
    no-op. What it can do is say which panels the next thread should open
-   with, the way `session-tabs.ts` says "in a new tab".
+   with, and leave the opening to the route effect that mounts the dock.
 
    One-shot and consumed by the shell's route effect right after it opens the
    chat, so the chat is the panel the queued ones split against — a preview

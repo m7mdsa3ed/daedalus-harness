@@ -104,9 +104,9 @@ const BAND_RIGHT = "--dock-band-right"
  * Strip left over for tabs, below which a group does not join the header's band
  * at all and takes its own row under it instead.
  *
- * The horizontal `SPLIT_MIN_WIDTH`, and the same judgement: a column too narrow
- * to share the row shows a 40px sliver of one tab between two of the app's
- * controls, which reads as broken. One group out of step reads as deliberate.
+ * The same judgement a split threshold made: a column too narrow to share the
+ * row shows a 40px sliver of one tab between two of the app's controls, which
+ * reads as broken. One group out of step reads as deliberate.
  */
 const BAND_MIN_TABS = 120
 
@@ -179,35 +179,28 @@ export interface OpenPanelOptions {
   /** Add beside the current panel instead of replacing it. */
   newTab?: boolean
   /**
-   * Put it in a new group beside the active one. Navigation panels go left,
-   * streams go below — the IDE preset's arrangement, one panel at a time.
+   * Where the caller thinks this panel *belongs* — navigation left, streams
+   * below, the IDE preset's arrangement one panel at a time.
    *
-   * A **preference**, not an instruction: see `SPLIT_MIN_WIDTH`. Below that
-   * width, and once a group of the same kind already exists, it degrades to a
-   * tab. Callers say where a panel *belongs* and the dock decides whether the
-   * window can afford it — which is the only way the + menu, the chords and
-   * every transcript link can share one answer.
+   * **It no longer splits the dock, and reads as `newTab`.** Every panel opens
+   * the way a new thread does: a tab beside what you are looking at. Opening a
+   * terminal used to cut the dock in half under the transcript and opening the
+   * IDE cut it in half beside it, so the answer to "open something" depended on
+   * which something — and a layout the reader had arranged rearranged itself
+   * under them. Splitting is still available and is now only ever *asked for*:
+   * `splitActive` (the strip's chord and the palette's row), which names the
+   * panel it moves.
+   *
+   * Kept as an option rather than deleted from a dozen call sites because it is
+   * the one thing those callers know that the dock does not — if a preset or a
+   * "restore this layout" ever wants to honour it again, it is still said. It
+   * was always documented as a *preference*, not an instruction; this is the
+   * dock exercising that.
    */
   direction?: "left" | "right" | "above" | "below"
   /** Open it without taking focus. */
   background?: boolean
 }
-
-/**
- * Narrower than this and a split is two useless columns, so a panel that asked
- * to open *beside* something opens as a **tab** instead.
- *
- * The window, deliberately, and not the panel's own container: what is being
- * decided here is whether the dock can be cut in two, which is a question about
- * the screen. (The rule the rest of the app follows — width is the panel's, the
- * pointer is the device's — is about laying out *inside* a panel; this is the
- * one place where the window genuinely is the subject.) Read at click time
- * rather than subscribed to: a layout the user is looking at must not rearrange
- * itself because a phone was turned sideways.
- *
- * The same 768px as `useIsMobile`, so "phone" means one thing in this app.
- */
-const SPLIT_MIN_WIDTH = 768
 
 export type PresetId = "ide" | "focus"
 
@@ -260,17 +253,27 @@ export function useDock(): WorkspaceDock {
   return dock
 }
 
-/* Dockview renders tabs itself, from the component named by
-   `defaultTabComponent` — so a tab is inside this tree but is handed nothing
-   except its own panel's props. A tab that draws the *thread's* own things (its
-   context reading, its actions) needs what the shell has, and a context is the
-   only way down to it. */
-const DockActionsContext = React.createContext<Actions | null>(null)
+/* ── What the strip's + can open ──
+   Dockview renders the tab strip from components it is handed by name, so
+   `TabActions` sits inside this tree with nothing but its own group's props.
+   The two things a + opens — a thread, a panel — are decided in `app-shell`
+   (which project a panel belongs to is the routed thread's, and toggling rather
+   than stacking is the same rule the chords follow), so they come down as a
+   context rather than being written a second time here.
 
-export function useDockActions(): Actions {
-  const actions = React.useContext(DockActionsContext)
-  if (!actions) throw new Error("useDockActions outside the workspace dock")
-  return actions
+   Deliberately the *callbacks* and not the dock: every surface that opens a
+   panel — the header menu, the chords, the palette, this + — calls the one
+   `openWorkspacePanel`, which is what keeps them from disagreeing about which
+   side a panel docks on. */
+export interface DockOpeners {
+  onNewTab?: () => void
+  onOpenPanel?: (kind: PanelKind) => void
+}
+
+const DockOpenersContext = React.createContext<DockOpeners>({})
+
+export function useDockOpeners(): DockOpeners {
+  return React.useContext(DockOpenersContext)
 }
 
 /** The descriptor a live Dockview panel was opened with, or null. */
@@ -344,27 +347,30 @@ export function useWorkspaceDock(): DockController {
         api.activeGroup?.activePanel
       const group = current?.group
 
-      /* The side preference, resolved against what the window and the dock can
-         actually do — the one place it is decided, so every caller gets the
-         same answer.
+      /* ── Opening never splits ──
+         Every panel arrives the way a new thread does: a tab beside what you
+         are looking at. The side a caller asked for is read as "and do not
+         replace what is in front of me" and nothing more — the one place it is
+         decided, so the + menu, the chords, the palette and every transcript
+         link give the same answer.
 
-         It is dropped in two cases. On a **phone**, where a split is two
-         columns of nothing: the panel opens as a tab in the group you are in,
-         which is what "beside the thread" means on a screen that can only show
-         one thing at a time. And when a group of that kind is **already open**,
-         because a second panel asking to open on the right would split the
-         dock a second time — the first one established where that kind lives,
-         and the second belongs in it. */
-      const roomToSplit = window.innerWidth >= SPLIT_MIN_WIDTH && siblings.length === 0
-      const direction = options?.direction && roomToSplit ? options.direction : undefined
-      /* A panel that wanted its own side and cannot have one must still not
-         REPLACE what is in front of it — it was never asking to navigate. */
-      const newTab = options?.newTab || (!!options?.direction && !direction)
+         What this replaced was a rule that split the dock when the window was
+         wide enough and no group of that kind existed yet. It meant "open a
+         terminal" cut the dock in half under the transcript, "open the IDE" cut
+         it in half beside it, and the *second* of each landed as a tab — so the
+         same click did two different things depending on the state of a layout
+         the reader had arranged themselves. Splitting is a thing you ask for by
+         name now: `splitActive`, the chord and the palette row, both of which
+         say which panel they move. */
+      const newTab = options?.newTab || !!options?.direction
 
-      /* Replace-in-place is what makes clicking through the sidebar feel like
-         navigation rather than tab-hoarding: the panel you came from goes away
-         unless you asked for a new tab. Only same-kind panels are replaced. */
-      const replace = !!current && current.api.component === panel.kind && !newTab && !direction
+      /* Replace-in-place: the panel you came from goes away unless you asked
+         for a new tab. Only same-kind panels are replaced — and no longer
+         chats, which every caller now opens with `newTab` (a thread you opened
+         is one you meant to keep; see the route effect in `app-shell`). What is
+         left on it is the kind whose "open another" genuinely means "point this
+         one somewhere else". */
+      const replace = !!current && current.api.component === panel.kind && !newTab
       const index = replace && group ? group.panels.indexOf(current) + 1 : undefined
 
       api.addPanel({
@@ -373,12 +379,12 @@ export function useWorkspaceDock(): DockController {
         title: PANEL_SPECS[panel.kind].defaultTitle,
         params: panel as unknown as Record<string, unknown>,
         inactive: options?.background,
-        position: (() => {
-          const reference = group?.id ?? api.activeGroup?.id
-          if (direction)
-            return reference ? { referenceGroup: reference, direction } : undefined
-          return group ? { referenceGroup: group.id, direction: "within" as const, index } : undefined
-        })(),
+        /* Always *within* a group — the one above if there is one, otherwise
+           dockview's own answer for an empty dock. Nothing here opens a group
+           any more; `splitActive` and `toggleFloat` are what make one. */
+        position: group
+          ? { referenceGroup: group.id, direction: "within" as const, index }
+          : undefined,
       })
 
       if (replace && current) silently(() => api.removePanel(current))
@@ -874,7 +880,9 @@ export function WorkspaceDock({
   actions,
   dock,
   onReady,
-}: {
+  onNewTab,
+  onOpenPanel,
+}: DockOpeners & {
   actions: Actions
   dock: WorkspaceDock
   onReady: (api: DockviewApi) => void
@@ -994,9 +1002,13 @@ export function WorkspaceDock({
     [onReady]
   )
 
+  /* Memoised, or every render of the dock hands the strip a new object and
+     redraws each group's actions row. */
+  const openers = React.useMemo(() => ({ onNewTab, onOpenPanel }), [onNewTab, onOpenPanel])
+
   return (
     <DockContext.Provider value={dock}>
-      <DockActionsContext.Provider value={actions}>
+      <DockOpenersContext.Provider value={openers}>
       <DockviewReact
         className="session-dock h-full min-h-0 flex-1"
         components={components}
@@ -1008,16 +1020,16 @@ export function WorkspaceDock({
            panel the user cannot get back without clearing the layout. */
         floatingGroupBounds="boundedWithinViewport"
         onReady={(event) => handleReady(event.api)}
-        /* One tab fills its strip. Dockview's own answer — the tab grows and
-           the void container beside it stops absorbing the leftover width — so
-           a lone chat tab reads as the band's title rather than as a chip
-           floating in an empty bar. Two or more stay content-sized: sharing a
-           row evenly is what a tab strip already is. */
-        singleTabMode="fullwidth"
+        /* No `singleTabMode`: a browser tab is the width of a tab whether it is
+           alone or one of nine (`index.css` gives it the same 15rem ceiling and
+           lets it shrink), and the strip beside it is the run of emptiness the
+           window is dragged by. A lone tab stretched to the whole band used to
+           be how that emptiness stayed pressable — it is the void container's
+           again now, which is what it is for. */
         rightHeaderActionsComponent={TabActions}
         theme={theme}
       />
-      </DockActionsContext.Provider>
+      </DockOpenersContext.Provider>
     </DockContext.Provider>
   )
 }

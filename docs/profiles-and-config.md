@@ -145,24 +145,72 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 
 ## What a change costs, and who waits for it
 
-- **A change that costs the process is held for the running turn's boundary, not taken.**
+- **A change that costs the process is staged when it is picked; the next spawn takes it.**
   This is the third answer `POST /api/sessions/:id/config` can give — `{live:false, staged}`
-  — and it exists because the second one used to be paid for with somebody's work. A model
-  or persona pick made mid-turn is a change the *next* turn is what reads anyway; killing
-  the running one to place it early bought nothing. So `applyConfig` puts it in
-  `session.stagedConfig` (in memory, never a column: its whole lifetime is the turn it is
-  waiting behind, and a server that restarted has already killed that turn) and flushes it
-  from the same `emit` branch that journals `turn_ended` — off the tick, because the flush
-  respawns and that branch is also what drains the queue, and never on a `continued` turn,
-  which is the gap between two messages the user sent together rather than a boundary
-  anybody is waiting at. **A held turn is never staged**: a turn stopped on a rate limit is
-  stopped *waiting* for exactly this change (see the `paused` event), so staging it behind a
-  boundary it will never reach would be a change that never happens. `defer:false` is the
-  explicit "now, and never mind the turn" — the menu's Apply now, which the route reads as
-  "the staged patch, plus whatever this call adds". The patch travels as **`staged_config`**:
-  absolute, live-only, not journaled, carried on `caught_up` beside the queue and the hold,
-  and fanned to every peer including the one that asked — a change staged from a phone has
-  to be visible on the laptop, or the turn ends and the model moves with no account of why.
+  — and it is now the *ordinary* one rather than a mid-turn exception. The reasoning that
+  produced it mid-turn holds everywhere: a model or persona pick is a change the next
+  **spawn** is what reads, so a spawn is what should pay for it, and taking it at pick time
+  bought nothing. Mid-turn it cost somebody's work. Idle on a live thread it restarted an
+  agent for a user who was still reading the answer. Idle on a *retired* thread it was worse
+  than either — it woke a process up for nobody, and the next message then revived that
+  thread a second time. Staged, the pick costs nothing and the send costs one spawn.
+
+  So `applyConfig` puts it in `session.stagedConfig` (in memory, never a column: a server
+  that restarts has already lost the process the patch was picked against, and `caught_up`
+  normalises `staged ?? null` so a reattach clears the banner rather than leaving a ghost),
+  and **two mechanisms take it, no third and no timer**:
+
+    1. **`respawnNow` folds it into any spawn that was happening anyway** — the revive behind
+       a send, a rewind's cut, the `/respawn` route, the scheduler's. Callers pass the row's
+       own values and get the user's newest ones. It is a **value substitution**, never a
+       re-entry: the tempting version calls `flushStagedNow()` at the top of `respawn()`,
+       which recurses through `applyConfig(defer:false)` → `restartWith` → `respawn` and
+       spends two spawns on one revive. The fold re-validates the patch's profile
+       (`profileSupports`) and falls back to the caller's rather than failing — a revive must
+       not die because a setting nobody is watching went stale — and emits its own
+       `config_notice` rows and `spawn_config`, which `restartWith` never duplicates because
+       a patch it folded is one that path had already dropped.
+    2. **`prompt` flushes before it starts a turn**, so nothing runs on settings the user has
+       moved off. It is the one door every turn comes through — the socket's send, the
+       scheduler, routines, autonomy — and the bridge is **re-read after the flush**, because
+       the respawn replaced the process and the old `session.bridge` names a killed child.
+
+  A **queue drain never flushes**: it calls `startTurn` directly and never reaches `prompt`,
+  which preserves the old `continued` rule — no restart between two messages the user sent
+  together. Neither does a **steer**, and `!bridge.promptActive` is the one term that
+  expresses both: past the queue branch, a live turn means this prompt is joining one.
+
+  There is **no `turn_ended` flush** any more. It was fire-and-forget (so a failure reached
+  nobody) and it restarted the agent the instant a turn ended, for a user who might read for
+  ten minutes and never reply.
+
+  Three things are never staged. `defer:false` is the explicit "now, and never mind what it
+  costs" — the menu's Apply now, which the route reads as "the staged patch, plus whatever
+  this call adds". A **held** turn is stopped *waiting* for exactly this change (see the
+  `paused` event), so staging it behind a boundary it will never reach is a change that never
+  happens. And an **agent** change is not a setting on this process but a different runtime:
+  `StagedConfig` cannot carry one — a mid-turn agent change used to be staged and then
+  silently dropped at flush — and it must not learn to, because a respawn onto another binary
+  ends in a `session/load` of an id living in the *old* runtime's store. Nothing drives it
+  from the UI (a started thread's agent is fixed at draft time, `draft-config.tsx`); the
+  guard exists so a script or a workflow cannot either.
+
+  **A flush that fails re-stages and refuses to send.** `applyConfig` drops the patch *before*
+  it announces the restart — so a peer reattaching at `ready` cannot be handed a stale one —
+  which makes putting it back the flush path's job. It has to go back: otherwise the pick is
+  lost by the one failure the user is actually watching. A patch whose profile has been
+  edited or deleted since is **dropped with a `config_notice`, never thrown**, and the send
+  proceeds on current settings: this code runs inside a prompt.
+
+  The patch travels as **`staged_config`**: absolute, live-only, not journaled, carried on
+  `caught_up` beside the queue and the hold, and fanned to every peer including the one that
+  asked — a change staged from a phone has to be visible on the laptop.
+
+  **The cost, stated plainly:** the spawn and its `session/load` move onto the critical path
+  of Enter, where they used to run in the background while the user read. The journal is kept
+  across it (`restart.kept`), so the transcript does not move; the composer stays submittable
+  through `reviving`, so the message is already on screen while it happens; and "Apply now" is
+  there for anyone who would rather pay it up front.
 - **The route answers the decision; the restart reports itself.** `applyConfig` used to hold
   its HTTP answer open across spawn → `session/load` → restore — seconds of a blocked
   request for a decision that took none — while every device that was *not* holding the menu
@@ -230,6 +278,37 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   taking one back must not cost a spawn. The scheduler gets the rule for free: a scheduled
   prompt that lands mid-turn waits its turn. The row is `components/composer-queue.tsx` on the
   strip (summary id `queue`).
+
+- **Escape stops the turn AND takes back the message that has not landed** — `cancel
+  {reclaim:true}`, answered `CancelReply {reclaimed?}`, and the words go back in the composer.
+  A send made a second ago costs one key to undo, and a cancelled turn no longer leaves a
+  queued row parked behind it that nothing will drain.
+
+  Atomic and server-side for `sendNow`'s reason, and the **ordering is the mechanism**: a
+  cancel settles the turn, `settleTurn` treats a settle as a step boundary and `flushSteers`
+  emits every held steer as the real bubble it was waiting to become — so `SessionQueue.stop`
+  takes the message back *before* it cancels. Two round trips from a browser could not
+  guarantee that.
+
+  **Exactly one message, the newest by `createdAt`**, because the composer is one box; a steer
+  and a queued row are weighed against each other rather than by which list they are in.
+  Everything older stays parked with its own Edit and ✕.
+
+  A **queued** row never left this server, so taking it back is total. A **held steer** is the
+  one that carries the "unless a new step read it" rule: its words went out at send, but its
+  `turn_started` sits in `bridge.pendingSteers` until a step boundary, and while it is there
+  `AcpBridge.takeSteer` unwinds it with no bubble and no journal row. Past that boundary
+  nothing comes back — the words are in the transcript, which is where they belong — and that
+  is an answer, never a reason to reach past it for an older message. (`ponytail`: the runtime
+  still has the steer buffered from the `session/prompt`; making the take-back total on its
+  side needs a withdraw it participates in, i.e. an `AgentDef` column.)
+
+  **`reclaim` is opt-in, and only a caller with somewhere to put the words may ask**: the
+  message is gone from the queue when it is answered, so `actions.stop(id, {onReclaim})` is
+  how Escape and the composer's Stop ask, and Retry, the palette and the thread menu leave it
+  unset. **Only into an empty box** (`ComposerHandle.isEmpty`) — a reclaimed message must not
+  land on top of something typed since. A held `config_notice` is not a message and is never
+  handed back.
 
 ## The gateway shim
 

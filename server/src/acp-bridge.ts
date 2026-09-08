@@ -357,6 +357,28 @@ interface PendingRequest {
   timer?: ReturnType<typeof setTimeout>;
 }
 
+/** One event waiting on the running step: a steer's `turn_started`, or the
+    `config_notice` for a setting changed mid-turn. */
+interface HeldSteer {
+  id: string;
+  createdAt: number;
+  event: ThreadEvent;
+  origin: Peer | undefined;
+}
+
+/** A held entry as the queue row every peer draws it as. One mapping, so the
+    list (`heldSteers`) and the take-back (`takeSteer`) cannot disagree about
+    what a row is. */
+function steerRow({ id, createdAt, event }: HeldSteer): QueuedMessage {
+  return {
+    id,
+    text: event.ev === "turn_started" || event.ev === "config_notice" ? event.text : "",
+    ...(event.ev === "turn_started" && event.attachments ? { attachments: event.attachments } : {}),
+    createdAt,
+    steer: true as const,
+  };
+}
+
 export interface BridgeHost {
   /** Journal (when the event is journaled) and fan out to every peer but
       `except` — which is how a peer avoids being told about its own action. */
@@ -561,7 +583,7 @@ export class AcpBridge {
       mode/model/effort notices (`config_notice`, via `holdConfigNotice`): the
       words are already on the wire, but the transcript does not show them
       until the step that was running lets go. Drained by `flushSteers`. */
-  private pendingSteers: { id: string; createdAt: number; event: ThreadEvent; origin: Peer | undefined }[] = [];
+  private pendingSteers: HeldSteer[] = [];
   /** Callers of `whenIdle()` waiting for `inflight` to reach zero. */
   private idleWaiters: (() => void)[] = [];
   private readonly suppressModelMetadataWarning: boolean;
@@ -1194,19 +1216,38 @@ export class AcpBridge {
   /** The steers still held for a step boundary, as queue rows: what the user
       said and has not yet seen land. */
   heldSteers(): QueuedMessage[] {
-    return this.pendingSteers.map(({ id, createdAt, event }) =>
-      event.ev === "turn_started"
-        ? {
-            id,
-            text: event.text,
-            ...(event.attachments ? { attachments: event.attachments } : {}),
-            createdAt,
-            steer: true as const,
-          }
-        : event.ev === "config_notice"
-          ? { id, text: event.text, createdAt, steer: true as const }
-          : { id, text: "", createdAt, steer: true as const },
+    return this.pendingSteers.map(steerRow);
+  }
+
+  /** The newest held steer that is a MESSAGE — a mode or model change waits at
+      the same boundary (`holdConfigNotice`) and is bookkeeping, not words
+      anyone can be handed back. A peek, so a caller can weigh it against the
+      queue before committing to `takeSteer`. */
+  newestSteer(): QueuedMessage | null {
+    const at = this.pendingSteers.findLastIndex((entry) => entry.event.ev === "turn_started");
+    return at < 0 ? null : steerRow(this.pendingSteers[at]!);
+  }
+
+  /**
+   * Take a held steer back — the one thing `flushSteers` must not go on to
+   * emit.
+   *
+   * The words reached the agent, but no runtime reads a second prompt before
+   * its running step ends, and until then the held event is the only place
+   * they exist on this side. So while the steer is still here it can be
+   * unwound; once `flushSteers` has run, its bubble is in the transcript and in
+   * the runtime's own history, and this answers `null` — which is exactly the
+   * "unless a new step already read it" line.
+   *
+   * The caller emits the queue: this is half of a cancel, not a step of its
+   * own, and one absolute `queue` event covers both halves.
+   */
+  takeSteer(id: string): QueuedMessage | null {
+    const at = this.pendingSteers.findIndex(
+      (entry) => entry.id === id && entry.event.ev === "turn_started",
     );
+    if (at < 0) return null;
+    return steerRow(this.pendingSteers.splice(at, 1)[0]!);
   }
 
   /**

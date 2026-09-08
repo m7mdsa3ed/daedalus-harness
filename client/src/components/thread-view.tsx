@@ -1,6 +1,6 @@
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
-import { ChevronUp, GitCompare } from "lucide-react"
+import { ChevronUp } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Logo } from "@/components/ui/logo"
@@ -253,29 +253,6 @@ function withTurnSuggestions(
   return after
 }
 
-/** What a turn did, under the turn that did it — and the way to review it.
-    Git's count, not the transcript's: a shell command that edited a file is in
-    it, an edit tool that declared one is in it once. Clicking it opens source
-    control narrowed to these files, which is where they can be read *and*
-    staged, discarded or committed. */
-function TurnChangesChip({ turn, onOpen }: { turn: TurnChanges; onOpen: (turn: TurnChanges) => void }) {
-  const added = turn.files.reduce((n, f) => n + f.additions, 0)
-  const removed = turn.files.reduce((n, f) => n + f.deletions, 0)
-  return (
-    <button
-      type="button"
-      onClick={() => onOpen(turn)}
-      title="Review this turn's changes in source control"
-      className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2 py-0.5 font-mono text-[11px] text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-    >
-      <GitCompare className="size-3" />
-      {turn.files.length} {turn.files.length === 1 ? "file" : "files"} changed
-      <span className="text-emerald-600 dark:text-emerald-400">+{added}</span>
-      <span className="text-red-600 dark:text-red-400">−{removed}</span>
-    </button>
-  )
-}
-
 /** Every row's turn, keyed by the row's own id. A step's popover reads the
     billed split of the turn it sits in here (`StepTokens`), since a runtime
     reports only a total per model request and the prompt/output/cache split
@@ -311,11 +288,14 @@ function useThreadKeys({
   sessionId,
   thread,
   actions,
+  composer,
   enabled,
 }: {
   sessionId: string
   thread: ThreadState
   actions: Actions
+  /** Where a message Escape takes back goes. */
+  composer: React.RefObject<ComposerHandle | null>
   enabled: boolean
 }) {
   const { permissions, elicitations, turnActive } = thread
@@ -349,7 +329,21 @@ function useThreadKeys({
       }
       if (turnActive) {
         event.preventDefault()
-        actions.stop(sessionId).catch((err) => reportError(err, "Couldn't stop the turn"))
+        /* Escape stops the turn AND takes back the message the user has not
+           seen land — the newest queued row, or a steer whose step boundary
+           has not arrived — so a send made a second ago costs one key to undo
+           and the words are back in the box, not parked in a queue that a
+           cancelled turn will never drain.
+           Only into an empty box: the message leaves the queue server-side, so
+           it must not land on top of something typed since. And nothing comes
+           back once a new step has read the steer — by then the words are in
+           the transcript, which is where they belong. */
+        const box = composer.current
+        actions
+          .stop(sessionId, {
+            ...(box?.isEmpty() ? { onReclaim: (text: string) => box.fill(text) } : {}),
+          })
+          .catch((err) => reportError(err, "Couldn't stop the turn"))
       }
     },
     { enabled }
@@ -529,7 +523,15 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
       options.showConfigNotices,
     ]
   )
-  const changesFor = (row: Row): TurnChanges | undefined => changesAfter.get(rowTailId(row))
+  /* The newest turn that wrote anything, for the composer's cluster. The map
+     is built in transcript order, so its last value is the most recent gated
+     turn — and it stays put when the next turn only reads, which is the point:
+     the reading is "what has this thread done to the worktree", not "what did
+     the very last turn do". */
+  const latestChanges = React.useMemo(
+    () => [...changesAfter.values()].at(-1),
+    [changesAfter]
+  )
   /* The per-turn rows are the server's and live-only on the socket, so a
      transcript opened cold seeds them once here. Failure is silence: the
      chips are ambient, and a thread with no project has nothing to read. */
@@ -661,10 +663,16 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
      mounted and navigates the URL as tabs are activated (see workspace/dock), so
      the route is the app's own answer to "which one is in front". */
   const location = useLocation()
+  /* The composer is a sibling of the transcript, so everything that puts words
+     back in the box — the suggestion card, a queued message's Edit, Escape's
+     take-back — goes through this handle rather than shared state. Declared
+     above the keys because Escape is one of them. */
+  const composerApiRef = React.useRef<ComposerHandle>(null)
   useThreadKeys({
     sessionId,
     thread,
     actions,
+    composer: composerApiRef,
     enabled: currentThreadId(location.pathname, location.search) === sessionId,
   })
   // Shared with the hero behind the whole inset, which the shell paints — the
@@ -684,10 +692,6 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
 
   const rootRef = React.useRef<HTMLDivElement>(null)
   const composerRef = React.useRef<HTMLDivElement>(null)
-  /* The suggestion card's one way back into the box: it lives in the
-     transcript, the box is a sibling — the fill goes through the composer's
-     imperative handle rather than a shared "composer text" store. */
-  const composerApiRef = React.useRef<ComposerHandle>(null)
   /* The docked composer is an overlay of unknown height — shelf rows, the
      queue, attachments and textarea growth all move it — so its pixel height
      is measured and published as `--composer-dock-h` on the grid root for the
@@ -751,18 +755,13 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                — zero for a thread in a group that is not at the top. The
                constant is the fallback: outside the dock (and for the frame
                before the first measurement) it is the whole header. */
-            /* `scrollbar-gutter: stable both-edges` is what keeps the transcript
-               centred on the *panel* rather than on this viewport. The app's
-               scrollbars take layout width (`index.css`: `scrollbar-width: thin`
-               over a 6px `::-webkit-scrollbar`, not overlay), so a column
-               centred in here sits 3px left of the composer, which is centred
-               over the panel outside the scroller — and 3px is exactly the
-               alignment `--harness-composer-width` subtracts 2rem to get right.
-               `both-edges`, not plain `stable`: reserving the gutter on one
-               side keeps the offset, it only stops it appearing and vanishing
-               with the scrollbar. */
+            /* The gutter that keeps this column centred on the *panel* — and so
+               on the composer, which is centred outside the scroller — is the
+               viewport's own (`MessageScrollerViewport`, which is why it is not
+               spelled here: two declarations of it raced, and the caller's
+               lost). */
             className={cn(
-              "pt-[var(--dock-content-overlap,var(--app-header-h))] [scroll-padding-top:var(--dock-content-overlap,var(--app-header-h))] [scrollbar-gutter:stable_both-edges]",
+              "pt-[var(--dock-content-overlap,var(--app-header-h))] [scroll-padding-top:var(--dock-content-overlap,var(--app-header-h))]",
               !empty && "[scroll-padding-bottom:var(--composer-dock-h,14rem)]"
             )}
           >
@@ -927,11 +926,6 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                       <TokenSummary usage={usageFor(row)!} label="This turn" durationMs={durationFor(row)} />
                     </div>
                   )}
-                  {changesFor(row) && (
-                    <div className="harness-item-in mt-1" style={stagger(3)}>
-                      <TurnChangesChip turn={changesFor(row)!} onOpen={openChanges} />
-                    </div>
-                  )}
                   {/* The model's closing follow-ups, under the answer that
                       suggested them. Deliberately NOT on the composer dock: the
                       dock is for state being typed with the turn, and next
@@ -941,7 +935,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                       its imperative handle, so the box stays the box's own
                       state. */}
                   {suggestionsFor(row) && (
-                    <div className="harness-item-in mt-1" style={stagger(4)}>
+                    <div className="harness-item-in mt-1" style={stagger(3)}>
                       <PromptSuggestions
                         suggestions={suggestionsFor(row)!.prompts}
                         onPick={(prompt) => composerApiRef.current?.fill(prompt)}
@@ -1158,6 +1152,8 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
           thread={thread}
           meta={meta}
           delivery={delivery}
+          changes={latestChanges}
+          onOpenChanges={openChanges}
         />
       </div>
       {/* The spacer that collapses. Nothing renders in it — its whole job is to

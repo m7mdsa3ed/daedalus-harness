@@ -457,7 +457,7 @@ export function ComposerStrip({
              surface for the card it belongs to; the rest of that card is a
              transparent box holding a mounted row. */
           front &&
-            "bg-surface/70 ring-1 ring-foreground/5 backdrop-blur-xl backdrop-saturate-150 dark:ring-foreground/10",
+            "bg-shelf/70 ring-1 ring-foreground/5 backdrop-blur-xl backdrop-saturate-150 dark:ring-foreground/10",
           !place && "hidden"
         )}
         style={
@@ -494,7 +494,7 @@ export function ComposerStrip({
                  sliver pinned to the card's edges is a hairline clipped away to
                  nothing. Inset, its bottom line falls where the card in front
                  begins and reads as the seam between the two. */
-              "bg-surface/70 ring-1 ring-foreground/5 ring-inset backdrop-blur-xl backdrop-saturate-150 dark:ring-foreground/10",
+              "bg-shelf/70 ring-1 ring-foreground/5 ring-inset backdrop-blur-xl backdrop-saturate-150 dark:ring-foreground/10",
               "transition-colors hover:bg-accent/40 hover:text-foreground",
               "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
             )}
@@ -568,13 +568,14 @@ export function ComposerStrip({
           // Width follows the composer: minus whatever the composer actually is
           // (capped when there is room, 100% of the container when there is not)
           // the strip stays narrower, so it reads as tucked behind rather than
-          // flush with it. Fixed px offsets — narrower on mobile (16px) for a
-          // more tucked look on cramped screens, tighter on desktop (8px) where
+          // flush with it. Fixed px offsets — narrower on mobile (40px) for a
+          // more tucked look on cramped screens, tighter on desktop (32px) where
           // the shelf has room. rem values scaled differently across viewport
           // sizes; px keeps the visual gap predictable. Measured against the
           // panel, so a chat squeezed beside a terminal gets the narrow inset
-          // the same way a phone does.
-          "mx-auto -mb-4 w-full max-w-[calc(min(100%,var(--harness-composer-width))_-_16px)] @panel-sm:max-w-[calc(min(100%,var(--harness-composer-width))_-_8px)]",
+          // the same way a phone does. (16/8px read as flush with the composer;
+          // 40/32 is where the tuck is actually visible.)
+          "mx-auto -mb-4 w-full max-w-[calc(min(100%,var(--harness-composer-width))_-_40px)] @panel-sm:max-w-[calc(min(100%,var(--harness-composer-width))_-_32px)]",
           // The fold has nothing left to draw — the last card unregistered the
           // frame the shelf emptied — so the box wears the surface itself on
           // the way down. Without it the composer would jump rather than slide.
@@ -582,7 +583,7 @@ export function ComposerStrip({
           // second one over it would wash the row it is under.
           empty &&
             !stowed &&
-            "overflow-hidden rounded-t-xl bg-surface/70 ring-1 ring-foreground/5 dark:ring-foreground/10",
+            "overflow-hidden rounded-t-xl bg-shelf/70 ring-1 ring-foreground/5 dark:ring-foreground/10",
           // Nothing registered and the fold finished: no pile, no shelf.
           stowed && empty && "hidden",
           className

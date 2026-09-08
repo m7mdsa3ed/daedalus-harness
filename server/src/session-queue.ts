@@ -111,6 +111,70 @@ export class SessionQueue {
   }
 
   /**
+   * Stop the running turn, and — with `reclaim` — take back the newest message
+   * that has not landed, so the caller can put it back in the composer.
+   *
+   * Atomic and server-side for the reason `sendNow` is: take-back → cancel is
+   * two steps, and a browser driving them could cancel with the words already
+   * flushed into the transcript, or take them back and never send the cancel.
+   *
+   * The take-back happens BEFORE the cancel, and that ordering is the whole
+   * mechanism. A cancel settles the turn, and `settleTurn` treats a settle as a
+   * step boundary — it calls `flushSteers`, which emits every held steer as the
+   * real `turn_started` it was waiting to become. Taken first, the steer is
+   * gone before that runs and the bubble never appears; taken after, the words
+   * are in the transcript and the composer would be a second copy of them.
+   *
+   * Exactly one message, because the composer is one box. A steer outranks a
+   * queued row only by being newer — the rows are ordered by `createdAt` and
+   * the last one is the one the user just sent, which is the one Escape is
+   * about. Everything older stays parked with its own Edit and ✕.
+   *
+   * `reclaimed` absent means nothing was taken: an ordinary stop, or a steer
+   * whose step boundary beat this call. Nothing is lost either way — a steer
+   * past its boundary is a bubble in the transcript, not a message dropped.
+   *
+   * ponytail: a QUEUED row never left this server, so taking it back is total.
+   * A reclaimed STEER is not: its words went out as a `session/prompt` the
+   * moment they were sent, so the runtime has them buffered even though no
+   * step read them, and a runtime that keeps that buffer on cancel keeps them
+   * as context for the next turn. The harness undoes everything on its own
+   * side — no bubble, no journal row, the words back in the box. Making it
+   * total needs a withdraw the runtime participates in (an `AgentDef` column,
+   * like every other thing the harness believes about a runtime), which is
+   * worth building when a doubled steer is actually observed.
+   */
+  async stop(session: Session, reclaim: boolean): Promise<{ reclaimed?: QueuedMessage }> {
+    const bridge = session.bridge;
+    const reclaimed = reclaim ? await this.takeNewest(session) : null;
+    /* The cancel still goes out when nothing was reclaimed: Escape means stop
+       first and take back second, never "stop only if there was something to
+       take". */
+    if (bridge) await bridge.cancel();
+    if (reclaimed) await this.emitQueue(session);
+    return reclaimed ? { reclaimed } : {};
+  }
+
+  /** The newest un-landed message, removed from wherever it lives: a held
+      steer is the bridge's, a queued row is the table's. Newest by
+      `createdAt`, not by which list it is in — a steer sent into the turn and
+      then a second message typed behind it leaves the queued row the newer of
+      the two. */
+  private async takeNewest(session: Session): Promise<QueuedMessage | null> {
+    const rows = await listQueue(session.id);
+    const row = rows[rows.length - 1];
+    const steer = session.bridge?.newestSteer();
+    if (steer && (!row || steer.createdAt >= row.createdAt)) {
+      /* `null` if the step boundary emitted it between the peek and here: the
+         words landed, and that is an answer — never a reason to reach past it
+         and take back some older message the user did not mean. */
+      return session.bridge?.takeSteer(steer.id) ?? null;
+    }
+    if (!row) return null;
+    return (await removeQueued(session.id, row.id)) ? row : null;
+  }
+
+  /**
    * Interrupt the running turn and send what is queued — one item, or all of
    * it combined — in its place. Atomic and server-side for the reason the
    * respawn route is: cancel → wait for the turn to settle → prompt is three

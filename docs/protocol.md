@@ -303,6 +303,21 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   one answers `kept: false` and the rebuild it forces is how the news reaches a peer at all
   (`historyLost` is stated on `attached`).
 
+  **A kept restart still has to be on the open chain, and that is the one thing it left
+  behind.** `kept: false` ends in `openFromStore`, which *is* a chain link, so everything
+  waiting on `ThreadConnection.settled()` waits correctly. `kept: true` opens nothing — that
+  is its whole point — and `markReviving("config")` is raised from the socket callback
+  instead, so the chain was idle underneath a phase saying a process was being replaced.
+  `ready()`'s `default:` case handles an in-flight phase by awaiting `settled()` on the
+  documented grounds that every such phase is raised inside `openNow`; with nothing on the
+  chain that resolved in the same tick, the loop saw no progress and reported the thread as
+  *stuck waiting for the agent to restart on the new settings*. It was masked only because
+  `composerLock` refused to submit during `reviving` — which Retry, the palette and
+  queue-send never went through, and which staging then removed on purpose. So the kept path
+  takes a chain link of its own (`holdForRestart`, released at `ready`/`failed`/`destroy`,
+  with a 60s floor so a socket dying mid-restart cannot wedge the chain forever). `ready()`
+  needs no change; a send issued during a config restart waits it out and lands after it.
+
 ## ACP schema is the source
 
 - ACP schema is the source for modes/config options/usage — render generically, don't

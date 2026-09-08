@@ -373,10 +373,23 @@ export function composerLock(
   switch (phase.kind) {
     case "starting":
       return { typable: true, submittable: false, note: "Starting the agent…" }
+    /* Submittable, unlike every other phase with a note on it. A send is not a
+       second attempt at what this phase is doing — it is the thing the phase is
+       making possible — and `ready()` owns the wait: `reviving` is on the open
+       chain either way it was raised (`openNow` for a revive,
+       `holdForRestart` for a config restart), so Enter here is accepted, waits
+       the respawn out and then sends. Server-side the same is already true:
+       `whenSpawnable` awaits `session.respawnChain` before it reads a bridge.
+
+       It is also what makes staging bearable. A change that costs the process
+       is taken by the *next send* now, so the spawn it pays for sits on the
+       critical path of Enter — and refusing Enter for the length of it would be
+       refusing the keystroke that asked for it. The note still says what is
+       happening; the message just rides through. */
     case "reviving":
       return {
         typable: true,
-        submittable: false,
+        submittable: true,
         note: phase.because === "config" ? "Applying your change…" : "Restarting the agent…",
       }
     case "loading":

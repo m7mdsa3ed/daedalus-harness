@@ -25,19 +25,25 @@ export const HEADER_BADGE =
   "rounded-full bg-background/50 ring-1 ring-border/50 backdrop-blur-sm"
 
 /** A control capsule, for the header's icon buttons — the sidebar toggle and
-    the ⋯ menu. (The bell wore it too until it moved to the sidebar header,
-    where there is a ground under it already.)
-    `hover:bg-background/80` replaces the ghost variant's
-    `hover:bg-accent`: the press target is already drawn, so hover is a
-    deepening of it rather than the first time it appears.
+    the view-settings sliders beside it.
 
-    `size-6` and not the button's own `icon-sm`: this is the app's chrome size
-    now, the one the palette trigger, the bell and the ⋯ menu wear in the
-    sidebar header, and the one the tab's capsules stand at in the band beside
-    it. A 32px control next to a 22px badge is the thing that made the header
-    and the tab strip read as two rows that happen to overlap. */
-export const HEADER_CHIP =
-  "size-6 bg-background/50 ring-1 ring-border/50 backdrop-blur-sm hover:bg-background/80"
+    **The ground and the radius are the tab's, and they are in `index.css`**
+    (`.header-chip`, written beside `.panel-tab-chip` and out of the same
+    values). These controls and the tabs stand on the same line whenever a group
+    joins the header's band, and a pill of `--background` next to a rounded
+    rectangle of `--composer` is two materials pretending to be one bar. Only
+    the size is here, because only the size is layout.
+
+    It is deliberately an unlayered CSS class and not utilities: it has to beat
+    the button's own `rounded-4xl`, which the utilities layer would not.
+
+    `size-8` is the **tab's** height (`h-8` in `workspace/panel-tab`), which is
+    the number that matters: these two controls and that group's tabs are one
+    row whenever a group joins the band, and a 24px control beside a 32px tab
+    reads as a strip tucked under the header rather than as the header's own
+    line. The sidebar header's own buttons are not bound by this — they stand on
+    a surface of their own, with nothing to line up with. */
+export const HEADER_CHIP = "header-chip size-8"
 
 /** The ground of a surface the app *raises over* its own content — what a
     capsule opens (the bell's glance) and what the app raises on its own (a
