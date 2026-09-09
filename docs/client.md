@@ -395,9 +395,14 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   winning, rather than dropped. **The sidebar
   is `components/thread-sidebar.tsx`**, laid out like the Codex and Claude desktop
   apps: fixed nav rows on top (`SidebarNav`: New thread, Search, Tasks — menu rows,
-  so they survive the icon rail), then Pinned, a flat Recents, **one folder per
-  project** with its threads under it and a hover `+` that starts a thread *in*
-  that project, Scheduled, Trash. **Recents keeps every running thread in the
+  so they survive the icon rail), then Pinned, an **Opened** tier of the threads
+  with a tab open (in dock order — `lib/workspace/open-threads`, published by the
+  dock and rebuilt from the restored layout on a reload), a flat Recents, **one
+  folder per project** with its threads under it and a hover `+` that starts a
+  thread *in* that project, Scheduled, Trash. **Recents lists what is not open**:
+  a thread with a tab is in Opened, so it is not also a shortcut below it, and
+  closing the tab is what returns it to Recents. The focused tab's row carries the
+  active tint in whichever tier holds it. **Recents keeps every running thread in the
   list**, whatever its age, and there is no Running tier of its own any more: a
   tier above Recents drew the same threads twice, and length alone
   buried the turn that is happening *now* under whatever was typed most
@@ -982,7 +987,9 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   be animated still holds for anything keyed on `dv-active-tab`. Wide, the mark is the panel's
   own (`PanelIcon`, a chat's being its agent's); narrow, a chat trades it for the **initials of
   its title**, because down there the mark IS the tab and four threads on one runtime would
-  otherwise be four identical agent logos.
+  otherwise be four identical agent logos. The tab list (`TabActions`) is the switcher from
+  **two** tabs on a phone rather than three: there the marks carry no names, and the list is
+  the one place every name is legible at once.
 - **A pinned tab is one the tidy-up goes around.** `lib/workspace/panel-pins.ts` is the set
   (device-local, keyed by server, like every other reader's-property store); the dock adds
   the ordering. Pinning means three things together: the tab sits at the front of its group,
@@ -1003,7 +1010,9 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   way home). A **popout** is a real browser window (`addPopoutGroup`, into
   `public/popout.html` — an empty room, no script, no second app; the service worker's
   navigation fallback denies it by name or it would be answered with the whole shell). It is
-  a user gesture only, and a blocked popup is *said* rather than swallowed. On the way back
+  a user gesture only, and a blocked popup is *said* rather than swallowed. **On a phone
+  neither is offered** — a float covers the dock it came from and a popout is a second browser
+  window, so the tab's ⋮ leaves both rows out. On the way back
   in, a float is restored whole or not at all and a popout is **never** reopened —
   `window.open` without a gesture is a popup — so `dockPopouts` brings its panels home to the
   group they were torn from *before* anything is counted, because a panel in `panels` that no

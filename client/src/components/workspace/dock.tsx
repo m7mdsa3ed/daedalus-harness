@@ -74,6 +74,7 @@ import {
   type SavedLayout,
 } from "@/lib/workspace/layout"
 import { forgetPanelPin, isPanelPinned, pinnedPanels, togglePanelPin } from "@/lib/workspace/panel-pins"
+import { setOpenThreads } from "@/lib/workspace/open-threads"
 import {
   PANEL_KINDS,
   PANEL_SPECS,
@@ -309,6 +310,20 @@ export function descriptorOf(panel: IDockviewPanel): PanelDescriptor | null {
 }
 
 const isChat = (panel: IDockviewPanel) => panel.api.component === "chat"
+
+/** The chat panels open in the dock, in the order they were opened — what the
+    sidebar's "Opened" tier lists and what Recents leaves out. Only chats: every
+    other kind is a panel, not a thread, and a session id is unique per panel, so
+    this cannot hold a duplicate. */
+function openChatThreads(api: DockviewApi): string[] {
+  const ids: string[] = []
+  for (const panel of api.panels) {
+    if (!isChat(panel)) continue
+    const descriptor = descriptorOf(panel)
+    if (descriptor?.kind === "chat") ids.push(descriptor.sessionId)
+  }
+  return ids
+}
 
 export interface DockController extends WorkspaceDock {
   apiRef: React.RefObject<DockviewApi | null>
@@ -564,6 +579,11 @@ export function useWorkspaceDock(): DockController {
 
   const splitActive = React.useCallback((direction: "right" | "below") => {
     const api = apiRef.current
+    /* One group below `md`, by construction (the stack effect above), so a
+       split asked for on a phone is a group the fold-back takes away in the
+       next microtask. Refused at the source, which is also the chord's path —
+       the palette's rows are simply not offered there. */
+    if (window.innerWidth < MOBILE_BREAKPOINT) return
     const panel = api?.activeGroup?.activePanel
     const descriptor = panel && descriptorOf(panel)
     if (!api || !panel || !descriptor) return
@@ -835,6 +855,13 @@ export function useWorkspaceDock(): DockController {
       }
     }
 
+    /* The sidebar's "Opened" tier is derived from the dock, never a second copy
+       of it: publish on every add, remove and move, and once now for what the
+       restored layout just put back. This is what makes a refresh bring the
+       same tabs back *and* the same rows into the sidebar. */
+    const publishOpenThreads = () => setOpenThreads(openChatThreads(api))
+    publishOpenThreads()
+
     /* The strip stays. It used to hide itself when the dock held a single
        panel — chrome with nothing to choose between — but the only way to open
        a second tab was then the sidebar, from a menu on a thread you were not
@@ -842,6 +869,11 @@ export function useWorkspaceDock(): DockController {
        there before there is one. */
     let saveTimer: ReturnType<typeof setTimeout> | undefined
     const disposables = [
+      api.onDidAddPanel(publishOpenThreads),
+      api.onDidRemovePanel(publishOpenThreads),
+      /* A tab dragged into another group keeps its panel and changes its place;
+         the tier follows the dock, so a move republishes too. */
+      api.onDidMovePanel(publishOpenThreads),
       /* The route follows the focused chat or page, and only those: focusing
          a terminal must not navigate away from the thread it belongs to. */
       api.onDidActivePanelChange(({ panel }) => {
@@ -863,6 +895,11 @@ export function useWorkspaceDock(): DockController {
           navigateTo(path, { replace: true })
       }),
       api.onDidLayoutChange(() => {
+        /* Belt and braces with the add/remove listeners above: a layout change
+           is raised after the dock's own `panels` list has settled, so the tier
+           is correct even if a remove event arrived mid-mutation. `setOpenThreads`
+           is a no-op when nothing moved. */
+        publishOpenThreads()
         clearTimeout(saveTimer)
         saveTimer = setTimeout(() => saveLayout(serverId, api.toJSON()), SAVE_DEBOUNCE_MS)
       }),

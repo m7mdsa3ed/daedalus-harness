@@ -228,6 +228,25 @@
      user-made theme needs a new token. */
   --surface: var(--card);
 
+  /* ── The shell's ground ──
+     `body::before` (the base block below) is the one sheet under the whole
+     app: the sidebar, the gutters the cards float in, the tab band and the
+     header row sit on it, while every content card paints its own
+     `--background`. On the web that made them the same colour — the sheet and
+     the card both `--background` — so the frame around the content was
+     invisible. Electron never had the problem: the OS material behind the
+     window was the difference, and it is still what the vibrancy block below
+     uses. With nothing behind the window, the sheet has to carry it.
+
+     Derived, not picked, from `--background` toward `--foreground`, so every
+     palette gets it for nothing. The step is small on purpose: it has to clear
+     the card while staying off the sidebar's own hierarchy — `--sidebar-accent`
+     (a hovered row) and `--sidebar-border` are both darker still in a light
+     palette, and a ground at their tone would erase them. Light is this
+     declaration; `.dark` overrides it below, because the card sits at the
+     opposite end of the ramp there. */
+  --app-ground: color-mix(in oklch, var(--background) 95%, var(--foreground) 5%);
+
   /* One content width for the whole session column. */
   --harness-chat-width: 748px;
   /* The composer shares the transcript's text column exactly: both sit inside a
@@ -301,6 +320,12 @@
      light's answer — would have lifted the shelf in front of the box it is
      tucked behind.) */
   --shelf: color-mix(in oklch, var(--composer) 55%, var(--background) 45%);
+  /* The shell steps the other way here: `--background` is the darkest tone in
+     every dark palette and the content card is already `--background`, so the
+     frame has to lift rather than sink. A step toward the foreground (the light
+     text) does that, and 10% lands it between the card and `--sidebar-accent`
+     with room on both sides. */
+  --app-ground: color-mix(in oklch, var(--background) 90%, var(--foreground) 10%);
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -389,13 +414,18 @@
     @apply bg-background text-foreground;
   }
 
-  /* Fixed pseudo-element to hold the background color behind glass surfaces. */
+  /* Fixed pseudo-element to hold the background color behind glass surfaces.
+     `--app-ground` is the shell's tint, one step off the `--background` every
+     content card paints, so the sidebar, gutters and tab band read as a frame
+     rather than as more of the card. Under vibrancy the block below turns it
+     down to a veil of `--background` instead — there the OS material is the
+     separation and the tint would only fight it. */
   body::before {
     content: "";
     position: fixed;
     inset: 0;
     z-index: -1;
-    background-color: var(--background);
+    background-color: var(--app-ground);
     pointer-events: none;
   }
 
@@ -1046,6 +1076,20 @@ html[data-desktop-vibrancy="true"] [data-slot="sidebar-wrapper"] {
    `require("node:os")`) if Windows 10 matters. */
 html[data-desktop-vibrancy="true"] [data-sidebar="sidebar"] {
   background-color: transparent;
+}
+
+/* The web's own half of that pair. Under vibrancy the OS material is what the
+   wrapper and the panel let through; with no window material behind them they
+   would otherwise paint `--sidebar` — which is `--background` — straight over
+   the tinted global layer, and the frame `body::before` draws would never be
+   seen. Dropped here too, so the sidebar and the gutters are the one ground the
+   layer lays down. `md` and up, and never `data-mobile`: the sheet wears
+   `data-sidebar="sidebar"` as well and has to keep its opaque panel. */
+@media (width >= 48rem) {
+  html:not([data-desktop-vibrancy="true"]) [data-slot="sidebar-wrapper"],
+  html:not([data-desktop-vibrancy="true"]) [data-sidebar="sidebar"]:not([data-mobile="true"]) {
+    background-color: transparent;
+  }
 }
 
 /* The vibrancy stops at the card. The transcript is read, not glanced at,

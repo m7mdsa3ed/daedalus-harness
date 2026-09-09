@@ -32,6 +32,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useIsMobile } from "@/hooks/use-device"
 import { MENU_WIDTH } from "@/components/menu-row"
 import { PANEL_ICONS } from "@/components/workspace/panel-kinds"
 import { PanelStatusDot } from "@/components/workspace/panel-status-dot"
@@ -43,7 +44,9 @@ import { PANEL_SPECS, isPanelKind } from "@/lib/workspace/panels"
 import { cn } from "@/lib/utils"
 
 /** Below this many tabs the strip shows them all, and a list of what you can
-    already see is a button that does nothing for you. */
+    already see is a button that does nothing for you. A phone's bar is two: there
+    the tabs are marks, half of them off the end of the strip, and the list is the
+    only place every name is legible at once. */
 const LIST_FROM = 3
 
 function TabRow({ panel, onClose }: { panel: IDockviewPanel; onClose: () => void }) {
@@ -107,6 +110,7 @@ function TabRow({ panel, onClose }: { panel: IDockviewPanel; onClose: () => void
 export function TabActions({ panels }: IDockviewHeaderActionsProps) {
   const dock = useDock()
   const { onNewTab, onOpenPanel } = useDockOpeners()
+  const isMobile = useIsMobile()
 
   return (
     <div className="flex h-full items-center gap-0.5 pr-1 pl-0.5">
@@ -145,9 +149,12 @@ export function TabActions({ panels }: IDockviewHeaderActionsProps) {
         </DropdownMenu>
       )}
       {/* Below `LIST_FROM` the list is a button that does nothing for you — the
-          tabs are all on screen. The + stays either way, which is the whole
-          reason this row no longer returns null. */}
-      {panels.length >= LIST_FROM && (
+          tabs are all on screen. On a phone the tabs are marks and half of them
+          are off the end of a 360px strip, so the list is the switcher from two
+          tabs up: it is the only place every thread's *name* is legible at once.
+          The + stays either way, which is the whole reason this row no longer
+          returns null. */}
+      {panels.length >= (isMobile ? 2 : LIST_FROM) && (
       <DropdownMenu>
         <Tooltip>
           <TooltipTrigger

@@ -408,6 +408,10 @@ function useTabMenuItems({
 }): MenuItemSpec[] {
   const navigate = useNavigate()
   const runHelper = useRunHelper(dock)
+  /* Floating and popping out are wide-window gestures: on a phone a float covers
+     the whole dock and a popout is a second browser window, neither of which is
+     the "panel beside a panel" these rows exist for. */
+  const isMobile = useIsMobile()
   /* The thread's row, for the project it belongs to — not drawn on the face,
      but "Project commands" below is this thread's project's. A row keeps its
      identity unless it changes (see `useSessionMeta`), so this is not a
@@ -431,18 +435,22 @@ function useTabMenuItems({
     { label: "Close group", disabled: !hasOthers, onClick: () => void dock.closeGroup(api.id) },
     { type: "separator" },
     { label: pinned ? "Unpin" : "Pin", onClick: () => dock.togglePin(api.id) },
-    { label: "Move to a floating window", onClick: () => dock.toggleFloat(api.id) },
-    {
-      label: "Open in a new window",
-      onClick: () => {
-        void dock.popoutPanel(api.id).then((opened) => {
-          /* A blocked popup is silent otherwise — the click appears to do
-             nothing at all, which reads as a broken menu item rather than as a
-             browser setting the user can change. */
-          if (!opened) toast.error("The browser blocked the new window")
-        })
-      },
-    },
+    ...(isMobile
+      ? []
+      : ([
+          { label: "Move to a floating window", onClick: () => dock.toggleFloat(api.id) },
+          {
+            label: "Open in a new window",
+            onClick: () => {
+              void dock.popoutPanel(api.id).then((opened) => {
+                /* A blocked popup is silent otherwise — the click appears to do
+                   nothing at all, which reads as a broken menu item rather than
+                   as a browser setting the user can change. */
+                if (!opened) toast.error("The browser blocked the new window")
+              })
+            },
+          },
+        ] satisfies MenuItemSpec[])),
     /* The project's saved shell lines, on the tab of a thread that belongs to
        it: a helper acts on one project, and which project that is, is a fact
        about this tab. A helper runs in a terminal panel, so the dock is already

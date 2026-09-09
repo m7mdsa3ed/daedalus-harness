@@ -67,6 +67,7 @@ import { useConfirm } from "@/components/confirm-dialog"
 import { AgentIcon, ProjectIcon } from "@/components/entity-icon"
 import { SETTINGS_SECTIONS } from "@/components/settings/sections"
 import { useSidebar } from "@/components/ui/sidebar"
+import { useIsMobile } from "@/hooks/use-device"
 import { openTerminal } from "@/lib/workspace/open-terminal"
 import { reportError } from "@/lib/errors"
 import { currentChoiceLabel } from "@/lib/session-options"
@@ -135,6 +136,7 @@ export function RootPage() {
   const { theme, setTheme } = useTheme()
   const [fontSize, setFontSize] = useFontSize()
   const { toggleSidebar, setOpenMobile } = useSidebar()
+  const isMobile = useIsMobile()
   const { sessionId, meta, thread, modes, options } = useThreadTarget()
   const query = palette.query.trim()
   // The chords these rows advertise are the reader's own (lib/keybindings), so
@@ -510,23 +512,33 @@ export function RootPage() {
       }),
   })
   items.push(
-    {
-      id: "dock:split-right",
-      group: "Workspace",
-      title: "Split right",
-      keywords: "panel side by side",
-      icon: <PanelsTopLeft />,
-      chord: binds.splitRight.chords[0],
-      onSelect: () => palette.run(() => palette.dock.splitActive("right")),
-    },
-    {
-      id: "dock:split-down",
-      group: "Workspace",
-      title: "Split down",
-      keywords: "panel below",
-      icon: <PanelBottom />,
-      onSelect: () => palette.run(() => palette.dock.splitActive("below")),
-    },
+    /* Splitting is a wide-window gesture. Below `md` the dock is one stack of
+       tabs by construction (`dock.tsx` folds every group into the active one,
+       and folds back any group that appears), so a split row would make a group
+       and take it away again in the next microtask — a flicker, not an
+       arrangement. The rows are the only place it is *offered*; the chord is
+       refused at the source for the same reason. */
+    ...(isMobile
+      ? []
+      : [
+          {
+            id: "dock:split-right",
+            group: "Workspace",
+            title: "Split right",
+            keywords: "panel side by side",
+            icon: <PanelsTopLeft />,
+            chord: binds.splitRight.chords[0],
+            onSelect: () => palette.run(() => palette.dock.splitActive("right")),
+          },
+          {
+            id: "dock:split-down",
+            group: "Workspace",
+            title: "Split down",
+            keywords: "panel below",
+            icon: <PanelBottom />,
+            onSelect: () => palette.run(() => palette.dock.splitActive("below")),
+          },
+        ]),
     {
       id: "dock:maximize",
       group: "Workspace",

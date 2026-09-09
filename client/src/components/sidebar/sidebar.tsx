@@ -5,6 +5,8 @@
      ┌ brand row · Search
      │ New thread · Build · Tasks · …                  fixed nav, icon + label, always there
       ├ Pinned                             the ones you said matter
+      │ Opened                             the threads with a tab open, in
+      │                                    dock order — Recents leaves these out
       │ Recents                            the newest few, flat — a shortcut,
       │                                    running turns always among them
      │ Projects                           one folder per project, ALL its
@@ -44,7 +46,7 @@
    `components/thread-sidebar.tsx` is the barrel the rest of the app imports
    from. */
 import * as React from "react"
-import { Clock, FolderIcon, Pin, Trash2 } from "lucide-react"
+import { Clock, FolderIcon, Layers, Pin, Trash2 } from "lucide-react"
 import { useNavigate } from "react-router"
 import {
   SidebarGroup,
@@ -63,6 +65,7 @@ import type { Actions } from "@/lib/actions"
 import { projectPath, settingsPath, threadPath } from "@/lib/router"
 import { usePins } from "@/lib/pins"
 import { useProjects } from "@/lib/queries/catalog"
+import { useOpenThreads } from "@/lib/workspace/open-threads"
 import { activityAt, isListed, type Project, type SessionMeta } from "@/lib/settings"
 import { useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
@@ -98,6 +101,10 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
   const projects = useProjects()
   const pins = usePins()
   const view = useSidebarView()
+  /* The threads with a tab open, in the dock's order — the "Opened" tier, and
+     what Recents leaves out. Published by the dock (lib/workspace/open-threads),
+     so a reload rebuilds it from the restored layout. */
+  const openIds = useOpenThreads()
   const navigate = useNavigate()
   const startIn = useStartThreadIn(actions)
   /* The icon rail is 3rem wide: a thread row there is a title clipped to
@@ -119,7 +126,7 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
      streamed token changes (statuses is identity-stable, see above), so a
      token costs this component a render but no re-sorting and — through the
      memoized rows — no row re-renders. */
-  const { live, trashed, pinned, recent, filed } = React.useMemo(() => {
+  const { live, trashed, pinned, recent, opened, filed } = React.useMemo(() => {
     // Deleting is reversible, so a deleted thread leaves the tiers above but
     // not the sidebar: it drops into Trash until it is restored or purged.
     const live = sessions
@@ -168,19 +175,36 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
        order of what is drawn cannot. */
     const isRunning = (session: SessionMeta) => statuses.get(session.id) === "running"
     const rest = [...live].sort((a, b) => b.createdAt - a.createdAt)
-    const running = rest.filter(isRunning)
+
+    /* ── Opened, and Recents without it ──
+       A thread with a tab open is already one click away, so it is not also a
+       shortcut in Recents: the tier below lists what is open, Recents lists what
+       is not. Closing a tab takes its id out of the open set, which is all it
+       takes for the thread to fall back into Recents if it belongs there — both
+       are derived, so the two can never disagree. Mapped through `live`, so the
+       status filter narrows this tier with every other, and a draft (which no
+       list draws) stays out of it. */
+    const openSet = new Set(openIds)
+    const byId = new Map(live.map((session) => [session.id, session]))
+    const opened = openIds.flatMap((id) => {
+      const session = byId.get(id)
+      return session ? [session] : []
+    })
+    const closed = rest.filter((session) => !openSet.has(session.id))
+
+    const running = closed.filter(isRunning)
     /* Every running thread keeps its place, whatever its age — that is what
        Recents replaced the old Running tier with, and burying the turn that is
        happening now is the thing the tier existed to prevent. The rest fill
        what is left, so the count is what it always was. */
     const shown = new Set(running.map((session) => session.id))
-    for (const session of rest) {
+    for (const session of closed) {
       if (shown.size >= Math.max(RECENT_COUNT, running.length)) break
       shown.add(session.id)
     }
-    const recent = view.sort === "recent" ? rest.filter((session) => shown.has(session.id)) : []
-    return { live, trashed, pinned, recent, filed: newestFirst }
-  }, [sessions, statuses, pins, view.filter, view.sort])
+    const recent = view.sort === "recent" ? closed.filter((session) => shown.has(session.id)) : []
+    return { live, trashed, pinned, recent, opened, filed: newestFirst }
+  }, [sessions, statuses, pins, view.filter, view.sort, openIds])
 
   const { byProject, orphans } = React.useMemo(() => {
     const byProject = new Map<string, SessionMeta[]>()
@@ -231,6 +255,16 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
       {pinned.length > 0 && (
         <FoldableGroup groupKey="__pinned" label="Pinned" icon={<Pin className="size-3 shrink-0" />}>
           <ThreadList sessions={pinned} {...listProps} />
+        </FoldableGroup>
+      )}
+
+      {/* The threads with a tab open, in the dock's order. The active one is
+          the row the dock just focused — highlighted here exactly as it is in
+          every other tier, so the transcript in front of you always has a row
+          that says so. Recents leaves these out; closing a tab returns it. */}
+      {opened.length > 0 && (
+        <FoldableGroup groupKey="__opened" label="Opened" icon={<Layers className="size-3 shrink-0" />}>
+          <ThreadList sessions={opened} {...listProps} />
         </FoldableGroup>
       )}
 

@@ -212,10 +212,26 @@ export function AppShell({
     dock.openPage(pagePath)
   }, [pagePath, location.key, dock])
 
+  /* ── Which thread the tab follows ──
+     The routed thread's *state*, never its row. `sessions` is rewritten by
+     every message this device sends — `session-title` and `turn-active` each
+     map the array, whether or not anything in it moved — so an effect keyed on
+     it re-ran on every send and re-focused the routed tab. That is invisible
+     while the address bar agrees with the panel in front, and a yank when it
+     does not: focusing a terminal or an IDE writes no route on purpose
+     ("focusing a terminal must not navigate away from the thread it belongs
+     to"), so the URL can still name a thread that is not the one in front, and
+     the send then pulled the dock back to it mid-sentence. Only a change that
+     alters whether the tab is opened at all is a dependency: absent (mint a
+     draft), draft (spend the console), known (open or focus it). `location.key`
+     stays, for the sidebar row clicked for a tab that was just closed — the
+     same path again, and it has to open it again. */
+  const routed = sessions.find((session) => session.id === sessionId)
+  const routedState = !routed ? "absent" : routed.draft ? "draft" : "known"
   React.useEffect(() => {
     if (!sessionId) return
     if (location.search) void navigate(threadPath(sessionId), { replace: true }) // legacy ?session=
-    if (sessions.some((s) => s.id === sessionId)) {
+    if (routedState !== "absent") {
       /* Always a tab of its own. Opening a thread used to *replace* the chat
          you were reading — the sidebar as navigation — and a new tab was the
          opt-in a ⌘-click or a menu row asked for. It is the other way round
@@ -230,7 +246,7 @@ export function AppShell({
          the signature: the console mints one and navigates to it before the
          send, so this can only ever spend a console you were just typing in,
          never a page tab you are merely reading. */
-      if (sessions.find((session) => session.id === sessionId)?.draft) dock.consumeConsole()
+      if (routedState === "draft") dock.consumeConsole()
       dock.openChat(sessionId, { newTab: true })
       /* Panels a page without a dock asked to open beside this thread. After
          the chat, so they split against it. */
@@ -247,7 +263,7 @@ export function AppShell({
     // redirect above clears the search, and re-running on that would only
     // open the same tab a second time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, sessions, ready, dock])
+  }, [sessionId, routedState, ready, dock, location.key])
 
   /* Drop tabs whose thread or project is gone — but never against a session
      list that never arrived. `loading` alone is not that test: a failed
@@ -351,7 +367,6 @@ export function AppShell({
 
   return (
     <SidebarProvider
-      data-resizing={sidebar.resizing || undefined}
       style={{
         "--sidebar-width": sidebar.width,
         height: "100dvh",
