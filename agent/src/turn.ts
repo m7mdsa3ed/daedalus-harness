@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { hostname, platform } from "node:os";
+import { setTimeout as sleep } from "node:timers/promises";
 import type * as acp from "./acp.js";
 import type { SharedV4ProviderOptions } from "@ai-sdk/provider";
 import {
@@ -44,8 +45,16 @@ const MAX_STEPS = 100;
 const MAX_MID_TURN_COMPACTIONS = 3;
 const OUTPUT_CONTENT_LIMIT = 30_000;
 const SUBAGENT_REPORT_LIMIT = 32_000;
-const MAX_STREAM_RETRIES = 2;
-const STREAM_RETRY_BASE_MS = 1_000;
+/* The harness's retries, and the only ones: `maxRetries: 0` on every
+   `streamText` below. Left at the SDK's default the log's holds all began
+   "Failed after 3 attempts" — three tries inside six seconds, then a
+   `RetryError` the classifier did not recognise, so a 429 that said "retry
+   after a brief wait" was handed to the user before the wait was over. Four
+   retries at 2s doubling is ~30s of patience, and a Retry-After header can
+   stretch any one wait up to the cap. */
+const MAX_STREAM_RETRIES = 4;
+const STREAM_RETRY_BASE_MS = 2_000;
+const STREAM_RETRY_MAX_MS = 60_000;
 
 interface Parked {
   resolve: (r: acp.PromptResponse) => void;
@@ -198,8 +207,8 @@ export async function handlePrompt(
           session,
           emit,
           clientCaps: deps.clientCaps(),
-          runSubagent: (name, prompt) =>
-            runSubagent(deps, session, ctx, emit, name, prompt, (usage) => {
+          runSubagent: (name, prompt, toolCallId) =>
+            runSubagent(deps, session, ctx, emit, toolCallId ?? "unknown", name, prompt, (usage) => {
               /* A subagent's spend is the turn's spend: its steps never touch
                  `session.lastTokens` (they measure the child's own window), so
                  the only place its tokens can land is here, folded into the
@@ -215,6 +224,7 @@ export async function handlePrompt(
           messages: session.messages,
           tools,
           abortSignal: abort.signal,
+          maxRetries: 0,
           stopWhen: [
             stepCountIs(MAX_STEPS),
             /* The step boundary is the only place a mid-turn compaction can
@@ -378,8 +388,8 @@ export async function handlePrompt(
 
       if (isRetriableStreamError(failure) && attempt < MAX_STREAM_RETRIES) {
         attempt++;
-        const delayMs = STREAM_RETRY_BASE_MS * 2 ** (attempt - 1);
-        process.stderr.write(`stream retry ${attempt}/${MAX_STREAM_RETRIES}\n`);
+        const delayMs = retryDelayMs(failure, attempt);
+        process.stderr.write(`stream retry ${attempt}/${MAX_STREAM_RETRIES} in ${delayMs}ms: ${describeHold(failure).message}\n`);
         /* Said before the wait, not after it: the backoff is most of the
            silence, and a notice that arrives when the next attempt starts
            explains a pause that has already happened. */
@@ -391,7 +401,9 @@ export async function handlePrompt(
           delayMs,
           ...describeHold(failure),
         });
-        await new Promise((r) => setTimeout(r, delayMs));
+        /* Abortable: a Stop pressed during a 30s backoff must not wait it
+           out. The loop head rethrows on the aborted signal. */
+        await sleep(delayMs, undefined, { signal: abort.signal }).catch(() => {});
         continue;
       }
 
@@ -491,7 +503,7 @@ async function notifyRetry(ctx: acp.AgentContext, params: RetryNotification): Pr
    the first line because an OpenAI-compatible error is usually one readable
    sentence followed by a JSON body nobody wants unbidden. */
 function describeHold(failure: unknown): ErrorHold {
-  const text = errorText(failure).trim() || "the model provider returned an error";
+  const text = errorText(unwrapRetry(failure)).trim() || "the model provider returned an error";
   const [first = text, ...rest] = text.split("\n");
   const detail = rest.join("\n").trim();
   return {
@@ -796,6 +808,7 @@ async function runSubagent(
   session: Session,
   ctx: acp.AgentContext,
   parentEmit: Emitter,
+  toolCallId: string,
   name: string,
   prompt: string,
   /** Every token the child burns, whatever happened to the attempt — the
@@ -811,6 +824,7 @@ async function runSubagent(
       subagentSessionId: childId,
       name,
       task: prompt.length > 500 ? `${prompt.slice(0, 500)}…` : prompt,
+      _meta: { daedalus: { parentToolUseId: toolCallId } },
     });
   }
   const childEmit = parentEmit.asChild(childId, rfd);
@@ -832,8 +846,10 @@ async function runSubagent(
     let lastError: unknown;
     for (let attempt = 0; attempt <= MAX_STREAM_RETRIES; attempt++) {
       if (attempt > 0) {
-        process.stderr.write(`subagent stream retry ${attempt}/${MAX_STREAM_RETRIES}\n`);
-        await new Promise((r) => setTimeout(r, STREAM_RETRY_BASE_MS * 2 ** (attempt - 1)));
+        const delayMs = retryDelayMs(lastError, attempt);
+        process.stderr.write(`subagent stream retry ${attempt}/${MAX_STREAM_RETRIES} in ${delayMs}ms\n`);
+        await sleep(delayMs, undefined, { signal: session.abort?.signal }).catch(() => {});
+        if (session.abort?.signal.aborted) throw lastError;
       }
 
       const result = streamText({
@@ -842,6 +858,7 @@ async function runSubagent(
         messages: [{ role: "user", content: prompt }],
         tools,
         abortSignal: session.abort?.signal,
+        maxRetries: 0,
         stopWhen: stepCountIs(MAX_STEPS),
         reasoning: session.effort ?? undefined,
         maxOutputTokens: deps.env.maxOutputTokens ?? undefined,
@@ -1341,10 +1358,39 @@ function isAbortError(err: unknown): boolean {
   return err instanceof Error && (err.name === "AbortError" || /abort/i.test(err.message));
 }
 
+/* The SDK's `RetryError` wraps the failure that actually happened; every
+   reading of a failure — retriable or not, what to tell the user — is of
+   the inner one. Defensive now that `maxRetries` is 0, cheap to keep. */
+function unwrapRetry(err: unknown): unknown {
+  return err instanceof Error && err.name === "AI_RetryError"
+    ? ((err as { lastError?: unknown }).lastError ?? err)
+    : err;
+}
+
 function isRetriableStreamError(err: unknown): boolean {
+  err = unwrapRetry(err);
   if (!(err instanceof Error)) return false;
+  /* A wall that will still be there in thirty seconds is held at once — the
+     five-hour usage cap, an exhausted quota, a key that stopped working. A
+     provider sends these as 429/403 too, and retrying into one only costs the
+     user the wait before the same hold. */
+  if (/usage limit|quota|insufficient|billing|unauthori[sz]ed|invalid api key/i.test(err.message)) return false;
   if (err.name === "AI_InvalidResponseDataError") return true;
-  if (err.name === "AI_APICallError" && "isRetryable" in err && (err as { isRetryable: boolean }).isRetryable) return true;
-  if (/ECONNRESET|EPIPE|ETIMEDOUT|socket hang up|network/i.test(err.message)) return true;
-  return false;
+  if (err.name === "AI_APICallError" && (err as { isRetryable?: boolean }).isRetryable) return true;
+  return /ECONNRESET|EPIPE|ETIMEDOUT|socket hang up|network|fetch failed|terminated/i.test(err.message);
+}
+
+/* Exponential backoff, floored by the provider's own Retry-After where it
+   sends one and capped so a bad header cannot park the turn for an hour. */
+function retryDelayMs(err: unknown, attempt: number): number {
+  const backoff = STREAM_RETRY_BASE_MS * 2 ** (attempt - 1);
+  const headers = (unwrapRetry(err) as { responseHeaders?: Record<string, string> } | null)?.responseHeaders;
+  const retryAfterMs = headers?.["retry-after-ms"]
+    ? parseFloat(headers["retry-after-ms"])
+    : headers?.["retry-after"]
+      ? parseFloat(headers["retry-after"]) * 1000
+      : NaN;
+  return Number.isFinite(retryAfterMs) && retryAfterMs >= 0
+    ? Math.min(Math.max(retryAfterMs, backoff), STREAM_RETRY_MAX_MS)
+    : backoff;
 }

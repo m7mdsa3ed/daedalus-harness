@@ -28,19 +28,40 @@ import "dockview-react/dist/styles/dockview.css"
 import { ChatPanel } from "@/components/workspace/chat-panel"
 import { forgetProjectEditors } from "@/lib/ide/editors"
 import { forgetScmFilter } from "@/lib/ide/scm-filter"
-import { IdePanel } from "@/components/workspace/ide-panel"
 import { PanelContainer } from "@/components/workspace/panel-container"
 import { PanelTab } from "@/components/workspace/panel-tab"
-import { TasksPanel } from "@/components/workspace/tasks-panel"
-import { TerminalPanel } from "@/components/workspace/terminal-panel"
+import { PagePanel } from "@/components/workspace/page-panel"
 import { WebPanel } from "@/components/workspace/web-panel"
 import { UnsupportedPanel } from "@/components/workspace/unsupported-panel"
 import { TabActions } from "@/components/workspace/tab-actions"
+
+/* The three panels that carry a library the rest of the app does not: Monaco
+   (the IDE), xterm (the terminal) and the whole board (the tasks tree). The
+   chat is not one of them — it is what the dock opens with, so lazy loading it
+   would only put a suspense boundary in front of the first paint.
+
+   They are the kind of thing dockview's own `defaultRenderer="always"` keeps
+   mounted once opened, so the chunk is fetched once per session at most, when
+   the reader opens the panel. Anything else importing these modules statically
+   puts them back in the entry chunk — Rollup calls it INEFFECTIVE_DYNAMIC_IMPORT
+   and says so in the build output, which is the check on this. */
+const IdePanel = React.lazy(async () => ({
+  default: (await import("@/components/workspace/ide-panel")).IdePanel as React.FC<IDockviewPanelProps>,
+}))
+const TerminalPanel = React.lazy(async () => ({
+  default: (await import("@/components/workspace/terminal-panel"))
+    .TerminalPanel as React.FC<IDockviewPanelProps>,
+}))
+const TasksPanel = React.lazy(async () => ({
+  default: (await import("@/components/workspace/tasks-panel"))
+    .TasksPanel as React.FC<IDockviewPanelProps>,
+}))
 import type { Actions } from "@/lib/actions"
 import { navigateTo, threadPath } from "@/lib/router"
 import { loadSettings } from "@/lib/settings"
 import { notifyDockLayout } from "@/lib/workspace/panel-overlap"
 import { useHotkey, useShortcut } from "@/hooks/use-hotkey"
+import { MOBILE_BREAKPOINT, useIsMobile } from "@/hooks/use-device"
 import { KEYS } from "@/lib/shortcuts"
 import { useTheme } from "@/lib/theme"
 import {
@@ -58,6 +79,7 @@ import {
   PANEL_SPECS,
   panelId,
   parsePanel,
+  pageKey,
   type PanelDescriptor,
   type PanelKind,
 } from "@/lib/workspace/panels"
@@ -135,9 +157,8 @@ function syncHeaderOverlap(api: DockviewApi): void {
   const cluster = (selector: string) =>
     header?.querySelector<HTMLElement>(selector)?.getBoundingClientRect()
   /* A cluster narrows the content box further; without one the box itself is
-     the bound. `Math.max`/`min` and not a fallback, because the sidebar toggle
-     sits outside `[data-header-left]` and only the box accounts for it when the
-     cluster is empty. */
+     the bound. `[data-header-left]` is the toggle and the sliders — the whole
+     of what the header holds now that every route's title is on its tab. */
   const leftBound = Math.max(contentLeft, cluster("[data-header-left]")?.right ?? contentLeft)
   const rightBound = Math.min(contentRight, cluster("[data-header-right]")?.left ?? contentRight)
 
@@ -210,6 +231,12 @@ export type CloseGuard = () => boolean | Promise<boolean>
 export interface WorkspaceDock {
   openPanel: (panel: PanelDescriptor, options?: OpenPanelOptions) => void
   openChat: (sessionId: string, options?: OpenPanelOptions) => void
+  /** Show a route in the app's browsing tab — see `openPage` for the rule. */
+  openPage: (path: string) => void
+  /** Spend the landing console's tab: the thread started from it takes its
+      place rather than standing beside a "New thread" tab that has nothing
+      left to do. A no-op unless the console is the active, unpinned tab. */
+  consumeConsole: () => void
   closePanel: (id: string) => Promise<void>
   closeOthers: (id: string) => Promise<void>
   closeToTheRight: (id: string) => Promise<void>
@@ -310,11 +337,69 @@ export function useWorkspaceDock(): DockController {
     }
   }, [])
 
+  /* ── The browsing tab ──
+     A page is a place you visit, not a thing you keep the way a thread is, so
+     the dock holds one page tab and points it wherever the URL goes — the way
+     a browser's sidebar links navigate the tab you are in. The first version
+     of page tabs opened a tab per place, and reading settings, then the
+     schedules, then a project left three tabs beside the chat that none of
+     them were about.
+
+     Three answers, in order: a tab already standing for this place (`pageKey`
+     — the settings tab whose section moves, a project's own page) is pointed
+     at the new path; else the unpinned page tab, whichever place it was on,
+     is repointed; else a new one opens beside what you are looking at. A pin
+     is how a page is *kept*: a pinned page tab is never repointed to another
+     place, and the next page opens its own. The id therefore says nothing
+     about the path — it is unique and nothing more. */
+  const openPage = React.useCallback((path: string) => {
+    const api = apiRef.current
+    if (!api) return
+    const key = pageKey(path)
+    const pages = api.panels.filter((candidate) => candidate.api.component === "page")
+    const placeOf = (candidate: IDockviewPanel): string | null => {
+      const descriptor = descriptorOf(candidate)
+      return descriptor?.kind === "page" ? pageKey(descriptor.path) : null
+    }
+    const target =
+      pages.find((candidate) => placeOf(candidate) === key) ??
+      pages.find((candidate) => candidate.api.isActive && !isPanelPinned(candidate.id)) ??
+      pages.find((candidate) => !isPanelPinned(candidate.id))
+    if (target) {
+      const descriptor = descriptorOf(target)
+      if (descriptor?.kind !== "page" || descriptor.path !== path)
+        target.api.updateParameters({ kind: "page", path })
+      target.api.setActive()
+      return
+    }
+    const group = api.activeGroup?.activePanel?.group ?? api.activeGroup ?? undefined
+    let id = `page:${key}`
+    for (let n = 2; api.getPanel(id); n += 1) id = `page:${key}:${n}`
+    api.addPanel({
+      id,
+      component: "page",
+      title: PANEL_SPECS.page.defaultTitle,
+      params: { kind: "page", path },
+      position: group ? { referenceGroup: group.id, direction: "within" as const } : undefined,
+    })
+  }, [])
+
+  const consumeConsole = React.useCallback(() => {
+    const api = apiRef.current
+    const active = api?.activeGroup?.activePanel
+    if (!api || !active || active.api.component !== "page" || isPanelPinned(active.id)) return
+    const descriptor = descriptorOf(active)
+    if (descriptor?.kind !== "page" || pageKey(descriptor.path) !== "home") return
+    silently(() => api.removePanel(active))
+  }, [silently])
+
   const openPanel = React.useCallback(
     (panel: PanelDescriptor, options?: OpenPanelOptions) => {
       const api = apiRef.current
       if (!api) return
       if (!PANEL_SPECS[panel.kind].implemented) return
+      /* One door for a page, whoever knocks — ⌘⇧T reopening one included. */
+      if (panel.kind === "page") return openPage(panel.path)
 
       const id = panelId(panel)
       const existing = api.getPanel(id)
@@ -389,7 +474,7 @@ export function useWorkspaceDock(): DockController {
 
       if (replace && current) silently(() => api.removePanel(current))
     },
-    [silently]
+    [silently, openPage]
   )
 
   const openChat = React.useCallback(
@@ -397,13 +482,13 @@ export function useWorkspaceDock(): DockController {
     [openPanel]
   )
 
-  /* The last chat cannot be closed: the route always points at a thread, and a
-     dock with no chat in it would re-open one on the next render anyway. Every
-     other kind is always closable. */
+  /* Every panel can be closed, the last one included: an empty dock goes to
+     the landing console (`onDidRemovePanel` in `handleReady`), which is the
+     app's own empty state — the last chat used to be pinned open because a
+     route always named a thread, and it no longer has to. */
   const isClosable = React.useCallback((panel: IDockviewPanel): boolean => {
     const api = apiRef.current
-    if (!api) return false
-    return !isChat(panel) || api.panels.filter(isChat).length > 1
+    return !!api && api.panels.includes(panel)
   }, [])
 
   const removeWithGuard = React.useCallback(async (panel: IDockviewPanel): Promise<boolean> => {
@@ -698,7 +783,7 @@ export function useWorkspaceDock(): DockController {
                    a prune of sessions and projects can say a tasks panel is
                    stale — a deleted board resolves to another one from inside
                    the panel (`lib/tasks-location.ts`). */
-                descriptor.kind === "tasks"
+                descriptor.kind === "tasks" || descriptor.kind === "page"
                 ? false
                 : !pruneProjects
                   ? false
@@ -757,14 +842,25 @@ export function useWorkspaceDock(): DockController {
        there before there is one. */
     let saveTimer: ReturnType<typeof setTimeout> | undefined
     const disposables = [
-      /* The route follows the focused chat, and only a chat: focusing a
-         terminal must not navigate away from the thread it belongs to. */
+      /* The route follows the focused chat or page, and only those: focusing
+         a terminal must not navigate away from the thread it belongs to. */
       api.onDidActivePanelChange(({ panel }) => {
-        if (!panel || !panel.api.isActive || !isChat(panel)) return
+        if (!panel || !panel.api.isActive) return
+        /* The tab you switched to is on screen. Dockview scrolls the strip
+           for nothing — a phone's strip holds four or five marks and the one
+           you tapped in the palette or the sidebar could be off its end, with
+           no sign of which tab is the one that is now speaking. `nearest` so a
+           tab already in view moves the strip by nothing. */
+        panel.view.tab.element.scrollIntoView({ inline: "nearest", block: "nearest" })
         const descriptor = descriptorOf(panel)
-        if (descriptor?.kind !== "chat") return
-        if (location.pathname !== threadPath(descriptor.sessionId))
-          navigateTo(threadPath(descriptor.sessionId), { replace: true })
+        const path =
+          descriptor?.kind === "chat"
+            ? threadPath(descriptor.sessionId)
+            : descriptor?.kind === "page"
+              ? descriptor.path
+              : null
+        if (path && location.pathname + location.search !== path)
+          navigateTo(path, { replace: true })
       }),
       api.onDidLayoutChange(() => {
         clearTimeout(saveTimer)
@@ -819,6 +915,8 @@ export function useWorkspaceDock(): DockController {
       onReady,
       openPanel,
       openChat,
+      openPage,
+      consumeConsole,
       closePanel,
       closeOthers,
       closeToTheRight,
@@ -847,6 +945,8 @@ export function useWorkspaceDock(): DockController {
       onReady,
       openPanel,
       openChat,
+      openPage,
+      consumeConsole,
       closePanel,
       closeOthers,
       closeToTheRight,
@@ -888,7 +988,37 @@ export function WorkspaceDock({
   onReady: (api: DockviewApi) => void
 }) {
   const { resolved } = useTheme()
-  const theme = React.useMemo(() => (resolved === "dark" ? themeAbyss : themeLight), [resolved])
+  /* ── Reordering a tab is a reorder, not a target picker ──
+     Dockview's default is a half-width fill over every tab — a row of slabs
+     the size of half a tab, which is what "multiple spots, wrong size" was.
+     `smooth` is its own Chrome-style reorder: the dragged tab collapses out of
+     the strip, the rest slide apart to open the gap where it would land, and
+     they FLIP to their final positions on drop. `line` turns the remaining
+     drop overlay into the 1px insertion rule at the tab edge that a strip
+     doing its own sliding wants (index.css keeps that variant's border and
+     drops the fill). Both are the installed dockview's, not ours — the CSS
+     side of it is two declarations there. */
+  const theme = React.useMemo(
+    () => ({
+      ...(resolved === "dark" ? themeAbyss : themeLight),
+      tabAnimation: "smooth" as const,
+      dndTabIndicator: "line" as const,
+    }),
+    [resolved],
+  )
+
+  /* ── One group on a phone ──
+     Two panels side by side in 390px is two panels nobody can read, so below
+     `md` the dock is one stack of tabs: every group folds into the active one
+     when the window narrows, and any group that appears while it is narrow —
+     a restored layout, a tab dragged to an edge, the split chord — folds the
+     same way (`onDidAddGroup` below). A width, not a pointer: a tablet in
+     landscape can hold a split. Nothing is remembered for the way back; the
+     layout the wide window had is whatever the stack is by then. */
+  const isMobile = useIsMobile()
+  React.useEffect(() => {
+    if (isMobile) dock.stackAll()
+  }, [isMobile, dock])
 
   /* Every kind gets an entry, including the ones this build has not written
      yet: Dockview throws on an unknown component name, so a layout saved by a
@@ -901,21 +1031,30 @@ export function WorkspaceDock({
      answers and which half stays the window's). */
   const components = React.useMemo(() => {
     const map: Record<string, React.FC<IDockviewPanelProps>> = {}
+    /* The Suspense is here for the same reason the container is: three of the
+       panels are lazy chunks (see the top of this file), and a boundary per
+       panel is a boundary that cannot be forgotten when a fourth is added.
+       The fallback is empty on purpose — the panel is already framed by its
+       tab and its container, so a spinner inside it is a second thing moving
+       in a box that just appeared. */
     const contained =
       (Panel: React.FC<IDockviewPanelProps>): React.FC<IDockviewPanelProps> =>
       (props) => (
         <PanelContainer>
-          <Panel {...props} />
+          <React.Suspense fallback={null}>
+            <Panel {...props} />
+          </React.Suspense>
         </PanelContainer>
       )
     for (const kind of PANEL_KINDS) map[kind] = contained(UnsupportedPanel)
     map.chat = contained((props) => (
       <ChatPanel {...(props as IDockviewPanelProps<{ sessionId: string }>)} actions={actions} />
     ))
-    map.ide = contained(IdePanel as React.FC<IDockviewPanelProps>)
-    map.terminal = contained(TerminalPanel as React.FC<IDockviewPanelProps>)
-    map.tasks = contained(TasksPanel as React.FC<IDockviewPanelProps>)
+    map.ide = contained(IdePanel)
+    map.terminal = contained(TerminalPanel)
+    map.tasks = contained(TasksPanel)
     map.web = contained(WebPanel as React.FC<IDockviewPanelProps>)
+    map.page = contained(PagePanel as React.FC<IDockviewPanelProps>)
     return map
   }, [actions])
 
@@ -956,7 +1095,21 @@ export function WorkspaceDock({
       const disposables = [
         api.onDidAddPanel(sync),
         api.onDidRemovePanel(sync),
+        /* Closing the last tab lands on the landing console rather than on an
+           empty dock. A microtask later, because `fromJSON` empties the dock
+           on its way to refilling it — a reload at `/t/x` clears, then adds,
+           and a navigation fired between the two would take the URL away from
+           the thread being restored. By the microtask the restore is done. */
+        api.onDidRemovePanel(() => {
+          queueMicrotask(() => {
+            if (api.panels.length === 0 && location.pathname !== "/") navigateTo("/")
+          })
+        }),
         api.onDidAddGroup(sync),
+        api.onDidAddGroup(() => {
+          if (window.innerWidth < MOBILE_BREAKPOINT && api.groups.length > 1)
+            queueMicrotask(dock.stackAll)
+        }),
         api.onDidRemoveGroup(sync),
         /* Dragging a tab into another group has to be listened for separately:
            dockview runs a move under a lock that suppresses the panel
@@ -999,7 +1152,7 @@ export function WorkspaceDock({
         disposables.forEach((disposable) => disposable.dispose())
       }
     },
-    [onReady]
+    [onReady, dock]
   )
 
   /* Memoised, or every render of the dock hands the strip a new object and
@@ -1020,6 +1173,13 @@ export function WorkspaceDock({
            panel the user cannot get back without clearing the layout. */
         floatingGroupBounds="boundedWithinViewport"
         onReady={(event) => handleReady(event.api)}
+        /* Dockview draws its own overflow chevron once the tabs stop fitting,
+           and `TabActions` already draws one at the same end of the same strip
+           — two dropdowns side by side, answering the same question. Ours is
+           the one that stays: it lists every tab rather than only the hidden
+           ones, says what each is doing (`panel-status`) and closes one without
+           bringing it back into the strip first. */
+        disableTabsOverflowList
         /* No `singleTabMode`: a browser tab is the width of a tab whether it is
            alone or one of nine (`index.css` gives it the same 15rem ceiling and
            lets it shrink), and the strip beside it is the run of emptiness the

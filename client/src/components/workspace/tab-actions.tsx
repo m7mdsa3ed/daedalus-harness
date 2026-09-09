@@ -52,23 +52,43 @@ function TabRow({ panel, onClose }: { panel: IDockviewPanel; onClose: () => void
   const title = panel.title ?? (isPanelKind(kind) ? PANEL_SPECS[kind].defaultTitle : "Panel")
   const status = usePanelStatus(panel.id)
   const pinned = usePanelPinned(panel.id)
+  const active = panel.api.isActive
 
   return (
     <DropdownMenuItem
       onClick={() => panel.api.setActive()}
-      className={cn("gap-2", panel.api.isActive && "bg-accent/60")}
+      /* What the ✕ beside the row does, for the reader who arrowed here rather
+         than pointed at it — the same key the tab strip itself answers to. */
+      onKeyDown={(event) => {
+        if (pinned || event.key !== "Delete") return
+        event.preventDefault()
+        onClose()
+      }}
+      /* The row for the tab you are already on. `aria-current` and not
+         `aria-selected`: this is a menu, and a menu row that says "selected"
+         claims a state a `menuitem` does not have. The tint is the same fact
+         for a reader who is looking rather than listening. */
+      aria-current={active ? "true" : undefined}
+      className={cn("gap-2", active && "bg-accent/60")}
     >
       {Icon && <Icon className="text-muted-foreground" />}
       <span className="min-w-0 flex-1 truncate">{title}</span>
-      {pinned && <PinIcon className="size-3 shrink-0 text-muted-foreground" />}
+      {pinned && <PinIcon aria-label="Pinned" className="size-3 shrink-0 text-muted-foreground" />}
       <PanelStatusDot status={status} />
       {/* Closing from the list, so a tab that has scrolled out of the strip can
           be got rid of without being brought back into it first. Pinned rows
-          keep the pin instead — the same trade the tab itself makes. */}
+          keep the pin instead — the same trade the tab itself makes.
+
+          `tabIndex={-1}` for the reason the tab's own controls carry it: a
+          focusable child of a `menuitem` is a second stop inside a widget whose
+          arrow keys own the movement. It keeps its name, so it is still read
+          out as part of the row and still reachable in a screen reader's browse
+          mode; the `Delete` above is the way to it from the arrow keys. */}
       {!pinned && (
         <Button
           size="icon-xs"
           variant="ghost"
+          tabIndex={-1}
           aria-label={`Close ${title}`}
           className="-mr-1 size-5 opacity-60 hover:opacity-100"
           onClick={(event) => {

@@ -56,21 +56,15 @@ import { useDock } from "@/components/workspace/dock"
 import { PanelNotice, PanelToolbar } from "@/components/workspace/primitives"
 import { TerminalKeyRow } from "@/components/workspace/terminal-keys"
 import { writeClipboard } from "@/lib/clipboard"
-import { describeError, reportError } from "@/lib/errors"
+import { reportError } from "@/lib/errors"
 import { loadSettings, serverName } from "@/lib/settings"
 import { colorToHex, useTheme } from "@/lib/theme"
-import { useCoarsePointer } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-device"
 import { toast } from "@/lib/toast"
 import { useProjects } from "@/lib/queries/catalog"
 import { Logo } from "@/components/ui/logo"
 import { cn } from "@/lib/utils"
-import {
-  createTerminal,
-  killTerminal,
-  startHelperTerminal,
-  terminalSocketUrl,
-} from "@/lib/workspace/terminals"
-import { queuePanel } from "@/lib/workspace/pending-panels"
+import { createTerminal, killTerminal, terminalSocketUrl } from "@/lib/workspace/terminals"
 import { panelId } from "@/lib/workspace/panels"
 import { usePublishPanelStatus } from "@/lib/workspace/panel-status"
 import {
@@ -931,56 +925,5 @@ async function pasteInto(terminal: Terminal): Promise<void> {
        and was refused. Nothing to recover — say so and let the reader use the
        soft keyboard's own paste into the terminal. */
     toast.error("The browser did not allow reading the clipboard")
-  }
-}
-
-/** Open a new terminal for a project and put it in the dock. Exported because
-    the palette and the shell's ⌃` both want it and neither owns a panel. */
-export async function openTerminal(
-  dock: ReturnType<typeof useDock>,
-  projectId: string
-): Promise<void> {
-  try {
-    const created = await createTerminal(projectId)
-    dock.openPanel(
-      { kind: "terminal", projectId, terminalId: created.id },
-      { direction: "below" }
-    )
-  } catch (err) {
-    const { title } = describeError(err)
-    reportError(err, title === "The request failed" ? "Couldn't open a terminal" : undefined)
-  }
-}
-
-/**
- * Run a project helper: a terminal, opened on the helper's own command.
- *
- * A helper is a shell line somebody saved, and a shell line asks things —
- * "which environment?", a password, `[y/N]`. The old run captured stdout into
- * a dialog with no stdin behind it, so any of those hung until the timeout
- * killed it with the question as the final line. Here the same command gets a
- * PTY, and the panel it lands in is the one the harness already knows how to
- * draw a PTY in.
- *
- * `dock` is null on a route that has no dock — the project page — where the
- * panel is *queued* for the next thread instead, the same trade `openRules`
- * makes there. The terminal itself is already running by then either way: it
- * is the server's, and it survives the trip.
- */
-export async function openHelperTerminal(
-  projectId: string,
-  helper: { id: string; name: string },
-  dock: ReturnType<typeof useDock> | null
-): Promise<boolean> {
-  try {
-    const created = await startHelperTerminal(projectId, helper.id)
-    const panel = { kind: "terminal", projectId, terminalId: created.id } as const
-    if (dock) dock.openPanel(panel, { direction: "below" })
-    else queuePanel(panel, { direction: "below" })
-    return true
-  } catch (err) {
-    const { title } = describeError(err)
-    reportError(err, title === "The request failed" ? `Couldn't run ${helper.name}` : undefined)
-    return false
   }
 }

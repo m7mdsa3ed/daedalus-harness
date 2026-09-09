@@ -64,6 +64,8 @@ export interface SocketHost {
   queueRemove(id: string, itemId: string): Promise<void>;
   queueClear(id: string): void;
   stopTurn(id: string, reclaim: boolean): Promise<CancelReply>;
+  /** Continue a held turn, taking a staged change first when there is one. */
+  resumeTurn(id: string): Promise<{ paused: boolean }>;
   enrichError(session: Session, error: WireError): WireError;
 }
 
@@ -383,7 +385,7 @@ export class SessionSocket {
       return;
     }
     if (command.cmd === "load_earlier") {
-      this.send(peer, { ev: "reply", id: command.id, result: this.host.journal.earlierPage(session.id, command.before) });
+      this.run(session, peer, command.id, () => this.host.journal.earlierPage(session.id, command.before));
       return;
     }
     /* The queue edits, for the same reason: a queue parked on a thread whose
@@ -461,7 +463,10 @@ export class SessionSocket {
         this.run(session, peer, command.id, () => bridge.pause());
         return;
       case "resume":
-        this.run(session, peer, command.id, () => bridge.resume());
+        /* Not `bridge.resume()` directly: Continue is the other door a staged
+           change may leave by (see `resumeTurn`), and the flush can replace the
+           process this `bridge` names. */
+        this.run(session, peer, command.id, () => this.host.resumeTurn(session.id));
         return;
       case "compact":
         this.run(session, peer, command.id, () => bridge.compact());

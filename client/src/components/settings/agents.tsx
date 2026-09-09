@@ -21,7 +21,7 @@
    installs it. Versions are what the agent reports over ACP (`agentInfo`),
    not a `--version` flag parsed per CLI, so every runtime reads the same. */
 import * as React from "react"
-import { CopyIcon, Cpu, PencilIcon, RefreshCwIcon, RotateCcwIcon } from "lucide-react"
+import { CopyIcon, Cpu, DownloadIcon, PencilIcon, RefreshCwIcon, RotateCcwIcon } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -166,6 +166,7 @@ export function AgentsPage() {
                   <Badge variant="secondary">
                     {uses} profile{uses === 1 ? "" : "s"}
                   </Badge>
+                  {st && <InstallButton agent={agent} status={st} onDone={recheck} />}
                   <Button
                     variant="ghost"
                     size="sm"
@@ -207,8 +208,48 @@ function StatusBadges({ status, pending }: { status: AgentStatus | undefined; pe
       <Badge variant="secondary" title={status.agent?.name ?? undefined}>
         {status.agent?.version ? `v${status.agent.version}` : "version unknown"}
       </Badge>
+      {outdated(status) && <Badge variant="outline">v{status.latest} available</Badge>}
       {status.protocolVersion !== null && <Badge variant="outline">ACP v{status.protocolVersion}</Badge>}
     </>
+  )
+}
+
+/* "Newer exists" is a *difference*, not a comparison: the published version is
+   npm's `latest` tag, which is by definition the one to be on, so anything
+   else — behind, a prerelease, a local build — is worth saying. Ordering two
+   version strings would be a semver parser we would then have to be right
+   about. A `latest` of null is "not askable" and says nothing. */
+const outdated = (status: AgentStatus) =>
+  status.installed && !!status.latest && !!status.agent?.version && status.latest !== status.agent.version
+
+/* ── Install / update ──
+   The row's own install line, run on the server. It is the same string the
+   page has always offered to copy, and installing and updating are one
+   command, so they are one button. It is only offered where there is a line to
+   run and a reason to run it. A finished run re-checks, which is what replaces
+   the badges. */
+function InstallButton({ agent, status, onDone }: { agent: AgentDef; status: AgentStatus; onDone: () => Promise<void> }) {
+  const { settings } = useSettingsPage()
+  const [busy, setBusy] = React.useState(false)
+  const update = outdated(status)
+  if (!status.install || (status.installed && !update)) return null
+  const run = async () => {
+    setBusy(true)
+    try {
+      await api(settings, `/api/agents/${agent.id}/install`, { method: "POST" })
+      toast.success(`${agent.name} ${update ? "updated" : "installed"}`)
+      await onDone()
+    } catch (err) {
+      reportError(err, `Couldn't install ${agent.name}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Button variant="outline" size="sm" className="max-sm:h-9" disabled={busy} onClick={() => void run()}>
+      <DownloadIcon className={`size-4 ${busy ? "animate-pulse" : ""}`} />
+      {busy ? "Running…" : update ? "Update" : "Install"}
+    </Button>
   )
 }
 

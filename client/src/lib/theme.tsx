@@ -178,7 +178,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     localStorage.setItem("theme", theme)
     localStorage.setItem(COLOR_THEME_KEY, colorTheme)
     applyThemeColor(resolved)
-    window.desktop?.setTitleBarTheme?.(resolved)
+    /* Both halves: the resolved colour draws the caption symbols, the *mode*
+       points the native blur layer's own tint (main.cjs) — "system" stays
+       "system" there, or the OS could never move it again. */
+    window.desktop?.setTitleBarTheme?.(resolved, theme)
   }, [theme, resolved, colorTheme, customThemes])
 
   return (
@@ -282,7 +285,7 @@ declare global {
       isElectron: boolean
       platform: string
       vibrancy: boolean
-      setTitleBarTheme?: (resolved: "light" | "dark") => void
+      setTitleBarTheme?: (resolved: "light" | "dark", source: Theme) => void
       writeClipboard?: (text: string) => Promise<boolean>
       /** Raise an OS notification through the main process (lib/notifications). */
       notify?: (payload: { title: string; body: string; sessionId?: string }) => Promise<boolean>

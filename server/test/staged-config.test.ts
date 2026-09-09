@@ -232,6 +232,55 @@ assert.equal(spawns(), beforeRevive + 1, "the revive is ONE spawn, not a revive 
 assert.equal(session.model, "m2", "…and it came up on the staged model, not the row's");
 assert.equal(manager.stagedRequest(session.id), null, "the patch was consumed by the fold");
 
+// ---- a held turn takes it, on Continue and on a send into the hold ----
+
+/* The hold is the harness's promise that a failed turn waits for a model change
+   and a resume, so Continue is a door a patch may leave by. And a pick made
+   while the turn was still *retrying* lands before the hold exists — the guard
+   in `applyConfig` reads the hold at pick time — which would otherwise strand it
+   behind a steer, and a steer never flushes. */
+const parked = await manager.create(profile, "fake", project, "m1");
+await parked.bridge!.ready;
+const heldPeer = new MockWs();
+assert.equal(await manager.attach(parked.id, heldPeer as never), null);
+send(heldPeer, { id: 3, cmd: "prompt", text: "needs permission" });
+await waitFor(() => heldPeer.of("permission").length === 1, "a turn parked on a permission");
+
+const midHeld = await manager.applyConfig(parked.id, {
+  profile,
+  agentId: "fake",
+  project,
+  model: "m2",
+});
+assert.deepEqual(midHeld.staged?.model, "m2", "the pick staged while the turn was running");
+await parked.bridge!.pause();
+assert.equal(parked.bridge!.paused, true, "the hold arrived after the pick");
+
+const heldSpawns = spawns();
+await manager.prompt(parked.id, "into the hold", undefined, { steer: true });
+assert.equal(parked.model, "m2", "a send into a held turn takes the patch");
+assert.equal(manager.stagedRequest(parked.id), null, "…and consumes it");
+assert.equal(spawns(), heldSpawns + 1, "…in one spawn");
+
+const resumed = await manager.applyConfig(parked.id, {
+  profile,
+  agentId: "fake",
+  project,
+  model: "m1",
+});
+assert.deepEqual(resumed.staged?.model, "m1", "staged again, on the new process");
+await parked.bridge!.pause();
+const beforeResume = spawns();
+assert.equal(
+  (await manager.resumeTurn(parked.id)).paused,
+  false,
+  "the flush replaced the process, so there is nothing left to resume",
+);
+assert.equal(parked.model, "m1", "Continue takes the patch");
+assert.equal(manager.stagedRequest(parked.id), null, "…and consumes it");
+assert.equal(spawns(), beforeResume + 1, "…in one spawn");
+heldPeer.close();
+
 // ---- an agent change is never staged ----
 
 const swapped = await manager.applyConfig(session.id, {

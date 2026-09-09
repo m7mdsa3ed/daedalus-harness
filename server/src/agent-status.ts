@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 import { createRequire } from "node:module";
+import { promisify } from "node:util";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import * as acp from "./acp.js";
 import { withAgentConnection } from "./probe.js";
@@ -48,6 +50,11 @@ export interface AgentStatus {
   /** Why the handshake did not answer, when the binary was there but the
       version is not: a crash on boot, a timeout, a missing dependency. */
   error: string | null;
+  /** The newest published version, when the install line names an npm package
+      — the only kind of "latest" the harness can ask about without knowing a
+      vendor. Null for a curl script, a local build, or an unreachable
+      registry: not knowing is an answer, never a failure. */
+  latest: string | null;
   checkedAt: number;
 }
 
@@ -151,6 +158,91 @@ export function checkInstalled(agent: AgentDef, project: Project): Pick<AgentSta
 }
 
 // ---------------------------------------------------------------------------
+// What is published
+// ---------------------------------------------------------------------------
+
+/*
+ * "Is there a newer one" is only askable where the install line names a
+ * registry the harness already knows how to read — `npm install -g <pkg>`.
+ * Anything else (opencode's curl script, our own `pnpm --dir agent build`)
+ * answers null, exactly like a registry that did not respond. The package
+ * comes off the row's own install line, so nothing here spells a vendor's
+ * package name: repoint the line and the check follows it.
+ */
+const NPM_INSTALL = /\bnpm\s+(?:i|install|add)\b[^|&;]*/;
+
+export function npmPackage(install: string | null | undefined): string | null {
+  const line = install?.match(NPM_INSTALL)?.[0];
+  if (!line) return null;
+  const word = line
+    .split(/\s+/)
+    .slice(2)
+    .find((w) => w && !w.startsWith("-"));
+  if (!word) return null;
+  // Drop a version/tag suffix: `pkg@1.2.3`, `@scope/pkg@latest`.
+  const at = word.lastIndexOf("@");
+  return at > 0 ? word.slice(0, at) : word;
+}
+
+/** Published versions move far more slowly than a binary on this box, and the
+    read costs a network round trip, so it gets its own longer TTL. */
+const LATEST_TTL_MS = 60 * 60_000;
+const latestCache = new Map<string, { version: string | null; at: number }>();
+
+async function latestVersion(pkg: string, refresh: boolean): Promise<string | null> {
+  const hit = latestCache.get(pkg);
+  if (!refresh && hit && Date.now() - hit.at < LATEST_TTL_MS) return hit.version;
+  let version: string | null = null;
+  try {
+    const res = await fetch(`https://registry.npmjs.org/${pkg.split("/").map(encodeURIComponent).join("/")}/latest`, {
+      headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.ok) version = ((await res.json()) as { version?: string }).version ?? null;
+  } catch {
+    version = null;
+  }
+  latestCache.set(pkg, { version, at: Date.now() });
+  return version;
+}
+
+const latestFor = (agent: AgentDef, refresh: boolean): Promise<string | null> => {
+  const pkg = npmPackage(agent.install);
+  return pkg ? latestVersion(pkg, refresh) : Promise.resolve(null);
+};
+
+// ---------------------------------------------------------------------------
+// Putting it there
+// ---------------------------------------------------------------------------
+
+/**
+ * Run the row's own install line. It is the same string the page already
+ * offered to copy — the only new thing is who types it — so there is nothing
+ * to validate and nothing to build: no package name is composed here, and an
+ * agent whose row carries no install line simply cannot be installed.
+ * Non-interactive by nature (`npm install -g`, a curl script, a local build),
+ * which is why this is not a terminal panel.
+ */
+export async function installAgent(agent: AgentDef): Promise<{ ok: boolean; output: string }> {
+  if (!agent.install) return { ok: false, output: "This agent has no install command." };
+  const run = promisify(execFile);
+  try {
+    const { stdout, stderr } = await run(agent.install, {
+      shell: true,
+      timeout: 10 * 60_000,
+      maxBuffer: 4 * 1024 * 1024,
+      windowsHide: true,
+    });
+    return { ok: true, output: `${stdout}${stderr}`.trim() };
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string; message?: string };
+    return { ok: false, output: `${e.stdout ?? ""}${e.stderr ?? ""}`.trim() || (e.message ?? "install failed") };
+  } finally {
+    evictAgentStatus(agent.id);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // What answers
 // ---------------------------------------------------------------------------
 
@@ -179,7 +271,7 @@ export function getAgentStatus(agent: AgentDef, { refresh = false } = {}): Promi
   }
   const running = inflight.get(agent.id);
   if (running) return running;
-  const run = measure(agent)
+  const run = measure(agent, refresh)
     .then((status) => {
       cache.set(agent.id, status);
       return status;
@@ -196,7 +288,7 @@ export async function getAgentsStatus(agents: AgentDef[], opts: { refresh?: bool
   };
 }
 
-async function measure(agent: AgentDef): Promise<AgentStatus> {
+async function measure(agent: AgentDef, refresh = false): Promise<AgentStatus> {
   const project = statusProject();
   const base: AgentStatus = {
     agentId: agent.id,
@@ -206,6 +298,7 @@ async function measure(agent: AgentDef): Promise<AgentStatus> {
     protocolVersion: null,
     agent: null,
     error: null,
+    latest: await latestFor(agent, refresh),
     checkedAt: Date.now(),
   };
   /* A binary that is not there has nothing to say; spawning it would only

@@ -270,7 +270,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   shape on the root, the choice pages, search and the routine digest alike.
   Reading a tool call — inferring its kind, target, language and diff out of
   ACP's opaque `rawInput`/`rawOutput` — is quarantined in `lib/tools.ts`, and
-  **drawing** one is `components/tool-views.tsx` on top of the primitives in
+  **drawing** one is `components/tool-views/` on top of the primitives in
   `components/tool-parts.tsx` (which exists so those two and `thread-items.tsx`
   can share a pane without importing each other). No component matches on a
   vendor tool name: `toolViewOf` picks the layout and the matching `extract*`
@@ -324,7 +324,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   *cited* in its prose, never every hit it saw — so it survives replay with
   nothing journaled, and it waits for `turnActive` to drop so it does not grow
   under the reader. Sources exist at the **tool-call level** too: `ToolSources`
-  (`tool-views.tsx`) is the `below` slot of every `StepRow` — a shadcn
+  (`tool-views/web.tsx`) is the `below` slot of every `StepRow` — a shadcn
   `AvatarGroup` stack of site favicons, one per host a search returned (result
   order, a `+N` count past six that opens the rest) or the page a fetch read —
   visible whether the step is open or not, so a collapsed run still says which
@@ -545,6 +545,19 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   **last** because a queued message is the conversation's *future* — everything above it has
   happened or is happening, including the approval or question the turn stopped on. What
   changes when one is sent is one border, not its shape or its place.
+  **The dash's weight is the reading order** — faint further down the queue, halfway for the
+  **next** one, nearly solid for a **steer** (which has also dropped the `opacity-90`, because
+  it has gone) — so the stack ranks itself without the numbered list that was tried and
+  rejected. The state pill is one shape for both states; only the word and the dot differ, and
+  the steer's pulses because that one is happening rather than waiting.
+  **The caption is state then time, and the row actions are one bordered group** that fades in
+  on hover and is simply always drawn where there is no hover — `useCoarsePointer`, the
+  device's question, not a `sm:` breakpoint's. Four loose ghost buttons, a pill and a time on
+  one 10px line read as six things. **"Send all" and "Clear" are the plural actions**: with one
+  editable message they repeat what its own two buttons say a line below and louder, so below
+  two the rule carries nothing but its label. The rule puts that label near the start with the
+  growing half *after* it, so a narrow panel gets a shorter rule instead of a 16px stub of dash
+  with two orphaned buttons wrapped under it.
 - **Editing a queued message takes it back to the composer** — `queueRemove` first, then the
   composer's `fill` handle, and the fill only on success, because a message in the box *and*
   in the queue gets said twice. There is no in-place editor: that was a second, worse composer
@@ -560,6 +573,12 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   "Take a photo" is offered (`capture="environment"` on a second picker: `capture` is an
   attribute, not a mode, so the attach picker stays gallery-first). `useIsMobile` (the width)
   keeps deciding what Enter means, because a soft keyboard is a width question in practice.
+  **Both are imported from `hooks/use-device.ts`, never from `hooks/use-mobile.ts`.** The
+  latter is shadcn's own generated file: `useCoarsePointer` used to live there, and a
+  `shadcn add` of any component that depends on it rewrote the file back to stock, taking the
+  export with it and blanking every screen that imported it. `use-device.ts` owns the harness's
+  additions (`useCoarsePointer`, `MOBILE_BREAKPOINT`) and re-exports `useIsMobile`, so a
+  regenerated `use-mobile.ts` is always a file nothing outside `ui/` reads.
 - **What Enter does is a preference, not a key binding** (`lib/composer-prefs.ts`,
   `ui.composerPrefs`, global and device-local like the view options). `enterSends` on: Enter
   sends, Shift+Enter breaks the line. Off: Enter breaks the line and the steer chord (an
@@ -859,10 +878,29 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   two windows apart — a zero-height box keeps its last answer rather than reading a hidden tab
   as fully covered, and the constant survives only as the fallback: one frame before the first
   measurement, and the surfaces that are not in a dock at all.
-- **The dock holds five panel kinds: chat, ide, terminal, web (the *Browser* panel) and
-  tasks.** The IDE panel (`components/workspace/ide-panel.tsx`, descriptor
+- **The dock holds six panel kinds: chat, ide, terminal, web (the *Browser* panel), tasks
+  and page.** The IDE panel (`components/workspace/ide-panel.tsx`, descriptor
   `{kind:"ide", projectId}`) holds four surfaces that are one product: the editor, the file
-  explorer, file search and source control.
+  explorer, file search and source control. The page panel
+  (`components/workspace/page-panel.tsx`, descriptor `{kind:"page", path}`) is every route
+  that is not a thread, rendered through the app's own route table against the panel's path
+  (`<Routes location>`), so the dock is the main area on every route and a settings page
+  can stand in a tab beside a chat. **It is the app's browsing tab** (`openPage` in
+  `workspace/dock.tsx`): opening a page repoints the tab already standing for that place
+  (`pageKey` in `lib/workspace/panels.ts` — one settings tab whose path moves between
+  sections, one per project page, one per trace), else the unpinned page tab, else opens a
+  new one — so pages do not pile up the way a tab per place did, and pinning is what keeps
+  one. Its id is unique and says nothing about its path. The URL points the tab and focusing
+  a tab writes the URL; `location.key` is in the route effect's deps so a sidebar row for a
+  tab you just closed opens it again. Pages still read `useLocation` from the address bar,
+  which is the panel's own path whenever it is the active tab. The landing console is a page
+  tab too, and it is what the dock lands on when the last tab closes — **every "New thread"
+  gesture mints a thread instead** (`actions.startThreadIn`, so ⌘N twice is two threads). The
+  one console that is spent is the one a thread was started from: `consumeConsole` runs on the
+  chat route effect, *before* the chat opens (opening it is what makes it active) and only for
+  a routed draft, which is what the console mints before it sends. The tab's mark is its
+  sidebar row's (`PageIcon` in `panel-kinds.tsx`); its title is written forward only, so a
+  restored tab never flashes "Page".
 - **A panel kind is a surface, and a surface that reads the URL cannot be one.** The tasks
   panel is the case that proved it: the board workspace answered "which board, which task"
   from `useParams`/`useSearchParams`/`useNavigate`, so a panel switching board would have
@@ -881,12 +919,21 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   route effect and `handleDockReady`). A thread you opened is a thread you meant to keep, and
   `openPanel` keys on `panelId`, so an already-open thread is focused rather than duplicated
   — the flag only decides what happens to a thread that has no panel yet. **Both** doors have
-  to say it: the dock is unmounted while the landing console is up (`threadMain` swaps it for
-  `LandingPage`), so sending the first message from `/` remounts the dock, restores the saved
-  layout and arrives at `handleDockReady` — where an open without the flag had the brand-new
-  thread eat whatever chat was in front of you. This retired `lib/session-tabs.ts` (the
-  one-shot "open the next one in a tab" flag), the ⌘-click on a sidebar row and the row menu's
-  "Open in new tab", all three of which now name the plain click.
+  to say it: `handleDockReady` can run *after* the route effects (a cold load, or a theme
+  change remounting DockviewReact), and an open without the flag had the brand-new thread eat
+  whatever chat was in front of you. This retired `lib/session-tabs.ts` (the one-shot "open the
+  next one in a tab" flag), the ⌘-click on a sidebar row and the row menu's "Open in new tab",
+  all three of which now name the plain click — which is also why the row's "New thread in new
+  tab" submenu is gone: plain "New thread" opens the tab.
+- **A draft's tab comes back after a reload.** The row is client-only, so the server's list
+  cannot carry it, and `prunePanels` — whose authority *is* that list — closed every unsent
+  thread's tab on the next boot and let the debounced layout save make the loss permanent.
+  `lib/draft-sessions.ts` persists the rows per server (mint,
+  retune, rename and forget all write through it, `refreshSessions` prunes the ids the server
+  learns), and `bootstrap` re-mints them *before* the prune's gate opens — but only the ones
+  the saved layout still names a tab for, so a tab you closed stays closed. The half-written
+  message was never the problem: `lib/drafts.ts` already kept that per session id, and the
+  same id comes back.
 - **A tab's title is only ever written forward.** `ChatPanel` sets it from `sessions`, and
   **skips the write when the store has no row yet** — dockview serializes titles, so a
   restored layout already knows every tab's name, and writing the `PANEL_SPECS` placeholder
@@ -903,6 +950,39 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   server that failed, unsaved files in the IDE. Four tones, and the whole sentence in the
   label, because a strip has room for one dot and a pointer and a screen reader both read the
   title. Live, per mount, and never serialized.
+- **Dockview owns the tab's ARIA; `panel-tab.tsx` owns its face.** dockview-core 8.2 already
+  builds the WAI-ARIA Tabs pattern around our renderer: `role="tablist"` + `aria-orientation`
+  on the strip, `role="tab"` + `aria-selected` + `aria-controls` per tab, `role="tabpanel"` on
+  the content, a **roving tabindex** (one tab stop for the whole strip) and the keyboard the
+  pattern asks for — ArrowLeft/Right, Home, End, Enter/Space with manual activation. All of it
+  rests on one condition, and the tab this replaced broke it: **nothing rendered inside
+  `role="tab"` may be focusable.** Dockview routes its keys with
+  `tabs.findIndex(tab => tab.element === event.target)`, so focus on a nested `<button>`
+  answers -1 and every arrow key goes dead — and two extra tab stops per tab is not a single
+  tab stop. So the ⋮ and the close are `tabIndex={-1}` and the keyboard reaches them the way
+  VS Code and Chrome do: on the tab itself, `Delete`/`Backspace` closes and `Shift`+`F10` (or
+  the Menu key) opens the actions, with both controls drawn while the tab has focus so the
+  keys are discoverable by the one reader who cannot find them by pointing. The tab also gets
+  a **visible focus ring** — a roving tabindex you cannot see is arrow keys into the dark.
+  What dockview cannot know is what the panel is *doing*: its `aria-label` is the plain title,
+  so `useTabLabel` rewrites it with the reading and the pin state folded in.
+  **Dockview's own overflow dropdown is off** (`disableTabsOverflowList`): it draws one at the
+  same end of the same strip as `TabActions`, and ours lists every tab rather than only the
+  hidden ones, says what each is doing and closes one without bringing it back first.
+- **A narrow strip collapses the title, and nothing swaps.** Off a phone a tab is its mark,
+  its name and its reading; on one, only the tab you are on says its name, because four
+  titles sharing a 360px strip are four tabs truncated to "Fix th…". The whole effect is one
+  animatable property — a single-column grid taken from `1fr` to `0fr` — because a grid column
+  is the only width that interpolates cleanly to nothing without the element knowing how wide
+  it is. What this replaced animated four things at three durations (the tab's `max-width`, a
+  mark's width, the title's opacity, the controls' width) and needed both the mark and the
+  title in the DOM at all times to do it. **The mark itself is picked in JS** (`useIsMobile`),
+  which is safe here for a reason worth stating: it depends on the *viewport*, not on which
+  tab is active, so it changes on a resize and never on a click — the rule that a swap cannot
+  be animated still holds for anything keyed on `dv-active-tab`. Wide, the mark is the panel's
+  own (`PanelIcon`, a chat's being its agent's); narrow, a chat trades it for the **initials of
+  its title**, because down there the mark IS the tab and four threads on one runtime would
+  otherwise be four identical agent logos.
 - **A pinned tab is one the tidy-up goes around.** `lib/workspace/panel-pins.ts` is the set
   (device-local, keyed by server, like every other reader's-property store); the dock adds
   the ordering. Pinning means three things together: the tab sits at the front of its group,

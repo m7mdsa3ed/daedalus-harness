@@ -39,7 +39,7 @@
 import * as React from "react"
 import { useMessageScroller, useMessageScrollerVisibility } from "@/components/ui/message-scroller"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { useCoarsePointer } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-device"
 import type { TurnTick } from "@daedalus/protocol"
 import type { ThreadItem } from "@/lib/store"
 import { cn } from "@/lib/utils"
@@ -241,9 +241,11 @@ export function ThreadRail({
       const content = contentRef.current
       if (!content || ticks.length === 0) return -1
       const contentTop = content.getBoundingClientRect().top
+      const ticksHeight = ticks.length * pitch
+      const offset = Math.max(0, (content.clientHeight - ticksHeight) / 2)
       const index = Math.max(
         0,
-        Math.min(ticks.length - 1, Math.round((clientY - contentTop) / pitch))
+        Math.min(ticks.length - 1, Math.round((clientY - contentTop - offset) / pitch))
       )
       setScrub((prev) =>
         prev && prev.pointerId === pointerId && prev.index === index
@@ -403,7 +405,7 @@ export function ThreadRail({
         onPointerCancel={() => setScrub(null)}
         onLostPointerCapture={() => setScrub(null)}
       >
-        <div ref={contentRef} className="flex h-max w-full flex-col items-stretch">
+        <div ref={contentRef} className="flex h-full w-full flex-col items-stretch justify-center">
           {ticks.map((tick, index) => {
             const active = index === activeIndex
             const selected = index === sel?.index

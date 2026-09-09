@@ -25,6 +25,25 @@ let server = null
 
 const symbolColorFor = (resolved) => (resolved === "dark" ? "#e5e5e5" : "#171717")
 
+/* ── What the window's material is tinted with ──
+   Windows composites the window's own backgroundColor OVER the material, at
+   that colour's alpha, and `#AARRGGBB` puts the alpha first. It must stay under
+   255 or the material is dropped entirely and the window goes flat.
+
+   Nothing added, in either mode — and that is a *handover*, not a default. This
+   used to be white at 40% in light, because the material takes the desktop's
+   colour and a dark wallpaper stayed dark behind a light app. That job now
+   belongs to the page's global layer (`body::before` under
+   `html[data-desktop-vibrancy]`, client/src/index.css), which does the same
+   thing in the app's own `--background`, follows every palette and light/dark
+   for free, and is one number instead of two. Two tempering layers, one here in
+   `#AARRGGBB` and one there in oklch, is how you end up tuning against
+   yourself — so this one is off and the stylesheet owns it.
+
+   macOS needs none of this either: its vibrancy material carries its own
+   light/dark appearance off `themeSource`. */
+const WINDOW_TINT = "#00000000"
+
 /* ── Notifications ──
    The renderer does NOT use the web Notification API here, and the permission
    handlers below are not the whole story: Chromium's web notifications inside
@@ -59,9 +78,18 @@ ipcMain.handle("notify", (_event, payload) => {
   return true
 })
 
-ipcMain.on("theme-changed", (_event, resolved) => {
+ipcMain.on("theme-changed", (_event, resolved, source) => {
+  /* The native material tints itself from the OS theme, never from the page:
+     a light app on a dark desktop got a dark mica/vibrancy slab behind its
+     sidebar, which is what "too dark in light mode" was. `themeSource` is the
+     one knob that repoints it, and it takes the app's *mode*, not the resolved
+     colour — pinning "light"/"dark" also pins `prefers-color-scheme`, so a
+     theme set to follow the OS has to stay "system" or it stops following it. */
+  nativeTheme.themeSource = source === "light" || source === "dark" ? source : "system"
   if (!win || win.isDestroyed() || process.platform === "darwin") return
   win.setTitleBarOverlay({ color: "#00000000", symbolColor: symbolColorFor(resolved), height: 36 })
+  /* No setBackgroundColor here any more: the tint is a constant, and mica's own
+     light/dark variant is picked by the `themeSource` set two lines up. */
 })
 
 ipcMain.handle("write-clipboard", (_event, text) => {
@@ -220,19 +248,30 @@ async function createWindow() {
         ? undefined
         : { color: "#00000000", symbolColor: symbolColorFor(nativeTheme.shouldUseDarkColors ? "dark" : "light"), height: 36 },
     trafficLightPosition: process.platform === "darwin" ? { x: 16, y: 14 } : undefined,
-    // Native through-the-desktop blur: macOS vibrancy / Windows 11 acrylic.
+    /* The window's own material: macOS vibrancy, Windows 11 mica.
+       Mica and not acrylic. Mica is a still tint of the *wallpaper* rather than
+       a live blur of whatever happens to be behind the window: it costs no
+       per-frame compositing, it does not move when something else moves under
+       it, and it is the material Windows itself dresses app frames in — which
+       is what an app window is supposed to read as. Acrylic was tried and is
+       the louder effect, but its liveness is the cost: text sits over a surface
+       that changes whenever anything behind the window does.
+       Either way nothing stands between the material and the page's text on its
+       own — that is the global layer's job (see WINDOW_TINT and `--app-veil` in
+       client/src/index.css), and it is a single knob, so swapping the material
+       does not re-open it. */
     vibrancy: process.platform === "darwin" ? "sidebar" : undefined,
     visualEffectState: process.platform === "darwin" ? "active" : undefined,
-    backgroundMaterial: process.platform === "win32" ? "acrylic" : undefined,
+    backgroundMaterial: process.platform === "win32" ? "mica" : undefined,
     // NOT transparent: Windows skips DWM rounding and ignores backgroundMaterial
-    // on transparent windows. Vibrancy/acrylic composite fine without it — the
+    // on transparent windows. Vibrancy/mica composite fine without it — the
     // alpha backgroundColor below is what lets them through.
     roundedCorners: true,
     backgroundColor:
       process.platform === "darwin"
         ? undefined
         : process.platform === "win32"
-          ? "#00000000"
+          ? WINDOW_TINT
           : nativeTheme.shouldUseDarkColors
             ? "#0a0a0a"
             : "#ffffff",

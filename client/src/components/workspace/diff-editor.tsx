@@ -13,7 +13,7 @@ import type * as Monaco from "monaco-editor"
 
 import { baseEditorOptions, languageForPath, loadMonaco, syncMonacoTheme, type MonacoApi } from "@/lib/ide/monaco"
 import { useTheme } from "@/lib/theme"
-import { useCoarsePointer } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-device"
 
 export function DiffEditor({
   original,

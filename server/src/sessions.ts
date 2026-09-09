@@ -2725,10 +2725,22 @@ export class SessionManager {
        it calls `startTurn` directly — which preserves the old `continued` rule:
        no restart between two messages the user sent together.
 
+       **`|| bridge.paused` is the one exception, and it is the held turn's.**
+       `applyConfig` refuses to *stage* onto a hold, on the grounds that a change
+       parked behind a boundary the turn will never reach is a change that never
+       happens — but that guard reads the hold at *pick* time, and a pick made
+       while the turn was still retrying lands before the hold exists. Left
+       alone, that patch is stranded exactly as the rule warns: a held turn's
+       send is a **steer**, and a steer never flushes, so the user's next message
+       runs on the settings they had already moved off and the pick looks like it
+       did nothing. A held turn is stopped, not running — this prompt is not
+       "joining" one, it is being parked at a boundary — so it is not the
+       `continued` case either.
+
        Awaited, and the bridge re-read afterwards: the flush replaced the
        process, so `session.bridge` is a different object by now and prompting
        the one above would be talking to a killed child. */
-    if (session.stagedConfig && !bridge.promptActive) {
+    if (session.stagedConfig && (!bridge.promptActive || bridge.paused)) {
       await this.flushStagedNow(session);
       bridge = await this.whenSpawnable(session);
     }
@@ -2809,6 +2821,33 @@ export class SessionManager {
       has not landed — see `SessionQueue.stop` for why the two are one call. */
   stopTurn(id: string, reclaim: boolean): Promise<CancelReply> {
     return this.queue.stop(this.requireSession(id), reclaim);
+  }
+
+  /**
+   * Let a held turn go on — taking the staged change first when there is one.
+   *
+   * The hold is the harness's promise that a failed turn waits for a model
+   * change and a Continue (`lib/thread/hold.ts`), so Continue is the one other
+   * door a patch may leave by. Without this it had only `prompt`, and a user who
+   * changed the model and then pressed Continue rather than typing would watch
+   * the change sit there: the hold goes, the turn runs on the settings they had
+   * already moved off, and the patch is still staged.
+   *
+   * The bridge is re-read after the flush. A change the running process can
+   * take leaves it in place and the resume releases the hold; one that costs the
+   * process replaces it, and the hold went with the old process — `close()`
+   * already ended the turn and wrote the row saying the restart did it, so there
+   * is nothing left to resume.
+   */
+  async resumeTurn(id: string): Promise<{ paused: boolean }> {
+    const session = this.requireSession(id);
+    const bridge = session.bridge;
+    if (!bridge) throw new Error("this thread has no running agent");
+    if (session.stagedConfig) {
+      await this.flushStagedNow(session);
+      if (session.bridge !== bridge) return { paused: false };
+    }
+    return bridge.resume();
   }
 
   queueSteer(id: string, itemId: string): Promise<{ turnId: string }> {
@@ -3018,6 +3057,7 @@ export class SessionManager {
     queueRemove: (id, itemId) => this.queueRemove(id, itemId),
     queueClear: (id) => this.queueClear(id),
     stopTurn: (id, reclaim) => this.stopTurn(id, reclaim),
+    resumeTurn: (id) => this.resumeTurn(id),
     enrichError: (session, error) => enrichError(session, error),
   });
 

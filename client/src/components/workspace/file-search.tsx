@@ -16,6 +16,7 @@ import * as React from "react"
 import { SearchIcon, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { CopyButton } from "@/components/ui/copy-button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { PanelEmptyState, PanelNotice, PanelToolbar } from "@/components/workspace/primitives"
@@ -91,7 +92,16 @@ export function FileSearch({
         </div>
       </PanelToolbar>
 
-      {error && <PanelNotice className="text-destructive">{error}</PanelNotice>}
+      {error && (
+        <PanelNotice className="flex items-start gap-1 text-destructive">
+          <span className="min-w-0 flex-1">{error}</span>
+          <CopyButton
+            text={error}
+            size="icon-xs"
+            className="shrink-0 text-destructive/70 hover:bg-destructive/15 hover:text-destructive"
+          />
+        </PanelNotice>
+      )}
       {truncated && <PanelNotice>More matched than are shown. Type more of the name.</PanelNotice>}
 
       {entries.length === 0 ? (

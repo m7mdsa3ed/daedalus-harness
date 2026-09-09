@@ -1,8 +1,9 @@
 /* ── The landing page ──
-   `/` with no thread open, and it *is* the new-thread page: the same centred
+   `/` with no thread open, and it *is* a new-thread page: the same centred
    welcome and the same composer an empty thread has always drawn, because they
-   are the same component. "New thread" no longer routes anywhere — the front
-   door is where a thread is started, and the thread begins to exist when it is
+   are the same component. Every "New thread" gesture mints a draft thread of
+   its own instead (`actions.startThreadIn`); this is what the dock lands on
+   when the last tab closes, and the thread it starts begins to exist when it is
    sent.
 
    The draft is minted on arrival and forgotten on the way out if nothing was
@@ -31,11 +32,7 @@ import { KEYBOARD_CENTER_FLOW } from "@/lib/keyboard-inset"
 import { useProfiles, useProjects } from "@/lib/queries/catalog"
 import { threadPath } from "@/lib/router"
 import { useSessionMeta, useThread } from "@/lib/store"
-import {
-  defaultsForProfile,
-  loadThreadDefaults,
-  resolveThreadStart,
-} from "@/lib/thread-defaults"
+import { loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import { cn } from "@/lib/utils"
 import type { SettingsSectionId } from "@/components/settings/sections"
 
@@ -82,10 +79,10 @@ function LandingComposer({ actions }: { actions: Actions }) {
   const projects = useProjects()
   const profiles = useProfiles()
   const navigate = useNavigate()
-  /* Which project this thread starts in, when the page was reached by a
-     project's own "New thread" rather than by ⌘N (`landingPath`). A search
-     param and not a remembered default, because clicking + on a project is not
-     a statement about every thread you start after it — and it is only the
+  /* Which project this console's thread starts in, when the console was
+     reached by a deep link that aims one (`?project=`, `landingPath`). A
+     search param and not a remembered default, because aiming one console is
+     not a statement about every thread you start after it — and it is only the
      *starting* project either way: the composer's own scope row moves it. */
   const wantedProject = useSearchParams()[0].get("project")
   // Memoized for `loadThreadDefaults`, which is a localStorage read and a parse.
@@ -118,14 +115,9 @@ function LandingComposer({ actions }: { actions: Actions }) {
   React.useLayoutEffect(() => {
     const project = projects.find((p) => p.id === projectId)
     if (!project) return
-    const defaults = loadThreadDefaults()
-    const start = resolveThreadStart(defaults, profiles)
+    const start = resolveThreadStart(loadThreadDefaults(), profiles)
     if (!start) return
-    const id = actions.newDraftThread({
-      project,
-      ...start,
-      ...defaultsForProfile(defaults, start.profile.id),
-    })
+    const id = actions.newDraftThread({ project, ...start })
     setSessionId(id)
     return () => {
       if (!sent.current) void actions.deleteThread(id)

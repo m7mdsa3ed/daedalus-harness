@@ -1,0 +1,603 @@
+import type * as acp from "@daedalus/acp"
+import type { SessionUpdate } from "@daedalus/protocol"
+// Value import, but tools.ts imports only *types* from here — erased at build,
+// so there is no runtime cycle.
+import {
+  applyTerminalMeta,
+  parentToolIdOf,
+  parseTaskNotification,
+  subagentItemId,
+  toolNameOf,
+  workflowInfoOf,
+} from "../tools"
+import { mintItemId } from "./items"
+import type {
+  AsyncTaskItem,
+  AutonomyItem,
+  CompactionItem,
+  PlanItem,
+  SubagentItem,
+  TextItem,
+  ThreadItem,
+  ToolItem,
+} from "./items"
+import type { ThreadState } from "./thread"
+import { addUsage } from "./messages"
+
+// ---- update application (shared by live updates and journal rebuild) ----
+
+function appendText(
+  items: ThreadItem[],
+  kind: TextItem["kind"],
+  text: string,
+  at?: number,
+  parentId?: string
+): ThreadItem[] {
+  const last = items[items.length - 1]
+  /* Same kind AND same owner: a subagent's prose and the parent's resuming
+     after it are two runs, not one. Without the second test the parent's next
+     sentence was glued onto the child's last one — inside the child's rail. */
+  if (last && last.kind === kind && last.parentId === parentId) {
+    return [...items.slice(0, -1), { ...last, text: last.text + text }]
+  }
+  return [...items, { kind, id: mintItemId(kind), text, at, parentId }]
+}
+
+/* Agents write a synthetic user turn when a prompt is cancelled, so the model
+   can see why the assistant stopped mid-sentence. It is a genuine user-role
+   message in the agent's own transcript — and it stays there, in the model's
+   context, which is the point. But nobody typed it, so it reads as a rule
+   across the transcript, not as a user bubble. The capture keeps the agent's
+   own wording (plain vs "for tool use") as the rule's label.
+   Anchored on the whole (trimmed) chunk: quoting the phrase inside a real
+   message must still render as that message. Pattern mirrors claude-agent-sdk's. */
+const SYNTHETIC_USER_RE = /^\[(Request interrupted by user[^\]]*)\]$/
+
+const metaOf = (update: object): Record<string, unknown> | undefined =>
+  (update as { _meta?: Record<string, unknown> | null })._meta ?? undefined
+
+/* Each update's `_meta` carries only what changed alongside it: the launch
+   update holds the one-shot `toolResponse`, while later ones repeat constants
+   like `toolName` without it — so replacing wholesale would forget the launch
+   record the moment the call completed. Merged one level deep, which is where
+   vendors nest (`_meta.claudeCode.…`); deeper values replace. */
+function mergeMeta(
+  prev: Record<string, unknown> | undefined,
+  next: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  if (!next) return prev
+  if (!prev) return next
+  const merged: Record<string, unknown> = { ...prev, ...next }
+  for (const key of Object.keys(next)) {
+    const a = prev[key]
+    const b = next[key]
+    if (
+      a !== null && b !== null &&
+      typeof a === "object" && typeof b === "object" &&
+      !Array.isArray(a) && !Array.isArray(b)
+    ) {
+      merged[key] = { ...a, ...b }
+    }
+  }
+  return merged
+}
+
+/** Past this an inline image from a replay is described rather than held. */
+const MAX_INLINE_HISTORY_IMAGE_BYTES = 256 * 1024
+
+function pushHistoryImage(
+  items: ThreadItem[],
+  content: { data: string; mimeType: string },
+  at?: number
+): ThreadItem[] {
+  // base64 is 4/3, near enough for a threshold.
+  const size = Math.floor((content.data.length * 3) / 4)
+  const oversized = size > MAX_INLINE_HISTORY_IMAGE_BYTES
+  const ref = {
+    // Not a harness id — nothing will ever fetch it. It exists so the chip has
+    // a React key and so the shape matches every other attachment.
+    id: `history:${items.length}:${size}`,
+    name: oversized ? "large image (from history)" : "image",
+    mimeType: content.mimeType,
+    size,
+    ...(oversized ? { oversized: true } : { inlineData: `data:${content.mimeType};base64,${content.data}` }),
+  }
+  /* Onto the user bubble this chunk belongs to, when one is already open: a
+     runtime sends the prose and the picture as two chunks of one message. */
+  const last = items[items.length - 1]
+  if (last && last.kind === "user" && !last.parentId) {
+    return [...items.slice(0, -1), { ...last, attachments: [...(last.attachments ?? []), ref] }]
+  }
+  return [...items, { kind: "user", id: mintItemId("user"), text: "", at, attachments: [ref] }]
+}
+
+export function applySessionUpdate(
+  items: ThreadItem[],
+  update: SessionUpdate,
+  allowUserChunks = false,
+  sessionId?: string
+): ThreadItem[] {
+  /* `allowUserChunks` is set only by the replay path, so it doubles as "this is
+     history": replayed items get no timestamp rather than the reload's. */
+  const at = allowUserChunks ? undefined : Date.now()
+  /* Whose item this is. The vendor `_meta` naming a parent tool call (Claude
+     Code's Task, or the child session OpenCode projects) wins even over an
+     update that arrived on a subagent's session (the RFD: `sessionId` names
+     the child): a workflow step's own Task tree arrives mirrored WITH the
+     step's session id AND the Task attribution, and filing it under the step
+     flattened the tree Claude Code's native transcript nests. The tool row the
+     meta names travels on the same mirrored stream, so the head always exists.
+     No meta, but a session — the child's item. Neither — the thread's own. */
+  const owner =
+    parentToolIdOf(metaOf(update)) ?? (sessionId ? subagentItemId(sessionId) : undefined)
+  switch (update.sessionUpdate) {
+    case "agent_message_chunk":
+    case "agent_thought_chunk": {
+      if (update.content.type !== "text") return items
+      const kind = update.sessionUpdate === "agent_message_chunk" ? "agent" : "thought"
+      return appendText(items, kind, update.content.text, at, owner)
+    }
+    case "user_message_chunk": {
+      /* An image the agent is replaying back at us. It reaches here only on a
+         `session/load` (a live prompt's own attachments are drawn from
+         `turn_started`'s refs), and dropping it — which is what this line did
+         for every non-text block — is why a replayed prompt that carried a
+         picture used to show the prose and silently lose it.
+
+         There is no harness row behind this one: it is the agent's copy, so it
+         becomes an attachment with an inline data URL instead of an id. And it
+         is capped, because those updates are journaled and a history with
+         twenty images would otherwise write twenty base64 blobs into
+         `session_events`: over the cap the chip says "large image (from
+         history)" rather than holding megabytes in the store. The journal cost
+         is then bounded by the agent's own history rather than by anything the
+         composer does. */
+      if (update.content.type === "image" && !owner) {
+        return pushHistoryImage(items, update.content, at)
+      }
+      if (update.content.type !== "text") return items
+      /* A subagent's "user" turns are its tool results and the brief it was
+         handed, echoed by the runtime for the model's benefit. Nobody typed
+         them and the brief is already on the parent, so they are dropped
+         rather than counted as prompts by everything that counts prompts. */
+      if (owner) return items
+      /* A background task announcing that it finished. The runtime injects it
+         as a user turn so the model reads it on its next turn, but nobody
+         typed it and no local push mirrors it — so unlike an ordinary user
+         chunk it has to pass through LIVE as well as on replay, and it must
+         not render as a bubble of XML. `notice` is the existing home for an
+         agent-authored transcript event; the renderer parses the block. */
+      if (parseTaskNotification(update.content.text)) {
+        const text = update.content.text.trim()
+        /* Deduped across the whole transcript, not just against the previous
+           item: a load replay can restate a turn the client already has (and
+           has been observed restating one turn twice inside a single replay),
+           with other items in between. The block carries the task's id, so
+           identical text is the same completion — the way a repeated tool_call
+           is the same call by its toolCallId. */
+        if (items.some((item) => item.kind === "notice" && item.text === text)) return items
+        return [...items, { kind: "notice", id: mintItemId("notice"), text, at }]
+      }
+      // Live prompts push user messages locally, so the agent echo is skipped —
+      // EXCEPT during a session/load replay, where chunks are the only source.
+      if (!allowUserChunks) return items
+      const synthetic = SYNTHETIC_USER_RE.exec(update.content.text.trim())
+      // Not appendText: two interrupts in a row are two rules, never one
+      // concatenated label.
+      // Live cancels push their own notice from actions.stop() so the rule (and
+      // its Continue button) appears immediately; on replay the agent's own
+      // wording rebuilds the transcript and supersedes it.
+      if (synthetic) {
+        return [...items, { kind: "notice", id: mintItemId("notice"), text: synthetic[1], at }]
+      }
+      return appendText(items, "user", update.content.text, at)
+    }
+    case "tool_call": {
+      const item: ToolItem = {
+        kind: "tool",
+        id: update.toolCallId,
+        title: update.title,
+        name: toolNameOf(update) ?? undefined,
+        status: update.status ?? "pending",
+        toolKind: update.kind ?? undefined,
+        rawInput: update.rawInput,
+        rawOutput: update.rawOutput,
+        content: update.content ?? [],
+        locations: update.locations ?? [],
+        meta: metaOf(update),
+        terminal: applyTerminalMeta(undefined, metaOf(update)),
+        startedAt: Date.now(),
+        at,
+      }
+      const existing = items.find((i): i is ToolItem => i.kind === "tool" && i.id === item.id)
+      /* A re-announced call is replaced wholesale, bar one thing it may have
+         learned since: who it belongs to. Claude Code's attribution is
+         best-effort — a child's `tool_call` can go out before the runtime
+         knows which Task it serves and be told on a later update — so an
+         owner once learned is never forgotten. */
+      item.parentId = owner ?? existing?.parentId
+      item.name = item.name ?? existing?.name
+      if (existing) {
+        return items.map((i) => (i.kind === "tool" && i.id === item.id ? item : i))
+      }
+      return [...items, item]
+    }
+    case "tool_call_update":
+      return items.map((i) => {
+        if (i.kind !== "tool" || i.id !== update.toolCallId) return i
+        const meta = mergeMeta(i.meta, metaOf(update))
+        return {
+          ...i,
+          title: update.title ?? i.title,
+          status: update.status ?? i.status,
+          toolKind: update.kind ?? i.toolKind,
+          rawInput: update.rawInput ?? i.rawInput,
+          rawOutput: update.rawOutput ?? i.rawOutput,
+          content: update.content ?? i.content,
+          locations: update.locations ?? i.locations,
+          meta,
+          terminal: applyTerminalMeta(i.terminal, metaOf(update)),
+          // From the MERGED meta: a later update that repeats `toolName`
+          // without the parent must not lose an attribution already learned —
+          // and the meta's tool parent outranks the session owner here for the
+          // same reason it does in `owner` above.
+          parentId: parentToolIdOf(meta) ?? owner ?? i.parentId,
+        }
+      })
+    case "plan": {
+      // The legacy channel: one plan per session, replaced wholesale each
+      // time — per owner: a subagent's plan is its own, keyed apart so it can
+      // never replace the thread's.
+      const id = owner ? `plan@${owner}` : "plan"
+      const plan: PlanItem = { kind: "plan", id, entries: update.entries, parentId: owner }
+      return items.some((i) => i.kind === "plan" && i.id === id)
+        ? items.map((i) => (i.kind === "plan" && i.id === id ? plan : i))
+        : [...items, plan]
+    }
+    case "plan_update": {
+      /* The newer channel. Each variant replaces that plan entirely — the spec
+         is explicit that an update carries the whole thing, so there is nothing
+         to merge. An unknown variant is dropped rather than rendered as an
+         empty plan. */
+      const content = update.plan
+      const base = {
+        kind: "plan" as const,
+        id: owner ? `plan:${content.planId}@${owner}` : `plan:${content.planId}`,
+        entries: [],
+        parentId: owner,
+      }
+      const plan: PlanItem | null =
+        content.type === "items"
+          ? { ...base, entries: content.entries }
+          : content.type === "markdown"
+            ? { ...base, markdown: content.content }
+            : content.type === "file"
+              ? { ...base, uri: content.uri }
+              : null
+      if (!plan) return items
+      return items.some((i) => i.kind === "plan" && i.id === plan.id)
+        ? items.map((i) => (i.kind === "plan" && i.id === plan.id ? plan : i))
+        : [...items, plan]
+    }
+    case "compaction_update": {
+      /* Patch semantics, per field: an omitted `summary`/`error` leaves what is
+         stored alone, `null` clears it, a value replaces it. `summary: []` is a
+         value that happens to clear too. Conflating "absent" with "empty" here
+         would wipe a streamed summary the moment the terminal update lands
+         without one — which is exactly how agents send it. */
+      const id = owner ? `compaction:${update.compactionId}@${owner}` : `compaction:${update.compactionId}`
+      const existing = items.find(
+        (i): i is CompactionItem => i.kind === "compaction" && i.id === id
+      )
+      const summary =
+        update.summary === undefined ? (existing?.summary ?? []) : (update.summary ?? [])
+      const error =
+        update.error === undefined ? existing?.error : (update.error ?? undefined)
+      const item: CompactionItem = {
+        kind: "compaction",
+        id,
+        status: update.status,
+        summary,
+        error,
+        at: existing?.at ?? at,
+        parentId: existing?.parentId ?? owner,
+      }
+      return existing
+        ? items.map((i) => (i.kind === "compaction" && i.id === id ? item : i))
+        : [...items, item]
+    }
+    case "compaction_summary_chunk": {
+      /* Appends to a compaction already on screen. The spec has chunks arrive
+         only between the `in_progress` update and the terminal one, so a chunk
+         for an id we have never seen is a stray — dropped rather than made into
+         a headless summary with no status to describe it. */
+      const id = owner ? `compaction:${update.compactionId}@${owner}` : `compaction:${update.compactionId}`
+      return items.map((i) =>
+        i.kind === "compaction" && i.id === id
+          ? { ...i, summary: [...i.summary, update.content] }
+          : i
+      )
+    }
+    case "plan_removed": {
+      // The agent abandoned this plan; leaving it on screen would describe work
+      // nobody is doing any more.
+      const id = owner ? `plan:${update.planId}@${owner}` : `plan:${update.planId}`
+      return items.filter((i) => !(i.kind === "plan" && i.id === id))
+    }
+    case "subagent_spawned": {
+      /* The RFD's announcement. Sent on the parent's session — so `owner` here
+         is the parent when the parent is itself a child, and undefined at the
+         top — and it precedes every update of the child's, which is what lets
+         the reducer file those under an item that already exists. Upsert:
+         a `session/load` restates spawns it has already sent. */
+      const id = subagentItemId(update.subagentSessionId)
+      const existing = items.find((i): i is SubagentItem => i.kind === "subagent" && i.id === id)
+      const item: SubagentItem = {
+        kind: "subagent",
+        id,
+        sessionId: update.subagentSessionId,
+        name: update.name,
+        task: update.task,
+        capabilities: update.capabilities ?? {},
+        workflow: workflowInfoOf(metaOf(update)) ?? existing?.workflow,
+        usage: existing?.usage,
+        context: existing?.context,
+        state: existing?.state ?? "running",
+        startedAt: existing?.startedAt ?? Date.now(),
+        at: existing?.at ?? at,
+        parentId: owner ?? existing?.parentId,
+      }
+      return existing
+        ? items.map((i) => (i.kind === "subagent" && i.id === id ? item : i))
+        : [...items, item]
+    }
+    case "subagent_state_update": {
+      const id = subagentItemId(update.subagentSessionId)
+      return items.map((i) => (i.kind === "subagent" && i.id === id ? { ...i, state: update.state } : i))
+    }
+    /* ── Async background tasks ──
+       A dynamic workflow, announced by the adapter's AIR lifecycle. Only a
+       workflow is kept: a backgrounded shell command is already drawn as its
+       own tool call, and a monitor is not work anyone asked for. Upsert,
+       because `session/load` restates a spawn it has already sent.
+
+       `showInTranscript` is deliberately NOT consulted, and it took a live run
+       to learn why. The SDK sends `background_tasks_changed` — a level with no
+       transcript policy on it — before `task_started`, which the adapter's own
+       note calls unspecified but "in practice the level precedes them". Seeing
+       the level first, the adapter marks the task a panel-only recovery and
+       pins `showInTranscript` to false *forever*, because a late
+       `skip_transcript: true` must not be able to retract a card it had
+       already drawn. Sound for a task whose kind it does not yet know — and
+       always wrong for this one: `local_workflow` is the Workflow tool and
+       nothing else, so it is user work by definition, never the housekeeping
+       (monitors, update watchers) that the flag exists to hide. Gating on it
+       meant every native run was dropped here in silence. */
+    case "async_task_spawned": {
+      if (update.taskType !== "workflow") return items
+      const id = `async-task:${update.asyncTaskId}`
+      const existing = items.find((i): i is AsyncTaskItem => i.kind === "async-task" && i.id === id)
+      const item: AsyncTaskItem = {
+        kind: "async-task",
+        id,
+        taskId: update.asyncTaskId,
+        name: update.name,
+        taskType: update.taskType,
+        description: update.description,
+        state: existing?.state ?? "running",
+        summary: existing?.summary,
+        toolCallId: update.toolCallId ?? existing?.toolCallId,
+        progress: existing?.progress ?? [],
+        usage: existing?.usage,
+        startedAt: existing?.startedAt ?? Date.now(),
+        at: existing?.at ?? at,
+        parentId: owner ?? existing?.parentId,
+      }
+      return existing
+        ? items.map((i) => (i.kind === "async-task" && i.id === id ? item : i))
+        : [...items, item]
+    }
+    /* A beat. `workflowProgress` is the run's whole shape restated, so it
+       REPLACES what we held rather than appending to it — the runtime rewrites
+       an agent's entry in place as it works, and accumulating would leave every
+       agent on screen once per beat. A beat that carries none (an unpatched
+       adapter) still moves the run's totals, so the array is only replaced when
+       one actually arrived.
+
+       A beat for a task we never took the spawn of is a stray — dropped rather
+       than made into a headless run, the same rule `compaction_summary_chunk`
+       follows. */
+    case "async_task_progress": {
+      const id = `async-task:${update.asyncTaskId}`
+      return items.map((i) =>
+        i.kind === "async-task" && i.id === id
+          ? {
+              ...i,
+              description: update.description ?? i.description,
+              summary: update.summary ?? i.summary,
+              usage: update.usage ?? i.usage,
+              toolCallId: i.toolCallId ?? update.toolCallId,
+              progress: update.workflowProgress ?? i.progress,
+            }
+          : i
+      )
+    }
+    case "async_task_state_update": {
+      const id = `async-task:${update.asyncTaskId}`
+      return items.map((i) =>
+        i.kind === "async-task" && i.id === id
+          ? {
+              ...i,
+              state: update.state,
+              summary: update.summary ?? i.summary,
+              /* The adapter mentions the launching call whenever it happens to
+                 have one, which for some runs is only here, on the last frame. */
+              toolCallId: i.toolCallId ?? update.toolCallId,
+            }
+          : i
+      )
+    }
+    /* A workflow run held or released. The run has no item — it is folded at
+       view time from its steps — so the hold is stamped onto every step that
+       carries the run's id, and the card reads it off any of them. Journaled,
+       so a replayed run stands where it stood. */
+    case "_daedalus/workflow_state": {
+      return items.map((i) =>
+        i.kind === "subagent" && i.workflow?.runId === update.runId
+          ? { ...i, workflow: { ...i.workflow, paused: update.paused } }
+          : i
+      )
+    }
+    /* What the step's turn cost, lifted off the child's own `turn_ended` by the
+       workflow runner (see SubagentUsage in the protocol). One per settled
+       turn, so it accumulates — `addUsage` is the same fold the thread's own
+       total uses, and each event is journaled exactly once, so a replay cannot
+       count a turn twice. */
+    case "_daedalus/subagent_usage": {
+      const id = subagentItemId(update.subagentSessionId)
+      return items.map((i) =>
+        i.kind === "subagent" && i.id === id ? { ...i, usage: addUsage(i.usage ?? null, update.usage) } : i
+      )
+    }
+    /* The durable half of an auto-answered permission or elicitation. Appended
+       rather than folded onto the tool row it names: the tool call may not have
+       arrived yet (an agent asks before it acts) and, for an elicitation, there
+       is no tool row at all. Its place in the transcript is where the question
+       was answered, which is what a reader is looking for. */
+    case "_daedalus/autonomy_answer": {
+      const item: AutonomyItem = {
+        kind: "autonomy",
+        id: `autonomy:${update.toolCallId ?? `${update.kind}:${items.length}`}`,
+        request: update.kind,
+        ...(update.toolKind ? { toolKind: update.toolKind } : {}),
+        ...(update.title ? { title: update.title } : {}),
+        answer: update.answer.answer,
+        timedOut: update.answer.timedOut,
+        at: Date.now(),
+        ...(owner ? { parentId: owner } : {}),
+      }
+      return [...items, item]
+    }
+    /* A child's context occupancy. Session-level for the thread — and dropped
+       there — but a step IS a session, so on this side of the fence it is the
+       one thing that says how full the worker's own window got. */
+    case "usage_update": {
+      if (!owner) return items
+      return items.map((i) => (i.kind === "subagent" && i.id === owner ? { ...i, context: update } : i))
+    }
+    default:
+      return items
+  }
+}
+
+/**
+ * What one step cost, out of the only mid-turn reading there is.
+ *
+ * ACP reports tokens once, on `turn_ended` — that is the turn's bill and it is
+ * what the footer prints. Nothing in the protocol says what a *step* inside it
+ * cost. But `usage_update` is not the running context total it sounds like:
+ * both runtimes that send one fill `used` with the **last model request's** own
+ * token count (claude-agent-acp from the assistant message's `message_start` /
+ * `message_delta` usage, codex-acp from `tokenUsage.last`), which is exactly a
+ * step's bill — the context that request carried plus what it wrote.
+ *
+ * So the reading is real and only its *owner* has to be inferred, which is what
+ * the mark is for. A request reports twice: once when it opens, before it has
+ * written anything, and once when it closes, by which time the steps it decided
+ * on are in the transcript. The tail item is therefore unchanged for the first
+ * and has moved for the second — so a reading at a tail that has not moved is
+ * the next request opening and is dropped, and one at a tail that has is the
+ * request closing, filed against the last thing it produced. One figure per
+ * model request, on the step it ended with.
+ *
+ * Two deliberate limits. A tail is the last **top-level** item: a subagent's
+ * own requests are not metered here (claude-agent-acp reports only the main
+ * loop), so a reading that arrives while a rail is filling belongs to the Task
+ * call that owns the rail, not to whatever row is deepest. And a runtime that
+ * refines its reading a second time at the same tail is not read twice — the
+ * later, larger figure is dropped rather than risk reading the next request's
+ * opening as a refinement. The figure is drawn as approximate for both reasons.
+ */
+function markStepUsage(
+  thread: ThreadState,
+  update: acp.UsageUpdate
+): Pick<ThreadState, "stepUsage" | "usageMark"> {
+  const kept = { stepUsage: thread.stepUsage, usageMark: thread.usageMark }
+  if (!(update.used > 0)) return kept
+  let tail: ThreadItem | undefined
+  for (let i = thread.items.length - 1; i >= 0; i--) {
+    if (!thread.items[i].parentId) {
+      tail = thread.items[i]
+      break
+    }
+  }
+  if (!tail || thread.usageMark === tail.id) return kept
+  return { stepUsage: { ...thread.stepUsage, [tail.id]: update }, usageMark: tail.id }
+}
+
+/** Session-level (non-transcript) updates applied to ThreadState. */
+export function applyMetaUpdate(
+  thread: ThreadState,
+  update: SessionUpdate,
+  allowUserChunks = false,
+  sessionId?: string
+): ThreadState {
+  /* A subagent's session-level state is its own — its mode, its options, its
+     context window. None of it describes the thread, so none of it reaches
+     ThreadState; only its transcript does. */
+  const sessionLevel =
+    update.sessionUpdate === "current_mode_update" ||
+    update.sessionUpdate === "config_option_update" ||
+    update.sessionUpdate === "available_commands_update" ||
+    update.sessionUpdate === "session_info_update"
+  if (sessionId && sessionLevel) return thread
+  /* The one session-level update a child still has somewhere to go: its
+     context occupancy is not the thread's, but it IS the step's, and the step
+     is an item. Everything else about a child's session dies here. */
+  if (sessionId && update.sessionUpdate === "usage_update")
+    return { ...thread, items: applySessionUpdate(thread.items, update, allowUserChunks, sessionId) }
+  switch (update.sessionUpdate) {
+    case "current_mode_update":
+      return thread.modes
+        ? { ...thread, modes: { ...thread.modes, currentModeId: update.currentModeId } }
+        : thread
+    case "config_option_update":
+      return { ...thread, configOptions: update.configOptions }
+    case "available_commands_update":
+      return { ...thread, availableCommands: update.availableCommands }
+    case "usage_update":
+      return { ...thread, context: update, ...markStepUsage(thread, update) }
+    default:
+      return { ...thread, items: applySessionUpdate(thread.items, update, allowUserChunks, sessionId) }
+  }
+}
+
+/** A turn can end with tool calls still in flight (cancel, agent crash) — no
+    further update will ever arrive for them, so settle them at turn end instead
+    of leaving a spinner running forever. A compaction is the same bargain: its
+    terminal update is owed by the same process that just stopped talking.
+ *
+ *  Which is exactly why **losing the socket is not a reason to run this**: the
+ *  turn is the server's and it keeps going with nobody attached, so a phone
+ *  backgrounded mid-run came back to a transcript full of failed tools and
+ *  `disconnected` workflow steps that a reconnect immediately contradicted —
+ *  the run had been fine the whole time. Callers that expect to come back and
+ *  be corrected (a close that will reconnect, a parked reconnect ladder) pass
+ *  `settle: false`; only an ending the *agent* reported settles. */
+export function settleTools(items: ThreadItem[]): ThreadItem[] {
+  return items.map((item) => {
+    if (item.kind === "tool" && (item.status === "pending" || item.status === "in_progress")) {
+      return { ...item, status: "failed" }
+    }
+    if (item.kind === "compaction" && item.status === "in_progress") {
+      return { ...item, status: "failed" as acp.CompactionStatus }
+    }
+    /* The RFD's own word for a child whose outcome the agent can no longer
+       report: not failed, not cancelled — unknown. The turn ending is exactly
+       that for any child still marked running. */
+    if (item.kind === "subagent" && item.state === "running") {
+      return { ...item, state: "disconnected" }
+    }
+    return item
+  })
+}

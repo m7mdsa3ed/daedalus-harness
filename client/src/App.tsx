@@ -120,6 +120,11 @@ function ConnectedShell({
   const actions = useActions(settings)
   const booted = React.useRef(false)
   const [loaded, setLoaded] = React.useState(false)
+  /* A boot whose session list never arrived is not a server with no threads.
+     The shell uses this to hold back the dock's prune, which otherwise closes
+     every restored tab against an empty list and lets the debounced layout
+     save make that permanent. */
+  const [bootFailed, setBootFailed] = React.useState(false)
 
   React.useEffect(() => {
     if (booted.current) return
@@ -127,8 +132,14 @@ function ConnectedShell({
     // The route decides which thread opens (see lib/router) — bootstrap only loads data.
     actions
       .bootstrap()
-      .then(() => setupPush(settings))
-      .catch((err) => reportError(err, "Couldn't load anything from the server"))
+      .then(() => {
+        setBootFailed(false)
+        setupPush(settings)
+      })
+      .catch((err) => {
+        setBootFailed(true)
+        reportError(err, "Couldn't load anything from the server")
+      })
       .finally(() => {
         setLoaded(true)
         // The enable-notifications offer is now a persistent toast, not a header
@@ -146,7 +157,13 @@ function ConnectedShell({
   return (
     <>
       <PruneAgentOptions />
-      <AppShell loading={!loaded} settings={settings} actions={actions} onAddServer={onAddServer} />
+      <AppShell
+        loading={!loaded}
+        failed={bootFailed}
+        settings={settings}
+        actions={actions}
+        onAddServer={onAddServer}
+      />
     </>
   )
 }

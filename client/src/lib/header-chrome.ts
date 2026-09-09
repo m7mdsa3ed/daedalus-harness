@@ -24,26 +24,18 @@
 export const HEADER_BADGE =
   "rounded-full bg-background/50 ring-1 ring-border/50 backdrop-blur-sm"
 
-/** A control capsule, for the header's icon buttons — the sidebar toggle and
-    the view-settings sliders beside it.
+/** The header's icon buttons — the sidebar toggle and the view-settings
+    sliders beside it. Bare ghost buttons, no ground: the row stands on the
+    wrapper's ground now rather than over a transcript, so there is nothing to
+    lift them off (the frosted chip they wore is the tab's alone, `index.css`).
 
-    **The ground and the radius are the tab's, and they are in `index.css`**
-    (`.header-chip`, written beside `.panel-tab-chip` and out of the same
-    values). These controls and the tabs stand on the same line whenever a group
-    joins the header's band, and a pill of `--background` next to a rounded
-    rectangle of `--composer` is two materials pretending to be one bar. Only
-    the size is here, because only the size is layout.
-
-    It is deliberately an unlayered CSS class and not utilities: it has to beat
-    the button's own `rounded-4xl`, which the utilities layer would not.
-
-    `size-8` is the **tab's** height (`h-8` in `workspace/panel-tab`), which is
+    `size-7` is the **tab's** height (`h-7` in `workspace/panel-tab`), which is
     the number that matters: these two controls and that group's tabs are one
-    row whenever a group joins the band, and a 24px control beside a 32px tab
+    row whenever a group joins the band, and a 24px control beside a 28px tab
     reads as a strip tucked under the header rather than as the header's own
     line. The sidebar header's own buttons are not bound by this — they stand on
     a surface of their own, with nothing to line up with. */
-export const HEADER_CHIP = "header-chip size-8"
+export const HEADER_CHIP = "size-7"
 
 /** The ground of a surface the app *raises over* its own content — what a
     capsule opens (the bell's glance) and what the app raises on its own (a

@@ -22,7 +22,7 @@ import {
   useMarkNotificationsRead,
 } from "@/lib/queries/surfaces"
 import { notificationsPath } from "@/lib/router"
-import { GLASS_SURFACE } from "@/lib/header-chrome"
+import { GLASS_SURFACE, HEADER_CHIP } from "@/lib/header-chrome"
 import { cn } from "@/lib/utils"
 
 /** The glance is the newest few; the page is the rest. */
@@ -64,11 +64,11 @@ export function NotificationBell() {
                and not in the transparent app header: it has the sidebar's own
                ground under it, so it needs no capsule to be visible, and it is
                the palette trigger's twin — same size, same weight, one pair. */
-            className="relative shrink-0 text-muted-foreground hover:text-foreground"
+            className={cn(HEADER_CHIP, "relative shrink-0 text-muted-foreground hover:text-foreground")}
             aria-label={unread > 0 ? `Notifications (${unread} unread)` : "Notifications"}
             title="Notifications"
           >
-            <BellIcon />
+            <BellIcon className="size-3.5" />
             {unread > 0 && <UnreadCount count={unread} className="absolute -top-1 -right-1" />}
           </Button>
         }

@@ -17,6 +17,7 @@ import {
   UserRoundXIcon,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { CopyButton } from "@/components/ui/copy-button"
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"
 import { CARD, ContentBlockView, Disclosure, LABEL, Prose, SmartBlock, SourceChip, Timestamp } from "@/components/tool-parts"
 import { TodoList } from "@/components/tool-views"
@@ -315,22 +316,18 @@ export const ErrorRow = React.memo(function ErrorRow({
      producing prose about a picture that is no longer there. */
   const carried = (item.retryAttachments?.length ?? 0) > 0
   const retryLabel = carried ? "Retry (text only)" : "Retry"
+  /* Never gated on `detail`. A failure with only a headline and a reason is
+     still a failure someone has to paste into an issue — and it is the case
+     with the *least* to select by hand, since there is no expandable well
+     under it holding the text. */
+  const full = [item.title, item.reason, item.detail].filter(Boolean).join("\n")
   // The pill buttons stay — they are the discoverable path. The menu repeats them.
   const menuItems: MenuItemSpec[] = [
     ...(onRetry ? [{ label: retryLabel, icon: <RotateCwIcon />, onClick: onRetry }] : []),
     ...(onRetryAsPaths
       ? [{ label: "Retry as file paths", icon: <PaperclipIcon />, onClick: onRetryAsPaths }]
       : []),
-    ...(item.detail
-      ? [
-          {
-            label: "Copy",
-            icon: <CopyIcon />,
-            onClick: () =>
-              copyText([item.title, item.reason, item.detail].filter(Boolean).join("\n")),
-          },
-        ]
-      : []),
+    { label: "Copy", icon: <CopyIcon />, onClick: () => copyText(full) },
     ...(onDismiss ? [{ label: "Dismiss", onClick: onDismiss }] : []),
   ]
   return (
@@ -386,20 +383,11 @@ export const ErrorRow = React.memo(function ErrorRow({
                   Retry as file paths
                 </Button>
               )}
-              {item.detail && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 gap-1 rounded-pill px-2 text-[11px]"
-                  onClick={() =>
-                    void writeClipboard([item.title, item.reason, item.detail].filter(Boolean).join("\n"))
-                      .catch(() => {})
-                  }
-                >
-                  <CopyIcon className="size-3" />
-                  Copy
-                </Button>
-              )}
+              <CopyButton
+                text={full}
+                label="Copy"
+                className="h-6 gap-1 rounded-pill px-2 text-[11px] [&_svg]:size-3"
+              />
               {onDismiss && (
                 <Button
                   variant="ghost"
@@ -446,7 +434,12 @@ export const CompactionStep = React.memo(function CompactionStep({
   const detail =
     item.summary.length > 0 || item.error ? (
       <div className="min-w-0 space-y-2">
-        {item.error && <p className="text-xs text-destructive">{item.error}</p>}
+        {item.error && (
+          <div className="flex items-start gap-1">
+            <p className="min-w-0 flex-1 text-xs text-destructive">{item.error}</p>
+            <CopyButton text={item.error} size="icon-xs" className="shrink-0 text-destructive" />
+          </div>
+        )}
         {item.summary.map((block, i) => (
           <ContentBlockView key={i} block={block} />
         ))}
@@ -583,4 +576,3 @@ export const PlanStep = React.memo(function PlanStep({ item }: { item: PlanItem 
   )
 })
 PlanStep.displayName = "PlanStep"
-import { writeClipboard } from "@/lib/clipboard"

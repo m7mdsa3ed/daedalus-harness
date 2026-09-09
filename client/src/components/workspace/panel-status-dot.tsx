@@ -6,6 +6,8 @@
    whole reading is in the `title`/`aria-label`, which is where a pointer and a
    screen reader both look. Each tone borrows the colour the rest of the app
    already gives that meaning, so a tab agrees with the sidebar row beside it. */
+import type * as React from "react"
+
 import type { PanelStatus, PanelTone } from "@/lib/workspace/panel-status"
 import { cn } from "@/lib/utils"
 
@@ -21,20 +23,33 @@ const TONES: Record<PanelTone, string> = {
   dirty: "border border-current bg-transparent",
 }
 
+/* The `role`/`aria-label` pair is the default and not a fixture: on a tab the
+   reading is already folded into the tab's own accessible name
+   (`useTabLabel`), and a live region *inside* `role="tab"` is both invalid
+   ARIA and a strip that talks over itself — so that caller passes
+   `aria-hidden role={undefined}` and the rest keep the announcement. Spread
+   last, which is what makes overriding them possible at all. */
 export function PanelStatusDot({
   status,
   className,
+  ...props
 }: {
   status: PanelStatus | null
-  className?: string
-}) {
+} & React.ComponentProps<"span">) {
   if (!status) return null
   return (
     <span
       role="status"
       aria-label={status.label}
       title={status.label}
-      className={cn("size-1.5 shrink-0 rounded-full", TONES[status.tone], className)}
+      className={cn(
+        "size-1.5 shrink-0 rounded-full",
+        TONES[status.tone],
+        // A pulse nobody asked for: the tone still says "running" by colour.
+        "motion-reduce:animate-none",
+        className
+      )}
+      {...props}
     />
   )
 }

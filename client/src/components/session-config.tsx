@@ -279,10 +279,12 @@ export function SessionConfigPopover({
               <DropdownMenuLabel className="text-muted-foreground">
                 Applies when you next send
               </DropdownMenuLabel>
-              <DropdownMenuItem onClick={() => void actions.applyStagedConfig(row)}>
-                <ClockIcon className="size-4" />
-                {thread.turnActive ? "Apply now — stops the turn" : "Apply now"}
-              </DropdownMenuItem>
+              {/* Cancel only — the staged change is taken by the next spawn,
+                  which the composer footer's `ConfigIndicator` says, and the
+                  menu is where the pick was made. The "Apply
+                  now" that used to live here forced a spawn even when nothing
+                  was about to be sent, which is the one auto-apply the reader
+                  did not ask for. */}
               <DropdownMenuItem
                 onClick={() =>
                   void actions

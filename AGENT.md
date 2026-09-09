@@ -100,7 +100,8 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   never hardcode per-agent knowledge in the client.
 - **The client mints session ids and threads start as drafts**: no row and no agent until the
   first message, so anything treating the server's list as authoritative must let drafts
-  through.
+  through — including the boot prune, which is why the row is persisted per device and
+  re-minted before it runs (`lib/draft-sessions.ts`).
 - **An agent's session id is earned, not announced** (`acp_session_provisional`): only a
   *proven* id may replace a proven one. **The journal is a cache for reading, never a source
   for resuming** — a revive is always `session/load`.
@@ -157,10 +158,15 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   **Two mechanisms, no third and no timer**: `respawnNow` *folds* the patch into any spawn
   that happens anyway (the revive behind a send, a rewind, the restart route) as a value
   substitution — never by re-entering `applyConfig`, which recurses into a second spawn — and
-  `prompt` flushes it before starting a turn, which is the one door every turn comes through.
+  `flushStagedNow` takes it outright, from the two doors a turn can start at: `prompt`, and
+  `resumeTurn` (Continue on a held turn, which is the hold's own promise — it waits for a
+  model change and a resume).
   A **queue drain never flushes** (it calls `startTurn` directly) and neither does a **steer**
   (`!promptActive` is the test), so the old `continued` rule survives: no restart between two
-  messages the user sent together. Never staged: `defer:false`, a **held** turn (stopped
+  messages the user sent together — **except into a held turn** (`|| paused`), where the flush
+  is the whole point: the "never staged onto a hold" guard below reads the hold at *pick* time,
+  so a pick made during the retry window would otherwise be stranded behind a steer. Never
+  staged: `defer:false`, a **held** turn (stopped
   *waiting* for the change), and an **agent** change — a different runtime, whose `session/load`
   would name an id in the *old* one's store. **A flush that fails re-stages and refuses to
   send**; a patch whose profile went stale is dropped with a notice, never thrown inside a
@@ -247,7 +253,7 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   `src/lib/builtin-themes.ts`, and that table is the only place a built-in exists. Three
   gates run first (WCAG AA, no duplicate design signature, every preset value and font used).
   Radius steps are **multiples** of `--radius`, never offsets.
-- **Reading a tool call is `lib/tools.ts`; drawing one is `components/tool-views.tsx`.** **No
+- **Reading a tool call is `lib/tools/`; drawing one is `components/tool-views/`.** **No
   component matches on a vendor tool name** — a new runtime's tool is one file's edit. ACP
   `kind` decides the layout family only; web views match the tool's **leaf** name. A vendor's
   `_meta` namespace is named once, in `lib/tools/helpers.ts` (`vendorMeta`); the readers know
@@ -257,17 +263,41 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - Device-local state lives in tiny stores (`lib/drafts.ts`, `lib/pins.ts`,
   `lib/view-options.ts`, `lib/keybindings.ts`) — how a transcript is drawn is the reader's
   property, not the conversation's.
-- **"New thread" is the landing console (`/`), not an empty transcript**, and a project's own
-  `+` aims it with `?project=` because there is no row for it to ride on yet. **No list draws
-  a draft** — `isListed`, not `isTopLevel`, is what the sidebar, Recents, the project page,
-  the palette and the schedule form filter by. The tab strip's `+` is the one exception left
-  (a tab has to be a panel, and the landing page is a route), with the project page's queued
-  terminal/IDE behind it — both open a draft because they need a dock. **It takes the caret
-  itself** — a draft's composer is focused when it is the routed thread or when the caller
-  says so (`autoFocus`, which is the console's, whose route is `/`); never on touch.
+- **"New thread" always creates a thread**: every door — ⌘N, the sidebar row, the strip's `+`,
+  the palette, a project's own `+`, the app shortcut — mints a draft through the one
+  `actions.startThreadIn` and opens it as a tab of its own, so pressing it twice is two
+  threads. The landing console is where the dock lands when the last tab closes, not a stop on
+  the way to starting something; only the project page's queued terminal/IDE still opens a
+  draft behind its own gesture. **No list draws a draft** — `isListed`, not `isTopLevel`, is
+  what the sidebar, Recents, the project page, the palette and the schedule form filter by.
+  **A draft's tab survives a reload** (`lib/draft-sessions.ts`): the row is persisted per
+  server and re-minted on boot only for the tabs the saved layout still names, so a closed tab
+  stays closed and a sent thread comes from the server. **It takes the caret itself** — a
+  draft's composer is focused when it is the routed thread or when the caller says so
+  (`autoFocus`, which is the console's, whose route is `/`); never on touch.
+- **Every route is a tab, and the dock is the main area on every route.** A thread is a
+  `chat` panel; everything else — settings, a project's page, the inbox, schedules, routines,
+  the board route, a trace, the landing console — is a `page` panel whose descriptor is its
+  path, rendered through the app's one route table against *that* path
+  (`workspace/page-panel.tsx`, `<Routes location>`). **The URL points the tab, and focusing a
+  tab writes the URL** — the same pair chats had, with `location.key` in the deps so a sidebar
+  row for a tab just closed opens it again. **A page is a place you visit, not a thing you
+  keep, so the dock holds one browsing tab** (`openPage`): a tab already standing for the
+  place (`pageKey` — every settings section is one tab whose path moves, a project's page and
+  a trace are places of their own) is pointed at the new path, else the *unpinned* page tab is
+  repointed, else one opens beside what you are looking at. **A pin is how a page is kept** —
+  a pinned page tab is never repointed to another place. A tab per place was the first
+  version, and reading settings, then the schedules, then a project left three tabs beside a
+  chat none of them were about. Inside a page tab `--app-header-h` is the measured overlap,
+  so no route pads for a header that is not over it; the title is written forward only,
+  never "Page". The tab wears the mark its sidebar row wears (`PageIcon`).
+- **The console is spent by the thread it starts** (`consumeConsole`, on the chat route effect,
+  asked *before* the chat opens because opening it is what makes it the active panel, and only
+  for a routed draft — the console mints one and navigates to it before sending, so it can
+  never spend a page tab you are merely reading). Closing the last tab lands on it.
 - **Opening a thread opens a tab, never replacing the one you were reading** — `newTab` at
-  both doors (the route effect *and* `handleDockReady`, because the dock is unmounted while
-  the landing console is up). An open thread is focused, not duplicated. **A tab's title is
+  both doors (the route effects *and* `handleDockReady`, which can run after them). An open
+  thread is focused, not duplicated. **A tab's title is
   only written forward**: dockview serializes titles, so a chat with no session row yet keeps
   the restored one rather than being renamed to the placeholder.
 - **Sidebar order and the period a row is filed under are `activityAt` — the last turn, never
@@ -345,7 +375,13 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   to a thread goes IN that thread; a surface with the user's attention holds its own; toasts
   are for failures with no surface to go back to. **An error a surface could render as
   emptiness must be rendered as an error.** Toasts only through `lib/toast.ts`.
-- **The dock holds five panel kinds: chat, ide, terminal, web, tasks**, and **Monaco is the
+- **Every drawn error carries a Copy, and it is never gated on having a detail** — a failure
+  with only a headline is the one with the *least* to select by hand, having no well under it
+  to open. `components/ui/copy-button.tsx` is the one button, and its tick is the feedback, not
+  a toast: these sit *inside* the thing that failed, where a toast about a copy competes with
+  the failure being read and on a dialog lands behind it. A failed **tool call** gets its copy
+  from `CodeBlock`, the one place all four `SmartBlock tone="error"` call sites land.
+- **The dock holds six panel kinds: chat, ide, terminal, web, tasks, page**, and **Monaco is the
   text surface and the diff and nothing else** — the official `monaco-editor`, so there is no
   workbench and no "initialize once per page" rule.
 - **Source control starts from `GET …/git/repos`, never from "the project's git"**: a section
@@ -362,24 +398,49 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   the library beside it that only exports `start` (`editor.worker.start.js`): pointed at the
   latter the worker boots, answers nothing, and every worker-backed feature dies quietly —
   the visible one being the diff, which drew both files whole with nothing marked changed.
-- **A tab is one slab, rounded on all four sides** (`.panel-tab-chip`, `index.css`), and
+- **A tab is one slab, rounded on all four sides** (`.dock-tab`, `index.css`), and
   **every tab has a ground** — three weights of one material: the tab you are on, the one you
   are pointing at, the rest. A surface that only appears on click reads as the selection
   rather than as the shape a tab has. (A browser's shape — top-rounded, flared into the panel
   — was tried and removed: the flare only reads against a filled toolbar, and everything under
-  these tabs is transparent by design.) It carries its kind's glyph, its title, and the ⋮ and
-  close, **both of which appear on hover** (always where there is no pointer, and the ⋮ holds
-  itself visible while its menu is open) — **not** the thread's context reading, which the
-  composer's footer says once. The ⋮ and the right-click menu render one `items` array, so
+  these tabs is transparent by design.) It carries the **panel's own mark** (`PanelIcon` — a
+  chat's is its agent's), its title, its **reading** (`PanelStatusDot`), and the ⋮ and
+  close, **both of which appear on hover or focus** (always where there is no pointer, and the
+  ⋮ holds itself visible while its menu is open) — **not** the thread's context reading, which
+  the composer's footer says once. The ⋮ and the right-click menu render one `items` array, so
   they cannot drift. Sizing is a browser's — one width whether it is alone or one of nine, so
   **no `singleTabMode`** — but wider than a browser's, because a thread is named after what it
   is doing, and the emptiness beside a lone tab is the void container's to drag the window by.
+  **That width is a `width`, never a `flex-basis`**: reordering is dockview's own
+  (`theme.tabAnimation: "smooth"` — the dragged tab collapses, the strip slides apart around
+  the gap, everything FLIPs home on drop) and it collapses the tab with `width: 0`, which a
+  basis outranks. `dndTabIndicator: "line"` is the other half — the default is a half-width
+  fill over every tab, which is a row of slabs the size of half a tab, not an insertion point.
+- **Dockview owns the tab's ARIA and the strip's keyboard; the tab owns its face.** The Tabs
+  pattern — `role="tablist"`/`tab`/`tabpanel`, `aria-selected`, `aria-controls`, a roving
+  tabindex, arrows/Home/End/Enter — is dockview-core's and is already correct, on one
+  condition: **nothing rendered inside `role="tab"` may be focusable**, or the arrow keys go
+  dead (dockview matches `event.target` against the tab element) and the strip stops being one
+  tab stop. So the ⋮ and the close are `tabIndex={-1}`, `Delete` closes and `Shift`+`F10`
+  opens the menu on the tab itself, and the tab draws a focus ring. What dockview cannot know
+  is what the panel is doing, so `useTabLabel` folds the reading and the pin into its
+  `aria-label`. **Dockview's own overflow list is off** — `TabActions` draws the better one.
+  A narrow strip **collapses the title to `0fr`** (one animatable grid column, not four
+  choreographed widths); the mark is picked in JS because it keys on the viewport, never on
+  which tab is active.
 - **Every strip is the app header's own row** (`--dv-tabs-and-actions-container-height`): a
   strip in the band and a strip docked under it are the same bar, and a shorter one below
-  reads as a lesser thing rather than as another group of the same kind. **What separates two
-  groups is the split view's own line** (`--dv-separator-border`), never a border on a strip —
-  it is drawn on every view but the first, so one declaration covers a stack and a row alike,
-  and the banded strip has nothing above it because it *is* the first.
+  reads as a lesser thing rather than as another group of the same kind. **The header row and
+  the tabs stand outside the card, on every route.** `SidebarInset` is the column, not the
+  card — `index.css` takes the variant's radius, shadow and background back off it — and the
+  card is what is *under* the header: the routes box on every other route (header in flow,
+  `--app-header-h` zeroed inside so no route pads for an overlay that is not over it), and
+  with the dock mounted each group's content container, the strip in flow above it (the only
+  box in dockview's tree below a strip and above the content, which is what makes a split two
+  strips over two cards; the header stays an overlay there so the top groups can join its
+  row). **What separates two groups is the gutter between their cards**;
+  `--dv-separator-border` is transparent, because dockview's line runs the full view height,
+  through the band and down the gap.
 - **A tab strip carries what is about its own group** — the **+** and the tab list, **against
   the last tab and not at the strip's end** (`.dv-void-container { order: 1 }`, which moves
   the one flex item that has to move and leaves dockview's tree alone). The + is the browser's

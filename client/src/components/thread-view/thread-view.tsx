@@ -1,0 +1,879 @@
+/* ── The transcript surface ── the scroller and its autoscroll pin, the
+   windowing behind `load_earlier`, the turn rail, the row footers, the
+   approval / question / held-turn cards, the docked composer and the rewind
+   dialog. The parts that are not the surface live beside it and are imported
+   one way, from here: `turn-footers.ts` (the per-turn derivations),
+   `thread-keys.ts` (Escape and the digits), `starting-line.tsx` (the
+   connection wait) and `welcome.tsx` (the empty state the landing console
+   shares). `thread-view.tsx` above is the barrel that keeps `ThreadView` and
+   `ThreadWelcome` at the path every caller already spells. */
+import * as React from "react"
+import type * as acp from "@daedalus/acp"
+import { ChevronUp } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { ActivityIndicator } from "@/components/composer-status"
+import { ComposerQueue } from "@/components/composer-queue"
+import { useAttachmentDelivery, wentInline } from "@/components/composer-attachments"
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from "@/components/ui/message-scroller"
+import type { Actions } from "@/lib/actions"
+import { KEYBOARD_CENTER_FLOW, KEYBOARD_LIFT, KEYBOARD_LIFT_FOCUSED } from "@/lib/keyboard-inset"
+import { holdOf } from "@/lib/thread/hold"
+import { currentThreadId, navigateTo, threadPath } from "@/lib/router"
+import { useDispatch, useSessionMeta, useThread, threadIsEmpty, type ThreadItem } from "@/lib/store"
+import { useLocation } from "react-router"
+import { useViewOptions, ViewOptionsContext } from "@/lib/view-options"
+import { useFollowStream } from "@/hooks/use-follow-stream"
+import { cn, stagger } from "@/lib/utils"
+import { StepTokensProvider, TokenSummary } from "@/components/token-usage"
+import { useDock } from "@/components/workspace/dock"
+import { requestIde } from "@/lib/ide/open"
+import { useServer } from "@/lib/server-context"
+import { sessionChanges, type TurnChanges } from "@/lib/workspace/git-api"
+import { InlineElicitation } from "@/components/elicitation-form"
+import { InlineApproval } from "@/components/tool-approval"
+import { InlineHeldTurn } from "@/components/held-turn"
+import { RowView, SourcesStrip } from "@/components/thread-items"
+import type { TurnSources } from "@/lib/sources"
+import { buildRows, isAnswerItem, rowTailId, type Row } from "@/lib/transcript-rows"
+import { PromptSuggestions } from "@/components/prompt-suggestions"
+import { Composer, type ComposerHandle } from "@/components/composer"
+import { ThreadRail } from "@/components/thread-rail"
+import { RewindDialog, type RewindScope } from "@/components/rewind-dialog"
+import { useAgents } from "@/lib/queries/catalog"
+import {
+  useStepTurnUsage,
+  withTurnChanges,
+  withTurnDuration,
+  withTurnSources,
+  withTurnSuggestions,
+  withTurnUsage,
+} from "@/components/thread-view/turn-footers"
+import { useThreadKeys } from "@/components/thread-view/thread-keys"
+import { StartingLine, useWaitShown } from "@/components/thread-view/starting-line"
+import { ThreadWelcome } from "@/components/thread-view/welcome"
+
+/** A transcript, addressed by the pair that names it. The panel above hands
+    the key down (see workspace/chat-panel): every store read, every action and
+    every device-local draft below is keyed by it, because a bare session id is
+    unique only on the server that minted it. */
+export function ThreadView({ sessionId, actions }: { sessionId: string; actions: Actions }) {
+  /* Narrow subscriptions, not the wide hook: the dock keeps every opened
+     transcript mounted, and on `useStore()` a streamed token in ANY thread
+     re-rendered every one of them and re-ran the derivations below. These two
+     re-render exactly when this thread's own objects are replaced. */
+  const dispatch = useDispatch()
+  const thread = useThread(sessionId)
+  const hold = holdOf(thread)
+  /* Whether the connection's own wait is on screen — read by the two rows at
+     the foot of the transcript that trade places with it. */
+  const waitShown = useWaitShown(thread.phase)
+  /* Safe unconditionally: a transcript only ever exists inside a chat panel
+     (`workspace/chat-panel.tsx`), which is inside the dock. The composer does
+     not do this itself — it is also the build page's, where there is none. */
+  const dock = useDock()
+  /* An interrupt is resumable only while it is the last thing that happened:
+     the turn is over, the agent is still there, and nothing has been said
+     since. Anything older is history, and history does not get a button. */
+  const options = useViewOptions()
+  const follow = useFollowStream(options.autoScroll)
+  /* Paging back costs a round trip and then a re-fold of the whole widened
+     window. Only the round trip can be paid before it is asked for, so it is:
+     when the top of the transcript comes within a screenful of the viewport,
+     the next page is fetched and held, and the button — which stays a button,
+     because a re-fold that moves the scroll position under a reader is not
+     something to do on their behalf — pays only the fold. */
+  const earlierRef = React.useRef<HTMLDivElement>(null)
+  const hasEarlier = thread.earlier > 0
+  React.useEffect(() => {
+    const node = earlierRef.current
+    const root = follow.viewport
+    if (!hasEarlier || !node || !root) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) actions.prefetchEarlier(sessionId)
+      },
+      // A screenful of warning. The observer fires once on connect too, which
+      // is right: a thread short enough to show its own top has already
+      // arrived at the boundary.
+      { root, rootMargin: "800px 0px 0px 0px" },
+    )
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [actions, follow.viewport, hasEarlier, thread.earlier, sessionId])
+  /* Memoised separately: `.filter` would hand `rows` a fresh array every render
+     even when nothing changed, and `rows`' memo depends on it. Two stable layers
+     (items → visible → rows) is what lets a streaming update — which mutates one
+     item in place via the reducer's new-array-of-old-refs — leave every unchanged
+     row's identity alone so the memo below actually skips them. */
+  /* Nothing is filtered out: a plan is drawn here, in the flow, at the point in
+     the conversation where the agent wrote it — like every other thing it did.
+     It used to be lifted onto the composer shelf, which cost more than it
+     bought: the shelf could only draw the checklist variant, so `plan_update`'s
+     markdown and file plans were rendered in neither place, and a plan lifted
+     out of the flow loses the one thing the flow says about it — when, and
+     after what, the agent decided on it. It still updates in place, since the
+     reducer replaces the item it already holds.
+
+     One exception, and it is the reader's own: `answersOnly` keeps the
+     conversation and drops the work (see lib/transcript-rows.isAnswerItem).
+     Filtered here, at the top of the derivation, so nesting, grouping, the
+     rail and every row memo below are unchanged — and identity-stable, since
+     `filter` preserves the item objects the reducer hands back. The full list
+     is still what the turn footers are computed from: what a turn cited and
+     what it cost are read off the steps this option hides. */
+  const visible = React.useMemo(
+    () =>
+      thread.items.filter(
+        (item) =>
+          (!options.answersOnly || isAnswerItem(item)) &&
+          (options.showConfigNotices || item.kind !== "notice" || item.config !== true)
+      ),
+    [thread.items, options.answersOnly, options.showConfigNotices]
+  )
+  /* Nesting folds a subagent's work under its step; grouping folds a *run*
+     of steps into one row. Both are computed here, not in the reducer: they
+     are ways of looking at the transcript, not changes to it, and toggling
+     the option must not touch a single item. See lib/transcript-rows. */
+  const rows = React.useMemo(
+    () => buildRows(visible, options.groupTools, thread.turnActive),
+    [options.groupTools, visible, thread.turnActive]
+  )
+  /* Where a Sources strip goes: after the item that ends each finished turn.
+     Keyed by that item's id so the lookup below is one map hit per row, and
+     a grouped run — whose last step may be the item — is checked by its tail. */
+  const sourcesAfter = React.useMemo(
+    () =>
+      withTurnSources(thread.items, thread.turnActive, options.answersOnly, options.showConfigNotices),
+    [thread.items, thread.turnActive, options.answersOnly, options.showConfigNotices]
+  )
+  const sourcesFor = (row: Row): TurnSources | undefined => sourcesAfter.get(rowTailId(row))
+  /* What the turn cost, in the same slot the sources sit in — the two are the
+     turn's footer, and a reader looking for either looks in one place. */
+  const usageAfter = React.useMemo(
+    () =>
+      withTurnUsage(
+        thread.items,
+        thread.turnActive,
+        thread.turnUsage,
+        options.answersOnly,
+        options.showConfigNotices
+      ),
+    [thread.items, thread.turnActive, thread.turnUsage, options.answersOnly, options.showConfigNotices]
+  )
+  const usageFor = (row: Row): acp.Usage | undefined => usageAfter.get(rowTailId(row))
+  const durationAfter = React.useMemo(
+    () =>
+      withTurnDuration(
+        thread.items,
+        thread.turnActive,
+        thread.turnDuration,
+        options.answersOnly,
+        options.showConfigNotices
+      ),
+    [
+      thread.items,
+      thread.turnActive,
+      thread.turnDuration,
+      options.answersOnly,
+      options.showConfigNotices,
+    ]
+  )
+  const durationFor = (row: Row): number | undefined => durationAfter.get(rowTailId(row))
+  const changesAfter = React.useMemo(
+    () =>
+      withTurnChanges(
+        thread.items,
+        thread.turnActive,
+        thread.turnChanges,
+        options.answersOnly,
+        options.showConfigNotices
+      ),
+    [
+      thread.items,
+      thread.turnActive,
+      thread.turnChanges,
+      options.answersOnly,
+      options.showConfigNotices,
+    ]
+  )
+  /* The newest turn that wrote anything, for the composer's cluster. The map
+     is built in transcript order, so its last value is the most recent gated
+     turn — and it stays put when the next turn only reads, which is the point:
+     the reading is "what has this thread done to the worktree", not "what did
+     the very last turn do". */
+  const latestChanges = React.useMemo(
+    () => [...changesAfter.values()].at(-1),
+    [changesAfter]
+  )
+  /* The per-turn rows are the server's and live-only on the socket, so a
+     transcript opened cold seeds them once here. Failure is silence: the
+     chips are ambient, and a thread with no project has nothing to read. */
+  const settings = useServer()
+  React.useEffect(() => {
+    const controller = new AbortController()
+    sessionChanges(settings, sessionId, controller.signal)
+      .then(({ turns }) => dispatch({ type: "turn-changes-all", id: sessionId, turns }))
+      .catch(() => {})
+    return () => controller.abort()
+  }, [settings, sessionId, dispatch])
+  /* Held at one identity until a figure actually moves — see `useStepTurnUsage`.
+     The raw walk returns a fresh object per token, and this is half of a
+     *context* value, which no `React.memo` below it can absorb. */
+  const stepTurnAfter = useStepTurnUsage(thread.items, thread.turnUsage)
+  /* The other half is `thread.stepUsage`, which the reducer only replaces when
+     a `usage_update` really marks a new step (`markStepUsage`) — so both inputs
+     are stable between chunks and the transcript's memo boundaries hold. An
+     object literal here is what made all five of them ornamental. */
+  const stepTokens = React.useMemo(
+    () => ({ step: thread.stepUsage, turn: stepTurnAfter }),
+    [thread.stepUsage, stepTurnAfter]
+  )
+  /* Hoisted out of the map below: `findIndex` inside `rows.map` was O(n²) per
+     render, re-scanned on every streamed token. */
+  const firstUserIndex = React.useMemo(() => rows.findIndex((r) => r.kind === "user"), [rows])
+  /* Turn ordinals for the rewind dialog ("Turn 4"): the journal's list when
+     present — it names withheld turns too — else the order on screen. The
+     same numbering the rail shows. */
+  const turnNumber = React.useMemo(() => {
+    const byId = new Map<string, number>()
+    if (thread.turns.length > 0) {
+      thread.turns.forEach((t, i) => byId.set(t.turnId, i + 1))
+    } else {
+      let n = 0
+      for (const item of thread.items) {
+        if (item.kind === "user" && item.turnId && !byId.has(item.turnId)) byId.set(item.turnId, ++n)
+      }
+    }
+    return byId
+  }, [thread.turns, thread.items])
+  /* The thread's true tail, not the filtered one: it is what "is this row the
+     one still being written" is asked against, and under `answersOnly` the
+     newest item is usually a step that is not on screen — measured against the
+     filtered list, the previous answer would wear the streaming caret for the
+     whole of a tool run. No row matches a hidden tail, which is the right
+     answer: the working line above the composer is what says a turn is live. */
+  const last = thread.items[thread.items.length - 1]
+  const resumable =
+    last?.kind === "notice" && !thread.turnActive && thread.phase.kind !== "failed"
+      ? last.id
+      : null
+  /* actions.send records its own failure in the transcript (with the text, so
+     the row it leaves behind can offer Retry) — a toast on top would say the
+     same thing twice. */
+  const resume = () => void actions.send(sessionId, "Continue.").catch(() => {})
+  const retry = (text: string) => void actions.send(sessionId, text).catch(() => {})
+  /* The one exception to "attachments do not survive Retry", and it exists for
+     the one failure `resolveDelivery` cannot prevent: a model whose catalog
+     claims `image` and whose provider refuses it anyway. Same bytes, same text,
+     pinned to the materialise-and-link branch. */
+  const retryAsPaths = (item: Extract<ThreadItem, { kind: "error" }>) =>
+    void actions
+      .send(sessionId, item.retryText ?? "", {
+        attachments: item.retryAttachments,
+        forceLink: true,
+      })
+      .catch(() => {})
+
+  /* ── Rewind ──
+     Which finished turn the dialog is open for. The dialog confirms the scope
+     and the action rebuilds from 0 after the server clears the journal. */
+  const [rewindTarget, setRewindTarget] = React.useState<{
+    turnId: string
+    n: number
+    text: string
+  } | null>(null)
+  const [rewindBusy, setRewindBusy] = React.useState(false)
+  const agents = useAgents()
+  const meta = useSessionMeta(sessionId)
+  /* Reviewing a turn is the IDE's source-control view, narrowed to the files
+     that turn touched (`lib/ide/scm-filter.ts`). Not a surface of its own: what
+     you want after reading "7 files changed" is the working set — staging,
+     discarding and the commit box already around it — and a second list of the
+     same files that could do none of those is what the changes tab was.
+
+     The narrowing is by path against `git status`, so it shows the turn's
+     files *that are still uncommitted*. A turn whose work has been committed
+     since filters down to nothing, and the view says so rather than pretending
+     the turn changed nothing. */
+  const openChanges = React.useCallback(
+    (turn: TurnChanges) => {
+      const projectId = meta?.projectId
+      if (!projectId) return
+      dock.openPanel({ kind: "ide", projectId }, { direction: "right" })
+      requestIde({
+        kind: "review",
+        projectId,
+        label: `${turn.files.length} ${turn.files.length === 1 ? "file" : "files"} from this turn`,
+        paths: turn.files.map((file) => file.path),
+      })
+    },
+    [dock, meta?.projectId]
+  )
+  /* The agent's rewind door: absent/false = the conversation half is not
+     offered on this thread, and files are restored on their own. Read off the
+     catalog like every other agent capability — the server still refuses what
+     it cannot do. */
+  const canRewindConversation =
+    agents.find((a) => a.id === meta?.agentId)?.rewindVia === "acp-fork-point"
+  const confirmRewind = (scope: RewindScope) => {
+    const target = rewindTarget
+    if (!target) return
+    setRewindBusy(true)
+    actions
+      .rewindThread(sessionId, target.turnId, scope)
+      .then(() => setRewindTarget(null))
+      .catch(() => {})
+      .finally(() => setRewindBusy(false))
+  }
+  /* Fork needs the same door rewind's conversation half needs — a runtime
+     that can cut at a message id — and costs this thread nothing: the branch
+     is born loaded elsewhere, and this transcript does not move. Failures are
+     recorded into this thread by the action, so the catch is a closed door. */
+  const forkAt = (turnId: string) => {
+    actions
+      .forkThread(sessionId, turnId)
+      .then((id) => navigateTo(threadPath(id)))
+      .catch(() => {})
+  }
+  /* What an attachment on this thread would actually do — read once here
+     because two surfaces need the same answer: the composer's chips forecast
+     it, and an error row uses it to decide whether "Retry as file paths" would
+     change anything. */
+  const delivery = useAttachmentDelivery(meta, thread)
+  /* Which transcript the keys belong to. The dock keeps every opened thread
+     mounted and navigates the URL as tabs are activated (see workspace/dock), so
+     the route is the app's own answer to "which one is in front". */
+  const location = useLocation()
+  /* The composer is a sibling of the transcript, so everything that puts words
+     back in the box — the suggestion card, a queued message's Edit, Escape's
+     take-back — goes through this handle rather than shared state. Declared
+     above the keys because Escape is one of them. */
+  const composerApiRef = React.useRef<ComposerHandle>(null)
+  useThreadKeys({
+    sessionId,
+    thread,
+    actions,
+    composer: composerApiRef,
+    enabled: currentThreadId(location.pathname, location.search) === sessionId,
+  })
+  // Shared with the hero behind the whole inset, which the shell paints — the
+  // two must agree about when this thread counts as empty. See lib/store.
+  const empty = threadIsEmpty(thread, meta?.draft)
+
+  /* Which finished answers get a suggestion card, keyed by the answer's own id
+     — the same per-turn slot the sources and token footers occupy. The thread's
+     toggle (a spawn bargain with the model, see lib/actions) is read here, so
+     turning suggestions off takes every card away at once. */
+  const suggestionsAfter = React.useMemo(
+    () => withTurnSuggestions(thread.items, thread.turnActive, meta?.suggestFollowups === true),
+    [thread.items, thread.turnActive, meta?.suggestFollowups]
+  )
+  const suggestionsFor = (row: Row): { itemId: string; prompts: string[] } | undefined =>
+    suggestionsAfter.get(rowTailId(row))
+
+  const rootRef = React.useRef<HTMLDivElement>(null)
+  const composerRef = React.useRef<HTMLDivElement>(null)
+  /* The docked composer is an overlay of unknown height — shelf rows, the
+     queue, attachments and textarea growth all move it — so its pixel height
+     is measured and published as `--composer-dock-h` on the grid root for the
+     transcript to respect (content reserve, scroll-padding, button lift).
+     Cleared while empty, where the composer is back in flow and no reserve
+     is needed. */
+  React.useLayoutEffect(() => {
+    const root = rootRef.current
+    const composer = composerRef.current
+    if (!root || !composer || empty) {
+      root?.style.removeProperty("--composer-dock-h")
+      return
+    }
+    const publish = () => {
+      root.style.setProperty("--composer-dock-h", `${composer.offsetHeight}px`)
+    }
+    publish()
+    const observer = new ResizeObserver(publish)
+    observer.observe(composer)
+    return () => observer.disconnect()
+  }, [empty])
+
+  return (
+    /* Rows: transcript | composer | spacer. The spacer is 1fr while the thread
+       is empty and 0fr once it is not, which centres the composer and then
+       docks it — `fr` interpolates, so that whole move is one transition on one
+       property with nothing measured in JS.
+       minmax(0,…) on both flexible tracks, never a bare `1fr`: that is shorthand
+       for minmax(auto,1fr), whose auto minimum lets a long transcript push the
+       row taller than the thread and scroll the whole pane. */
+    <MessageScrollerProvider autoScroll={options.autoScroll}>
+    {/* The Provider sits at the grid root rather than around the transcript:
+        the turn rail needs the scroller's `scrollToMessage`/`currentAnchorId`
+        as much as the transcript does. The provider renders no DOM of its own
+        — context only — so this changes nothing about the layout. */}
+    <div
+      ref={rootRef}
+      data-empty={empty || undefined}
+      className="relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_auto_minmax(0,0fr)] transition-[grid-template-rows] duration-500 ease-out data-empty:grid-rows-[minmax(0,1fr)_auto_minmax(0,1fr)]"
+    >
+      {/* `autoScroll` defaults to FALSE — without it the transcript never follows
+           the stream. Every direct child of Content must be an Item with a
+           `messageId`: the visibility/preservation scanner skips elements without
+           one, so unkeyed items are invisible to the scroller.
+           The primitive's own follow is kept (it is what hides the
+           scroll-to-bottom button while following) but it is not trusted on its
+           own — `useFollowStream` owns the pin. See hooks/use-follow-stream. */}
+        <MessageScroller className="min-h-0 flex-1">
+          <MessageScrollerViewport
+            ref={follow.viewportRef}
+            /* Measured dock height: the follow/scroll-into-view offset keeps
+               the live tail landing above the glass. Falls back while the
+               first measurement lands. The top padding is the floating app
+               header: it scrolls away with the transcript (padding inside a
+               scroller does), so the first message starts below the header
+               and everything after it passes beneath the header's blur; the
+               scroll-padding keeps a jump-to-message landing there too rather
+               than hidden under it. */
+            /* `--dock-content-overlap` is how much of *this panel* the floating
+               header actually covers, measured per group by workspace/dock.tsx
+               — zero for a thread in a group that is not at the top. The
+               constant is the fallback: outside the dock (and for the frame
+               before the first measurement) it is the whole header. */
+            /* The gutter that keeps this column centred on the *panel* — and so
+               on the composer, which is centred outside the scroller — is the
+               viewport's own (`MessageScrollerViewport`, which is why it is not
+               spelled here: two declarations of it raced, and the caller's
+               lost). */
+            className={cn(
+              "pt-[var(--dock-content-overlap,var(--app-header-h))] [scroll-padding-top:var(--dock-content-overlap,var(--app-header-h))]",
+              !empty && "[scroll-padding-bottom:var(--composer-dock-h,14rem)]"
+            )}
+          >
+            <ViewOptionsContext.Provider value={options}>
+            <StepTokensProvider value={stepTokens}>
+            <MessageScrollerContent
+              ref={follow.contentRef}
+              data-answers={options.answersOnly ? "only" : undefined}
+              data-density={options.compactDensity ? "compact" : undefined}
+              data-wrap={options.codeWrap ? "on" : undefined}
+              data-motion={options.calmMotion ? "calm" : undefined}
+              className={cn(
+              "thread-transcript mx-auto w-full gap-0.5 px-4 py-4",
+                options.compactDensity && "gap-0 py-2",
+                options.wideTranscript ? "max-w-[82rem]" : "max-w-[var(--harness-chat-width)]",
+                /* Scrollable reserve matching the measured dock height, plus a
+                   breath of room, so the last message rests above the glass
+                   instead of behind it. */
+                !empty && "pb-[calc(var(--composer-dock-h,13rem)+1rem)]",
+              )}
+            >
+              {/* Nothing stands in while a thread connects. A skeleton claimed a
+                  shape for content nobody had seen yet, and on a thread that
+                  turns out to be empty it was a lie twice over. The sidebar row
+                  says "connecting" instead — see AppShell.
+                  The empty state is not in here either: it sits with the
+                  composer in the middle row, so the greeting and the box you
+                  type into travel to the bottom together. */}
+              {/* The transcript begins in the middle: this thread was long
+                  enough that the server sent only its tail. The rest is still
+                  there and comes back a page at a time. */}
+              {thread.earlier > 0 && (
+                <MessageScrollerItem messageId="earlier">
+                  <div
+                    ref={earlierRef}
+                    className="mb-2 flex items-center justify-center gap-2 text-xs text-muted-foreground"
+                  >
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={thread.loadingEarlier}
+                      onClick={() => void actions.loadEarlier(sessionId)}
+                    >
+                      <ChevronUp className={cn("size-4", thread.loadingEarlier && "animate-pulse")} />
+                      {thread.loadingEarlier ? "Loading…" : "Load earlier steps"}
+                    </Button>
+                    <span>{thread.earlier} earlier step{thread.earlier === 1 ? "" : "s"}</span>
+                  </div>
+                </MessageScrollerItem>
+              )}
+              {rows.map((row, i) => {
+                /* A hairline above each of your messages (except the first)
+                    separates one turn from the next when Turn dividers is on. */
+                const isUser = row.kind === "user"
+                const divider = options.stepDividers && isUser && i !== firstUserIndex
+                return (
+                /* ponytail: no scrollAnchor. Anchoring the user's message to
+                    the top of the viewport meant sending scrolled the whole
+                    transcript up and left a blank screen until the agent
+                    produced enough output to fill it back in. Autoscroll alone
+                    keeps the newest content in view without the jump. */
+                /* data-settled gates content-visibility (see index.css). It is
+                    set only while a turn is NOT streaming: content-visibility
+                    lays off-screen items out at a placeholder, so scrollHeight
+                    is only trustworthy when nothing is about to grow — and
+                    autoscroll reads scrollHeight. With autoScroll engaged
+                    (turnActive) every row stays fully measured; a quiet thread
+                    can then bound its DOM for the off-screen bulk. */
+                <MessageScrollerItem
+                  key={row.id}
+                  messageId={row.id}
+                  /* What kind of row this is, for the one thing CSS has to know
+                     about it: under `answersOnly` the steps between two stretches
+                     of prose are gone, and the padding they were separated by is
+                     a gap in the middle of what is now one answer. Collapsed in
+                     index.css against the *adjacency*, which is a fact only the
+                     rendered list has — see the [data-answers="only"] block. */
+                  data-row-kind={row.kind}
+                  data-settled={!thread.turnActive ? "true" : undefined}
+                >
+                  {divider && (
+                    <div aria-hidden className="my-1.5 h-px bg-border/50 first:hidden" />
+                  )}
+                  {/* The entrance wrapper (index.css): one per row, so the
+                      divider and the Sources strip sit beside it — each mounts
+                      at its own moment and rises in on its own.
+
+                      The `stagger` numbers below are this row's footer read top
+                      to bottom, and they are hand-written because that is what
+                      they are: five fixed slots, not a list. They cost nothing
+                      in the case they mostly run in — the answer mounts alone,
+                      long before the turn ends, so its 0 is the only one asked
+                      for. They earn themselves at the two moments the footer
+                      arrives *together*: the end of a turn, when sources, the
+                      token figure, the changes chip and the follow-ups all
+                      resolve on one frame, and a replay, where the whole row is
+                      one mount. Both used to land as a single block. */}
+                  <div className="harness-item-in" style={stagger(0)}>
+                    <RowView
+                      row={row}
+                      onContinue={resumable === row.id ? resume : undefined}
+                      onRewind={
+                        row.kind === "user" &&
+                        row.turnId &&
+                        !row.local &&
+                        !thread.turnActive &&
+                        !meta?.parentSessionId
+                          ? () =>
+                              setRewindTarget({
+                                turnId: row.turnId!,
+                                n: turnNumber.get(row.turnId!) ?? 0,
+                                text: row.text,
+                              })
+                          : undefined
+                      }
+                      /* No dialog: there is no scope to pick — a fork never
+                         touches this thread. Gated on the agent's door rather
+                         than the parent check rewind carries, because a
+                         branch of a workflow step is allowed to be its own
+                         thread where a rewind of one is not allowed at all. */
+                      onFork={
+                        row.kind === "user" &&
+                        row.turnId &&
+                        !row.local &&
+                        !thread.turnActive &&
+                        canRewindConversation
+                          ? () => forkAt(row.turnId!)
+                          : undefined
+                      }
+                      onRetry={
+                        row.kind === "error" && row.retryText
+                          ? () => retry(row.retryText!)
+                          : undefined
+                      }
+                      /* Offered only when something on that turn would actually
+                         have been inlined — a turn whose files all went as paths
+                         already failed for some other reason, and a button that
+                         changes nothing is worse than no button. Read through
+                         the same `resolveDelivery` the chip's note and the
+                         bridge's branch use. */
+                      onRetryAsPaths={
+                        row.kind === "error" && wentInline(row, delivery)
+                          ? () => retryAsPaths(row)
+                          : undefined
+                      }
+                      onDismiss={
+                        row.kind === "error"
+                          ? () => dispatch({ type: "dismiss-error", id: sessionId, itemId: row.id })
+                          : undefined
+                      }
+                      showTimestamps={options.showTimestamps}
+                      streaming={thread.turnActive && last !== undefined && rowTailId(row) === last.id}
+                    />
+                  </div>
+                  {options.showSources && sourcesFor(row) && (
+                    <div className="harness-item-in" style={stagger(1)}>
+                      <SourcesStrip turn={sourcesFor(row)!} />
+                    </div>
+                  )}
+                  {options.showTokens && usageFor(row) && (
+                    <div className="harness-item-in -ml-1" style={stagger(2)}>
+                      <TokenSummary usage={usageFor(row)!} label="This turn" durationMs={durationFor(row)} />
+                    </div>
+                  )}
+                  {/* The model's closing follow-ups, under the answer that
+                      suggested them. Deliberately NOT on the composer dock: the
+                      dock is for state being typed with the turn, and next
+                      actions belong where the reader is when they arrive — in
+                      the same footer slot Sources and the token figure use. A
+                      click fills the composer (replaced, unsent, focused) via
+                      its imperative handle, so the box stays the box's own
+                      state. */}
+                  {suggestionsFor(row) && (
+                    <div className="harness-item-in mt-1" style={stagger(3)}>
+                      <PromptSuggestions
+                        suggestions={suggestionsFor(row)!.prompts}
+                        onPick={(prompt) => composerApiRef.current?.fill(prompt)}
+                      />
+                    </div>
+                  )}
+                </MessageScrollerItem>
+                )
+              })}
+              {/* The wait sits at the FOOT of the transcript, not its head: a
+                  replay arrives oldest-first and the scroller is pinned to the
+                  bottom, so a line at the top is the one place the reader is
+                  not looking — it announced the wait above content that was
+                  still landing under it, and then vanished from off-screen.
+                  Here it is where the next thing to happen will happen, in the
+                  same slot the working line takes once the thread is live. */}
+              {waitShown && (
+                <MessageScrollerItem messageId="starting">
+                  <StartingLine phase={thread.phase} />
+                </MessageScrollerItem>
+              )}
+              {/* Suppressed while the thread is opening: the StartingLine just
+                  above already owns the wait, and two animated lines over one
+                  message read as "we don't know what is happening" rather than
+                  as progress. Reaching `live` hands the wait back here.
+                  Suppressed again for a turn held on a failure, for the same
+                  reason from the other end: the card below says the same
+                  sentence with the buttons that act on it, and a line above it
+                  repeating the reason is the wait announced twice. A *user's*
+                  pause keeps the line, because it has no card. */}
+              {thread.turnActive && !waitShown && !hold.byError && (
+                <MessageScrollerItem messageId="working">
+                  {/* The turn's foot is its own five-slot cascade, counted from
+                      the working line down: these mount together far more often
+                      than the row footer above does — a turn that starts with a
+                      plan and a queue behind it raises three of them on one
+                      frame, and a hold raises the fourth over the top. */}
+                  <div className="harness-item-in" style={stagger(0)}>
+                    <div className="py-0.5">
+                      <ActivityIndicator thread={thread} />
+                    </div>
+                  </div>
+                </MessageScrollerItem>
+              )}
+              {/* The three things that stop a turn dead, at the tail of the
+                  flow where the turn is: an approval, a question and a turn
+                  held on a failure are the same event to a reader — the agent
+                  has got as far as it can and is waiting on you — so they are
+                  drawn on the same card. All come after the working line:
+                  whatever the agent got as far as saying is above the thing it
+                  stopped on. */}
+              {hold.byError && (
+                <MessageScrollerItem messageId="held">
+                  <div className="harness-item-in" style={stagger(3)}>
+                    <div className="py-1">
+                      <InlineHeldTurn sessionId={sessionId} actions={actions} thread={thread} />
+                    </div>
+                  </div>
+                </MessageScrollerItem>
+              )}
+              {thread.permissions.map((pending, index) => (
+                <MessageScrollerItem
+                  key={pending.requestId}
+                  messageId={`permission:${pending.requestId}`}
+                >
+                  {/* Continuing the foot's count rather than restarting it, and
+                      the one place here that is a real list: two approvals
+                      arriving at once are two rows, so they cascade past each
+                      other the way a run's steps do. */}
+                  <div className="harness-item-in" style={stagger(4 + index)}>
+                    <div className="py-1">
+                      <InlineApproval permission={pending} autofocus={index === 0} />
+                    </div>
+                  </div>
+                </MessageScrollerItem>
+              ))}
+              {/* The card rides the soft keyboard while a field within it is
+                  being answered. It is the transcript's live tail, resting on
+                  the margin above the docked composer — so when the composer
+                  lifts for the keyboard, its glass would slide up over the
+                  very input being typed into. `KEYBOARD_LIFT_FOCUSED` lifts
+                  the card by the same inset while it has focus, so it clears
+                  the lifted glass and the keys together, and settles back the
+                  moment it does not. A transform, so the transcript itself
+                  never moves with it. */}
+              {thread.elicitations.map((pending) => (
+                <MessageScrollerItem
+                  key={pending.requestId}
+                  messageId={`elicitation:${pending.requestId}`}
+                  className={KEYBOARD_LIFT_FOCUSED}
+                >
+                  <div className="harness-item-in">
+                    <div className="py-1">
+                      <InlineElicitation elicitation={pending} />
+                    </div>
+                  </div>
+                </MessageScrollerItem>
+              ))}
+              {/* Last, and last on purpose: a queued message is the *future* of
+                  this conversation. Everything above it has happened or is
+                  happening — the working line, the approval, the question the
+                  turn stopped on — and these are the sentences that go next, so
+                  they sit where they will land, at the end, until they are
+                  sent. Editing one takes it back to the composer, which is why
+                  there is no editor here.
+
+                  Gated outside the component: a `MessageScrollerItem` that
+                  renders nothing still reserves `contain-intrinsic-size`. */}
+              {thread.queue.length > 0 && (
+                <MessageScrollerItem messageId="queue">
+                  <ComposerQueue
+                    sessionId={sessionId}
+                    thread={thread}
+                    actions={actions}
+                    onEdit={(text) => composerApiRef.current?.fill(text)}
+                  />
+                </MessageScrollerItem>
+              )}
+            </MessageScrollerContent>
+            </StepTokensProvider>
+            </ViewOptionsContext.Provider>
+          </MessageScrollerViewport>
+          {/* The primitive's own scroll-to-end runs on click; re-pinning here as
+              well is what makes the button mean "and keep up from now on"
+              instead of "put me at the bottom once". */}
+          {/* Lifted above the docked composer while the thread is live, so the
+              button never parks behind the glass. The lift repeats the base's
+              `data-[direction=end]:` variant — an unprefixed `bottom-*` would
+              survive the merge but lose to it on specificity. `z-30` keeps it
+              painting above the composer's `z-20`. */}
+          <MessageScrollerButton
+            onClick={follow.follow}
+            className={cn(
+              !empty &&
+                "z-30 data-[direction=end]:bottom-[calc(var(--composer-dock-h,14rem)+1rem)]",
+            )}
+          />
+          {/* The turn rail: one tick per turn, riding the transcript's left
+              edge as an absolute overlay, centred in the view — a sibling of
+              the viewport, so it does not scroll with the content. Under the
+              reader's Turn rail toggle, and the rail draws nothing under two
+              turns, so a short thread pays for it only in a hook call. */}
+          {options.turnRail && visible.length > 0 && (
+            <ThreadRail
+              items={visible}
+              turns={thread.turns}
+              onEnsureTurn={(turnId, seq) => actions.loadUntilTurn(sessionId, turnId, seq)}
+            />
+          )}
+        </MessageScroller>
+      {/* min-w-0, and it is load-bearing: a grid item's automatic minimum is
+          `min-content`, so the composer's row was as wide as the widest
+          unbreakable thing on the shelf — a queued message holding a URL or a
+          long path made the whole column wider than the panel and pushed the
+          composer off the side of the screen. (The strip's own
+          `max-w-[calc(min(100%,…))]` cannot prevent that: a percentage max-width
+          is ignored while intrinsic contributions are being measured.) With the
+          minimum at 0 the track is the panel's width, the strip fills it, and
+          the rows inside truncate and wrap as they were written to. The same
+          reasoning as every `min-h-0` on the rows above — the axis is the only
+          difference. */}
+      {/* Docked once the thread is live: the composer leaves the grid flow and
+          overlays the transcript's foot (absolute against the grid root above,
+          which is `relative`), so thread content scrolls under the frosted
+          card. The row it vacated collapses and the viewport takes the full
+          height. `pointer-events-none` keeps the full-width band from eating
+          transcript clicks — the composer's own root re-enables them. While
+          empty the composer stays in flow, centred by the grid rows above. */}
+      {/* Docked, it rides the soft keyboard: nothing else on the screen moves
+          when one opens (index.html asks for `overlays-content`), and this is
+          the surface that would otherwise be under it — absolute against a
+          panel that does not scroll, so the browser has nothing to scroll
+          into view either. A transform rather than a `bottom`, so the height
+          the transcript reserves (`--composer-dock-h`, measured from
+          offsetHeight) does not move with it and the transcript stays exactly
+          where the reader left it. An empty thread rides the same way: the
+          composer is back in flow and centred, but nothing around it scrolls
+          either, so the browser's own scroll-into-view has nothing to move
+          and the keyboard would cover it just the same. By half, though:
+          the grid rows centre the box, so its middle already sits at
+          mid-pane — the keyboard covers the bottom `k`, and staying centred
+          in what is left above it means rising by `k/2`, not `k`
+          (`KEYBOARD_CENTER_FLOW`). A full `KEYBOARD_LIFT` here would push
+          the welcome past centre and, on a short pane, out the top.
+
+          The transition is the platform's own animation, copied: 285ms on
+          `cubic-bezier(0.2, 0, 0, 1)` are Android's ANIMATION_DURATION_SYNC_IME_MS
+          and SYNC_IME_INTERPOLATOR (AOSP `InsetsController`). It has to be
+          copied because it cannot be followed — the per-frame keyboard
+          position lives in `WindowInsetsAnimation.Callback.onProgress`, which
+          Chromium consumes for its own Java UI and never plumbs into the
+          renderer, so `--keyboard-inset` arrives once, whole, as the keyboard
+          starts moving (Android dispatches the final insets at animation
+          start once a callback is registered). Animating from that one value
+          on the same curve is as close to in step as a page can get; the
+          slower dismiss (340ms) is not matched, which would take script to
+          tell an open from a close. `translate` so it stays on the
+          compositor. */}
+      <div
+        ref={composerRef}
+        className={cn(
+          "min-w-0",
+          empty ? KEYBOARD_CENTER_FLOW : KEYBOARD_LIFT,
+          empty
+            ? "relative"
+            : "pointer-events-none absolute inset-x-0 bottom-0 z-20",
+        )}
+      >
+        {empty && <ThreadWelcome draft={meta?.draft} />}
+        <Composer
+          ref={composerApiRef}
+          sessionId={sessionId}
+          actions={actions}
+          thread={thread}
+          meta={meta}
+          delivery={delivery}
+          changes={latestChanges}
+          onOpenChanges={openChanges}
+        />
+      </div>
+      {/* The spacer that collapses. Nothing renders in it — its whole job is to
+          be the bottom half of the centring while the thread is empty. */}
+      <span aria-hidden />
+    </div>
+    {rewindTarget && (
+      <RewindDialog
+        open={rewindTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !rewindBusy) setRewindTarget(null)
+        }}
+        turnLabel={rewindTarget.n > 0 ? `Turn ${rewindTarget.n}` : "this turn"}
+        turnPreview={rewindTarget.text}
+        canRewindConversation={canRewindConversation}
+        /* A files restore needs a start snapshot: the chip the transcript
+           draws for reviewed changes reads the same store slice
+           (`turnChanges`). Measured files prove a snapshot exists; an unknown
+           turn reads as available, with the server's 404 as the honest
+           fallback — a wrongly-disabled row blocks a rewind that works, while
+           a wrongly-enabled one just surfaces the refusal in-thread. */
+        hasFiles={(() => {
+          const changes = thread.turnChanges[rewindTarget.turnId]
+          if (!changes) return true
+          if (changes.files.length > 0) return true
+          return !changes.unavailable
+        })()}
+        defaultScope={canRewindConversation ? "both" : "files"}
+        busy={rewindBusy}
+        onConfirm={confirmRewind}
+      />
+    )}
+    </MessageScrollerProvider>
+  )
+}

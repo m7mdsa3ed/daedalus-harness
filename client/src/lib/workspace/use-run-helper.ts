@@ -13,7 +13,7 @@
 import * as React from "react"
 
 import { useConfirm } from "@/components/confirm-dialog"
-import { openHelperTerminal } from "@/components/workspace/terminal-panel"
+import { openHelperTerminal } from "@/lib/workspace/open-terminal"
 import type { useDock } from "@/components/workspace/dock"
 import type { HelperCommand } from "@/lib/settings"
 

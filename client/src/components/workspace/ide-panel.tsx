@@ -47,7 +47,7 @@ import {
 } from "@/lib/ide/editors"
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"
 import { usePublishPanelStatus } from "@/lib/workspace/panel-status"
-import { useCoarsePointer } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-device"
 import { idePrefs, setIdePref } from "@/lib/ide/prefs"
 import { useProjects } from "@/lib/queries/catalog"
 import { cn } from "@/lib/utils"

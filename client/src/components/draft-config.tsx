@@ -19,7 +19,7 @@ import {
 import { MenuRow, selectChoices } from "@/components/config-menu"
 import { ThreadToolsMenu, useThreadToolCount } from "@/components/thread-tools"
 import type { Actions } from "@/lib/actions"
-import { optionKey, optionsForModel, useAgentOptions, withChoices } from "@/lib/agent-options"
+import { optionKey, shownOptions, useAgentOptions } from "@/lib/agent-options"
 import { partitionSessionOptions } from "@/lib/session-options"
 import { profileSupports, type SessionMeta } from "@/lib/settings"
 import { saveThreadDefaults } from "@/lib/thread-defaults"
@@ -289,9 +289,9 @@ export function DraftConfigPopover({
   /* What this profile's agent offered the last time one ran. A draft has no
      process to ask, so this is the only way its settings can be picked before
      the thread starts; `createSession` replays the picks once session/new
-     answers. No modeIds here: without a live session there is no separate
-     `modes` state for a mode option to duplicate, so it renders as itself.
-     Siblings of the same agent stand in while this profile has no answer of
+     answers. The remembered `modes` fold their config-option twin away below,
+     as the live menu does — drawn as its own row, a twin pick went out as a
+     config choice the server skips in favour of the mode channel. Siblings of the same agent stand in while this profile has no answer of
      its own — the profile only overrides model and effort, so the rest of the
      agent's options are the same set whichever profile is selected. */
   const known = useAgentOptions(
@@ -310,15 +310,14 @@ export function DraftConfigPopover({
   /* Which options exist can depend on which model is picked — opencode only
      offers `effort` on its reasoning models — so read the set recorded for the
      chosen model rather than the one that happened to be live when we looked. */
-  const remembered = React.useMemo(() => {
-    const modelOption = known.base.find((o) => o.category === "model" && o.type === "select")
-    const chosen = modelOption ? meta.configChoices?.[modelOption.id] : undefined
-    return withChoices(
-      optionsForModel(known, typeof chosen === "string" ? chosen : undefined),
-      meta.configChoices
-    )
-  }, [known, meta.configChoices])
-  const agentOptions = partitionSessionOptions(remembered)
+  const remembered = React.useMemo(
+    () => shownOptions(known, meta.configChoices),
+    [known, meta.configChoices]
+  )
+  const agentOptions = partitionSessionOptions(
+    remembered,
+    new Set(known.modes?.availableModes.map((m) => m.id) ?? [])
+  )
   /* The permission modes, when the agent advertises them on the `modes`
      channel — which daedalus does, and an agent that does would otherwise be
      the one runtime you cannot start in plan mode. Same rule as the live

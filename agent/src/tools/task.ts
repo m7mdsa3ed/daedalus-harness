@@ -17,6 +17,6 @@ export function makeTaskTool(rt: ToolRuntime) {
       description: z.string().describe("A short (3-5 word) description of the task"),
       prompt: z.string().describe("The full task brief for the subagent"),
     }),
-    execute: async ({ description, prompt }) => rt.runSubagent(description, prompt),
+    execute: async ({ description, prompt }, options) => rt.runSubagent(description, prompt, options.toolCallId),
   });
 }

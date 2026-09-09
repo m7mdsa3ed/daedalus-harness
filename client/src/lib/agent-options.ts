@@ -154,7 +154,19 @@ export function useAgentOptions(
   key: string,
   fallbackKeys: readonly string[] = []
 ): AgentOptionSet {
-  const known = store.use()
+  return resolveAgentOptions(store.use(), key, fallbackKeys)
+}
+
+/** The same read outside React — what `createSession` sends has to be what
+    the draft menu showed, so both resolve through this one function. */
+export const knownAgentOptions = (key: string, fallbackKeys: readonly string[] = []) =>
+  resolveAgentOptions(store.get(), key, fallbackKeys)
+
+function resolveAgentOptions(
+  known: Record<string, AgentOptionSet>,
+  key: string,
+  fallbackKeys: readonly string[]
+): AgentOptionSet {
   const own = known[key]
   if (isSet(own) && (own.base.length > 0 || own.modes)) return own
   for (const fallback of fallbackKeys) {
@@ -202,6 +214,20 @@ export function withChoices(
     }
     return option
   })
+}
+
+/** The option set a draft *shows*: the remembered set for the chosen model,
+    with the draft's own picks laid over it. One derivation for the menu and
+    for `createSession`, so what is drawn is what is sent — a remembered value
+    the user never clicked used to be displayed and then left out of the
+    create call, and the agent came up on its default. */
+export function shownOptions(
+  known: AgentOptionSet,
+  choices: ConfigChoices | undefined
+): acp.SessionConfigOption[] {
+  const modelOption = known.base.find((o) => o.category === "model" && o.type === "select")
+  const chosen = modelOption ? choices?.[modelOption.id] : undefined
+  return withChoices(optionsForModel(known, typeof chosen === "string" ? chosen : undefined), choices)
 }
 
 /** Forget everything remembered about one profile, *and* let it be asked

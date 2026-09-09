@@ -6,7 +6,12 @@ import type { LanguageModelV4StreamPart, LanguageModelV4Usage } from "@ai-sdk/pr
 import { MockLanguageModelV4, convertArrayToReadableStream } from "ai/test";
 import type { AgentEnv } from "../../src/env.js";
 import type { ModelFactory } from "../../src/provider.js";
-import { PAUSED_NOTIFICATION, type PausedNotification } from "../../src/hold.js";
+import {
+  PAUSED_NOTIFICATION,
+  RETRY_NOTIFICATION,
+  type PausedNotification,
+  type RetryNotification,
+} from "../../src/hold.js";
 import type { UpdateParams } from "../../src/types.js";
 
 export function testEnv(overrides: Partial<AgentEnv> = {}): AgentEnv {
@@ -118,6 +123,9 @@ export interface Harness {
   /** `_daedalus/session/paused` — the hold the runtime took on its own, which
       is the only way a test can see a failed turn waiting rather than ending. */
   holds: PausedNotification[];
+  /** `_daedalus/session/retry` — a failed attempt the runtime is retrying on
+      its own, `attempt: null` being the take-back. */
+  retries: RetryNotification[];
   permissionRequests: acp.RequestPermissionRequest[];
   elicitations: acp.CreateElicitationRequest[];
   answerPermission: (optionId: string) => void;
@@ -147,6 +155,7 @@ export function makeClient(options: ClientOptions = {}): { app: acp.ClientApp; h
   const harness: Harness = {
     updates: [],
     holds: [],
+    retries: [],
     permissionRequests: [],
     elicitations: [],
     answerPermission: () => {},
@@ -185,6 +194,13 @@ export function makeClient(options: ClientOptions = {}): { app: acp.ClientApp; h
       (params: unknown) => params as PausedNotification,
       ({ params }) => {
         harness.holds.push(params);
+      },
+    )
+    .onNotification(
+      RETRY_NOTIFICATION,
+      (params: unknown) => params as RetryNotification,
+      ({ params }) => {
+        harness.retries.push(params);
       },
     )
     .onRequest("session/request_permission", ({ params }) => {

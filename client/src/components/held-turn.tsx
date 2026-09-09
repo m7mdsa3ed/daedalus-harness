@@ -11,6 +11,7 @@ import {
 } from "@/components/agent-request"
 import { SessionConfigPopover } from "@/components/session-config"
 import { Button } from "@/components/ui/button"
+import { CopyButton } from "@/components/ui/copy-button"
 import type { Actions } from "@/lib/actions"
 import { describeError, reportError } from "@/lib/errors"
 import type { ThreadState } from "@/lib/store"
@@ -75,8 +76,12 @@ export function InlineHeldTurn({
           The turn stopped at its last finished step and kept everything before it. Change the
           model, then continue — nothing is re-run.
         </p>
-        {info?.detail && (
-          <>
+        {/* Copy is offered whether or not there is a detail to fold: the
+            provider's sentence in the header is often the whole of what a rate
+            limit or a bad-key failure said, and it is the part someone pastes
+            into a support thread. */}
+        <div className="flex items-center gap-1">
+          {info?.detail && (
             <button
               type="button"
               onClick={() => setOpen((v) => !v)}
@@ -85,14 +90,19 @@ export function InlineHeldTurn({
               <ChevronRightIcon className={cn("size-3 transition-transform", open && "rotate-90")} />
               {open ? "Hide details" : "Show details"}
             </button>
-            {open && (
-              <AgentRequestWell>
-                <pre className="max-h-56 overflow-auto font-mono text-[11px] whitespace-pre-wrap">
-                  {info.detail}
-                </pre>
-              </AgentRequestWell>
-            )}
-          </>
+          )}
+          <CopyButton
+            text={[reason, info?.detail].filter(Boolean).join("\n\n")}
+            size="icon-xs"
+            className="text-muted-foreground/80 hover:text-foreground"
+          />
+        </div>
+        {open && info?.detail && (
+          <AgentRequestWell>
+            <pre className="max-h-56 overflow-auto font-mono text-[11px] whitespace-pre-wrap">
+              {info.detail}
+            </pre>
+          </AgentRequestWell>
         )}
       </AgentRequestBody>
       <AgentRequestActions>

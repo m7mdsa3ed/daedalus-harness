@@ -44,8 +44,13 @@ export const CHART_SPIN = [0, 46, -52, 96, -104]
 const spin = (hue: number, i: number) => (hue + CHART_SPIN[i] + 360) % 360
 
 export function lightRamp({ hue: h, brand: C, tint: t }: RampSpec): Ramp {
+  /* The shell and the main pane are ONE surface. `SidebarInset` is
+     `bg-background`, so the sidebar, the gutters it floats that card in and the
+     card itself all have to be this exact value — chroma included, which is why
+     it is the same string and not a second `ok()` at the same lightness. */
+  const background = ok(0.99, t * 0.35, h)
   const ramp: Ramp = {
-    background: ok(0.99, t * 0.35, h),
+    background,
     foreground: ok(0.205, t * 1.6, h),
     card: ok(1, t * 0.2, h),
     "card-foreground": ok(0.205, t * 1.6, h),
@@ -63,13 +68,20 @@ export function lightRamp({ hue: h, brand: C, tint: t }: RampSpec): Ramp {
     border: ok(0.9, t * 1.25, h),
     input: ok(0.895, t * 1.45, h),
     ring: ok(0.62, C * 0.82, h),
-    sidebar: ok(0.968, t * 1.15, h),
+    /* No shell-against-card gap: the rail is the page. What used to be 0.043 of
+       separation (the `inset` card floating on a tinted ground) is 0, so the
+       card is said by its radius and its shadow alone. The sidebar's own
+       hierarchy keeps the steps it had *below the ground it stands on* —
+       −0.048 for a row's hover, −0.080 for a group's rule — because those are
+       measured from the sidebar, not from the old tint, and a hover left at
+       0.899 under a 0.99 ground is a step twice the size it was. */
+    sidebar: background,
     "sidebar-foreground": ok(0.205, t * 1.6, h),
     "sidebar-primary": ok(0.5, C, h),
     "sidebar-primary-foreground": ok(0.985, Math.min(t, 0.01), h),
-    "sidebar-accent": ok(0.92, t * 2.3, h),
+    "sidebar-accent": ok(0.942, t * 2.3, h),
     "sidebar-accent-foreground": ok(0.245, t * 2.8, h),
-    "sidebar-border": ok(0.888, t * 1.5, h),
+    "sidebar-border": ok(0.91, t * 1.5, h),
     "sidebar-ring": ok(0.62, C * 0.82, h),
   }
   for (let i = 0; i < CHART_SPIN.length; i++) {
@@ -79,8 +91,10 @@ export function lightRamp({ hue: h, brand: C, tint: t }: RampSpec): Ramp {
 }
 
 export function darkRamp({ hue: h, brand: C, tint: t }: RampSpec): Ramp {
+  /* Same surface as the main pane — see lightRamp. */
+  const background = ok(0.155, t * 2.2, h)
   const ramp: Ramp = {
-    background: ok(0.155, t * 2.2, h),
+    background,
     foreground: ok(0.972, t * 0.6, h),
     card: ok(0.215, t * 2.6, h),
     "card-foreground": ok(0.972, t * 0.6, h),
@@ -98,11 +112,13 @@ export function darkRamp({ hue: h, brand: C, tint: t }: RampSpec): Ramp {
     border: ok(0.85, Math.max(C, 0.02) * 0.4, h, 15),
     input: ok(0.85, Math.max(C, 0.02) * 0.4, h, 20),
     ring: ok(0.58, C * 0.75, h),
-    sidebar: ok(0.198, t * 2.6, h),
+    sidebar: background,
     "sidebar-foreground": ok(0.972, t * 0.6, h),
     "sidebar-primary": ok(0.8, C * 0.62, h),
     "sidebar-primary-foreground": ok(0.17, t * 2.6, h),
-    "sidebar-accent": ok(0.318, t * 3.8, h),
+    /* +0.120 off the ground it stands on, the step it always was — it just
+       stands on the background now instead of 0.043 above it. */
+    "sidebar-accent": ok(0.275, t * 3.8, h),
     "sidebar-accent-foreground": ok(0.965, t * 0.85, h),
     "sidebar-border": ok(0.85, Math.max(C, 0.02) * 0.4, h, 13),
     "sidebar-ring": ok(0.58, C * 0.75, h),

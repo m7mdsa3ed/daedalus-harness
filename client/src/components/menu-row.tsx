@@ -22,7 +22,7 @@
 import * as React from "react"
 
 import { Shortcut } from "@/components/shortcut"
-import { useCoarsePointer } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-device"
 import type { ShortcutId } from "@/lib/shortcuts"
 
 /** The row's own metrics — `items-start` because a row may carry a hint, and a

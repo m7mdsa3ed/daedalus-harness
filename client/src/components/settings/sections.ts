@@ -1,8 +1,14 @@
 /* ── Settings sections ──
    The metadata both sides of the settings screen share: the sidebar nav
-   (app-shell) and each page's header. Every section is its own route —
-   /settings/<id> — with its page component in this directory; register new
-   sections here and add a <Route> in app-shell's route tree. */
+   (`components/routes.tsx`, which draws it) and each page's header. Every
+   section is its own route — /settings/<id> — with its page component in this
+   directory.
+
+   Adding one is two entries, in two files that each own half the answer: the
+   label and the icon here, and the lazy page in `SETTINGS_PAGES`
+   (`components/routes.tsx`), which is where the `<Route>` and the nav row are
+   both generated from. `id` is the URL segment as well as the section id — the
+   two have never differed, and the route tree relies on that. */
 import {
   Bell,
   BookOpen,
@@ -180,6 +186,12 @@ export type PageMeta = { title: string; description: string }
 
 export const sectionMeta = (id: SettingsSectionId): SectionMeta =>
   SETTINGS_SECTIONS.find((s) => s.id === id) ?? SETTINGS_SECTIONS[0]
+
+/** URL segment → a section that exists. `null` is the overview (`/settings`
+    itself) and every segment that names nothing — the route tree redirects
+    those to the overview, so nothing lights up on the way. */
+export const sectionOf = (segment: string): SettingsSectionId | null =>
+  SETTINGS_SECTIONS.find((s) => s.id === segment)?.id ?? null
 
 /* ── How wide a settings page may get ──
    One column width for the whole section, set by the layout, because a page

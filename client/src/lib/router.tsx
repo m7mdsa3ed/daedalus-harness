@@ -21,10 +21,10 @@ import * as React from "react"
 import { matchPath, useNavigate, type NavigateFunction } from "react-router"
 
 export const threadPath = (sessionId: string) => `/t/${encodeURIComponent(sessionId)}`
-/** Where "New thread" goes: the landing console, optionally aimed at a project.
-    A thread is not created — not here, not on the server — until that console's
-    first message, so the project it will land in cannot ride on a row yet and
-    rides on the URL instead. */
+/** The landing console's address — where the dock lands with nothing open.
+    Every "New thread" gesture mints a thread instead (`actions.startThreadIn`),
+    so the optional project is a deep link's aim at a console, not a stop on the
+    way to starting one. */
 export const landingPath = (projectId?: string) =>
   projectId ? `/?project=${encodeURIComponent(projectId)}` : "/"
 /** One thread's trace — the journal as a timeline rather than a transcript. */

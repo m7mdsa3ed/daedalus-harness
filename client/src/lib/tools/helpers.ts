@@ -24,6 +24,7 @@ export const str = (value: unknown): string | null =>
 export const VENDOR_META = {
   claudeCode: "claudeCode",
   codex: "codex",
+  daedalus: "daedalus",
 } as const
 
 /** One vendor's `_meta` block on an item, or null. */

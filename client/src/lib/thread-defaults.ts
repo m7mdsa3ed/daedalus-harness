@@ -47,28 +47,17 @@ export function loadThreadDefaults(): ThreadDefaults {
   }
 }
 
-/**
- * The half of the defaults that is only meaningful inside a profile.
- *
- * `projectId`/`profileId` degrade to a fallback on their own — a deleted
- * project just means the first one. Model and effort cannot: they name ids in
- * the remembered *profile's* catalog, so once the fallback picks a different
- * profile they name something that profile has never heard of, and it is passed
- * straight through to the agent's env at spawn (a codex model id filling
- * claude-code's ANTHROPIC_MODEL). Carry them only when the remembered profile
- * is the one actually resolved — the same rule the `configure-draft` reducer
- * already applies to `configChoices`.
- */
-export function defaultsForProfile(
-  defaults: ThreadDefaults,
-  profileId: string
-): Pick<ThreadDefaults, "model" | "effort"> {
-  if (defaults.profileId !== profileId) return {}
-  return { model: defaults.model, effort: defaults.effort }
+export interface ThreadStart {
+  profile: Profile
+  agentId: string
+  model?: string
+  effort?: string
 }
 
 /**
- * The (profile, agent) pair a new thread opens on.
+ * The (profile, agent) pair a new thread opens on, with the model and effort
+ * that go with it — the shape `actions.newDraftThread` takes, so a caller
+ * spreads it and adds the project.
  *
  * Both halves are remembered, and each degrades on its own: the profile you
  * last used may be gone, or may no longer be configured for the agent you last
@@ -77,8 +66,26 @@ export function defaultsForProfile(
  * first) is picked over switching agents. With nothing usable remembered, the
  * first profile and its first agent. Null only when there are no profiles at
  * all, which is the "set up a project" empty state.
+ *
+ * Model and effort ride along only when the remembered profile is the one
+ * actually resolved. `projectId`/`profileId` degrade to a fallback on their
+ * own; these two cannot — they name ids in the remembered *profile's* catalog,
+ * and once the fallback picks a different profile they name something it has
+ * never heard of, passed straight through to the agent's env at spawn (a codex
+ * model id filling claude-code's ANTHROPIC_MODEL). Same rule the
+ * `configure-draft` reducer applies to `configChoices`.
  */
 export function resolveThreadStart(
+  defaults: ThreadDefaults,
+  profiles: readonly Profile[]
+): ThreadStart | null {
+  const pair = resolvePair(defaults, profiles)
+  if (!pair) return null
+  if (pair.profile.id !== defaults.profileId) return pair
+  return { ...pair, model: defaults.model, effort: defaults.effort }
+}
+
+function resolvePair(
   defaults: ThreadDefaults,
   profiles: readonly Profile[]
 ): { profile: Profile; agentId: string } | null {

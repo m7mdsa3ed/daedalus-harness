@@ -28,6 +28,7 @@ import {
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { CopyButton } from "@/components/ui/copy-button"
 import { Input } from "@/components/ui/input"
 import { useConfirm } from "@/components/confirm-dialog"
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"
@@ -281,9 +282,18 @@ export function FileExplorer({
 
     if (dir.error) {
       rows.push(
-        <p key={`${path}:error`} className="px-2 py-1 text-xs text-destructive" style={indent(depth)}>
-          {dir.error}
-        </p>
+        <div
+          key={`${path}:error`}
+          className="flex items-start gap-1 px-2 py-1"
+          style={indent(depth)}
+        >
+          <p className="min-w-0 flex-1 text-xs text-destructive">{dir.error}</p>
+          <CopyButton
+            text={dir.error}
+            size="icon-xs"
+            className="shrink-0 text-destructive/70 hover:bg-destructive/15 hover:text-destructive"
+          />
+        </div>
       )
       return rows
     }

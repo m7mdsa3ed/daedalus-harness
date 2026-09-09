@@ -371,7 +371,7 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 ## The client mints session ids; threads start as drafts
 
 - **The client mints session ids and threads start as drafts.** "New thread" is a route
-  change, not a round trip: `actions.newDraftThread` mints a UUID, puts a `draft: true`
+  change, not a round trip: `actions.startThreadIn` mints a UUID, puts a `draft: true`
   `SessionMeta` in the store and navigates. `POST /api/sessions` (which accepts that id,
   rejecting non-UUIDs and collisions) is not called — and no agent process is spawned —
   until the first message, in `actions.send` — and that POST does not answer until the
@@ -380,6 +380,10 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   replacing, `refreshSessions` prunes against server ids **plus** draft ids, and
   `connectThread` returns early for a draft since there is nothing to connect to. A route
   for a thread the server has never heard of is adopted as a fresh draft rather than 404ing.
+  **A draft's tab also survives a reload**, which the server's list cannot say: the row is
+  persisted per device (`lib/draft-sessions.ts`) and `bootstrap` re-mints it before the
+  boot's `prunePanels` runs, but only for a draft the saved dock layout still names a tab for
+  — a closed tab stays closed, and an id the server now reports is an ordinary thread.
   An empty thread centres its composer over an animated wash (`styles/thread-hero.css`) and
   docks it on the first message — both driven by one `data-empty` flag on a grid whose
   spacer row animates `1fr` → `0fr`.
@@ -651,9 +655,13 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   how to wait at it, so a failure holds there instead, and the user changes the model or the
   profile (which the harness does *on the running process*, `applyConfigLive`) and lets it go
   on. `turn.ts` re-reads `session.modelId` on every pass, so the change is the whole of what
-  makes the next attempt different. Nothing recovers on its own: no model fallback, no
-  Retry-After backoff. The two auto-retries for a transient stream error are unchanged and
-  come first; the hold is what happens when they are spent.
+  makes the next attempt different. Nothing recovers on its own past the auto-retries: no
+  model fallback. Those come first — four, at 2s doubling (~30s), each wait floored by the
+  provider's Retry-After and capped at 60s (`retryDelayMs`), and abortable so a Stop is not
+  stuck behind one — and the hold is what happens when they are spent. **A wall that will
+  still be there in thirty seconds is held at once** (`isRetriableStreamError`): a five-hour
+  usage cap, a spent quota, a dead key arrive as 429/403 too, and retrying into them only
+  cost the user the wait before the same hold.
 - **A retry is said out loud, because the silence was being read as work.** Those two
   auto-retries used to be a line on the agent's stderr and nothing else: a thread would sit
   for three seconds with the working line still shimmering under the name of a tool call that
@@ -673,7 +681,11 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   (`maxRetries`, 3 attempts by default) *inside* one `streamText` call, with no callback to
   hang a notice on — they surface only inside the final message ("Failed after 3 attempts").
   Reporting them per-attempt means owning the retry policy here with `maxRetries: 0`, which is
-  a change to what gets retried and not only to what gets said.
+  a change to what gets retried and not only to what gets said. It was documented before it
+  was set: every 9router hold in the log began "Failed after 3 attempts" — three SDK tries
+  inside six seconds, then a `RetryError` whose name the classifier did not match, so a 429
+  that said "retry after a brief wait" went straight to a hold. `unwrapRetry` reads the
+  inner error wherever a failure is read, in case the SDK ever wraps one again.
 - **One wait, two reasons.** `Session.held` is `paused || errorHold !== null` and `gate()`
   loops on it, so a new reason to hold never needs a new gate. `holdError()` **resolves**
   with `"released" | "cancelled"` and never throws — a throw would reach the turn's outer

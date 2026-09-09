@@ -1,0 +1,287 @@
+/* ── What a finished turn is worth ── the per-turn derivations the transcript
+   hangs off the row each turn ends on: its sources, its cost, how long it
+   took, what it did to the worktree, the follow-ups it offered, and the split
+   a step's own popover reads. All pure reads of `thread.items` — a reading of
+   the transcript, never a change to one — so they live apart from the surface
+   in `thread-view.tsx`, which is the only importer.
+
+   One exception, and it is deliberate: `useStepTurnUsage` is a hook, because
+   holding a derivation at one identity needs somewhere to hold it. It sits
+   here beside the pure walk it wraps rather than in the surface, so nobody
+   reaches for `withStepTurnUsage` without seeing why the raw result must not
+   be handed to a context. */
+import * as React from "react"
+import type * as acp from "@daedalus/acp"
+import { couldTouchFiles } from "@/lib/tools"
+import { splitTurns, turnSources, type TurnSources } from "@/lib/sources"
+import { turnSuggestions } from "@/lib/suggestions"
+import { isAnswerItem } from "@/lib/transcript-rows"
+import type { ThreadItem } from "@/lib/store"
+import type { TurnChanges } from "@/lib/workspace/git-api"
+
+/**
+ * Append a Sources row to every finished turn that has any. Computed on the
+ * transcript rather than in the reducer for the same reason grouping is: it is
+ * a reading of the items, derived entirely from what is already there, and it
+ * must not change one. The last turn only qualifies once it has ended — a
+ * strip that grows while the answer is still streaming is noise under the
+ * cursor — so `turnActive` is part of the input.
+ */
+/* A finished turn is immutable — items are append-only and a changed item is a
+   new object — so its extraction (JSON-parsing every tool's rawOutput and
+   regex-scanning every message) is done once and remembered against the turn's
+   first item. Only the last, unfinished turn ever changes, and it is skipped
+   while `turnActive` anyway, so a streamed token now costs O(1 turn) instead
+   of O(thread). Keyed on the item *object* in a WeakMap: a replay's re-fold
+   replaces the objects, which makes a stale entry unreachable rather than
+   wrong, and a closed thread's entries collect with its items. The len/last
+   check catches a turn that gained items without changing its head. */
+const TURN_SOURCES_CACHE = new WeakMap<
+  ThreadItem,
+  { len: number; last: ThreadItem; sources: TurnSources }
+>()
+
+function cachedTurnSources(turn: ThreadItem[]): TurnSources {
+  const first = turn[0]
+  const last = turn[turn.length - 1]
+  const hit = TURN_SOURCES_CACHE.get(first)
+  if (hit && hit.len === turn.length && hit.last === last) return hit.sources
+  const sources = turnSources(turn)
+  TURN_SOURCES_CACHE.set(first, { len: turn.length, last, sources })
+  return sources
+}
+
+/** Every finished turn, paired with the id of the row it ends on — the anchor
+    both footers hang off. A turn still streaming is left out: a strip that
+    grows under the reader is worse than one that arrives when the answer does.
+    Shared by the sources strip and the token figure, which are two answers to
+    "what came of this turn" and must sit in the same place.
+    The turn is always the WHOLE turn, even under `answersOnly`: what a turn
+    cited and what it cost are read off the steps, which is exactly what that
+    option takes off the screen. Only the anchor moves — to the last row of the
+    turn still drawn, since a footer hung off a hidden item is dropped. */
+function finishedTurns(
+  items: ThreadItem[],
+  turnActive: boolean,
+  answersOnly = false,
+  showConfigNotices = true
+): { turn: ThreadItem[]; tailId: string }[] {
+  const byId = new Map(items.map((item) => [item.id, item]))
+  /* The row a turn ends on. A subagent's item is not a row of its own — it is
+     drawn under the step that launched it — so a turn that ends inside a
+     subagent's rail ends, as far as the rows go, on that step. */
+  const rootOf = (item: ThreadItem): ThreadItem => {
+    let current = item
+    for (let depth = 0; current.parentId && depth < 16; depth++) {
+      const owner = byId.get(current.parentId)
+      if (!owner) break
+      current = owner
+    }
+    return current
+  }
+  const turns = splitTurns(items)
+  const out: { turn: ThreadItem[]; tailId: string }[] = []
+  const hidden = (item: ThreadItem): boolean =>
+    item.kind === "notice" && item.config === true && !showConfigNotices
+  const tailOf = (turn: ThreadItem[]): ThreadItem | undefined => {
+    if (!answersOnly && showConfigNotices) return turn[turn.length - 1]
+    for (let i = turn.length - 1; i >= 0; i--) {
+      const item = turn[i]
+      if (hidden(item)) continue
+      if (!answersOnly || isAnswerItem(item)) return item
+    }
+    return undefined
+  }
+  turns.forEach((turn, index) => {
+    if (index === turns.length - 1 && turnActive) return
+    const last = tailOf(turn)
+    if (!last || turn[0].kind !== "user") return
+    out.push({ turn, tailId: rootOf(last).id })
+  })
+  return out
+}
+
+export function withTurnSources(
+  items: ThreadItem[],
+  turnActive: boolean,
+  answersOnly: boolean,
+  showConfigNotices = true
+): Map<string, TurnSources> {
+  const after = new Map<string, TurnSources>()
+  for (const { turn, tailId } of finishedTurns(items, turnActive, answersOnly, showConfigNotices)) {
+    const sources = cachedTurnSources(turn)
+    if (sources.sources.length > 0) after.set(tailId, sources)
+  }
+  return after
+}
+
+/** What each finished turn cost, keyed by the row it ends on. The numbers are
+    the store's (`turnUsage`, filed by `turn_ended`); the turn is matched to
+    them by the `turnId` on the message that opened it, which is the only thing
+    tying a transcript position to a reading that arrives long after it. A turn
+    whose agent reported no usage — or one older than this feature, replayed
+    from a journal that has the reading but whose user row was never tagged —
+    simply has no entry, and nothing is drawn. */
+export function withTurnUsage(
+  items: ThreadItem[],
+  turnActive: boolean,
+  turnUsage: Record<string, acp.Usage>,
+  answersOnly: boolean,
+  showConfigNotices = true
+): Map<string, acp.Usage> {
+  const after = new Map<string, acp.Usage>()
+  for (const { turn, tailId } of finishedTurns(items, turnActive, answersOnly, showConfigNotices)) {
+    const head = turn[0]
+    const turnId = head.kind === "user" ? head.turnId : undefined
+    const usage = turnId ? turnUsage[turnId] : undefined
+    if (usage) after.set(tailId, usage)
+  }
+  return after
+}
+
+/** What each finished turn took, keyed by the row it ends on — the same walk
+    as `withTurnUsage`, the denominator the footer's tok/s is drawn against. A
+    turn that ended before the server measured durations simply has no entry,
+    and the footer draws tokens with no speed. */
+export function withTurnDuration(
+  items: ThreadItem[],
+  turnActive: boolean,
+  turnDuration: Record<string, number>,
+  answersOnly: boolean,
+  showConfigNotices = true
+): Map<string, number> {
+  const after = new Map<string, number>()
+  for (const { turn, tailId } of finishedTurns(items, turnActive, answersOnly, showConfigNotices)) {
+    const head = turn[0]
+    const turnId = head.kind === "user" ? head.turnId : undefined
+    const durationMs = turnId ? turnDuration[turnId] : undefined
+    if (durationMs !== undefined) after.set(tailId, durationMs)
+  }
+  return after
+}
+
+/**
+ * Whether a turn could be the author of a diff: did it run a single tool that
+ * was not a read, a search, a fetch or a thought (`couldTouchFiles`)?
+ *
+ * The measurement itself is git's and stays whole-worktree — that is the whole
+ * point of it, since a `sed` in a shell changes the project as much as an Edit
+ * call and only the worktree sees both. But git measures a *window*, not an
+ * author: everything that lands between the two snapshots is attributed to
+ * whichever turn was open, so a cwd shared with a second thread, an editor or
+ * a build ends up handing a turn that only searched the web a chip claiming
+ * seventy files. This is the one thing the transcript knows and git cannot,
+ * and it is used only to decide whether to *draw* the chip.
+ *
+ * Subagent rows are counted, not skipped: they carry a `parentId`, but a
+ * child's Edit is the parent turn's change, and the launching step is itself
+ * an unclassified call so the turn qualifies either way.
+ */
+function turnCouldTouchFiles(turn: ThreadItem[]): boolean {
+  return turn.some((item) => item.kind === "tool" && couldTouchFiles(item))
+}
+
+/** What each finished turn did to the worktree, keyed by the row it ends on
+    — same walk as `withTurnUsage`, same footer slot. A turn that changed
+    nothing (or was not measured), or that ran nothing that could have written
+    a file, draws nothing. */
+export function withTurnChanges(
+  items: ThreadItem[],
+  turnActive: boolean,
+  turnChanges: Record<string, TurnChanges>,
+  answersOnly: boolean,
+  showConfigNotices = true
+): Map<string, TurnChanges> {
+  const after = new Map<string, TurnChanges>()
+  for (const { turn, tailId } of finishedTurns(items, turnActive, answersOnly, showConfigNotices)) {
+    const head = turn[0]
+    const turnId = head.kind === "user" ? head.turnId : undefined
+    const changes = turnId ? turnChanges[turnId] : undefined
+    if (!changes || !changes.ended || changes.files.length === 0) continue
+    if (!turnCouldTouchFiles(turn)) continue
+    after.set(tailId, changes)
+  }
+  return after
+}
+
+/** Each finished turn's suggestion card, keyed by the id of the answer that
+    carries it — the same walk and the same finished-turn gating as the footers
+    above: the last turn only qualifies once it has ended, so a card never
+    grows under the cursor mid-answer. Off when the thread's suggestions toggle
+    is off (`meta.suggestFollowups`) — the toggle is the thread's ask, and the
+    model's willingness to deliver the fence is read per answer by
+    `turnSuggestions`. */
+export function withTurnSuggestions(
+  items: ThreadItem[],
+  turnActive: boolean,
+  enabled: boolean
+): Map<string, { itemId: string; prompts: string[] }> {
+  const after = new Map<string, { itemId: string; prompts: string[] }>()
+  if (!enabled) return after
+  for (const { turn } of finishedTurns(items, turnActive)) {
+    const entry = turnSuggestions(turn)
+    if (entry) after.set(entry.itemId, entry)
+  }
+  return after
+}
+
+/** Every row's turn, keyed by the row's own id. A step's popover reads the
+    billed split of the turn it sits in here (`StepTokens`), since a runtime
+    reports only a total per model request and the prompt/output/cache split
+    once, at turn end. The walk is the same one `withTurnUsage` does for the
+    footer — the nearest user row back, which is the only thing tying a
+    transcript position to a reading that arrives after it — but kept per row. */
+export function withStepTurnUsage(
+  items: ThreadItem[],
+  turnUsage: Record<string, acp.Usage>
+): Record<string, acp.Usage> {
+  const after: Record<string, acp.Usage> = {}
+  let turnId: string | undefined
+  for (const item of items) {
+    if (item.kind === "user") turnId = item.turnId
+    const usage = turnId ? turnUsage[turnId] : undefined
+    if (usage) after[item.id] = usage
+  }
+  return after
+}
+
+/**
+ * The same map, held at one identity until its *contents* change.
+ *
+ * `withStepTurnUsage` walks `thread.items`, which the reducer replaces on every
+ * streamed chunk, so its result is a fresh object per token even when not one
+ * figure in it moved — and this map is half of the `StepTokens` context value.
+ * A context whose value changes identity re-renders **every consumer**, and
+ * `React.memo` does not stop it: the transcript's five memo boundaries
+ * (`RowView`, `ThreadItemView`, `ToolRun`, `SubagentStep`, `ToolStep`) are all
+ * bypassed, because `ThreadItemView` and `ToolStep` both call `useStepTokens`
+ * unconditionally. That made the contract this codebase is built on — "a
+ * streaming chunk re-renders only the changed rows instead of all n" — false
+ * for the whole transcript.
+ *
+ * So the walk still happens per token (it is O(n) over items already in hand)
+ * and only the *identity* is held. A usage figure lands on `usage_update`, so
+ * past the first chunk of a step the contents are equal and the old object goes
+ * back out — which is what lets the memo below it hold.
+ *
+ * Shallow, and that is exact rather than approximate: the values are the very
+ * `acp.Usage` objects `thread.turnUsage` holds, so two runs of the walk over an
+ * unchanged store put the identical references in. The same pattern, for the
+ * same reason, as `useLiveTurnActive` in `lib/store/provider.tsx`.
+ */
+export function useStepTurnUsage(
+  items: ThreadItem[],
+  turnUsage: Record<string, acp.Usage>
+): Record<string, acp.Usage> {
+  const held = React.useRef<Record<string, acp.Usage>>({})
+  return React.useMemo(() => {
+    const next = withStepTurnUsage(items, turnUsage)
+    const keys = Object.keys(next)
+    const previous = held.current
+    const same =
+      keys.length === Object.keys(previous).length &&
+      keys.every((key) => previous[key] === next[key])
+    if (!same) held.current = next
+    return held.current
+  }, [items, turnUsage])
+}

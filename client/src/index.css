@@ -166,13 +166,20 @@
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
 
-  --sidebar: oklch(0.985 0 0);
+  /* The three sidebar surfaces carry the light ramp's steps (lib/theme-ramp.ts),
+     not shadcn's stock 0.985/0.97/0.922: this is what paints in the one frame
+     before `data-color-theme` is on the html element, and a shell that starts a
+     hairline from the card and settles somewhere else is the boot flashing a
+     different app. `--sidebar` is `--background` exactly, which is the ramp's
+     rule and not a coincidence to be tidied away — the rail and the main pane
+     are one surface. */
+  --sidebar: var(--background);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent: oklch(0.942 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-border: oklch(0.91 0 0);
   --sidebar-ring: oklch(0.708 0 0);
   --scrollbar-thumb: color-mix(in oklch, var(--foreground) 18%, transparent);
   --scrollbar-thumb-hover: color-mix(in oklch, var(--foreground) 28%, transparent);
@@ -234,7 +241,7 @@
      height and padding by all of it leaves a visibly empty band under an
      already-tall bar. The main column no longer uses it — its top is the
      floating header (app-shell.tsx), which spans the *full* inset and more,
-     measured by `--app-header-h`: the inset plus the header's own 3rem row.
+     measured by `--app-header-h`: the inset plus the header's own 2.5rem row.
      Every route that scrolls under that header pads by it, so content starts
      where it always did and, once scrolled, passes beneath the header's
      progressive blur. `--keyboard-inset` is published by lib/keyboard-inset.ts
@@ -245,8 +252,28 @@
      it: a tab strip in the header's band is as tall as the header's own row and
      starts below the inset, never level with the notch (`data-header-band`). */
   --app-inset-top: max(0px, calc(env(safe-area-inset-top, 0px) - 0.375rem));
-  --app-header-row-h: 3rem;
+  /* 2rem: the row only has to clear the 28px the chips and tabs are
+     (`size-7` / `h-7`), and 32px leaves 2px of air above and below them — the
+     40px it was held a bar with a band of nothing in it. Everything else
+     follows from this one number: `--app-header-h`, the strip's own height and
+     every route's `pt-[var(--app-header-h)]`. */
+  --app-header-row-h: 2rem;
   --app-header-h: calc(max(0px, env(safe-area-inset-top, 0px)) + var(--app-header-row-h));
+  /* The air above the header row and again between it and the card — one
+     number, so the row has the same on both sides. Zero where the window's
+     own caption buttons stand at the top edge (desktop, WCO): there the row
+     *is* the titlebar and is sized to it, and a gutter above it would put the
+     app's controls a step below the window's. */
+  --app-frame-gap: 0.5rem;
+  /* Below `md` the row keeps its old 2.5rem: there is no frame gap there (the
+     card is edge to edge and starts straight under the row), so the row's own
+     air is all the padding the bar has, and 2px of it around a 28px chip
+     against the screen's top edge is a bar with no padding. A width query,
+     not a pointer one — the row is layout, and the panel width is what
+     decides it. */
+  @media (width < 48rem) {
+    --app-header-row-h: 2.5rem;
+  }
   --keyboard-inset: 0px;
 
   /* ── The transcript's three work accents ──
@@ -298,11 +325,14 @@
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
 
-  --sidebar: oklch(0.205 0 0);
+  /* Same rule as light: the shell is the page. Stock shadcn had this at 0.205,
+     which is `--card` exactly — the rail matched the composer and not the
+     surface it stands beside. */
+  --sidebar: var(--background);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent: oklch(0.265 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
@@ -370,8 +400,8 @@
   }
 
   /* ── Frosted glass surfaces ──
-     The --popover/--card/--sidebar backgrounds are translucent, so the blur
-     is what makes them read as frosted glass. */
+     The --popover/--card backgrounds are translucent, so the blur is what makes
+     them read as frosted glass. The sidebar is not one of them — see below. */
   @supports (backdrop-filter: blur(0)) or (-webkit-backdrop-filter: blur(0)) {
     [data-slot="card"] {
       @apply shadow-glass backdrop-blur-[var(--app-blur)] backdrop-saturate-[1.3];
@@ -395,14 +425,11 @@
       @apply shadow-glass-lg backdrop-blur-[calc(var(--app-blur)*1.85)] backdrop-saturate-[1.5];
     }
 
-    [data-sidebar="sidebar"] {
-      @apply relative overflow-hidden backdrop-blur-[var(--app-blur)] backdrop-saturate-[1.15];
-      background-color: var(--sidebar);
-    }
-
-    [data-sidebar="sidebar"] > * {
-      @apply relative z-10;
-    }
+    /* The sidebar is not a glass surface: on desktop it is transparent and sits
+       on the page's own ground, and blurring a flat colour returns that same
+       flat colour at the cost of a compositing layer. (The mobile sheet keeps
+       its opaque `bg-sidebar`, and vibrancy re-adds a real blur further down,
+       where there is a desktop behind the window to show.) */
   }
 
   /* Fallback shadow when backdrop-filter isn't supported at all. */
@@ -492,11 +519,11 @@
    A frosted surface says "there is a layer here" by *revealing* what is behind
    it: the transcript's text and code go soft and the panel reads as a sheet
    over them. Both halves of that fail when the thing behind is another glass
-   surface. The sidebar is translucent and already blurred, and it is a flat
-   tint — blurring a flat colour returns the same flat colour, so the frost is
-   invisible, while 72% lets the tint straight through, so the menu has no edge
-   of its own either. What you get is a menu that reads as transparent and
-   unblurred, which is exactly what it is.
+   surface. The sidebar is transparent down to the page's flat ground — blurring
+   a flat colour returns the same flat colour, so the frost is invisible, while
+   72% lets that ground straight through, so the menu has no edge of its own
+   either. What you get is a menu that reads as transparent and unblurred, which
+   is exactly what it is.
 
    Almost nothing hits this, because every menu in the sidebar opens `side=
    "right"`, out over the opaque main pane. The one exception is the server
@@ -519,13 +546,11 @@
   backdrop-filter: none;
 }
 
-/* On non-hover (touch) devices, sidebar becomes a sheet overlay. */
-@media (hover: none) and (pointer: coarse) {
-  :root {
-    --sidebar: color-mix(in oklab, var(--background) 94%, var(--foreground) 6%);
-    --sidebar-border: color-mix(in oklab, var(--foreground) 10%, transparent);
-  }
-}
+/* No touch-device retint of `--sidebar` here any more. It was a `:root` block —
+   one class — against palettes that declare the token from three, so it never
+   applied to anything a user could actually be wearing; and the separation it
+   was reaching for is in the light ramp now (lib/theme-ramp.ts), which the
+   sheet reads like every other surface. */
 
 /* The composer's toolbar under a finger. The icon buttons get their 32px
    (`icon-sm`) scale from `useCoarsePointer` in composer.tsx; this rule carries
@@ -899,6 +924,18 @@
 html[data-desktop="true"] {
   --desktop-titlebar-height: 36px;
 }
+/* Windows and Linux: the caption buttons are a 36px overlay at the top edge
+   (`titleBarOverlay.height`, electron/main.cjs), so the header row is that
+   tall and sits at the top with no gutter — its chips centre on the same line
+   the buttons do. The sidebar column has no frame of its own (`p-0` on the
+   container, app-shell.tsx): its one inset is the 8px each row carries, the
+   same on every side, so nothing here zeroes a top gutter. macOS is
+   different: the traffic lights sit over the sidebar's corner and it pads for
+   them above, so the header keeps its gutter. */
+html[data-desktop="true"]:not([data-desktop-platform="darwin"]) {
+  --app-header-row-h: var(--desktop-titlebar-height);
+  --app-frame-gap: 0px;
+}
 
 html[data-desktop="true"] [data-drag-region],
 html[data-window-controls-overlay="true"] [data-drag-region] {
@@ -916,34 +953,115 @@ html[data-desktop="true"][data-desktop-platform="darwin"] [data-sidebar="sidebar
   padding-top: var(--desktop-titlebar-height);
 }
 
-/* True through-the-desktop blur (macOS vibrancy / Windows acrylic): drop the
+/* The window's native material (macOS vibrancy / Windows mica): drop the
    opaque page ground so the OS layer shows through the sidebar. */
 html[data-desktop-vibrancy="true"],
 html[data-desktop-vibrancy="true"] body {
   background: transparent !important;
 }
+
+/* ── The global layer ──
+   ONE layer between the OS material and the whole app, and it is the page
+   ground that was already here: `body::before` (the base block above) is a
+   fixed, `inset: 0`, `z-index: -1`, pointer-transparent sheet of
+   `--background`. Under vibrancy it used to be switched off outright, which is
+   what left the acrylic bare against the app's text and sent every attempt at
+   fixing it into a per-surface veil on the sidebar — first 80%, then 45%, each
+   one a slab that had to be tuned against somebody's wallpaper and each one
+   only covering the one surface that happened to be transparent.
+
+   So it is not switched off, it is turned DOWN. Same element, same geometry,
+   one number: how much of the app's own ground stands between the desktop and
+   everything drawn on it. Being global is the point — the sidebar, the gutters
+   the card floats in, and any surface that is or becomes translucent all sit on
+   the same sheet, so they cannot disagree about how much desktop is showing,
+   and a new translucent surface needs no veil of its own.
+
+   `--background` and not a grey, so it follows every palette and both modes for
+   nothing. Light is heavier than dark for the reason it always was: a dark
+   wallpaper drags a near-white ground down and reads as grime, while anything
+   coming through a near-black ground can only lighten it and reads as depth.
+
+   ponytail: one knob, and there is no way to compute it — the input is
+   somebody's wallpaper. Up hides more of the desktop, down lets more through.
+   The transcript is deliberately NOT on this layer: `sidebar-inset`/`main` stay
+   opaque further down, because body text over a live blur is the one place no
+   veil is enough. Relax that rule and this layer is already what catches it. */
+html[data-desktop-vibrancy="true"] {
+  --app-veil: 55%;
+}
+html.dark[data-desktop-vibrancy="true"] {
+  --app-veil: 45%;
+}
 html[data-desktop-vibrancy="true"] body::before {
-  display: none;
+  background-color: color-mix(in oklch, var(--background) var(--app-veil), transparent);
+}
+/* The wrapper is the third ground, and the `inset` variant paints it: shadcn's
+   `has-data-[variant=inset]:bg-sidebar` is what the card floats on, and it is
+   opaque. Left standing under vibrancy it seals the window one level below the
+   two rules above — the sidebar's `backdrop-filter` then blurs a flat colour
+   into the same flat colour and its brightness lift is all that is left, so the
+   panel reads as a washed-out copy of the very gutters it should match, and the
+   desktop shows through nowhere. Dropped here; the card is still opaque on its
+   own account (below), so what goes vibrant is the gutters and the sidebar, and
+   nothing that carries text. */
+html[data-desktop-vibrancy="true"] [data-slot="sidebar-wrapper"] {
+  background-color: transparent;
 }
 
-@supports (backdrop-filter: blur(0)) or (-webkit-backdrop-filter: blur(0)) {
-  html[data-desktop-vibrancy="true"] [data-sidebar="sidebar"] {
-    @apply backdrop-blur-[var(--app-blur)] backdrop-saturate-[1.15];
-    background-color: color-mix(in oklch, var(--sidebar) 70%, transparent);
-  }
+/* There is no shell-against-card gap, and its absence is not a rule here
+   either — it is the ramp's `--sidebar`, in lib/theme-ramp.ts, which is
+   `--background` itself, and which the generator and the studio both build
+   from, so a shipped palette and a user-made one are one surface by
+   construction. An override at this level could only ever lose anyway: every
+   palette declares `--sidebar` from
+   `[data-color-theme="x"][data-color-theme]:not(.dark)`, three classes deep on
+   purpose, and one written against `html` is two. */
+
+/* ── The sidebar paints nothing: the global layer above is already under it ──
+   The panel has no veil of its own, and adding one back is the mistake this
+   block exists to prevent. `body::before` covers the whole window, so a scrim
+   here would be a second scrim on top of the first — two numbers for one
+   effect, tuned against each other rather than against the desktop, which is
+   exactly how this arrived at 80% and then 45% and read wrong at both.
+
+   There is no `backdrop-filter` either. The desktop is not in the page's
+   backdrop — it is under the *window* — so a CSS filter has nothing of it to
+   sample: what it blurs is the page behind the element, which here is the
+   global layer and nothing else. It bought a compositing layer and returned the
+   surface it was given, which is this file's own "glass over glass is not
+   glass" rule pointed at the OS instead of at another panel. The `brightness()`
+   lift that rode along with it went the same way, for the same reason.
+
+   `--sidebar-accent` (a row's hover) and `--sidebar-border` still paint, so the
+   sidebar's own hierarchy is intact; what left is only the ground, and the
+   ground is the window's.
+
+   ponytail: this trusts `data-desktop-vibrancy`, and the preload sets it for
+   every win32 — but mica needs Windows 11 (build 22000+), and on 10
+   `backgroundMaterial` is ignored, so what shows through is the grey void
+   electron/preload.cjs's own comment warns about — at `--app-veil`, not fully.
+   Gate it by passing a build check from main through
+   `webPreferences.additionalArguments` (the sandboxed preload cannot
+   `require("node:os")`) if Windows 10 matters. */
+html[data-desktop-vibrancy="true"] [data-sidebar="sidebar"] {
+  background-color: transparent;
 }
 
-/* The vibrancy stops at the sidebar. The transcript is read, not glanced at,
+/* The vibrancy stops at the card. The transcript is read, not glanced at,
    and it is the one surface where what is behind the *window* would land under
    body text — at any tint, in either mode. It used to keep 8% of the desktop
    in dark mode, which is 8% of somebody's wallpaper moving under a paragraph
-   while they read it, and no amount of it is worth what it costs there. So the
-   main surface is opaque, and it is the sidebar that shows the OS layer
-   through — which is the half of the window vibrancy was for. */
-html[data-desktop-vibrancy="true"] [data-slot="sidebar-inset"],
-html[data-desktop-vibrancy="true"] main {
-  background-color: var(--background);
-}
+   while they read it, and no amount of it is worth what it costs there. So
+   the card is opaque and the ground around it — the sidebar, the gutters, the
+   header row and the tab band — shows the OS layer through, which is the half
+   of the window vibrancy was for.
+
+   No rule here any more: the card carries its own `bg-background` (the routes
+   box in app-shell.tsx, the dock's `.dv-content-container` below), and
+   `SidebarInset` is the column it sits in, transparent at every width. The
+   rule that kept the inset opaque under vibrancy used to live here and was the
+   slab the cards vanished into. */
 
 /* Windows/Linux draw min/max/close as an overlay in the top-right corner —
    keep the header's own actions from sliding under them. The sidebar's brand
@@ -988,6 +1106,8 @@ html[data-window-controls-overlay="true"] [data-drag-region]:not([data-sidebar="
    rather than the box. */
 html[data-window-controls-overlay="true"] {
   --app-header-row-h: max(3rem, var(--wco-titlebar-h, env(titlebar-area-height, 3rem)));
+  /* The row is the titlebar here too, so nothing above it. */
+  --app-frame-gap: 0px;
 }
 /* Sidebar drag-resize (handle lives in app-shell.tsx): kill the width easing
    while dragging so the sidebar tracks the pointer, and drop the handle when
@@ -1565,21 +1685,13 @@ html .dockview-theme-abyss {
   --dv-inactivegroup-visiblepanel-tab-color: var(--foreground);
   --dv-inactivegroup-hiddenpanel-tab-color: var(--muted-foreground);
   --dv-tab-divider-color: transparent;
-  /* The line between two views, and dockview's own mechanism for it
-     (`.dv-view:not(:first-child)::before`) rather than a border on the strip:
-     it is drawn on every view but the first, so it is one declaration for a
-     stack *and* a row — the top edge of a group docked below, the left edge of
-     one split beside. A strip's own `border-top` would have to ask which of
-     those it was and would still know nothing about the group above it.
-
-     It was briefly transparent, on the grounds that the strip in the header's
-     band drew no edge and a docked one did. That was the wrong half to change:
-     the two strips are the same bar now (same height, same tabs, same
-     material), and *between two views* is exactly where the app should say
-     something. The band has no line above it because there is no second view up
-     there — it is the first. */
-  --dv-separator-border: var(--border);
-  --dv-drag-over-background-color: color-mix(in oklch, var(--primary) 14%, transparent);
+  /* No line between two views: each group's content is its own card now (below,
+     `.dv-content-container`) and the gutter between two cards is the
+     separation. Dockview's line (`.dv-view:not(:first-child)::before`) runs the
+     full height of the view, which put a hairline through the tab band and
+     down the gap between two rounded slabs. */
+  --dv-separator-border: transparent;
+  --dv-drag-over-background-color: color-mix(in oklch, var(--primary) 8%, transparent);
   --dv-drag-over-border-color: var(--primary);
   --dv-edge-dock-indicator-color: var(--primary);
   --dv-icon-hover-background-color: var(--accent);
@@ -1634,7 +1746,7 @@ html .dv-groupview > .dv-tabs-and-actions-container {
 /* ── The header's band ──
    A group the header covers does not clear it, it *joins its row*: the overlap
    above is then the safe-area inset alone, and the strip lands in the header's
-   own 3rem band. That is the whole merge — one bar carrying the app's controls
+   own band (`--app-header-row-h`). That is the whole merge — one bar carrying the app's controls
    and this group's tabs, rather than a bar of controls with a bar of tabs under
    it. `data-header-band` is set by workspace/dock.tsx on the groups it is true
    of, which on a horizontal split is more than one of them.
@@ -1653,20 +1765,23 @@ html .dv-groupview[data-header-band] {
 }
 
 html .dv-groupview[data-header-band] > .dv-tabs-and-actions-container {
-  /* A strip in the header's band has to be an overlay for the same reason the
-     header is one: in flow it *takes* the band, and the transcript then starts
-     below it with nothing left to pass underneath — the progressive blur had
-     nothing to take out of focus, which is the whole reason the header is
-     transparent. Out of flow the content container (`flex-grow: 1`) reclaims
-     the full group, the panel pads its own top by what the header covers
-     (`--dock-content-overlap`, already measured) and the transcript scrolls up
-     under the tabs exactly as it did under the header alone.
+  /* In flow at `md` and up, taking the band: the content container starts
+     *below* the tabs, so the card it draws (`.dv-content-container` below)
+     has its rounded top edge under the strip rather than behind it, and
+     `--dock-content-overlap` measures zero for a banded group.
 
-     `top: 0` and not the inset: the offset arrives as the inherited
-     `margin-top`, which applies to an absolutely positioned box too. */
-  position: absolute;
-  inset-inline: 0;
-  top: 0;
+     Below `md` there is no card and the strip is an overlay: the content
+     container (`flex-grow: 1`) reclaims the full group, the panel pads its
+     own top by what the header covers (`--dock-content-overlap`, measured)
+     and the transcript scrolls up under the tabs and the header's
+     progressive blur, which is kept there (app-shell.tsx). `top: 0` and not
+     the inset: the offset arrives as the inherited `margin-top`, which
+     applies to an absolutely positioned box too. */
+  @media (width < 48rem) {
+    position: absolute;
+    inset-inline: 0;
+    top: 0;
+  }
   /* The measurement is the header's content box, gutter included, so the tabs
      stand on the same `px-4` line the transcript and the composer do — no 4px
      of the strip's own on top of it. */
@@ -1734,6 +1849,93 @@ html .dv-right-actions-container {
   flex-shrink: 0;
 }
 
+/* ── The header row stands outside the card, and so do the tabs ──
+   `SidebarInset` used to be the one rounded card every route was read on, with
+   the header and the dock's tabs inside it, in its top band. It is the column
+   now and not the card: shadcn's variant still draws the radius, the shadow
+   and `bg-background`, and this takes all three back, keeping its gutter. It
+   paints nothing, so the ground the header stands on is the wrapper's — under
+   vibrancy, the desktop. (Left opaque it was a slab the same colour as the
+   cards on it, and they vanished into it.) Unlayered, and later in the file
+   than the vibrancy rules: the variant's utilities and the old "the inset is
+   opaque under vibrancy" rule are both things this has to beat.
+
+   The card is whatever is *under* the header row, and with the dock on every
+   route that is each group's *content container* — radius, `bg-background`,
+   `shadow-sm` — with the strip in flow above it on the ground. Per group,
+   because a split is two strips over two cards, and this is the only box in
+   dockview's tree that sits below a strip and above the content.
+
+   `always`-rendered panels live in an overlay at the dockview root positioned
+   from this container's border box (margins excluded), so the overlay takes
+   the same radius and clips to it — `contain: paint` was already clipping it
+   to a rectangle.
+
+   **Four corners, in the frame's own air.** The card is rounded on every
+   corner and keeps the frame's gutter on the right and the bottom as well
+   (`--app-frame-gap`, the same air the column keeps over the header row and
+   the card under the strip): a corner that runs into the window's edge is a
+   corner the reader never sees, and a card with two square corners stopped
+   reading as a thing standing on the ground. The left stands on the sidebar's
+   own edge — the variant's `ml-2` arrives there when it is closed — and
+   between two groups split side by side it is the 4px the second one's card
+   keeps on its left (`.dv-horizontal` below), which is also the only place
+   two cards can meet.
+
+   Below `md` the variant draws no card (its margins and radius are `md:`), so
+   neither does this: edge to edge, as it was — but still opaque, because a
+   narrow desktop window under vibrancy would otherwise put the transcript on
+   the wallpaper. The strip's own `padding: 0 4px` is what sets the first chip
+   in from the card's edge. */
+html [data-slot="sidebar-inset"] {
+  background-color: transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+html .dv-groupview > .dv-content-container {
+  background-color: var(--background);
+}
+@media (width >= 48rem) {
+  html [data-slot="sidebar-inset"] {
+    margin: var(--app-frame-gap) 0 0;
+  }
+  html .dv-groupview > .dv-content-container {
+    @apply shadow-sm;
+    border-radius: var(--radius-xl);
+    /* The same air under the strip as the column has over the header row, and
+       the frame's gutter on the right and bottom so those corners read. */
+    margin: var(--app-frame-gap) var(--app-frame-gap) var(--app-frame-gap) 0;
+  }
+  html .dv-horizontal > .dv-view-container > .dv-view:not(:first-child) .dv-content-container {
+    margin-left: 4px;
+  }
+  html .dv-render-overlay {
+    border-radius: var(--radius-xl);
+    overflow: hidden;
+  }
+}
+
+/* ── Dragging a tab over a target ──
+   Dockview's drop highlight is a rectangle of `--dv-drag-over-background-color`
+   with `--dv-drag-over-border: none` — a hard-edged slab with no corner, which
+   over a rounded surface reads as a box pasted on it. Rounded and ringed rather
+   than filled, so the target lights up instead of gaining a block; the line
+   variants (a drop between two tabs or against a panel's edge) keep their 1px
+   rule and drop the fill. */
+html .dv-drop-target > .dv-drop-target-dropzone > .dv-drop-target-selection,
+html .dv-drop-target-container .dv-drop-target-anchor {
+  border-radius: var(--radius-xl);
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--primary) 40%, transparent);
+}
+
+html .dv-drop-target > .dv-drop-target-dropzone > .dv-drop-target-selection.dv-drop-target-selection-line,
+html .dv-drop-target > .dv-drop-target-dropzone > .dv-drop-target-selection.dv-drop-target-small-horizontal,
+html .dv-drop-target > .dv-drop-target-dropzone > .dv-drop-target-selection.dv-drop-target-small-vertical {
+  background-color: transparent;
+  box-shadow: none;
+  border-radius: 0;
+}
+
 html .dv-tab {
   align-items: center;
   display: flex;
@@ -1755,122 +1957,123 @@ html .dv-tab {
      The floor is what keeps this from being the opposite problem: past about
      seven tabs, shrinking without one leaves slivers rather than a strip that
      scrolls. Below it the container scrolls as it always did, and the tab list
-     at the strip's end is the way back to what scrolled off. */
-  flex: 1 1 19rem;
+     at the strip's end is the way back to what scrolled off.
+
+     **The size is a `width`, not a flex-basis**, and that is not a preference:
+     dockview's reorder collapses the tab being dragged with
+     `width: 0 !important` and opens the gap by measuring what is left. A
+     `flex-basis` of 19rem outranks any `width`, so with `flex: 1 1 19rem` the
+     dragged tab never left the strip and every gap was a tab too wide. `flex-
+     basis: auto` defers to the width, which makes the two agree — same
+     grow-to-a-ceiling, shrink-to-a-floor behaviour, one that dockview can
+     animate. */
+  flex: 1 1 auto;
+  width: 19rem;
   max-width: 19rem;
   min-width: 7rem;
+  /* Dockview times its own reorder off this (it defaults to 200ms, and sets
+     70ms on every `.dv-drop-target` — which a tab is, so the collapse and the
+     slide ran at a third of the strip's own speed). One duration for the whole
+     strip. */
+  --dv-transition-duration: var(--dock-tab-duration);
+}
+
+/* The tab in the hand: dockview collapses it to nothing so the strip closes
+   over it. Its `width: 0` needs the grow taken off too, or the tab shrinks to
+   zero and then immediately grows back into whatever slack the strip has. */
+html .dv-tab.dv-tab--dragging {
+  flex-grow: 0;
+}
+
+/* One easing for everything a tab does, so the strip moves as one thing.
+   Declared before the two blocks that read it, because the reduced-motion
+   override below zeroes it on `html` too — at equal specificity the later
+   rule wins, and a definition placed after the override would quietly undo
+   it. The duration is split out because dockview's reorder wants a bare one. */
+html {
+  --dock-tab-duration: 240ms;
+  --dock-tab-motion: var(--dock-tab-duration) cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* ── Narrow: one title, the rest are marks ──
    On a phone only the tab you are on says its name; every other one shrinks to
-   its mark — a kind's glyph, or a chat's initials. Four titles sharing a 360px
-   strip are four tabs truncated to "Fix th…", which is four identical tabs.
+   its mark — a kind glyph, or a chat thread's initials (`panel-tab.tsx`
+   picks which). Four titles sharing a 360px strip are four tabs truncated to
+   "Fix th…", which is four identical tabs.
 
-   **All of it is here rather than in `panel-tab.tsx`, and that is what makes it
-   move.** The first version branched on `useIsMobile()` and rendered either a
-   mark or a title: React replaced one element with another, so the swap was a
-   frame, not a transition — there is nothing to interpolate between two
-   different nodes. Both are in the DOM now and this collapses whichever the tab
-   is not, which is a width and an opacity, and those animate.
+   **The title collapses; nothing swaps.** The whole effect is one animatable
+   property — a single-column grid taken from `1fr` to `0fr` — because a grid
+   column is the only width that interpolates cleanly to nothing without the
+   element knowing what it is wide. The version this replaces animated four
+   things at three durations (the tab's max-width, a mark's width, the title's
+   opacity, the controls' width) and needed both the mark and the title in the
+   DOM at all times to do it.
 
    Keyed on dockview's own `dv-active-tab`/`dv-inactive-tab` — the class it
-   already toggles on the element that owns the width — so nothing has to be
-   told twice and the width and the contents cannot disagree about which tab is
-   which mid-flight. */
-@media (max-width: 767px) {
+   already toggles on the element that owns the width — so the width and the
+   contents cannot disagree about which tab is which mid-flight. */
+@media (width < 48rem) {
+  /* The strip is swiped, not scrolled: no thin scrollbar under a row of chips
+     (the marks *are* the sign that there is more), the strip stops at its own
+     end rather than handing the swipe to the browser's back gesture, and it
+     settles on a tab edge so a mark is never cut in half. */
+  html .dv-tabs-container {
+    scrollbar-width: none;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+  }
+  html .dv-tabs-container::-webkit-scrollbar {
+    display: none;
+  }
+
   /* Every tab grows; what differs is the ceiling. Transitioning the *cap*
-     rather than the basis is what makes the two tabs cross over smoothly: a
-     `flex-grow` that jumped 0 → 1 would resolve to the new width in one frame,
-     however long the transition on the basis was. 24rem is past any phone, so
-     the active tab is really bounded by the strip. */
+     rather than the basis is what makes two tabs cross over smoothly — a
+     `flex-grow` that jumped 0 → 1 would resolve to the new width in one frame
+     however long the basis took. 24rem is past any phone, so the active tab is
+     really bounded by the strip. */
   html .dv-tab {
+    scroll-snap-align: start;
     flex: 1 1 auto;
-    min-width: 2.75rem;
+    /* Back to the content's own width: the wide strip's 19rem basis would make
+       every tab here want the whole phone and settle by shrinking, which is the
+       opposite of "one title, the rest are marks". */
+    width: auto;
+    min-width: 2.5rem;
     max-width: 24rem;
-    transition: max-width 240ms cubic-bezier(0.22, 1, 0.36, 1);
+    transition: max-width var(--dock-tab-motion);
   }
 
   html .dv-tab.dv-inactive-tab {
-    max-width: 2.75rem;
+    max-width: 2.5rem;
   }
 
-  /* The chip loses the row's padding as it narrows, so the mark ends centred in
-     a square rather than pushed against one edge on the way. */
-  html .dv-tab.dv-inactive-tab .panel-tab-chip {
+  /* The chip loses the row's padding as it narrows, so the mark ends centred
+     in a square rather than pushed against one edge on the way. */
+  html .dv-tab.dv-inactive-tab .dock-tab {
     justify-content: center;
     padding-inline: 0;
   }
 
-  html .panel-tab-chip {
-    transition:
-      padding 240ms cubic-bezier(0.22, 1, 0.36, 1),
-      background-color 200ms,
-      color 200ms;
-  }
-
-  /* The mark: full width on a tab that is not in front, nothing on the one that
-     is. `width` and not `display`, because `display` is the one property that
-     cannot be transitioned into. The opacity runs faster than the width and
-     leads it, so the letters are gone before the box that held them finishes
-     closing — a mark fading *while* it slides is what reads as a smear. */
-  html .panel-tab-chip [data-tab-mark] {
-    width: 1.5rem;
-    opacity: 1;
-    transition:
-      width 240ms cubic-bezier(0.22, 1, 0.36, 1),
-      opacity 140ms ease-out 60ms;
-  }
-
-  html .dv-tab.dv-active-tab .panel-tab-chip [data-tab-mark] {
-    width: 0;
+  html .dv-tab.dv-inactive-tab .dock-tab [data-tab-title] {
+    grid-template-columns: 0fr;
     opacity: 0;
-    transition:
-      width 240ms cubic-bezier(0.22, 1, 0.36, 1),
-      opacity 100ms ease-in;
   }
 
-  /* The title is the mirror of it, and deliberately *late*: it fades in over
-     the second half of the widening, so a name never appears in a box too
-     narrow to hold it and then reflows. Going the other way it leaves at once,
-     which is the same rule — no text in a closing box. */
-  html .dv-tab.dv-inactive-tab .panel-tab-chip [data-tab-title] {
-    opacity: 0;
-    transition: opacity 100ms ease-in;
-  }
-
-  html .dv-tab.dv-active-tab .panel-tab-chip [data-tab-title] {
-    opacity: 1;
-    transition: opacity 160ms ease-out 120ms;
-  }
-
-  /* The controls go with the title. They are hidden, not unmounted, for the
-     same reason as everything else here: a node leaving the DOM takes its width
-     with it in one frame. */
-  html .dv-tab.dv-inactive-tab .panel-tab-chip [data-tab-action],
-  html .dv-tab.dv-inactive-tab .panel-tab-chip button {
-    width: 0;
-    opacity: 0;
-    pointer-events: none;
-    transition:
-      width 240ms cubic-bezier(0.22, 1, 0.36, 1),
-      opacity 100ms ease-in;
-  }
-}
-
-/* Off the phone the mark does not exist at all — no width, no transition, and
-   nothing for a wide strip to reserve. */
-@media (min-width: 768px) {
-  html .panel-tab-chip [data-tab-mark] {
+  /* The controls go with the title. `display` and not a width, because there
+     is nothing left to animate once the box around them is closing anyway. */
+  html .dv-tab.dv-inactive-tab .dock-tab [data-tab-controls] {
     display: none;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  html .dv-tab,
-  html .panel-tab-chip,
-  html .panel-tab-chip [data-tab-mark],
-  html .panel-tab-chip [data-tab-title],
-  html .panel-tab-chip [data-tab-action] {
+  html {
+    --dock-tab-duration: 0s;
+    --dock-tab-motion: 0s;
+  }
+  html .dock-tab,
+  html .dock-tab [data-tab-title],
+  html .dock-tab [data-tab-action] {
     transition: none;
   }
 }
@@ -1894,37 +2097,74 @@ html .dv-tab {
    be docked. A tab is a tab. What differs between the two places is what is
    behind the blur, which is the point of a blur.
 
-   The ground is `--composer`, the composer card's own (`bg-composer/70`,
-   components/composer.tsx): the band and the composer are the two frosted
-   surfaces the transcript runs between, so they are the same material or they
-   are two. */
-/* **Every tab has a ground, not only the focused one.** A surface that appears
-   when a tab is clicked reads as part of the selection rather than as the shape
-   a tab has, and a strip of bare labels beside one filled chip is one tab and
-   some text. Three weights of the same material instead: the tab you are on,
-   the tab you are pointing at, and the rest. Focus is then the *same* surface
-   at more weight, and the tabs beside it are visibly the same object. */
-/* `.header-chip` is the app header's own controls — the sidebar toggle and the
-   view-settings sliders (`lib/header-chrome.ts`). They are here, with the tabs
-   and out of the same values, because when a group joins the header's band they
-   are literally on the same line as these tabs: a pill of `--background` beside
-   a rounded rectangle of `--composer` is two materials pretending to be one
-   bar. Unlayered on purpose — it has to beat the button's own `rounded-4xl`,
-   which a `rounded-lg` utility would not. */
-html .panel-tab-chip,
-html .header-chip {
+   **The active tab is made of the card under it.** The strip stands on the
+   wrapper's ground now, with the group's card starting 8px below it, so the
+   tab you are on wears the card's own material — `--background` and the same
+   `shadow-sm` — and reads as the piece of that card that reaches up into the
+   row, which is what a tab is. The rest wear nothing: on a flat ground a row
+   of filled chips read as a row of buttons, and the one that mattered was
+   only a shade darker than the others. Pointing at one raises a scrim toward
+   the foreground, which is the one mix that reads on a light ground and a dark
+   one alike (a `--background` hover would be invisible on a ground that is
+   `--background`, lib/theme-ramp.ts). No backdrop blur: nothing passes under
+   the row any more.
+
+   The header's own controls — the sidebar toggle and the view-settings
+   sliders (`HEADER_CHIP`, lib/header-chrome.ts) — are bare glyphs for the
+   same reason, and only their size is still the tab's. */
+html .dock-tab {
   border-radius: var(--radius);
-  background-color: color-mix(in oklch, var(--composer) 35%, transparent);
-  backdrop-filter: blur(var(--app-blur, 14px));
+  background-color: transparent;
+  transition:
+    padding var(--dock-tab-motion),
+    background-color 200ms,
+    color 200ms;
 }
 
-html .panel-tab-chip:not([data-active]):hover,
-html .header-chip:hover {
-  background-color: color-mix(in oklch, var(--composer) 55%, transparent);
+/* The title's box. One grid column, because a grid column is the one width
+   that animates cleanly to nothing — the narrow strip takes it to `0fr`. */
+html .dock-tab [data-tab-title] {
+  grid-template-columns: 1fr;
+  transition:
+    grid-template-columns var(--dock-tab-motion),
+    opacity 140ms ease-out;
 }
 
-html .panel-tab-chip[data-active] {
-  background-color: color-mix(in oklch, var(--composer) 80%, transparent);
+html .dock-tab:not([data-active]):hover {
+  background-color: color-mix(in oklch, var(--foreground) 7%, transparent);
+}
+
+html .dock-tab[data-active] {
+  background-color: var(--background);
+  /* `shadow-sm`, spelled: the card's own, so the tab and the card are one
+     material with one edge. */
+  box-shadow:
+    0 1px 3px 0 rgb(0 0 0 / 0.1),
+    0 1px 2px -1px rgb(0 0 0 / 0.1);
+}
+
+/* ── Where the keyboard is ──
+   Dockview gives the strip a roving tabindex, so exactly one tab is a tab stop
+   and the arrows move between them — which is only usable if you can *see*
+   which tab you have arrowed to. The ring goes on the chip and not on
+   dockview's own `.dv-tab` box, so it traces the shape a reader sees rather
+   than the invisible cell around it. `:has()` because the focus lands on the
+   ancestor: `.dv-tab` is the element with the tabindex, the chip is ours. */
+html .dv-tab:focus-visible {
+  outline: none;
+}
+
+html .dv-tab:focus-visible .dock-tab {
+  outline: 2px solid var(--ring);
+  outline-offset: -1px;
+}
+
+/* The tab you are dragging: a lift, so it reads as picked up rather than as a
+   second copy of the row. After the active rule, which it has to outrank at
+   equal specificity — the tab being dragged is usually the active one. */
+html .dv-tab-ghost-drag .dock-tab {
+  background-color: var(--background);
+  box-shadow: 0 10px 24px -6px oklch(0 0 0 / 0.35);
 }
 
 /* ── The tab's own controls: the ⋮ and the close ──
@@ -1947,21 +2187,28 @@ html .panel-tab-chip[data-active] {
    pointer leaves the tab to reach it, and a trigger that faded out under the
    list it opened would look like the menu had come from nowhere. The pin is not
    here at all — it is a *state*, not an action, and a pinned tab that looked
-   like any other until you pointed at it is the one thing pinning is for. */
-html .panel-tab-chip [data-tab-action] {
+   like any other until you pointed at it is the one thing pinning is for.
+
+   **A focused tab shows both.** The controls are not focus stops of their own
+   (they would break the strip's roving tabindex — see `panel-tab.tsx`), so a
+   keyboard user reaches them with `Delete` and `Shift`+`F10` on the tab
+   itself. Drawing them while the tab has focus is what says those keys are
+   there; hiding them from a keyboard would be hiding the affordance from the
+   one reader who cannot discover it by pointing. */
+html .dock-tab [data-tab-action] {
   opacity: 0;
   transition: opacity 120ms ease;
 }
 
-html .panel-tab-chip:hover [data-tab-action],
-html .panel-tab-chip [data-tab-action]:focus-visible,
-html .panel-tab-chip [data-tab-action="menu"][aria-expanded="true"],
-html .panel-tab-chip[data-active] [data-tab-action="close"] {
+html .dock-tab:hover [data-tab-action],
+html .dv-tab:focus-visible .dock-tab [data-tab-action],
+html .dock-tab [data-tab-action="menu"][aria-expanded="true"],
+html .dock-tab[data-active] [data-tab-action="close"] {
   opacity: 1;
 }
 
 @media (hover: none) {
-  html .panel-tab-chip [data-tab-action] {
+  html .dock-tab [data-tab-action] {
     opacity: 1;
   }
 }
@@ -2074,6 +2321,21 @@ html .panel-tab-chip[data-active] [data-tab-action="close"] {
     --_scroll-fade-size-b,
     var(--scroll-fade-size, min(12%, calc(var(--spacing) * 10)))
   );
+}
+
+/* The transcript's scrollbar is hidden — the wheel and touch still scroll, and
+   the scroll-to-bottom button stays the affordance that the tail has been
+   left. `both-edges` keeps the `mx-auto` column's box symmetric and centred on
+   the panel whether or not a scrollbar draws, so the geometry is unchanged from
+   when the thin scrollbar was shown. Keyed on the slot (like the fade rules
+   above), not a utility, so no equal-specificity class can race it. */
+[data-slot="message-scroller-viewport"] {
+  scrollbar-width: none;
+  scrollbar-gutter: stable both-edges;
+}
+
+[data-slot="message-scroller-viewport"]::-webkit-scrollbar {
+  display: none;
 }
 
 /* `scrollbar-none`: hide a horizontal row's scrollbar, like a touch strip.

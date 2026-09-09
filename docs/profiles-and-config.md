@@ -170,15 +170,28 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
        not die because a setting nobody is watching went stale — and emits its own
        `config_notice` rows and `spawn_config`, which `restartWith` never duplicates because
        a patch it folded is one that path had already dropped.
-    2. **`prompt` flushes before it starts a turn**, so nothing runs on settings the user has
-       moved off. It is the one door every turn comes through — the socket's send, the
-       scheduler, routines, autonomy — and the bridge is **re-read after the flush**, because
-       the respawn replaced the process and the old `session.bridge` names a killed child.
+    2. **`flushStagedNow` takes it outright**, from the two doors a turn can start at.
+       `prompt` flushes before it starts a turn, so nothing runs on settings the user has
+       moved off — it is the door every turn comes through (the socket's send, the scheduler,
+       routines, autonomy). **`resumeTurn`** is the second: Continue on a held turn, which is
+       the hold's own promise — it exists because a failed turn waits for a model change and
+       a resume — and without it a user who changed the model and pressed Continue rather
+       than typing would watch the patch sit there while the turn ran on the settings they had
+       already moved off. Either way the bridge is **re-read after the flush**, because the
+       respawn replaced the process and the old `session.bridge` names a killed child.
 
   A **queue drain never flushes**: it calls `startTurn` directly and never reaches `prompt`,
   which preserves the old `continued` rule — no restart between two messages the user sent
-  together. Neither does a **steer**, and `!bridge.promptActive` is the one term that
-  expresses both: past the queue branch, a live turn means this prompt is joining one.
+  together. Neither does a **steer**: past the queue branch, a live turn means this prompt is
+  joining one. `!bridge.promptActive` is the one term that expresses both.
+
+  **Except when the turn is held** (`!bridge.promptActive || bridge.paused`). The "never
+  staged onto a hold" rule above is read at *pick* time, and a pick made while the turn was
+  still **retrying** lands before the hold exists — the retry window is long, and it is
+  exactly when a user reaches for the model menu. That patch is then stranded the way the
+  rule warns about: a held turn's send is a steer, a steer never flushes, and the message
+  runs on the settings the user had already moved off. A held turn is stopped, not running,
+  so a prompt into it is not "joining" one — and it is not two messages sent together either.
 
   There is **no `turn_ended` flush** any more. It was fire-and-forget (so a failure reached
   nobody) and it restarted the agent the instant a turn ended, for a user who might read for

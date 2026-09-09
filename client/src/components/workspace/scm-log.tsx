@@ -25,6 +25,7 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react"
 
 import { Button } from "@/components/ui/button"
+import { CopyButton } from "@/components/ui/copy-button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useConfirm } from "@/components/confirm-dialog"
 import { describeError } from "@/lib/errors"
@@ -103,7 +104,17 @@ function Section({
       {open && (
         <div className="pb-1">
           {error ? (
-            <p className="px-2 py-1 text-[11px] text-destructive">{error}</p>
+            /* A git failure is the one error in this panel worth a clipboard:
+               it is usually the porcelain's own multi-line complaint, and the
+               next thing anyone does with it is paste it somewhere. */
+            <div className="flex items-start gap-1 px-2 py-1">
+              <p className="min-w-0 flex-1 text-[11px] text-destructive">{error}</p>
+              <CopyButton
+                text={error}
+                size="icon-xs"
+                className="shrink-0 text-destructive/70 hover:bg-destructive/15 hover:text-destructive"
+              />
+            </div>
           ) : (
             children
           )}

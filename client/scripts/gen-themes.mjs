@@ -42,11 +42,19 @@ const OUT_TS = join(ROOT, "src", "lib", "builtin-themes.ts")
 // ---- the catalog ----
 
 /** A theme's ramp, with its own overrides applied on top. Only Default has
-    any: its background is pinned rather than derived (see below). */
-const rampOf = (theme, mode) => ({
-  ...(mode === "light" ? lightRamp(theme) : darkRamp(theme)),
-  ...(theme.overrides?.[mode] ?? {}),
-})
+    any: its background is pinned rather than derived (see below).
+
+    `sidebar` is re-tied to `background` *after* the merge, because the ramp
+    ties them by reading its own local and an override lands past that: Default
+    pins white, and the shell would otherwise stay at the derived 0.99 — which
+    is the whole complaint, on the one theme most people are looking at. */
+const rampOf = (theme, mode) => {
+  const ramp = {
+    ...(mode === "light" ? lightRamp(theme) : darkRamp(theme)),
+    ...(theme.overrides?.[mode] ?? {}),
+  }
+  return { ...ramp, sidebar: ramp.background }
+}
 
 /* Shape presets: the base radius and, separately, what `rounded-pill` draws.
    Keep in sync with RADIUS_PRESETS in src/lib/custom-themes.ts, which is what

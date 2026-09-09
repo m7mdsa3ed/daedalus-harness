@@ -77,7 +77,7 @@
    `.harness-strip-*` in index.css). */
 import * as React from "react"
 
-import { useCoarsePointer } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-device"
 import { cn } from "@/lib/utils"
 
 /* ── Chip badge ──
@@ -457,7 +457,7 @@ export function ComposerStrip({
              surface for the card it belongs to; the rest of that card is a
              transparent box holding a mounted row. */
           front &&
-            "bg-shelf/70 ring-1 ring-foreground/5 backdrop-blur-xl backdrop-saturate-150 dark:ring-foreground/10",
+            "bg-shelf ring-1 ring-foreground/5 backdrop-blur-sm dark:ring-foreground/10",
           !place && "hidden"
         )}
         style={
@@ -494,7 +494,7 @@ export function ComposerStrip({
                  sliver pinned to the card's edges is a hairline clipped away to
                  nothing. Inset, its bottom line falls where the card in front
                  begins and reads as the seam between the two. */
-              "bg-shelf/70 ring-1 ring-foreground/5 ring-inset backdrop-blur-xl backdrop-saturate-150 dark:ring-foreground/10",
+              "bg-shelf ring-1 ring-foreground/5 ring-inset backdrop-blur-sm dark:ring-foreground/10",
               "transition-colors hover:bg-accent/40 hover:text-foreground",
               "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
             )}
@@ -583,7 +583,7 @@ export function ComposerStrip({
           // second one over it would wash the row it is under.
           empty &&
             !stowed &&
-            "overflow-hidden rounded-t-xl bg-shelf/70 ring-1 ring-foreground/5 dark:ring-foreground/10",
+            "overflow-hidden rounded-t-xl bg-shelf ring-1 ring-foreground/5 dark:ring-foreground/10",
           // Nothing registered and the fold finished: no pile, no shelf.
           stowed && empty && "hidden",
           className

@@ -11,7 +11,7 @@
    server restart. `parsePanel` is the other half of that contract — anything
    restored has to come back through it before the dock will trust it. */
 
-export type PanelKind = "chat" | "ide" | "terminal" | "web" | "tasks"
+export type PanelKind = "chat" | "ide" | "terminal" | "web" | "tasks" | "page"
 
 /** Whether a web panel is looking at a project's own dev server or the wider
     internet. It is carried on the descriptor so the panel cannot decide for
@@ -32,6 +32,14 @@ export type PanelDescriptor =
       between boards is not opening a second panel. Boards are the server's,
       not a project's, which is why this carries no `projectId`. */
   | { kind: "tasks"; boardId?: string; taskId?: string }
+  /** Every route that is not a thread — settings, a project's page, the inbox,
+      the landing console — as a tab, so a settings page can stand beside the
+      chat it is about. `path` is the route (pathname plus search) the panel
+      renders through the app's own route table (`workspace/page-panel.tsx`).
+      A page tab is the app's *browsing* tab: opening a page repoints the
+      unpinned one rather than adding another (`openPage` in dock.tsx), so its
+      id says nothing about where it is pointed. */
+  | { kind: "page"; path: string }
 
 export interface PanelSpec {
   /** One per project — opening it again focuses what is there. */
@@ -50,6 +58,7 @@ export const PANEL_SPECS: Record<PanelKind, PanelSpec> = {
   terminal: { singleton: false, defaultTitle: "Terminal", implemented: true },
   web: { singleton: false, defaultTitle: "Browser", implemented: true },
   tasks: { singleton: true, defaultTitle: "Tasks", implemented: true },
+  page: { singleton: false, defaultTitle: "Page", implemented: true },
 }
 
 export const PANEL_KINDS = Object.keys(PANEL_SPECS) as PanelKind[]
@@ -76,7 +85,21 @@ export function panelId(panel: PanelDescriptor): string {
         : `web:${panel.projectId}:${panel.viewId}`
     case "tasks":
       return "tasks"
+    case "page":
+      /* Never looked up by — a page tab is found by `pageKey`, never by id
+         (see `openPage`). This is only the *base* of a fresh tab's id. */
+      return `page:${pageKey(panel.path)}`
   }
+}
+
+/** Which place a route is. One per top-level section — `/settings/mcp` and
+    `/settings/rules` are the same settings tab pointed elsewhere — except
+    where the second segment names a *thing*: a project's page and a thread's
+    trace are places of their own. The root is `home`, the landing console. */
+export function pageKey(path: string): string {
+  const [, first = "", second = ""] = path.split("?")[0].split("/")
+  if ((first === "projects" || first === "t") && second) return `${first}/${second}`
+  return first || "home"
 }
 
 const str = (value: unknown): string | undefined =>
@@ -106,6 +129,10 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
     case "terminal": {
       const terminalId = str(p.terminalId)
       return projectId && terminalId ? { kind: "terminal", projectId, terminalId } : null
+    }
+    case "page": {
+      const path = str(p.path)
+      return path?.startsWith("/") ? { kind: "page", path } : null
     }
     case "tasks": {
       /* Both fields are optional and both are only ever *hints*: an unknown

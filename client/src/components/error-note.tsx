@@ -14,8 +14,9 @@
    normalizing, the console logging and the "don't let the global net say this
    twice" bookkeeping. This component only draws. */
 import * as React from "react"
-import { AlertTriangleIcon, CheckIcon, CopyIcon } from "lucide-react"
+import { AlertTriangleIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { CopyButton } from "@/components/ui/copy-button"
 import type { InlineError } from "@/lib/errors"
 import { cn } from "@/lib/utils"
 
@@ -31,27 +32,14 @@ export function ErrorNote({
   retryLabel?: string
   className?: string
 }) {
-  const [copied, setCopied] = React.useState(false)
   const [expanded, setExpanded] = React.useState(false)
 
   /* A second failure is a second thing to read: collapse again so a long
-     detail from the last one cannot be mistaken for this one's. */
-  React.useEffect(() => {
-    setExpanded(false)
-    setCopied(false)
-  }, [error])
+     detail from the last one cannot be mistaken for this one's. (The Copy
+     button resets its own tick — see CopyButton.) */
+  React.useEffect(() => setExpanded(false), [error])
 
   if (!error) return null
-
-  const copy = async () => {
-    try {
-      await writeClipboard(error.text)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    } catch {
-      /* Clipboard is permission-gated; the text is on screen either way. */
-    }
-  }
 
   // The headline is the action that failed; the normalized title only repeats
   // it when there is no context, so it moves into the body when there is one.
@@ -110,19 +98,13 @@ export function ErrorNote({
               {expanded ? "Less" : "More"}
             </Button>
           )}
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
+          <CopyButton
+            text={error.text}
+            label="Copy"
             className="h-7 px-2 text-xs hover:bg-destructive/10"
-            onClick={() => void copy()}
-          >
-            {copied ? <CheckIcon /> : <CopyIcon />}
-            {copied ? "Copied" : "Copy"}
-          </Button>
+          />
         </div>
       </div>
     </div>
   )
 }
-import { writeClipboard } from "@/lib/clipboard"

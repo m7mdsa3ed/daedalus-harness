@@ -9,7 +9,7 @@ export interface ToolRuntime {
   emit: Emitter;
   clientCaps: acp.ClientCapabilities | null;
   /** Runs a nested subagent loop and returns its final report (task tool). */
-  runSubagent(name: string, prompt: string): Promise<string>;
+  runSubagent(name: string, prompt: string, toolCallId?: string): Promise<string>;
 }
 
 /* How the transcript should draw a call of this tool: the ACP `kind` picks

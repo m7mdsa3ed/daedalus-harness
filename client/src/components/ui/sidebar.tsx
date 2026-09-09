@@ -200,9 +200,7 @@ function Sidebar({
             <SheetTitle>Sidebar</SheetTitle>
             <SheetDescription>Displays the mobile sidebar.</SheetDescription>
           </SheetHeader>
-          {/* The same inset the desktop column pads by: the sheet covers the
-              whole screen on a phone, cutout included. */}
-          <div className="flex h-full w-full flex-col pt-[var(--app-inset-top)]">{children}</div>
+          <div className="flex h-full w-full flex-col">{children}</div>
         </SheetContent>
       </Sheet>
     )
@@ -245,14 +243,7 @@ function Sidebar({
         <div
           data-sidebar="sidebar"
           data-slot="sidebar-inner"
-          /* The status bar's inset is padding *inside* this box, never a margin
-             above it: `bg-sidebar` has to keep running edge to edge under the
-             cutout — a sidebar that starts below the notch leaves a bare strip
-             of page above it — while everything in the column begins below it.
-             `--app-inset-top` (index.css) is the cutout less a hair, because
-             Chrome reports the full height and padding by all of it leaves a
-             visible band under an already-tall bar. */
-          className="flex size-full flex-col bg-sidebar pt-[var(--app-inset-top)] group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:shadow-sm group-data-[variant=floating]:ring-1 group-data-[variant=floating]:ring-sidebar-border"
+          className="flex size-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:shadow-sm group-data-[variant=floating]:ring-1 group-data-[variant=floating]:ring-sidebar-border"
         >
           {children}
         </div>

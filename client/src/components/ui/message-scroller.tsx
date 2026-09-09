@@ -33,27 +33,6 @@ function MessageScroller({
   )
 }
 
-/* `scrollbar-gutter: stable both-edges` is what keeps a centred column inside
-   this viewport centred on the *panel* rather than on the viewport. The app's
-   scrollbars take layout width (`index.css`: `scrollbar-width: thin` over a 6px
-   `::-webkit-scrollbar`, not overlay), so a scrollbar makes this content box 6px
-   narrower on one side and its centre 3px left of the panel's — which puts the
-   transcript 3px left of the composer, a sibling *outside* the scroller that is
-   centred on the whole panel and shares an edge with it.
-
-   `both-edges`, not plain `stable`: reserving on the inline-end side alone only
-   stops the gutter appearing and vanishing with the scrollbar, and leaves the
-   3px.
-
-   It is spelled as an arbitrary property, once, here — not as tailwind-scrollbar's
-   own gutter utility, and not passed in by the caller. tailwind-merge has no
-   conflict group pairing the two, so both survive `cn` and the winner is decided
-   by stylesheet order, which the caller cannot see: this viewport carried the
-   plugin's utility while ThreadView passed the arbitrary one, Tailwind emitted
-   the arbitrary property first, and at equal specificity `both-edges` never
-   applied. One declaration, no race — and the plugin's name for it is
-   deliberately not written anywhere in this file, comments included, because
-   Tailwind scans raw file text and a mention alone re-emits the rule. */
 function MessageScrollerViewport({
   className,
   ...props
@@ -62,7 +41,7 @@ function MessageScrollerViewport({
     <MessageScrollerPrimitive.Viewport
       data-slot="message-scroller-viewport"
       className={cn(
-        "size-full min-h-0 min-w-0 scroll-fade-b scrollbar-thin [scrollbar-gutter:stable_both-edges] overflow-y-auto overscroll-contain contain-content data-autoscrolling:scrollbar-thumb-transparent data-autoscrolling:scrollbar-track-transparent data-pending-scroll:invisible",
+        "size-full min-h-0 min-w-0 scroll-fade-b scrollbar-thin scrollbar-gutter-stable overflow-y-auto overscroll-contain contain-content data-autoscrolling:scrollbar-thumb-transparent data-autoscrolling:scrollbar-track-transparent data-pending-scroll:invisible",
         className
       )}
       {...props}

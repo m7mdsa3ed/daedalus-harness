@@ -67,7 +67,6 @@ import { settingsFormPath, settingsPath, schedulesPath, threadPath } from "@/lib
 import { scheduleWhen } from "@/lib/schedule"
 import { activityAt, isListed, type HelperCommand, type Project, type ScheduledMessage, type SessionMeta } from "@/lib/settings"
 import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
-import { defaultsForProfile, loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import { useServer } from "@/lib/server-context"
 import { StatusDot } from "@/components/status-dot"
 import { useStoreSelect, type ThreadState } from "@/lib/store"
@@ -109,27 +108,18 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
   const allScheduled = useScheduled().data ?? []
   const liveThreads = useStoreSelect((store) => store.threads)
   const navigate = useNavigate()
-  const startIn = useStartThreadIn()
-  const profiles = useProfiles()
+  const startIn = useStartThreadIn(actions)
   const { stats, error, loading, refresh } = useProjectStats(project.id)
   const [importing, setImporting] = React.useState(false)
 
   /* Somewhere for a queued *panel* to land. A helper's terminal and the rules
      editor are panels, panels live in the dock, and the dock only exists on a
-     thread route — so with no thread in this project yet, this is the one path
-     left that still opens an empty one. "New thread" does not: it goes to the
-     landing console, and nothing exists until it is sent. The draft this mints
-     is invisible to every list (`isListed`) until the same thing is true of it. */
+     thread route — so with no thread in this project yet, this opens an empty
+     one. It is the same door the + takes (`actions.startThreadIn`); the draft
+     is invisible to every list (`isListed`) until it is sent. */
   const openWorkspaceThread = () => {
-    const defaults = loadThreadDefaults()
-    const start = resolveThreadStart(defaults, profiles)
-    if (!start) return void navigate(settingsPath("projects"))
-    const id = actions.newDraftThread({
-      project,
-      ...start,
-      ...defaultsForProfile(defaults, start.profile.id),
-    })
-    void navigate(threadPath(id))
+    const id = actions.startThreadIn({ projectId: project.id })
+    void navigate(id ? threadPath(id) : settingsPath("projects"))
   }
 
   /* No dock on this route, so the helper's terminal is queued for the thread

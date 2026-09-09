@@ -171,6 +171,8 @@ export function parentToolIdOf(meta: unknown): string | undefined {
   const record = asRecord(meta)
   const claude = str(vendorMeta(record, "claudeCode")?.parentToolUseId)
   if (claude) return claude
+  const daedalus = str(vendorMeta(record, "daedalus")?.parentToolUseId)
+  if (daedalus) return daedalus
   const opencode = str(asRecord(record?.["opencode/child-session"])?.id)
   if (opencode) return subagentItemId(opencode)
   return undefined

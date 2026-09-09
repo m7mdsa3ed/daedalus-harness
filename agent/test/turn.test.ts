@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type * as acp from "../src/acp.js";
+import { APICallError } from "@ai-sdk/provider";
 import { buildAgentApp } from "../src/app.js";
 import { SessionStore } from "../src/persistence.js";
 import {
@@ -319,6 +320,72 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
     assert.equal(response.stopReason, "end_turn");
   });
   console.log("turn: a failed finish reason holds ok");
+}
+
+// --- a 429 is retried by the harness, announced, and never held ---
+{
+  const rateLimited = new APICallError({
+    message: "rate limit exceeded, retry after a brief wait",
+    url: "http://provider/chat/completions",
+    requestBodyValues: {},
+    statusCode: 429,
+    responseHeaders: { "retry-after": "0" },
+  });
+  const agent = buildAgentApp({
+    env: testEnv({ holdOnError: true }),
+    makeModel: scriptedModel([
+      [
+        { type: "stream-start", warnings: [] },
+        { type: "error", error: rateLimited },
+        { type: "finish", finishReason: { unified: "error", raw: "error" } as never, usage: usage(1, 0) },
+      ],
+      textScript("after the retry "),
+    ]),
+  });
+  const { app: client, harness } = makeClient();
+  await client.connectWith(agent, async (ctx) => {
+    await initialize(ctx);
+    const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
+    const response = await ctx.request("session/prompt", { sessionId, prompt: promptOf("go") });
+    assert.equal(response.stopReason, "end_turn");
+    assert.equal(harness.holds.length, 0, "a retriable provider error is retried, not held");
+    assert.equal(harness.retries[0]?.attempt, 1, "the retry was announced before its backoff");
+    assert.match(harness.retries[0]?.message ?? "", /rate limit/);
+    assert.equal(harness.retries.at(-1)?.attempt, null, "and taken back once the attempt worked");
+  });
+  console.log("turn: a 429 is retried, not held ok");
+}
+
+// --- a wall that will not move is held at once, not retried into ---
+{
+  const capped = new APICallError({
+    message: "Usage limit reached for 5 hour. Your limit will reset at 18:30",
+    url: "http://provider/chat/completions",
+    requestBodyValues: {},
+    statusCode: 429,
+  });
+  const agent = buildAgentApp({
+    env: testEnv({ holdOnError: true }),
+    makeModel: scriptedModel([
+      [
+        { type: "stream-start", warnings: [] },
+        { type: "error", error: capped },
+        { type: "finish", finishReason: { unified: "error", raw: "error" } as never, usage: usage(1, 0) },
+      ],
+      textScript("after the resume "),
+    ]),
+  });
+  const { app: client, harness } = makeClient();
+  await client.connectWith(agent, async (ctx) => {
+    await initialize(ctx);
+    const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
+    const turn = ctx.request("session/prompt", { sessionId, prompt: promptOf("go") }) as Promise<acp.PromptResponse>;
+    await waitFor(() => harness.holds.some((h) => h.paused), "the usage cap to hold", 1_000);
+    assert.equal(harness.retries.length, 0, "a usage cap is not worth a retry");
+    await ctx.request("_daedalus/session/resume", { sessionId });
+    assert.equal((await turn).stopReason, "end_turn");
+  });
+  console.log("turn: a usage cap holds at once ok");
 }
 
 // --- a tool that fails is the model's problem, not the reader's ---

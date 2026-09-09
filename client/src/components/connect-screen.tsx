@@ -1,6 +1,7 @@
 import * as React from "react"
 import { KeyRound, Loader2, Server, Tag, TriangleAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { CopyButton } from "@/components/ui/copy-button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { describeError } from "@/lib/errors"
@@ -159,7 +160,15 @@ export function ConnectScreen({
             {error && (
               <p className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
                 <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-                {error}
+                <span className="min-w-0 flex-1">{error}</span>
+                {/* Nothing else on this screen is connected yet — no toast
+                    pipeline, no transcript to record into — so the clipboard is
+                    the only way this sentence leaves the machine. */}
+                <CopyButton
+                  text={error}
+                  size="icon-xs"
+                  className="-my-0.5 shrink-0 text-destructive/70 hover:bg-destructive/15 hover:text-destructive"
+                />
               </p>
             )}
             <div className="flex gap-2">

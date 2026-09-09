@@ -727,7 +727,7 @@ export class AcpBridge {
     if (opts.restore) await this.applyRestore(opts.restore);
     if (opts.modeId) await this.applyDraftMode(opts.modeId);
     if (opts.agentOwned) await this.applyAgentOwned(opts.agentOwned);
-    if (opts.configChoices) await this.applyChoices(opts.configChoices);
+    if (opts.configChoices) await this.applyChoices(opts.configChoices, opts.modeId);
   }
 
   /**
@@ -1037,16 +1037,28 @@ export class AcpBridge {
     }
   }
 
-  private async applyChoices(choices: Record<string, string | boolean>): Promise<void> {
+  private async applyChoices(
+    choices: Record<string, string | boolean>,
+    draftModeId?: string,
+  ): Promise<void> {
     /* A draft's mode pick that also arrived as a config choice (a stale twin
        entry, or a caller that wrote both) must not land after `applyDraftMode`
        and move the mode back: the twin is the same knob on the other channel.
        The draft mode wins because it was picked against the live `modes`
-       list; anything else is replayed as usual. */
+       list. A twin pick with *no* draft mode beside it is the mode pick — a
+       draft that only knew the option (a probe that answered no `modes`)
+       said it the only way it could — so it goes through the mode door
+       rather than being dropped; anything else is replayed as usual. */
     const modeIds = new Set(this.modes?.availableModes.map((m) => m.id) ?? []);
     for (const [configId, value] of Object.entries(choices)) {
       const option = this.configOptions.find((o) => o.id === configId);
-      if (option && isModeTwin(option, modeIds)) continue;
+      if (option && isModeTwin(option, modeIds)) {
+        if (!draftModeId && typeof value === "string") await this.applyDraftMode(value);
+        continue;
+      }
+      /* The draft sends every option it showed, not only the picks, so most
+         of these already stand: one round trip each is worth skipping. */
+      if (option && option.currentValue === value) continue;
       try {
         await this.setConfigOption(configId, value);
       } catch (error) {

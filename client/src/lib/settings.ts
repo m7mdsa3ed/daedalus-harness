@@ -5,6 +5,7 @@
 
 import { uuid } from "./uuid"
 import { clearPersistedCache } from "./queries/persist"
+import { clearDraftSessions } from "./draft-sessions"
 import { clearLayout } from "./workspace/layout"
 
 export interface ServerSettings {
@@ -127,6 +128,8 @@ export function removeServer(id: string): void {
   const servers = store.servers.filter((s) => s.id !== id)
   write({ servers, activeId: store.activeId === id ? (servers[0]?.id ?? null) : store.activeId })
   clearLayout(id)
+  // Its unsent threads too: their ids were minted against that server.
+  clearDraftSessions(id)
   // Its cached description goes with its credentials: the rows are no use
   // without a token to refresh them. See lib/queries/persist.
   clearPersistedCache(id)
@@ -271,6 +274,9 @@ export interface AgentStatus {
   protocolVersion: number | null
   agent: { name: string; title: string | null; version: string | null } | null
   error: string | null
+  /** The newest published version, when the row's install line names an npm
+      package. Null means "not askable", never "up to date". */
+  latest: string | null
   checkedAt: number
 }
 

@@ -16,6 +16,21 @@
    difference between "I typed that a moment ago" and a message parked on an
    archived thread since yesterday.
 
+   ── The dash gets stronger the closer it is to going ──
+   Three weights of the one border, so the stack has a reading order without a
+   number beside each row: a message further down the queue is faint, the
+   **next** one is halfway, and a **steer** — already on the wire — is nearly
+   solid and has dropped the `opacity-90` the others wear. The state pill is
+   the same shape for both states, and the steer's dot pulses, because that
+   one is a thing happening rather than a thing waiting.
+
+   ── The caption is a caption, and the actions are one object ──
+   Four ghost buttons, a pill and a time all loose on one 10px line read as
+   six things. The actions live in a single bordered group that fades in on
+   hover (and is simply always there where there is no hover to fade with —
+   the **pointer's** question, not the width's), so the caption itself is only
+   ever what it says it is: state, then time.
+
    ── Editing takes it back ──
    There is no in-place editor. "Edit" removes the message from the queue and
    puts its words back in the composer, which is where a message is composed:
@@ -44,14 +59,25 @@ import { Button } from "@/components/ui/button"
 import { Message, MessageContent } from "@/components/ui/message"
 import { Timestamp } from "@/components/tool-parts"
 import { UserMessageText } from "@/components/thread-items"
+import { useCoarsePointer } from "@/hooks/use-device"
 import type { Actions } from "@/lib/actions"
 import type { ThreadState } from "@/lib/store"
 import { formatBytes } from "@/lib/attachments"
 import { cn } from "@/lib/utils"
 
-/* Taller on a phone, where it is a thumb rather than a cursor. */
-const ROW_BUTTON = "h-7 shrink-0 gap-1 rounded-md px-2 text-[11px] sm:h-6"
-const ICON_BUTTON = "size-7 sm:size-6"
+/* One object, not four: the actions ride in a bordered group so a row's
+   caption reads as [actions] [state] [time] and not as six loose 10px things.
+   Same shell for the whole-queue pair on the rule, so the two halves of this
+   surface are visibly the same kind of control. */
+const ACTION_GROUP =
+  "flex shrink-0 items-center gap-0.5 rounded-pill border border-border/60 bg-background/80 p-0.5 shadow-xs backdrop-blur-sm"
+/* Taller on a finger than under a cursor — the device's question, not the
+   panel width's. */
+const ROW_BUTTON = "shrink-0 gap-1 rounded-pill px-2 text-[11px]"
+/* The state pill: one shape for both states, so what differs between "Next"
+   and "Steering" is the word and the dot, never the geometry. */
+const STATE_PILL =
+  "flex shrink-0 items-center gap-1 rounded-pill bg-primary/10 px-1.5 py-0.5 font-medium text-primary"
 
 export function ComposerQueue({
   sessionId,
@@ -66,6 +92,7 @@ export function ComposerQueue({
       from the queue by the time this is called — see the note above. */
   onEdit: (text: string) => void
 }) {
+  const coarse = useCoarsePointer()
   const items = thread.queue
   const count = items.length
   /* A held steer is listed but already sent: "send all" and "clear" have
@@ -80,46 +107,59 @@ export function ComposerQueue({
   const canSend = !closed && !thread.archived
   const canEdit = !closed
   const running = thread.turnActive
+  /* "Send all" and "Clear" are the *plural* actions. With one editable
+      message they say exactly what its own two buttons say, one line below
+      and louder — so at that size the rule carries nothing but its label,
+      which is the common case and the quiet one. */
+  const bulk = editable.length > 1
 
   return (
     <div className="pt-1">
       {/* A rule, the same one a notice wears, rather than a header bar: what
           follows is the conversation continuing, not a panel of queued items,
           and the two actions that apply to the whole queue ride the rule
-          because there is nowhere else they belong. */}
-      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 py-2 text-[11px] text-muted-foreground/70">
-        <span aria-hidden className="h-px min-w-4 flex-1 bg-border" />
-        <span className="shrink-0">
+          because there is nowhere else they belong.
+
+          A divider with its label near the start and the growing half of the
+          rule *after* it: the label truncates and the actions never wrap, so a
+          narrow panel gets a shorter rule rather than a 16px stub of dash with
+          two orphaned buttons under it. */}
+      <div className="flex items-center gap-2.5 py-2 text-[11px] text-muted-foreground/70">
+        <span aria-hidden className="h-px w-4 shrink-0 bg-border" />
+        <span className="min-w-0 truncate">
           {count === 1 ? "1 message" : `${count} messages`}{" "}
           {running ? "waiting for this turn" : "waiting to be sent"}
         </span>
-        <span className="flex shrink-0 items-center gap-1">
-          <Button
-            variant="ghost"
-            size="xs"
-            className={cn(ROW_BUTTON, "text-primary hover:text-primary")}
-            disabled={!canSend || editable.length === 0}
-            title={
-              running
-                ? "Stop the running turn and send everything queued as one message"
-                : "Send everything queued as one message"
-            }
-            onClick={() => void actions.queueSendNow(sessionId).catch(() => {})}
-          >
-            <SendHorizontalIcon />
-            {running ? "Send all now" : "Send all"}
-          </Button>
-          <Button
-            variant="ghost"
-            size="xs"
-            className={cn(ROW_BUTTON, "text-muted-foreground")}
-            disabled={!canEdit || editable.length === 0}
-            title="Forget every queued message"
-            onClick={() => void actions.queueClear(sessionId).catch(() => {})}
-          >
-            Clear
-          </Button>
-        </span>
+        <span aria-hidden className="h-px min-w-2 flex-1 bg-border" />
+        {bulk && (
+          <span className={ACTION_GROUP}>
+            <Button
+              variant="ghost"
+              size={coarse ? "sm" : "xs"}
+              className={cn(ROW_BUTTON, "text-primary hover:text-primary")}
+              disabled={!canSend}
+              title={
+                running
+                  ? "Stop the running turn and send everything queued as one message"
+                  : "Send everything queued as one message"
+              }
+              onClick={() => void actions.queueSendNow(sessionId).catch(() => {})}
+            >
+              <SendHorizontalIcon />
+              {running ? "Send all now" : "Send all"}
+            </Button>
+            <Button
+              variant="ghost"
+              size={coarse ? "sm" : "xs"}
+              className={cn(ROW_BUTTON, "text-muted-foreground")}
+              disabled={!canEdit}
+              title="Forget every queued message"
+              onClick={() => void actions.queueClear(sessionId).catch(() => {})}
+            >
+              Clear
+            </Button>
+          </span>
+        )}
       </div>
       {items.map((item) => (
         <QueuedMessageRow
@@ -159,6 +199,7 @@ function QueuedMessageRow({
   running: boolean
 }) {
   const [busy, setBusy] = React.useState(false)
+  const coarse = useCoarsePointer()
 
   const run = (op: Promise<unknown>) => {
     setBusy(true)
@@ -180,18 +221,28 @@ function QueuedMessageRow({
       align="end"
       aria-busy={busy || undefined}
       className={cn(
-        "group/queued flex-col items-end gap-0.5 py-2 transition-opacity",
+        /* Tighter than a sent message's `py-2`: consecutive queued rows are one
+           block of things about to happen, not four unrelated messages. */
+        "group/queued flex-col items-end gap-1 py-1 transition-opacity",
         busy && "opacity-50"
       )}
     >
       <MessageContent>
         {/* The sent message's own bubble, dashed: same tint, same corner tail,
             same 80% cap, so what changes when it goes is one border and not
-            the shape of the thing you wrote. */}
-        <Bubble variant="tinted" align="end" className="opacity-90">
+            the shape of the thing you wrote. The dash's *weight* is how far
+            down the queue it is — see the note at the top of the file. */}
+        <Bubble variant="tinted" align="end" className={cn(!item.steer && "opacity-90")}>
           <BubbleContent
             dir="auto"
-            className="rounded-2xl rounded-br-sm border border-dashed border-primary/40 px-4 py-2.5 text-sm dark:border-primary/30"
+            className={cn(
+              "rounded-2xl rounded-br-sm border border-dashed px-4 py-2.5 text-sm",
+              item.steer
+                ? "border-primary/70 dark:border-primary/60"
+                : next
+                  ? "border-primary/45 dark:border-primary/35"
+                  : "border-primary/25 dark:border-primary/20"
+            )}
           >
             {item.attachments && item.attachments.length > 0 && (
               <QueuedAttachments
@@ -215,16 +266,24 @@ function QueuedMessageRow({
       </MessageContent>
       {/* State, time, and the actions — under the bubble on the same right
           edge a timestamp uses, so the row reads as one object. The actions
-          are revealed on hover on a pointer and always drawn on a phone, where
-          there is no hover to reveal them with. Focus counts as hover, or the
-          row would be unusable from the keyboard. */}
+          are revealed on hover under a cursor and always drawn where there is
+          no hover to reveal them with — the *pointer's* question, not the
+          panel width's. Focus counts as hover, or the row would be unusable
+          from the keyboard. */}
       <div className="flex items-center gap-1.5 pe-1 text-[10px] text-muted-foreground/60">
         {!item.steer && (
-          <span className="flex items-center gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover/queued:opacity-100 sm:group-focus-within/queued:opacity-100">
+          <span
+            className={cn(
+              ACTION_GROUP,
+              "transition-opacity",
+              !coarse &&
+                "opacity-0 group-hover/queued:opacity-100 group-focus-within/queued:opacity-100"
+            )}
+          >
             <Button
               variant="ghost"
-              size="icon-xs"
-              className={cn(ICON_BUTTON, "text-primary hover:text-primary")}
+              size={coarse ? "icon-sm" : "icon-xs"}
+              className="rounded-pill text-primary hover:text-primary"
               disabled={!canSend || busy}
               title={running ? "Stop the running turn and send this now" : "Send this now"}
               onClick={() => run(actions.queueSendNow(sessionId, item.id))}
@@ -234,8 +293,8 @@ function QueuedMessageRow({
             {running && (
               <Button
                 variant="ghost"
-                size="icon-xs"
-                className={ICON_BUTTON}
+                size={coarse ? "icon-sm" : "icon-xs"}
+                className="rounded-pill"
                 disabled={!canSend || busy}
                 title="Steer: send this into the running turn without stopping it"
                 onClick={() => run(actions.queueSteer(sessionId, item.id))}
@@ -245,8 +304,8 @@ function QueuedMessageRow({
             )}
             <Button
               variant="ghost"
-              size="icon-xs"
-              className={ICON_BUTTON}
+              size={coarse ? "icon-sm" : "icon-xs"}
+              className="rounded-pill"
               disabled={!canEdit || busy}
               title="Take it back to the composer — this removes it from the queue"
               onClick={edit}
@@ -255,8 +314,8 @@ function QueuedMessageRow({
             </Button>
             <Button
               variant="ghost"
-              size="icon-xs"
-              className={cn(ICON_BUTTON, "text-muted-foreground hover:text-destructive")}
+              size={coarse ? "icon-sm" : "icon-xs"}
+              className="rounded-pill text-muted-foreground hover:text-destructive"
               disabled={!canEdit || busy}
               title="Remove"
               onClick={() => run(actions.queueRemove(sessionId, item.id))}
@@ -269,13 +328,19 @@ function QueuedMessageRow({
           /* Already on the wire, joining the running turn at its next step
              boundary — which is where its bubble will land. Until then this
              row is the only place the words are, which is also why it has no
-             actions: there is nothing left to take back. */
-          <span className="flex items-center gap-0.5 rounded bg-primary/10 px-1 font-medium text-primary">
-            <CornerDownRightIcon aria-hidden className="size-2.5" />
+             actions: there is nothing left to take back. The dot pulses
+             because this one is happening, not waiting. */
+          <span className={STATE_PILL}>
+            <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-primary" />
             Steering
           </span>
         ) : (
-          next && <span className="rounded bg-primary/10 px-1 font-medium text-primary">Next</span>
+          next && (
+            <span className={STATE_PILL}>
+              <span aria-hidden className="size-1.5 rounded-full bg-primary/50" />
+              Next
+            </span>
+          )
         )}
         <Timestamp at={item.createdAt} className="text-[10px]" />
       </div>

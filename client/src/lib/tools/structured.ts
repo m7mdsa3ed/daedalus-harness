@@ -36,7 +36,11 @@ export interface ToolQuestion {
 export function extractQuestions(
   item: Pick<ToolItem, "title" | "meta" | "rawInput" | "rawOutput" | "content">
 ): ToolQuestion[] | null {
-  if (!isOneOf(item, ["askuserquestion", "ask_user_question", "question", "ask"])) return null
+  /* `ask_user` is the harness's own runtime (`agent/src/tools/ask-user.ts`),
+     and its absence here is why the one tool we ship ourselves was the one
+     rendering as a JSON dump of the form the reader had just filled in. */
+  if (!isOneOf(item, ["askuserquestion", "ask_user_question", "ask_user", "question", "ask"]))
+    return null
   const raw = asRecord(item.rawInput)?.questions
   if (!Array.isArray(raw)) return null
   const answers = collectAnswers(item)
@@ -85,11 +89,15 @@ function collectAnswers(item: Pick<ToolItem, "meta" | "rawInput" | "rawOutput" |
   const byIndex: string[][] = []
   const notes = new Map<string, string>()
 
-  for (const source of answerSources(item)) {
+  const text = answerText(item)
+  for (const source of answerSources(item, text)) {
     const record = asRecord(source)
     readAnswers(record ? (record.answers ?? record) : source, byKey, byIndex)
     readNotes(record?.annotations, notes)
   }
+  /* Last, and only into what the structured sources left empty: a runtime that
+     sends both means the one with a schema. */
+  readArrowAnswers(text, byKey, byIndex)
 
   const lookup = (question: string, header: string | undefined) =>
     byKey.get(question) ?? (header ? byKey.get(header) : undefined)
@@ -99,12 +107,20 @@ function collectAnswers(item: Pick<ToolItem, "meta" | "rawInput" | "rawOutput" |
   }
 }
 
+/** Whatever the call reported back, as text — the last resort for both readers
+    below, and computed once because both want it. */
+function answerText(item: Pick<ToolItem, "rawOutput" | "content">): string {
+  return stringifyOutput(item.rawOutput ?? contentText(item.content), 20_000).text
+}
+
 /** Everything that might carry the answers, nearest first. Records and arrays
     both — `readAnswers` knows the two shapes. */
-function answerSources(item: Pick<ToolItem, "meta" | "rawInput" | "rawOutput" | "content">): unknown[] {
+function answerSources(
+  item: Pick<ToolItem, "meta" | "rawInput" | "rawOutput" | "content">,
+  text: string
+): unknown[] {
   const raw = asRecord(item.rawOutput)
   const codex = asRecord(raw?.result)
-  const text = stringifyOutput(item.rawOutput ?? contentText(item.content), 20_000).text
   return [
     asRecord(item.rawInput),
     asRecord(codex?.structuredContent),
@@ -135,6 +151,39 @@ function readAnswers(value: unknown, byKey: Map<string, string[]>, byIndex: stri
     const picked = answerValues(entry)
     if (picked && !byKey.has(key)) byKey.set(key, picked)
   }
+}
+
+/* ── The arrow form ──
+   Our own runtime answers a question by handing the model back the exchange as
+   prose: `question\n→ answer`, one block per question, a blank line between
+   (`agent/src/tools/ask-user.ts`). That is the right shape for the *model* —
+   it reads the reply as text — and it is the only shape that names the
+   question and the answer together without a schema, which is what makes it
+   readable here rather than a guess.
+
+   Nothing above can see it. Every other source is a record or an array, and
+   the `parseJson` fallback declines a string that is not JSON, so a settled
+   `ask_user` listed four options and said nothing about which one the reader
+   had chosen — the transcript of a question with the reply cut out of it,
+   which is the exact failure the `answer` field was added to fix. */
+const ARROW_BLOCK_RE = /^([\s\S]+?)\n[ \t]*→[ \t]*([\s\S]+)$/
+
+function readArrowAnswers(text: string, byKey: Map<string, string[]>, byIndex: string[][]): void {
+  if (!text.includes("→")) return
+  /* The block's position IS the question's: the runtime emits exactly one
+     block per question, in order, so a positional read is sound even where the
+     prompt was rewritten and the text no longer matches the input's. */
+  text.split(/\n[ \t]*\n/).forEach((block, index) => {
+    const match = ARROW_BLOCK_RE.exec(block.trim())
+    if (!match) return
+    const question = match[1].trim()
+    const answer = match[2].trim()
+    // The runtime's own placeholder for a field the reader left blank. It is
+    // not an answer, and drawing it as one would put a tick beside nothing.
+    if (!question || !answer || answer === "(no answer)") return
+    if (!byKey.has(question)) byKey.set(question, [answer])
+    if (byIndex[index] === undefined) byIndex[index] = [answer]
+  })
 }
 
 function readNotes(value: unknown, notes: Map<string, string>): void {

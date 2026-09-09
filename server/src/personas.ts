@@ -209,6 +209,45 @@ const SEED_PERSONAS: SeedPersona[] = [
     ].join("\n"),
   },
   {
+    since: 2,
+    introduced: 2,
+    id: "builtin:rebuild",
+    name: "Rebuild from scratch",
+    description: "Delete the current implementation and write it again to the new spec. No patching, no compat layers.",
+    sortOrder: 45,
+    thinking: 24_000,
+    effort: "high",
+    prompt: [
+      "This thread replaces an implementation; it does not fix or refactor one. The",
+      "user has new instructions for how something should work, and the result must",
+      "read as if it had been built that way from the first commit.",
+      "",
+      "First, learn the contract, not the code: who calls the thing being replaced,",
+      "what goes in, what comes out, what the tests and docs promise, and where its",
+      "boundary is. Read the old implementation only to extract that contract and to",
+      "list every file it touches. Do not copy its structure, its names, its helpers",
+      "or its workarounds — assume its design is the reason it is being replaced.",
+      "",
+      "Then delete it and write the replacement from the new instructions alone.",
+      "Remove the old files, functions, types, flags and comments outright; do not",
+      "leave a `legacy` path, a shim, an adapter, a feature flag, a `// removed` note",
+      "or a compatibility layer, and do not keep an old branch \"just in case\". If",
+      "the new logic makes an old concept meaningless, the concept goes too. Rewrite",
+      "the callers, the tests and the docs so they describe only what now exists.",
+      "",
+      "Stay inside the boundary you found. Rebuild the thing asked for, not everything",
+      "next to it; a caller changes only where the new contract forces it to. Keep",
+      "what the user did not ask to change: data on disk, the wire protocol, public",
+      "routes and the rest of the codebase's rules — a rewrite is not a schema",
+      "migration unless the new instructions say it is.",
+      "",
+      "Finish whole. Search for every remaining reference to what you removed and",
+      "clear it, run the typecheck and the tests, and report what was deleted, what",
+      "replaced it, and anything in the old contract the new instructions did not",
+      "cover so the user can decide.",
+    ].join("\n"),
+  },
+  {
     since: 1,
     introduced: 1,
     id: "builtin:lazy",
@@ -418,14 +457,14 @@ export async function resolvePersonaSpawn(
 export const SUGGEST_FOLLOWUPS_FENCE = "suggest-prompts";
 
 /** Trailer appended to the spawn instructions while a thread wants suggestions. */
-export const SUGGEST_FOLLOWUPS_INSTRUCTIONS = `After your final answer, suggest 2-3 natural follow-up prompts the user may want to ask next. Emit them as one fenced block named \`${SUGGEST_FOLLOWUPS_FENCE}\`, one prompt per line, with no other text inside the fence:
+export const SUGGEST_FOLLOWUPS_INSTRUCTIONS = `After your final answer, suggest 2-3 follow-up prompts the user might want to send next. Emit them as one fenced block named \`${SUGGEST_FOLLOWUPS_FENCE}\`, one prompt per line, with no other text inside the fence:
 
 \`\`\`${SUGGEST_FOLLOWUPS_FENCE}
 <first follow-up prompt>
 <second follow-up prompt>
 \`\`\`
 
-Omit the block when no follow-up makes sense. Never put anything but follow-up prompts in it.`;
+Every prompt is a message the USER would type next, written so it can be sent as-is — a command or a question the user asks of you ("Show me the diff", "Merge the two servers via backup import", "What happens if two servers' projects conflict?"). Write them in the user's voice, never in yours. In particular, do not put your own questions to the user in the block: if you need their input to proceed, ask it in your answer's prose. Omit the block when no follow-up makes sense — for example when your answer has already asked the user what it needs to know, or nothing natural remains to suggest. Never put anything but follow-up prompts in it.`;
 
 /**
  * The spawn instructions for a thread: its persona, plus the suggestions

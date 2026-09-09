@@ -17,7 +17,7 @@ import type { Project } from "../src/projects.js";
 import { configureGatewayShim } from "../src/gateway-shim.js";
 import { getAgent, isBuiltInAgent, resetAgent, resolveSpawn, seedAgents, updateAgent } from "../src/registry.js";
 import type { PersonaSpawn } from "../src/personas.js";
-import { checkInstalled, locateCommand } from "../src/agent-status.js";
+import { checkInstalled, locateCommand, npmPackage } from "../src/agent-status.js";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -725,3 +725,11 @@ test("checkInstalled names what is missing — the command, or a file the args p
 console.log(`registry: ${passed} passed, ${failures.length} failed`);
 for (const failure of failures) console.error(`\nFAIL ${failure}`);
 process.exit(failures.length ? 1 : 0);
+
+test("npmPackage reads the package off an install line, and only an npm one", () => {
+  assert.equal(npmPackage("npm install -g @agentclientprotocol/claude-agent-acp"), "@agentclientprotocol/claude-agent-acp");
+  assert.equal(npmPackage("npm i -g codex-acp@1.7.0"), "codex-acp");
+  assert.equal(npmPackage("curl -fsSL https://opencode.ai/install | bash"), null);
+  assert.equal(npmPackage("pnpm --dir agent install && pnpm --dir agent build"), null);
+  assert.equal(npmPackage(null), null);
+});

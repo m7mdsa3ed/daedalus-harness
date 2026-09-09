@@ -2,7 +2,7 @@
    The boxes every tool view is built out of: the panes, the code blocks, the
    markdown renderer, the content-block switch. They live apart from
    `thread-items.tsx` (which owns the transcript's own rows) and from
-   `tool-views.tsx` (which owns one layout per kind of tool) so that the two
+   `tool-views/` (which owns one layout per kind of tool) so that the two
    can share them without importing each other — a tool view needs a pane, and
    the transcript needs to draw a tool view, and a cycle between those two is
    what splitting this file out of the middle avoids. */
@@ -30,6 +30,7 @@ import {
   Trash2Icon,
 } from "lucide-react"
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { CopyButton } from "@/components/ui/copy-button"
 import { DiffView } from "@/components/ui/diff-view"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { isPlainClick, useThreadLinks } from "@/lib/workspace/thread-links"
@@ -47,7 +48,7 @@ import type { ToolItem } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { useViewOptionsContext } from "@/lib/view-options"
 import { writeClipboard } from "@/lib/clipboard"
-import { useCoarsePointer } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-device"
 
 export const KIND_LABELS: Record<string, string> = {
   read: "read",
@@ -631,13 +632,16 @@ export function CodeBlock({
   tone?: "error"
   language?: string
 }) {
-  return (
+  const pane = (
     <div
       className={cn(
         PANE_MAX_H,
         "w-fit max-w-full overflow-auto",
         tone === "error"
-          ? "rounded-md border border-destructive/40 bg-destructive/5 px-2.5 py-2 text-destructive"
+          ? /* `pr-9` reserves the corner the copy below floats in, so a long
+               single-line stack trace is not read with its tail under a
+               button. */
+            "rounded-md border border-destructive/40 bg-destructive/5 py-2 pl-2.5 pr-9 text-destructive"
           : PANE_PAD
       )}
     >
@@ -648,6 +652,25 @@ export function CodeBlock({
       ) : (
         <Highlighted code={children} language={tone === "error" ? undefined : language} />
       )}
+    </div>
+  )
+  if (tone !== "error") return pane
+  /* The one place every failed tool call ends up — an MCP error, a non-zero
+     bash run, a failed read, a fetch that 500'd all arrive here through
+     `SmartBlock`, so the copy they each needed is written once.
+
+     Outside the pane, not in it: the pane is the scroll container, and a
+     button positioned inside one scrolls away with the stack trace it is meant
+     to lift out. Always drawn rather than revealed on hover, because a
+     failure is read on touch as often as with a pointer. */
+  return (
+    <div className="relative w-fit max-w-full">
+      {pane}
+      <CopyButton
+        text={children}
+        size="icon-xs"
+        className="absolute top-1 right-1 bg-destructive/5 text-destructive/70 backdrop-blur-sm hover:bg-destructive/15 hover:text-destructive"
+      />
     </div>
   )
 }

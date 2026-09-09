@@ -10,7 +10,7 @@ import {
   updateProfile,
 } from "../profiles.js";
 import { AgentInputSchema, getAgent, isBuiltInAgent, listAgents, resetAgent, updateAgent } from "../registry.js";
-import { evictAgentStatus, getAgentsStatus } from "../agent-status.js";
+import { evictAgentStatus, getAgentsStatus, installAgent } from "../agent-status.js";
 import { getProject } from "../projects.js";
 import { probeAgentOptions } from "../probe.js";
 import { modelsDevProviders, searchModelsDev, toCandidate } from "../models-dev.js";
@@ -45,6 +45,19 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
   app.get("/api/agents/status", async (c) =>
     c.json(await getAgentsStatus(await listAgents(), { refresh: c.req.query("refresh") === "1" })),
   );
+  /* Run the row's own install line, which is the same string the page has
+     always offered to copy — installing and updating are one door, because
+     `npm install -g` is the same command either way. The status cache is
+     evicted by the runner, so the page's re-check reads the new binary. */
+  app.post("/api/agents/:id/install", async (c) => {
+    const agent = await getAgent(c.req.param("id"));
+    if (!agent) return c.json({ error: "not found" }, 404);
+    const result = await installAgent(agent);
+    /* A failure leaves through the same `{ error }` door every route throw
+       does, carrying the command's own output — which is the only thing that
+       says *why* an install failed. */
+    return result.ok ? c.json(result) : c.json({ error: result.output }, 500);
+  });
   const agentCrud = crud(AgentInputSchema);
   app.put(
     "/api/agents/:id",
