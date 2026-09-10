@@ -523,9 +523,14 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
   });
 
   app.patch("/api/sessions/:id", async (c) => {
-    const { title } = await c.req.json();
-    if (typeof title !== "string") return c.json({ error: "title must be a string" }, 400);
+    const { title, pinned } = await c.req.json();
     if (!sessions.get(c.req.param("id"))) return c.json({ error: "not found" }, 404);
+    // Pinning is the other thing this row edits, and it travels alone: a menu
+    // toggling a pin has no title to send.
+    if (typeof pinned === "boolean" && title === undefined) {
+      return c.json({ pinnedAt: sessions.setPinned(c.req.param("id"), pinned) ?? null });
+    }
+    if (typeof title !== "string") return c.json({ error: "title must be a string" }, 400);
     const named = sessions.rename(c.req.param("id"), title);
     // The row exists, so the only way back is an empty name — which is a bad
     // request, not a missing thread.

@@ -260,9 +260,11 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   the shape, never the key.
 - **⌘K's root page never asks the server**; searching is a destination owning its own query,
   debounce and abort. Rows are data, not JSX, and cmdk's own filter is off.
-- Device-local state lives in tiny stores (`lib/drafts.ts`, `lib/pins.ts`,
-  `lib/view-options.ts`, `lib/keybindings.ts`) — how a transcript is drawn is the reader's
-  property, not the conversation's.
+- Device-local state lives in tiny stores (`lib/drafts.ts`, `lib/view-options.ts`,
+  `lib/keybindings.ts`) — how a transcript is drawn is the reader's property, not the
+  conversation's. **A pin is not one of them**: it is a fact about the thread
+  (`sessions.pinned_at`, `PATCH /api/sessions/:id {pinned}`), so it follows the thread to
+  every device, and its timestamp is the order the pinned group is drawn in.
 - **"New thread" always creates a thread**: every door — ⌘N, the sidebar row, the strip's `+`,
   the palette, a project's own `+`, the app shortcut — mints a draft through the one
   `actions.startThreadIn` and opens it as a tab of its own, so pressing it twice is two

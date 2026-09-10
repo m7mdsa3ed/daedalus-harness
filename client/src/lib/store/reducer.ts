@@ -153,6 +153,7 @@ export type Action =
   | { type: "session-title"; id: string; title: string }
   | { type: "agent-session-title"; id: string; title: string }
   | { type: "rename-session"; id: string; title: string }
+  | { type: "pin-session"; id: string; pinnedAt: number | null }
   /** Absolute state, with one hole: an event may carry modes and leave the
       options out, which means "unchanged" and not "none". The reducer is where
       that is resolved, because during a batched replay the caller cannot read
@@ -521,6 +522,15 @@ export function reducer(state: State, action: Action): State {
         ...state,
         sessions: state.sessions.map((s) =>
           s.id === action.id ? { ...s, title: action.title } : s
+        ),
+      }
+    /* The pin is the server's row; this is the same answer drawn before the
+       list is read back, exactly as a rename is. */
+    case "pin-session":
+      return {
+        ...state,
+        sessions: state.sessions.map((s) =>
+          s.id === action.id ? { ...s, pinnedAt: action.pinnedAt } : s
         ),
       }
     case "session-config":

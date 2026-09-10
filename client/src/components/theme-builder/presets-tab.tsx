@@ -60,7 +60,7 @@ export function PresetsTab({
             stays editable afterwards.
           </FieldDescription>
         </div>
-        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-1.5 @panel-sm:grid-cols-3">
           {STYLE_PRESETS.map((preset) => (
             <button
               key={preset.id}
@@ -93,7 +93,7 @@ export function PresetsTab({
             that goes with it — Revert undoes the whole thing.
           </FieldDescription>
         </div>
-        <div className="grid gap-1.5 sm:grid-cols-2">
+        <div className="grid gap-1.5 @panel-sm:grid-cols-2">
           {COLOR_SCHEMES.map((scheme) => (
             <button
               key={scheme.id}

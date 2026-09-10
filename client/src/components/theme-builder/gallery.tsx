@@ -45,7 +45,7 @@ export function ThemeGallery() {
           Built-ins ship with the app; your themes are saved to the server and followed across devices.
         </p>
       </div>
-      <div className="grid grid-cols-2 gap-2 p-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 p-2 @panel-sm:grid-cols-3 @panel-md:grid-cols-4 @panel-lg:grid-cols-5">
         {BUILTIN_THEMES.map(({ value, label, note }) => (
           <ThemeCard
             key={value}

@@ -780,6 +780,11 @@ export const sessions = pgTable(
     /** Epoch ms this thread was deleted; null = live. Deleted threads keep
         their row (and their acpSessionId) so a delete stays undoable. */
     deletedAt: bigint("deleted_at", { mode: "number" }),
+    /** Epoch ms this thread was pinned; null = not pinned. A pin is the
+        server's, not the device's: the thread you pinned on the laptop is
+        pinned on the phone. The timestamp is also the order — oldest pin
+        first, so the group you built by hand stays where you put it. */
+    pinnedAt: bigint("pinned_at", { mode: "number" }),
     /** The thread this one is a workflow step of (`workflows.ts`), else null.
         Indexed, and NOT a foreign key like the three above — but for a different
         reason: an SQL cascade would delete the children's rows underneath the

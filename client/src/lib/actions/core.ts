@@ -11,7 +11,6 @@ import type { QueryClient } from "@tanstack/react-query"
 import { pruneDrafts } from "../drafts"
 import { prunePastes } from "../pastes"
 import { pruneDraftAttachments } from "../draft-attachments"
-import { prunePins } from "../pins"
 import { loadDraftSessions, pruneDraftSessions } from "../draft-sessions"
 import { loadLayout } from "../workspace/layout"
 import { panelId } from "../workspace/panels"
@@ -243,7 +242,6 @@ export function createCore(deps: CoreDeps) {
     pruneDrafts(ids)
     prunePastes(ids)
     pruneDraftAttachments(ids)
-    prunePins(ids)
     /* And the draft rows themselves: an id the server reports is a thread that
        has been sent (here or on another device), so its row stops being this
        device's to bring back. Drafts still unknown to the server stay. */

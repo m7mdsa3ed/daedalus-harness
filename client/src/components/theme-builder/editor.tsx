@@ -254,7 +254,7 @@ function ThemeEditor({
           thumbnail: this page runs at the settings frame's full width
           (settingsMaxWidth in settings/sections.ts), and the mock is the half
           that benefits from it. */}
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] lg:items-start xl:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(0,32rem)] 2xl:gap-6">
+      <div className="grid gap-4 @panel-lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] @panel-lg:items-start @panel-xl:grid-cols-[minmax(0,1fr)_minmax(0,28rem)] @panel-xl:gap-6">
         {/* Controls */}
         <div className="flex min-w-0 flex-col gap-4">
           <Field>
@@ -290,7 +290,7 @@ function ThemeEditor({
                 hold a label plus both mode fields twice over (~350px each);
                 below that the pair wraps, and the light/dark comparison is the
                 one thing this grid exists for. */}
-            <TabsContent value="color" className="grid items-start gap-4 pt-3 2xl:grid-cols-2">
+            <TabsContent value="color" className="grid items-start gap-4 pt-3 @panel-xl:grid-cols-2">
               {THEME_TOKEN_GROUPS.map((group) => (
                 <FieldSet key={group.label} className="gap-3">
                   <div className="flex items-end justify-between gap-3">
@@ -302,7 +302,7 @@ function ThemeEditor({
                     </div>
                     {/* Column headers, once per group: the two fields on every
                         row below are the same token in the two modes. */}
-                    <div className="hidden shrink-0 gap-2 text-[11px] tracking-wide text-muted-foreground uppercase sm:flex">
+                    <div className="hidden shrink-0 gap-2 text-[11px] tracking-wide text-muted-foreground uppercase @panel-sm:flex">
                       {MODES.map((mode) => (
                         <span key={mode} className="w-32 text-center">
                           {mode}
@@ -312,13 +312,20 @@ function ThemeEditor({
                   </div>
                   <ItemGroup className="gap-0.5 rounded-xl border p-1">
                     {group.tokens.map(({ token, label }) => (
-                      <Item key={token} size="xs" className="gap-2 rounded-lg py-1.5">
-                        <ItemContent>
+                      <Item
+                        key={token}
+                        size="xs"
+                        // Stacked below the split: the label over the pair,
+                        // each field filling half the row. Side by side the
+                        // moment there is room for a name plus two swatches.
+                        className="flex-col items-stretch gap-1.5 rounded-lg py-2 @panel-sm:flex-row @panel-sm:items-center @panel-sm:gap-2 @panel-sm:py-1.5"
+                      >
+                        <ItemContent className="min-w-0">
                           <ItemTitle className="text-xs font-normal" title={`--${token}`}>
                             {label}
                           </ItemTitle>
                         </ItemContent>
-                        <ItemActions className="gap-2">
+                        <ItemActions className="gap-2 [&>*]:min-w-0 [&>*]:flex-1 @panel-sm:[&>*]:flex-none">
                           {MODES.map((mode) => (
                             <TokenField
                               key={mode}
@@ -373,11 +380,22 @@ function ThemeEditor({
           </footer>
         </div>
 
-        {/* Preview. First on a phone (there is one column, and the thing being
-            described should precede the controls that describe it); beside the
-            controls and sticky from lg up, where it can stay in view for the
-            whole length of the Color tab. */}
-        <aside className="order-first min-w-0 lg:order-none lg:sticky lg:top-2 lg:max-h-[calc(var(--panel-h,100svh)-1rem)] lg:overflow-y-auto lg:pb-2">
+        {/* Preview. Beside the controls and sticky from the split up, where it
+            stays in view for the whole length of the Color tab.
+
+            Below the split it is still sticky — pinned to the top of the panel
+            rather than to the side — because a preview that scrolls away is a
+            preview you edit blind, which is the single thing this layout
+            exists to prevent. It sticks under whatever the app header covers
+            of *this* panel (`--dock-content-overlap`, measured per panel), and
+            it carries its own surface, so the controls scroll under it rather
+            than through it. */}
+        <aside
+          className={cn(
+            "order-first sticky top-[var(--dock-content-overlap,0px)] z-20 min-w-0 rounded-xl border bg-surface/95 p-2 shadow-glass backdrop-blur",
+            "@panel-lg:order-none @panel-lg:top-2 @panel-lg:max-h-[calc(var(--panel-h,100svh)-1rem)] @panel-lg:overflow-y-auto @panel-lg:rounded-none @panel-lg:border-0 @panel-lg:bg-transparent @panel-lg:p-0 @panel-lg:pb-2 @panel-lg:shadow-none @panel-lg:backdrop-blur-none"
+          )}
+        >
           <PreviewPane theme={theme} worn={worn} />
         </aside>
       </div>

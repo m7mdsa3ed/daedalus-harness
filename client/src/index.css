@@ -112,6 +112,12 @@
      lay out like one. */
   --container-panel-sm: 40rem;
   --container-panel-md: 48rem;
+  /* Two more, for the surfaces that are wide layouts rather than one column —
+     the theme studio's controls-beside-preview split and its two-up token grid.
+     Same rule: the pixel values of `lg:` and `xl:`, because they replace media
+     queries written against those numbers. */
+  --container-panel-lg: 64rem;
+  --container-panel-xl: 80rem;
 }
 
 :root {
@@ -135,6 +141,24 @@
      no dark override for the two shadows here. */
   --app-radius-pill: calc(infinity * 1px);
   --app-blur: 14px;
+  /* The three axes a theme can move that are neither a colour nor a shape.
+
+     `--app-font-size` is the root font size, so it scales the *whole* app —
+     every size in this stylesheet is a rem, including `--app-header-h` and the
+     measure — rather than only body copy. A percentage, not a px, so a reader
+     who has raised their browser's default keeps it.
+
+     `--app-ground-step` scales how far the shell's tint sits off the page
+     (`--app-ground`, declared per mode below): a multiplier and not a
+     percentage, because the light and dark steps are different numbers and a
+     theme picks *how much frame*, not a value that only reads in one mode.
+
+     `--app-saturate` multiplies the backdrop saturation the glass utilities
+     apply. It does nothing at `--app-blur: 0` — vibrancy is a property of
+     frosted glass, and a theme with no glass has none to dial. */
+  --app-font-size: 100%;
+  --app-ground-step: 1;
+  --app-saturate: 1;
   --app-font-sans: var(--font-family-figtree);
   --app-font-heading: var(--app-font-sans);
   --app-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -177,7 +201,9 @@
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.942 0 0);
+  /* A step below `--app-ground` (~0.94 here): in a light palette the hovered
+     rail row darkens, and the rail's own surface is the ground. */
+  --sidebar-accent: oklch(0.9 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.91 0 0);
   --sidebar-ring: oklch(0.708 0 0);
@@ -242,10 +268,13 @@
      palette gets it for nothing. The step is small on purpose: it has to clear
      the card while staying off the sidebar's own hierarchy — `--sidebar-accent`
      (a hovered row) and `--sidebar-border` are both darker still in a light
-     palette, and a ground at their tone would erase them. Light is this
+     palette, and a ground at their tone would erase them — so the hovered row
+     moves down as this moves down, in the ramp (lib/theme-ramp.ts) and in the
+     boot palette below. 7%, not the 5% it was: the frame has to read in a 32px
+     header band and not just across a desktop gutter. Light is this
      declaration; `.dark` overrides it below, because the card sits at the
      opposite end of the ramp there. */
-  --app-ground: color-mix(in oklch, var(--background) 95%, var(--foreground) 5%);
+  --app-ground: color-mix(in oklch, var(--foreground) calc(7 * var(--app-ground-step) * 1%), var(--background));
 
   /* One content width for the whole session column. */
   --harness-chat-width: 748px;
@@ -258,12 +287,15 @@
      `--app-inset-top` is the status bar's, less a hair, and is the *sidebar
      panels'* own padding (ui/sidebar.tsx): Chrome reports the full cutout
      height and padding by all of it leaves a visibly empty band under an
-     already-tall bar. The main column no longer uses it — its top is the
-     floating header (app-shell.tsx), which spans the *full* inset and more,
-     measured by `--app-header-h`: the inset plus the header's own 2.5rem row.
+     already-tall bar. The main column's top is the floating header
+     (app-shell.tsx), measured by `--app-header-h` — and it pads by **this**
+     inset, not the raw `env()`, for the same reason: installed to the home
+     screen the app draws behind the status bar (`viewport-fit=cover`), so the
+     full inset plus a row of its own is a bar of chrome the height of two,
+     most of it empty. Trimmed by the same hair the panels take.
      Every route that scrolls under that header pads by it, so content starts
      where it always did and, once scrolled, passes beneath the header's
-     progressive blur. `--keyboard-inset` is published by lib/keyboard-inset.ts
+     transparent row. `--keyboard-inset` is published by lib/keyboard-inset.ts
      and named here only so every reader gets a 0 before the first
      measurement.
 
@@ -277,22 +309,21 @@
      follows from this one number: `--app-header-h`, the strip's own height and
      every route's `pt-[var(--app-header-h)]`. */
   --app-header-row-h: 2rem;
-  --app-header-h: calc(max(0px, env(safe-area-inset-top, 0px)) + var(--app-header-row-h));
+  --app-header-h: calc(var(--app-inset-top) + var(--app-header-row-h));
   /* The air above the header row and again between it and the card — one
      number, so the row has the same on both sides. Zero where the window's
      own caption buttons stand at the top edge (desktop, WCO): there the row
      *is* the titlebar and is sized to it, and a gutter above it would put the
      app's controls a step below the window's. */
   --app-frame-gap: 0.5rem;
-  /* Below `md` the row keeps its old 2.5rem: there is no frame gap there (the
-     card is edge to edge and starts straight under the row), so the row's own
-     air is all the padding the bar has, and 2px of it around a 28px chip
-     against the screen's top edge is a bar with no padding. A width query,
-     not a pointer one — the row is layout, and the panel width is what
-     decides it. */
-  @media (width < 48rem) {
-    --app-header-row-h: 2.5rem;
-  }
+  /* One row height on every device. Below `md` it used to be 2.5rem, on the
+     grounds that there is no frame gap there so the row's own air is all the
+     padding the bar has — which was true while the bar was a transparent strip
+     over the transcript. It stands on the shell's own tint now, with the
+     status-bar inset above it, so the air is the band's and the row is back to
+     what it takes to hold a 28px chip. In an installed PWA that row sat under
+     the *full* safe-area inset, which is where "the header is huge" came
+     from. */
   --keyboard-inset: 0px;
 
   /* ── The transcript's three work accents ──
@@ -323,9 +354,19 @@
   /* The shell steps the other way here: `--background` is the darkest tone in
      every dark palette and the content card is already `--background`, so the
      frame has to lift rather than sink. A step toward the foreground (the light
-     text) does that, and 10% lands it between the card and `--sidebar-accent`
-     with room on both sides. */
-  --app-ground: color-mix(in oklch, var(--background) 90%, var(--foreground) 10%);
+     text) does that.
+
+     16%, not the 10% it was. At 10% the frame landed ~0.24 against a card at
+     ~0.155 — a step that survives on a wide desktop gutter and disappears
+     everywhere the frame is *thin*: the header band is 32-40px, and on a phone
+     that band plus the card's top corners were the only places the shell was
+     visible at all, which is what "the top bar is black and the content is
+     black" was. The ceiling is `--sidebar-accent` (a hovered rail row), which
+     has to stay a step ABOVE this — so it moves up with it, in the ramp
+     (lib/theme-ramp.ts) and in the boot palette below. Light does not move:
+     its foreground is near-black, so the same percentages are a landslide
+     there, and a near-white frame against a white card already reads. */
+  --app-ground: color-mix(in oklch, var(--foreground) calc(16 * var(--app-ground-step) * 1%), var(--background));
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -357,7 +398,9 @@
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.265 0 0);
+  /* A step above `--app-ground` (~0.29 here), never below it: this is the
+     hovered rail row, and the rail's own surface is the ground. */
+  --sidebar-accent: oklch(0.325 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
@@ -374,8 +417,15 @@
 
 
 @layer base {
+  /* The canvas is the shell's tint, not the card's colour. This is what an
+     overscroll rubber-band and the strip under a translucent status bar show,
+     and both of those are the *frame*, not the transcript. */
   html {
-    background-color: var(--background);
+    background-color: var(--app-ground);
+    /* The theme's text-size axis. On `html` and nowhere else: every rem in the
+       app is measured from here, so one declaration scales the transcript, the
+       header band and the measure together. */
+    font-size: var(--app-font-size);
   }
 
   * {
@@ -406,12 +456,27 @@
     background: transparent;
   }
 
+  /* ── The body paints NOTHING, and that is load-bearing ──
+     It used to paint `--background`, and that one declaration is why the shell
+     had no tint on the web for as long as it has had one. `body::before` below
+     is the ground sheet, and a `z-index: -1` positioned child paints at step 2
+     of the root stacking context — *before* the in-flow backgrounds at step 3,
+     which is where the body's own lands. So the body painted the card's colour
+     straight over the ground, everywhere, and the sidebar, the gutters and the
+     header band all came out as `--background`: black chrome on a black
+     transcript. It only ever showed under Electron's vibrancy, where
+     `html, body { background: 0 0 !important }` takes both away — which is
+     exactly why this reads as "tint the web version".
+
+     (Painting the body was harmless while the root had no background of its
+     own: a body background with no root background is *propagated to the
+     canvas*, and the body is then treated as having none. Giving `html` a
+     colour is what quietly turned it into a real background on a real box.) */
   body {
-    background-color: var(--background);
     /* Inherited, so declaring it once here is the whole implementation of a
        theme's tracking — see --app-tracking in :root. */
     letter-spacing: var(--app-tracking, 0em);
-    @apply bg-background text-foreground;
+    @apply text-foreground;
   }
 
   /* Fixed pseudo-element to hold the background color behind glass surfaces.
@@ -434,13 +499,13 @@
      them read as frosted glass. The sidebar is not one of them — see below. */
   @supports (backdrop-filter: blur(0)) or (-webkit-backdrop-filter: blur(0)) {
     [data-slot="card"] {
-      @apply shadow-glass backdrop-blur-[var(--app-blur)] backdrop-saturate-[1.3];
+      @apply shadow-glass backdrop-blur-[var(--app-blur)] backdrop-saturate-[calc(1.3*var(--app-saturate))];
     }
 
     /* Dialogs are opaque on purpose (see the glass backgrounds block below);
        only sheets get the blur. */
     [data-slot="sheet-content"] {
-      @apply shadow-glass-lg backdrop-blur-[calc(var(--app-blur)*2)] backdrop-saturate-[1.45];
+      @apply shadow-glass-lg backdrop-blur-[calc(var(--app-blur)*2)] backdrop-saturate-[calc(1.45*var(--app-saturate))];
     }
 
     [data-slot="popover-content"],
@@ -452,7 +517,7 @@
     [data-slot="context-menu-sub-content"],
     [data-slot="menubar-content"],
     [data-slot="menubar-sub-content"] {
-      @apply shadow-glass-lg backdrop-blur-[calc(var(--app-blur)*1.85)] backdrop-saturate-[1.5];
+      @apply shadow-glass-lg backdrop-blur-[calc(var(--app-blur)*1.85)] backdrop-saturate-[calc(1.5*var(--app-saturate))];
     }
 
     /* The sidebar is not a glass surface: on desktop it is transparent and sits
@@ -1083,10 +1148,31 @@ html[data-desktop-vibrancy="true"] [data-sidebar="sidebar"] {
    would otherwise paint `--sidebar` — which is `--background` — straight over
    the tinted global layer, and the frame `body::before` draws would never be
    seen. Dropped here too, so the sidebar and the gutters are the one ground the
-   layer lays down. `md` and up, and never `data-mobile`: the sheet wears
-   `data-sidebar="sidebar"` as well and has to keep its opaque panel. */
+   layer lays down.
+
+   The **wrapper** is every width, not `md` and up: below `md` the sidebar is a
+   sheet and the wrapper is nothing but the column the header band and the card
+   stand in, so painting `--sidebar` (which is `--background`) over the ground
+   there made the bar and the transcript the same colour — the card's top
+   corners would round onto a surface identical to itself. The *rail* stays
+   `md` and up and never `data-mobile`: the sheet wears `data-sidebar="sidebar"`
+   as well and has to keep its opaque panel. */
+/* The phone's sidebar is a *sheet*, so it cannot wear the frame's tint the way
+   the rail does — by being transparent over `body::before`. It paints the tint
+   instead. Without this the sheet is `--sidebar`, which every palette defines
+   as `--background`, i.e. the transcript's own colour: opening the sidebar on a
+   phone slid a black panel out over a black transcript, with only its shadow
+   saying where one ended. A rule on the element, not an override of
+   `--sidebar` — a palette declares that from a three-class selector and one
+   written here could never win (see the note above this block). */
+html [data-sidebar="sidebar"][data-mobile="true"] {
+  background-color: var(--app-ground);
+}
+
+html:not([data-desktop-vibrancy="true"]) [data-slot="sidebar-wrapper"] {
+  background-color: transparent;
+}
 @media (width >= 48rem) {
-  html:not([data-desktop-vibrancy="true"]) [data-slot="sidebar-wrapper"],
   html:not([data-desktop-vibrancy="true"]) [data-sidebar="sidebar"]:not([data-mobile="true"]) {
     background-color: transparent;
   }
@@ -1774,14 +1860,11 @@ html .dv-tabs-and-actions-container {
    zero. */
 html .dv-groupview > .dv-tabs-and-actions-container {
   margin-top: var(--dock-header-overlap, var(--app-header-h));
-  /* Chrome above chrome: the strip must paint above the floating header's
-     progressive-blur ramp (the header is z-30 and the ramp hangs 1rem below
-     it, exactly over this strip). Under the ramp the tabs blurred — and the
-     overlay sat on top of them, so pointer events never reached the tab to
-     start a drag or its close button. The strip is TRANSPARENT by design, so
-     raising it costs nothing visually: content scrolling under it is still
-     taken out of focus by the ramp, and the tabs themselves stay crisp. The
-     one number that has to clear a sibling here is the header's 30; dockview's
+  /* Chrome above chrome: the strip must paint above the floating header
+     (z-30), whose box spans this strip. Below it, pointer events never
+     reached a tab to start a drag or hit its close button. The strip is
+     TRANSPARENT by design, so raising it costs nothing visually. The one
+     number that has to clear a sibling here is the header's 30; dockview's
      drag ghost floats at 999 and is untouched. */
   position: relative;
   z-index: 40;
@@ -1809,23 +1892,21 @@ html .dv-groupview[data-header-band] {
 }
 
 html .dv-groupview[data-header-band] > .dv-tabs-and-actions-container {
-  /* In flow at `md` and up, taking the band: the content container starts
+  /* In flow, on every width, taking the band: the content container starts
      *below* the tabs, so the card it draws (`.dv-content-container` below)
      has its rounded top edge under the strip rather than behind it, and
      `--dock-content-overlap` measures zero for a banded group.
 
-     Below `md` there is no card and the strip is an overlay: the content
-     container (`flex-grow: 1`) reclaims the full group, the panel pads its
-     own top by what the header covers (`--dock-content-overlap`, measured)
-     and the transcript scrolls up under the tabs and the header's
-     progressive blur, which is kept there (app-shell.tsx). `top: 0` and not
-     the inset: the offset arrives as the inherited `margin-top`, which
-     applies to an absolutely positioned box too. */
-  @media (width < 48rem) {
-    position: absolute;
-    inset-inline: 0;
-    top: 0;
-  }
+     Below `md` it used to be an *overlay* instead — the content container
+     reclaimed the full group and the transcript scrolled up under the tabs,
+     which only ever worked because the header carried a progressive blur to
+     take those lines out of focus before they reached the chips. With the bar
+     transparent on every device (app-shell.tsx) that is body text passing
+     behind chrome, so the phone takes the same layout as the desktop: one
+     band of the app's ground carrying the chips and the tabs, and a card
+     under it that nothing scrolls beneath. Every panel already pads by the
+     *measured* `--dock-content-overlap`, so they all go to zero here without
+     a rule of their own. */
   /* The measurement is the header's content box, gutter included, so the tabs
      stand on the same `px-4` line the transcript and the composer do — no 4px
      of the strip's own on top of it. */
@@ -1926,8 +2007,14 @@ html .dv-right-actions-container {
    keeps on its left (`.dv-horizontal` below), which is also the only place
    two cards can meet.
 
-   Below `md` the variant draws no card (its margins and radius are `md:`), so
-   neither does this: edge to edge, as it was — but still opaque, because a
+   Below `md` the card keeps the same relationship on *less* air: no frame gap
+   and no side gutters — a phone has no width to spend on a margin and a
+   transcript inset from both edges is a narrower column, not a nicer one — but
+   its **top two corners are rounded**, which is the whole point. That is what
+   the card needs to read as a card: the band above it is the app's ground and
+   the corners are where the ground shows through. Square and flush, the bar
+   and the transcript were one sheet with tabs floating in it, which is the
+   layout the progressive blur was papering over. Still opaque, because a
    narrow desktop window under vibrancy would otherwise put the transcript on
    the wallpaper. The strip's own `padding: 0 4px` is what sets the first chip
    in from the card's edge. */
@@ -1938,6 +2025,14 @@ html [data-slot="sidebar-inset"] {
 }
 html .dv-groupview > .dv-content-container {
   background-color: var(--background);
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+}
+/* The `always`-rendered panel is an overlay positioned from that container's
+   border box, so it takes the same corners or an opaque panel (a terminal, the
+   IDE) squares them back off. */
+html .dv-render-overlay {
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  overflow: hidden;
 }
 @media (width >= 48rem) {
   html [data-slot="sidebar-inset"] {

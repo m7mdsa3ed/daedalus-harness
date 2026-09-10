@@ -24,7 +24,11 @@ export type PanelDescriptor =
       in one. One per project, because what is open *inside* it is its own
       state (`lib/ide/editors.ts`) and not the dock's. */
   | { kind: "ide"; projectId: string }
-  | { kind: "terminal"; projectId: string; terminalId: string }
+  /* `closeOnExit` is a helper command's terminal: it was opened by a button
+     that meant "run this", not "give me a shell", so a clean exit is the end of
+     the errand and the panel goes with it. A non-zero exit keeps the panel —
+     that output is the whole reason you ran it. */
+  | { kind: "terminal"; projectId: string; terminalId: string; closeOnExit?: boolean }
   | { kind: "web"; trust: WebTrust; viewId: string; projectId?: string; url?: string }
   /** A board, beside the work it describes. One panel, not one per board: the
       board being read is a *place inside* it (`lib/tasks-location.ts`) the way
@@ -128,7 +132,9 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
     }
     case "terminal": {
       const terminalId = str(p.terminalId)
-      return projectId && terminalId ? { kind: "terminal", projectId, terminalId } : null
+      return projectId && terminalId
+        ? { kind: "terminal", projectId, terminalId, closeOnExit: p.closeOnExit === true }
+        : null
     }
     case "page": {
       const path = str(p.path)

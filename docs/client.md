@@ -366,13 +366,13 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   not from a flag in the store: the reducer never marks a thought done.
   `components/ui/diff-view.tsx` is a dependency-free line LCS.
   Device-local, per-session state lives in its own tiny stores — `lib/drafts.ts`
-  (unsent prompts) and `lib/pins.ts` (pinned threads), both pruned from
-  `refreshSessions` and both **scoped to the active server** (`lib/server-scope.ts`),
+  (unsent prompts) chief among them, pruned from
+  `refreshSessions` and **scoped to the active server** (`lib/server-scope.ts`),
   along with `pastes.ts`, `draft-attachments.ts`, `agent-options.ts`,
   `thread-defaults.ts`, the sidebar's collapsed folders and the tasks board's
   remembered board. Every one of those keys is an id the *server* minted — a session,
   a profile, a project, a board — and unscoped they meant a `prune*` run at server B's
-  bootstrap deleted server A's unsent drafts and pins, since the sweep walks
+  bootstrap deleted server A's unsent drafts, since the sweep walks
   `localStorage` by prefix and every id looked equally dead. `scopedKey`/`scopedPrefix`
   are resolved **per call**, never captured, because the active server moves without a
   reload now; `createScopedLocalStore` is `createLocalStore` with a key that follows the

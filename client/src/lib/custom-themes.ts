@@ -259,6 +259,46 @@ export const TRACKING_PRESETS: readonly TrackingPreset[] = [
   { id: "wide", label: "Wide", value: "0.012em" },
 ]
 
+export interface ScalePreset {
+  id: string
+  label: string
+  hint: string
+  value: string
+}
+
+/** Root font size (`--app-font-size`, on `html`). Every length in the app is a
+    rem, so this is a scale for the whole interface — the transcript, the header
+    band, the sidebar and the measure move together — and not a body-copy size.
+    Percentages rather than px so a reader who has raised their browser's own
+    default keeps that raise underneath this one. */
+export const TEXT_PRESETS: readonly ScalePreset[] = [
+  { id: "compact", label: "Compact", hint: "A step down. More on screen, tighter on a phone.", value: "93.75%" },
+  { id: "default", label: "Default", hint: "The app's size — 16px, or whatever your browser's default is.", value: "100%" },
+  { id: "large", label: "Large", hint: "A step up. Easier at arm's length.", value: "106.25%" },
+  { id: "larger", label: "Larger", hint: "Two steps up.", value: "112.5%" },
+]
+
+/** How far the shell's tint (`--app-ground` — the frame behind the cards, the
+    overscroll band, the strip under the status bar) sits off the page. Stored
+    as a multiplier of each mode's own step rather than as a percentage: light
+    moves 7% and dark 16% for the same *apparent* distance, so a single stored
+    percentage would read as a frame in one mode and as nothing in the other. */
+export const GROUND_PRESETS: readonly ScalePreset[] = [
+  { id: "flush", label: "Flush", hint: "No frame at all — the shell is the page colour.", value: "0" },
+  { id: "faint", label: "Faint", hint: "A hairline of separation.", value: "0.55" },
+  { id: "default", label: "Default", hint: "The app's frame.", value: "1" },
+  { id: "strong", label: "Strong", hint: "The cards float well clear of the shell.", value: "1.7" },
+]
+
+/** Backdrop saturation behind frosted surfaces, as a multiplier of the app's
+    own (1.3–1.5 depending on the tier). Does nothing when Glass is None —
+    there is no backdrop being filtered — which is why it sits next to it. */
+export const VIBRANCY_PRESETS: readonly ScalePreset[] = [
+  { id: "none", label: "Plain", hint: "No colour lift behind glass.", value: "0.77" },
+  { id: "default", label: "Default", hint: "The app's lift.", value: "1" },
+  { id: "rich", label: "Rich", hint: "Colour blooms through frosted surfaces.", value: "1.35" },
+]
+
 export interface StylePreset {
   id: string
   label: string
@@ -372,6 +412,9 @@ export const BASE_KEYS = [
   "tracking",
   "blur",
   "width",
+  "text",
+  "ground",
+  "vibrancy",
   ...FONT_SLOTS.map((s) => s.key),
 ] as const
 
@@ -400,8 +443,21 @@ const blurValue = (id: string | undefined) => BLUR_PRESETS.find((p) => p.id === 
 const widthValue = (id: string | undefined) => WIDTH_PRESETS.find((p) => p.id === id)?.value
 const depthPreset = (id: string | undefined) => DEPTH_PRESETS.find((p) => p.id === id)
 const trackingValue = (id: string | undefined) => TRACKING_PRESETS.find((p) => p.id === id)?.value
+const textValue = (id: string | undefined) => TEXT_PRESETS.find((p) => p.id === id)?.value
+const groundValue = (id: string | undefined) => GROUND_PRESETS.find((p) => p.id === id)?.value
+const vibrancyValue = (id: string | undefined) => VIBRANCY_PRESETS.find((p) => p.id === id)?.value
 
-export { radiusPreset, radiusValue, blurValue, widthValue, depthPreset, trackingValue }
+export {
+  radiusPreset,
+  radiusValue,
+  blurValue,
+  widthValue,
+  depthPreset,
+  trackingValue,
+  textValue,
+  groundValue,
+  vibrancyValue,
+}
 
 // ---- color conversion ----
 
@@ -638,6 +694,12 @@ export function readThemeBase(builtin: string): BaseTokens {
   if (BLUR_PRESETS.some((p) => p.id === blur)) base.blur = blur
   const width = read("width")
   if (WIDTH_PRESETS.some((p) => p.id === width)) base.width = width
+  const text = read("text")
+  if (TEXT_PRESETS.some((p) => p.id === text)) base.text = text
+  const ground = read("ground")
+  if (GROUND_PRESETS.some((p) => p.id === ground)) base.ground = ground
+  const vibrancy = read("vibrancy")
+  if (VIBRANCY_PRESETS.some((p) => p.id === vibrancy)) base.vibrancy = vibrancy
   for (const slot of FONT_SLOTS) {
     const value = read(slot.key)
     if (value) base[slot.key] = value
@@ -709,6 +771,12 @@ function baseDeclarations(base: BaseTokens): string {
   if (width) lines.push(`  --harness-chat-width: ${width};`)
   const tracking = trackingValue(base.tracking)
   if (tracking) lines.push(`  --app-tracking: ${tracking};`)
+  const text = textValue(base.text)
+  if (text) lines.push(`  --app-font-size: ${text};`)
+  const ground = groundValue(base.ground)
+  if (ground) lines.push(`  --app-ground-step: ${ground};`)
+  const vibrancy = vibrancyValue(base.vibrancy)
+  if (vibrancy) lines.push(`  --app-saturate: ${vibrancy};`)
   if (depthPreset(base.depth)) {
     lines.push(
       `  --app-shadow-glass: var(--depth-${base.depth}-glass);`,
@@ -768,6 +836,13 @@ export function themeStyleVars(
   if (width) vars["--harness-chat-width"] = width
   const tracking = trackingValue(theme.base?.tracking)
   if (tracking) vars["--app-tracking"] = tracking
+  const ground = groundValue(theme.base?.ground)
+  if (ground) vars["--app-ground-step"] = ground
+  const vibrancy = vibrancyValue(theme.base?.vibrancy)
+  if (vibrancy) vars["--app-saturate"] = vibrancy
+  /* `--app-font-size` is deliberately NOT written here: it is only read by
+     `html { font-size }`, and the mock is a fixed-size drawing of the app, not
+     a scale model of it. The Text control shows its own sample instead. */
   if (depthPreset(theme.base?.depth)) {
     vars["--app-shadow-glass"] = `var(--depth-${theme.base.depth}-glass)`
     vars["--app-shadow-glass-lg"] = `var(--depth-${theme.base.depth}-glass-lg)`

@@ -32,6 +32,10 @@ export function TokenField({
   tokens: ThemeTokens
   onChange: (value: string) => void
 }) {
+  /* Below the split the two fields stack under their label and fill the row,
+     so the pair is two large targets rather than two 128px boxes squeezed
+     against a truncated name. Stacked they also have to say which mode they
+     are — the column headers the wide layout prints once per group are gone. */
   const value = tokens[token] ?? "#808080"
   const [draft, setDraft] = React.useState(value)
   React.useEffect(() => setDraft(value), [value])
@@ -48,7 +52,10 @@ export function TokenField({
   const field = (
     <InputGroup
       data-invalid={failing || undefined}
-      className={cn("h-7 w-32 shrink-0 rounded-lg", failing && "border-destructive/70")}
+      className={cn(
+        "h-9 w-full rounded-lg @panel-sm:h-7 @panel-sm:w-32 @panel-sm:shrink-0",
+        failing && "border-destructive/70"
+      )}
     >
       {/* The swatch is the addon: one control, two ways in — pick or paste. */}
       <InputGroupAddon className="pl-1.5">
@@ -57,8 +64,9 @@ export function TokenField({
           aria-label={`${token} (${mode})`}
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          className="size-4.5 cursor-pointer appearance-none rounded border-0 bg-transparent p-0 [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded [&::-webkit-color-swatch]:border-0"
+          className="size-5 cursor-pointer appearance-none rounded border-0 bg-transparent p-0 @panel-sm:size-4.5 [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded [&::-webkit-color-swatch]:border-0"
         />
+        <span className="text-[10px] tracking-wide uppercase @panel-sm:hidden">{mode}</span>
       </InputGroupAddon>
       <InputGroupInput
         value={draft}
@@ -66,7 +74,7 @@ export function TokenField({
         onBlur={() => setDraft(value)}
         spellCheck={false}
         aria-label={`${token} hex (${mode})`}
-        className="h-7 px-0 text-right font-mono text-[11px] tabular-nums"
+        className="h-9 px-0 text-right font-mono text-[11px] tabular-nums @panel-sm:h-7"
       />
       {failing && (
         <InputGroupAddon align="inline-end" className="pr-1.5 text-destructive">

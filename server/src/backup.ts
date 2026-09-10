@@ -323,6 +323,9 @@ const SessionRow = z.object({
      before the column existed. */
   lastTurnError: optStr,
   deletedAt: int.nullish(),
+  /* Absent in a bundle written before pins moved to the server, which reads as
+     unpinned — which is what every thread in it was. */
+  pinnedAt: int.nullish(),
   parentSessionId: optStr,
   /* Absent in a bundle written before forks existed, which reads as a thread
      that was never branched — which is what every thread in it was. */
@@ -1088,6 +1091,7 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
           modeId: columns.modeId ?? null,
           acpSessionId: columns.acpSessionId ?? null,
           deletedAt: columns.deletedAt ?? null,
+          pinnedAt: columns.pinnedAt ?? null,
           parentSessionId: columns.parentSessionId ?? null,
           forkedFromSessionId: columns.forkedFromSessionId ?? null,
           forkedFromTurnId: columns.forkedFromTurnId ?? null,

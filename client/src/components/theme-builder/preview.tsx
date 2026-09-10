@@ -67,7 +67,10 @@ function ThemeMock({ theme, mode }: { theme: CustomTheme; mode: Mode }) {
         mode === "dark" && "dark"
       )}
     >
-      <div className="flex h-56">
+      {/* Short where the pane is a sticky bar over the controls — it has to
+          leave the screen it is pinned to usable — and full height once it has
+          a column of its own. */}
+      <div className="flex h-36 @panel-lg:h-56">
         {/* Sidebar */}
         <div className="flex w-[30%] shrink-0 flex-col gap-1 border-r border-sidebar-border bg-sidebar p-1.5">
           <div className="flex items-center gap-1 px-0.5 py-1">
@@ -174,7 +177,7 @@ export function PreviewPane({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
-        <p className="text-xs font-medium">Preview</p>
+        <p className="hidden text-xs font-medium @panel-lg:block">Preview</p>
         <div className="ml-auto flex rounded-lg bg-muted p-0.5">
           {PREVIEW_MODES.map(({ id, label }) => (
             <button
@@ -195,7 +198,14 @@ export function PreviewPane({
         </div>
       </div>
 
-      <div className="flex flex-col gap-2">
+      {/* Both modes stack in the column and sit side by side in the bar: two
+          full-width mocks pinned over a phone would be most of the screen. */}
+      <div
+        className={cn(
+          "grid gap-2",
+          preview === "both" && "grid-cols-2 @panel-lg:grid-cols-1"
+        )}
+      >
         {shown.map((mode) => (
           <div key={mode} className="space-y-1">
             {preview === "both" && (
@@ -208,7 +218,7 @@ export function PreviewPane({
         ))}
       </div>
 
-      <p className="text-[11px] text-muted-foreground">
+      <p className="hidden text-[11px] text-muted-foreground @panel-lg:block">
         Changes apply immediately
         {worn ? " — you are wearing this theme" : ""}.
       </p>

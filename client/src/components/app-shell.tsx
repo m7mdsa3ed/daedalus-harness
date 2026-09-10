@@ -14,7 +14,6 @@ import { useLocation, useNavigate } from "react-router"
 import type { DockviewApi } from "dockview-react"
 import { Button } from "@/components/ui/button"
 import { Logo } from "@/components/ui/logo"
-import { ProgressiveBlur } from "@/components/ui/progressive-blur"
 import { SidebarGroupsSkeleton } from "@/components/ui/skeletons"
 import {
   Sidebar,
@@ -545,20 +544,14 @@ export function AppShell({
         <header
           data-app-header
           data-drag-region
-          className="pointer-events-none absolute inset-x-0 top-0 z-30 flex h-[var(--app-header-h)] items-center gap-1 bg-transparent px-[9px] pt-[max(0px,env(safe-area-inset-top,0px))] sm:gap-2 md:px-1"
+          className="pointer-events-none absolute inset-x-0 top-0 z-30 flex h-[var(--app-header-h)] items-center gap-1 bg-transparent px-[9px] pt-[var(--app-inset-top)] sm:gap-2 md:px-1"
         >
-          {/* Below `md` there is no card: the strip in the band is an overlay
-              again (`index.css`) and the transcript scrolls up under the tabs
-              and this bar, so the bar keeps its progressive blur there — the
-              ramp that takes a line out of focus before it reaches the chrome.
-              `md:hidden`, because at `md` the card starts under the tabs and
-              the tail would only blur its top rem. */}
-          <ProgressiveBlur
-            position="top"
-            height="calc(100% + 1rem)"
-            blurLevels={[0.4, 0.8, 1.4, 2.2, 3.4, 5.4, 8.6, 14]}
-            className="absolute inset-x-0 top-0 -z-10 md:hidden"
-          />
+          {/* One bar on every device: transparent, no ramp. Below `md` this used
+              to carry a progressive blur, which made the phone's top bar a
+              different object from the desktop's and Electron's — a gradient
+              band over the transcript where the other two show the transcript
+              itself. Content scrolling under the chips is the same everywhere
+              now. */}
           {/* The two device-level controls. No title and no crumb — every
               route is a tab, and the tab says the name; a thread keeps only
               its fork badge here. Wrapped and named so the dock can measure

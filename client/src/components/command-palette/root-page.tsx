@@ -84,7 +84,7 @@ import {
 } from "@/lib/settings"
 import { useAgents, usePersonas, useProfiles, useProjects } from "@/lib/queries/catalog"
 import { recordPaletteCommand, usePaletteRecents } from "@/lib/palette-recents"
-import { togglePin, usePins } from "@/lib/pins"
+import { usePins } from "@/lib/pins"
 import { loadThreadDefaults, resolveThreadStart } from "@/lib/thread-defaults"
 import { useRoutines } from "@/lib/queries/routines"
 import { useLiveTurnActive, useStoreSelect } from "@/lib/store"
@@ -385,7 +385,7 @@ export function RootPage() {
       title: pinned ? "Unpin this thread" : "Pin this thread",
       keywords: "favourite favorite",
       icon: pinned ? <PinOff /> : <Pin />,
-      onSelect: () => palette.run(() => togglePin(meta.id)),
+      onSelect: () => palette.run(() => void palette.actions.togglePin(meta.id)),
     })
     items.push({
       id: "thread:copy",

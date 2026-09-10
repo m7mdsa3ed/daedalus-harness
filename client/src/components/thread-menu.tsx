@@ -63,7 +63,7 @@ import type { PanelKind } from "@/lib/workspace/panels"
 import { usePrompt } from "@/components/prompt-dialog"
 import type { Actions } from "@/lib/actions"
 import { reportError } from "@/lib/errors"
-import { togglePin, usePins } from "@/lib/pins"
+import { usePins } from "@/lib/pins"
 import { projectPath, settingsFormPath, threadPath, threadTracePath } from "@/lib/router"
 import { type HelperCommand, type Project, type SessionMeta } from "@/lib/settings"
 import { useProjects } from "@/lib/queries/catalog"
@@ -85,10 +85,14 @@ function copyThreadLink(session: SessionMeta) {
     accepting text it silently loses. */
 const TITLE_MAX = 200
 
-const pinItem = (session: SessionMeta, pinned: boolean): MenuItemSpec => ({
+const pinItem = (
+  session: SessionMeta,
+  pinned: boolean,
+  pin: (session: SessionMeta) => void
+): MenuItemSpec => ({
   label: pinned ? "Unpin" : "Pin to top",
   icon: pinned ? <PinOff /> : <Pin />,
-  onClick: () => togglePin(session.id),
+  onClick: () => pin(session),
 })
 
 const renameItem = (session: SessionMeta, rename: (session: SessionMeta) => void): MenuItemSpec => ({
@@ -114,6 +118,7 @@ export function threadMenuItems(
   handlers: {
     onRename: (session: SessionMeta) => void
     onDelete: (session: SessionMeta) => void
+    onPin: (session: SessionMeta) => void
   }
 ): MenuItemSpec[] {
   /* No "Open in new tab": opening a thread IS opening a tab now (see the route
@@ -121,7 +126,7 @@ export function threadMenuItems(
      click that opened the menu. */
   return [
     renameItem(session, handlers.onRename),
-    pinItem(session, pinned),
+    pinItem(session, pinned, handlers.onPin),
     { label: "Copy link", icon: <LinkIcon />, onClick: () => copyThreadLink(session) },
     { type: "separator" },
     deleteItem(session, handlers.onDelete),
@@ -238,6 +243,13 @@ export function useThreadRowActions(
     [actions, prompt]
   )
 
+  const pin = React.useCallback(
+    (session: SessionMeta) => {
+      actions.togglePin(session.id).catch((err) => reportError(err, "Couldn't pin the thread"))
+    },
+    [actions]
+  )
+
   const restore = React.useCallback(
     (session: SessionMeta) => {
       actions
@@ -266,7 +278,7 @@ export function useThreadRowActions(
     [confirm, actions]
   )
 
-  return { rename, remove, restore, purge }
+  return { rename, remove, restore, purge, pin }
 }
 
 /**
@@ -339,7 +351,7 @@ export function ThreadHeaderMenu({
   )
   /* The same three the sidebar list holds, from the same hook: deleting from
      here asks the same question, and leaves the route the same way. */
-  const { rename, remove } = useThreadRowActions(actions, {
+  const { rename, remove, pin } = useThreadRowActions(actions, {
     activeThreadId: sessionId,
     onLeave: () => void navigate("/"),
   })
@@ -412,7 +424,7 @@ export function ThreadHeaderMenu({
       /* The sidebar row's own list, in the sidebar's order — the same
          builders, so a change to Rename or Pin reaches both surfaces. */
       renameItem(thread, rename),
-      pinItem(thread, pins.includes(thread.id)),
+      pinItem(thread, pins.includes(thread.id), pin),
       ...(onOpenInNewTab
         ? [
             {

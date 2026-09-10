@@ -240,6 +240,9 @@ export interface Session {
       row (and their acpSessionId) so a delete stays undoable — purge is the
       only thing that forgets a thread. */
   deletedAt: number | null;
+  /** Epoch ms this thread was pinned; null = not pinned. Server-side, so a pin
+      made on one device is a pin on every device. */
+  pinnedAt: number | null;
   exited: boolean;
   /** Tail of this session's in-flight respawn chain, null when idle. A second
       respawn — a double-click, two tabs, model then effort changed in quick
@@ -772,6 +775,7 @@ export class SessionManager {
         lastTurnError: s.lastTurnError,
         context: s.context,
         deletedAt: s.deletedAt,
+        pinnedAt: s.pinnedAt,
         parentSessionId: s.parentSessionId,
         forkedFromSessionId: s.forkedFromSessionId,
         forkedFromTurnId: s.forkedFromTurnId,
@@ -1395,6 +1399,7 @@ export class SessionManager {
       peers: new Set(),
       detachedAt: now,
       deletedAt: null,
+      pinnedAt: null,
       exited: false,
       respawnChain: null,
       quietLoad: false,
@@ -2936,6 +2941,7 @@ export class SessionManager {
       lastActivityAt: s.lastActivityAt || s.createdAt,
       lastTurnError: s.lastTurnError,
       deletedAt: s.deletedAt,
+      pinnedAt: s.pinnedAt,
       attached: s.peers.size > 0,
       peerCount: s.peers.size,
       exited: s.exited,
@@ -2967,6 +2973,18 @@ export class SessionManager {
     session.titleFromPrompt = null;
     this.persist(session);
     return next;
+  }
+
+  /**
+   * Pin a thread, or take the pin back. The timestamp is the order the pinned
+   * group is drawn in, which is why re-pinning moves a thread to the end of it.
+   */
+  setPinned(id: string, pinned: boolean): number | null | undefined {
+    const session = this.sessions.get(id);
+    if (!session) return undefined;
+    session.pinnedAt = pinned ? Date.now() : null;
+    this.persist(session);
+    return session.pinnedAt;
   }
 
   /**

@@ -79,7 +79,10 @@ export function lightRamp({ hue: h, brand: C, tint: t }: RampSpec): Ramp {
     "sidebar-foreground": ok(0.205, t * 1.6, h),
     "sidebar-primary": ok(0.5, C, h),
     "sidebar-primary-foreground": ok(0.985, Math.min(t, 0.01), h),
-    "sidebar-accent": ok(0.942, t * 2.3, h),
+    /* A step below the shell's tint, which is what the rail stands on
+       (`--app-ground`, index.css: ~0.94 in a light palette). At 0.942 it was
+       the ground's own tone, so a hovered row left no mark. */
+    "sidebar-accent": ok(0.9, t * 2.3, h),
     "sidebar-accent-foreground": ok(0.245, t * 2.8, h),
     "sidebar-border": ok(0.91, t * 1.5, h),
     "sidebar-ring": ok(0.62, C * 0.82, h),
@@ -116,9 +119,11 @@ export function darkRamp({ hue: h, brand: C, tint: t }: RampSpec): Ramp {
     "sidebar-foreground": ok(0.972, t * 0.6, h),
     "sidebar-primary": ok(0.8, C * 0.62, h),
     "sidebar-primary-foreground": ok(0.17, t * 2.6, h),
-    /* +0.120 off the ground it stands on, the step it always was — it just
-       stands on the background now instead of 0.043 above it. */
-    "sidebar-accent": ok(0.275, t * 3.8, h),
+    /* A step above the shell's tint, which is what the rail actually stands on
+       (`--app-ground`, index.css: ~0.29 in a dark palette since the frame was
+       lifted to read in a 32px header band). At 0.275 it was *under* it, so a
+       hovered row was a darker patch on a lighter rail. */
+    "sidebar-accent": ok(0.325, t * 3.8, h),
     "sidebar-accent-foreground": ok(0.965, t * 0.85, h),
     "sidebar-border": ok(0.85, Math.max(C, 0.02) * 0.4, h, 13),
     "sidebar-ring": ok(0.58, C * 0.75, h),

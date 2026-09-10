@@ -16,9 +16,11 @@ import { useSessionMeta, useStoreSelect } from "@/lib/store"
 import { requestIde } from "@/lib/ide/open"
 import { toRelative, type ThreadLinks } from "@/lib/workspace/thread-links"
 
-/** One Browser panel for every source followed out of a transcript, so the
-    tenth link read does not leave ten tabs behind. */
-const SOURCES_VIEW_ID = "sources"
+/** Open a URL in the external browser. Uses the Electron shell when available,
+    falls back to `window.open`. */
+function openInBrowser(url: string): void {
+  window.open(url, "_blank", "noopener")
+}
 
 export function useThreadLinksFor(sessionId: string): ThreadLinks | null {
   const dock = useDock()
@@ -51,12 +53,8 @@ export function useThreadLinksFor(sessionId: string): ThreadLinks | null {
         requestIde({ kind: "diff", projectId, path: toRelative(path, cwd) })
       },
       openUrl: (url) => {
-        /* External trust, always — a page an agent found on the web is not the
-           project's own dev server, and trust in this dock only ever drops. */
-        dock.openPanel(
-          { kind: "web", trust: "external", viewId: SOURCES_VIEW_ID, url },
-          { direction: "right" }
-        )
+        /* Open in the external browser rather than inside the dock's web panel. */
+        openInBrowser(url)
       },
     }
   }, [cwd, dock, projectId])

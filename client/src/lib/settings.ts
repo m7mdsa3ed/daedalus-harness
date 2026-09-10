@@ -707,6 +707,10 @@ export interface SessionMeta {
   /** Epoch ms this thread was deleted; null = live. Deleted threads still come
       down the wire — they live in Trash until they are purged or restored. */
   deletedAt: number | null
+  /** Epoch ms this thread was pinned; null/absent = not pinned. The server's,
+      so a pin follows the thread to every device — and the timestamp is also
+      the order the pinned group is drawn in (oldest pin first). */
+  pinnedAt?: number | null
   attached: boolean
   /** How many clients are attached — several devices may share one thread. */
   peerCount?: number
@@ -806,6 +810,7 @@ export function sameRow(a: SessionMeta, b: SessionMeta): boolean {
     a.lastActivityAt === b.lastActivityAt &&
     a.lastTurnError === b.lastTurnError &&
     a.deletedAt === b.deletedAt &&
+    (a.pinnedAt ?? null) === (b.pinnedAt ?? null) &&
     a.attached === b.attached &&
     a.peerCount === b.peerCount &&
     a.exited === b.exited &&

@@ -24,7 +24,9 @@ export function lifecycleActions(core: ActionsCore) {
     async renameThread(sessionId: string, title: string) {
       const next = title.trim()
       if (!next) return
-      if (getState().sessions.find((s) => s.id === sessionId)?.draft) {
+      // Unknown reads as a draft too — see `deleteThread`.
+      const known = getState().sessions.find((s) => s.id === sessionId)
+      if (!known || known.draft) {
         dispatch({ type: "rename-session", id: sessionId, title: next })
         patchDraft(settings.id, sessionId, { title: next })
         return
@@ -37,11 +39,37 @@ export function lifecycleActions(core: ActionsCore) {
       dispatch({ type: "rename-session", id: sessionId, title: named })
     },
 
+    /** Pin a thread to the top of the sidebar, or take the pin back.
+     *
+     * The server owns it (`sessions.pinned_at`), so the pin follows the thread
+     * to every device; the store is moved with the answer rather than by a
+     * list refetch, which is the same bargain `renameThread` makes. A draft has
+     * no row to pin — it is not in any list either (`isListed`), so there is
+     * nothing to do. */
+    async togglePin(sessionId: string) {
+      const session = getState().sessions.find((s) => s.id === sessionId)
+      if (!session || session.draft) return
+      const { pinnedAt } = await api<{ pinnedAt: number | null }>(
+        settings,
+        `/api/sessions/${sessionId}`,
+        { method: "PATCH", body: JSON.stringify({ pinned: !session.pinnedAt }) }
+      )
+      dispatch({ type: "pin-session", id: sessionId, pinnedAt })
+    },
+
     /** Reversible: the agent process dies, the thread moves to Trash.
         A draft has neither, and nothing to be restored from — closing it just
         forgets it. */
     async deleteThread(sessionId: string) {
-      if (getState().sessions.find((s) => s.id === sessionId)?.draft) {
+      /* A row the store does not know is not a row the *server* knows either —
+         and it is reached: `getState` is the last *committed* state (the ref is
+         written in a layout effect), so a draft minted and dropped inside one
+         commit — the landing console's own layout effect, which mints on mount
+         and forgets on the cleanup right behind it — is invisible here. It used
+         to fall through to the DELETE, which 404s on an id the server was never
+         told about. Same guard `togglePin` makes. */
+      const session = getState().sessions.find((s) => s.id === sessionId)
+      if (!session || session.draft) {
         dispatch({ type: "drop-draft-session", id: sessionId })
         forgetDraft(settings.id, sessionId)
         return

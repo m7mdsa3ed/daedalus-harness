@@ -54,6 +54,7 @@ export const ThreadRow = React.memo(function ThreadRow({
   onDelete,
   onRestore,
   onPurge,
+  onPin,
 }: {
   session: SessionMeta
   state: ThreadStatus
@@ -65,6 +66,7 @@ export const ThreadRow = React.memo(function ThreadRow({
   onDelete: (session: SessionMeta) => void
   onRestore: (session: SessionMeta) => void
   onPurge: (session: SessionMeta) => void
+  onPin: (session: SessionMeta) => void
 }) {
   /* One list feeds both the ⋯ menu and the right-click menu. */
   const items = React.useMemo(
@@ -74,8 +76,9 @@ export const ThreadRow = React.memo(function ThreadRow({
         : threadMenuItems(session, pinned, {
             onRename,
             onDelete,
+            onPin,
           }),
-    [session, trash, pinned, onOpen, onRename, onDelete, onRestore, onPurge]
+    [session, trash, pinned, onOpen, onRename, onDelete, onRestore, onPurge, onPin]
   )
   const { isMobile } = useSidebar()
 

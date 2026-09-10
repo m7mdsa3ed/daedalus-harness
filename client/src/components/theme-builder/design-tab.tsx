@@ -12,8 +12,11 @@ import {
   BLUR_PRESETS,
   DEPTH_PRESETS,
   FONT_SLOTS,
+  GROUND_PRESETS,
   RADIUS_PRESETS,
+  TEXT_PRESETS,
   TRACKING_PRESETS,
+  VIBRANCY_PRESETS,
   WIDTH_PRESETS,
   type BaseTokens,
 } from "@/lib/custom-themes"
@@ -29,6 +32,9 @@ const DEPTH_OPTIONS = DEPTH_PRESETS.map((p) => ({ id: p.id, label: p.label, hint
 const BLUR_OPTIONS = BLUR_PRESETS.map((p) => ({ id: p.id, label: p.label, hint: p.hint }))
 const WIDTH_OPTIONS = WIDTH_PRESETS.map((p) => ({ id: p.id, label: p.label, hint: p.hint }))
 const TRACKING_OPTIONS = TRACKING_PRESETS.map((p) => ({ id: p.id, label: p.label }))
+const TEXT_OPTIONS = TEXT_PRESETS.map((p) => ({ id: p.id, label: p.label, hint: p.hint }))
+const GROUND_OPTIONS = GROUND_PRESETS.map((p) => ({ id: p.id, label: p.label, hint: p.hint }))
+const VIBRANCY_OPTIONS = VIBRANCY_PRESETS.map((p) => ({ id: p.id, label: p.label, hint: p.hint }))
 
 export function DesignTab({
   base,
@@ -67,6 +73,28 @@ export function DesignTab({
         </ItemGroup>
       </FieldSet>
 
+      {/* Text size is part of the type decision, so it sits under the faces
+          rather than beside the shape controls. It is the one axis the mock
+          cannot show — the mock is a fixed-size drawing of the app, not a
+          scale model — so its swatch carries the sample instead. */}
+      <PresetField
+        legend="Text size"
+        hint="Scales the whole interface, not just body copy — every size in the app is measured from the root."
+        value={base.text ?? "default"}
+        options={TEXT_OPTIONS}
+        onChange={(id) => onChange({ text: id })}
+        renderSwatch={(id) => (
+          <span
+            className="block leading-none font-medium opacity-70"
+            style={{
+              fontSize: `calc(0.8125rem * ${parseFloat(TEXT_PRESETS.find((p) => p.id === id)?.value ?? "100") / 100})`,
+            }}
+          >
+            Aa
+          </span>
+        )}
+      />
+
       <PresetField
         legend="Shape"
         hint="One corner radius; every step from a chip to a dialog is a multiple of it. Square also squares the capsules."
@@ -104,6 +132,31 @@ export function DesignTab({
         )}
       />
 
+      {/* The frame the cards stand on. `--app-ground` is a color-mix whose
+          text names `--app-ground-step`, and a custom property is substituted
+          where it is *used* — so setting the step on this swatch re-resolves
+          the mix here, in whichever mode the studio is being read in. */}
+      <PresetField
+        legend="Frame"
+        hint="How far the shell's tint sits off the page — the band behind the cards, under the status bar and past an overscroll."
+        value={base.ground ?? "default"}
+        options={GROUND_OPTIONS}
+        onChange={(id) => onChange({ ground: id })}
+        renderSwatch={(id) => (
+          <span
+            className="flex size-5 items-center justify-center rounded-md"
+            style={
+              {
+                "--app-ground-step": GROUND_PRESETS.find((p) => p.id === id)?.value ?? "1",
+                background: "var(--app-ground)",
+              } as React.CSSProperties
+            }
+          >
+            <span className="block size-3 rounded-sm border border-border bg-card" />
+          </span>
+        )}
+      />
+
       <PresetField
         legend="Glass"
         hint="Backdrop blur behind cards, popovers, the sidebar and the composer."
@@ -123,6 +176,33 @@ export function DesignTab({
               className="absolute inset-x-0 bottom-0 h-1/2 border-t border-border/50 bg-card/50"
               style={{
                 backdropFilter: `blur(${BLUR_PRESETS.find((p) => p.id === id)?.value ?? "0px"})`,
+              }}
+            />
+          </span>
+        )}
+      />
+
+      {/* Beside Glass because it is the other half of one surface: with Glass
+          at None there is no backdrop being filtered and this does nothing. */}
+      <PresetField
+        legend="Vibrancy"
+        hint="How much colour the page lifts through frosted surfaces. Needs Glass — a theme with no blur has no backdrop to saturate."
+        value={base.vibrancy ?? "default"}
+        options={VIBRANCY_OPTIONS}
+        onChange={(id) => onChange({ vibrancy: id })}
+        renderSwatch={(id) => (
+          <span className="relative block size-5 overflow-hidden rounded-md">
+            <span
+              className="absolute inset-0"
+              style={{
+                background:
+                  "repeating-linear-gradient(45deg, var(--primary) 0 3px, var(--destructive) 3px 6px)",
+              }}
+            />
+            <span
+              className="absolute inset-x-0 bottom-0 h-1/2 border-t border-border/50 bg-card/40"
+              style={{
+                backdropFilter: `blur(4px) saturate(calc(1.3 * ${VIBRANCY_PRESETS.find((p) => p.id === id)?.value ?? "1"}))`,
               }}
             />
           </span>

@@ -194,7 +194,7 @@ function isTransparent(color: string): boolean {
 export function TerminalPanel({
   api,
   params,
-}: IDockviewPanelProps<{ projectId: string; terminalId: string }>) {
+}: IDockviewPanelProps<{ projectId: string; terminalId: string; closeOnExit?: boolean }>) {
   const { projectId, terminalId } = params
   const dock = useDock()
   const confirm = useConfirm()
@@ -241,6 +241,19 @@ export function TerminalPanel({
      applies later changes in place. */
   const prefsRef = React.useRef(prefs)
   prefsRef.current = prefs
+
+  /* Set the moment the exit frame lands, ahead of the `status` render it
+     causes: the close guard below runs inside the very close this triggers, and
+     the state it would otherwise read is one commit behind — so a helper's
+     panel closing itself asked "close this terminal?" about a shell that had
+     already exited. */
+  const exited = React.useRef(false)
+  /* See the exit frame below. */
+  const closeOnExit = React.useRef({ enabled: false, close: async () => {} })
+  closeOnExit.current = {
+    enabled: params.closeOnExit === true,
+    close: () => dock.closePanel(api.id),
+  }
 
   React.useEffect(() => {
     const named = shellTitle ?? givenTitle
@@ -377,8 +390,16 @@ export function TerminalPanel({
       } else if (frame.t === "data" && frame.data) {
         terminal.write(frame.data)
       } else if (frame.t === "exit") {
+        exited.current = true
         setStatus("exited")
         setDetail(`The shell exited (${frame.exitCode ?? 0}).`)
+        /* A helper command's terminal is an errand, and a finished errand is
+           not a panel: it closes itself once the command succeeded. A non-zero
+           exit stays open — the output is why you ran it. Read through a ref so
+           this effect, which owns the socket and the scrollback, does not
+           re-run when the dock rebuilds its callbacks. */
+        if (closeOnExit.current.enabled && (frame.exitCode ?? 0) === 0)
+          void closeOnExit.current.close()
       } else if (frame.t === "error") {
         setDetail(frame.message ?? null)
       }
@@ -494,7 +515,7 @@ export function TerminalPanel({
   React.useEffect(
     () =>
       dock.registerCloseGuard(panelId({ kind: "terminal", projectId, terminalId }), async () => {
-        if (status === "exited" || status === "failed") return true
+        if (exited.current || status === "exited" || status === "failed") return true
         const answer = await confirm({
           title: "Close this terminal?",
           description:

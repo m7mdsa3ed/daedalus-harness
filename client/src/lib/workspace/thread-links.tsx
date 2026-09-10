@@ -24,13 +24,11 @@ export interface ThreadLinks {
   /** Open an agent's edit as a comparison against the last commit. */
   openDiff: (path: string) => void
   /**
-   * Open a page the agent read or cited in the workspace's own Browser panel,
-   * rather than in a browser tab that leaves the app.
+   * Open a page the agent read or cited in the external browser.
    *
-   * One panel, reused: following a second source replaces the page in it, the
-   * way clicking a second file replaces the editor. Callers keep their `href`
-   * so a middle-click, a ⌘-click and "copy link" all still mean what they
-   * always did — this is the plain left-click path only.
+   * Callers keep their `href` so a middle-click, a ⌘-click and "copy link"
+   * all still mean what they always did — this is the plain left-click path
+   * only.
    */
   openUrl: (url: string) => void
 }

@@ -56,7 +56,10 @@ export async function openHelperTerminal(
 ): Promise<boolean> {
   try {
     const created = await startHelperTerminal(projectId, helper.id)
-    const panel = { kind: "terminal", projectId, terminalId: created.id } as const
+    /* Closed when the command finishes cleanly: a helper is an errand, and a
+       panel left behind on every successful run is a strip of dead shells to
+       tidy by hand. A failure stays put, output and all. */
+    const panel = { kind: "terminal", projectId, terminalId: created.id, closeOnExit: true } as const
     if (dock) dock.openPanel(panel, { direction: "below" })
     else queuePanel(panel, { direction: "below" })
     return true
