@@ -295,7 +295,7 @@
      most of it empty. Trimmed by the same hair the panels take.
      Every route that scrolls under that header pads by it, so content starts
      where it always did and, once scrolled, passes beneath the header's
-     transparent row. `--keyboard-inset` is published by lib/keyboard-inset.ts
+     progressive blur. `--keyboard-inset` is published by lib/keyboard-inset.ts
      and named here only so every reader gets a 0 before the first
      measurement.
 
@@ -316,14 +316,17 @@
      *is* the titlebar and is sized to it, and a gutter above it would put the
      app's controls a step below the window's. */
   --app-frame-gap: 0.5rem;
-  /* One row height on every device. Below `md` it used to be 2.5rem, on the
-     grounds that there is no frame gap there so the row's own air is all the
-     padding the bar has — which was true while the bar was a transparent strip
-     over the transcript. It stands on the shell's own tint now, with the
-     status-bar inset above it, so the air is the band's and the row is back to
-     what it takes to hold a 28px chip. In an installed PWA that row sat under
-     the *full* safe-area inset, which is where "the header is huge" came
-     from. */
+  /* Below `md` the row keeps its old 2.5rem: there is no frame gap there (the
+     card is edge to edge and starts straight under the row), so the row's own
+     air is all the padding the bar has, and 2px of it around a 28px chip
+     against the screen's top edge is a bar with no padding. A width query,
+     not a pointer one — the row is layout, and the panel width is what
+     decides it. (The *inset* above it is still `--app-inset-top`, the trimmed
+     one, and not the raw `env()`: installed to the home screen the full cutout
+     plus a row of its own is a bar of chrome the height of two.) */
+  @media (width < 48rem) {
+    --app-header-row-h: 2.5rem;
+  }
   --keyboard-inset: 0px;
 
   /* ── The transcript's three work accents ──
@@ -1150,13 +1153,15 @@ html[data-desktop-vibrancy="true"] [data-sidebar="sidebar"] {
    seen. Dropped here too, so the sidebar and the gutters are the one ground the
    layer lays down.
 
-   The **wrapper** is every width, not `md` and up: below `md` the sidebar is a
-   sheet and the wrapper is nothing but the column the header band and the card
-   stand in, so painting `--sidebar` (which is `--background`) over the ground
-   there made the bar and the transcript the same colour — the card's top
-   corners would round onto a surface identical to itself. The *rail* stays
-   `md` and up and never `data-mobile`: the sheet wears `data-sidebar="sidebar"`
-   as well and has to keep its opaque panel. */
+   `md` and up, and never `data-mobile`: the sheet wears
+   `data-sidebar="sidebar"` as well and has to keep its opaque panel. */
+@media (width >= 48rem) {
+  html:not([data-desktop-vibrancy="true"]) [data-slot="sidebar-wrapper"],
+  html:not([data-desktop-vibrancy="true"]) [data-sidebar="sidebar"]:not([data-mobile="true"]) {
+    background-color: transparent;
+  }
+}
+
 /* The phone's sidebar is a *sheet*, so it cannot wear the frame's tint the way
    the rail does — by being transparent over `body::before`. It paints the tint
    instead. Without this the sheet is `--sidebar`, which every palette defines
@@ -1167,15 +1172,6 @@ html[data-desktop-vibrancy="true"] [data-sidebar="sidebar"] {
    written here could never win (see the note above this block). */
 html [data-sidebar="sidebar"][data-mobile="true"] {
   background-color: var(--app-ground);
-}
-
-html:not([data-desktop-vibrancy="true"]) [data-slot="sidebar-wrapper"] {
-  background-color: transparent;
-}
-@media (width >= 48rem) {
-  html:not([data-desktop-vibrancy="true"]) [data-sidebar="sidebar"]:not([data-mobile="true"]) {
-    background-color: transparent;
-  }
 }
 
 /* The vibrancy stops at the card. The transcript is read, not glanced at,
@@ -1860,11 +1856,14 @@ html .dv-tabs-and-actions-container {
    zero. */
 html .dv-groupview > .dv-tabs-and-actions-container {
   margin-top: var(--dock-header-overlap, var(--app-header-h));
-  /* Chrome above chrome: the strip must paint above the floating header
-     (z-30), whose box spans this strip. Below it, pointer events never
-     reached a tab to start a drag or hit its close button. The strip is
-     TRANSPARENT by design, so raising it costs nothing visually. The one
-     number that has to clear a sibling here is the header's 30; dockview's
+  /* Chrome above chrome: the strip must paint above the floating header's
+     progressive-blur ramp (the header is z-30 and the ramp hangs 1rem below
+     it, exactly over this strip). Under the ramp the tabs blurred — and the
+     overlay sat on top of them, so pointer events never reached the tab to
+     start a drag or its close button. The strip is TRANSPARENT by design, so
+     raising it costs nothing visually: content scrolling under it is still
+     taken out of focus by the ramp, and the tabs themselves stay crisp. The
+     one number that has to clear a sibling here is the header's 30; dockview's
      drag ghost floats at 999 and is untouched. */
   position: relative;
   z-index: 40;
@@ -1892,21 +1891,23 @@ html .dv-groupview[data-header-band] {
 }
 
 html .dv-groupview[data-header-band] > .dv-tabs-and-actions-container {
-  /* In flow, on every width, taking the band: the content container starts
+  /* In flow at `md` and up, taking the band: the content container starts
      *below* the tabs, so the card it draws (`.dv-content-container` below)
      has its rounded top edge under the strip rather than behind it, and
      `--dock-content-overlap` measures zero for a banded group.
 
-     Below `md` it used to be an *overlay* instead — the content container
-     reclaimed the full group and the transcript scrolled up under the tabs,
-     which only ever worked because the header carried a progressive blur to
-     take those lines out of focus before they reached the chips. With the bar
-     transparent on every device (app-shell.tsx) that is body text passing
-     behind chrome, so the phone takes the same layout as the desktop: one
-     band of the app's ground carrying the chips and the tabs, and a card
-     under it that nothing scrolls beneath. Every panel already pads by the
-     *measured* `--dock-content-overlap`, so they all go to zero here without
-     a rule of their own. */
+     Below `md` there is no card and the strip is an overlay: the content
+     container (`flex-grow: 1`) reclaims the full group, the panel pads its
+     own top by what the header covers (`--dock-content-overlap`, measured)
+     and the transcript scrolls up under the tabs and the header's
+     progressive blur, which is kept there (app-shell.tsx). `top: 0` and not
+     the inset: the offset arrives as the inherited `margin-top`, which
+     applies to an absolutely positioned box too. */
+  @media (width < 48rem) {
+    position: absolute;
+    inset-inline: 0;
+    top: 0;
+  }
   /* The measurement is the header's content box, gutter included, so the tabs
      stand on the same `px-4` line the transcript and the composer do — no 4px
      of the strip's own on top of it. */
@@ -2007,14 +2008,8 @@ html .dv-right-actions-container {
    keeps on its left (`.dv-horizontal` below), which is also the only place
    two cards can meet.
 
-   Below `md` the card keeps the same relationship on *less* air: no frame gap
-   and no side gutters — a phone has no width to spend on a margin and a
-   transcript inset from both edges is a narrower column, not a nicer one — but
-   its **top two corners are rounded**, which is the whole point. That is what
-   the card needs to read as a card: the band above it is the app's ground and
-   the corners are where the ground shows through. Square and flush, the bar
-   and the transcript were one sheet with tabs floating in it, which is the
-   layout the progressive blur was papering over. Still opaque, because a
+   Below `md` the variant draws no card (its margins and radius are `md:`), so
+   neither does this: edge to edge, as it was — but still opaque, because a
    narrow desktop window under vibrancy would otherwise put the transcript on
    the wallpaper. The strip's own `padding: 0 4px` is what sets the first chip
    in from the card's edge. */
@@ -2025,14 +2020,6 @@ html [data-slot="sidebar-inset"] {
 }
 html .dv-groupview > .dv-content-container {
   background-color: var(--background);
-  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-}
-/* The `always`-rendered panel is an overlay positioned from that container's
-   border box, so it takes the same corners or an opaque panel (a terminal, the
-   IDE) squares them back off. */
-html .dv-render-overlay {
-  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-  overflow: hidden;
 }
 @media (width >= 48rem) {
   html [data-slot="sidebar-inset"] {
