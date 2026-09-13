@@ -408,7 +408,9 @@ export async function resolvePersonaSpawn(
   sessionId: string,
   id: string | null | undefined,
   agent: AgentDef | undefined,
-  suggestFollowups?: boolean | null,
+  /** The thread's behaviour toggles — neither is a persona, both are folded
+      into the same instruction text below. See `withInstructionTrailers`. */
+  behaviour: { suggestFollowups?: boolean | null; uiBlocks?: boolean | null } = {},
   rules?: Rule[],
 ): Promise<PersonaSpawn | undefined> {
   const rulesText = rules?.length ? rules.map((r) => r.content).join("\n\n") : undefined;
@@ -427,7 +429,7 @@ export async function resolvePersonaSpawn(
   // Folded here rather than at the call site so the file below holds the same
   // text the inline doors carry — an agent that reads instructions off disk
   // must see the trailer too.
-  const spawn = withFollowupSuggestions(base, suggestFollowups);
+  const spawn = withInstructionTrailers(base, behaviour);
   // Called even when there is no spawn, so a thread that has just had one
   // taken away does not leave the old text on disk for the next spawn to point
   // at — see `writePersonaPrompt`.
@@ -466,20 +468,100 @@ export const SUGGEST_FOLLOWUPS_INSTRUCTIONS = `After your final answer, suggest 
 
 Every prompt is a message the USER would type next, written so it can be sent as-is — a command or a question the user asks of you ("Show me the diff", "Merge the two servers via backup import", "What happens if two servers' projects conflict?"). Write them in the user's voice, never in yours. In particular, do not put your own questions to the user in the block: if you need their input to proceed, ask it in your answer's prose. Omit the block when no follow-up makes sense — for example when your answer has already asked the user what it needs to know, or nothing natural remains to suggest. Never put anything but follow-up prompts in it.`;
 
+/* ── Drawn answers ──
+ *
+ * The other thread-level behaviour folded in at this seam, and it is the same
+ * bargain as the suggestions trailer above: a toggle the thread owns, carried as
+ * *instruction text* rather than as a capability of one runtime.
+ *
+ * That distinction is the point. Our own runtime could be told about this lane
+ * with a `DAEDALUS_AGENT_*` variable, and it was — but a variable is a fact about
+ * one agent, so any other runtime on a profile (Claude Code, Codex, whatever the
+ * user repoints `command` at) would never be offered the lane at all. Going
+ * through the persona door means the instructions ride the same three
+ * deliveries every runtime already implements — ACP `_meta` append,
+ * `{personaPrompt}` inline, `{personaFile}` on disk — so "the thread asked for
+ * drawn answers" costs no per-runtime code and works everywhere.
+ *
+ * Two things stay where they were, deliberately:
+ *   — `sessions.ui_blocks` remains a column, because it is also what the switch
+ *     is drawn from;
+ *   — the *rendering* is untouched by any of it. The client draws a fence
+ *     whatever this says (see `ProseWithOpenui`), so a thread that never enabled
+ *     the lane still renders one it is handed. */
+
+/** The fence tag the client draws as a view. Mirrored by the client
+    (`tool-parts.tsx`), which also accepts the bare `openui`. */
+export const OPENUI_FENCE = "openui-lang";
+
 /**
- * The spawn instructions for a thread: its persona, plus the suggestions
- * trailer when the thread asked for it. Returns undefined when there is
- * nothing to instruct — the caller's placeholders resolve empty exactly as
- * they do for a thread with no persona.
+ * Trailer appended to the spawn instructions while a thread wants drawn answers.
+ *
+ * The component table is NOT here: it is generated from the client's own library
+ * (`client/scripts/gen-openui.mjs` → `agent/src/openui-prompt.ts`) and delivered
+ * to our runtime in its system prompt. Pointing at that generated prompt is what
+ * keeps one component list rather than two that drift — another runtime gets the
+ * pointer and no components, which is the honest amount to say when the
+ * components belong to the client that draws them. */
+export const OPENUI_INSTRUCTIONS = `You may answer with a small program that the client draws as real UI, inline where you write it — a comparison, a trend, a handful of figures or a status board. It is a presentation lane and nothing else: nothing in it can read a file, run a command or reach the network, and every tool call stays a normal tool call.
+
+Write it in one fenced block named \`${OPENUI_FENCE}\`:
+
+\`\`\`${OPENUI_FENCE}
+root = Stack([title, figures])
+title = Section("Build health", "The last 24 hours.")
+figures = StatRow([builds, fails])
+builds = Stat("Builds", "412")
+fails = Stat("Failures", "7", "-2 vs yesterday")
+\`\`\`
+
+Four rules, and the first is the one that is most often got wrong:
+
+- **Every argument is positional and in the component's declared order** — \`Stat("Builds", "412")\`, never \`Stat(label="Builds", value="412")\`. A named argument is dropped, every prop on that component comes out empty, and the view renders as a blank shell.
+- **\`root\` must be defined, and it is written first.** A program with no \`root\` draws nothing at all, whatever else it contains.
+- **Reach for it only when the answer is a structure**, and keep the prose around it short. A question, an explanation or a single fact is prose.
+- **Keep it small** — roughly a dozen statements — and keep every label and title short, because the view may be read on a phone.
+
+If the harness has told you the available components, use exactly those and their signatures. If it has not, this lane is not for you here: write the answer as prose.`;
+
+/**
+ * The spawn instructions for a thread: its persona, plus a trailer for each
+ * behaviour the thread turned on. Returns undefined when there is nothing to
+ * instruct — the caller's placeholders resolve empty exactly as they do for a
+ * thread with no persona.
+ *
+ * A list rather than a chain of `with…` folds. Each trailer is independent, so
+ * the composition belongs in one place where the order is visible; the order
+ * here is the order they read in, and suggestions stay last so the very end of
+ * the instructions is still the follow-up block the client parses.
  */
-export function withFollowupSuggestions(
+export function withInstructionTrailers(
   persona: PersonaSpawn | undefined,
-  enabled: boolean | null | undefined,
+  behaviour: { suggestFollowups?: boolean | null; uiBlocks?: boolean | null },
 ): PersonaSpawn | undefined {
-  if (!enabled) return persona;
-  if (!persona) return { id: "suggestions", prompt: SUGGEST_FOLLOWUPS_INSTRUCTIONS, thinking: null };
-  if (persona.prompt.includes(SUGGEST_FOLLOWUPS_INSTRUCTIONS)) return persona;
-  return { ...persona, prompt: `${persona.prompt}\n\n${SUGGEST_FOLLOWUPS_INSTRUCTIONS}` };
+  const trailers: { id: string; text: string }[] = [];
+  if (behaviour.uiBlocks) trailers.push({ id: "openui", text: OPENUI_INSTRUCTIONS });
+  if (behaviour.suggestFollowups)
+    trailers.push({ id: "suggestions", text: SUGGEST_FOLLOWUPS_INSTRUCTIONS });
+  if (trailers.length === 0) return persona;
+
+  /* Appended only where absent, and matched on the trailer itself: a thread
+     whose persona happens to quote one of these is not a reason to send it
+     twice, and a respawn must not double-append. */
+  const fresh = trailers.filter((trailer) => !persona?.prompt.includes(trailer.text));
+  if (fresh.length === 0) return persona;
+  const joined = fresh.map((trailer) => trailer.text).join("\n\n");
+  if (!persona) {
+    // The thread's id becomes whichever behaviour is doing the instructing —
+    // both is the only way to get here with no persona, and "behaviours" is the
+    // honest name for text that is not one.
+    return {
+      id: fresh.length === 1 ? fresh[0]!.id : "behaviours",
+      prompt: joined,
+      thinking: null,
+    };
+  }
+  return { ...persona, prompt: `${persona.prompt}\n\n${joined}` };
 }
 
 /** The effort a persona asks for, if it asks for one. Separate from

@@ -9,6 +9,7 @@ import {
   alreadyAsked,
   loadAgentOptions,
   markAsked,
+  markProbed,
   optionKey,
   saveProbedOptions,
   type AgentOptionSet,
@@ -63,6 +64,7 @@ export function draftActions(core: ActionsCore) {
          the way it was going to be worked on, not just its profile. */
       personaId: defaults.personaId ?? "",
       suggestFollowups: defaults.suggestFollowups ?? true,
+      uiBlocks: defaults.uiBlocks ?? true,
       title: "New thread",
       createdAt: Date.now(),
       deletedAt: null,
@@ -108,13 +110,21 @@ export function draftActions(core: ActionsCore) {
      * The server answers by spawning one and killing it (see probe.ts), which
      * is the only way to ask — so this runs at most once per (profile, agent)
      * per page-load, and never when a live session has already told us. A
-     * failure is silent on purpose: the menu falls back to saying the settings
-     * appear once the thread starts, which is exactly what it said before.
+     * failure is still silent in the console sense, but it is no longer silent
+     * on screen: the outcome is recorded (`markProbed`) so the menu can say
+     * "asking", "that didn't work, try again" and "this agent offers nothing"
+     * as the three different things they are. `force` is the try-again — the
+     * one caller that may step over the once-per-page-load guard.
      */
-    async learnAgentOptions(profileId: string, agentId: string, projectId: string) {
+    async learnAgentOptions(
+      profileId: string,
+      agentId: string,
+      projectId: string,
+      force = false
+    ) {
       if (!agentId) return
       const key = optionKey(profileId, agentId)
-      if (alreadyAsked(key) || loadAgentOptions(key).base.length > 0) return
+      if (!force && (alreadyAsked(key) || loadAgentOptions(key).base.length > 0)) return
       markAsked(key)
       try {
         const probed = await api<{
@@ -130,8 +140,10 @@ export function draftActions(core: ActionsCore) {
           byModel: probed.byModel ?? {},
           ...(probed.modes ? { modes: probed.modes } : {}),
         })
+        markProbed(key, true)
       } catch (error) {
         console.warn(`Couldn't ask ${agentId} on ${profileId} what it supports`, error)
+        markProbed(key, false)
       }
     },
 
@@ -160,6 +172,7 @@ export function draftActions(core: ActionsCore) {
           | "modeId"
           | "personaId"
           | "suggestFollowups"
+          | "uiBlocks"
           | "mcpServerIds"
           | "skillIds"
           | "commandIds"

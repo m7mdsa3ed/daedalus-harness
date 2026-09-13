@@ -53,7 +53,8 @@ import {
 import { MoreHorizontal } from "lucide-react"
 import { useConfirm } from "@/components/confirm-dialog"
 import { useDock } from "@/components/workspace/dock"
-import { PanelNotice, PanelToolbar } from "@/components/workspace/primitives"
+import { Notice } from "@/components/notice"
+import { PanelToolbar } from "@/components/workspace/primitives"
 import { TerminalKeyRow } from "@/components/workspace/terminal-keys"
 import { writeClipboard } from "@/lib/clipboard"
 import { reportError } from "@/lib/errors"
@@ -779,9 +780,9 @@ export function TerminalPanel({
       )}
 
       {detail && (
-        <PanelNotice>
-          {detail}
-        </PanelNotice>
+        <div className="px-2 py-1.5">
+          <Notice tone="warn">{detail}</Notice>
+        </div>
       )}
 
       <div

@@ -862,7 +862,11 @@ export class RoutineEngine {
       endedAt: null,
       abort: new AbortController(),
     };
-    this.insert(run);
+    /* Awaited: everything below reads the row back (`getRun`, and the whole
+       list view), and `fire` returns that read. Left un-awaited it raced the
+       insert — the caller saw a row that was not there yet, and a refusal on a
+       run that had not been written. */
+    await this.insert(run);
 
     const refusal = (await this.preflight(run)) ?? (await this.quotaFloor(run));
     if (refusal) {

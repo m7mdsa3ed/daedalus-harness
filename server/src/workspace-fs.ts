@@ -21,6 +21,12 @@
  * Every listing, read and write is bounded. An unbounded read of whatever a
  * path happens to point at is how a file API becomes a way to allocate a
  * gigabyte from a browser.
+ *
+ * The one exception is the `@` search (`searchEntries`), and it says so where it
+ * is defined: it is an *input affordance* rather than a panel, and the query
+ * names its own scope (`~/`, absolute, or relative to the cwd), because people
+ * point agents at files outside the project. It only ever *lists* names — it
+ * reads no bytes and writes nothing.
  */
 import {
   createReadStream,
@@ -41,6 +47,7 @@ import {
   stat as statAsync,
 } from "node:fs/promises";
 import { dirname, join, normalize, relative, resolve, sep } from "node:path";
+import { homedir } from "node:os";
 
 import { getProject } from "./projects.js";
 import { HttpError } from "./http-error.js";
@@ -366,21 +373,161 @@ export interface WorkspaceSearch {
   truncated: boolean;
 }
 
+/** One line a content search matched. */
+export interface WorkspaceContentMatch {
+  /** Project-relative, POSIX-separated. */
+  path: string;
+  /** 1-based line number, as an editor counts. */
+  line: number;
+  /** The line's text, trimmed of trailing whitespace and cut to `MATCH_TEXT_MAX`. */
+  text: string;
+}
+
+export interface WorkspaceContentSearch {
+  matches: WorkspaceContentMatch[];
+  /** The walk hit a budget, or there were more matches than `limit`. */
+  truncated: boolean;
+}
+
+/** Matches returned for one content search, across all files. */
+const CONTENT_DEFAULT_LIMIT = 100;
+const CONTENT_MAX_LIMIT = 500;
+/** Files opened before a content search gives up. Reading bytes is far more
+    expensive than statting names, so this budget is smaller than the walk's. */
+const CONTENT_FILE_LIMIT = 4000;
+/** Directories listed before a content search gives up — separate from the
+    file budget, because a tree of empty folders reads no file and would
+    otherwise walk forever. */
+const CONTENT_DIR_LIMIT = 4000;
+/** A single file larger than this is skipped rather than read: a content
+    search is a glance, and a minified bundle in it is pure cost. */
+const CONTENT_MAX_FILE_BYTES = 1024 * 1024;
+/** How much of a matched line is handed back for the result row. */
+const MATCH_TEXT_MAX = 200;
+
 /**
- * Fuzzy subsequence score for `query` against a project-relative path, or
- * `null` when the query is not a subsequence of it at all.
+ * Every line containing a term, best-effort and bounded.
+ *
+ * This is the IDE's "search in files", and it is deliberately **not** a shell
+ * out to `rg` or `git grep`: a project need not be a repository and neither
+ * binary is something the harness may assume, the same reasoning `searchEntries`
+ * gives for walking rather than listing. It is also not the `@` menu's search —
+ * that one names a scope on the whole machine and lists *names*; this one reads
+ * bytes and cannot leave the project, so the panel that opens its results can
+ * always open the file they came from.
+ *
+ * Case-insensitive substring, whole line returned: matching a regex here would
+ * mean an unvalidated pattern reaching a walk over somebody else's repository,
+ * and substring is what a reader typing into an IDE search box means most of the
+ * time. Ignores are the explorer's own (`DEFAULT_IGNORES`), so a search never
+ * finds something the tree would not show.
+ */
+export async function searchContents(
+  projectId: string,
+  rawQuery: string | undefined,
+  options: { limit?: number } = {},
+): Promise<WorkspaceContentSearch> {
+  const root = await projectRoot(projectId);
+  const term = (rawQuery ?? "").trim().toLowerCase();
+  const limit = Math.min(Math.max(options.limit ?? CONTENT_DEFAULT_LIMIT, 1), CONTENT_MAX_LIMIT);
+  if (!term) return { matches: [], truncated: false };
+
+  const matches: WorkspaceContentMatch[] = [];
+  let truncated = false;
+
+  const queue: string[] = [root];
+  let filesRead = 0;
+  /* Directories are budgeted too, and separately: a tree of ten thousand empty
+     folders is a stat storm that reads no file at all, and the file budget
+     would never notice it. */
+  let dirsRead = 0;
+
+  while (queue.length > 0 && !truncated) {
+    if (++dirsRead > CONTENT_DIR_LIMIT) break;
+    const dir = queue.shift() as string;
+    let dirents: Dirent[];
+    try {
+      dirents = await readdirAsync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const dirent of dirents) {
+      if (isIgnored(dirent.name, DEFAULT_IGNORES)) continue;
+      /* Hidden files are skipped here without the "did the query type a dot"
+         escape `searchEntries` offers: a content search is over source, and
+         `.git`-adjacent noise is not source even when it matches. */
+      if (isHidden(dirent.name)) continue;
+      const absolute = join(dir, dirent.name);
+      if (dirent.isDirectory()) {
+        queue.push(absolute);
+        continue;
+      }
+      /* A symlink is never followed — the same cycle-and-containment bargain
+         the name walk makes. */
+      if (!dirent.isFile()) continue;
+      if (++filesRead > CONTENT_FILE_LIMIT) {
+        truncated = true;
+        break;
+      }
+
+      let content: string;
+      try {
+        const info = await statAsync(absolute);
+        if (info.size > CONTENT_MAX_FILE_BYTES) continue;
+        content = await readFileAsync(absolute, "utf8");
+      } catch {
+        /* Unreadable, or not text at all: skipped. */
+        continue;
+      }
+      /* A NUL in the first chunk is the same binary signal `looksBinary` uses,
+         which saves decoding a megabyte of something that has no lines. */
+      if (content.includes("\0")) continue;
+
+      const lines = content.split("\n");
+      for (let index = 0; index < lines.length; index += 1) {
+        const text = lines[index];
+        if (!text.toLowerCase().includes(term)) continue;
+        if (matches.length >= limit) {
+          truncated = true;
+          break;
+        }
+        matches.push({
+          path: relative(root, absolute).split(sep).join("/"),
+          line: index + 1,
+          text: text.trimEnd().slice(0, MATCH_TEXT_MAX),
+        });
+      }
+      if (truncated) break;
+    }
+  }
+
+  return { matches, truncated };
+}
+
+/**
+ * Fuzzy subsequence score for `query` against a path (relative to whatever
+ * directory is being searched), or `null` when the query is not a subsequence
+ * of it at all.
  *
  * Greedy leftmost matching — not the optimal alignment, which costs a DP table
  * per candidate and buys an ordering nobody can perceive. What it does buy is
- * the three signals that make a file picker feel right: a run of adjacent
- * characters beats a scattered one, a character right after a separator beats
- * one mid-word, and a hit in the basename beats one in the directories, so
- * `cfg` finds `vite.config.ts` before `src/config/rc/legacy.ts`.
+ * the signals that make a file picker feel right: an exact or prefix hit on the
+ * basename is almost always what was meant, so it is scored far above a
+ * scattered subsequence; a run of adjacent characters beats a scattered one; a
+ * character right after a separator beats one mid-word; a hit in the basename
+ * beats one in the directories. So `cfg` finds `vite.config.ts` before
+ * `src/config/rc/legacy.ts`, and `index` finds `index.ts` first. Case is a
+ * tiebreak, not a gate — a match in the case that was typed is a hair better
+ * than one that only matches case-insensitively.
  */
 function fuzzyScore(query: string, path: string): number | null {
   const q = query.toLowerCase();
+  if (q === "") return 0;
   const p = path.toLowerCase();
   const baseStart = p.lastIndexOf("/") + 1;
+  const base = p.slice(baseStart);
+  const bonus = base === q ? 60 : base.startsWith(q) ? 30 : 0;
+
   let qi = 0;
   let score = 0;
   let prev = -2;
@@ -391,27 +538,97 @@ function fuzzyScore(query: string, path: string): number | null {
     score += 10 + run * 6;
     if (i === 0 || "/-_. ".includes(p[i - 1])) score += 8;
     if (i >= baseStart) score += 4;
+    if (path[i] === query[qi]) score += 2;
     prev = i;
     qi++;
   }
   if (qi < q.length) return null;
   // Shorter and shallower wins among equals: the file you meant is rarely the
   // one buried deepest.
-  return score - p.length * 0.15 - (p.split("/").length - 1) * 0.5;
+  return score + bonus - p.length * 0.15 - (p.split("/").length - 1) * 0.5;
+}
+
+/* ── Search scope ───────────────────────────────────────────────────────────
+ *
+ * A `@` query names *where* to look as well as *what* to look for. The text
+ * through the last `/` is the directory and the rest is the fuzzy term, so
+ * `src/com` searches `src/` for `com`, and a `~/` or `/` prefix searches the
+ * home directory or an absolute one. That is what lets a mention reach **any
+ * path on the machine**, not only the project's cwd — pointing an agent at a log
+ * file, a dot config or a sibling checkout should not require moving it in
+ * first. A bare relative query still resolves against the cwd, so the common
+ * case is unchanged.
+ *
+ * `prefix` is put back in front of every result, so the menu completes the path
+ * the person is already typing (`/etc/hosts`, `~/.config/nvim/…`) rather than a
+ * re-rooted one they would have to reconcile.
+ */
+interface SearchScope {
+  /** Absolute directory to search. */
+  base: string;
+  /** Textual prefix (ending in `/`) prepended to each result's path. */
+  prefix: string;
+  /** Fuzzy term within `base`; `""` asks for the directory's own listing. */
+  term: string;
+  /** True when the query is relative, i.e. resolved against the project. */
+  relative: boolean;
+}
+
+function parseSearchScope(root: string, query: string): SearchScope {
+  /* `~` and `~/…`: the home directory, named the way a shell names it. */
+  if (query === "~" || query.startsWith("~/")) {
+    const rest = query.slice(1).replace(/^\/+/, "");
+    const cut = rest.lastIndexOf("/");
+    const dir = cut < 0 ? "" : rest.slice(0, cut);
+    return {
+      base: dir === "" ? homedir() : join(homedir(), dir),
+      prefix: dir === "" ? "~/" : `~/${dir}/`,
+      term: cut < 0 ? rest : rest.slice(cut + 1),
+      relative: false,
+    };
+  }
+  /* An absolute path names its own base; the project only supplies the relative
+     case. `lastIndexOf("/") <= 0` means the base is the filesystem root. */
+  if (query.startsWith("/")) {
+    const cut = query.lastIndexOf("/");
+    const dir = cut <= 0 ? "/" : query.slice(0, cut);
+    return {
+      base: dir,
+      prefix: dir === "/" ? "/" : `${dir}/`,
+      term: query.slice(cut + 1),
+      relative: false,
+    };
+  }
+  /* Relative to the project — and it may still climb out with `../`. */
+  const cut = query.lastIndexOf("/");
+  if (cut < 0) return { base: root, prefix: "", term: query, relative: true };
+  const dir = query.slice(0, cut);
+  return {
+    base: resolve(root, normalize(dir)),
+    prefix: `${dir}/`,
+    term: query.slice(cut + 1),
+    relative: true,
+  };
 }
 
 /**
- * Every path in the project that fuzzy-matches `query`, best first.
+ * Every path that fuzzy-matches a `@` query, best first.
  *
- * This is what the composer's `@` menu reads. It is deliberately a *walk* and
- * not a shell out to `git ls-files` or `rg --files`: a project need not be a
- * repository, and neither binary is something the harness may assume. The walk
- * is breadth-first so a truncated one still returns the shallow paths — the
+ * This is what the composer's `@` menu and the IDE's file finder both read. The
+ * query names a scope (`~`, absolute, or relative to the project — see
+ * `parseSearchScope`), and the search over it is deliberately a *walk* and not a
+ * shell out to `git ls-files` or `rg --files`: a project need not be a
+ * repository, and neither binary is something the harness may assume.
+ *
+ * Inside the project the walk is breadth-first and budgeted at
+ * `SEARCH_VISIT_LIMIT`, so a truncated one still returns the shallow paths — the
  * ones a person is most likely to have meant — rather than whatever branch was
- * deepest.
+ * deepest. A directory *outside* the project is browsed **one level at a time**
+ * instead of walked: recursing from `/home` or `/` on every keystroke is a stat
+ * storm nothing asked for, and drilling a segment at a time is how a path
+ * completer is used anyway. An empty term is always that one-level listing, so
+ * `@src/` shows `src`'s children and opening the menu shows the root's.
  *
- * An empty query answers with the project root's own listing, so opening the
- * menu shows something to arrow through before a single character is typed.
  * Ignored directories (`node_modules`, `.git`, …) are skipped outright and
  * hidden ones only when the query asks for them by typing the dot, which is the
  * same bargain `listDir` makes with its flags.
@@ -424,70 +641,125 @@ export async function searchEntries(
   const root = await projectRoot(projectId);
   const query = (rawQuery ?? "").trim();
   const limit = Math.min(Math.max(options.limit ?? SEARCH_DEFAULT_LIMIT, 1), SEARCH_MAX_LIMIT);
+  const scope = parseSearchScope(root, query);
 
-  if (query === "") {
-    const listing = await listDir(projectId, "", {});
-    return {
-      entries: listing.entries.slice(0, limit),
-      truncated: listing.truncated || listing.entries.length > limit,
-    };
+  let { base, prefix, term } = scope;
+  let baseReal: string | null;
+  try {
+    baseReal = statSync(base).isDirectory() ? realpathSync(base) : null;
+  } catch {
+    baseReal = null;
+  }
+  if (baseReal === null) {
+    /* A prefix that is not a directory (or does not exist yet) has nothing to
+       search under it. Inside the project, fall back to the whole tree so
+       `sr/ind` still finds `src/index.ts`; outside it, a half-typed absolute
+       path has no parent worth guessing at. */
+    if (!scope.relative) return { entries: [], truncated: false };
+    baseReal = root;
+    prefix = "";
+    term = query;
   }
 
   const wantHidden = query.includes(".");
+  const inside = within(root, baseReal);
   const scored: { entry: WorkspaceEntry; score: number }[] = [];
-  const queue: string[] = [root];
-  let visited = 0;
   let truncated = false;
 
-  while (queue.length > 0 && !truncated) {
-    /* One wave: readdir the front of the queue concurrently, then fold the
-       answers back in queue order — that keeps the walk breadth-first and the
-       visit budget deterministic, so a truncated search still keeps exactly
-       the shallow paths the sequential walk kept. */
-    const wave = queue.splice(0, FS_CONCURRENCY);
-    const listings = await Promise.all(
-      wave.map(async (dir) => {
-        try {
-          return await readdirAsync(dir, { withFileTypes: true });
-        } catch {
-          // A directory that vanished or cannot be read is skipped, not fatal:
-          // a search is best-effort over a tree somebody else is editing.
-          return null;
+  if (term === "" || !inside) {
+    /* One directory, filtered by `term`: the drill-down (`@src/`) and every
+       scope outside the project, which is browsed rather than walked. */
+    let dirents: Dirent[];
+    try {
+      dirents = await readdirAsync(baseReal, { withFileTypes: true });
+    } catch {
+      dirents = [];
+    }
+    let seen = 0;
+    for (const dirent of dirents) {
+      if (isIgnored(dirent.name, DEFAULT_IGNORES)) continue;
+      if (isHidden(dirent.name) && !wantHidden) continue;
+      if (++seen > MAX_ENTRIES) {
+        truncated = true;
+        break;
+      }
+      const score = term === "" ? 0 : fuzzyScore(term, dirent.name);
+      if (score === null) continue;
+      const link = dirent.isSymbolicLink();
+      scored.push({
+        entry: {
+          name: dirent.name,
+          path: `${prefix}${dirent.name}`,
+          type: !link && dirent.isDirectory() ? "dir" : "file",
+          ...(link ? { link: true } : {}),
+        },
+        score,
+      });
+    }
+  } else {
+    /* Inside the project: the bounded breadth-first walk, rooted at the query's
+       base and matching the term against each path relative to it. */
+    const queue: string[] = [baseReal];
+    let visited = 0;
+    while (queue.length > 0 && !truncated) {
+      /* One wave: readdir the front of the queue concurrently, then fold the
+         answers back in queue order — that keeps the walk breadth-first and the
+         visit budget deterministic, so a truncated search still keeps exactly
+         the shallow paths the sequential walk kept. */
+      const wave = queue.splice(0, FS_CONCURRENCY);
+      const listings = await Promise.all(
+        wave.map(async (dir) => {
+          try {
+            return await readdirAsync(dir, { withFileTypes: true });
+          } catch {
+            // A directory that vanished or cannot be read is skipped, not fatal:
+            // a search is best-effort over a tree somebody else is editing.
+            return null;
+          }
+        }),
+      );
+      for (let w = 0; w < wave.length && !truncated; w++) {
+        const dirents = listings[w];
+        if (dirents === null) continue;
+        const dir = wave[w];
+        for (const dirent of dirents) {
+          if (isIgnored(dirent.name, DEFAULT_IGNORES)) continue;
+          if (isHidden(dirent.name) && !wantHidden) continue;
+          if (++visited > SEARCH_VISIT_LIMIT) {
+            truncated = true;
+            break;
+          }
+          const absolute = join(dir, dirent.name);
+          /* A symlink is listed as a file and never descended: following one is
+             how a walk finds a cycle, and its target may be outside the project
+             — which the read routes would refuse anyway. */
+          const link = dirent.isSymbolicLink();
+          const type: "dir" | "file" = !link && dirent.isDirectory() ? "dir" : "file";
+          const rel = relative(baseReal, absolute).split(sep).join("/");
+          const score = fuzzyScore(term, rel);
+          if (score !== null)
+            scored.push({
+              entry: {
+                name: dirent.name,
+                path: `${prefix}${rel}`,
+                type,
+                ...(link ? { link: true } : {}),
+              },
+              score,
+            });
+          if (type === "dir") queue.push(absolute);
         }
-      }),
-    );
-    for (let w = 0; w < wave.length && !truncated; w++) {
-      const dirents = listings[w];
-      if (dirents === null) continue;
-      const dir = wave[w];
-      for (const dirent of dirents) {
-        if (isIgnored(dirent.name, DEFAULT_IGNORES)) continue;
-        if (isHidden(dirent.name) && !wantHidden) continue;
-        if (++visited > SEARCH_VISIT_LIMIT) {
-          truncated = true;
-          break;
-        }
-        const absolute = join(dir, dirent.name);
-        /* A symlink is listed as a file and never descended: following one is
-           how a walk finds a cycle, and its target may be outside the project —
-           which the read routes would refuse anyway. */
-        const link = dirent.isSymbolicLink();
-        const type: "dir" | "file" = !link && dirent.isDirectory() ? "dir" : "file";
-        const path = relativePath(root, absolute);
-        const score = fuzzyScore(query, path);
-        if (score !== null)
-          scored.push({
-            entry: { name: dirent.name, path, type, ...(link ? { link: true } : {}) },
-            score,
-          });
-        if (type === "dir") queue.push(absolute);
       }
     }
   }
 
+  /* Dirs first among equal scores, so an empty term (the drill-down) reads like
+     a listing while a ranked search keeps its ranking. Then shorter and shallower
+     wins: the file you meant is rarely the one buried deepest. */
   scored.sort(
     (a, b) =>
       b.score - a.score ||
+      (a.entry.type === b.entry.type ? 0 : a.entry.type === "dir" ? -1 : 1) ||
       a.entry.path.length - b.entry.path.length ||
       a.entry.path.localeCompare(b.entry.path),
   );

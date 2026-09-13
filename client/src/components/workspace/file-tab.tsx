@@ -19,11 +19,13 @@
 import * as React from "react"
 import { ArrowLeftRightIcon, FileWarningIcon, RefreshCwIcon, SaveIcon, Undo2Icon } from "lucide-react"
 
+import { Empty } from "@/components/empty"
 import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/confirm-dialog"
 import { CodeEditor } from "@/components/workspace/code-editor"
 import { DiffEditor } from "@/components/workspace/diff-editor"
-import { PanelEmptyState, PanelToolbar } from "@/components/workspace/primitives"
+import { CodeLinesSkeleton } from "@/components/ui/skeletons"
+import { PanelToolbar } from "@/components/workspace/primitives"
 import { describeError, reportError } from "@/lib/errors"
 import { consumeReveal, setTabDirty, type Reveal } from "@/lib/ide/editors"
 import { toast } from "@/lib/toast"
@@ -270,18 +272,30 @@ export function FileTab({
 
   /* ── Render ──────────────────────────────────────────────────────────────── */
 
-  if (loading && !file) return <PanelEmptyState>Loading…</PanelEmptyState>
+  if (loading && !file) return <CodeLinesSkeleton className="h-full overflow-hidden" />
   if (error) {
     return (
-      <PanelEmptyState>
-        <p className="max-w-sm">{error}</p>
-        <Button size="sm" variant="outline" onClick={() => void load()}>
-          Try again
-        </Button>
-      </PanelEmptyState>
+      <div className="p-3">
+        <Empty
+          size="lg"
+          icon={FileWarningIcon}
+          action={
+            <Button size="sm" variant="outline" onClick={() => void load()}>
+              Try again
+            </Button>
+          }
+        >
+          {error}
+        </Empty>
+      </div>
     )
   }
-  if (!file) return <PanelEmptyState>Nothing to show.</PanelEmptyState>
+  if (!file)
+    return (
+      <div className="p-2">
+        <Empty>Nothing to show.</Empty>
+      </div>
+    )
 
   const unsupported = file.binary || file.tooLarge
   const isImage = IMAGES.has(extensionOf(path))

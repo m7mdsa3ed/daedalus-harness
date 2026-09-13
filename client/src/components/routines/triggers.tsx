@@ -23,7 +23,9 @@ import {
 } from "lucide-react"
 
 import { useConfirm } from "@/components/confirm-dialog"
+import { Empty } from "@/components/empty"
 import { ErrorNote } from "@/components/error-note"
+import { Notice } from "@/components/notice"
 import { Field, lines } from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
 import {
@@ -257,9 +259,9 @@ export function TriggersPanel({ routineId }: { routineId: string }) {
           </div>
         )
       ) : triggers.length === 0 ? (
-        <p className="rounded-xl border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
+        <Empty size="lg">
           No triggers — this routine only fires when you run it by hand.
-        </p>
+        </Empty>
       ) : (
         triggers.map((trigger) => (
           <TriggerCard
@@ -461,14 +463,16 @@ function ApiFields({
   return (
     <div className="space-y-3">
       {token ? (
-        <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
-          <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
-            Copy this now — it is shown once. Only its hash is stored, so it cannot be shown again.
-          </p>
-          <CopyLine value={token} mono />
-          <p className="pt-1 text-xs text-muted-foreground">Fire it with:</p>
-          <CopyLine value={`curl -X POST ${url}`} mono />
-        </div>
+        <Notice
+          tone="warn"
+          title="Copy this now — it is shown once. Only its hash is stored, so it cannot be shown again."
+        >
+          <div className="space-y-2 pt-0.5">
+            <CopyLine value={token} mono />
+            <p className="text-xs text-muted-foreground">Fire it with:</p>
+            <CopyLine value={`curl -X POST ${url}`} mono />
+          </div>
+        </Notice>
       ) : (
         <p className="text-xs text-muted-foreground">
           {trigger.hasToken

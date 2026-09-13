@@ -34,8 +34,10 @@ import {
   useMcpServers,
   useProfilePresets,
   useProfiles,
+  useSetProfileFlags,
   useSkills,
 } from "@/lib/queries/catalog"
+import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
 import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions, FormSection, Picker } from "./primitives"
 import {
@@ -98,6 +100,12 @@ const USAGE_PROVIDERS: { kind: ProfileUsageKind; label: string; hint: string; ho
     hint: "Reads the key's own spend limit (when one is set) as a window, and the account's credit balance underneath. Both are documented routes.",
     hostPlaceholder: "https://openrouter.ai/api/v1",
   },
+  {
+    kind: "command-code",
+    label: "Command Code — plan credits",
+    hint: "Reads the plan's rolling 5-hour and weekly credit windows, and the credits left in the cycle, from the same account route the CLI's /usage panel calls — it has no non-interactive form. The staging platform is picked from the base URL above unless you name a host.",
+    hostPlaceholder: "https://api.commandcode.ai",
+  },
 ]
 
 export function ProfilesPage() {
@@ -108,6 +116,19 @@ export function ProfilesPage() {
   const agents = useAgents()
   const confirm = useConfirm()
   const navigate = useNavigate()
+  const setFlags = useSetProfileFlags()
+
+  /* The switches act at once, as the routines list's does: hiding, showing,
+     disabling and enabling are all reversible, so there is nothing to ask
+     about first. */
+  const toggle = (profile: Profile, flags: { hidden?: boolean; disabled?: boolean }, message: string) =>
+    setFlags.mutate(
+      { id: profile.id, ...flags },
+      {
+        onSuccess: () => toast.success(message),
+        onError: (err) => reportError(err, "Couldn't update the profile"),
+      }
+    )
 
   const remove = async (profile: Profile) => {
     if (
@@ -161,7 +182,18 @@ export function ProfilesPage() {
                 <ProfileIcon profile={profile} className="size-5 shrink-0 mt-0.5" />
                 <div className="min-w-0 flex-1 space-y-1.5">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="truncate text-sm font-semibold">{profile.name}</span>
+                    <span className={cn("truncate text-sm font-semibold", (profile.hidden || profile.disabled) && "text-muted-foreground")}>
+                      {profile.name}
+                    </span>
+                    {profile.disabled ? (
+                      <span className="rounded-pill bg-muted px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase text-muted-foreground">
+                        Disabled
+                      </span>
+                    ) : profile.hidden && (
+                      <span className="rounded-pill bg-muted px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase text-muted-foreground">
+                        Hidden
+                      </span>
+                    )}
                     {!profile.hasApiKey && (
                       <Badge variant="outline" className="text-muted-foreground text-[10px] font-normal px-1.5 py-0">
                         no key
@@ -196,6 +228,31 @@ export function ProfilesPage() {
                 </div>
               </div>
               <div className="flex items-center justify-end gap-1 shrink-0 pt-2 border-t border-border/40 sm:border-t-0 sm:pt-0">
+                {/* Kept, not deleted: either flag still leaves the profile
+                    spawning the threads already on it. Hiding is the pickers
+                    only — the usage page keeps reading the plan; disabling
+                    closes everywhere, usage included. State-labelled, since
+                    two bare switches would not say which was which. */}
+                <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Switch
+                    checked={!profile.hidden}
+                    onCheckedChange={(on) =>
+                      toggle(profile, { hidden: !on }, on ? "Profile shown" : "Profile hidden")
+                    }
+                    aria-label={profile.hidden ? `Show ${profile.name}` : `Hide ${profile.name}`}
+                  />
+                  Shown
+                </label>
+                <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Switch
+                    checked={!profile.disabled}
+                    onCheckedChange={(on) =>
+                      toggle(profile, { disabled: !on }, on ? "Profile enabled" : "Profile disabled")
+                    }
+                    aria-label={profile.disabled ? `Enable ${profile.name}` : `Disable ${profile.name}`}
+                  />
+                  Enabled
+                </label>
                 <Button variant="ghost" size="icon-lg" title="Edit" onClick={() => void navigate(settingsFormPath("profiles", profile.id))}>
                   <Pencil />
                 </Button>
@@ -277,6 +334,8 @@ function ProfileForm({
        carries the custom models the notice would be nagging about. Absent on
        older servers (and the virtual Default), which is the same as off. */
     suppressModelMetadataWarning: profile?.suppressModelMetadataWarning ?? false,
+    hidden: profile?.hidden ?? false,
+    disabled: profile?.disabled ?? false,
   }))
   /* Which agents this profile serves, and each one's optional base-URL
      override. A new profile starts on the first registered agent, so the form
@@ -390,6 +449,8 @@ function ProfileForm({
             ? null
             : { kind: form.usageKind, baseUrl: form.usageBaseUrl.trim(), apiKey: form.usageApiKey },
         suppressModelMetadataWarning: form.suppressModelMetadataWarning,
+        hidden: form.hidden,
+        disabled: form.disabled,
         mcpServerIds: form.mcpServerIds,
         skillIds: form.skillIds,
         commandIds: form.commandIds,
@@ -458,6 +519,32 @@ function ProfileForm({
           </div>
         </Field>
       </div>
+      <Field
+        label="Shown"
+        hint="Off, this profile is kept but not offered when starting a new thread. Its credentials, catalog and linked tools stay, the threads already on it keep running, and the usage page keeps tracking its plan — it is only out of the pickers."
+      >
+        <label className="flex items-start gap-2.5 text-sm cursor-pointer">
+          <Switch
+            className="mt-0.5 shrink-0"
+            checked={!form.hidden}
+            onCheckedChange={(on) => set({ hidden: !on })}
+          />
+          <span className="min-w-0 flex-1 leading-snug">Offer this profile when starting a thread</span>
+        </label>
+      </Field>
+      <Field
+        label="Enabled"
+        hint="Off, the profile is disabled everywhere: out of the pickers and off the usage page too, for when a plan is paused or no longer worth watching. The threads already on it keep running — move them to another profile to close it fully."
+      >
+        <label className="flex items-start gap-2.5 text-sm cursor-pointer">
+          <Switch
+            className="mt-0.5 shrink-0"
+            checked={!form.disabled}
+            onCheckedChange={(on) => set({ disabled: !on })}
+          />
+          <span className="min-w-0 flex-1 leading-snug">Track and offer this profile everywhere</span>
+        </label>
+      </Field>
       {/* One provider, several runtimes: the same key and catalog reach each
           agent through its own env template, so a profile names every agent it
           serves rather than being made once per agent. The only thing that is

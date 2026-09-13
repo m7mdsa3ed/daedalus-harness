@@ -629,8 +629,12 @@ export class SessionJournal {
     return { turnSeq, messageId: lastMessageId ?? null };
   }
 
-  /** How many turns lie before `before`. */
-  async countTurnsBefore(sessionId: string, before: number): Promise<number> {
+  /** How many turns lie before `before` — every one of them when it is
+      omitted. The omission is the "all" spelling and not a sentinel, for the
+      reason `turnStartsBefore` gives: `seq` is a 32-bit column, so a
+      `MAX_SAFE_INTEGER` upper bound is out of range for the type and the query
+      is rejected before it can count anything. */
+  async countTurnsBefore(sessionId: string, before?: number): Promise<number> {
     await this.flush();
     const [row] = await this.db
       .select({ count: sql<number>`count(*)` })
@@ -638,7 +642,7 @@ export class SessionJournal {
       .where(and(
         eq(eventsTable.sessionId, sessionId),
         eq(eventsTable.kind, "turn_started"),
-        lt(eventsTable.seq, before),
+        ...(before === undefined ? [] : [lt(eventsTable.seq, before)]),
       ));
     return Number(row?.count ?? 0);
   }
@@ -723,7 +727,66 @@ export class SessionJournal {
        lie behind it), so nothing would offer it back either. Same rule as
        `earlierPage`: the window that reaches the oldest turn takes the head
        along, which is the only way that head is ever read. */
-    return (await this.countTurnsBefore(sessionId, cut)) === 0 ? 0 : cut;
+    if ((await this.countTurnsBefore(sessionId, cut)) === 0) return 0;
+    /* The cut is a `turn_started`, and everything between the previous turn's
+       end and it belongs to no turn at all — a `!` command, a config notice.
+       Starting the window *at* the turn would strand those rows above it: the
+       reader made them, nothing the window counts owns them, and the only way
+       back would be to page a whole turn down. The gap is bounded by the two
+       turns around it (a turn's own updates all live between its `turn_started`
+       and its `turn_ended`), so it is taken whole. */
+    const prevEnd = await this.turnEndBefore(sessionId, cut);
+    const gapStart = prevEnd === null ? cut : Math.max(prevEnd + 1, 1);
+    /* A `!` command is the one row the reader put in the transcript themselves,
+       and it belongs to no turn — so a window cut on a turn boundary would drop
+       it for good, where a message inside a turn the window refuses is merely
+       older and `earlierPage` offers it back. It is never withheld: the window
+       opens at the thread's oldest one, whatever that costs. The cost is real,
+       but it is bounded by the thread's own size and most of it never reaches
+       the wire — a run of streamed chunks goes as the one event it draws (see
+       `coalescedPage`). The range has to stay contiguous, so the events between
+       that command and the cut come along; they are the thread's own history,
+       which is what a replay is for. */
+    const firstShell = await this.firstShell(sessionId);
+    return firstShell === null ? gapStart : Math.min(gapStart, firstShell);
+  }
+
+  /** The seq of the `turn_ended` immediately before `before`, or null when no
+      turn has ended above it — the wall between the gap and the turn before. */
+  private async turnEndBefore(sessionId: string, before: number): Promise<number | null> {
+    await this.flush();
+    const [row] = await this.db
+      .select({ seq: eventsTable.seq })
+      .from(eventsTable)
+      .where(
+        and(
+          eq(eventsTable.sessionId, sessionId),
+          eq(eventsTable.kind, "turn_ended"),
+          lt(eventsTable.seq, before),
+        ),
+      )
+      .orderBy(desc(eventsTable.seq))
+      .limit(1);
+    return row?.seq ?? null;
+  }
+
+  /** The seq of a thread's oldest `!` command, or null when it has none — the
+      one row a window may never cut away. */
+  private async firstShell(sessionId: string): Promise<number | null> {
+    await this.flush();
+    const [row] = await this.db
+      .select({ seq: eventsTable.seq })
+      .from(eventsTable)
+      .where(
+        and(
+          eq(eventsTable.sessionId, sessionId),
+          eq(eventsTable.kind, "update"),
+          sql`${eventsTable.payload}->'update'->>'sessionUpdate' = '_daedalus/shell'`,
+        ),
+      )
+      .orderBy(asc(eventsTable.seq))
+      .limit(1);
+    return row?.seq ?? null;
   }
 
   /** The page of whole turns immediately before `before`, plus how many turns

@@ -76,6 +76,37 @@ export function searchFiles(
   )
 }
 
+/** One line a content search matched. */
+export interface WorkspaceContentMatch {
+  path: string
+  /** 1-based. */
+  line: number
+  text: string
+}
+
+export interface WorkspaceContentSearch {
+  matches: WorkspaceContentMatch[]
+  truncated: boolean
+}
+
+/** Lines containing a term, across the project. A different question from
+    `searchFiles` — "where is it written" rather than "where is it called" —
+    so it is a different route and reads bytes. */
+export function grepFiles(
+  projectId: string,
+  query: string,
+  options: { limit?: number; signal?: AbortSignal } = {}
+): Promise<WorkspaceContentSearch> {
+  return api<WorkspaceContentSearch>(
+    server(),
+    `/api/projects/${encodeURIComponent(projectId)}/files/grep${q({
+      q: query,
+      limit: options.limit ? String(options.limit) : undefined,
+    })}`,
+    { signal: options.signal }
+  )
+}
+
 export function readFile(
   projectId: string,
   path: string,
@@ -139,6 +170,13 @@ export async function readFileObjectUrl(
 }
 
 /* ── Path helpers ──────────────────────────────────────────────────────────── */
+
+/** True for a path that belongs to the project. A search query may name a
+    `~/`, absolute or Windows path — the composer's `@` menu completes those, but
+    a project-scoped surface (the IDE's file finder) cannot open them, so it
+    filters them out rather than offering a row that errors on click. */
+export const isProjectRelative = (path: string): boolean =>
+  !path.startsWith("/") && !path.startsWith("~") && !/^[a-zA-Z]:[\\/]/.test(path)
 
 export const basename = (path: string): string => path.split("/").pop() ?? path
 

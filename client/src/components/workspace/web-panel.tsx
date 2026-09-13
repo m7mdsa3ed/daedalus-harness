@@ -28,7 +28,10 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   ExternalLinkIcon,
+  GlobeIcon,
+  LoaderCircleIcon,
   MonitorIcon,
+  PlayIcon,
   RefreshCwIcon,
   ShieldAlertIcon,
   SmartphoneIcon,
@@ -37,10 +40,17 @@ import {
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { PanelEmptyState, PanelNotice, PanelToolbar } from "@/components/workspace/primitives"
+import { Empty } from "@/components/empty"
+import { Notice } from "@/components/notice"
+import { PanelToolbar } from "@/components/workspace/primitives"
+import { useServer } from "@/lib/server-context"
+/* Aliased: this component's `api` prop is dockview's panel handle. */
+import { api as request, type HelperCommand } from "@/lib/settings"
 import { reportError } from "@/lib/errors"
 import { useProjects } from "@/lib/queries/catalog"
 import { cn } from "@/lib/utils"
+import { useDock } from "@/components/workspace/dock"
+import { useRunHelper } from "@/lib/workspace/use-run-helper"
 
 /**
  * A typed address → a URL this panel will open, or a throw.
@@ -93,6 +103,19 @@ type ViewportId = (typeof VIEWPORTS)[number]["id"]
 
 type WebPanelParams = { trust: "project" | "external"; viewId: string; projectId?: string; url?: string }
 
+/** The stored preview answer: whether the project's dev server is up, probed
+    from the server's own machine (a browser fetch would be CORS-blocked and a
+    cross-origin frame cannot be inspected). */
+interface PreviewState {
+  url: string
+  up: boolean
+}
+
+/* How often the browser is asked while the preview is down — the fast lane is
+   the seconds right after "Start", when a dev server is still booting. */
+const PROBE_MS = 4000
+const STARTING_PROBE_MS = 1500
+
 /** The Browser panel: a typed URL, or a source followed out of a transcript. */
 export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
   const { trust, projectId, url: initialUrl } = params
@@ -100,6 +123,13 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
      reaches this panel; only a projects refresh (rare, and its own clock)
      re-renders it. */
   const project = useProjects().find((candidate) => candidate.id === projectId)
+  const settings = useServer()
+  const dock = useDock()
+  const runHelper = useRunHelper(dock)
+  const previewUrl = trust === "project" ? (project?.previewUrl ?? "") : ""
+  const previewHelper = trust === "project"
+    ? project?.helpers?.find((helper) => helper.preview)
+    : undefined
 
   const [url, setUrl] = React.useState(initialUrl ?? "")
   const [typed, setTyped] = React.useState(initialUrl ?? "")
@@ -111,6 +141,61 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
   /* Per panel, not persisted: it is a reminder about the page in front of you,
      and it is cheap to have said once per browser panel you open. */
   const [hint, setHint] = React.useState(true)
+
+  /* ── The project preview ──
+     Trust-level "project" polls the server's own answer while it has a URL:
+     the loopback fetch works from any device the app runs on, which is the
+     whole point of probing server-side — a phone in the project's LAN sees
+     the same "running/not running" as the machine that hosts the server.
+     Polling stops the moment the preview is up: a page that has loaded needs
+     no more checks, and a live page is the only "up" that matters. */
+  const [probe, setProbe] = React.useState<PreviewState | null>(null)
+  const [starting, setStarting] = React.useState(false)
+  const probeMs = starting ? STARTING_PROBE_MS : PROBE_MS
+
+  React.useEffect(() => {
+    if (trust !== "project" || !projectId) {
+      setProbe(null)
+      return
+    }
+    let live = true
+    const check = () => {
+      request<PreviewState>(settings, `/api/projects/${encodeURIComponent(projectId)}/preview`)
+        .then((state) => {
+          if (live) setProbe(state)
+        })
+        .catch(() => {
+          /* A failing probe degrades to "down" — the panel's other half
+             (Start, the hint) is exactly what down is for. */
+          if (live) setProbe((current) => (current ? { ...current, up: false } : current))
+        })
+    }
+    check()
+    const timer = setInterval(check, probeMs)
+    return () => {
+      live = false
+      clearInterval(timer)
+    }
+  }, [trust, projectId, settings, probeMs])
+
+  /* The transition from down to up is the moment "Start" paid off: the frame
+     already tried to load and failed, so it is reloaded the one time. */
+  const wasDown = React.useRef(true)
+  React.useEffect(() => {
+    if (!probe) return
+    if (probe.up) {
+      if (wasDown.current && url) setReloadKey((current) => current + 1)
+      wasDown.current = false
+      setStarting(false)
+    } else {
+      wasDown.current = true
+    }
+  }, [probe, url])
+
+  const startPreview = async (helper: HelperCommand) => {
+    const started = await runHelper(helper, projectId ?? "")
+    if (started) setStarting(true)
+  }
 
   React.useEffect(() => {
     api.setTitle(url ? new URL(url).host : project ? `Browser — ${project.name}` : "Browser")
@@ -132,6 +217,21 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
     // per genuinely new address.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.url])
+
+  /* A project panel restored from a saved layout has no address — the
+     descriptor was saved before the project had a preview URL, or the field
+     was filled in after the tab was opened. The stored URL is the *answer* to
+     what this panel is for, so it is loaded rather than offered. Only until
+     something else has been loaded: an address the person typed is theirs. */
+  const seededRef = React.useRef(false)
+  React.useEffect(() => {
+    if (seededRef.current || trust !== "project" || !previewUrl || url) return
+    seededRef.current = true
+    go(previewUrl)
+    // `go` closes over `url` (to guard the empty case); the ref above is what
+    // keeps this to one shot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trust, previewUrl, url])
 
   const go = (next: string) => {
     try {
@@ -202,6 +302,29 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           />
         </form>
 
+        {/* The project preview's own status, probed from the server: the one
+            reading a plain iframe cannot be trusted with. Shown only where a
+            preview URL is configured — an empty bar says nothing. */}
+        {trust === "project" && probe?.url && (
+          <span
+            className={cn(
+              "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px]",
+              probe.up
+                ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                : "border-amber-500/30 text-amber-600 dark:text-amber-400"
+            )}
+          >
+            <span
+              aria-hidden
+              className={cn(
+                "size-1.5 rounded-full",
+                probe.up ? "bg-emerald-500" : "bg-amber-500"
+              )}
+            />
+            {probe.up ? "Running" : "Not running"}
+          </span>
+        )}
+
 
         {VIEWPORTS.map((entry) => (
           <Button
@@ -238,27 +361,60 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           detected badly after the fact: the frame may stay blank, and the
           button that always works is in the toolbar. */}
       {trust === "external" && url && !mixedContent && hint && (
-        <PanelNotice className="flex items-center gap-2">
-          <ShieldAlertIcon aria-hidden className="size-3.5 shrink-0" />
-          <span className="min-w-0 flex-1">
+        <div className="px-2 py-1.5">
+          <Notice
+            icon={<ShieldAlertIcon />}
+            action={
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => setHint(false)}
+              >
+                Got it
+              </Button>
+            }
+          >
             Some sites refuse to be shown inside another page. If this stays blank, use{" "}
             <span className="text-foreground">Open in your browser</span>.
-          </span>
-          <button
-            type="button"
-            className="shrink-0 underline-offset-2 hover:text-foreground hover:underline"
-            onClick={() => setHint(false)}
-          >
-            Got it
-          </button>
-        </PanelNotice>
+          </Notice>
+        </div>
       )}
       {mixedContent && (
-        <PanelNotice className="text-foreground">
-          This page is served over https, so the browser will not let it frame an{" "}
-          <code className="font-mono">http://</code> address. Open it in a browser tab instead, or
-          serve the dev server over https.
-        </PanelNotice>
+        <div className="px-2 py-1.5">
+          <Notice tone="warn" className="text-foreground">
+            This page is served over https, so the browser will not let it frame an{" "}
+            <code className="font-mono">http://</code> address. Open it in a browser tab instead, or
+            serve the dev server over https.
+          </Notice>
+        </div>
+      )}
+      {/* The dev server is down and the panel knows a command that starts it —
+          the two halves of "link the project to the browser" meeting. The run
+          lives in a terminal (helpers always do — a dev server asks things
+          and only a PTY can be answered), and the probe's fast lane reloads
+          the frame the moment it answers. If nothing is marked as the preview
+          command, the hint is all there is to say. */}
+      {trust === "project" && url && probe && probe.url === url && !probe.up && (
+        <div className="px-2 py-1.5">
+          <Notice
+            icon={<GlobeIcon />}
+            action={
+              previewHelper && !starting ? (
+                <Button size="sm" variant="outline" onClick={() => void startPreview(previewHelper)}>
+                  <PlayIcon /> Start {previewHelper.name}
+                </Button>
+              ) : undefined
+            }
+          >
+            Nothing is answering at <code className="font-mono">{probe.url}</code>.{" "}
+            {previewHelper
+              ? "The dev server looks stopped."
+              : "Start the dev server, then reload it here."}
+            {starting && <LoaderCircleIcon aria-label="Starting…" className="ml-1 inline size-3.5 animate-spin" />}
+          </Notice>
+        </div>
       )}
 
       <div className="min-h-0 flex-1 overflow-auto bg-muted/20">
@@ -279,18 +435,16 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           </div>
         ) : (
           <Centered>
-            <p className="max-w-xs">
-              {trust === "external"
-                ? "Enter an address, or follow a source from a thread — the pages an agent read open here."
-                : null}
-              {trust === "project" && (
-                <>
-                  Enter the address of this project's development server —{" "}
-                  <code className="font-mono">localhost:5173</code>, or whatever your{" "}
-                  <code className="font-mono">dev</code> script prints.
-                </>
-              )}
-            </p>
+            {trust === "external"
+              ? "Enter an address, or follow a source from a thread — the pages an agent read open here."
+              : null}
+            {trust === "project" && (
+              <>
+                Enter the address of this project's development server —{" "}
+                <code className="font-mono">localhost:5173</code>, or whatever your{" "}
+                <code className="font-mono">dev</code> script prints.
+              </>
+            )}
           </Centered>
         )}
       </div>
@@ -299,5 +453,9 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
-  return <PanelEmptyState>{children}</PanelEmptyState>
+  return (
+    <div className="p-3">
+      <Empty size="lg">{children}</Empty>
+    </div>
+  )
 }

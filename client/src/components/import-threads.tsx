@@ -182,8 +182,11 @@ export function ImportThreadsDialog({
      wherever one exists: a listing is about the machine's own login, and codex
      in particular filters its thread list by the spawned profile's model
      provider, so a gateway profile can answer with none of the CLI's work. */
+  /* Disabled profiles are left out: a listing is read through a (profile, agent)
+     pair, so scanning on a closed profile would offer to pull a conversation
+     into a pair no new thread could start on. */
   const profilesFor = React.useCallback(
-    (id: string) => allProfiles.filter((p) => profileSupports(p, id)),
+    (id: string) => allProfiles.filter((p) => profileSupports(p, id) && !p.hidden && !p.disabled),
     [allProfiles]
   )
   React.useEffect(() => {

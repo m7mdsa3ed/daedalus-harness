@@ -17,6 +17,11 @@ export const ProjectInputSchema = z.object({
   /** Optional — a URL. Empty means "no logo of its own"; the client draws
       the project's initial instead. */
   logoUrl: z.string().optional().default(""),
+  /** The project's dev server, as the Browser panel should open it. Empty
+      means none. What it is reachable *at* is the person's own call —
+      `localhost` for the machine the server runs on, a LAN or tunnel address
+      for a phone. */
+  previewUrl: z.string().optional().default(""),
 });
 
 /** The *input* shape, so `logoUrl` is optional to callers — routes parse it
@@ -32,6 +37,7 @@ export type Project = ProjectInput & { id: string; helpers?: HelperCommand[] };
 const rowToProject = (row: typeof projectsTable.$inferSelect, helpers: HelperCommand[]): Project => ({
   ...row,
   logoUrl: row.logoUrl ?? "",
+  previewUrl: row.previewUrl ?? "",
   helpers,
 });
 
@@ -42,6 +48,7 @@ const columns = (input: ProjectInput) => ({
   cwd: input.cwd,
   description: input.description ?? null,
   logoUrl: input.logoUrl ?? "",
+  previewUrl: input.previewUrl ?? "",
 });
 
 export async function listProjects(): Promise<Project[]> {

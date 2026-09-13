@@ -19,7 +19,7 @@ export interface BridgeHostOwner {
   refreshQuota(session: Session): void;
   drainQueue(session: Session): unknown;
   emitQueue(session: Session): void;
-  persist(session: Session): void;
+  persist(session: Session): Promise<void>;
   events: SessionEvents;
 }
 
@@ -67,7 +67,14 @@ export function makeBridgeHost(session: Session, owner: BridgeHostOwner): Bridge
     onAutonomyBlocked: () => {
       session.autonomyBlocked += 1;
     },
-    hasQueued: async () => !session.queueChain && (await listQueue(session.id)).length > 0,
+    /* The table, and nothing else. It used to answer "no" while any queue work
+       was in flight, which was how a drain's own rows were kept from counting —
+       but a claimed row is a *deleted* row now (`SessionQueue.send`), so a row
+       still here is a row still waiting, whoever is busy. Standing the turn's
+       report down on `queueChain` meant a "send now" that outran its own
+       bookkeeping reported `continued: false` over a queue that still had
+       messages in it, and nothing came back for them. */
+    hasQueued: async () => (await listQueue(session.id)).length > 0,
     onHeldSteersChanged: () => owner.emitQueue(session),
     /* The drain runs here, synchronously after `turn_ended` was journaled,
        so the log reads turn_ended(continued) → turn_started(combined). The
@@ -96,7 +103,7 @@ export function makeBridgeHost(session: Session, owner: BridgeHostOwner): Bridge
        provisional, which makes it the one id the next `session/new` is
        allowed to replace. A proven id (a load that answered, or a turn that
        committed) is never replaced on the strength of a `session/new`. */
-    onAcpSessionId: (acpSessionId, proven) => {
+    onAcpSessionId: async (acpSessionId, proven) => {
       session.liveAcpSessionId = acpSessionId;
       if (proven) {
         // The agent found this session and read it back: nothing outranks it.
@@ -109,7 +116,7 @@ export function makeBridgeHost(session: Session, owner: BridgeHostOwner): Bridge
         session.acpSessionId = acpSessionId;
         session.acpSessionProvisional = true;
       }
-      owner.persist(session);
+      await owner.persist(session);
     },
     onSessionDurable: () => {
       const live = session.liveAcpSessionId;

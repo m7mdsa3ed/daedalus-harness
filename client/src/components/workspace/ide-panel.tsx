@@ -22,8 +22,9 @@
    so a reader who never opens this panel never downloads it. */
 import * as React from "react"
 import type { IDockviewPanelProps } from "dockview-react"
-import { FilesIcon, GitCompareIcon, SearchIcon, XIcon } from "lucide-react"
+import { FileCode2Icon, FilesIcon, GitCompareIcon, SearchIcon, XIcon } from "lucide-react"
 
+import { Empty } from "@/components/empty"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useConfirm } from "@/components/confirm-dialog"
@@ -32,7 +33,6 @@ import { DiffTab } from "@/components/workspace/diff-tab"
 import { FileExplorer } from "@/components/workspace/file-explorer"
 import { FileSearch } from "@/components/workspace/file-search"
 import { FileTab } from "@/components/workspace/file-tab"
-import { PanelEmptyState } from "@/components/workspace/primitives"
 import { ScmView } from "@/components/workspace/scm-view"
 import { disposeCodeModel } from "@/components/workspace/code-editor"
 import {
@@ -164,8 +164,11 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
   )
 
   const openFile = React.useCallback(
-    (path: string) => {
-      openTab(projectId, { kind: "file", path })
+    (path: string, line?: number) => {
+      /* A line is a *reveal*, not a different tab — `lib/ide/editors.ts` holds it
+         as a one-shot on the tab, so following a search hit to line 42 and then
+         the same file from the tree is one tab, scrolled twice. */
+      openTab(projectId, { kind: "file", path }, line ? { reveal: { line } } : {})
       if (narrowRef.current) setSideOpen(false)
     },
     [projectId]
@@ -206,7 +209,12 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
     { label: "Close all", onClick: () => closeAllTabs(projectId) },
   ]
 
-  if (!project) return <PanelEmptyState>This project is no longer available.</PanelEmptyState>
+  if (!project)
+    return (
+      <div className="p-2">
+        <Empty>This project is no longer available.</Empty>
+      </div>
+    )
 
   return (
     <div ref={root} className="flex h-full min-h-0 w-full pt-[var(--dock-content-overlap,var(--app-header-h))]">
@@ -347,9 +355,11 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
             away and back — the thing a keyed remount would throw away. */}
         <div className="relative min-h-0 flex-1">
           {editors.tabs.length === 0 ? (
-            <PanelEmptyState>
-              Open a file from the explorer, or follow one out of a transcript.
-            </PanelEmptyState>
+            <div className="p-2">
+              <Empty size="lg" icon={FileCode2Icon}>
+                Open a file from the explorer, or follow one out of a transcript.
+              </Empty>
+            </div>
           ) : (
             editors.tabs.map((tab) => (
               <div

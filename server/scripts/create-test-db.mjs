@@ -13,8 +13,33 @@
  * Prints nothing on success. Exits non-zero with a readable line otherwise, so
  * the caller can pass the message straight through.
  */
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { testDatabaseUrl } from "./test-database-url.js";
+
+/*
+ * What the tables in a kept database were built from.
+ *
+ * `ensureSchema` pushes only into a database with no `sessions` table, which is
+ * right for an install (a push is the operator's step, `pnpm db:push`) and
+ * wrong for these: nobody runs `db:push` against a scratch database, and they
+ * are kept between runs, so the day `schema.ts` gained a column every test file
+ * started failing on the one it had never been told about — `column
+ * "pinned_at" does not exist`, from a database created before the pin existed.
+ *
+ * So the fingerprint of `schema.ts` is stored on the database as its comment,
+ * and a database whose comment does not match has its `public` schema dropped —
+ * which is exactly the state `ensureSchema` pushes into. Cheap (one hash of one
+ * file), and it costs a push only when the schema actually moved.
+ */
+const SCHEMA_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "db", "schema.ts");
+const fingerprint = `daedalus-test-schema:${createHash("sha256")
+  .update(readFileSync(SCHEMA_PATH))
+  .digest("hex")
+  .slice(0, 32)}`;
 
 const { scratch, name, isInstall } = testDatabaseUrl();
 if (isInstall) {
@@ -71,13 +96,37 @@ try {
  * a table in this database like any other, and stale rows in it are stale
  * search results.
  */
-if (!fresh) {
-  const db = new pg.Client({ connectionString: scratch.toString() });
-  await db.connect();
-  try {
-    const tables = await db.query(
-      "SELECT tablename FROM pg_tables WHERE schemaname = 'public'",
-    );
+const db = new pg.Client({ connectionString: scratch.toString() });
+await db.connect();
+try {
+  const stored = await db.query(
+    "SELECT shobj_description(oid, 'pg_database') AS comment FROM pg_database WHERE datname = $1",
+    [name],
+  );
+  const stale = !fresh && stored.rows[0]?.comment !== fingerprint;
+  if (stale) {
+    /* Everything, so `ensureSchema` sees a database it has never pushed to and
+       pushes the whole current schema. Dropping the schema rather than the
+       database keeps this on the one connection and needs no maintenance
+       round trip. */
+    await db.query("DROP SCHEMA public CASCADE");
+    await db.query("CREATE SCHEMA public");
+  } else if (!fresh) {
+    /*
+     * Empty it, if it was already there and still matches.
+     *
+     * The SQLite file this replaced was deleted and re-made on every run, so
+     * each test file started against nothing. A database kept between runs does
+     * not, and several tests assert on "every session there is" — the first one
+     * to run twice failed on rows its own previous run had left. Truncating
+     * gives the same clean slate for a fraction of the cost of dropping and
+     * re-pushing.
+     *
+     * `session_events_fts` is included even though push does not manage it: it
+     * is a table in this database like any other, and stale rows in it are
+     * stale search results.
+     */
+    const tables = await db.query("SELECT tablename FROM pg_tables WHERE schemaname = 'public'");
     if (tables.rowCount > 0) {
       const list = tables.rows
         .map((row) => `"${row.tablename.replaceAll('"', '""')}"`)
@@ -85,10 +134,17 @@ if (!fresh) {
       // One statement, so the foreign keys between them are never half-cleared.
       await db.query(`TRUNCATE ${list} RESTART IDENTITY CASCADE`);
     }
-  } catch (error) {
-    console.error(`could not empty the test database ${name}: ${String(error)}`);
-    process.exit(1);
-  } finally {
-    await db.end();
   }
+  /* Written whichever way it went: a fresh or just-dropped database is about to
+     be pushed from this exact `schema.ts` by `ensureSchema`. Quoted, never
+     parameterised — COMMENT takes no parameters, and both halves are derived
+     from config and a file hash. */
+  await db.query(
+    `COMMENT ON DATABASE "${name.replaceAll('"', '""')}" IS '${fingerprint.replaceAll("'", "''")}'`,
+  );
+} catch (error) {
+  console.error(`could not prepare the test database ${name}: ${String(error)}`);
+  process.exit(1);
+} finally {
+  await db.end();
 }

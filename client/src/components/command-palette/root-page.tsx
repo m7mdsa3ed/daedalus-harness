@@ -477,13 +477,21 @@ export function RootPage() {
       title: "Browser",
       keywords: "preview dev server localhost web",
       icon: <MonitorIcon />,
-      onSelect: () =>
+      onSelect: () => {
+        const previewUrl = projects.find((candidate) => candidate.id === meta.projectId)?.previewUrl ?? ""
         palette.run(() =>
           palette.dock.openPanel(
-            { kind: "web", trust: "project", projectId: meta.projectId, viewId: "default" },
+            {
+              kind: "web",
+              trust: "project",
+              projectId: meta.projectId,
+              viewId: "default",
+              ...(previewUrl ? { url: previewUrl } : {}),
+            },
             { direction: "right" }
           )
-        ),
+        )
+      },
     })
     items.push({
       id: "dock:terminal",

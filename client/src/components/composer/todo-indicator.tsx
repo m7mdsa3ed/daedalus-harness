@@ -3,11 +3,17 @@
    the checklist — a `todos` tool call, or failing that the thread's own ACP
    plan. */
 import { useMemo } from "react"
-import { CheckCircle2Icon, CheckIcon, CircleDashedIcon, LoaderCircleIcon } from "lucide-react"
+import { CheckCircle2Icon, CircleDashedIcon, LoaderCircleIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Ring } from "@/components/composer/indicator"
+import {
+  READING_MARK,
+  READING_TRIGGER,
+  ReadingBadge,
+  ReadingBubble,
+  Ring,
+} from "@/components/composer/indicator"
 import { extractTodos, toolViewOf } from "@/lib/tools"
 import { type PlanItem, type ThreadState, type ToolItem } from "@/lib/store"
 import { cn } from "@/lib/utils"
@@ -79,7 +85,6 @@ export function TodoIndicator({ thread }: { thread: ThreadState }) {
     todos.find((todo) => todo.status === "in_progress") ??
     todos.find((todo) => todo.status !== "completed")
   const percent = Math.round((completed / total) * 100)
-  const done = completed === total
 
   return (
     <Popover>
@@ -88,17 +93,18 @@ export function TodoIndicator({ thread }: { thread: ThreadState }) {
           <Button
             variant="ghost"
             size="icon-xs"
-            className="relative shrink-0 rounded-lg text-primary hover:text-primary"
+            className={cn(READING_TRIGGER, "text-primary hover:text-primary")}
             title={`Checklist — ${completed} of ${total} done${current ? ` · ${current.content}` : ""}`}
             aria-label="Checklist"
           >
-            <Ring percent={percent} />
-            {/* The count inside the dial, exactly as the context ring prints
-                its percentage — one shape, two readings, so a glance at the
-                cluster is one habit and not two. */}
-            <span className="absolute inset-0 grid place-items-center text-[8px] font-semibold tabular-nums">
-              {done ? <CheckIcon className="size-2.5" /> : completed}
-            </span>
+            <Ring percent={percent} className={READING_MARK} />
+            {/* The count rides the mark on a narrow panel and becomes the
+                badge's `2/5` where there is room — the same bargain the other
+                four readings strike, so the cluster is one row. */}
+            <ReadingBubble>{completed}</ReadingBubble>
+            <ReadingBadge>
+              {completed}/{total}
+            </ReadingBadge>
           </Button>
         }
       />

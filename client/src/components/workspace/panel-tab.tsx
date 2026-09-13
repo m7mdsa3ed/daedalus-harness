@@ -69,7 +69,6 @@ import { reportError } from "@/lib/errors"
 import { useProjects } from "@/lib/queries/catalog"
 import { settingsFormPath, threadPath } from "@/lib/router"
 import { useSessionMeta } from "@/lib/store"
-import { initialsOf } from "@/lib/tasks-view"
 import { toast } from "@/lib/toast"
 import { usePanelPinned } from "@/lib/workspace/panel-pins"
 import { usePanelStatus } from "@/lib/workspace/panel-status"
@@ -186,7 +185,6 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
   const dock = useDock()
   const ref = React.useRef<HTMLDivElement>(null)
   const [menuOpen, setMenuOpen] = React.useState(false)
-  const compact = useIsMobile()
 
   const descriptor = parsePanel(api.component, params)
   const fallback = isPanelKind(api.component) ? PANEL_SPECS[api.component].defaultTitle : "Panel"
@@ -206,9 +204,13 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
 
   return (
     <ItemContextMenu items={items}>
-      {/* Air on all four sides: the chip is a rounded surface *in* the strip,
-          not a shape cut out of it, so it needs the room its corners imply. */}
-      <div className="flex h-full min-w-0 flex-1 items-center p-0.5">
+      {/* Air above and below, and none to the sides: the strip's `gap` is
+          gone and the chip's own inset is the whole of the space between two
+          tabs — one number for one distance (`index.css`). The chip is a slab
+          *of the row* on a docked strip, so it takes the row's height with a
+          2px inset, which is what `py-0.5` here and `h-full` + `m-0.5` below
+          add up to. */}
+      <div className="flex h-full min-w-0 flex-1 items-center py-0.5">
         <div
           /* The ref lives here and not on the box above, which is the one
              `ItemContextMenu` merges its trigger onto: a `render` prop composes
@@ -218,20 +220,19 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
           ref={ref}
           data-active={active || undefined}
           className={cn(
-            /* `h-7` — the height of the sidebar toggle and the view-settings
-               sliders beside it (`HEADER_CHIP`), because in the header's band
-               all three stand on the same line: a tab shorter than the controls
-               next to it reads as a strip tucked under the header rather than
-               as the header's own row. */
-            "dock-tab flex h-7 min-w-0 flex-1 items-center gap-1.5 px-2 text-xs",
+            /* `--dock-chip-h` and not a height of its own: in the header's band
+               the chip is the height of the sidebar toggle and the view-settings
+               sliders beside it (`HEADER_CHIP`, the same token), because all
+               three stand on the one line; on a docked strip it is the row minus
+               the 2px of air the cell keeps above and below it. */
+            "dock-tab mx-0.5 flex h-[var(--dock-chip-h)] min-w-0 flex-1 items-center gap-2 px-2 text-xs",
             active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
           )}
         >
-          <TabMark descriptor={descriptor} title={title} compact={compact} />
-          {/* A grid of one column, because a grid column is the one width that
-              animates to nothing: `index.css` takes it to `0fr` on a narrow
-              strip's inactive tabs. `truncate` goes on the inner span — the
-              grid item is what overflows. */}
+          <TabMark descriptor={descriptor} />
+          {/* A grid of one column (`index.css`), so the inner span has a column
+              of exactly the tab's width to truncate against. `truncate` goes on
+              the inner span — the grid item is what overflows. */}
           <span data-tab-title className="grid min-w-0 flex-1">
             <span title={title} className="truncate">
               {title}
@@ -300,49 +301,31 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
 }
 
 /**
- * The mark a tab wears.
+ * The mark a tab wears: the panel's own (`PanelIcon`) — a chat's is its agent's,
+ * which is what stops four threads from being four identical speech bubbles.
  *
- * Wide, it is the panel's own (`PanelIcon`) — a chat's is its agent's, which is
- * what stops four threads from being four identical speech bubbles. Narrow, a
- * chat trades that for the **initials of its title**, because down there the
- * mark IS the tab and four threads on one runtime would otherwise be four
- * identical agent logos.
- *
- * Chosen in JS rather than by a CSS swap, and that is safe here for a reason
- * worth stating: the choice depends on the *viewport*, not on which tab is
- * active, so it changes on a resize and never on a click. (What a narrow strip
- * animates is the title, not the mark — see `index.css`.)
+ * Beside a title the mark is a glyph, and a ground around it would be a button
+ * that is not one, so the tile it sits in draws no ground. That is also the
+ * whole of what a narrow strip used to change here: it swapped a chat's icon
+ * for the initials of its title, because down there the mark *was* the tab. The
+ * strip now draws one tab and the list names the rest (`index.css`,
+ * `tab-actions.tsx`), so nothing picks a mark by viewport and there is no
+ * swap to make.
  */
-function TabMark({
-  descriptor,
-  title,
-  compact,
-}: {
-  descriptor: Descriptor
-  title: string
-  compact: boolean
-}) {
+function TabMark({ descriptor }: { descriptor: Descriptor }) {
   return (
-    <span
-      data-tab-mark
-      aria-hidden
-      className={cn(
-        "grid size-5 shrink-0 place-items-center rounded-[calc(var(--radius)*0.8)]",
-        /* A tile only where the mark stands alone: beside a title it is a
-           glyph, and a ground around it would be a button that is not one. */
-        compact && "bg-foreground/[0.07]"
-      )}
-    >
-      {compact && descriptor?.kind === "chat" ? (
-        <span className="text-[11px] font-semibold tracking-tight">{initialsOf(title)}</span>
-      ) : (
-        <PanelIcon panel={descriptor} className="size-3.5" />
-      )}
+    <span data-tab-mark aria-hidden className="grid size-4 shrink-0 place-items-center">
+      <PanelIcon panel={descriptor} className="size-3.5" />
     </span>
   )
 }
 
-const TAB_CONTROL = "size-5 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
+/* `--dock-control-h` square and fully round, so the two of them read as
+   controls *inside* the slab rather than as two more small slabs: a 20px box
+   in a 28px chip is a button, and two rounded squares at the end of a rounded
+   rectangle is a tab made of three rounded rectangles. */
+const TAB_CONTROL =
+  "size-[var(--dock-control-h)] shrink-0 rounded-full text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
 
 /**
  * A tab's close / unpin control.

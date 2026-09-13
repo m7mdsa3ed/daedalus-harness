@@ -16,12 +16,30 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { MenuRow, MenuRowSkeleton, selectChoices } from "@/components/config-menu"
 import type { Actions } from "@/lib/actions"
-import { optionKey, optionsForModel, useAgentOptions } from "@/lib/agent-options"
+import { optionKey, shownOptions, useAgentOptions } from "@/lib/agent-options"
 import { reportError } from "@/lib/errors"
+import { effectivePricing, formatRate, offPeakLabel, offPeakState } from "@/lib/off-peak"
 import { currentChoiceLabel, partitionSessionOptions } from "@/lib/session-options"
 import { profileSupports } from "@/lib/settings"
 import { useAgents, usePersonas, useProfiles } from "@/lib/queries/catalog"
 import { configView, useSessionMeta, useStoreSelect, type ThreadState } from "@/lib/store"
+
+/**
+ * The clock, coarse on purpose.
+ *
+ * An off-peak window turns over at a minute boundary and nothing here is worth
+ * a per-second timer, so this ticks once a minute. It runs for as long as the
+ * composer's config trigger is mounted, which is the whole point: the chip is a
+ * live reading, not a value someone has to re-open the menu to refresh.
+ */
+function useMinute(): Date {
+  const [now, setNow] = React.useState(() => new Date())
+  React.useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60_000)
+    return () => clearInterval(timer)
+  }, [])
+  return now
+}
 
 /** Sentinel for "whatever the profile says", which is not itself a model id. */
 const DEFAULT_CHOICE = "__default__"
@@ -94,9 +112,14 @@ export function SessionConfigPopover({
   // The thread's agent, not the profile's: a profile may serve several.
   const agentId = meta?.agentId ?? ""
   const agent = agents.find((a) => a.id === agentId)
-  /* The profiles this thread could move to: every one configured for its
-     agent. Changing profile is new credentials, never a new runtime. */
-  const agentProfiles = profiles.filter((p) => profileSupports(p, agentId))
+  /* The profiles this thread could move to: every shown one configured for
+     its agent. Changing profile is new credentials, never a new runtime. A
+     hidden or disabled profile is offered no more here than it is on a draft —
+     but the thread's own stays listed if it is the one it runs on, so the menu
+     still reads it out. */
+  const agentProfiles = profiles.filter(
+    (p) => profileSupports(p, agentId) && (p.id === meta?.profileId || (!p.hidden && !p.disabled))
+  )
   // Called before the early return below: hooks cannot be conditional.
   // Sibling profiles serving the same agent stand in while this one has no
   // remembered set — the profile owns only model and effort, so the rest of
@@ -122,6 +145,8 @@ export function SessionConfigPopover({
     if (!unanswered || !meta) return
     void actions.learnAgentOptions(meta.profileId, agentId, meta.projectId)
   }, [actions, unanswered, meta?.profileId, agentId, meta?.projectId])
+  // Called before the return below, for the reason the comment above gives.
+  const now = useMinute()
   if (!meta || !row || !profile) return null
 
   const modeIds = new Set(thread.modes?.availableModes.map((m) => m.id) ?? [])
@@ -133,8 +158,17 @@ export function SessionConfigPopover({
      remembered set — showed everything. Same source, same fallback: what the
      profile's agent last advertised, replaced the moment the session speaks. */
   const live = thread.configOptions.length > 0
+  /* The fallback is `shownOptions` — the *same* derivation the new-thread menu
+     draws with — rather than the remembered set alone: the row records the
+     model and effort this thread is on, and a menu that fell back to whatever
+     the remembered set last sat on would state a different model for the
+     length of a spawn, a load or a restart, then snap back. Reading the row
+     makes it state the same thing the draft did, and stick while the process
+     is replaced. */
   const options = partitionSessionOptions(
-    live ? thread.configOptions : optionsForModel(remembered, meta.model || undefined),
+    live
+      ? thread.configOptions
+      : shownOptions(remembered, meta.configChoices, meta.model, meta.effort),
     modeIds
   )
   const modes = thread.modes && thread.modes.availableModes.length > 1 ? thread.modes : null
@@ -149,6 +183,12 @@ export function SessionConfigPopover({
   const overridden = profile.models.length > 0
   const spawnModel = profile.models.find((m) => m.id === (meta.model || profile.defaultModel))
   const spawnEfforts = spawnModel?.reasoningEfforts ?? []
+  /* The provider's cheaper window of the day, if the selected model declares
+     one. Only the profile's own catalog can: the window is model metadata, and
+     a model the agent owns has nowhere to state one. A reading of the clock,
+     not of anything the server sent. */
+  const offPeak = spawnModel?.offPeak
+  const offPeakNow = offPeak ? offPeakState(offPeak, now) : null
   const profileEffort = overridden && spawnEfforts.length > 0
   const liveEffort = profileEffort ? undefined : options.effort
 
@@ -173,6 +213,7 @@ export function SessionConfigPopover({
      else. */
   const triggerLabel = [
     [persona?.name, modelLabel, effortLabel, modeLabel].filter(Boolean).join(" · "),
+    offPeak ? offPeakLabel(offPeak, now) : "",
     meta.configPending ? "— applying…" : meta.configStaged ? "— when you next send" : "",
   ]
     .filter(Boolean)
@@ -211,7 +252,7 @@ export function SessionConfigPopover({
                what will not fit scrolls with the rest of the control cluster,
                which is already `overflow-x-auto`. The title still carries the
                settings whole. */
-            className="h-6 gap-1 border-0 bg-transparent px-1.5 text-[11px] shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent"
+            className="h-6 gap-1 rounded-pill border-0 bg-transparent px-1.5 text-[11px] shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent"
             title={triggerLabel}
           >
             {/* The model's own icon replaces the profile's logo in the pair —
@@ -249,6 +290,15 @@ export function SessionConfigPopover({
               {effortLabel && <span className="capitalize"> · {effortLabel}</span>}
               {modeLabel && ` · ${modeLabel}`}
             </span>
+            {/* The one thing about the settings the values cannot say: the
+                provider is charging less right now. Drawn only while it is
+                true — peak is the ordinary state and needs no badge — and the
+                title above carries the window whole, both halves of it. */}
+            {offPeakNow?.active && (
+              <span className="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-px text-[10px] font-medium text-emerald-700 dark:text-emerald-400">
+                Off-peak
+              </span>
+            )}
             {/* The chip already shows the value that was picked (the overlay is
                 what it reads); this is the half the value cannot say — whether
                 it is true yet. A spinner while the change is in flight, a clock
@@ -370,6 +420,17 @@ export function SessionConfigPopover({
                and the menu is the same height either way. */
             unanswered && <MenuRowSkeleton label="Model" />
           )}
+          {/* The window in full, under the row that owns it: which side of it
+              we are on and when it next flips. A property of the model, so it
+              reads like one — and it says nothing at all for a model with a
+              single all-day rate, which is most of them. */}
+          {offPeak && (
+            <div className="px-2 pb-1 text-[11px] leading-snug text-muted-foreground">
+              {offPeakLabel(offPeak, now)}
+              {spawnModel?.pricing &&
+                ` · ${formatRate(effectivePricing(spawnModel.pricing, offPeak, now) ?? spawnModel.pricing)}`}
+            </div>
+          )}
           {profileEffort ? (
             <MenuRow
               label="Effort"
@@ -405,6 +466,16 @@ export function SessionConfigPopover({
             onCheckedChange={(checked) => actions.changeThreadSuggestions(row, checked === true)}
           >
             Suggest follow-ups
+          </DropdownMenuCheckboxItem>
+          {/* The same spawn-text bargain: the lane is system-prompt text, so a
+              flip costs a respawn and the server says so. Off, the model is
+              never *asked* for one — a fence that arrives anyway still draws,
+              because the drawing is the client's and it reads no toggle. */}
+          <DropdownMenuCheckboxItem
+            checked={meta.uiBlocks !== false}
+            onCheckedChange={(checked) => actions.changeThreadUiBlocks(row, checked === true)}
+          >
+            Draw answers as UI
           </DropdownMenuCheckboxItem>
         </DropdownMenuGroup>
         {(modes || options.rest.length > 0) && (

@@ -236,13 +236,18 @@
      and the page one flat band — the tuck was drawn and invisible.
 
      Derived from the composer rather than picked, so every generated palette
-     gets it for nothing — and **darker than the composer in both modes**, which
-     is two declarations and not one: "darker" is toward the text in a light
-     palette and toward the *background* in a dark one, where `--composer` is
-     already the lighter of the two tones. Mixing toward the foreground in both
-     would have lightened the shelf in dark mode, which is the composer's job,
-     not the thing behind it. This one is light's; `.dark` overrides it below. */
-  --shelf: color-mix(in oklch, var(--composer) 84%, var(--foreground) 16%);
+     gets it for nothing — and a step *back* from the composer in both modes,
+     which is two declarations and not one: a step back is toward the text in a
+     light palette and toward the *background* in a dark one, where `--composer`
+     is already the lighter of the two tones. Mixing toward the foreground in
+     both would have lightened the shelf in dark mode, which is the composer's
+     job, not the thing behind it. This one is light's; `.dark` overrides it
+     below. Light's step is deliberately shallow — the composer in a light
+     palette already sits a hair below white, so a deep mix toward the text
+     turned the shelf a heavy grey; at a few percent the strip is barely off the
+     box, light and airy, and the step is carried by the *lowest* perceptible
+     tint rather than by a grey. */
+  --shelf: color-mix(in oklch, var(--composer) 96%, var(--foreground) 4%);
 
   /* ── The main surface ──
      What the thread (and every page) sits on, inside the sidebar's tinted
@@ -253,6 +258,24 @@
      rather than sinking into it. Derived, like --composer, so no palette or
      user-made theme needs a new token. */
   --surface: var(--card);
+
+  /* ── One height for everything standing in a strip ──
+     The tab chip, the ⋮/close inside it, and a strip's own + and list are one
+     material on one line, so they take one height from one token. That was
+     three numbers in three files — `h-7` on the chip, `size-6` on the strip's
+     two controls, `size-5` on the chip's two — shared by nothing, which is how
+     a tab ends up a slab floating in a 32px row with 2px of air above and
+     below it and nothing to be a slab *of*.
+
+     On `:root` and not on the dockview element, because the app header's own
+     controls (`HEADER_CHIP`, lib/header-chrome.ts) stand in the same row
+     whenever a group joins the band, and a token scoped to the dock is one
+     those two cannot see. `--app-header-row-h` is 2.5rem below `md` and 2rem
+     above, so the chip keeps the 28px it always had in the band's row and, in
+     a docked strip, takes the row minus the 2px of air the cell keeps above
+     and below it. */
+  --dock-control-h: 1.25rem;
+  --dock-chip-h: min(1.75rem, calc(var(--app-header-row-h) - 0.25rem));
 
   /* ── The shell's ground ──
      `body::before` (the base block below) is the one sheet under the whole
@@ -352,8 +375,10 @@
      `--composer` is the *lighter* of the two tones in every dark palette, so a
      step back from it is a step toward the background. (Toward the foreground —
      light's answer — would have lifted the shelf in front of the box it is
-     tucked behind.) */
-  --shelf: color-mix(in oklch, var(--composer) 55%, var(--background) 45%);
+     tucked behind.) Deeper than the light step's mix for the same reason it is
+     the other direction: there is less room between the composer and the
+     background down here, so it takes more of it to read. */
+  --shelf: color-mix(in oklch, var(--composer) 44%, var(--background) 56%);
   /* The shell steps the other way here: `--background` is the darkest tone in
      every dark palette and the content card is already `--background`, so the
      frame has to lift rather than sink. A step toward the foreground (the light
@@ -623,13 +648,13 @@
    either. What you get is a menu that reads as transparent and unblurred, which
    is exactly what it is.
 
-   Almost nothing hits this, because every menu in the sidebar opens `side=
-   "right"`, out over the opaque main pane. The one exception is the server
-   switcher in the footer, which opens `side="top"` and therefore stays over the
-   sidebar — so it opts out here rather than the surface being weakened for the
-   menus where the glass is doing its job. `backdrop-filter` goes with it: with
-   an opaque background there is nothing for it to show, and it would still cost
-   a compositing layer. */
+   No surface sets `data-surface="solid"` today: every menu opens `side=
+   "right"`, out over the opaque main pane, and the footer's two cards (plan
+   usage, servers) wear the glass over the desktop's own vibrancy/mica, where
+   there is a desktop behind the window to show. The door stays for the next
+   surface that opens over flat ground. `backdrop-filter` goes with the
+   opacity: with an opaque background there is nothing for it to show, and it
+   would still cost a compositing layer. */
 [data-slot="popover-content"][data-surface="solid"],
 [data-slot="dropdown-menu-content"][data-surface="solid"],
 [data-slot="dropdown-menu-sub-content"][data-surface="solid"],
@@ -1834,8 +1859,17 @@ html .dockview-theme-abyss {
    says where you are, and a line under a row of floating rounded chips is a
    second edge for a bar that has none. */
 html .dv-tabs-and-actions-container {
-  padding: 0 4px;
-  gap: 2px;
+  /* 6px plus the chip's own 2px inset is the 8px line every other surface in
+     the column starts on (`--app-frame-gap` — the air the card keeps around
+     itself), and in the header's band it is also what puts the first tab on
+     roughly the line the header's own controls stand on. It was 2px, which
+     with the chip's 2px was a tab 4px from the frame while the card under it
+     was 8px in. */
+  padding: 0 6px;
+  /* The air between two tabs is the chips' own inset (`mx-0.5` each side on
+     the chip, `panel-tab.tsx`), so the strip adds none: a gap here and an
+     inset there were two numbers for one distance. */
+  gap: 0;
 }
 
 /* The strip clears the floating app header (app-shell.tsx) when its group is at
@@ -2075,28 +2109,31 @@ html .dv-tab {
      scroll, wrong for ours, which carries the ⋮ and the close at the tab's far
      end and would push them past the strip's edge the moment a title is long.
 
-     The ceiling is wider than a browser's 240px on purpose: what a tab here has
-     to hold apart from its neighbours is a thread's name, and a thread is named
-     after what it is doing rather than after a domain. Two of them truncated to
-     the same first three words are two identical tabs.
+     The ceiling is still wider than a browser's 240px, for the reason a tab
+     here exists: it holds a *name* — a thread is named after what it is doing,
+     not after a domain — and two names truncated to the same first three words
+     are two identical tabs. 256px is a step off the browser's 240px, and it
+     was 304px: at five tabs the strip held 1520px of tabs in a 1184px strip, so
+     every one of them was already squeezed or scrolled off, and the 48px this
+     gives back is most of a sixth tab at the width the app is actually used at.
 
      The floor is what keeps this from being the opposite problem: past about
-     seven tabs, shrinking without one leaves slivers rather than a strip that
+     nine tabs, shrinking without one leaves slivers rather than a strip that
      scrolls. Below it the container scrolls as it always did, and the tab list
      at the strip's end is the way back to what scrolled off.
 
      **The size is a `width`, not a flex-basis**, and that is not a preference:
      dockview's reorder collapses the tab being dragged with
      `width: 0 !important` and opens the gap by measuring what is left. A
-     `flex-basis` of 19rem outranks any `width`, so with `flex: 1 1 19rem` the
+     `flex-basis` of 16rem outranks any `width`, so with `flex: 1 1 16rem` the
      dragged tab never left the strip and every gap was a tab too wide. `flex-
      basis: auto` defers to the width, which makes the two agree — same
      grow-to-a-ceiling, shrink-to-a-floor behaviour, one that dockview can
      animate. */
   flex: 1 1 auto;
-  width: 19rem;
-  max-width: 19rem;
-  min-width: 7rem;
+  width: 16rem;
+  max-width: 16rem;
+  min-width: 6.5rem;
   /* Dockview times its own reorder off this (it defaults to 200ms, and sets
      70ms on every `.dv-drop-target` — which a tab is, so the collapse and the
      slide ran at a third of the strip's own speed). One duration for the whole
@@ -2111,83 +2148,36 @@ html .dv-tab.dv-tab--dragging {
   flex-grow: 0;
 }
 
-/* One easing for everything a tab does, so the strip moves as one thing.
-   Declared before the two blocks that read it, because the reduced-motion
-   override below zeroes it on `html` too — at equal specificity the later
-   rule wins, and a definition placed after the override would quietly undo
-   it. The duration is split out because dockview's reorder wants a bare one. */
+/* How long the strip takes when dockview reorders it — the one motion a tab
+   still has now that collapsing a title is a resize (`html .dv-tab`, above) and
+   hiding a tab on a phone is `display`. Declared before the reduced-motion
+   override below, because that override zeroes it on `html` too — at equal
+   specificity the later rule wins, and a definition placed after it would
+   quietly undo it. */
 html {
   --dock-tab-duration: 240ms;
-  --dock-tab-motion: var(--dock-tab-duration) cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* ── Narrow: one title, the rest are marks ──
-   On a phone only the tab you are on says its name; every other one shrinks to
-   its mark — a kind glyph, or a chat thread's initials (`panel-tab.tsx`
-   picks which). Four titles sharing a 360px strip are four tabs truncated to
-   "Fix th…", which is four identical tabs.
+/* ── Narrow: the strip is one tab, the rest are in the list ──
+   A phone's strip draws the tab you are on and nothing else; every other tab
+   lives in the tab list at the strip's end (`tab-actions.tsx`, the switcher
+   from two tabs up). Four titles sharing a 360px strip are four tabs truncated
+   to "Fix th…" — four identical tabs, none of them the name of a thread — and a
+   row of marks is a second thing to read beside the list that already names
+   every one of them.
 
-   **The title collapses; nothing swaps.** The whole effect is one animatable
-   property — a single-column grid taken from `1fr` to `0fr` — because a grid
-   column is the only width that interpolates cleanly to nothing without the
-   element knowing what it is wide. The version this replaces animated four
-   things at three durations (the tab's max-width, a mark's width, the title's
-   opacity, the controls' width) and needed both the mark and the title in the
-   DOM at all times to do it.
+   It used to draw every tab as its mark and collapse the ones you were not on
+   to `2.5rem`, animating the tab's `max-width` cap and a grid column to `0fr`.
+   That is gone with the marks: what this hides is never laid out, so there is
+   nothing between two states to interpolate, and switching threads is one
+   frame — the instant a browser gives a tab switch. Nothing else changes here:
+   the wide strip sizes itself below (`html .dv-tab`), and it is measured from
+   the strip, not from this query.
 
-   Keyed on dockview's own `dv-active-tab`/`dv-inactive-tab` — the class it
-   already toggles on the element that owns the width — so the width and the
-   contents cannot disagree about which tab is which mid-flight. */
+   Keyed on dockview's own `dv-active-tab`/`dv-inactive-tab`, the class it
+   already toggles on the element that owns the width. */
 @media (width < 48rem) {
-  /* The strip is swiped, not scrolled: no thin scrollbar under a row of chips
-     (the marks *are* the sign that there is more), the strip stops at its own
-     end rather than handing the swipe to the browser's back gesture, and it
-     settles on a tab edge so a mark is never cut in half. */
-  html .dv-tabs-container {
-    scrollbar-width: none;
-    overscroll-behavior-x: contain;
-    scroll-snap-type: x proximity;
-  }
-  html .dv-tabs-container::-webkit-scrollbar {
-    display: none;
-  }
-
-  /* Every tab grows; what differs is the ceiling. Transitioning the *cap*
-     rather than the basis is what makes two tabs cross over smoothly — a
-     `flex-grow` that jumped 0 → 1 would resolve to the new width in one frame
-     however long the basis took. 24rem is past any phone, so the active tab is
-     really bounded by the strip. */
-  html .dv-tab {
-    scroll-snap-align: start;
-    flex: 1 1 auto;
-    /* Back to the content's own width: the wide strip's 19rem basis would make
-       every tab here want the whole phone and settle by shrinking, which is the
-       opposite of "one title, the rest are marks". */
-    width: auto;
-    min-width: 2.5rem;
-    max-width: 24rem;
-    transition: max-width var(--dock-tab-motion);
-  }
-
   html .dv-tab.dv-inactive-tab {
-    max-width: 2.5rem;
-  }
-
-  /* The chip loses the row's padding as it narrows, so the mark ends centred
-     in a square rather than pushed against one edge on the way. */
-  html .dv-tab.dv-inactive-tab .dock-tab {
-    justify-content: center;
-    padding-inline: 0;
-  }
-
-  html .dv-tab.dv-inactive-tab .dock-tab [data-tab-title] {
-    grid-template-columns: 0fr;
-    opacity: 0;
-  }
-
-  /* The controls go with the title. `display` and not a width, because there
-     is nothing left to animate once the box around them is closing anyway. */
-  html .dv-tab.dv-inactive-tab .dock-tab [data-tab-controls] {
     display: none;
   }
 }
@@ -2195,10 +2185,8 @@ html {
 @media (prefers-reduced-motion: reduce) {
   html {
     --dock-tab-duration: 0s;
-    --dock-tab-motion: 0s;
   }
   html .dock-tab,
-  html .dock-tab [data-tab-title],
   html .dock-tab [data-tab-action] {
     transition: none;
   }
@@ -2235,6 +2223,35 @@ html {
    `--background`, lib/theme-ramp.ts). No backdrop blur: nothing passes under
    the row any more.
 
+   **A tab is not a slab on a row.** That sentence was only half true: the chip
+   was `h-7` inside a 32px tab, so on a *docked* strip it was a slab floating in
+   a bar with 2px of air above and below it and nothing to be a slab *of*. In the
+   header's band the row and the chip were the same height and the meaning was
+   right; everywhere else it was a floating rectangle among floating rectangles,
+   and the selection was carried by one 4% tint.
+
+   So the chip fills the cell that holds it (`h-full`, `m-0.5`), and the *cell* is
+   the box with the air — the tab's own `py-0.5` is the strip's inset, per tab,
+   which is what a row of 32px cells has instead of a gap. The tab you are on is
+   then the piece of the card that rises the full height of the row, and the ones
+   you are not on are the ground with a title written on it.
+
+   **The ground is the hierarchy, and there is only one of it.** The unselected
+   tab is now truly *nothing* — the comment above had it wearing 4% of the
+   foreground while calling that nothing, and 4% is a full step of the ramp
+   (`--app-ground-step`, lib/theme-ramp.ts) — which is what made the active tab's
+   `--background` look like a shade of the same grey rather than a different
+   material. Hover is a single 6% wash toward the foreground: one mix that reads
+   on a light ground and a dark one alike. The selected tab is the card's own
+   ground, its own shadow, and the mark in the full foreground colour.
+
+   **What a tab *is* is its mark, not its close button.** The mark used to be a
+   20px tile around a 14px glyph — the square `Button`'s box, on a chat, with no
+   `size-` on either of the two icons inside it — and the tile sat flush against
+   the chip's edge, so a mark at `--radius`' round looked like it had been
+   trimmed by the tab's own corner. It is a bare 16px glyph now, inset 8px, which
+   gives the title that 4px back.
+
    The header's own controls — the sidebar toggle and the view-settings
    sliders (`HEADER_CHIP`, lib/header-chrome.ts) — are bare glyphs for the
    same reason, and only their size is still the tab's. */
@@ -2242,22 +2259,32 @@ html .dock-tab {
   border-radius: var(--radius);
   background-color: transparent;
   transition:
-    padding var(--dock-tab-motion),
     background-color 200ms,
-    color 200ms;
+    color 200ms,
+    box-shadow 200ms;
 }
 
-/* The title's box. One grid column, because a grid column is the one width
-   that animates cleanly to nothing — the narrow strip takes it to `0fr`. */
+/* The title's box: one grid column of exactly the tab's width, so the inner
+   span's `truncate` has something to overflow. (`auto` would size to the
+   title's own width and grow the tab past its cap.) */
 html .dock-tab [data-tab-title] {
   grid-template-columns: 1fr;
-  transition:
-    grid-template-columns var(--dock-tab-motion),
-    opacity 140ms ease-out;
+}
+
+/* A mark earns the width it takes: a chat's agent art is a piece of flat art
+   with no transparent padding, so a tile drawn around it in the *same*
+   `currentColor` as the glyphs would be a box around a picture rather than a
+   shape the picture sits in. It is a bare glyph like every other. */
+html .dock-tab [data-tab-mark] {
+  color: var(--muted-foreground);
+}
+
+html .dock-tab[data-active] [data-tab-mark] {
+  color: var(--foreground);
 }
 
 html .dock-tab:not([data-active]):hover {
-  background-color: color-mix(in oklch, var(--foreground) 7%, transparent);
+  background-color: color-mix(in oklch, var(--foreground) 6%, transparent);
 }
 
 html .dock-tab[data-active] {

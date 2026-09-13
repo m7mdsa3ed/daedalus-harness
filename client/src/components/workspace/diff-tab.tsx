@@ -22,10 +22,12 @@ import * as React from "react"
 import { RefreshIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 
+import { Empty } from "@/components/empty"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { DiffEditor } from "@/components/workspace/diff-editor"
-import { PanelEmptyState, PanelToolbar } from "@/components/workspace/primitives"
+import { DiffRowsSkeleton } from "@/components/ui/skeletons"
+import { PanelToolbar } from "@/components/workspace/primitives"
 import { describeError } from "@/lib/errors"
 import { readFile } from "@/lib/workspace/fs-api"
 import { gitFileAt, type Comparison } from "@/lib/workspace/git-api"
@@ -107,7 +109,12 @@ export function DiffTab({
   }, [projectId, path, live])
 
   const error = original.error ?? modified.error
-  if (error) return <PanelEmptyState>{error}</PanelEmptyState>
+  if (error)
+    return (
+      <div className="p-2">
+        <Empty>{error}</Empty>
+      </div>
+    )
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -140,7 +147,7 @@ export function DiffTab({
       </PanelToolbar>
       <div className="min-h-0 flex-1 overflow-hidden">
         {original.text === null || modified.text === null ? (
-          <PanelEmptyState>Reading both sides…</PanelEmptyState>
+          <DiffRowsSkeleton className="h-full overflow-y-auto" />
         ) : (
           <DiffEditor original={original.text} modified={modified.text} filename={path} />
         )}

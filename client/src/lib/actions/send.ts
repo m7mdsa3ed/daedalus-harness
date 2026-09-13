@@ -14,6 +14,7 @@
 
 import type { AttachmentRef } from "@daedalus/protocol"
 import { toast } from "../toast"
+import { uuid } from "../uuid"
 import { postJson, type ActionsCore } from "./core"
 import type { configActions } from "./config"
 
@@ -361,6 +362,52 @@ export function sendActions(
         recordError(sessionId, error, "Couldn't compact the conversation")
         throw error
       }
+    },
+
+    /**
+     * Run a `!` line against the thread's project and put the result in the
+     * transcript. Not a prompt: the server runs it (`server/src/shell.ts`) and
+     * journals a `_daedalus/shell` row, so the agent is never told and no turn
+     * runs.
+     *
+     * The row is fanned out to every attached peer, but this device may hold no
+     * socket — a thread opened to read has none, by design (`phase.ts`) — so
+     * the fan-out would not reach the very screen that asked for it and the
+     * line would leave no trace until the next attach. Drawn here from the
+     * answer when that is the case, and *not* when it is not, or a live thread
+     * would show the same command twice.
+     */
+    async runShell(sessionId: string, command: string) {
+      const shellId = uuid()
+      /* Drawn before the request leaves: a `!` line can take seconds, and one
+         that showed nothing until it finished would read as a line that was
+         ignored. It is keyed by the id the server journals under, so what
+         follows *patches* this row rather than adding a second — by fan-out to
+         a live socket, by this dispatch when there is none (a thread opened to
+         read holds no socket — `phase.ts`), and by both when both happen. */
+      dispatch({
+        type: "update",
+        id: sessionId,
+        update: { sessionUpdate: "_daedalus/shell", shellId, status: "running", command },
+      })
+      const result = await postJson<{
+        output: string
+        exitCode: number | null
+        timedOut: boolean
+      }>(settings, `/api/sessions/${sessionId}/shell`, { command, shellId })
+      dispatch({
+        type: "update",
+        id: sessionId,
+        update: {
+          sessionUpdate: "_daedalus/shell",
+          shellId,
+          status: "done",
+          command,
+          output: result.output,
+          exitCode: result.exitCode,
+          timedOut: result.timedOut,
+        },
+      })
     },
 
     /** Hold or release a harness workflow run of this thread. The hold is

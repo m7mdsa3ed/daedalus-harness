@@ -33,6 +33,30 @@ import type { AutonomyPolicy } from "../autonomy.js";
  *     the tail costs nothing to keep and a replay is a range scan.
  */
 
+/**
+ * The hours a provider charges less for, and by how much.
+ *
+ * Some providers price a window of the day rather than a request: DeepSeek's
+ * off-peak discount is the well-known one, and there is nothing to send — the
+ * endpoint charges by its own clock. So a window is *declared*, beside the
+ * model's `pricing`, and read back as a live indicator; no turn carries it.
+ *
+ * `pricing` is the full-price rate; inside the window the rate is that times
+ * `multiplier`. The window is stated in the provider's own zone (`tz`) — UTC
+ * for the provider this exists for — and `from` may wrap past midnight
+ * (16:30 → 00:30 is one continuous span).
+ */
+export interface OffPeakWindow {
+  /** "HH:MM", 24-hour, in `tz`. */
+  from: string;
+  /** "HH:MM", 24-hour, in `tz`; earlier than `from` when it wraps. */
+  to: string;
+  /** IANA zone the provider states the window in, e.g. "UTC". */
+  tz: string;
+  /** Fraction of the list price charged inside the window: 0.5 = half off. */
+  multiplier: number;
+}
+
 /** One model in a profile's catalog. Nested, and only ever read as a whole.
     The optional metadata past `reasoningEfforts` is filled from models.dev (or
     an agent's own advertising) and is display/enrichment only — nothing at
@@ -45,8 +69,11 @@ export interface ModelDef {
   reasoningEfforts: string[];
   /** One-line capability blurb, when known. */
   description?: string;
-  /** USD per million tokens. */
+  /** USD per million tokens, at full price. */
   pricing?: { input: number; output: number };
+  /** Hours the provider charges less for — display only, since the provider
+      decides by its own clock. Absent = one rate all day. */
+  offPeak?: OffPeakWindow;
   /** Input modalities, e.g. ["text", "image"]. */
   modalities?: string[];
   /** Provenance when enriched: "providerId/modelId" in models.dev, so the
@@ -280,7 +307,10 @@ export type ProfileUsageKind =
   /** DeepSeek's account balance (`/user/balance`) — no windows, credits. */
   | "deepseek"
   /** OpenRouter's key limit and credits (`/api/v1/key`, `/api/v1/credits`). */
-  | "openrouter";
+  | "openrouter"
+  /** Command Code's plan credits (`/alpha/billing/credits`) — the route its own
+      `/usage` panel calls, which no CLI flag can reach. */
+  | "command-code";
 
 /** Every `kind` a profile may name, for the form's picker and for validating a
     saved profile. Adding a provider is this array, the union above, and a branch
@@ -293,13 +323,15 @@ export const USAGE_KINDS = [
   "synthetic",
   "deepseek",
   "openrouter",
+  "command-code",
 ] as const satisfies readonly ProfileUsageKind[];
 
 export interface ProfileUsage {
   kind: ProfileUsageKind;
   /** Override the adapter's default host, or name the full endpoint outright.
       Empty means the adapter decides (which for z.ai includes picking the CN
-      platform when the profile's own base URL is a bigmodel.cn one). */
+      platform when the profile's own base URL is a bigmodel.cn one, and for
+      Command Code the staging platform when it is one). */
   baseUrl?: string;
   /** Credential for the usage API when it is not the profile's own key.
       Empty means "use `profiles.api_key`", which is the ordinary case: a
@@ -347,6 +379,19 @@ export const profiles = pgTable("profiles", {
   suppressModelMetadataWarning: boolean("suppress_model_metadata_warning")
     .notNull()
     .default(false),
+  /** Two selection flags, one column each — both keep the row, its credentials
+      and its linked tools, and both leave every thread already on the profile
+      running: a flag on a profile is a state, not a deletion, the same bargain
+      `routines.enabled` makes. It is the *selection* that is closed, which is
+      why nothing here filters the row out of `listProfiles`: settings and every
+      lookup by id still see it.
+      `hidden` takes the profile out of the pickers only, while the usage plan
+      keeps tracking it — hiding is how a plan is watched without being picked.
+      `disabled` closes it everywhere — the pickers and the usage plan both —
+      which is what "disable" meant before the split, and why the quota route
+      filters on it. */
+  hidden: boolean("hidden").notNull().default(false),
+  disabled: boolean("disabled").notNull().default(false),
   /* The web-search and knowledge opt-ins used to be columns here. They are
      library rows now (`mcp_servers.type = "builtin"`), linked like any other
      server — see BUILTIN_MCP in library.ts. */
@@ -362,6 +407,12 @@ export const projects = pgTable("projects", {
       folder, pickers, the projects list. Null/empty means "no logo", which
       falls back to the project's initial in the client. */
   logoUrl: text("logo_url"),
+  /** The project's development server, as the Browser panel should open it.
+      What this is reachable at is the person's own network fact: `localhost`
+      for the machine the server runs on, a LAN or tunnel address for a phone.
+      Empty means none. The server probes it loopback-side (`/preview` route)
+      but never rewrites where the browser points. */
+  previewUrl: text("preview_url"),
 });
 
 /** The harness's own MCP servers, as library rows. `builtin` names which; the
@@ -670,6 +721,10 @@ export const projectHelpers = pgTable(
     description: text("description"),
     /** Ask before running — for the destructive ones. */
     confirm: boolean("confirm").notNull().default(false),
+    /** This helper starts the project's dev server — the command the Browser
+        panel offers when the preview URL is set but nothing is answering on
+        it. A marker, never a constraint: the row still runs as any helper. */
+    preview: boolean("preview").notNull().default(false),
     createdAt: bigint("created_at", { mode: "number" }).notNull(),
   },
   (t) => [index("project_helpers_project").on(t.projectId)],
@@ -727,6 +782,17 @@ export const sessions = pgTable(
         its instructions only when a session is created or loaded, so toggling
         it costs a respawn — see `applyConfigLive`. */
     suggestFollowups: boolean("suggest_followups")
+      .notNull()
+      .default(true),
+    /** True when the agent is *asked* to answer with a fenced `openui-lang`
+        block, which the client draws as real UI (`client/src/lib/openui/`, and
+        the runtime's copy of the generated prompt in `agent/src/openui-prompt.ts`).
+        On unless turned off. It governs the asking and nothing else: the client
+        renders a fence whatever this says, so a mid-thread flip changes no
+        answer already on screen. A spawn input exactly like
+        `suggest_followups` — the lane is system-prompt text, read only at
+        `session/new`/`session/load`, so toggling it costs a respawn. */
+    uiBlocks: boolean("ui_blocks")
       .notNull()
       .default(true),
     title: text("title").notNull(),

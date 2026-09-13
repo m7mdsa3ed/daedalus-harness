@@ -11,6 +11,8 @@ import type * as acp from "../src/acp.js";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { MockLanguageModelV4, convertArrayToReadableStream } from "ai/test";
 import { buildAgentApp } from "../src/app.js";
+import { needsCompaction, windowFor } from "../src/compaction.js";
+import type { Session } from "../src/session.js";
 import { SessionStore } from "../src/persistence.js";
 import type { ModelFactory } from "../src/provider.js";
 import type { ToolRuntime } from "../src/tools/context.js";
@@ -526,6 +528,45 @@ function mcpServer(pidFile: string): acp.McpServer {
     assert.ok(!flat.includes("unsupported MCP transport"), "SSE is not the unsupported kind");
   });
   console.log("fixes: sse transport accepted ok");
+}
+
+// --- the window is the model's, resolved per request, with the answer's room
+//     reserved out of the threshold ---
+{
+  const env = testEnv({
+    contextWindow: 200_000,
+    maxOutputTokens: 8_000,
+    modelWindows: { small: [32_000, 4_000], big: [1_000_000, 64_000] },
+  });
+  const at = (modelId: string, lastTokens: number) =>
+    needsCompaction({ autoCompact: true, modelId, lastTokens } as Session, env);
+
+  /* The model is a live setting, so the window has to follow it and not the
+     spawn: a thread that started on the 200k default and switched up used to
+     keep measuring against 200k. */
+  assert.equal(windowFor(env, "big").size, 1_000_000, "the live model's window, not the spawn's");
+  assert.equal(windowFor(env, "small").size, 32_000);
+  assert.equal(windowFor(env, "unlisted").size, 200_000, "an unknown model keeps the spawn figure");
+  assert.equal(windowFor(env, "unlisted").known, true, "which is still a measured figure");
+  assert.equal(
+    windowFor(testEnv(), "unlisted").known,
+    false,
+    "but a fallback nobody supplied is flagged as an estimate",
+  );
+
+  /* And the answer needs somewhere to go: 0.8 of a 1M window is 800k, which a
+     64k reply overflows the moment the threshold is what decides. */
+  assert.equal(windowFor(env, "big").usable, 936_000);
+  assert.equal(at("big", 740_000), false, "a big window is nowhere near full at 740k");
+  assert.equal(at("big", 800_000), true, "and needs compacting before the reply cannot fit");
+  assert.equal(at("small", 20_000), false);
+  assert.equal(at("small", 25_000), true, "0.8 of (32k - 4k)");
+  assert.equal(
+    at("big", 900_000) && !needsCompaction({ autoCompact: false, modelId: "big", lastTokens: 900_000 } as Session, env),
+    true,
+    "auto-compact off still means never",
+  );
+  console.log("fixes: per-model context window ok");
 }
 
 console.log("fixes.test.ts passed");

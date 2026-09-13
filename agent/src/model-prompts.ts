@@ -117,8 +117,10 @@ const FAMILIES: { test: RegExp; text: string }[] = [
   {
     test: /deepseek/i,
     text: `- Copy old_string out of the read output byte for byte, with enough surrounding lines to be unique; a re-typed match fails.
-- If an edit fails twice, re-read the file rather than retrying a third variant.
-- Emit tool calls as tool calls — never markup describing a call you are about to make.`,
+- If an edit fails twice, re-read the file rather than retrying a third variant. Retrying a near-miss is the loop that ends in rewriting a whole file that needed three lines.
+- Emit tool calls as tool calls. Never write markup or prose that describes a call you are about to make — under a long transcript this drifts into narrating the call instead of making it, and a narrated call never runs.
+- Pick the tool whose description matches the step. read_file, glob and grep are not worth routing through bash.
+- Verify against the file rather than from recall of it. Confident recall of code you did not read this turn is this family's characteristic wrong answer.`,
   },
   {
     test: /glm/i,

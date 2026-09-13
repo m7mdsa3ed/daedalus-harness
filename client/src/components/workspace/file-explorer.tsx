@@ -32,6 +32,7 @@ import { CopyButton } from "@/components/ui/copy-button"
 import { Input } from "@/components/ui/input"
 import { useConfirm } from "@/components/confirm-dialog"
 import { ItemContextMenu, type MenuItemSpec } from "@/components/item-context-menu"
+import { PanelRowsSkeleton } from "@/components/ui/skeletons"
 import { PanelToolbar } from "@/components/workspace/primitives"
 import { describeError, reportError } from "@/lib/errors"
 import { cn } from "@/lib/utils"
@@ -367,9 +368,9 @@ export function FileExplorer({
 
     if (dir.loading && dir.entries.length === 0) {
       rows.push(
-        <p key={`${path}:loading`} style={indent(depth)} className={cn(ROW, "text-muted-foreground/60")}>
-          Loading…
-        </p>
+        <div key={`${path}:loading`} style={indent(depth)}>
+          <PanelRowsSkeleton rows={4} className="p-0" />
+        </div>
       )
     } else if (!dir.loading && entries.length === 0 && !draft) {
       rows.push(

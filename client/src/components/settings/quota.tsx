@@ -22,7 +22,15 @@
    from any runtime. It has no agent selector because it has no agent: one
    account, shared by every runtime the profile serves. Those come first, since
    somebody configured them on purpose. Everything below the header is shared:
-   `QuotaBody` draws windows, credits and the raw report the same either way. */
+   `QuotaBody` draws windows, credits and the raw report the same either way.
+
+   The sections are filed under one card per provider (`QuotaKindCard`): two
+   Z.AI keys share one Z.AI card, three Command Code seats one Command Code
+   card — which is what makes a machine with five accounts readable as
+   providers rather than five unrelated plans. Runtime logins are one card per
+   runtime, headed by the runtime's own name. The sidebar popover draws the
+   same shape at a glance's measure: one card per provider, each account a
+   named section with its fullest window beside it. */
 import * as React from "react"
 import { GaugeIcon, RefreshCwIcon } from "lucide-react"
 
@@ -36,11 +44,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Skeleton } from "@/components/ui/skeleton"
 import { AgentIcon, ProfileIcon } from "@/components/entity-icon"
+import { ErrorNote } from "@/components/error-note"
+import { inlineFromQuery } from "@/lib/errors"
 import { profileAgentIds, type Profile } from "@/lib/settings"
 import { useAgents, useProfiles } from "@/lib/queries/catalog"
 import {
   formatReset,
+  profileHasUsage,
+  providerKindLabel,
   quotaStatusText,
   quotaTone,
   type QuotaSnapshot,
@@ -104,15 +117,17 @@ function RawReport({ raw, label }: { raw: string; label: string }) {
   )
 }
 
-/** A card's header: mark, name, plan badge, when it was read, and the controls.
-    Shared by both cards for the reason `QuotaBody` is — the two differ in what
-    they name and whether they have a profile picker, not in how a card reads.
+/** One account's section header inside its kind's card: name and fullest-window
+    summary on the name line (the sidebar popover's block leads with the same
+    pair), plan badge and freshness under it, and the controls on their own
+    line. Sections wrap in exactly one place: on a phone the picker and button
+    take the line under the name, on `sm+` they sit back on the header's own
+    line, right-aligned.
 
-    One flex row that wraps in exactly one place. The controls are a `w-full`
-    child, so on a phone they take the line under the name (where the picker can
-    be full width and the button has room) and on `sm+` they sit back on the
-    header's own line, right-aligned, as before. */
-function QuotaCardHeader({
+    Shared by both section kinds for the reason `QuotaBody` is — the two differ
+    in what they name and whether they have a profile picker, not in how a
+    section reads. */
+function QuotaSectionHeader({
   icon,
   name,
   quota,
@@ -126,22 +141,38 @@ function QuotaCardHeader({
   name: string
   quota: QuotaSnapshot
   meta: React.ReactNode
-  /** The profile picker, on the card that has one. */
+  /** The profile picker, on the section that has one. */
   control?: React.ReactNode
   busy: boolean
   onRefresh: () => void
   refreshLabel: string
 }) {
+  /* The fullest window — what the name line summarises, since the limit hit
+     first is the one that matters. Missing when the reading has no windows,
+     which draws no summary rather than a zero. */
+  const peak =
+    quota.windows.length > 0
+      ? quota.windows.reduce((worst, window) => (window.usedPercent > worst.usedPercent ? window : worst))
+      : null
+  const peakPercent = peak ? Math.min(100, Math.max(0, Math.round(peak.usedPercent))) : null
+  const peakTone = peakPercent !== null ? quotaTone(peakPercent) : null
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-3">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2.5">
       {icon}
       <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="truncate text-sm font-medium">{name}</span>
-          {quota.planName && (
-            <Badge variant="secondary" className="capitalize">
-              {quota.planName}
-            </Badge>
+        <div className="flex min-w-0 items-baseline justify-between gap-3">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="truncate text-sm font-medium">{name}</span>
+            {quota.planName && (
+              <Badge variant="secondary" className="capitalize">
+                {quota.planName}
+              </Badge>
+            )}
+          </div>
+          {peakPercent !== null && peakTone && (
+            <span className={cn("shrink-0 text-sm font-medium tabular-nums", peakTone.text)}>
+              {peakPercent}%
+            </span>
           )}
         </div>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">{meta}</p>
@@ -164,6 +195,58 @@ function QuotaCardHeader({
         </Button>
       </div>
     </div>
+  )
+}
+
+/** One card while its own reading is in flight: the shape a reading draws —
+    header line, window bars — rather than a sentence where a plan goes.
+
+    The mark and the name are the real ones, because every card is drawn from
+    the moment the page knows it exists: four providers on this machine means
+    four named cards, each waiting on its own reader, and which one is slow is
+    then something the page can show rather than something it hides behind a
+    single page-wide spinner. Only the numbers are missing.
+
+    It is a card *section* and not a `Group` of its own: the page draws one
+    card per kind, so a border here would be a card inside a card. */
+function QuotaSectionSkeleton({ icon, name }: { icon: React.ReactNode; name?: string }) {
+  return (
+    <div aria-busy="true" className="space-y-4 p-4">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-3">
+        {icon}
+        <div className="min-w-0 flex-1">
+          {name ? (
+            <p className="truncate text-sm font-medium">{name}</p>
+          ) : (
+            <Skeleton className="h-4 w-40 max-w-full" />
+          )}
+          <Skeleton className="mt-1.5 h-3 w-56 max-w-full" />
+        </div>
+        <Skeleton className="h-8 w-24 shrink-0 rounded-lg" />
+      </div>
+      {[0, 1].map((bar) => (
+        <div key={bar}>
+          <div className="flex items-baseline justify-between gap-3">
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="h-4 w-10" />
+          </div>
+          <Skeleton className="mt-1.5 h-1.5 w-full rounded-pill" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** Before the catalog answers nobody can be named and neither kind is known, so
+    the wait is one anonymous group of two anonymous cards — the one moment the
+    page has no identity to show. */
+function QuotaCardsSkeleton() {
+  return (
+    <Group>
+      {[0, 1].map((card) => (
+        <QuotaSectionSkeleton key={card} icon={<Skeleton className="size-5 shrink-0 rounded-sm" />} />
+      ))}
+    </Group>
   )
 }
 
@@ -197,38 +280,54 @@ function QuotaBody({ quota, rawLabel }: { quota: QuotaSnapshot; rawLabel: string
 
 /** The plan a *profile's* provider sells, read from that provider's own account
     API. No agent selector: the account is the profile's, and every runtime it
-    serves spends the same windows. */
-function ProfileQuotaCard({ profile, initial }: { profile: Profile; initial: QuotaSnapshot }) {
-  /* The list route already read this profile's plan; the query is seeded with
-     it and Refresh alone goes back to the provider (the `?refresh=1` bypass),
-     rewriting both this card's cache entry and the list's. */
-  const { quota: reading, busy, refresh } = useProfileQuota(profile.id, initial)
-  // The seed is the list route's own reading, so the card always has one.
+    serves spends the same windows.
+
+    A card *section*: the border and the heading belong to the card the page
+    files it under, which is the kind of plan it is (see `QuotaKindCard`). */
+function ProfileQuotaSection({ profile, initial }: { profile: Profile; initial: QuotaSnapshot | null }) {
+  /* Seeded when the list route happened to read this profile too, in which case
+     the card is drawn at once; otherwise this query is the only reader, and the
+     card is the skeleton until it answers. Refresh goes back to the provider
+     either way (the `?refresh=1` bypass), rewriting this card's cache entry and
+     the list's. */
+  const { quota: reading, error, refetch, busy, refresh } = useProfileQuota(profile.id, initial)
   const quota = reading ?? initial
 
+  if (!quota) {
+    const icon = <ProfileIcon profile={profile} className="size-5 shrink-0" />
+    /* A reading that failed is drawn, not sat on: there is no other section
+       that would have carried this provider's failure, and a skeleton is a
+       promise that something is still coming. */
+    const failure = inlineFromQuery(error, `Couldn't read ${profile.name}'s plan usage`)
+    if (failure) {
+      return (
+        <div className="p-4">
+          <ErrorNote error={failure} onRetry={refetch} />
+        </div>
+      )
+    }
+    return <QuotaSectionSkeleton icon={icon} name={profile.name} />
+  }
+
   return (
-    <Group label={profile.name}>
-      <div className="space-y-4 p-4">
-        <QuotaCardHeader
-          icon={<ProfileIcon profile={profile} className="size-5 shrink-0" />}
-          name={profile.name}
-          quota={quota}
-          meta={`Read ${new Date(quota.fetchedAt).toLocaleTimeString()} · shared by ${
-            profileAgentIds(profile).length === 1
-              ? "1 agent"
-              : `${profileAgentIds(profile).length} agents`
-          }`}
-          busy={busy}
-          onRefresh={() => refresh()}
-          refreshLabel={`Refresh ${profile.name}'s plan usage`}
-        />
-        <QuotaBody quota={quota} rawLabel="What the provider reported" />
-      </div>
-    </Group>
+    <div className="space-y-4 p-4">
+      <QuotaSectionHeader
+        icon={<ProfileIcon profile={profile} className="size-5 shrink-0" />}
+        name={profile.name}
+        quota={quota}
+        meta={`Read ${new Date(quota.fetchedAt).toLocaleTimeString()} · shared by ${
+          profileAgentIds(profile).length === 1 ? "1 agent" : `${profileAgentIds(profile).length} agents`
+        }`}
+        busy={busy}
+        onRefresh={() => refresh()}
+        refreshLabel={`Refresh ${profile.name}'s plan usage`}
+      />
+      <QuotaBody quota={quota} rawLabel="What the provider reported" />
+    </div>
   )
 }
 
-function AgentQuotaCard({
+function AgentQuotaSection({
   agentId,
   agentName,
   initial,
@@ -236,58 +335,87 @@ function AgentQuotaCard({
 }: {
   agentId: string
   agentName: string
-  initial: QuotaSnapshot
+  initial: QuotaSnapshot | null
   /** The profiles that can spawn this agent, Default first. */
   profiles: { id: string; name: string }[]
 }) {
-  /* The list route already read the Default profile, so that one seeds the
-     query; picking another profile is a different cache entry and takes its
-     own reading. While it loads, the default's reading stays on screen — the
-     same behaviour the local state had, without the state. */
+  /* Seeded when the list route read this agent's Default profile too, which it
+     usually has; picking another profile is a different cache entry and takes
+     its own reading, and until either answers the card is its own skeleton. The
+     query is keyed by the pair, so switching profiles does not disturb the
+     reading the old one left in the cache. */
   const [profileId, setProfileId] = React.useState(defaultProfileId(agentId))
-  const { quota: reading, busy, refresh } = useAgentQuota(agentId, profileId, initial)
-  // The default-profile seed is the list route's own reading, so the card
-  // always has one to draw while another profile's is on its way.
+  const { quota: reading, error, refetch, busy, refresh } = useAgentQuota(agentId, profileId, initial)
   const quota = reading ?? initial
+
+  if (!quota) {
+    const icon = <AgentIcon agentId={agentId} className="size-5 shrink-0" />
+    // Same as the provider card: a failure here is this card's to draw.
+    const failure = inlineFromQuery(error, `Couldn't read ${agentName}'s usage`)
+    if (failure) {
+      return (
+        <div className="p-4">
+          <ErrorNote error={failure} onRetry={refetch} />
+        </div>
+      )
+    }
+    return <QuotaSectionSkeleton icon={icon} name={agentName} />
+  }
 
   const profileName = profiles.find((p) => p.id === profileId)?.name ?? profileId
   const fetched = new Date(quota.fetchedAt)
 
   return (
-    <Group label={agentName}>
-      <div className="space-y-4 p-4">
-        <QuotaCardHeader
-          icon={<AgentIcon agentId={agentId} className="size-5 shrink-0" />}
-          name={agentName}
-          quota={quota}
-          meta={`Read ${fetched.toLocaleTimeString()} · ${profileName}`}
-          control={
-            profiles.length > 1 ? (
-              <Select
-                value={profileId}
-                onValueChange={(id) => setProfileId(id ?? defaultProfileId(agentId))}
-              >
-                <SelectTrigger className="w-full max-sm:h-9 sm:w-44">
-                  <SelectValue>{profileName}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {profiles.map((profile) => (
-                    <SelectItem key={profile.id} value={profile.id}>
-                      {profile.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : undefined
-          }
-          busy={busy}
-          onRefresh={() => refresh()}
-          refreshLabel={`Refresh ${agentName}'s usage`}
-        />
+    <div className="space-y-4 p-4">
+      <QuotaSectionHeader
+        icon={<AgentIcon agentId={agentId} className="size-5 shrink-0" />}
+        name={agentName}
+        quota={quota}
+        meta={`Read ${fetched.toLocaleTimeString()} · ${profileName}`}
+        control={
+          profiles.length > 1 ? (
+            <Select
+              value={profileId}
+              onValueChange={(id) => setProfileId(id ?? defaultProfileId(agentId))}
+            >
+              <SelectTrigger className="w-full max-sm:h-9 sm:w-44">
+                <SelectValue>{profileName}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {profiles.map((profile) => (
+                  <SelectItem key={profile.id} value={profile.id}>
+                    {profile.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : undefined
+        }
+        busy={busy}
+        onRefresh={() => refresh()}
+        refreshLabel={`Refresh ${agentName}'s usage`}
+      />
 
-        <QuotaBody quota={quota} rawLabel="What the runtime reported" />
+      <QuotaBody quota={quota} rawLabel="What the runtime reported" />
+    </div>
+  )
+}
+
+/** One card per provider — or per runtime for a machine login: the provider as
+    the card's own header, and each account a section divided off from the
+    next — name, fullest-window summary, bars, raw report. The same shape the
+    sidebar popover draws at a glance's measure, at the density a page can
+    hold. */
+function QuotaKindCard({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <section className="mb-6 last:mb-0">
+      <div className="overflow-hidden rounded-xl border bg-card">
+        <h2 className="border-b px-4 py-2.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+          {label}
+        </h2>
+        <div className="divide-y">{children}</div>
       </div>
-    </Group>
+    </section>
   )
 }
 
@@ -310,7 +438,51 @@ export function QuotaPage() {
     [profiles]
   )
 
-  const agentName = (id: string) => agents.find((agent) => agent.id === id)?.name ?? id
+  /* Which cards there are is the *catalog's* answer, not the list route's: a
+     profile that names a usage provider and an agent that carries a probe are
+     both known before anything is read. So every card is drawn at once and each
+     takes its own reading — a provider that is slow, or wedged, holds up its own
+     card and nothing else, and the page says which one it is waiting on instead
+     of replacing all of them with one skeleton.
+
+     The list route still runs, and is still worth running: it seeds the cards
+     whose readings it already took (an agent's Default, every provider), so the
+     ordinary page load draws finished cards rather than waiting on a second
+     round of calls. */
+  const providerProfiles = profiles.filter((profile) => profileHasUsage(profile))
+  const probeAgents = agents.filter((agent) => agent.quotaProbe)
+  const readingFor = (match: (quota: QuotaSnapshot) => boolean) => quotas?.find(match) ?? null
+
+  /* One card per provider, runtimes last: providers are what somebody
+     configured on purpose — two Z.AI keys share one Z.AI card, each still
+     naming its own account — and a runtime login is the login this machine
+     happens to have, headed by the runtime's own name. An account's `kind` is
+     its profile's `usage.kind`, so a profile the catalog has not caught up
+     with files under its own name rather than nowhere. */
+  const groups = React.useMemo(() => {
+    const byKind = new Map<string, { profiles: Profile[] }>()
+    for (const profile of providerProfiles) {
+      const kind = profile.usage?.kind && profile.usage.kind !== "none" ? profile.usage.kind : profile.id
+      const group = byKind.get(kind) ?? { profiles: [] }
+      group.profiles.push(profile)
+      byKind.set(kind, group)
+    }
+    const providerGroups = [...byKind.entries()].map(([kind, group]) => ({
+      key: `provider:${kind}`,
+      label: providerKindLabel(kind),
+      profiles: group.profiles,
+      agents: [] as typeof agents,
+    }))
+    const runtimeGroups = probeAgents.map((agent) => ({
+      key: `agent:${agent.id}`,
+      label: agent.name,
+      profiles: [] as typeof profiles,
+      agents: [agent],
+    }))
+    return [...providerGroups, ...runtimeGroups].filter(
+      (group) => group.profiles.length + group.agents.length > 0
+    )
+  }, [providerProfiles, probeAgents])
 
   return (
     <>
@@ -323,35 +495,43 @@ export function QuotaPage() {
           </Button>
         }
       />
-      {quotas === null ? (
-        <p className="text-sm text-muted-foreground">Reading usage…</p>
-      ) : quotas.length === 0 ? (
-        <EmptyCard
-          icon={GaugeIcon}
-          text="Nothing here reports a plan. Claude Code and Codex report the machine's own login; a provider that sells a coding plan reports it when the profile names a usage provider in Settings › Profiles."
-        />
+      {groups.length === 0 ? (
+        /* Nothing to draw, and the list is the only thing that could still name
+           something the catalog has not caught up with — so it is a wait until
+           it answers, and an empty page after. */
+        quotas === null ? (
+          <QuotaCardsSkeleton />
+        ) : (
+          <EmptyCard
+            icon={GaugeIcon}
+            text="Nothing here reports a plan. Claude Code and Codex report the machine's own login; a provider that sells a coding plan reports it when the profile names a usage provider in Settings › Profiles."
+          />
+        )
       ) : (
-        quotas.map((quota) => {
-          /* `source` decides the card, not the shape of what came back: an
-             agent reading with no windows is still an agent's. Readings taken
-             before providers existed have no `source` and were all agents'. */
-          if (quota.source !== "profile") {
-            return (
-              <AgentQuotaCard
-                key={`agent:${quota.agentId}`}
-                agentId={quota.agentId}
-                agentName={agentName(quota.agentId)}
-                initial={quota}
-                profiles={profilesFor(quota.agentId)}
+        groups.map((group) => (
+          <QuotaKindCard key={group.key} label={group.label}>
+            {group.profiles.map((profile) => (
+              <ProfileQuotaSection
+                key={`profile:${profile.id}`}
+                profile={profile}
+                initial={readingFor((quota) => quota.source === "profile" && quota.profileId === profile.id)}
               />
-            )
-          }
-          const profile = profiles.find((p) => p.id === quota.profileId)
-          /* A profile the store has not caught up with yet — the list route
-             reads the database directly. Skipped rather than drawn nameless. */
-          if (!profile) return null
-          return <ProfileQuotaCard key={`profile:${quota.profileId}`} profile={profile} initial={quota} />
-        })
+            ))}
+            {group.agents.map((agent) => (
+              <AgentQuotaSection
+                key={`agent:${agent.id}`}
+                agentId={agent.id}
+                agentName={agent.name}
+                /* `source` decides which reading is the agent's, not the shape of
+                   what came back: an agent reading with no windows is still an
+                   agent's, and readings taken before providers existed have no
+                   `source` at all. */
+                initial={readingFor((quota) => quota.source !== "profile" && quota.agentId === agent.id)}
+                profiles={profilesFor(agent.id)}
+              />
+            ))}
+          </QuotaKindCard>
+        ))
       )}
     </>
   )

@@ -1,4 +1,5 @@
 import type { Context, Hono } from "hono";
+import { z } from "zod";
 import {
   ProfileInputSchema,
   createProfile,
@@ -7,6 +8,7 @@ import {
   listProfiles,
   redact,
   resolveProfileAgent,
+  setProfileFlags,
   updateProfile,
 } from "../profiles.js";
 import { AgentInputSchema, getAgent, isBuiltInAgent, listAgents, resetAgent, updateAgent } from "../registry.js";
@@ -15,7 +17,7 @@ import { getProject } from "../projects.js";
 import { probeAgentOptions } from "../probe.js";
 import { modelsDevProviders, searchModelsDev, toCandidate } from "../models-dev.js";
 import { resolveProfilePresets } from "../profile-presets.js";
-import { enrichProviderModels, fetchProviderModels } from "../provider-models.js";
+import { enrichProviderModels, fetchProviderModels, testProviderModel } from "../provider-models.js";
 import type { SessionManager } from "../sessions.js";
 import { crud } from "./helpers.js";
 
@@ -96,6 +98,18 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     const updated = await updateProfile(id, data);
     return updated && redact(updated);
   }));
+  /* The list's switches: one field each, so the client never resends the
+     credentials it does not hold to change one. */
+  const profilePatchSchema = z.object({
+    hidden: z.boolean().optional(),
+    disabled: z.boolean().optional(),
+  });
+  app.patch("/api/profiles/:id", async (c) => {
+    const parsed = profilePatchSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    const updated = await setProfileFlags(c.req.param("id"), parsed.data);
+    return updated ? c.json(redact(updated)) : c.json({ error: "not found" }, 404);
+  });
   app.delete("/api/profiles/:id", async (c) => {
     const id = c.req.param("id");
     /* A profile a live thread still spawns from must not vanish under it — the
@@ -147,19 +161,27 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
    * back to its stored key when the body leaves the key empty (the client never
    * has it). No profile id is required when the body carries both.
    */
-  app.post("/api/profiles/:id/fetch-models", async (c) => {
-    const body = await c.req.json().catch(() => ({}) as { baseUrl?: string; apiKey?: string });
+  /** The form's credentials, falling back to the saved profile's — the client
+      never holds the key, so an empty one means "use the stored one". */
+  async function formCredentials(
+    id: string,
+    body: { baseUrl?: string; apiKey?: string },
+  ): Promise<{ baseUrl: string; apiKey: string }> {
     let baseUrl = body.baseUrl?.trim() ?? "";
     let apiKey = body.apiKey ?? "";
     if (!baseUrl || !apiKey) {
-      const profile = await getProfile(c.req.param("id"));
+      const profile = await getProfile(id);
       if (profile) {
         baseUrl = baseUrl || profile.baseUrl;
         apiKey = apiKey || profile.apiKey;
-      } else if (!baseUrl) {
-        return c.json({ error: "unknown profile" }, 404);
       }
     }
+    return { baseUrl, apiKey };
+  }
+
+  app.post("/api/profiles/:id/fetch-models", async (c) => {
+    const body = await c.req.json().catch(() => ({}) as { baseUrl?: string; apiKey?: string });
+    const { baseUrl, apiKey } = await formCredentials(c.req.param("id"), body);
     if (!baseUrl) return c.json({ error: "no base URL to fetch models from" }, 400);
     try {
       const models = await fetchProviderModels(baseUrl, apiKey);
@@ -167,6 +189,41 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     } catch (err) {
       // The provider's answer (or absence of one) is the message worth showing.
       return c.json({ error: err instanceof Error ? err.message : "the provider fetch failed" }, 502);
+    }
+  });
+
+  /**
+   * Run one of the profile's models for real — the same credentials, the same
+   * id, the same `max_tokens` a turn would send — and report what the provider
+   * said. The listing route proves the id exists; this proves a turn on it
+   * would start, which is a different question (balance, access, and a stored
+   * output cap the provider rejects as too large).
+   */
+  app.post("/api/profiles/:id/test-model", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      model?: string;
+      maxOutputTokens?: number;
+      baseUrl?: string;
+      apiKey?: string;
+    };
+    const model = body.model?.trim() ?? "";
+    if (!model) return c.json({ error: "no model to test" }, 400);
+    const { baseUrl, apiKey } = await formCredentials(c.req.param("id"), body);
+    if (!baseUrl) return c.json({ error: "no base URL to test against" }, 400);
+    try {
+      return c.json(
+        await testProviderModel({
+          baseUrl,
+          apiKey,
+          model,
+          ...(typeof body.maxOutputTokens === "number" && body.maxOutputTokens > 0
+            ? { maxOutputTokens: Math.round(body.maxOutputTokens) }
+            : {}),
+        }),
+      );
+    } catch (err) {
+      // The provider's own words — the message is the whole point of the test.
+      return c.json({ error: err instanceof Error ? err.message : "the model test failed" }, 502);
     }
   });
 

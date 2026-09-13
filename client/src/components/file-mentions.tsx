@@ -11,16 +11,23 @@ import { ComposerStripItem, useStripSummary } from "./composer-strip"
    prompt shape. What it completes is text (`@src/index.ts`), and the send path
    is untouched — the draft, the queue, the journal and the Retry row all stay
    strings. The protocol half is the server's: `AcpBridge.prompt` turns every
-   mention that resolves to a real path inside the cwd into an ACP
-   `resource_link` block beside the text (`server/src/mentions.ts`), so an agent
-   that reads the protocol gets a reference and one that reads prose still gets
-   the `@path` every runtime already understands.
+   mention that resolves to a real path into an ACP `resource_link` block beside
+   the text (`server/src/mentions.ts`), so an agent that reads the protocol gets
+   a reference and one that reads prose still gets the `@path` every runtime
+   already understands.
+
+   A query may name any path on the machine, not only the project: the scope is
+   parsed server-side (`searchEntries` in `server/src/workspace-fs.ts`), so
+   `@/etc/`, `@~/` and a relative `@src/` all search the directory they name, and
+   the menu completes the path as typed. A directory pick appends `/` and leaves
+   the token open so the next keystroke drills in; a file pick adds a space.
 
    Unlike a command, a mention can appear anywhere in the message — you name a
    file mid-sentence — so the token is read at the **caret**, not from the start
    of the text, and the caret is tracked rather than inferred. A thread with no
    project (which cannot happen today, but a draft is created before anything is
-   guaranteed) simply never opens the menu. */
+   guaranteed) simply never opens the menu — the project is the base a relative
+   query resolves against, and the auth scope of the search route. */
 
 /** Wait after the last keystroke before asking the server. Long enough that
     typing a path costs one walk rather than one per character, short enough
@@ -135,7 +142,7 @@ export function useFileMentions(opts: {
           /* A project whose directory has moved answers 404 for every query.
              Said once per keystroke would be a storm, so it is a toast on the
              request that actually failed and the menu simply stays empty. */
-          reportError(err, "Couldn't search the project's files")
+          reportError(err, "Couldn't search for files")
         })
     }, DEBOUNCE_MS)
     return () => {

@@ -66,7 +66,10 @@ await test("an unknown key names no editor", () => {
 
 await test("status for an unknown project is refused, not answered", async () => {
   const { ideStatus } = await import("../src/ide.js");
-  assert.throws(() => ideStatus("no-such-project"), /unknown project/);
+  // `ideStatus` resolves the project before it answers, so the refusal is a
+  // rejected promise; `assert.throws` never sees it and the test passed on the
+  // unhandled rejection rather than on the refusal.
+  await assert.rejects(async () => ideStatus("no-such-project"), /unknown project/);
 });
 
 if (failures.length) {

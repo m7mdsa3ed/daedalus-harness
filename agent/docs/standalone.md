@@ -36,8 +36,9 @@ template works either way).
 | `DAEDALUS_AGENT_API_KEY` | Sent as `Authorization: Bearer …`. | a placeholder, for gateways that want the header but ignore it |
 | `DAEDALUS_AGENT_SMALL_MODEL` | Model used for compaction summaries. | the main model |
 | `DAEDALUS_AGENT_EFFORT` | `minimal` \| `low` \| `medium` \| `high` \| `xhigh` — the AI SDK's unified reasoning level. | provider default |
-| `DAEDALUS_AGENT_CONTEXT_WINDOW` | Token window, used for the usage readout and the compaction threshold. | 200000 |
-| `DAEDALUS_AGENT_MAX_OUTPUT_TOKENS` | Per-response cap. | provider default |
+| `DAEDALUS_AGENT_CONTEXT_WINDOW` | Token window of the model spawned on, used for the usage readout and the compaction threshold. Reported as an estimate when unset — see `DAEDALUS_AGENT_MODEL_WINDOWS`. | 200000 (flagged estimated) |
+| `DAEDALUS_AGENT_MAX_OUTPUT_TOKENS` | Per-response cap. Also the room reserved out of the compaction threshold, so a prompt never grows into the space the answer needs. | provider default |
+| `DAEDALUS_AGENT_MODEL_WINDOWS` | `{"model-id":[contextWindow,maxOutputTokens]}` for every model reachable without a respawn. The model is a live setting, so the two figures above describe only the model the process *started* on; the map is what makes the readout and the threshold follow a switch. Unparseable or absent falls back to them. | none |
 | `DAEDALUS_AGENT_PERSONA_FILE` | Path to a markdown file appended to the system prompt — see [prompting.md](./prompting.md). | none |
 | `DAEDALUS_AGENT_MODEL_PROMPTS_FILE` | Path to a JSON file mapping model ids to instruction text (`{version: 1, entries: [{match, prompt}]}`), re-read every turn — see [prompting.md](./prompting.md). The harness writes this from its library; standalone, hand-write or script it. | none (built-in family calibrations stand alone) |
 | `DAEDALUS_AGENT_PROJECT_INSTRUCTIONS` | `0` to stop reading `AGENTS.md` / `CLAUDE.md` from the workspace. | on |

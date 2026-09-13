@@ -27,6 +27,20 @@ import { cn } from "@/lib/utils"
  * means nothing (it is over) and is stepped past to whatever ran before it —
  * which is what keeps a parallel batch of calls reading as the call still out.
  */
+/**
+ * The one sentence a retry line can spend on the failure. `describeError`
+ * splits a failure into a headline and the rest, and for a provider failure
+ * the headline is the generic RPC label ("The agent hit an internal error")
+ * while the actual cause — the sentence the hold would later quote — is the
+ * first line of `detail`. A bare title is the fallback for failures with
+ * nothing more specific to say.
+ */
+function retryWhy(error: unknown): string {
+  const info = describeError(error)
+  const first = info.detail?.split("\n")[0]?.trim()
+  return first || info.title
+}
+
 export function workingMessage(thread: ThreadState): string {
   /* Before everything else: a held turn is not doing any of it. Read off the
      hold rather than the transcript, whose newest item is whatever the turn
@@ -44,7 +58,7 @@ export function workingMessage(thread: ThreadState): string {
      out what for. */
   if (thread.retry) {
     const of = thread.retry.of ? ` of ${thread.retry.of}` : ""
-    const why = thread.retry.error ? describeError(thread.retry.error).title : ""
+    const why = thread.retry.error ? retryWhy(thread.retry.error) : ""
     return `Retrying (${thread.retry.attempt}${of})${why ? ` — ${why}` : ""}`
   }
   if (thread.permissions.length > 0) return "Waiting for your approval"

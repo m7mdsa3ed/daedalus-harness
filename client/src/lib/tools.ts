@@ -16,6 +16,11 @@
    here, and the modules underneath import each other (helpers ← naming ← the
    extractors ← view, never the reverse). */
 
+/* The one sanctioned reader of a vendor's `_meta` block, re-exported because
+   `_meta` is not only a tool call's: a `usage_update` carries one too, and the
+   alternative was `lib/tokens.ts` spelling the namespace a second time. */
+export { vendorMeta } from "./tools/helpers"
+
 export type { ToolKind } from "./tools/naming"
 export {
   toolNameOf,

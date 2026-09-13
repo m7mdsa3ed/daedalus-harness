@@ -27,6 +27,9 @@ export interface ThreadDefaults {
   /** Whether new threads ask answers to close with follow-up suggestions.
       Carried like the persona: it is instructions, not provider state. */
   suggestFollowups?: boolean
+  /** Whether new threads may be answered with a drawn view. Also instructions
+      rather than provider state, so it travels with the persona above. */
+  uiBlocks?: boolean
   /** The library picks the last draft made on its composer strip — the MCP
       servers, skills and slash commands it brought on top of its profile's.
       Remembered so a reload (which rebuilds an unsent draft from these
@@ -89,16 +92,21 @@ function resolvePair(
   defaults: ThreadDefaults,
   profiles: readonly Profile[]
 ): { profile: Profile; agentId: string } | null {
-  const remembered = profiles.find((p) => p.id === defaults.profileId)
+  /* A hidden or disabled profile is not a candidate for a new thread, and that
+     includes the remembered one: opening on it again would reopen exactly the
+     selection the flags took out of the pickers. The agents' virtual Defaults
+     are neither, so while any agent is registered there is always a fallback. */
+  const shown = profiles.filter((p) => !p.hidden && !p.disabled)
+  const remembered = shown.find((p) => p.id === defaults.profileId)
   const agentId = defaults.agentId
   if (remembered && agentId && profileSupports(remembered, agentId)) {
     return { profile: remembered, agentId }
   }
   if (agentId) {
-    const serving = profiles.find((p) => profileSupports(p, agentId))
+    const serving = shown.find((p) => profileSupports(p, agentId))
     if (serving) return { profile: serving, agentId }
   }
-  const profile = remembered ?? profiles[0]
+  const profile = remembered ?? shown[0]
   const first = profile && profileAgentIds(profile)[0]
   return profile && first ? { profile, agentId: first } : null
 }

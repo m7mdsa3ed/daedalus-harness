@@ -8,26 +8,24 @@ import { LoaderCircleIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Ring } from "@/components/composer/indicator"
+import { Notice } from "@/components/notice"
+import {
+  READING_MARK,
+  READING_TRIGGER,
+  ReadingBadge,
+  ReadingBubble,
+  Ring,
+} from "@/components/composer/indicator"
 import { formatReset, peakWindow, planReadable, quotaStatusText, quotaTone } from "@/lib/quota"
 import type { Actions } from "@/lib/actions"
 import type { SessionMeta } from "@/lib/settings"
 import { useAgents, useProfiles } from "@/lib/queries/catalog"
 import type { ThreadState } from "@/lib/store"
-import { formatRate, formatTokens } from "@/lib/tokens"
+import { formatRate, formatTokens, windowEstimated } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 
 /** Above this the agent is about to compact, so the popover says so. */
 const COMPACTION_WARN = 85
-
-/** Urgency colour for the ring and bar: calm while there is room, amber as it
- *  fills, red at the brink. Returns both the text and fill classes so the same
- *  tone paints the dial and the bar without a second threshold check. */
-function contextTone(percent: number): { text: string; bar: string } {
-  if (percent >= 90) return { text: "text-destructive", bar: "bg-destructive" }
-  if (percent >= COMPACTION_WARN) return { text: "text-amber-600 dark:text-amber-400", bar: "bg-amber-500" }
-  return { text: "text-emerald-600 dark:text-emerald-400", bar: "bg-emerald-500" }
-}
 
 function Stat({ label, value, valueClass }: { label: string; value: string; valueClass?: string }) {
   return (
@@ -129,9 +127,9 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
             )
           })}
           {peak && peak.usedPercent >= 90 && (
-            <p className="rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-[11px] text-destructive">
+            <Notice tone="error" className="px-2 py-1.5 text-[11px]">
               Nearly out of plan — {peak.label.toLowerCase()} is {Math.round(peak.usedPercent)}% used.
-            </p>
+            </Notice>
           )}
         </div>
       )}
@@ -163,7 +161,7 @@ export function ContextIndicator({
       beside the bell, which is the header's other silent-size control. */
   size?: "icon-xs" | "icon-sm"
   /** Extra trigger classes. The header rounds its controls like the bell's
-      pill rather than the composer's `rounded-lg`. */
+      pill, which the composer's own toolbar wears too. */
   triggerClassName?: string
 }) {
   const { context, usage, ttftMs } = thread
@@ -172,6 +170,12 @@ export function ContextIndicator({
   const percent = context
     ? Math.min(100, Math.max(0, Math.round((context.used / context.size) * 100)))
     : 0
+  /* The window was not in any catalog, so the runtime reported a fallback and
+     said so. Everything derived from it is drawn as an approximation and the
+     compaction warning is withheld — a warning about a threshold nobody can
+     locate is worse than silence. */
+  const estimated = windowEstimated(context)
+  const about = estimated ? "~" : ""
   // thread.usage is the store's running total over the session's turns (agents
   // report Usage per turn), so the rate below is a genuine average.
   // `inputTokens` counts only tokens NOT served from cache — the rest of the
@@ -190,7 +194,6 @@ export function ContextIndicator({
   const measuredOutput = measured.reduce((n, [, u]) => n + u.outputTokens, 0)
   const measuredMs = measured.reduce((n, [id]) => n + (thread.turnDuration[id] ?? 0), 0)
   const avgRate = formatRate(measuredOutput, measuredMs)
-  const tone = context ? contextTone(percent) : null
 
   return (
     <Popover>
@@ -200,16 +203,25 @@ export function ContextIndicator({
             variant="ghost"
             size={size}
             className={cn(
-              "relative shrink-0 rounded-lg hover:text-foreground",
-              tone ? tone.text : "text-muted-foreground",
+              /* A reading, not a button: the dial is the mark, and the panel's
+                 own width decides whether it also gets words. Deliberately
+                 uncoloured — the fill that turned amber then red was a second,
+                 quieter way of saying what the warning in the popover says once,
+                 and a mark that changes colour as a thread fills reads as an
+                 alarm in a cluster of settled facts. */
+              READING_TRIGGER,
+              "text-muted-foreground hover:text-foreground",
               triggerClassName,
             )}
-            title={context ? `Context window — ${percent}% used` : "Turn stats"}
+            title={
+              context
+                ? `Context window — ${about}${percent}% used${estimated ? " (window size estimated)" : ""}`
+                : "Turn stats"
+            }
           >
-            <Ring percent={percent} />
-            <span className="absolute inset-0 grid place-items-center text-[8px] font-semibold tabular-nums">
-              {context ? percent : "—"}
-            </span>
+            <Ring percent={percent} className={READING_MARK} />
+            <ReadingBubble>{context ? percent : "—"}</ReadingBubble>
+            <ReadingBadge>{context ? `${about}${percent}%` : "Stats"}</ReadingBadge>
           </Button>
         }
       />
@@ -218,9 +230,15 @@ export function ContextIndicator({
           <p className="font-medium">Context window</p>
           <p className="text-xs text-muted-foreground">
             {context
-              ? `${formatTokens(context.used)} of ${formatTokens(context.size)} tokens`
+              ? `${formatTokens(context.used)} of ${about}${formatTokens(context.size)} tokens`
               : "Not reported by this agent"}
           </p>
+          {estimated && (
+            <p className="text-[11px] text-muted-foreground">
+              This model's window size isn't in the catalog, so the size is a default and every
+              figure below it is approximate.
+            </p>
+          )}
         </div>
         {context && (
           <div
@@ -230,20 +248,23 @@ export function ContextIndicator({
             aria-valuemin={0}
             aria-valuemax={100}
           >
-            <div className={cn("h-full rounded-pill transition-all", tone?.bar)} style={{ width: `${percent}%` }} />
+            <div className="h-full rounded-pill bg-foreground/60 transition-all" style={{ width: `${percent}%` }} />
           </div>
         )}
-        {context && percent >= COMPACTION_WARN && (
-          <p className="rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+        {context && !estimated && percent >= COMPACTION_WARN && (
+          <Notice tone="warn" className="px-2 py-1.5 text-[11px]">
             Context is nearly full — the agent compacts the history soon to keep the turn going.
-          </p>
+          </Notice>
         )}
         <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
           <Stat label="Requests" value={String(requests)} />
           {context && (
             <>
-              <Stat label="Used" value={`${percent}%`} valueClass={tone?.text} />
-              <Stat label="Remaining" value={formatTokens(Math.max(0, context.size - context.used))} />
+              <Stat label="Used" value={`${about}${percent}%`} />
+              <Stat
+                label="Remaining"
+                value={`${about}${formatTokens(Math.max(0, context.size - context.used))}`}
+              />
             </>
           )}
           {usage && (

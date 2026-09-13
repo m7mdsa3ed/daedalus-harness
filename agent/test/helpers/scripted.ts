@@ -23,6 +23,7 @@ export function testEnv(overrides: Partial<AgentEnv> = {}): AgentEnv {
     effort: null,
     contextWindow: null,
     maxOutputTokens: null,
+    modelWindows: {},
     personaFile: null,
     /* Off by default in tests: the scan walks to the filesystem root and reads
        the *real* ~/.claude/CLAUDE.md, so leaving it on would make every prompt
@@ -35,6 +36,7 @@ export function testEnv(overrides: Partial<AgentEnv> = {}): AgentEnv {
        tests turn it on. */
     holdOnError: false,
     modelPromptsFile: null,
+    uiBlocks: true,
     home: mkdtempSync(join(tmpdir(), "daedalus-agent-test-")),
     ...overrides,
   };

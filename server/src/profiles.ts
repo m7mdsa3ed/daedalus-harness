@@ -39,6 +39,19 @@ export const ProfileInputSchema = z.object({
         // payloads from before they existed still parse.
         description: z.string().optional(),
         pricing: z.object({ input: z.number().min(0), output: z.number().min(0) }).optional(),
+        // A cheaper window of the day, stated in the provider's own clock. A
+        // fraction of the list price, so 0.5 is "half off" — and it must be
+        // inside (0, 1], since a window that costs full price or more is not
+        // one. Kept permissive on the clock strings: an unparseable "HH:MM" is
+        // read by the client as "no window", never a failed profile write.
+        offPeak: z
+          .object({
+            from: z.string().regex(/^\d{1,2}:\d{2}$/),
+            to: z.string().regex(/^\d{1,2}:\d{2}$/),
+            tz: z.string().min(1),
+            multiplier: z.number().gt(0).lte(1),
+          })
+          .optional(),
         modalities: z.array(z.string()).optional(),
         devRef: z.string().optional(),
         iconUrl: z.string().optional(),
@@ -68,6 +81,12 @@ export const ProfileInputSchema = z.object({
       carries the model's numbers, so the nag is noise the user has chosen to
       not see (see acp-bridge.ts — the bridge is where it is dropped). */
   suppressModelMetadataWarning: z.boolean().default(false),
+  /** Kept but not offered when starting a new thread — see `profiles.hidden`
+      and `profiles.disabled` in db/schema.ts. Defaulted, so a payload from a
+      client that predates the flags shows the profile rather than failing the
+      write. */
+  hidden: z.boolean().default(false),
+  disabled: z.boolean().default(false),
   /** Logo shown next to the profile in pickers — a URL (models.dev serves
       provider marks at https://models.dev/logos/<provider>.svg). Empty means
       "no logo of its own", and the client falls back to the agent's mark. */
@@ -81,7 +100,7 @@ export const ProfileInputSchema = z.object({
 });
 
 export type ProfileInput = z.infer<typeof ProfileInputSchema>;
-export type Profile = Omit<ProfileInput, "smallModel" | "suppressModelMetadataWarning"> & {
+export type Profile = Omit<ProfileInput, "smallModel" | "suppressModelMetadataWarning" | "hidden" | "disabled"> & {
   /** Null on rows predating the column; `resolveSpawn` reads it as empty, which
       falls back to the session model. */
   smallModel: string | null;
@@ -89,6 +108,12 @@ export type Profile = Omit<ProfileInput, "smallModel" | "suppressModelMetadataWa
       (tests, the virtual Default's twin) predate it, and every reader treats
       absence as false. Stored rows always carry it once `pnpm db:push` has run. */
   suppressModelMetadataWarning?: boolean;
+  /** Optional on purpose, like `suppressModelMetadataWarning`: a hand-built
+      profile literal predates the flags, and every reader treats absence as
+      "shown and enabled", which is the only safe reading. Stored rows carry
+      the booleans. */
+  hidden?: boolean;
+  disabled?: boolean;
   id: string;
   /** Not stored: synthesized for an agent so it can always be run as it ships.
       See `defaultProfileFor`. Nothing may edit or delete one. */
@@ -129,6 +154,10 @@ export function defaultProfileFor(agentId: string, _agentName?: string): Profile
     // own probe is exactly the right reader here.
     usage: null,
     suppressModelMetadataWarning: false,
+    // A Default can never be hidden or disabled: it is the agent as it ships,
+    // and the one profile that must always be pickable next to the user's own.
+    hidden: false,
+    disabled: false,
     ...emptyLinks(),
     virtual: true,
   };
@@ -181,6 +210,8 @@ function toProfile(row: Record<string, unknown>, links: LinkSet): Profile {
     logoUrl: (row.logoUrl as string | null | undefined) ?? "",
     usage: (row.usage as ProfileUsage | null | undefined) ?? null,
     suppressModelMetadataWarning: row.suppressModelMetadataWarning === true,
+    hidden: row.hidden === true,
+    disabled: row.disabled === true,
   };
 }
 
@@ -278,6 +309,30 @@ export async function updateProfile(id: string, input: ProfileInput): Promise<Pr
        number an answer about a different account, which no TTL covers. */
     await tx.delete(agentQuotaTable).where(like(agentQuotaTable.key, `${id}:%`));
   });
+  return await getProfile(id);
+}
+
+/**
+ * Flip only the selection flags, for the list's switches.
+ *
+ * A dedicated write rather than a `PUT` of the whole row: a profile's payload
+ * carries credentials the client never holds (`redact` sends `hasApiKey`), so a
+ * toggle that round-tripped through the editor would have to mean "keep the
+ * stored key" the same way a blank field does. One column, one route, nothing
+ * else touched — and no probe or quota eviction, because neither flag changes
+ * the endpoint nor the account the cached reading is about.
+ */
+export async function setProfileFlags(
+  id: string,
+  flags: { hidden?: boolean; disabled?: boolean },
+): Promise<Profile | undefined> {
+  if (isVirtualProfile(id)) return undefined;
+  const patch: { hidden?: boolean; disabled?: boolean } = {};
+  if (flags.hidden !== undefined) patch.hidden = flags.hidden;
+  if (flags.disabled !== undefined) patch.disabled = flags.disabled;
+  if (Object.keys(patch).length === 0) return await getProfile(id);
+  const result = await db.update(profilesTable).set(patch).where(eq(profilesTable.id, id));
+  if ((result.rowCount ?? 0) === 0) return undefined;
   return await getProfile(id);
 }
 

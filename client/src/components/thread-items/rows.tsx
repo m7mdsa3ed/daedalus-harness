@@ -27,6 +27,7 @@ import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
 import { ItemContextMenu } from "@/components/item-context-menu"
 import { Message, MessageContent } from "@/components/ui/message"
+import { SkeletonText } from "@/components/ui/skeletons"
 import { MessageAttachments } from "@/components/message-attachments"
 import { loadAgentTranscript, useAgentTranscript } from "@/lib/agent-transcripts"
 import { loadSettings } from "@/lib/settings"
@@ -65,6 +66,8 @@ import {
   CompactionStep,
   ErrorRow,
   PlanStep,
+  ShellRun,
+  ShellStep,
   StreamedAgentText,
   StreamedProse,
   TaskNotificationCard,
@@ -150,7 +153,13 @@ export const ToolRun = React.memo(function ToolRun({
      given one and the run's own state otherwise, so a hand-opened group stays
      open through the turn that follows it and a hand-closed one stays closed. */
   const [choice, setChoice] = React.useState<boolean | null>(null)
-  const open = choice ?? (active || tail === true)
+  /* A step the transcript would have opened on its own keeps that answer inside
+     the run: a single edit shows its diff without being asked, and a batch of
+     edits grouped into one run may not fold away the thing each step exists to
+     show. The run's own fold is about counting finished work; the steps inside
+     a run opened this way keep their own defaultOpen (reads and searches stay
+     one-line rows), and the reader's hand still wins over all of it. */
+  const open = choice ?? (active || tail === true || tools.some(toolOpensByDefault))
   const setOpen = (value: boolean | ((previous: boolean) => boolean)) =>
     setChoice(typeof value === "function" ? value(open) : value)
 
@@ -289,6 +298,8 @@ export const RowView = React.memo(function RowView({
 }) {
   if (row.kind === "run")
     return <ToolRun items={row.items} showTimestamps={showTimestamps} tail={streaming} />
+  if (row.kind === "shell-run")
+    return <ShellRun items={row.items} showTimestamps={showTimestamps} />
   if (row.kind === "subagent-group") return <SubagentStep group={row} showTimestamps={showTimestamps} />
   if (row.kind === "workflow-group")
     return <WorkflowRun group={row} showTimestamps={showTimestamps} stepRow={SubagentStep} />
@@ -526,13 +537,12 @@ function NativeStepTranscript({
   const rows = React.useMemo(() => buildRows(workflowAgentItems(events), false, active), [events, active])
 
   if (rows.length === 0) {
+    /* Still being read: lines where the transcript will be, not a sentence
+       saying so — the tool-call views already stand in this way. */
+    if (active && !failed) return <SkeletonText lines={3} className="py-0.5" />
     return (
-      <p className={cn("text-[11px] text-muted-foreground/70", active && !failed && "harness-shimmer")}>
-        {failed
-          ? "Couldn't read this agent's transcript on the server."
-          : active
-            ? "Reading this agent's transcript…"
-            : "This agent left no transcript."}
+      <p className="text-[11px] text-muted-foreground/70">
+        {failed ? "Couldn't read this agent's transcript on the server." : "This agent left no transcript."}
       </p>
     )
   }
@@ -792,6 +802,8 @@ export const ThreadItemView = React.memo(function ThreadItemView({
       return <CompactionStep item={item} showTimestamp={showTimestamps} />
     case "autonomy":
       return <AutonomyStep item={item} showTimestamp={showTimestamps} />
+    case "shell":
+      return <ShellStep item={item} showTimestamp={showTimestamps} />
     case "subagent":
       // An announced session with nothing filed under it yet — `buildRows`
       // wraps every one it sees, so this is the bare item reaching a row view

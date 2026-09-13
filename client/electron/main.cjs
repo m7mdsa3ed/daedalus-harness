@@ -306,10 +306,31 @@ async function createWindow() {
     win = null
   })
 
-  // External links open in the real browser, never inside the app shell.
+  /* External links open in the real browser, never inside the app shell — but a
+     dock popout is `window.open` too (dockview's `addPopoutGroup` opens
+     `popout.html` and portals the panel's DOM into it). It is same-origin and
+     it needs a real window object back, so it is allowed as a native child
+     window; denying it sent the empty room to the system browser. */
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
-    return { action: "deny" }
+    const sameOrigin = (() => {
+      try {
+        return new URL(url).origin === new URL(win.webContents.getURL()).origin
+      } catch {
+        return false
+      }
+    })()
+    if (!sameOrigin) {
+      shell.openExternal(url)
+      return { action: "deny" }
+    }
+    return {
+      action: "allow",
+      overrideBrowserWindowOptions: {
+        autoHideMenuBar: true,
+        backgroundColor: nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff",
+        webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, spellcheck: true },
+      },
+    }
   })
   win.webContents.on("will-navigate", (event, url) => {
     const base = win.webContents.getURL()

@@ -123,24 +123,24 @@ await test("an upload answers a ref and writes the bytes once", async () => {
 await test("the same id twice is a retry, not a second file", async () => {
   const again = await putAttachment({ id: imageId, name: "shot.png", mimeType: "image/png", bytes: png });
   assert.equal(again.createdAt, (await getAttachment(imageId))!.createdAt);
-  assert.equal(countAttachments(), 1);
+  assert.equal(await countAttachments(), 1);
 });
 
 await test("the same content under another id is a row over one file", async () => {
   const second = randomUUID();
-  putAttachment({ id: second, name: "copy.png", mimeType: "image/png", bytes: png });
-  assert.equal(countAttachments(), 2, "a claim is a thread's, a file is content's");
+  await putAttachment({ id: second, name: "copy.png", mimeType: "image/png", bytes: png });
+  assert.equal(await countAttachments(), 2, "a claim is a thread's, a file is content's");
   // Dropping one leaves the other's bytes alone: the file goes only when no row
   // still references that hash.
-  deleteAttachments([second]);
+  await deleteAttachments([second]);
   assert.deepEqual(readAttachment((await getAttachment(imageId))!), png);
-  assert.equal(countAttachments(), 1);
+  assert.equal(await countAttachments(), 1);
 });
 
-await test("a file over the cap is a 413, not a degrade", () => {
-  assert.throws(
-    () =>
-      putAttachment({
+await test("a file over the cap is a 413, not a degrade", async () => {
+  await assert.rejects(
+    async () =>
+      await putAttachment({
         id: randomUUID(),
         name: "huge.bin",
         mimeType: "application/octet-stream",
@@ -154,8 +154,8 @@ console.log("attachments — the blocks");
 
 const textId = randomUUID();
 const pdfId = randomUUID();
-putAttachment({ id: textId, name: "notes.txt", mimeType: "text/plain", bytes: Buffer.from("hello") });
-putAttachment({
+await putAttachment({ id: textId, name: "notes.txt", mimeType: "text/plain", bytes: Buffer.from("hello") });
+await putAttachment({
   id: pdfId,
   name: "spec.pdf",
   mimeType: "application/pdf",
@@ -179,7 +179,7 @@ await test("each file takes the branch its capabilities allow", async () => {
 
 await test("a binary mislabelled as text is refused the resource branch", async () => {
   const sneaky = randomUUID();
-  putAttachment({
+  await putAttachment({
     id: sneaky,
     name: "actually.bin",
     mimeType: "text/plain",
@@ -193,7 +193,7 @@ await test("a binary mislabelled as text is refused the resource branch", async 
     hasCatalog: false,
   });
   assert.deepEqual((await out).blocks.map((b) => b.type), ["resource_link"]);
-  deleteAttachments([sneaky]);
+  await deleteAttachments([sneaky]);
 });
 
 await test("the materialised directory gitignores itself", () => {
@@ -262,13 +262,13 @@ await test("a claimed attachment belongs to the thread", async () => {
 });
 
 await test("an unknown id is dropped, not fatal", async () => {
-  const kept = claimAttachments([randomUUID(), textId], session.id);
-  assert.deepEqual((await kept).map((ref) => ref.name), ["notes.txt"]);
+  const kept = await claimAttachments([randomUUID(), textId], session.id);
+  assert.deepEqual(kept.map((ref) => ref.name), ["notes.txt"]);
 });
 
 await test("an id claimed by another thread is dropped too", async () => {
   const other = await manager.create(profile, "fake", project);
-  const kept = claimAttachments([imageId], other.id);
+  const kept = await claimAttachments([imageId], other.id);
   assert.deepEqual(kept, [], "a file belongs to the thread that sent it");
   manager.purge(other.id);
 });
@@ -276,14 +276,14 @@ await test("an id claimed by another thread is dropped too", async () => {
 const heldId = randomUUID();
 await test("a queue row round-trips ids and answers refs", async () => {
   const held = heldId;
-  putAttachment({ id: held, name: "queued.png", mimeType: "image/png", bytes: png });
+  await putAttachment({ id: held, name: "queued.png", mimeType: "image/png", bytes: png });
   // Enqueued directly: `queueAdd` on an *idle* thread drains straight away —
   // one path, so a client whose picture of the turn was stale still gets its
   // words sent — which is asserted below rather than worked around here.
-  enqueue(session.id, "later", await claimAttachments([held], session.id));
-  const queued = (await listQueue(session.id));
+  await enqueue(session.id, "later", await claimAttachments([held], session.id));
+  const queued = await listQueue(session.id);
   assert.deepEqual(
-    (await queued).at(-1)?.attachments?.map((a) => a.name),
+    queued.at(-1)?.attachments?.map((a) => a.name),
     ["queued.png"],
     "the row stores ids; the wire carries refs",
   );
@@ -312,22 +312,22 @@ console.log("attachments — the sweep");
 
 await test("an unclaimed upload past its day is swept; a claimed one is kept", async () => {
   const stale = randomUUID();
-  putAttachment({ id: stale, name: "forgotten.png", mimeType: "image/png", bytes: png });
+  await putAttachment({ id: stale, name: "forgotten.png", mimeType: "image/png", bytes: png });
   const { db, attachments: table } = await import("../src/db/index.js");
   const { eq } = await import("drizzle-orm");
   await db.update(table)
     .set({ createdAt: Date.now() - 48 * 60 * 60 * 1000 })
     .where(eq(table.id, stale))
     ;
-  sweepAttachments();
-  assert.equal(getAttachment(stale), undefined, "an upload whose prompt was never sent");
-  assert.ok(getAttachment(imageId), "one a thread claimed stays as long as the thread does");
+  await sweepAttachments();
+  assert.equal(await getAttachment(stale), undefined, "an upload whose prompt was never sent");
+  assert.ok(await getAttachment(imageId), "one a thread claimed stays as long as the thread does");
 });
 
-await test("purging the thread takes its attachments with it", () => {
-  manager.purge(session.id);
-  assert.equal(getAttachment(imageId), undefined);
-  assert.equal(getAttachment(pdfId), undefined);
+await test("purging the thread takes its attachments with it", async () => {
+  await manager.purge(session.id);
+  assert.equal(await getAttachment(imageId), undefined);
+  assert.equal(await getAttachment(pdfId), undefined);
 });
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

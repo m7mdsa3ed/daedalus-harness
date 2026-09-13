@@ -171,6 +171,20 @@ const GROUPS: Group[] = [
           "Fold a run of consecutive steps, and the thinking between them, into one line you can open — the prose stays the thing you scroll.",
       },
       {
+        key: "showShellCommands",
+        icon: TerminalIcon,
+        title: "Show `!` commands",
+        description:
+          "The shell commands you ran in the box and what they printed. Off, the rows are hidden and the thread reads as the conversation alone — nothing is deleted, and they come back when you turn it on.",
+      },
+      {
+        key: "groupShellCommands",
+        icon: Rows3,
+        title: "Group `!` commands",
+        description:
+          "Fold a run of commands you ran back to back into one line you can open, the way tool steps fold. A single command stays its own block.",
+      },
+      {
         key: "showSources",
         icon: Globe,
         title: "Show sources",

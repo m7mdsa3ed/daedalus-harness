@@ -200,6 +200,21 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   route, because the layout is what renders the container and it only knows the
   location; and set by the layout rather than by each page, or the frame would
   jump width as you moved between them.
+  **The window's own material — macOS vibrancy, Windows 11 mica — is a device
+  preference, and `src/lib/window-material.ts` is its owner** (`ui.windowMaterial`,
+  Settings › Appearance › Window). It is the one thing here that is *not* a
+  theme token and cannot be: the material sits behind the window, and the
+  `data-desktop-vibrancy` blocks in `index.css` are what drop the page ground so
+  the sidebar, the gutters and the header band show it through. Off is the
+  absence of that attribute and nothing else — the ground it takes away is
+  opaque and `inset: 0`, so with it gone the material is covered and the app is
+  solid, and no native call has to move. The row is gated on
+  `WINDOW_MATERIAL`, which is `window.desktop.vibrancy` — the **platform's**
+  capability, never the current choice — so a browser and a shell on a platform
+  with no material are offered no switch, and switching it off cannot hide the
+  switch that switches it back on. The preload reads the same key for the one
+  frame before the bundle parses (a window left opaque used to flash the
+  material on). `main.tsx` imports the module for its boot-time `apply`.
   **The colour before the app exists is
   `src/lib/boot-colors.ts`** — the address-bar tint, the inlined splash and the
   manifest all need the background named before any stylesheet is parsed, so it
@@ -445,6 +460,14 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   that opens on hover (Base UI `openOnHover`) and, on a phone, on long press,
   where it also carries the row's actions (it replaces the right-click menu there). Every row, label and group draws from
   one scale (`ROW`/`MENU`/`GROUP`/`TIER`, exported for the settings nav too). The
+  footer's **plan usage** rows (`sidebar/usage.tsx`, `SidebarUsage`) sit above the
+  account row: one `ROW`-height line per readable plan, the name and the peak
+  window's percentage in the same `quotaTone` colours as everywhere else, and a
+  row click opens Settings › Usage. The windows, the reset times and the raw
+  report stay on that page — the peak is the whole story at this size. Nothing is
+  drawn when no runtime or profile reports a plan. It reads the Usage page's own
+  list route (`useAllQuotaQuery`), so it costs one bounded read per launch and no
+  timer. The
   main surface (`SidebarInset`) is `bg-card` over the sidebar's tinted ground, and
   the Threads label carries a sort/filter menu (recent first / by project;
   all / running / needs you) remembered per device as `ui.sidebarView`. Fold
@@ -518,15 +541,18 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   and it pointed the draft's menu off the bottom of the screen the moment the row moved into
   the composer. The routine form passes `side="bottom"`; the composer takes the default.
 - **The toolbar is the card's second row**, reading *what goes in → who answers → what
-  happens*: a "+" menu (attach, take a photo on touch, mention a file, run a command, insert a code block,
-  clear), the model/config cluster, the length reading, then voice, pause, stop and a filled
-  primary Send. It used to be five loose buttons on a row that a phone overflowed first; every
+  happens*: a "+" menu (attach, take a photo on touch, mention a file, run a command, run a project command,
+  insert a code block, clear), the model/config cluster, the length reading, then voice, pause, stop and
+  Send. **Send is always drawn** — a muted disabled chip on an empty box, a filled primary disc the moment
+  there is something to send — and the whole row, Send and the "+" included, wears one corner: `rounded-pill`,
+  the token `--radius-pill` states rather than derives, so a square theme squares them with everything else.
+  It used to be five loose buttons on a row that a phone overflowed first; every
   way of *adding to* the message is behind the "+", and every way of *sending* it is behind
   the chevron beside Send (queue or steer while a turn runs, Schedule…, and the Enter
   preference). A long-press on Send (touch) and a right-click (mouse) open that same menu, so
   the chevron is a hint, not the only door.
 - **The pile is only what is about the message being typed** (`components/composer-strip.tsx`):
-  attachments, parked pastes, the history notice, the two completers, the archive notice, and
+  attachments, parked pastes, the history notice, the three completers, the archive notice, and
   the count of subagents out working. It is a "which of these do you want in front" mechanism,
   and a fact that is *always* true is not a card in it — the project spent its life as a card
   nobody brought forward and then stopped being drawn at all. It stacks **above the footer**.
@@ -558,7 +584,12 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   **The caption is state then time, and the row actions are one bordered group** that fades in
   on hover and is simply always drawn where there is no hover — `useCoarsePointer`, the
   device's question, not a `sm:` breakpoint's. Four loose ghost buttons, a pill and a time on
-  one 10px line read as six things. **"Send all" and "Clear" are the plural actions**: with one
+  one 10px line read as six things. **Below `@panel-sm:` the caption stacks** — the panel's
+  width, not the window's — because a pill, a time and four 32px touch targets are a phone's
+  whole width: state and time keep the line a sent message's timestamp sits on, and the
+  actions drop to a line of their own beneath it, full size and still hittable. One `order`
+  swap is the whole mechanism, so the same markup is one line on a wide panel and two on a
+  narrow one. **"Send all" and "Clear" are the plural actions**: with one
   editable message they repeat what its own two buttons say a line below and louder, so below
   two the rule carries nothing but its label. The rule puts that label near the start with the
   growing half *after* it, so a narrow panel gets a shorter rule instead of a 16px stub of dash
@@ -595,11 +626,11 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   send. The taller box is a fraction of `--panel-h` (the viewport outside the dock), half a
   phone. The length reading beside it prints a *rough* token count (4 chars ≈ 1 token) with a
   tilde, so a pasted document reads as "about 3k tokens" before it goes rather than after.
-- Every insertion the "+" menu makes (`@`, `/`, fences) goes through the `@` completer's
+- Every insertion the "+" menu makes (`@`, `/`, `!`, fences) goes through the `@` completer's
   `requestCaret` slot, for the reason `file-mentions.tsx` documents: rewriting `text` is a
   render, and the caret must be re-applied after it. A command is put at the *front* of the
-  text wherever the caret was, because the completer reads `^/name`; a mention is a word and
-  earns a space before it; fences go on their own line.
+  text wherever the caret was, because the completers read `^/name` and `^!name`; a mention is
+  a word and earns a space before it; fences go on their own line.
 
 ## Slash commands
 
@@ -633,24 +664,79 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   `selectionStart`, or the placement is undone by the effect meant to follow it. Picking a
   directory completes to `@path/` and leaves the token open so the next keystroke drills in;
   picking a file completes to `@path ` and is done. It reads one route,
-  `GET /api/projects/:id/files/search?q=` (`searchEntries` in `workspace-fs.ts`): a
-  breadth-first walk of the project — not `git ls-files` or `rg`, neither of which a project
-  is guaranteed to have — skipping `DEFAULT_IGNORES`, never descending a symlink, budgeted at
-  `SEARCH_VISIT_LIMIT` entries and ranked by a greedy fuzzy score that rewards adjacent runs,
-  separator boundaries and basename hits. Breadth-first is what makes a *truncated* walk
-  still useful: it returns the shallow paths, which are the ones a person meant. What the
-  composer sends is unchanged — plain `@src/index.ts` in the text, so the draft, the queue,
-  the journal, Retry and the prompt-history walk all stay strings and none of them learned a
-  second shape. The protocol half is the server's: `AcpBridge.prompt` appends the
-  `resource_link` blocks that `server/src/mentions.ts` derives from the text, and **only for
-  a token that resolves to something existing inside the session's cwd** — prose is full of
-  at-signs (an address, a handle, a decorator) and inventing a file reference for one sends
-  the agent after a path nobody named. Containment is checked lexically and then against the
-  real path, like every other path in `workspace-fs`, because `@../../.ssh/id_rsa` is user
-  input naming a file *for an agent to open*. Both halves travel on purpose: the text is what
-  every runtime already understands, the links are what a runtime that reads the protocol can
-  resolve without guessing, and dropping the text would make the transcript stop saying what
-  the user typed.
+  `GET /api/projects/:id/files/search?q=` (`searchEntries` in `workspace-fs.ts`), and **the
+  query names its own scope**: the text through the last `/` is the directory and the rest
+  the term, so `src/com` searches `src/`, and `@/etc/`, `@~/` and a relative `@src/` all
+  work — a mention reaches any path on the machine, not only the cwd. The server completes
+  the path **as typed** (`parseSearchScope`), so a pick inserts `/etc/hosts` or
+  `~/.config/…` rather than a re-rooted one. Inside the project the search is a breadth-first
+  walk — not `git ls-files` or `rg`, neither of which a project is guaranteed to have —
+  skipping `DEFAULT_IGNORES`, never descending a symlink, budgeted at `SEARCH_VISIT_LIMIT`
+  entries and ranked by a greedy fuzzy score that rewards adjacent runs, separator
+  boundaries, basename hits, and an exact or prefix basename above all. A truncated walk
+  still returns the shallow paths, which are the ones a person meant. A directory **outside**
+  the project is browsed one level at a time instead of walked, because recursing from
+  `/home` on every keystroke is a stat storm nothing asked for; an empty term is always that
+  one-level listing, so `@src/` shows `src`'s children and opening the menu shows the root's.
+  The IDE's file finder reads the same route and filters to `isProjectRelative` results, the
+  only ones it can open. What the composer sends is unchanged — plain `@src/index.ts` in the
+  text, so the draft, the queue, the journal, Retry and the prompt-history walk all stay
+  strings and none of them learned a second shape. The protocol half is the server's:
+  `AcpBridge.prompt` appends the `resource_link` blocks that `server/src/mentions.ts` derives
+  from the text, and **for any token that resolves to a path that exists** — `~` and absolute
+  resolved as such, the rest against the cwd. Prose is full of at-signs (an address, a
+  handle, a decorator), so a token that names nothing real is not a link; the text still says
+  what the user typed. Both halves travel on purpose: the text is what every runtime already
+  understands, the links are what a runtime that reads the protocol can resolve without
+  guessing, and dropping the text would make the transcript stop saying what the user typed.
+
+## `!` commands
+
+- **A `!` line is a shell command the user runs against the project, and the project's saved
+  ones are its suggestions.** `components/project-commands.tsx` is the third completer — the same
+  strip row, the same start-anchored token and the same mousedown/key contract as
+  `slash-commands.tsx`. It lists the project's helpers (the list the tab menu draws under
+  **Project commands** and the project page under **Run**, matched on name *or* on command), and
+  picking one fills its **command** into the box rather than its name: what will run is the thing
+  worth reading and editing before it does. `Composer`'s `send` then consumes the line instead of
+  prompting (`shellLineFor`) — it never reaches the agent. **The result is a transcript row, not
+  a terminal**: `actions.runShell` posts to `POST /api/sessions/:id/shell` (`server/src/shell.ts`,
+  an `execFile` capture that shares the login shell `terminals.ts` uses, which is why `pnpm` is
+  found), and the server journals a **`_daedalus/shell`** update — constructed the way
+  `config_notice` is, with `seq: 0`, so `append` assigns the real one and replay, fan-out and
+  windowing come for free. It is an `update` and not a sixth journaled kind for the reason
+  `AutonomyAnswer` gives: the fold and the replay are already the code path, and a client that
+  predates the variant ignores it rather than failing to connect. It is **two updates per run** —
+  `running` then `done`, both under a caller-minted `shellId`, folded as an upsert so the second
+  settles the first — which is what lets the row draw from the moment the line starts. The row is
+  a **Bash step** (`ShellItem` → `ShellStep`): the same `execute` icon, the same heading rule
+  (`toolHeading`, so `!pnpm test` reads "Run the tests" over the command, exactly as the agent's
+  own call would) and the same `ShellPane` body — the thing itself *is* an `execute` call, so two
+  vocabularies for it would be the lie. It differs in one thing: it is **open by default**, because
+  nothing else in the thread says what the command printed. It says the command and what it
+  printed, tinted as a failure on a non-zero exit, and **no turn runs** — `turnActive` never
+  moves. **A line that IS
+  one of the saved commands runs
+  *as* that helper** — the server resolves it, so the helper's cwd and env apply whether the line
+  was picked or typed — and anything else runs in the project root. This is the one route that
+  takes a command *up* from the browser; the bearer token is the gate, the same one the terminal
+  panel's own prompt answers to. **A draft is offered none of it**: running one needs a session to
+  journal the row onto, which a draft has not got until its first message. The rows ride on
+  `useProjects()` (the server folds a project's helpers into its list, so no second request and no
+  new hook), and because a thread opened to read holds **no socket** (`phase.ts`), `runShell`
+  draws the running row up front and settles it from the answer — the same idempotent upsert the
+  fan-out performs, so a live thread and a read-only one agree and neither shows it twice.
+  **A `!` row is never windowed away**: `windowStart` opens the replay at the thread's oldest
+  shell command (`firstShell`), because a row that belongs to no turn would otherwise be cut off
+  by a turn boundary for good, where an old message is merely behind `load earlier`.
+- **Two view options govern the rows** (`lib/view-options.ts`). **Show `!` commands** hides them
+  outright — the command still ran and the journal still holds it, only the row is silent — and
+  **Group `!` commands** folds a run of commands run back to back into one line (`ShellRun`,
+  `groupShellRuns`), the way `groupTools` folds tool steps; a single command stays its own block.
+  Both are Detail-group rows, and neither is `answersOnly`'s business: a `!` line is the reader's
+  own act, not the agent's work, which is why it is the one thing that option does not drop.
+  A turn's footer never anchors to one either — the strip belongs under the answer, not under a
+  command the reader ran in the gap after it (`turn-footers.ts`).
 
 ## The soft keyboard
 
@@ -955,6 +1041,25 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   server that failed, unsaved files in the IDE. Four tones, and the whole sentence in the
   label, because a strip has room for one dot and a pointer and a screen reader both read the
   title. Live, per mount, and never serialized.
+- **A tab fills the row it is in, and the row's ground is the hierarchy.** A tab is a real
+  object — the piece of the card under it that reaches up into the strip — and it was drawn as
+  a 28px slab *floating* in a 32px row, with 2px of air on all four sides and nothing to be a
+  slab of. That meant something in the header's band, where the row and the chip were the same
+  height, and nothing anywhere else, and the selection was carried by one 4% tint: at 4% of the
+  foreground the unselected tab was already a full step of the ramp (`--app-ground-step`,
+  lib/theme-ramp.ts), so the active tab's `--background` read as a shade of the same grey
+  rather than as a different material. The chip is now `h-[var(--dock-chip-h)]` and the *cell*
+  is what keeps the air (`py-0.5`, `m-0.5`), so the selected tab rises the full height of the
+  row and the rest are the ground with a title written on them — hover being the single 6%
+  wash, which is the one mix that reads on a light ground and a dark one alike. **One height
+  token for everything standing in a strip** (`--dock-chip-h`/`--dock-control-h` on `:root`,
+  because the app header's own `HEADER_CHIP` controls stand in the same row whenever a group
+  joins the band and a token scoped to the dockview element is one they cannot see): it was
+  `h-7` on the chip, `size-6` on the strip's own + and list, `size-5` on the chip's ⋮ and ✕ —
+  three numbers in three files, which is how a 24px target ended up running a strip. A tab's
+  cap is 256px rather than 304px (five tabs were 1520px of tab in a 1184px strip, so every one
+  of them was already squeezed), and the strip's first tab starts on the same 8px line as the
+  card under it.
 - **Dockview owns the tab's ARIA; `panel-tab.tsx` owns its face.** dockview-core 8.2 already
   builds the WAI-ARIA Tabs pattern around our renderer: `role="tablist"` + `aria-orientation`
   on the strip, `role="tab"` + `aria-selected` + `aria-controls` per tab, `role="tabpanel"` on
@@ -974,22 +1079,21 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   **Dockview's own overflow dropdown is off** (`disableTabsOverflowList`): it draws one at the
   same end of the same strip as `TabActions`, and ours lists every tab rather than only the
   hidden ones, says what each is doing and closes one without bringing it back first.
-- **A narrow strip collapses the title, and nothing swaps.** Off a phone a tab is its mark,
-  its name and its reading; on one, only the tab you are on says its name, because four
-  titles sharing a 360px strip are four tabs truncated to "Fix th…". The whole effect is one
-  animatable property — a single-column grid taken from `1fr` to `0fr` — because a grid column
-  is the only width that interpolates cleanly to nothing without the element knowing how wide
-  it is. What this replaced animated four things at three durations (the tab's `max-width`, a
-  mark's width, the title's opacity, the controls' width) and needed both the mark and the
-  title in the DOM at all times to do it. **The mark itself is picked in JS** (`useIsMobile`),
-  which is safe here for a reason worth stating: it depends on the *viewport*, not on which
-  tab is active, so it changes on a resize and never on a click — the rule that a swap cannot
-  be animated still holds for anything keyed on `dv-active-tab`. Wide, the mark is the panel's
-  own (`PanelIcon`, a chat's being its agent's); narrow, a chat trades it for the **initials of
-  its title**, because down there the mark IS the tab and four threads on one runtime would
-  otherwise be four identical agent logos. The tab list (`TabActions`) is the switcher from
-  **two** tabs on a phone rather than three: there the marks carry no names, and the list is
-  the one place every name is legible at once.
+- **A narrow strip is the tab you are on, and the list holds the rest.** A phone's strip used
+  to draw every tab as its mark and collapse the ones you were not on to `2.5rem` — the tab's
+  `max-width` cap and a grid column taken to `0fr`. That is gone: a row of glyphs is a second
+  thing to read beside a list that already names every tab, and a tab you cannot read by name
+  is a tab you switch to by trial. `index.css` draws the active tab and `display: none`s the
+  others — **a hide, not a collapse**, so there is no width or opacity to interpolate and no
+  direction for a node leaving to take: a tab switch is one frame, which is the instant a
+  browser gives one. Nothing swaps on the viewport either, so the mark no longer trades a
+  chat's `PanelIcon` for the **initials of its title** (`initialsOf` is the assignee avatar's
+  again, nothing more) and `panel-tab.tsx` holds no viewport branch. What is *not* hidden is
+  unchanged: the wide strip keeps its one-column title container, which is a resize
+  (`transition` there was for a collapse that no longer happens), and dockview's reorder is the
+  strip's only motion (`--dock-tab-duration`). The tab list (`TabActions`) is the switcher from
+  **two** tabs on a phone rather than three: its strip draws one, and the list is the only
+  place the other is.
 - **A pinned tab is one the tidy-up goes around.** `lib/workspace/panel-pins.ts` is the set
   (device-local, keyed by server, like every other reader's-property store); the dock adds
   the ordering. Pinning means three things together: the tab sits at the front of its group,
@@ -1035,9 +1139,16 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   expanded paths, so a watch event invalidates exactly the directory that changed and every
   other branch keeps its expansion and its scroll), and the server is the authority on what
   exists — create, rename and delete re-read the directory rather than inserting a row
-  optimistically. `file-search.tsx` is the route the composer's `@` menu already reads, so
-  there is one idea of "roughly this name"; it is file *names*, since the server has no grep
-  route, and that limit is stated rather than hidden. `scm-view.tsx` groups `git status` the
+  optimistically. `file-search.tsx` asks **two questions from one box**, and they are two routes
+  because they are two questions: the name half is the route the composer's `@` menu already
+  reads (one idea of "roughly this name"), and the content half is `/files/grep`
+  (`searchContents` in `workspace-fs.ts`). The content half **reads bytes and cannot leave the
+  project** — which is exactly why it is a different route from the `@` search, whose query
+  names a scope on the whole machine and only ever lists names. It matches a case-insensitive
+  substring and returns the whole line, and it is deliberately not a shell out to `rg` or
+  `git grep`: a project need not be a repository and neither binary is something the harness may
+  assume. Ignores are the explorer's own, so a search never finds something the tree would not
+  show. `scm-view.tsx` groups `git status` the
   way git thinks — merge, index, working tree, untracked — and every button is a `gitWrite`
   against the project's existing routes; a row's mark is read back from the next status,
   never inferred from what was clicked.
@@ -1054,6 +1165,30 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   nested repository does not read a file that is not there. Past eight repositories a section
   reads its status when first expanded rather than on mount, since each is a git process. The
   list is re-walked only when a `.git` appears in the watch stream, not on every write.
+- **The history is drawn as a graph, and the walk is pure.** `lib/workspace/git-graph.ts` is the
+  half worth testing: an open lane waits for a hash, a commit claims the first lane expecting it
+  or opens one, hands that lane to its first parent and appends the rest — which is the whole of
+  what makes a merge fan out. The drawing (`scm/commit-graph.tsx`) only turns a `GraphRow` into
+  SVG. The log route carries `parents` and `refs` because the picture is unreadable without
+  them: lanes are derived from parent hashes, and a branch tip is the only thing that says
+  *which* line is which. Lane colours are `stroke-*`/`fill-*` utilities, never `--chart-*` —
+  those are deliberately greyscale in this app's neutral palette, so six lanes would be one
+  indistinguishable smear. Row height is one constant shared by the SVG and the list, so a dot
+  cannot land beside the wrong commit. List or graph is `idePrefs.historyLayout`, device-local
+  like the file layouts; the graph is the default because a log read beside a running agent is
+  usually "which line did that land on".
+- **A commit message is drafted through a profile, and the diff never leaves the server.**
+  `POST …/git/draft-message` takes a profile and a repo, gathers the diff itself
+  (`git.commitMessagePrompt`) and asks `enhancePrompt` with `kind: "commit"` — one model call,
+  not a turn, so nothing is journaled and the key stays server-side, the same bargain the
+  composer's enhancer makes. The diff is gathered here rather than sent up because it is
+  routinely hundreds of kilobytes and re-implementing `git diff` in the client to ask a question
+  about git's own output is the wrong shape. Two things it gets right that a naive version does
+  not: **untracked files are in no diff at all**, so they are read in as `--no-index` new-file
+  hunks (that command exits 1 whenever there is a difference, which `run` now accepts as an
+  answer), and staged work wins when there is any, since that is what a commit would actually
+  contain. The button is drawn only where a profile can actually do it — a disabled wand nobody
+  can enable is worse than none.
 - **Changed files are a tree, and the reader chooses.** `lib/workspace/git-tree.ts` is
   generic in what a row carries (a `GitFileState` in source control, a `ChangedFile` in the
   turn-changes tab) and folds single-child chains into one row (`src/lib/ide`, not three rows
@@ -1155,8 +1290,11 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   project alone and the tabs are a module store (`lib/ide/editors.ts`): they survive the panel
   being closed and reopened, a reveal is a one-shot field on the tab, and a dirty tab is
   known to the tab bar and to the close confirmation without either asking the editor.
-  Unsaved text survives a *reload* through `lib/workspace/buffers.ts`, which matters because
-  this app reloads itself on purpose when a service-worker update is taken.
+  **The tabs themselves survive a *reload*** (`daedalus.ide.tabs.v1`, per server and then per
+  project, every tab re-validated on the way in — `parseBody` drops a shape this build does not
+  mean), as does unsaved text, through `lib/workspace/buffers.ts`, which matters because this
+  app reloads itself on purpose when a service-worker update is taken. A reveal and a dirty
+  flag are never stored: both are rebuilt by the editor re-reading the buffer.
 - **`lib/ide/open.ts` and `lib/ide/editors.ts` name nothing from Monaco, and that is
   load-bearing.** They are imported by the transcript, which every reader loads; a static
   import of the editor there would put Monaco in the app's entry chunk. A request is plain

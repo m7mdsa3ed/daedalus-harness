@@ -28,6 +28,12 @@
    plan left for the same reason: it belongs at the point in the conversation
    where it was written.
 
+   Above the shelf is the composer's other surface (`composer/notices.tsx`), and
+   the split between the two is by subject: a note up there is about *sending*
+   (the connection that carries a message, a send that revives a stopped agent),
+   while anything about the *turn* is at the foot of the transcript, where the
+   next thing will happen. Between them every state has exactly one home.
+
    ── The shelf is a pile of cards, one in front ──
    Left to itself the shelf grew a row per concern — archive notice, draft
    scope, todo list, history notice, command menu — and stacked rows push the
@@ -129,14 +135,19 @@ type StripContext = {
    row that arrives mid-turn would land wherever it happened to mount. Sorting
    by a fixed list keeps a sliver in the same place every time — the pile is
    pointed at, and a control that moves under the cursor is a misclick. Ids not
-   listed here sort last, in mount order. */
+   listed here sort last, in mount order.
+
+   Only ids a row actually registers belong here — the `useStripSummary`
+   callers, which are the pile's whole membership. A stale id costs nothing at
+   runtime (it matches no entry) but it lies about what the pile can hold: the
+   archive notice and the subagent count both spent time listed here after they
+   had moved out of the pile and into the footer / above the strip. */
 const SUMMARY_ORDER = [
-  "archived",
-  "agents",
   "attachments",
   "pastes",
   "history",
   "slash",
+  "project-command",
   "mention",
 ]
 
@@ -456,8 +467,7 @@ export function ComposerStrip({
              where every raised surface is frosted. The sliver carries the
              surface for the card it belongs to; the rest of that card is a
              transparent box holding a mounted row. */
-          front &&
-            "bg-shelf ring-1 ring-foreground/5 backdrop-blur-sm dark:ring-foreground/10",
+          front && "bg-shelf backdrop-blur-sm",
           !place && "hidden"
         )}
         style={
@@ -488,13 +498,9 @@ export function ComposerStrip({
             className={cn(
               "absolute inset-x-0 top-0 flex items-center gap-1.5 rounded-t-xl px-2.5 text-muted-foreground",
               /* The sliver is the card's surface, since it is the only part of
-                 the card anyone sees. `ring-inset` and not the card's outset
-                 ring: a ring is a box-shadow drawn *outside* the border box,
-                 and the card clips its own children, so an outset one on a
-                 sliver pinned to the card's edges is a hairline clipped away to
-                 nothing. Inset, its bottom line falls where the card in front
-                 begins and reads as the seam between the two. */
-              "bg-shelf ring-1 ring-foreground/5 ring-inset backdrop-blur-sm dark:ring-foreground/10",
+                 the card anyone sees, and it draws no ring: the seam to the
+                 card in front is the two grounds meeting, not a hairline. */
+              "bg-shelf backdrop-blur-sm",
               "transition-colors hover:bg-accent/40 hover:text-foreground",
               "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
             )}
@@ -581,9 +587,7 @@ export function ComposerStrip({
           // the way down. Without it the composer would jump rather than slide.
           // Never with a footer: that surface is already down there, and a
           // second one over it would wash the row it is under.
-          empty &&
-            !stowed &&
-            "overflow-hidden rounded-t-xl bg-shelf ring-1 ring-foreground/5 dark:ring-foreground/10",
+          empty && !stowed && "overflow-hidden rounded-t-xl bg-shelf",
           // Nothing registered and the fold finished: no pile, no shelf.
           stowed && empty && "hidden",
           className
@@ -605,15 +609,14 @@ export function ComposerStrip({
             data-strip-footer=""
             className={cn(
               "absolute inset-x-0 bottom-0 pb-4",
-              /* `--composer`, not the pile's `--surface`: the footer belongs to
-                 the composer, not to the shelf. It says what is permanently
-                 true of the thread the box below writes to, so it wears that
-                 box's ground and the seam between the two disappears — what is
-                 left is one composer unit with a shelf of transient cards on
-                 top of it. The two tokens are far enough apart in both modes to
-                 read as different objects (light: muted-mixed vs card; dark:
-                 card vs background). */
-              "bg-composer/70 ring-1 ring-foreground/5 backdrop-blur-xl backdrop-saturate-150 dark:ring-foreground/10",
+              /* `--shelf`, never the composer's `--composer`: the strip is a
+                 surface of its own, and wearing the box's ground made the two
+                 one flat band. The shelf token is derived from the composer and
+                 sits a step away from it in both modes (light: darker toward the
+                 foreground; dark: darker toward the background), so the strip
+                 reads as a distinct object under the box it belongs to. No
+                 ring: the difference in ground is what separates them. */
+              "bg-shelf",
               entries.length === 0 && "rounded-t-xl"
             )}
           >

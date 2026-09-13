@@ -17,6 +17,8 @@ import { useNavigate } from "react-router"
 import { NotificationRow, UnreadCount } from "@/components/notifications/items"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Skeleton } from "@/components/ui/skeleton"
+import { NotificationRowsSkeleton } from "@/components/ui/skeletons"
 import {
   useInbox,
   useMarkNotificationsRead,
@@ -32,7 +34,7 @@ export function NotificationBell() {
   /* The query cache owns the read: the badge fetches on mount, opening
      re-fetches, and returning to the window re-fetches via focus — the three
      moments the old module store asked for by hand. */
-  const { inbox, refetch } = useInbox()
+  const { inbox, isPending, refetch } = useInbox()
   const markRead = useMarkNotificationsRead()
   const navigate = useNavigate()
   const [open, setOpen] = React.useState(false)
@@ -96,15 +98,21 @@ export function NotificationBell() {
           <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2.5">
             <div className="min-w-0 flex-1">
               <p className="text-[13px] leading-5 font-semibold">Notifications</p>
-              <p className="text-[11px] leading-4 text-muted-foreground tabular-nums">
-                {!inbox
-                  ? "Loading…"
-                  : items.length === 0
-                    ? "Nothing recorded"
-                    : unread > 0
-                      ? `${unread} unread`
-                      : "All read"}
-              </p>
+              {!inbox && isPending ? (
+                /* The summary is read, not guessed: a skeleton claims the line
+                   "Loading…" did and does not move when the count lands. */
+                <Skeleton className="mt-0.5 h-3 w-24" />
+              ) : (
+                <p className="text-[11px] leading-4 text-muted-foreground tabular-nums">
+                  {!inbox
+                    ? "Loading…"
+                    : items.length === 0
+                      ? "Nothing recorded"
+                      : unread > 0
+                        ? `${unread} unread`
+                        : "All read"}
+                </p>
+              )}
             </div>
             {unread > 0 && (
               /* The button's own `xs` size rather than a hand-set height and
@@ -124,7 +132,11 @@ export function NotificationBell() {
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {shown.length === 0 ? (
+            {!inbox && isPending ? (
+              /* "You're all caught up" is a fact about a list, and it is not
+                 one yet while the list is still arriving. */
+              <NotificationRowsSkeleton rows={5} />
+            ) : shown.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-2 px-4 py-10 text-center">
                 <BellIcon className="size-5 text-muted-foreground/50" />
                 <p className="text-xs text-muted-foreground">

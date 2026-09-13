@@ -57,6 +57,18 @@ export function textInsertions({
     requestCaret(1)
     requestAnimationFrame(() => inputRef.current?.focus())
   }
+  /* The same rule for a project command, which the completer reads as `^!name`.
+     The bang is behind a shift layer on a phone, so the "+" is the door a thumb
+     can actually open. */
+  const insertProjectCommand = () => {
+    if (text.startsWith("!")) {
+      inputRef.current?.focus()
+      return
+    }
+    setText("!" + text)
+    requestCaret(1)
+    requestAnimationFrame(() => inputRef.current?.focus())
+  }
   /* Fences around the selection, or an empty block with the caret inside. On
      its own line either way: a fence mid-sentence is not a fence. */
   const insertCodeBlock = () => {
@@ -72,5 +84,5 @@ export function textInsertions({
     requestAnimationFrame(() => el?.focus())
   }
 
-  return { insertMention, insertCommand, insertCodeBlock }
+  return { insertMention, insertCommand, insertProjectCommand, insertCodeBlock }
 }

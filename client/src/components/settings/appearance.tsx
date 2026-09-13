@@ -1,7 +1,9 @@
 import { Monitor, Moon, RotateCcw, Sun } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
+import { Switch } from "@/components/ui/switch"
 import { ThemeGallery } from "@/components/theme-builder"
+import { useWindowMaterial, WINDOW_MATERIAL } from "@/lib/window-material"
 import {
   FONT_SIZE_DEFAULT,
   FONT_SIZE_MAX,
@@ -14,7 +16,7 @@ import {
   useTheme,
 } from "@/lib/theme"
 import { cn } from "@/lib/utils"
-import { PageHeader, Group } from "./primitives"
+import { PageHeader, Group, Row } from "./primitives"
 import { sectionMeta } from "./sections"
 
 const MODES = [
@@ -80,6 +82,30 @@ function SliderRow({
   )
 }
 
+/* ── The window's material ──
+   Only a shell that has one is offered this: `WINDOW_MATERIAL` is the
+   platform's answer (the preload's), false in every browser and on a platform
+   with no material, so a checkbox that changes nothing is never shown. The
+   sidebar and the header band are what show the desktop through, and that is
+   what the switch turns off — the app goes opaque, with no restart. */
+function WindowGroup() {
+  const [material, setMaterial] = useWindowMaterial()
+  return (
+    <Group label="Window">
+      <Row
+        title="Translucent window"
+        subtitle="Let the desktop show through the sidebar and the top bar — vibrancy on macOS, mica on Windows. Off, the window is solid."
+      >
+        <Switch
+          checked={material}
+          onCheckedChange={setMaterial}
+          aria-label="Translucent window"
+        />
+      </Row>
+    </Group>
+  )
+}
+
 export function AppearancePage() {
   const meta = sectionMeta("appearance")
   const { theme, setTheme } = useTheme()
@@ -136,6 +162,7 @@ export function AppearancePage() {
           unit="%"
         />
       </Group>
+      {WINDOW_MATERIAL && <WindowGroup />}
     </>
   )
 }

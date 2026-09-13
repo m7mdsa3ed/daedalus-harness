@@ -2,6 +2,7 @@ import * as React from "react"
 import {
   BookOpenIcon,
   FolderIcon,
+  GlobeIcon,
   PanelsTopLeft,
   Pencil,
   PlayIcon,
@@ -13,7 +14,9 @@ import {
 import { Navigate, useNavigate, useParams } from "react-router"
 import { captureError, reportError, type InlineError, errorText } from "@/lib/errors"
 import { Button } from "@/components/ui/button"
+import { Empty } from "@/components/empty"
 import { ProjectIcon } from "@/components/entity-icon"
+import { Notice } from "@/components/notice"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -146,6 +149,7 @@ export function ProjectForm({
     cwd: project?.cwd ?? "",
     description: project?.description ?? "",
     logoUrl: project?.logoUrl ?? "",
+    previewUrl: project?.previewUrl ?? "",
   }))
   const [busy, setBusy] = React.useState(false)
   const [saveError, setSaveError] = React.useState<InlineError | null>(null)
@@ -162,6 +166,7 @@ export function ProjectForm({
         cwd: form.cwd === "/" ? form.cwd : form.cwd.replace(/\/+$/, ""),
         description: form.description.trim() || null,
         logoUrl: form.logoUrl.trim(),
+        previewUrl: form.previewUrl.trim(),
       }
       if (project) {
         await api(settings, `/api/projects/${project.id}`, { method: "PUT", body: JSON.stringify(payload) })
@@ -216,6 +221,20 @@ export function ProjectForm({
             />
           </div>
         </Field>
+        <Field
+          label="Preview URL"
+          hint="The project's dev server, as the Browser panel opens it. Reachable from this device: localhost on the server's own machine, a LAN or tunnel address from a phone. The dev server must be running — mark a helper command below and the panel can start it for you."
+        >
+          <div className="flex items-center gap-2">
+            <GlobeIcon className="size-4 shrink-0 text-muted-foreground" />
+            <Input
+              value={form.previewUrl}
+              onChange={(e) => set({ previewUrl: e.target.value })}
+              placeholder="http://localhost:5173"
+              className="font-mono text-xs"
+            />
+          </div>
+        </Field>
       </FormSection>
       <FormActions busy={busy} onCancel={() => onDone(false)} error={saveError} />
       </PageForm>
@@ -249,6 +268,7 @@ function HelpersSection({ project }: { project: Project | null }) {
   const [cwd, setCwd] = React.useState("")
   const [envText, setEnvText] = React.useState("")
   const [confirm, setConfirm] = React.useState(false)
+  const [preview, setPreview] = React.useState(false)
   const [envProblem, setEnvProblem] = React.useState<string | null>(null)
 
   /** `KEY=value` per line — friendlier to type than JSON, lossless to parse. */
@@ -275,6 +295,7 @@ function HelpersSection({ project }: { project: Project | null }) {
       helper.env ? Object.entries(helper.env).map(([k, v]) => `${k}=${v}`).join("\n") : ""
     )
     setConfirm(helper.confirm)
+    setPreview(helper.preview)
     setEnvProblem(null)
   }
 
@@ -286,6 +307,7 @@ function HelpersSection({ project }: { project: Project | null }) {
     setCwd("")
     setEnvText("")
     setConfirm(false)
+    setPreview(false)
     setEnvProblem(null)
   }
 
@@ -310,6 +332,7 @@ function HelpersSection({ project }: { project: Project | null }) {
       cwd: cwd.trim() || null,
       env: env && Object.keys(env).length > 0 ? env : null,
       confirm,
+      preview,
     }
 
     setSaving(true)
@@ -354,9 +377,7 @@ function HelpersSection({ project }: { project: Project | null }) {
             Commands you can run from the project page&rsquo;s header dropdown. Run in the project&rsquo;s working directory.
           </p>
           {helpers.length === 0 ? (
-            <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
-              No helper commands yet — add one below.
-            </p>
+            <Empty>No helper commands yet — add one below.</Empty>
           ) : (
             <ul className="max-h-64 divide-y overflow-y-auto rounded-lg border">
               {helpers.map((h) => (
@@ -372,9 +393,14 @@ function HelpersSection({ project }: { project: Project | null }) {
                     <div className="mt-0.5 font-mono text-xs break-all text-muted-foreground">
                       {h.command}
                     </div>
-                    {(h.cwd || h.confirm) && (
+                    {(h.cwd || h.confirm || h.preview) && (
                       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
                         {h.cwd && <span className="font-mono">cwd: {h.cwd}</span>}
+                        {h.preview && (
+                          <span className="inline-flex items-center gap-1 text-primary">
+                            <GlobeIcon className="size-3" /> starts the preview
+                          </span>
+                        )}
                         {h.confirm && <span>asks first</span>}
                       </div>
                     )}
@@ -463,6 +489,20 @@ function HelpersSection({ project }: { project: Project | null }) {
                 </div>
               </div>
               <Switch checked={confirm} onCheckedChange={setConfirm} aria-label="Ask before running" />
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+              <div className="min-w-0">
+                <div className="text-xs font-medium">Starts the project's dev server</div>
+                <div className="text-[11px] text-muted-foreground">
+                  Marked once per project — the Browser panel offers it when the preview URL is
+                  set but nothing answers on it.
+                </div>
+              </div>
+              <Switch
+                checked={preview}
+                onCheckedChange={setPreview}
+                aria-label="Starts the project's dev server"
+              />
             </div>
             <div className="flex justify-end gap-2">
               {editingId && (
@@ -555,17 +595,15 @@ function KnowledgeSection({ project }: { project: Project | null }) {
             </Button>
           </div>
           {error && (
-            <p className="rounded-lg border border-destructive/30 px-3 py-2 text-xs text-destructive">
+            <Notice tone="error">
               {error}{" "}
               <button type="button" className="underline" onClick={() => void refetch()}>
                 Try again
               </button>
-            </p>
+            </Notice>
           )}
           {rows.length === 0 ? (
-            <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
-              No knowledge entries yet — add the first one below.
-            </p>
+            <Empty>No knowledge entries yet — add the first one below.</Empty>
           ) : (
             <ul className="max-h-64 divide-y overflow-y-auto rounded-lg border">
               {rows.map((entry) => (

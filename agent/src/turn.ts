@@ -6,16 +6,19 @@ import type { SharedV4ProviderOptions } from "@ai-sdk/provider";
 import {
   stepCountIs,
   streamText,
+  type FilePart,
   type LanguageModelUsage,
   type ModelMessage,
   type StreamTextResult,
   type ToolSet,
+  type UserContent,
 } from "ai";
 import { makeRepairToolCall } from "./tools/repair.js";
 import { expandCommand } from "./commands.js";
-import { compact, needsCompaction, windowSize } from "./compaction.js";
+import { compact, needsCompaction, windowFor } from "./compaction.js";
 import type { AgentEnv } from "./env.js";
 import { findInstructionFiles, readInstructions } from "./instructions.js";
+import { OPENUI_PROMPT } from "./openui-prompt.js";
 import { loadModelPrompts, modelPromptLayer } from "./model-prompts.js";
 import type { SessionStore } from "./persistence.js";
 import { PROVIDER_OPTIONS_KEY, type ModelFactory } from "./provider.js";
@@ -81,7 +84,11 @@ export async function handlePrompt(
      response is the same turn's end — exactly the contract the harness's
      `inflight` counter expects. */
   if (session.turnActive) {
-    session.steerQueue.push({ messages: [{ role: "user", content: expanded }] });
+    /* The same rendering the non-steer door uses: a steer that carried an image
+       is still a prompt with an image in it, and flattening it to `expanded`
+       dropped the bytes while keeping the `[attached: …]` prose — the model was
+       told a screenshot was there and never given it. */
+    session.steerQueue.push({ messages: [{ role: "user", content: promptContent(params.prompt, expanded) }] });
     return new Promise<acp.PromptResponse>((resolve, reject) => {
       const parked = parkedBySession.get(session) ?? [];
       parked.push({ resolve, reject });
@@ -138,7 +145,12 @@ export async function handlePrompt(
        JSONL compact barrier has to land before it so a load replay keeps it. */
     if (needsCompaction(session, deps.env)) await compactOnce();
 
-    const userMessage: ModelMessage = { role: "user", content: expanded };
+    /* The prompt as the *provider* must see it: the text plus any image/audio
+       bytes the bridge put on the wire (`attachment-blocks.ts` picks that
+       branch against this runtime's capability and the thread's model). `expanded`
+       is the plain-text rendering for callers that only want the words; the
+       message keeps the parts. */
+    const userMessage: ModelMessage = { role: "user", content: promptContent(params.prompt, expanded) };
     session.messages.push(userMessage);
     deps.store.appendMessages(session.id, [userMessage]);
     /* Journal the user's words for load replay; live, the harness draws the
@@ -193,6 +205,38 @@ export async function handlePrompt(
          automatic path — the caps exist to stop the threshold retrying itself
          forever, and neither reason applies to a button someone pressed. */
       let compactManual = false;
+      /* How many model steps this attempt took, read off the messages the turn
+         kept (one assistant message per step). Checked at the late-steer
+         boundary below against the same `MAX_STEPS` the stream is stopped at,
+         so a thought that arrives at the ceiling waits for the next turn
+         instead of driving a step past the cap. */
+      let stepsTaken = 0;
+
+      /* Read whatever steering has arrived, and answer with the messages it
+         contributed, having already recorded and persisted them. Called at a
+         step boundary (`prepareStep`, before the next model call) and after an
+         attempt's last step has streamed — the two places a steer can be picked
+         up. A steer's words are the user's, so they are pushed into the history
+         and journaled here rather than flattened into the prompt: the replay
+         has to draw the bubble where it landed. `steered` collects them for
+         this attempt's rollback — they are already on disk, so a failed attempt
+         must put them back rather than truncate them away. */
+      const drainSteers = (): ModelMessage[] => {
+        if (session.steerQueue.length === 0) return [];
+        const injected = session.steerQueue.flatMap((s) => s.messages);
+        session.steerQueue = [];
+        session.messages.push(...injected);
+        steered.push(...injected);
+        deps.store.appendMessages(session.id, injected);
+        for (const m of injected) {
+          emit.record({
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text: contentText(m) },
+            messageId: randomUUID(),
+          });
+        }
+        return injected;
+      };
 
       /* Set when this attempt produced no answer. Collected in one variable
          rather than handled twice, because the two ways an attempt can fail
@@ -275,24 +319,22 @@ export async function handlePrompt(
             ) {
               compactMidTurn = true;
             }
-            if (session.steerQueue.length === 0) return {};
-            const injected = session.steerQueue.flatMap((s) => s.messages);
-            session.steerQueue = [];
-            session.messages.push(...injected);
-            steered.push(...injected);
-            deps.store.appendMessages(session.id, injected);
-            for (const m of injected) {
-              emit.record({
-                sessionUpdate: "user_message_chunk",
-                content: { type: "text", text: contentText(m) },
-                messageId: randomUUID(),
-              });
-            }
+            const injected = drainSteers();
+            if (injected.length === 0) return {};
             return { messages: [...messages, ...injected] };
           },
         });
 
-        const outcome = await pumpStream(result, emit, meta, deps.env, session, undefined, subagentsNegotiated(deps));
+        const outcome = await pumpStream(
+          result,
+          emit,
+          meta,
+          deps.env,
+          session.modelId,
+          session,
+          undefined,
+          subagentsNegotiated(deps),
+        );
         if (outcome.totalUsage) turnUsage = addUsage(turnUsage, outcome.totalUsage);
 
         /* `result.response` is the *last step's* metadata — its `messages` are
@@ -305,6 +347,7 @@ export async function handlePrompt(
         let generated: ModelMessage[] = [];
         try {
           generated = await result.responseMessages;
+          stepsTaken = generated.filter((m) => m.role === "assistant").length;
           if (generated.length === 0 && !outcome.aborted && outcome.error === undefined) {
             process.stderr.write("warning: turn produced no response messages to keep\n");
           }
@@ -367,6 +410,22 @@ export async function handlePrompt(
           const stopReason: acp.StopReason = outcome.aborted
             ? "cancelled"
             : mapFinishReason(outcome.finishReason);
+
+          /* A steer can land after `prepareStep` has run for the last time —
+             the model had already streamed its answer, so no step boundary is
+             left to read it. Ending here would leave the words in the history
+             for a turn that never comes: the user watched their steer join a
+             turn that never acted on it. So the same drain runs once more, and
+             a steer that arrived is read in one more step of *this* turn. The
+             one bound is the step cap: at the last step the loop has nowhere
+             left to send it, and the `finally` below keeps it as context for
+             the next turn rather than dropping it. */
+          const late = abort.signal.aborted || stepsTaken >= MAX_STEPS ? [] : drainSteers();
+          if (late.length > 0) {
+            attempt = 0;
+            continue;
+          }
+
           const promptResponse: acp.PromptResponse = {
             stopReason,
             usage: toAcpUsage(turnUsage),
@@ -389,7 +448,13 @@ export async function handlePrompt(
       if (isRetriableStreamError(failure) && attempt < MAX_STREAM_RETRIES) {
         attempt++;
         const delayMs = retryDelayMs(failure, attempt);
-        process.stderr.write(`stream retry ${attempt}/${MAX_STREAM_RETRIES} in ${delayMs}ms: ${describeHold(failure).message}\n`);
+        /* The log gets the whole thing — a headline is cut to fit a row in a
+           transcript, and stderr is not a row. It is also what gets spliced
+           into an error on the way out (see CLAUDE.md), so a cut here is a cut
+           in the one place the reason was still recoverable. */
+        process.stderr.write(
+          `stream retry ${attempt}/${MAX_STREAM_RETRIES} in ${delayMs}ms: ${errorText(unwrapRetry(failure)).trim()}\n`,
+        );
         /* Said before the wait, not after it: the backoff is most of the
            silence, and a notice that arrives when the next attempt starts
            explains a pause that has already happened. */
@@ -468,7 +533,9 @@ async function holdForFailure(
   signal: AbortSignal,
 ): Promise<Release> {
   const hold = describeHold(failure);
-  process.stderr.write(`turn held: ${hold.message}\n`);
+  // Whole, for the same reason the retry's line is: stderr is the log, and it
+  // is what gets spliced into an error on the way out.
+  process.stderr.write(`turn held: ${errorText(unwrapRetry(failure)).trim() || hold.message}\n`);
   await notifyPaused(ctx, { sessionId: session.id, paused: true, reason: "error", ...hold });
   const release = await session.holdError(hold, signal);
   /* Said again on the way out, whichever way it ended: the harness learns a
@@ -506,9 +573,15 @@ function describeHold(failure: unknown): ErrorHold {
   const text = errorText(unwrapRetry(failure)).trim() || "the model provider returned an error";
   const [first = text, ...rest] = text.split("\n");
   const detail = rest.join("\n").trim();
+  const message = first.length > 200 ? `${first.slice(0, 200)}…` : first;
+  /* The headline is cut to a headline's length, but nothing is cut *away*: the
+     ellipsis promises a rest, and a one-line provider error had none to open —
+     the whole reason it says `Too big: expected number to be <=…` and stops
+     right before the parameter's name. A cut headline carries the entire text
+     as its detail; an uncut one carries only what came after it. */
   return {
-    message: first.length > 200 ? `${first.slice(0, 200)}…` : first,
-    ...(detail ? { detail } : {}),
+    message,
+    ...(message === first ? (detail ? { detail } : {}) : { detail: text }),
   };
 }
 
@@ -592,6 +665,11 @@ async function pumpStream(
   emit: Emitter,
   meta: Record<string, ToolMeta>,
   env: AgentEnv,
+  /* The model these requests are going out on, which is what decides the
+     window they are measured against. Passed rather than read off `contextOf`:
+     a subagent has no context gauge of its own here but its requests still
+     carry a window, and it runs on the same session's model. */
+  modelId: string,
   contextOf: Session | null,
   onUsage: ((usage: LanguageModelUsage) => void) | undefined,
   /* Whether the client negotiated the subagent RFD — the one thing that
@@ -736,6 +814,10 @@ async function pumpStream(
         }
         case "finish-step": {
           const used = totalOf(part.usage);
+          /* ponytail: lags by whatever is appended after the last model reply —
+             the final step's tool results, the next user message — since only a
+             request reports. The output reserve in `windowFor` absorbs it;
+             add a tokenizer only if a real turn is seen overflowing. */
           if (contextOf) contextOf.lastTokens = used;
           onUsage?.(part.usage);
           /* Per-step, because a turn's total hides where the cache was lost:
@@ -746,20 +828,24 @@ async function pumpStream(
              a cold step answerable by a query instead of a reconstruction. */
           const cacheRead = part.usage.inputTokenDetails?.cacheReadTokens ?? null;
           const cacheWrite = part.usage.inputTokenDetails?.cacheWriteTokens ?? null;
+          const window = windowFor(env, modelId);
+          const cache =
+            cacheRead === null && cacheWrite === null
+              ? null
+              : { read: cacheRead, write: cacheWrite, prompt: part.usage.inputTokens ?? null };
+          /* `size` is required by the schema and there is no way to say "I do
+             not know", so an unknown window ships the fallback and says so
+             beside it — the client draws the reading as approximate rather
+             than as a percentage of a number nobody measured. */
+          const usageMeta = {
+            ...(cache ? { cache } : {}),
+            ...(window.known ? {} : { daedalus: { windowEstimated: true } }),
+          };
           await emit.update({
             sessionUpdate: "usage_update",
             used,
-            size: windowSize(env),
-            _meta:
-              cacheRead === null && cacheWrite === null
-                ? undefined
-                : {
-                    cache: {
-                      read: cacheRead,
-                      write: cacheWrite,
-                      prompt: part.usage.inputTokens ?? null,
-                    },
-                  },
+            size: window.size,
+            _meta: Object.keys(usageMeta).length > 0 ? usageMeta : undefined,
           });
           break;
         }
@@ -875,7 +961,7 @@ async function runSubagent(
       });
 
       try {
-        const outcome = await pumpStream(result, childEmit, meta, deps.env, null, undefined, rfd);
+        const outcome = await pumpStream(result, childEmit, meta, deps.env, session.modelId, null, undefined, rfd);
         if (outcome.totalUsage) reportUsage(outcome.totalUsage);
         if (outcome.error !== undefined) {
           if (isRetriableStreamError(outcome.error) && attempt < MAX_STREAM_RETRIES && !session.abort?.signal.aborted) {
@@ -973,20 +1059,53 @@ You have write_todos, and its list is drawn in the transcript for the user.
 - Use it for multi-step, long-running or ambiguous work: short, verifiable steps, ordered, with no filler item like "explore the codebase".
 - Keep exactly one item in progress, and mark an item completed the moment it is done rather than batching updates at the end.
 - When the plan turns out to be wrong, rewrite it. A stale plan is worse than none.
+- Close the plan before you finish: every item done, blocked with a one-sentence reason and the question it needs, or dropped with a reason. Never leave one in progress.
+- Unless the plan is the deliverable you were asked for — plan mode, or an explicit "make me a plan" — never end a turn holding only a plan.
 
 ## Task execution
 
 Keep going until the request is completely resolved. Finish the whole task before you hand it back.
 - Understand the code before you change it: search for the existing pattern, read the range around it, and follow the conventions already there rather than importing your own.
-- Implement with the tools you have, in the smallest change that does the job.
+- Match the fix to the cause. Trace the error or the behaviour the task names back to where it actually originates, and change that — not the first place its symptom shows, and not a workaround layered on top.
+- Implement with the tools you have, in the smallest change that does the job, and make it whole: the edit, the call site it belongs to, and the name that now reads wrong all ship together.
 - Do the work rather than asking about it. Treat a short task as sufficient direction and infer the rest by reading the repo.
+- Bias to action: default to implementing with reasonable assumptions, and do not end a turn on a clarification unless you are truly blocked. Every turn should close with a concrete change or an explicit blocker and the one question that unblocks it.
+- Persist to the end within the turn: carry the work through implementation, verification and a clear account of the outcome rather than stopping at analysis or a partial fix, unless the user pauses or redirects you.
+- Watch for the loop: re-reading or re-editing the same files without clear progress is a signal to stop, say what you found, and ask what you need. Local checklists are fine; never spend a turn restating a plan instead of acting on it.
 - Never commit unless the user explicitly asks. Committing uninvited reads as being out of control, even when the change is right.
+
+## Code quality
+
+- Act as a discerning engineer: correctness, clarity and reliability over speed. No risky shortcuts, speculative changes or hacks just to make something run — cover the root cause or the core ask, not the symptom or a narrow slice.
+- Conform to the codebase's own conventions — patterns, helpers, naming, formatting — and say why if you must diverge.
+- Complete the change across every surface it touches, so behaviour stays consistent rather than half-wired.
+- Keep behaviour safe by default: preserve intended UX, and gate or flag an intentional behaviour change rather than letting it land silently.
+- Handle errors tightly: no broad catch-all, no silent fallback that turns a failure into apparent success. Surface or propagate, following the repo's existing idiom.
+- Read enough context before editing and batch the logical edits together, rather than thrashing with a run of micro-edits.
+- Keep types honest: the build and type-check must pass, and casts like \`as any\` are a last resort, not a way to close a gap.
+- Search for prior art before adding a helper: reuse or extract the shared one instead of a second copy.
+
+## Working efficiently
+
+Every step is a round trip — the model call, the tool call and its result are all sent again on the next one — so a task finished correctly in three steps is worth more than the same task in eight.
+- Start at the decisive action: the read or the search that tells you what to do, rather than a survey of everything that might be related.
+- Read the range a decision needs, not the whole file. Grep for the name, then read around the hit.
+- Batch what is independent into one message — several reads, several greps, the status check and the diff — so the round trips overlap instead of queueing.
+- When a call fails, read the error before repeating the call. A retry that changes nothing is a loop; change the argument, the path or the approach.
+- Take the shortest correct path. Don't add a helper, an abstraction or a guard the task did not ask for.
 
 ## Testing your work
 
 - Verify with the project's own tests or build when it has them. Never assume a framework or a script name — read the README or the package manifest and find out.
 ${has("bash") ? "- When the task is done, run the project's lint and typecheck commands (npm run lint, npm run typecheck, ruff, and so on) if you know them." : "- When the task is done, say which lint and typecheck commands should be run to check it — you cannot run them yourself this turn."} If you cannot find the right command, ask the user for it, and suggest writing it into AGENTS.md so the next session knows.
 - Report what you actually ran. A check you skipped is said to be skipped; a failing test is quoted, not paraphrased away.
+
+## Reviews
+
+When the user asks for a review, it is a code review: find the bugs, risks, behavioural regressions and missing tests, and make the findings the body of the answer.
+- Findings first, worst first, each with a file and line reference and enough of the code to see the problem.
+- Then open questions and assumptions, then a short summary — and only after the findings. A summary that leads buries the one thing the reader asked for.
+- Report nothing you cannot point at: if you found no issues, say so plainly and name the residual risks and the tests you did not run.
 
 ## Ambition vs. precision
 
@@ -999,7 +1118,7 @@ ${has("bash") ? "- When the task is done, run the project's lint and typecheck c
 The conversation above is your memory of this session, and it is authoritative. Before you reach for a tool, check whether the answer is already in it.
 - Do not re-read a file whose contents are already in this conversation, and do not re-run a search you have already run. The earlier result is still true unless something changed it.
 - Something changed it means: you edited or wrote the file, a bash command you ran touched it, or the user says it changed. Then re-read only the part that moved — use \`offset\`/\`limit\` rather than pulling the whole file back.
-- Your own edits are recorded above. After an edit_file succeeds, the file is what you just made it; do not read it back to confirm the tool did what it said.
+- A tool call records its own result: if you just wrote or edited a file, do not read it back to confirm the tool did what it said — but a read is how you see the file as it stands now, and that is the version your next edit has to match.
 - Read the range you need, not the file. When you are looking for one function, grep for it and read around the hit; a whole-file read to answer a one-line question is wasted context for the rest of the session.
 - When the user follows up on work you just did, continue from what you already know instead of re-exploring the codebase from scratch. Re-establish context only for the parts of the repo this session has genuinely not seen.
 - This is not a licence to guess. If a fact was never established here, or it was compacted away and you cannot see it, go and read it — the rule is "don't fetch twice", never "answer from memory you don't have".
@@ -1056,6 +1175,7 @@ When doing frontend design tasks, avoid collapsing into bland, generic layouts. 
 - Background: don't rely on a flat single color; use gradients, shapes or subtle patterns to build atmosphere.
 - Overall: avoid boilerplate layouts and interchangeable UI patterns. Vary themes, type families and visual languages across outputs.
 - Make sure the page loads properly on both desktop and mobile.
+- Finish it: a layout left as a skeleton, a placeholder section or a stub handler is not done. Ship something in a working state the user can run and try, without inventing adjacent features or services around it.
 
 Exception: inside an existing website or design system, preserve the established patterns, structure and visual language.
 
@@ -1123,6 +1243,44 @@ assistant: Clients are marked as failed in the \`connectToServer\` function in s
         session.modelId,
         env.modelPromptsFile ? loadModelPrompts(env.modelPromptsFile) : [],
       ),
+    );
+  }
+  /* ── The component table ──
+     Only for our own runtime, and only the *table*.
+
+     The permission to produce a view at all is not decided here any more: it
+     rides the persona door with every other thread-level behaviour
+     (`server/src/personas.ts`), so any runtime on a profile is asked in its own
+     instructions rather than only this one being told by a variable. What is
+     left for this block is the half a server-side file cannot carry — the
+     generated component list, which is produced from the client's own library
+     (`client/scripts/gen-openui.mjs` → `openui-prompt.ts`) and describes what
+     the reader's app will actually draw. `OPENUI_PROMPT` supersedes the trailer
+     server-side writes whenever both arrive, because it carries the same rules
+     plus the components.
+
+     Two gates, and both are about who is reading:
+
+     — a **subagent** is not drawing anything: its final message is a report to
+       its caller, and a generated view in a worker's handoff is a picture the
+       parent cannot see. It gets the brief;
+     — an **unattended run** has nobody in front of it. `holdOnError` is off for
+       exactly that case and nothing else (a workflow step, a scheduled run),
+       and it is the honest test to reuse rather than inventing a second flag: a
+       view is read by a person, and a run whose output goes to a log wants
+       prose it can grep.
+
+     `env.uiBlocks` still reaches this process (the server sets it from the
+     thread's column), so it is the switch for *this* half too — a thread that
+     turned the lane off should not have its table pushed at it. It is
+     byte-stable per generated file, so it sits in the cacheable prefix. */
+  if (!opts.subagent && env.holdOnError && env.uiBlocks) {
+    parts.push(
+      `## Drawing an answer
+
+The client draws a fenced \`openui-lang\` block as real UI, inline where the fence stood. It is a presentation lane and nothing else: nothing in it can read a file, run a command or reach the network — every tool call stays a tool call above.
+
+${OPENUI_PROMPT}`,
     );
   }
   /* Its own block, and pushed for a subagent as well as for a root turn.
@@ -1235,16 +1393,50 @@ function settleParked(session: Session, settle: (p: Parked) => void): void {
   for (const p of parked) settle(p);
 }
 
+/* The two renderings of one ACP prompt, walked once. `promptText` is the
+   plain-text projection — the session title, the journaled user bubble, the
+   prose every consumer that cannot carry a binary needs. `promptContent` is
+   the provider's: the same text, but `image`/`audio` blocks ride through as
+   content parts instead of being flattened to nothing.
+
+   They share the walk so a new block kind is handled in one place. The text
+   halves are byte-identical between them, which is what lets the bridge's own
+   `[attached: …]` suffix (already appended to the text block) stay the single
+   description of a file in the prose. */
 export function promptText(blocks: acp.ContentBlock[]): string {
-  const parts: string[] = [];
+  return promptParts(blocks)
+    .filter((p): p is string => typeof p === "string")
+    .join("\n")
+    .trim();
+}
+
+function promptParts(blocks: acp.ContentBlock[]): (string | FilePart)[] {
+  const parts: (string | FilePart)[] = [];
   for (const block of blocks) {
     if (block.type === "text") parts.push(block.text);
     else if (block.type === "resource_link") parts.push(`@${block.uri}`);
     else if (block.type === "resource" && "text" in block.resource) {
       parts.push(`<attached uri="${block.resource.uri}">\n${block.resource.text}\n</attached>`);
+    } else if (block.type === "image") {
+      /* The `file` part, not the deprecated `image` one (the SDK warns on it):
+         a mediaType of `image/*` is what `createOpenAICompatible` turns into an
+         `image_url` data URI. */
+      parts.push({ type: "file", mediaType: block.mimeType, data: block.data });
+    } else if (block.type === "audio") {
+      parts.push({ type: "file", mediaType: block.mimeType, data: block.data });
     }
   }
-  return parts.join("\n").trim();
+  return parts;
+}
+
+/* A string when the prompt carries no binary — the AI SDK reads a lone-string
+   user message the same way, and it keeps the persisted JSONL small and
+   readable. With media it becomes parts: one text part holding the whole
+   prose (the bridge's `[attached: …]` suffix included), then the images. */
+function promptContent(blocks: acp.ContentBlock[], text: string): UserContent {
+  const media = promptParts(blocks).filter((p): p is FilePart => typeof p !== "string");
+  if (media.length === 0) return text;
+  return [{ type: "text", text }, ...media];
 }
 
 function contentText(message: ModelMessage): string {
@@ -1375,6 +1567,10 @@ function isRetriableStreamError(err: unknown): boolean {
      provider sends these as 429/403 too, and retrying into one only costs the
      user the wait before the same hold. */
   if (/usage limit|quota|insufficient|billing|unauthori[sz]ed|invalid api key/i.test(err.message)) return false;
+  /* A 400 is the provider saying the request itself is wrong — a bad model id,
+     a `max_tokens` above its ceiling. The same bytes sent again get the same
+     answer, so four backoffs only put a minute in front of the hold. */
+  if ((err as { statusCode?: number }).statusCode === 400) return false;
   if (err.name === "AI_InvalidResponseDataError") return true;
   if (err.name === "AI_APICallError" && (err as { isRetryable?: boolean }).isRetryable) return true;
   return /ECONNRESET|EPIPE|ETIMEDOUT|socket hang up|network|fetch failed|terminated/i.test(err.message);

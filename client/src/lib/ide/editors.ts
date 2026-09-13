@@ -10,14 +10,20 @@
 
    Not React state, because the dock unmounts a panel when its tab is closed or
    the layout is rearranged, and a set of open files with unsaved edits in them
-   must survive that. The store outlives every mount; unsaved text survives a
-   *reload* too, through `lib/workspace/buffers.ts`.
+   must survive that. The store outlives every mount, and — unlike the dock's
+   own descriptor, which is restored per panel — the tabs written here are
+   restored from `localStorage` too, so a reload brings back the files that
+   were open. Unsaved text comes back the same way, through
+   `lib/workspace/buffers.ts`.
 
    Subscribed to with `useSyncExternalStore`, so a component re-renders on the
    slice it actually read. */
 import * as React from "react"
 
-/* Type-only, so this module stays as free of runtime imports as `open.ts`. */
+/* The one runtime import, and it is not the editor: `loadSettings` names the
+   server the tabs are stored under. What the entry chunk must not carry is
+   still type-only — `open.ts` and this file name nothing of Monaco. */
+import { loadSettings } from "@/lib/settings"
 import type { Comparison } from "@/lib/workspace/git-api"
 
 export interface FileTab {
@@ -67,6 +73,110 @@ const EMPTY: ProjectEditors = { tabs: [], activeId: null, dirty: new Set(), reve
 const projects = new Map<string, ProjectEditors>()
 const listeners = new Set<() => void>()
 
+/* ── The tabs survive a reload ──
+   The store above is what makes a set of open files outlive the panel; this is
+   what makes it outlive the page. Keyed by server and then by project, on the
+   same discipline as `lib/workspace/buffers.ts`: the blob is user-editable and
+   written by some past build, so every tab is re-validated on the way in and a
+   shape this build does not mean is dropped rather than trusted.
+
+   Only the tabs and which one was in front are kept. A reveal is one-shot and a
+   dirty flag is derived — the editor rebuilds both by re-reading the buffer,
+   which is how it learns a file is dirty the first time. */
+const KEY = "daedalus.ide.tabs.v1"
+
+interface StoredProject {
+  tabs?: unknown
+  activeId?: unknown
+}
+type StoredTabs = Record<string, Record<string, StoredProject>>
+
+const COMPARISONS = new Set<string>(["worktree", "staged", "head"])
+
+const serverId = (): string => loadSettings()?.id ?? "none"
+
+function readAll(): StoredTabs {
+  try {
+    const raw = localStorage.getItem(KEY)
+    const parsed: unknown = raw ? JSON.parse(raw) : {}
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {}
+    return parsed as StoredTabs
+  } catch {
+    /* Corrupt JSON reads as no tabs. There is nothing to tell the user — they
+       get the IDE a first run gets. */
+    return {}
+  }
+}
+
+function writeAll(store: StoredTabs): void {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(store))
+  } catch (error) {
+    // Quota. The tabs still work; they just will not come back.
+    console.warn("Could not persist the editor tabs", error)
+  }
+}
+
+/** A tab body this build can mean, or null for one it cannot. */
+function parseBody(raw: unknown): TabBody | null {
+  if (!raw || typeof raw !== "object") return null
+  const body = raw as Record<string, unknown>
+  if (typeof body.path !== "string" || body.path.length === 0) return null
+  if (body.kind === "file") return { kind: "file", path: body.path }
+  if (body.kind !== "diff") return null
+  const left = body.left
+  const right = body.right
+  if (typeof left !== "string" || !COMPARISONS.has(left)) return null
+  if (typeof right !== "string" || !COMPARISONS.has(right)) return null
+  return { kind: "diff", path: body.path, left: left as Comparison, right: right as Comparison }
+}
+
+/** The stored tabs, rebuilt as live ones. Ids are derived, never stored. */
+function parseTabs(entry: StoredProject | undefined): Tab[] {
+  if (!entry || !Array.isArray(entry.tabs)) return []
+  const tabs: Tab[] = []
+  const seen = new Set<string>()
+  for (const raw of entry.tabs) {
+    const body = parseBody(raw)
+    if (!body) continue
+    const id = tabId(body)
+    if (seen.has(id)) continue
+    seen.add(id)
+    tabs.push({ id, body })
+  }
+  return tabs
+}
+
+/** Write this project's tabs back, or drop the entry when it has none. */
+function persist(projectId: string): void {
+  const current = projects.get(projectId)
+  const store = readAll()
+  const server = serverId()
+  const byProject = { ...(store[server] ?? {}) }
+  if (!current || current.tabs.length === 0) delete byProject[projectId]
+  else
+    byProject[projectId] = {
+      tabs: current.tabs.map((tab) => tab.body),
+      activeId: current.activeId,
+    }
+  if (Object.keys(byProject).length === 0) delete store[server]
+  else store[server] = byProject
+  writeAll(store)
+}
+
+/* Read once, for the server that is active at start-up: the map is the live
+   copy from here on, and a server switch rebuilds the app's state anyway. */
+for (const [projectId, entry] of Object.entries(readAll()[serverId()] ?? {})) {
+  const tabs = parseTabs(entry)
+  if (tabs.length === 0) continue
+  const stored = entry?.activeId
+  const activeId =
+    typeof stored === "string" && tabs.some((tab) => tab.id === stored)
+      ? stored
+      : (tabs[tabs.length - 1]?.id ?? null)
+  projects.set(projectId, { tabs, activeId, dirty: new Set(), reveals: {} })
+}
+
 function emit(): void {
   for (const listener of [...listeners]) listener()
 }
@@ -76,6 +186,9 @@ function update(projectId: string, change: (current: ProjectEditors) => ProjectE
   const next = change(current)
   if (next === current) return
   projects.set(projectId, next)
+  /* Only the open set and the focus are worth a write: a reveal is one-shot and
+     a dirty flag is derived, so neither belongs in what a reload restores. */
+  if (next.tabs !== current.tabs || next.activeId !== current.activeId) persist(projectId)
   emit()
 }
 
@@ -189,9 +302,10 @@ export function consumeReveal(projectId: string, id: string): void {
   })
 }
 
-/** A project that is gone takes its tabs with it. */
+/** A project that is gone takes its tabs with it — the stored ones too, or a
+    project reopened under the same id would come back to a set of files. */
 export function forgetProjectEditors(projectId: string): void {
-  if (!projects.has(projectId)) return
-  projects.delete(projectId)
-  emit()
+  const had = projects.delete(projectId)
+  persist(projectId)
+  if (had) emit()
 }

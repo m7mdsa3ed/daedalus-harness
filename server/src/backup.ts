@@ -134,6 +134,11 @@ const ModelRow = z.object({
   reasoningEfforts: z.array(str).default([]),
   description: str.optional(),
   pricing: z.object({ input: z.number(), output: z.number() }).optional(),
+  // A cheaper window of the day (schema.ts `OffPeakWindow`). Carried because it
+  // is configuration the user wrote, like the price itself.
+  offPeak: z
+    .object({ from: str, to: str, tz: str, multiplier: z.number() })
+    .optional(),
   modalities: z.array(str).optional(),
   devRef: str.optional(),
 });
@@ -156,6 +161,13 @@ const ProfileRow = z.object({
     .object({ kind: z.enum(USAGE_KINDS), baseUrl: optStr, apiKey: optStr })
     .nullish(),
   models: z.array(ModelRow).default([]),
+  /** Absent in a bundle written before the flag existed, which reads as
+      shown — the safe default for a profile a bundle would otherwise
+      silently keep out of every picker. */
+  hidden: z.boolean().optional(),
+  /** Optional like `hidden` so an old bundle's `disabled: true` restores as
+      exactly that — disabled — rather than being dropped by a rename. */
+  disabled: z.boolean().optional(),
   mcpServerIds: z.array(str).default([]),
   skillIds: z.array(str).default([]),
   commandIds: z.array(str).default([]),
@@ -311,6 +323,9 @@ const SessionRow = z.object({
   /* Absent in a bundle written before suggestion toggles existed, which
      reads as on — suggestions default on, like every new thread. */
   suggestFollowups: z.boolean().default(true),
+  /* Same bargain for the drawn-UI lane: a bundle written before the switch
+     existed reads as on, which is the default every new thread carries. */
+  uiBlocks: z.boolean().default(true),
   title: str.default("New thread"),
   acpSessionId: optStr,
   acpSessionProvisional: z.boolean().default(false),
@@ -958,7 +973,14 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
       const { row, missing } = keepSecrets(p, existingProfiles.get(p.id));
       if (missing) summary.missingSecrets = true;
       const { mcpServerIds: _m, skillIds: _s, commandIds: _c, ...columns } = row;
-      return { ...columns, smallModel: columns.smallModel ?? "", logoUrl: columns.logoUrl ?? "", usage: columns.usage ?? null };
+      return {
+        ...columns,
+        hidden: columns.hidden ?? false,
+        disabled: columns.disabled ?? false,
+        smallModel: columns.smallModel ?? "",
+        logoUrl: columns.logoUrl ?? "",
+        usage: columns.usage ?? null,
+      };
     });
     upsertChunked(tx, profilesTable, "id", profileRows);
     summary.profiles = bundle.profiles.length;

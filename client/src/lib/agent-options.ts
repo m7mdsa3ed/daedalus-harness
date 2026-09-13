@@ -1,6 +1,6 @@
 import type * as acp from "@daedalus/acp"
 
-import { createLocalStore } from "./local-store"
+import { createLocalStore, createStore } from "./local-store"
 
 /* ── What an agent can be configured with ──
    ACP config options come from a *running* agent, and a thread that has not
@@ -74,9 +74,27 @@ const store = createLocalStore<Record<string, AgentOptionSet>>(
   {}
 )
 
-/** Profiles already asked this page-load, so a re-render cannot start a second
-    spawn while the first is still in flight — or retry a hopeless one forever. */
-const asked = new Set<string>()
+/** How the one-shot probe is going for each pair, this page-load — so a
+    re-render cannot start a second spawn while the first is still in flight, or
+    retry a hopeless one forever. Reactive and *not* persisted: a probe in
+    flight is a fact about this tab, and a failure should be re-askable by
+    reloading. It exists because "we are asking", "we asked and it broke" and
+    "it genuinely has nothing" are three different things to say, and a menu
+    that says the last one for all three is a menu that looks broken while it
+    is merely working. */
+export type ProbeStatus = "asking" | "done" | "failed"
+const probes = createStore<Record<string, ProbeStatus>>({})
+const setProbe = (key: string, status: ProbeStatus) =>
+  probes.set({ ...probes.get(), [key]: status })
+
+/** Drop the recorded outcomes for the pairs a `drop*` below is forgetting, so
+    the next render asks again rather than reading a status about a profile that
+    no longer exists. */
+const forgetProbes = (match: (key: string) => boolean) =>
+  probes.set(Object.fromEntries(Object.entries(probes.get()).filter(([key]) => !match(key))))
+
+/** Live read for the menus that draw the difference. */
+export const useProbeStatus = (key: string): ProbeStatus | undefined => probes.use()[key]
 
 /** `key` is always an `optionKey(profileId, agentId)`. */
 export const loadAgentOptions = (key: string): AgentOptionSet => {
@@ -193,8 +211,10 @@ export function usePromptCapabilities(
 }
 
 /** Has this pair already been asked (or is being asked) this page-load? */
-export const alreadyAsked = (key: string): boolean => asked.has(key)
-export const markAsked = (key: string): void => void asked.add(key)
+export const alreadyAsked = (key: string): boolean => probes.get()[key] !== undefined
+export const markAsked = (key: string): void => setProbe(key, "asking")
+export const markProbed = (key: string, ok: boolean): void =>
+  setProbe(key, ok ? "done" : "failed")
 
 /** Apply a draft's picks to a remembered set, so the menu shows what was chosen
     rather than what the agent last happened to be on. */
@@ -216,18 +236,42 @@ export function withChoices(
   })
 }
 
-/** The option set a draft *shows*: the remembered set for the chosen model,
-    with the draft's own picks laid over it. One derivation for the menu and
-    for `createSession`, so what is drawn is what is sent — a remembered value
-    the user never clicked used to be displayed and then left out of the
-    create call, and the agent came up on its default. */
+/** The option set a thread *shows*: the remembered set for the model the row
+    records, with its own picks laid over it. One derivation for the new-thread
+    menu, the started-thread menu and `createSession`, so what is drawn is what
+    is sent and the two menus cannot state different things — a remembered
+    value the user never clicked used to be displayed and then left out of the
+    create call, and the agent came up on its default.
+
+    The model and the effort are read off the row (`SessionMeta.model` /
+    `.effort`) and forced back onto the set by *category*: every thread records
+    them there whatever its profile — a catalog id for a profile that owns one,
+    the agent's own selector id for a profile that does not — and the server
+    applies the second kind through `agentOwned`, which is why they no longer
+    travel as config choices. A pick still sitting in `choices` is an older
+    draft's (the model used to live there) and is read only when the row itself
+    names nothing. */
 export function shownOptions(
   known: AgentOptionSet,
-  choices: ConfigChoices | undefined
+  choices: ConfigChoices | undefined,
+  model?: string,
+  effort?: string
 ): acp.SessionConfigOption[] {
   const modelOption = known.base.find((o) => o.category === "model" && o.type === "select")
-  const chosen = modelOption ? choices?.[modelOption.id] : undefined
-  return withChoices(optionsForModel(known, typeof chosen === "string" ? chosen : undefined), choices)
+  const chosen = model || (modelOption ? choices?.[modelOption.id] : undefined)
+  const shown = withChoices(
+    optionsForModel(known, typeof chosen === "string" && chosen ? chosen : undefined),
+    choices
+  )
+  /* Absolute for the two settings the row names: the remembered set may have
+     been recorded on a different model (a sibling profile's, or this one's
+     last), and what it is sitting on is not what this thread is on. */
+  return shown.map((option) => {
+    if (option.type !== "select") return option
+    if (option.category === "model" && model) return { ...option, currentValue: model }
+    if (option.category === "thought_level" && effort) return { ...option, currentValue: effort }
+    return option
+  })
 }
 
 /** Forget everything remembered about one profile, *and* let it be asked
@@ -241,7 +285,7 @@ export function shownOptions(
     (`updateProfile`); this is the device-local half of it. */
 export function dropAgentOptions(profileId: string): void {
   const prefix = `${profileId}:`
-  for (const key of asked) if (key.startsWith(prefix)) asked.delete(key)
+  forgetProbes((key) => key.startsWith(prefix))
   const kept = Object.fromEntries(
     Object.entries(store.get()).filter(([key]) => !key.startsWith(prefix))
   )
@@ -254,7 +298,7 @@ export function dropAgentOptions(profileId: string): void {
     not contain a colon, so the suffix identifies it. */
 export function dropAgentOptionsFor(agentId: string): void {
   const suffix = `:${agentId}`
-  for (const key of asked) if (key.endsWith(suffix)) asked.delete(key)
+  forgetProbes((key) => key.endsWith(suffix))
   const kept = Object.fromEntries(
     Object.entries(store.get()).filter(([key]) => !key.endsWith(suffix))
   )

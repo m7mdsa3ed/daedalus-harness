@@ -17,9 +17,14 @@ export type FileLayout = "tree" | "list"
 export interface IdePrefs {
   scmLayout: FileLayout
   changesLayout: FileLayout
+  /** How the commit history is read: rows, or rows with the lanes drawn. */
+  historyLayout: HistoryLayout
   /** Width of the IDE panel's side view (explorer, search, source control), in px. */
   sideWidth: number
 }
+
+/** How a commit list is laid out. */
+export type HistoryLayout = "list" | "graph"
 
 const DEFAULTS: IdePrefs = {
   /* A tree by default: a working set is usually a handful of files in two or
@@ -27,10 +32,16 @@ const DEFAULTS: IdePrefs = {
      the work happened. */
   scmLayout: "tree",
   changesLayout: "tree",
+  /* The graph by default: a log read beside a running agent is usually a
+     "which line did that land on" question, which is the one thing the picture
+     answers and the flat list does not. */
+  historyLayout: "graph",
   sideWidth: 240,
 }
 
 const isLayout = (value: unknown): value is FileLayout => value === "tree" || value === "list"
+const isHistoryLayout = (value: unknown): value is HistoryLayout =>
+  value === "list" || value === "graph"
 
 export const idePrefs = createLocalStore<IdePrefs>(
   "daedalus.ide.prefs.v1",
@@ -40,6 +51,9 @@ export const idePrefs = createLocalStore<IdePrefs>(
     return {
       scmLayout: isLayout(stored.scmLayout) ? stored.scmLayout : DEFAULTS.scmLayout,
       changesLayout: isLayout(stored.changesLayout) ? stored.changesLayout : DEFAULTS.changesLayout,
+      historyLayout: isHistoryLayout(stored.historyLayout)
+        ? stored.historyLayout
+        : DEFAULTS.historyLayout,
       sideWidth:
         typeof stored.sideWidth === "number" && Number.isFinite(stored.sideWidth)
           ? stored.sideWidth

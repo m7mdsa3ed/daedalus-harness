@@ -25,6 +25,7 @@ import {
   PackageIcon,
   PlusSignIcon,
   RefreshIcon,
+  SparklesIcon,
   Tick02Icon,
 } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
@@ -40,7 +41,8 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { useConfirm } from "@/components/confirm-dialog"
 import { HistorySection, StashSection } from "@/components/workspace/scm-log"
-import { PanelNotice } from "@/components/workspace/primitives"
+import { PanelRowsSkeleton } from "@/components/ui/skeletons"
+import { Notice } from "@/components/notice"
 import { BranchMenu, Tracking } from "@/components/workspace/scm/branch-menu"
 import { Group } from "@/components/workspace/scm/file-rows"
 import {
@@ -52,11 +54,18 @@ import {
 } from "@/components/workspace/scm/shared"
 import { useCoarsePointer } from "@/hooks/use-device"
 import { describeError } from "@/lib/errors"
+import {
+  canEnhance,
+  resolveEnhanceModelId,
+  resolveEnhanceProfile,
+} from "@/lib/enhance"
+import { useProfiles } from "@/lib/queries/catalog"
 import type { FileLayout } from "@/lib/ide/prefs"
 import type { ScmFilter } from "@/lib/ide/scm-filter"
 import { useServer } from "@/lib/server-context"
 import { cn } from "@/lib/utils"
 import {
+  draftCommitMessage,
   gitWrite,
   projectPath,
   stashPush,
@@ -102,6 +111,7 @@ export function RepoSection({
   const coarse = useCoarsePointer()
 
   const [busy, setBusy] = React.useState(false)
+  const [drafting, setDrafting] = React.useState(false)
   const [message, setMessage] = React.useState("")
   const [output, setOutput] = React.useState<string | null>(null)
   /* Git's own refusal ("error: path … has unstaged changes"), held by the
@@ -177,6 +187,35 @@ export function RepoSection({
     },
     [confirm, write]
   )
+
+  /* Draft a commit message. The profile pick is the enhancer's, resolved the
+     same way and remembered device-locally — writing commit messages and
+     sharpening prompts are the same habit, and the picker is the same picker. */
+  const profiles = useProfiles()
+  const draftProfile = React.useMemo(() => {
+    const picked = resolveEnhanceProfile(profiles)
+    return canEnhance(picked) ? picked : null
+  }, [profiles])
+
+  const draftMessage = React.useCallback(async () => {
+    if (!draftProfile) return
+    setDrafting(true)
+    setWriteError(null)
+    try {
+      const { message: drafted } = await draftCommitMessage(settings, projectId, {
+        profileId: draftProfile.id,
+        model: resolveEnhanceModelId(draftProfile) || undefined,
+        repo: repo.path || undefined,
+      })
+      setMessage(drafted)
+    } catch (err) {
+      /* A draft that failed is a failure *here*, beside the box it was meant to
+         fill — not a toast over a panel the reader is looking at. */
+      setWriteError(describeError(err).title)
+    } finally {
+      setDrafting(false)
+    }
+  }, [draftProfile, settings, projectId, repo.path])
 
   const commit = React.useCallback(async () => {
     if (!status?.repository) return
@@ -383,9 +422,21 @@ export function RepoSection({
 
       {open && (
         <div>
-          {state?.error && <PanelNotice className="text-destructive">{state.error}</PanelNotice>}
-          {writeError && <PanelNotice className="text-destructive">{writeError}</PanelNotice>}
-          {output && <PanelNotice className="font-mono">{output}</PanelNotice>}
+          {state?.error && (
+            <div className="px-2 py-1.5">
+              <Notice tone="error">{state.error}</Notice>
+            </div>
+          )}
+          {writeError && (
+            <div className="px-2 py-1.5">
+              <Notice tone="error">{writeError}</Notice>
+            </div>
+          )}
+          {output && (
+            <div className="px-2 py-1.5">
+              <Notice className="font-mono">{output}</Notice>
+            </div>
+          )}
 
           {/* The commit box comes *before* the files: it is what the panel is
               for, and forty changed files used to push it off the bottom. */}
@@ -439,12 +490,22 @@ export function RepoSection({
                   }
                 />
                 <Count value={unstaged.length} />
+                {/* Offered only where there is a profile that can do it: a
+                    disabled wand nobody can enable is worse than no wand. */}
+                {draftProfile && (
+                  <IconAction
+                    label={drafting ? "Drafting…" : "Draft the message with AI"}
+                    icon={SparklesIcon}
+                    disabled={drafting || busy || (count ?? 0) === 0}
+                    onClick={() => void draftMessage()}
+                  />
+                )}
               </div>
             </form>
           )}
 
           {!status && !state?.error ? (
-            <p className="px-3 py-2 text-xs text-muted-foreground">Reading the repository…</p>
+            <PanelRowsSkeleton rows={4} className="py-1" />
           ) : status && !status.repository ? (
             <p className="px-3 py-2 text-xs text-muted-foreground">
               This directory is no longer a git repository.

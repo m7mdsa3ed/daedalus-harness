@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Hono } from "hono";
 import { z } from "zod";
 import { enhancePrompt } from "../enhance.js";
@@ -7,7 +8,10 @@ import { getProject } from "../projects.js";
 import { listAgentSessions } from "../session-list.js";
 import type { SessionManager } from "../sessions.js";
 import { TRACE_PAGE_LIMIT } from "../protocol.js";
+import { listHelpers } from "../project-helpers.js";
+import { runShellLine } from "../shell.js";
 import type { Scope } from "../turn-changes.js";
+import { containedPath, projectRoot } from "../workspace-fs.js";
 import { workspace } from "./helpers.js";
 
 const UUID_RE =/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -34,6 +38,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       modeId,
       personaId,
       suggestFollowups,
+      uiBlocks,
       configChoices,
       title,
       mcpServerIds,
@@ -77,6 +82,9 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       // Omitted reads as off — a draft that never asked is a thread that
       // never asked, the same default the row carries.
       suggestFollowups: typeof suggestFollowups === "boolean" ? suggestFollowups : undefined,
+      // The drawn-UI lane, the same draft-picked spawn input: omitted reads as
+      // on, which is what the row's default says.
+      uiBlocks: typeof uiBlocks === "boolean" ? uiBlocks : undefined,
       // The draft's permission mode, picked against the agent's probed `modes`.
       // Best-effort like the config choices: a mode the agent does not offer
       // costs the pick, not the thread. The bridge guards on the agent's own
@@ -271,7 +279,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
        change it was asked to take. This is what answers a caller that does
        not. */
     const staged = body.defer === false ? (sessions.stagedRequest(session.id) ?? {}) : {};
-    const { profileId, agentId: askedAgent, model, effort, personaId, suggestFollowups } = {
+    const { profileId, agentId: askedAgent, model, effort, personaId, suggestFollowups, uiBlocks } = {
       ...staged,
       ...body,
     };
@@ -296,6 +304,9 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
         // Omitted means unchanged; a boolean flips the suggestions trailer and
         // respawns, like a persona change.
         suggestFollowups: typeof suggestFollowups === "boolean" ? suggestFollowups : undefined,
+        // Same bargain for the drawn-UI lane: system-prompt text, so a flip
+        // costs the process.
+        uiBlocks: typeof uiBlocks === "boolean" ? uiBlocks : undefined,
       },
       {
         defer: body.defer === false ? false : undefined,
@@ -324,6 +335,7 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       effort: session.effort,
       personaId: session.personaId,
       suggestFollowups: session.suggestFollowups,
+      uiBlocks: session.uiBlocks,
       acpSessionId: session.liveAcpSessionId ?? session.acpSessionId,
       ...(session.historyLost ? { historyLost: session.historyLost } : {}),
     });
@@ -572,6 +584,70 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
       model: parsed.data.model || session.model || undefined,
     });
     return c.json({ enhanced });
+  });
+
+  /* A `!` line from the composer: run it against the thread's project and put
+     the result in the transcript. Not a turn — nothing is queued, no prompt
+     goes out, and the agent is never told the line happened. It IS journaled,
+     though (`_daedalus/shell`), which is what makes it part of the
+     conversation: it sits where it was run and comes back on a reload, unlike
+     the enhance above, which sends nothing.
+
+     A line that is one of the project's saved helper commands runs **as** that
+     helper — its own directory and environment — because the row is the
+     definition, and that is what picking one in the composer filled in.
+     Anything else runs in the project root. The command travels from the
+     browser here and nowhere else: this is the one route that takes one. */
+  const ShellSchema = z.object({ command: z.string(), shellId: z.string().optional() });
+
+  app.post("/api/sessions/:id/shell", async (c) => {
+    const session = sessions.get(c.req.param("id"));
+    if (!session) return c.json({ error: "not found" }, 404);
+    if (session.deletedAt !== null) return c.json({ error: "session deleted" }, 409);
+    const parsed = ShellSchema.safeParse(await c.req.json().catch(() => ({})));
+    const typed = parsed.success ? parsed.data.command.trim() : "";
+    if (!typed) return c.json({ error: "command is required" }, 400);
+    /* The caller mints this so it can draw the row before this request lands.
+       A caller that does not — curl, a test — still gets a row of its own. */
+    const shellId = (parsed.success ? parsed.data.shellId?.trim() : "") || randomUUID();
+
+    const root = await projectRoot(session.projectId);
+    const helper = (await listHelpers(session.projectId)).find(
+      (candidate) => candidate.command.trim() === typed || candidate.name === typed,
+    );
+    const command = helper?.command ?? typed;
+    const run = { sessionUpdate: "_daedalus/shell" as const, shellId, command };
+
+    /* Said BEFORE the work, not after: the row has to be on screen while the
+       line runs, or a command that takes a few seconds reads as one that did
+       nothing at all. The two updates carry the same `shellId`, so the second
+       settles the first rather than starting a second row. */
+    sessions.emitOn(session.id, {
+      ev: "update",
+      seq: 0,
+      historyReplay: false,
+      update: { ...run, status: "running" },
+    });
+
+    const result = await runShellLine({
+      cwd: containedPath(root, helper?.cwd ?? null),
+      command,
+      env: helper?.env ?? undefined,
+    });
+
+    sessions.emitOn(session.id, {
+      ev: "update",
+      seq: 0,
+      historyReplay: false,
+      update: {
+        ...run,
+        status: "done",
+        output: result.output,
+        exitCode: result.exitCode,
+        timedOut: result.timedOut,
+      },
+    });
+    return c.json({ shellId, command, ...result });
   });
 
   /* The same rewrite for a draft, which has no server row yet: the profile (and

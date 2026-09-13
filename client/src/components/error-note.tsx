@@ -14,7 +14,7 @@
    normalizing, the console logging and the "don't let the global net say this
    twice" bookkeeping. This component only draws. */
 import * as React from "react"
-import { AlertTriangleIcon } from "lucide-react"
+import { Notice } from "@/components/notice"
 import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
 import type { InlineError } from "@/lib/errors"
@@ -52,59 +52,49 @@ export function ErrorNote({
   const long = body.length > 160 || body.split("\n").length > 3
 
   return (
-    <div
-      role="alert"
-      className={cn(
-        "flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-destructive",
-        className
+    <Notice tone="error" size="md" className={className} title={error.context ?? error.title}>
+      {body && (
+        /* Paths, commands and server bodies: one long unspaced token has to
+           break rather than push the dialog wide, and the newlines the agent
+           or the server wrote are part of the message. */
+        <p
+          className={cn(
+            "text-xs whitespace-pre-wrap text-destructive/85 [overflow-wrap:anywhere]",
+            !expanded && "line-clamp-3"
+          )}
+        >
+          {body}
+        </p>
       )}
-    >
-      <AlertTriangleIcon className="mt-0.5 size-4 shrink-0" />
-      <div className="min-w-0 flex-1 space-y-1">
-        <p className="text-sm font-medium text-pretty">{error.context ?? error.title}</p>
-        {body && (
-          /* Paths, commands and server bodies: one long unspaced token has to
-             break rather than push the dialog wide, and the newlines the agent
-             or the server wrote are part of the message. */
-          <p
-            className={cn(
-              "text-xs whitespace-pre-wrap text-destructive/85 [overflow-wrap:anywhere]",
-              !expanded && "line-clamp-3"
-            )}
-          >
-            {body}
-          </p>
-        )}
-        <div className="flex flex-wrap items-center gap-1">
-          {onRetry && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs hover:bg-destructive/10"
-              onClick={onRetry}
-            >
-              {retryLabel}
-            </Button>
-          )}
-          {long && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs hover:bg-destructive/10"
-              onClick={() => setExpanded((open) => !open)}
-            >
-              {expanded ? "Less" : "More"}
-            </Button>
-          )}
-          <CopyButton
-            text={error.text}
-            label="Copy"
+      <div className="flex flex-wrap items-center gap-1">
+        {onRetry && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
             className="h-7 px-2 text-xs hover:bg-destructive/10"
-          />
-        </div>
+            onClick={onRetry}
+          >
+            {retryLabel}
+          </Button>
+        )}
+        {long && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs hover:bg-destructive/10"
+            onClick={() => setExpanded((open) => !open)}
+          >
+            {expanded ? "Less" : "More"}
+          </Button>
+        )}
+        <CopyButton
+          text={error.text}
+          label="Copy"
+          className="h-7 px-2 text-xs hover:bg-destructive/10"
+        />
       </div>
-    </div>
+    </Notice>
   )
 }

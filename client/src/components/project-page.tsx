@@ -57,6 +57,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { AgentIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
+import { Notice } from "@/components/notice"
 import { useConfirm } from "@/components/confirm-dialog"
 import { ImportThreadsDialog } from "@/components/import-threads"
 import { useStartThreadIn } from "@/components/thread-sidebar"
@@ -198,18 +199,18 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
             has moved or is not mounted spawns nothing, and the failure it
             produces otherwise arrives as an ENOENT inside a thread. */}
         {stats && !stats.cwdExists && (
-          <Banner tone="destructive" icon={AlertTriangleIcon}>
+          <Notice tone="error" className="mt-4">
             The working directory does not exist on the server. Threads started here will fail to
             spawn — check the path in the project's settings.
-          </Banner>
+          </Notice>
         )}
         {error && (
-          <Banner tone="muted" icon={AlertTriangleIcon}>
+          <Notice tone="neutral" icon={<AlertTriangleIcon />} className="mt-4">
             {error}{" "}
             <button type="button" className="underline" onClick={refresh}>
               Try again
             </button>
-          </Banner>
+          </Notice>
         )}
 
         <div className="mt-6 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
@@ -538,30 +539,6 @@ function ProjectHeader({
         </DropdownMenu>
       </div>
     </div>
-  )
-}
-
-function Banner({
-  tone,
-  icon: Icon,
-  children,
-}: {
-  tone: "destructive" | "muted"
-  icon: typeof AlertTriangleIcon
-  children: React.ReactNode
-}) {
-  return (
-    <p
-      className={cn(
-        "mt-4 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs",
-        tone === "destructive"
-          ? "border-destructive/30 bg-destructive/5 text-destructive"
-          : "text-muted-foreground"
-      )}
-    >
-      <Icon className="mt-px size-3.5 shrink-0" />
-      <span className="text-pretty">{children}</span>
-    </p>
   )
 }
 

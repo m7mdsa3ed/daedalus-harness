@@ -79,7 +79,7 @@ const fail = (status: 400 | 403 | 404 | 409 | 413, message: string) =>
     only for a stripped environment (a container, a systemd unit). With a
     `command` the shell runs it and exits — still a login shell, for the same
     PATH reason. */
-function shellFor(command?: string): { file: string; args: string[] } {
+export function shellFor(command?: string): { file: string; args: string[] } {
   const shell = process.env.SHELL || (process.platform === "win32" ? "powershell.exe" : "/bin/bash");
   // A login shell reads the profile, which is where PATH usually gets its
   // interesting entries — without it `pnpm` is frequently just missing.

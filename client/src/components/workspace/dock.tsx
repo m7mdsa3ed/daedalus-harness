@@ -879,10 +879,10 @@ export function useWorkspaceDock(): DockController {
       api.onDidActivePanelChange(({ panel }) => {
         if (!panel || !panel.api.isActive) return
         /* The tab you switched to is on screen. Dockview scrolls the strip
-           for nothing — a phone's strip holds four or five marks and the one
-           you tapped in the palette or the sidebar could be off its end, with
-           no sign of which tab is the one that is now speaking. `nearest` so a
-           tab already in view moves the strip by nothing. */
+           for nothing — the one you tapped in the palette or the sidebar could
+           be off the end of a narrow window, with no sign of which tab is the
+           one that is now speaking. `nearest` so a tab already in view moves
+           the strip by nothing. */
         panel.view.tab.element.scrollIntoView({ inline: "nearest", block: "nearest" })
         const descriptor = descriptorOf(panel)
         const path =

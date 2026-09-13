@@ -36,6 +36,7 @@ export type ConfigPatch = {
   effort?: string
   personaId?: string
   suggestFollowups?: boolean
+  uiBlocks?: boolean
 }
 
 interface ConfigReply {
@@ -73,6 +74,7 @@ function previousConfig(meta: SessionMeta, patch: ConfigPatch): ConfigPatch {
     ...(patch.suggestFollowups !== undefined
       ? { suggestFollowups: meta.suggestFollowups === true }
       : {}),
+    ...(patch.uiBlocks !== undefined ? { uiBlocks: meta.uiBlocks !== false } : {}),
   }
 }
 
@@ -98,6 +100,9 @@ export function describeConfig(patch: ConfigPatch, profiles: Profile[]): string 
   }
   if (patch.suggestFollowups !== undefined) {
     parts.push(patch.suggestFollowups ? "Follow-ups on" : "Follow-ups off")
+  }
+  if (patch.uiBlocks !== undefined) {
+    parts.push(patch.uiBlocks ? "Drawn UI on" : "Drawn UI off")
   }
   return parts.join(" · ")
 }
@@ -157,6 +162,9 @@ export function configActions(core: ActionsCore) {
              own — so only a real flip travels, and the server's respawn
              answers for every peer. */
           suggestFollowups: next.suggestFollowups,
+          // Same as the trailer above: a boolean has no "unchanged" sentinel,
+          // so only a real flip travels.
+          uiBlocks: next.uiBlocks,
           /* "Now, and never mind the running turn" — the only thing that
              stops the server holding a process-costing change for the turn's
              own boundary. Sent by the menu's Apply now and by nothing else. */
@@ -407,6 +415,17 @@ export function configActions(core: ActionsCore) {
         { suggestFollowups },
         "Couldn't change this thread's suggestions"
       )
+    },
+
+    /**
+     * Flip whether answers may carry a drawn view (`openui-lang`).
+     *
+     * The identical bargain to the suggestions trailer above: the lane is
+     * system-prompt text, read at `session/new`/`session/load` and nowhere
+     * else, so this costs a respawn and the server stages it like a persona.
+     */
+    changeThreadUiBlocks(meta: SessionMeta, uiBlocks: boolean): void {
+      changeThreadConfig(meta, { uiBlocks }, "Couldn't change this thread's drawn UI")
     },
 
     /** Drop the staged change. The server answers every peer with

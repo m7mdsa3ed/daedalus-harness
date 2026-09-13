@@ -74,13 +74,23 @@ const FIXTURE = {
     means a candidate-URL change the tests have not been told about. */
 const canned = new Map<string, { status: number; body?: unknown }>();
 
+/** The last request body a canned endpoint was sent — what the model test
+    asserts against, since the point of it is *what* gets sent. */
+let lastSent: Record<string, unknown> | null = null;
+const sent = () => lastSent;
+
 const realFetch = globalThis.fetch;
-globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
   const url = String(input);
   if (url.includes("models.dev")) return new Response(JSON.stringify(FIXTURE), { status: 200 });
   const hit = canned.get(url);
   if (!hit) throw new Error(`unexpected fetch in test: ${url}`);
-  return new Response(hit.body === undefined ? null : JSON.stringify(hit.body), { status: hit.status });
+  lastSent = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+  /* A canned body that is already a string is sent as-is: an error endpoint's
+     answer is prose, which is exactly what the test route reports. */
+  const body =
+    hit.body === undefined ? null : typeof hit.body === "string" ? hit.body : JSON.stringify(hit.body);
+  return new Response(body, { status: hit.status });
 }) as typeof fetch;
 
 const { searchModelsDev, modelsDevProviders, toCandidate } = await import("../src/models-dev.js");
@@ -88,6 +98,7 @@ const {
   parseProviderModels,
   fetchProviderModels,
   enrichProviderModels,
+  testProviderModel,
 } = await import("../src/provider-models.js");
 
 // --- the models.dev proxy ---
@@ -206,6 +217,76 @@ await test("fetchProviderModels throws with every attempt when nothing answers",
   await assert.rejects(
     fetchProviderModels("https://api.example.com", "bad-key"),
     (err: Error) => err.message.includes("401") && err.message.includes("500"),
+  );
+});
+
+// --- the model test: does a turn on this row actually start? ---
+
+const CHAT = "https://api.example.com/v1/chat/completions";
+const OK_BODY = { choices: [{ message: { content: " ok " }, finish_reason: "stop" }] };
+
+await test("testProviderModel sends the row's own max_tokens and reads the reply", async () => {
+  canned.clear();
+  lastSent = null;
+  canned.set(CHAT, { status: 200, body: OK_BODY });
+  const result = await testProviderModel({
+    baseUrl: "https://api.example.com",
+    apiKey: "sk-test",
+    model: "smart-2",
+    maxOutputTokens: 64000,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.reply, "ok");
+  assert.equal(result.finishReason, "stop");
+  // The cap is the whole reason the test exists: it must travel verbatim.
+  assert.equal(sent()?.model, "smart-2");
+  assert.equal(sent()?.max_tokens, 64000);
+});
+
+await test("testProviderModel omits max_tokens when the row has no cap", async () => {
+  canned.clear();
+  lastSent = null;
+  canned.set(CHAT, { status: 200, body: OK_BODY });
+  await testProviderModel({ baseUrl: "https://api.example.com", apiKey: "sk-test", model: "smart-2" });
+  assert.equal("max_tokens" in (sent() ?? {}), false);
+});
+
+await test("testProviderModel reports the provider's 400 rather than retrying it", async () => {
+  canned.clear();
+  // The failure this was written for: a stored cap above the provider's ceiling.
+  canned.set(CHAT, {
+    status: 400,
+    body: 'Validation error: Too big: expected number to be <=200000 at "params.max_tokens"',
+  });
+  await assert.rejects(
+    testProviderModel({
+      baseUrl: "https://api.example.com",
+      apiKey: "sk-test",
+      model: "smart-2",
+      maxOutputTokens: 1_000_000,
+    }),
+    (err: Error) => err.message.startsWith("400") && err.message.includes("params.max_tokens"),
+  );
+});
+
+await test("testProviderModel falls back to the other URL spelling on a 404", async () => {
+  canned.clear();
+  canned.set(CHAT, { status: 404, body: "not found" });
+  canned.set("https://api.example.com/chat/completions", { status: 200, body: OK_BODY });
+  const result = await testProviderModel({
+    baseUrl: "https://api.example.com",
+    apiKey: "sk-test",
+    model: "smart-2",
+  });
+  assert.equal(result.reply, "ok");
+});
+
+await test("testProviderModel keeps a 404 that is about the model, not the route", async () => {
+  canned.clear();
+  canned.set(CHAT, { status: 404, body: "no such model: smart-2" });
+  await assert.rejects(
+    testProviderModel({ baseUrl: "https://api.example.com", apiKey: "sk-test", model: "smart-2" }),
+    (err: Error) => err.message.includes("no such model"),
   );
 });
 

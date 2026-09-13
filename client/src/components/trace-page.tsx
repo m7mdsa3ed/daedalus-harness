@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AgentIcon } from "@/components/entity-icon"
+import { Notice } from "@/components/notice"
 import { errorText } from "@/lib/errors"
 import { writeClipboard } from "@/lib/clipboard"
 import { threadPath } from "@/lib/router"
@@ -73,12 +74,12 @@ export function TracePage() {
         />
 
         {trace.error && (
-          <Banner tone="muted" icon={AlertTriangleIcon}>
+          <Notice tone="neutral" icon={<AlertTriangleIcon />} className="mt-4">
             {errorText(trace.error)}{" "}
             <button type="button" className="underline" onClick={trace.refresh}>
               Try again
             </button>
-          </Banner>
+          </Notice>
         )}
 
         <div className="mt-6 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
@@ -288,30 +289,6 @@ function CardShell({
       </header>
       {children}
     </section>
-  )
-}
-
-function Banner({
-  tone,
-  icon: Icon,
-  children,
-}: {
-  tone: "destructive" | "muted";
-  icon: typeof AlertTriangleIcon;
-  children: React.ReactNode;
-}) {
-  return (
-    <p
-      className={cn(
-        "mt-4 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs",
-        tone === "destructive"
-          ? "border-destructive/30 bg-destructive/5 text-destructive"
-          : "text-muted-foreground"
-      )}
-    >
-      <Icon className="mt-px size-3.5 shrink-0" />
-      <span className="text-pretty">{children}</span>
-    </p>
   )
 }
 

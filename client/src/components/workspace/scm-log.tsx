@@ -18,17 +18,23 @@ import {
   ArrowDown01Icon,
   ArrowRight01Icon,
   Delete02Icon,
+  GitCommitVerticalIcon,
   InboxDownloadIcon,
   InboxUploadIcon,
+  ListIcon,
   RefreshIcon,
 } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 
+import { CommitGraph } from "@/components/workspace/scm/commit-graph"
+
 import { Button } from "@/components/ui/button"
 import { CopyButton } from "@/components/ui/copy-button"
+import { PanelRowsSkeleton } from "@/components/ui/skeletons"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useConfirm } from "@/components/confirm-dialog"
 import { describeError } from "@/lib/errors"
+import { idePrefs, setIdePref } from "@/lib/ide/prefs"
 import { useServer } from "@/lib/server-context"
 import { writeClipboard } from "@/lib/clipboard"
 import { shortAge } from "@/lib/time"
@@ -61,6 +67,8 @@ function Section({
   coarse,
   busy,
   error,
+  /** Anything the section itself offers, before the Refresh it always has. */
+  actions,
   children,
 }: {
   title: string
@@ -71,6 +79,7 @@ function Section({
   coarse: boolean
   busy: boolean
   error: string | null
+  actions?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
@@ -97,6 +106,7 @@ function Section({
             <span className="font-mono tabular-nums opacity-70">{count}</span>
           )}
         </button>
+        {open && actions}
         {open && (
           <SmallAction label={`Refresh ${title.toLowerCase()}`} icon={RefreshIcon} disabled={busy} onClick={onRefresh} coarse={coarse} />
         )}
@@ -277,7 +287,7 @@ export function StashSection({
       error={list.error}
     >
       {list.items === null ? (
-        <p className="px-2 py-1 text-[11px] text-muted-foreground">Reading the stash…</p>
+        <PanelRowsSkeleton rows={3} className="space-y-1.5 p-1" />
       ) : list.items.length === 0 ? (
         <p className="px-2 py-1 text-[11px] text-muted-foreground">Nothing is stashed.</p>
       ) : (
@@ -373,6 +383,12 @@ export function HistorySection({
     invalidate()
   }, [generation, invalidate])
 
+  const layout = idePrefs.use().historyLayout
+  const copy = (commit: GitCommit) =>
+    void writeClipboard(commit.hash)
+      .then(() => toast.success(`Copied ${commit.short}`))
+      .catch((err: unknown) => toast.error(describeError(err).title))
+
   return (
     <Section
       title="History"
@@ -383,21 +399,32 @@ export function HistorySection({
       coarse={coarse}
       busy={list.busy}
       error={list.error}
+      actions={
+        /* A log read beside a running agent is usually "which line did that
+           land on", which is what the lanes answer — so the picture is the
+           default and the rows are the option, not the other way round. */
+        <SmallAction
+          label={layout === "graph" ? "Show as a list" : "Draw the lanes"}
+          icon={layout === "graph" ? ListIcon : GitCommitVerticalIcon}
+          onClick={() => setIdePref("historyLayout", layout === "graph" ? "list" : "graph")}
+          coarse={coarse}
+        />
+      }
     >
       {list.items === null ? (
-        <p className="px-2 py-1 text-[11px] text-muted-foreground">Reading the log…</p>
+        <PanelRowsSkeleton rows={4} className="space-y-1.5 p-1" />
       ) : list.items.length === 0 ? (
         <p className="px-2 py-1 text-[11px] text-muted-foreground">No commits yet.</p>
+      ) : layout === "graph" ? (
+        <div className="py-1 pr-1">
+          <CommitGraph commits={list.items} onCopy={copy} coarse={coarse} />
+        </div>
       ) : (
         list.items.map((commit) => (
           <button
             key={commit.hash}
             type="button"
-            onClick={() =>
-              void writeClipboard(commit.hash)
-                .then(() => toast.success(`Copied ${commit.short}`))
-                .catch((err: unknown) => toast.error(describeError(err).title))
-            }
+            onClick={() => copy(commit)}
             title={`${commit.short} · ${commit.author} · ${new Date(commit.at * 1000).toLocaleString()}\n${commit.subject}\n\nClick to copy the full hash`}
             className={cn(
               "flex w-full items-center gap-2 rounded-md pr-1 pl-2 text-left text-xs hover:bg-accent/40",

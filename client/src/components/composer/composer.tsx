@@ -16,9 +16,10 @@
    **The textarea.** **Then one toolbar** that reads left to right as *what goes
    in → who answers → what happens*: the "+" menu (attach, photo, mention,
    command, code block), the model/config cluster, then the counters and the
-   actions, ending on a filled Send. Every control on the row is the same shape
-   and chrome-less except the two that carry meaning by colour: Send is primary,
-   Stop is destructive. The scale follows the pointer — 24px (`icon-xs`) under a
+   actions, ending on a filled Send. Every control on the row is the same shape,
+   and the three that act on the whole message wear a filled ground instead of a
+   border: the "+" muted, Send primary, Stop destructive. The scale follows the
+   pointer — 24px (`icon-xs`) under a
    mouse, 32px (`icon-sm`) under a finger, where the same row had to double as a
    touch target (`useCoarsePointer`, see below).
 
@@ -29,11 +30,12 @@
 
    What used to be five separate buttons (attach, voice, pause, stop, send)
    competing for a row that is 300px wide on a phone is now a menu on the left
-   and one action on the right. The "+" holds everything that *adds to* the
-   message; the end of the row holds the one action the state calls for — the
-   mic while the box is empty, Send as soon as something is in it, and Stop
-   beside either while a turn runs. Queue and steer are still the two sends
-   (⏎ and the steer chord), said in Send's tooltip rather than in a menu.
+   and the actions on the right. The "+" holds everything that *adds to* the
+   message; Send is always drawn — a muted disabled chip while the box is empty,
+   a filled primary disc the moment there is something to send — with the mic
+   beside it while the box is empty and Stop beside it while a turn runs. Queue
+   and steer are still the two sends (⏎ and the steer chord), said in Send's
+   tooltip rather than in a menu.
 
    Features the toolbar offers beyond the old row:
    — a length reading once a prompt is long enough for its size to matter,
@@ -88,6 +90,7 @@ import {
   harnessCommandFor,
   useSlashCommands,
 } from "@/components/slash-commands"
+import { ProjectCommandMenu, shellLineFor, useProjectCommands } from "@/components/project-commands"
 import { useComposerAttachments } from "@/hooks/use-composer-attachments"
 import { useCoarsePointer, useIsMobile } from "@/hooks/use-device"
 import { useVoice } from "@/hooks/use-voice"
@@ -108,7 +111,7 @@ import {
   savePastes,
   type Paste,
 } from "@/lib/pastes"
-import { useComposerHistory, useRecordComposerHistory } from "@/lib/queries"
+import { useComposerHistory, useProjects, useRecordComposerHistory } from "@/lib/queries"
 import { currentThreadId, schedulePath } from "@/lib/router"
 import type { SessionMeta } from "@/lib/settings"
 import { formatChord } from "@/lib/shortcuts"
@@ -301,6 +304,15 @@ export function Composer({
       void actions.compact(sessionId)
       return
     }
+    /* A `!` line is run against the project and written into the transcript —
+       it is not a prompt, so the agent never sees it. Only a started thread can
+       take one: the result is journaled on a real session, and a draft has no
+       row to journal into (its first message is what makes one). */
+    const line = draft ? null : shellLineFor(value)
+    if (line) {
+      void runProjectCommand(line)
+      return
+    }
     /* The tokens become their bodies here, at the last moment, exactly as
        `mentions.ts` derives resource links from the text at the last moment.
        Everything downstream sees the string it always did. */
@@ -396,6 +408,36 @@ export function Composer({
   const slash = useSlashCommands(text, thread.availableCommands, setText, harnessCommands)
   const hasCommands = thread.availableCommands.length > 0 || harnessCommands.length > 0
 
+  /* `!` suggests the project's saved shell lines. A project command is not a
+     prompt: `send` above runs the line it names against the project and writes
+     the result into the transcript, so nothing travels to the agent. The rows
+     ride on `useProjects()` — the server folds a project's helpers into its
+     list, so no second request and no new hook — and they are offered only on a
+     started thread, because a draft has no journal to write the result to. */
+  const projects = useProjects()
+  const project = meta?.projectId
+    ? projects.find((candidate) => candidate.id === meta.projectId)
+    : undefined
+  const helpers = draft ? [] : (project?.helpers ?? [])
+  const commands = useProjectCommands({ text, helpers, setText })
+  /* The line runs in the project and its output lands in the transcript as a
+     `_daedalus/shell` row — no turn, no prompt. Which directory and environment
+     it runs in is not the client's to decide: the server resolves a line that
+     IS one of the saved commands back to its helper (so a helper's own cwd and
+     env still apply, whether the line was picked or typed), and runs anything
+     else in the project root. */
+  const runProjectCommand = async (line: string) => {
+    try {
+      await actions.runShell(sessionId, line)
+      /* Cleared only once it ran: a failure leaves the line in the box to try
+         again, the way a failed send leaves its words. */
+      setText("")
+      clearDraft(sessionId)
+    } catch (err) {
+      reportError(err, `Couldn't run ${line}`)
+    }
+  }
+
   /* `@` completes a path in the project. It reads the token at the caret — a
      file is named mid-sentence, unlike a command — so the textarea has to be
      reachable. It goes after the command menu in the key handler for the same
@@ -433,7 +475,7 @@ export function Composer({
     inputRef: composerRef,
   })
 
-  const { insertMention, insertCommand, insertCodeBlock } = textInsertions({
+  const { insertMention, insertCommand, insertProjectCommand, insertCodeBlock } = textInsertions({
     text,
     setText,
     requestCaret: mentions.requestCaret,
@@ -624,14 +666,15 @@ export function Composer({
             the turn. It is a row, not an overlay, so the plan and the history
             notice stay readable while you complete a command. */}
         <SlashCommandMenu state={slash} />
+        <ProjectCommandMenu state={commands} />
         <FileMentionMenu state={mentions} />
       </ComposerStrip>
       {/* relative/z-10: the composer paints over the strip's tucked bottom edge.
-          It wears the same soft shadow and hairline ring as the app's floating
-          menus, with the ring in the accent rather than plain foreground, so
-          the card reads as the raised, accent-framed top of the composer unit. Deliberately no focus
-          ring: the caret in the textarea is the "you are typing here" signal.
-          The only ring change is destructive, while voice is listening.
+          It wears the same soft shadow as the app's floating menus and no
+          hairline ring at all, so the card reads as the raised top of the
+          composer unit by its ground alone. Deliberately no focus ring: the
+          caret in the textarea is the "you are typing here" signal. The only
+          ring is destructive, while voice is listening.
 
           It is also the drop target, and deliberately the whole card rather
           than the textarea: a file aimed at "the composer" lands on the button
@@ -642,8 +685,8 @@ export function Composer({
         data-slot="composer-card"
         className={cn(
           "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl bg-composer/70 p-2 shadow-2xl backdrop-blur-xl backdrop-saturate-150",
-          "ring-1 ring-foreground/5 transition-[ring-color] duration-200 dark:ring-foreground/10",
-          voice.listening && "ring-destructive/40"
+          "transition-[ring-color] duration-200",
+          voice.listening && "ring-1 ring-destructive/40"
         )}
         onDragOver={(e) => {
           if (!e.dataTransfer.types.includes("Files")) return
@@ -681,6 +724,7 @@ export function Composer({
           onPaste={onPaste}
           onKeyDown={composerKeyDown({
             slash,
+            commands,
             mentions,
             history,
             isMobile,
@@ -716,11 +760,11 @@ export function Composer({
         />
         {/* One control language across the row: every button is the same
             size — 24px (`icon-xs`), the app's xs scale, mouse and finger
-            alike — rounded-lg, and chrome-less with a hover wash. The row
-            sits INSIDE the composer card, so a bordered button there is a
-            box inside a box; colour carries the meaning instead, and only on
-            the two that act on the message as a whole: Send is a filled
-            primary disc, Stop a destructive one. */}
+            alike — and rounded-pill. The three that act on the message as a
+            whole carry a filled ground rather than a border: the "+" a muted
+            disc, Send a primary one, Stop a destructive one. The row sits
+            INSIDE the composer card, so a bordered button there would be a box
+            inside a box; the ground and the colour carry the meaning instead. */}
         <div
           data-slot="composer-toolbar"
           className={cn("flex items-center gap-1 pt-1", coarse && "gap-1.5 pt-1.5")}
@@ -732,10 +776,12 @@ export function Composer({
             onFiles={files.add}
             canMention={Boolean(meta?.projectId)}
             hasCommands={hasCommands}
+            hasProjectCommands={helpers.length > 0}
             hasHistory={composerHistory.items.length > 0}
             hasContent={hasContent}
             onMention={insertMention}
             onCommand={insertCommand}
+            onProjectCommand={insertProjectCommand}
             onCodeBlock={insertCodeBlock}
             onHistory={() => setHistoryOpen(true)}
             onClear={clearAll}
@@ -785,7 +831,7 @@ export function Composer({
               variant="ghost"
               size={iconSize}
               className={cn(
-                "shrink-0 rounded-lg text-muted-foreground hover:text-foreground [&_svg]:size-3.5",
+                "shrink-0 rounded-pill text-muted-foreground hover:text-foreground [&_svg]:size-3.5",
                 // Listening is a live state, so it stays coloured — but as text,
                 // not as a filled chip that reintroduces the chrome.
                 voice.listening && "animate-pulse text-destructive hover:text-destructive"
@@ -813,7 +859,7 @@ export function Composer({
               variant="ghost"
               size={iconSize}
               className={cn(
-                "shrink-0 rounded-lg text-muted-foreground hover:text-foreground [&_svg]:size-3.5",
+                "shrink-0 rounded-pill text-muted-foreground hover:text-foreground [&_svg]:size-3.5",
                 thread.paused && "text-primary hover:text-primary"
               )}
               onClick={() =>
@@ -834,9 +880,9 @@ export function Composer({
           )}
           {thread.turnActive && (
             <Button
-              variant="ghost"
+              variant="destructive"
               size={iconSize}
-              className="shrink-0 rounded-full bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive"
+              className="shrink-0 rounded-pill shadow-sm"
               /* Stop and Escape are the same gesture, so they answer the same
                  way: a message the user has not seen land comes back into the
                  box rather than staying parked in a queue nothing will drain.
@@ -853,19 +899,24 @@ export function Composer({
               <Square className="size-3.5 fill-current" />
             </Button>
           )}
-          {(hasContent || gated) && (
-            <Button
-              variant="default"
-              size={iconSize}
-              className="shrink-0 rounded-full shadow-sm disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100"
-              onClick={() => void send()}
-              disabled={!canSend}
-              title={sendTitle}
-              aria-label={sendTitle}
-            >
-              {gated ? <Spinner className="size-3.5" /> : <ArrowUp className="size-3.5" strokeWidth={2.5} />}
-            </Button>
-          )}
+          {/* Always drawn, even on an empty box: the affordance you aim at
+              stays in the same place before and after you type, rather than
+              appearing the moment the first character lands. When there is
+              nothing to send `canSend` is false, so it wears the disabled
+              ground — a muted chip — and fills primary the moment it becomes
+              sendable. Wears the row's own corner (`rounded-pill`, like the
+              "+"), so the cluster is one shape. */}
+          <Button
+            variant="default"
+            size={iconSize}
+            className="shrink-0 rounded-pill disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100"
+            onClick={() => void send()}
+            disabled={!canSend}
+            title={sendTitle}
+            aria-label={sendTitle}
+          >
+            {gated ? <Spinner className="size-3.5" /> : <ArrowUp className="size-3.5" strokeWidth={2.5} />}
+          </Button>
         </div>
       </div>
       {/* Outside the card so the dialog is not inside the element it writes

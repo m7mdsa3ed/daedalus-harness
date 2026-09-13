@@ -9,7 +9,7 @@
  * nobody wants to debug. The path is load-bearing — every consumer imports
  * from here, and the export list below is the whole public surface.
  *
- *   `store/items.ts`          the thread item model (TextItem … AsyncTaskItem,
+ *   `store/items.ts`          the thread item model (TextItem … ShellItem,
  *                             the ThreadItem union, the two pending asks) and
  *                             the module-counter id mint every item is named by.
  *   `store/thread.ts`         ThreadState and State, `emptyThread`, and the two
@@ -35,6 +35,7 @@ export type {
   CompactionItem,
   AutonomyItem,
   AsyncTaskItem,
+  ShellItem,
   ThreadItem,
   PendingPermission,
   PendingElicitation,

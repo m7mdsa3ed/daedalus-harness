@@ -42,6 +42,7 @@ export type Action =
           | "modeId"
           | "personaId"
           | "suggestFollowups"
+          | "uiBlocks"
           | "mcpServerIds"
           | "skillIds"
           | "commandIds"
@@ -60,6 +61,7 @@ export type Action =
       effort: string
       personaId?: string
       suggestFollowups?: boolean
+      uiBlocks?: boolean
     }
   /** This device's own optimism about a config change, or the end of it.
       `patch: null` clears; anything else **merges**, because the picks are
@@ -261,6 +263,7 @@ export function reducer(state: State, action: Action): State {
                 ...(action.personaId === undefined ? {} : { personaId: action.personaId }),
                 // Omitted by a server that predates the toggle — same bargain.
                 ...(action.suggestFollowups === undefined ? {} : { suggestFollowups: action.suggestFollowups }),
+                ...(action.uiBlocks === undefined ? {} : { uiBlocks: action.uiBlocks }),
               }
             : session
         ),

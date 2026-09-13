@@ -21,6 +21,7 @@ import { History, Search, Trash2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/confirm-dialog"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -38,6 +39,21 @@ import { cn } from "@/lib/utils"
     a dialog that renders all of them is a scroll nobody reads to the end of —
     and the query is how you reach the rest. */
 const SHOWN = 60
+
+/** The list before it lands: rows of prompt lines and their meta, not a
+    sentence where the history goes. */
+function HistoryRowsSkeleton() {
+  return (
+    <div aria-busy="true" className="space-y-3 px-2 py-2">
+      {[...Array(6).keys()].map((index) => (
+        <div key={index} className="space-y-1.5">
+          <Skeleton className={cn("h-3.5", index % 3 === 0 ? "w-3/5" : index % 3 === 1 ? "w-4/5" : "w-1/2")} />
+          <Skeleton className="h-2.5 w-28" />
+        </div>
+      ))}
+    </div>
+  )
+}
 
 export function ComposerHistoryDialog({
   open,
@@ -140,15 +156,16 @@ export function ComposerHistoryDialog({
 
           {/* Three states a bare empty list would draw identically, and one of
               them is "still reading" — which must never look like "nothing". */}
-          {shown.length === 0 && (
-            <p className="px-2 py-6 text-center text-sm text-muted-foreground">
-              {isPending
-                ? "Reading your history…"
-                : needle
+          {shown.length === 0 &&
+            (isPending ? (
+              <HistoryRowsSkeleton />
+            ) : (
+              <p className="px-2 py-6 text-center text-sm text-muted-foreground">
+                {needle
                   ? "No prompt matches that."
                   : "Nothing sent yet — what you send from any thread shows up here."}
-            </p>
-          )}
+              </p>
+            ))}
         </div>
 
         {/* Said only when the cap is actually hiding something, so the number

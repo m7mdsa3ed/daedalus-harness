@@ -19,10 +19,14 @@
 import * as React from "react"
 import { FilterIcon, FolderTreeIcon, ListIcon, RefreshIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
+import { GitBranchIcon } from "lucide-react"
 
+import { Empty } from "@/components/empty"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { PanelEmptyState, PanelToolbar } from "@/components/workspace/primitives"
+import { Skeleton } from "@/components/ui/skeleton"
+import { PanelRowsSkeleton } from "@/components/ui/skeletons"
+import { PanelToolbar } from "@/components/workspace/primitives"
 import { RepoSection } from "@/components/workspace/scm/repo-section"
 import { IconAction, type RepoState } from "@/components/workspace/scm/shared"
 import { describeError } from "@/lib/errors"
@@ -41,6 +45,25 @@ import { watchProject } from "@/lib/workspace/watch"
     a monorepo of checkouts would spend them all on sections nobody opened — so
     past this many, a section reads its status when it is first expanded. */
 const AUTO_STATUS_REPOS = 8
+
+/** The panel before the repository walk answers: a section per repository in
+    the shape a repository draws — header, then its files. */
+function ReposSkeleton() {
+  return (
+    <div aria-busy="true" className="space-y-3 p-3">
+      {[4, 2, 3].map((rowsFor, index) => (
+        <div key={index} className="overflow-hidden rounded-xl border">
+          <div className="flex items-center gap-2 border-b bg-muted/40 px-3 py-2">
+            <Skeleton className="size-4 shrink-0 rounded-sm" />
+            <Skeleton className="h-3.5 w-40 max-w-full" />
+            <Skeleton className="ml-auto h-3 w-16 shrink-0" />
+          </div>
+          <PanelRowsSkeleton rows={rowsFor} />
+        </div>
+      ))}
+    </div>
+  )
+}
 
 export function ScmView({
   projectId,
@@ -203,14 +226,21 @@ export function ScmView({
     })
   }, [])
 
-  if (reposError) return <PanelEmptyState>{reposError}</PanelEmptyState>
-  if (!repos) return <PanelEmptyState>Looking for repositories…</PanelEmptyState>
+  if (reposError)
+    return (
+      <div className="p-2">
+        <Empty>{reposError}</Empty>
+      </div>
+    )
+  if (!repos) return <ReposSkeleton />
   if (repos.length === 0)
     return (
-      <PanelEmptyState>
-        Neither this project nor anything under it is a git repository, so there is nothing to
-        review.
-      </PanelEmptyState>
+      <div className="p-3">
+        <Empty size="lg" icon={GitBranchIcon}>
+          Neither this project nor anything under it is a git repository, so there is nothing to
+          review.
+        </Empty>
+      </div>
     )
 
   const single = repos.length === 1

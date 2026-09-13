@@ -42,12 +42,49 @@ const MAX_SUMMARY_TOKENS = 8_192;
 const SUMMARY_PROMPT =
   "Summarize this conversation so it can continue in a fresh context. Keep: the user's goal and constraints, decisions made, files touched and how, current state of the work, and what remains. Be specific about paths and names. Write the summary and nothing else.";
 
-export function windowSize(env: AgentEnv): number {
-  return env.contextWindow ?? FALLBACK_WINDOW;
+/** What the window is for the model a request is actually going out on. */
+export interface ContextWindow {
+  /** The model's full context window — what `usage_update.size` reports, and
+      what a reader means by "a 200k model". */
+  size: number;
+  /** What a *prompt* may occupy: the window less the room the answer needs.
+      The threshold reads this one. Thresholding against the full window let a
+      64k-output model on a 200k window sail to 160k of prompt, at which point
+      the request that trips the threshold is the one that already failed. */
+  usable: number;
+  /** False when nothing in the catalog knew this model and `size` is
+      `FALLBACK_WINDOW` — a fabricated denominator that a percentage, a
+      "remaining" figure and a compaction warning would all otherwise wear as
+      fact. Travels on `_meta` so the client can draw the reading as an
+      estimate; compaction still runs on it, because a guessed ceiling is a
+      better bargain than none. */
+  known: boolean;
+}
+
+/**
+ * Resolved per request rather than per spawn, because the model is a live
+ * setting and the window is a property of the model — see `AgentEnv.modelWindows`.
+ */
+export function windowFor(env: AgentEnv, modelId: string | null): ContextWindow {
+  const pair = modelId ? env.modelWindows[modelId] : undefined;
+  /* The spawn model's own figures stand in for a model the map does not name —
+     which is every model when the harness is not the spawner (a hand-run agent
+     gets whatever `DAEDALUS_AGENT_CONTEXT_WINDOW` it was given, as before). */
+  const size = pair?.[0] ?? env.contextWindow ?? FALLBACK_WINDOW;
+  const maxOutput = pair ? pair[1] : (env.maxOutputTokens ?? 0);
+  return {
+    size,
+    /* Floored well above zero: a catalog that reports an output cap as large as
+       the window itself would otherwise make every turn need compacting. */
+    usable: Math.max(size * 0.5, size - maxOutput),
+    known: pair !== undefined || env.contextWindow !== null,
+  };
 }
 
 export function needsCompaction(session: Session, env: AgentEnv): boolean {
-  return session.autoCompact && session.lastTokens > THRESHOLD * windowSize(env);
+  return (
+    session.autoCompact && session.lastTokens > THRESHOLD * windowFor(env, session.modelId).usable
+  );
 }
 
 /* Runs between turns, when the last request's own token reading crossed the

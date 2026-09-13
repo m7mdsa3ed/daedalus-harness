@@ -47,14 +47,16 @@ const FETCH_TIMEOUT_MS = 15_000;
     URL — both conventions exist: `https://api.openai.com/v1` (base includes
     the version) and `https://api.anthropic.com` (it does not). Both /models
     spellings are tried against both, so either paste works. */
-function candidateUrls(base: string): string[] {
+function endpointUrls(base: string, path: string): string[] {
   const trimmed = base.replace(/\/+$/, "");
   if (trimmed.endsWith("/v1")) {
     const root = trimmed.slice(0, -3);
-    return [`${trimmed}/models`, `${root}/models`];
+    return [`${trimmed}/${path}`, `${root}/${path}`];
   }
-  return [`${trimmed}/v1/models`, `${trimmed}/models`];
+  return [`${trimmed}/v1/${path}`, `${trimmed}/${path}`];
 }
+
+const candidateUrls = (base: string): string[] => endpointUrls(base, "models");
 
 /** The list endpoint's body, in whatever dialect the endpoint speaks: OpenAI's
     `{data: [...]}`, Anthropic's `{data: [{id, display_name}]}`, Ollama's
@@ -118,6 +120,84 @@ export async function fetchProviderModels(baseUrl: string, apiKey: string): Prom
     }
   }
   throw new Error(`the provider didn't answer with a model list (${attempts.join("; ")})`);
+}
+
+/** What a model test came back with: the provider answered, how long it took,
+    and the first words it said (proof it was the model and not a proxy). */
+export interface ModelTestResult {
+  ok: true;
+  ms: number;
+  reply: string;
+  finishReason?: string;
+}
+
+/**
+ * Ask the provider to actually run the model, with the profile's own numbers.
+ *
+ * This is the check `GET /models` cannot make: a listed id can still be
+ * unservable (no balance, no access), and — the failure this was written for —
+ * the profile's `maxOutputTokens` can be larger than the provider will accept,
+ * which is a 400 on *every* turn and nowhere visible until one is spent. Send
+ * the stored cap verbatim, so the test fails exactly where a real turn does.
+ *
+ * ponytail: OpenAI-compatible `chat/completions` only. That is what a profile's
+ * base URL is in practice (gateway or OpenAI-shaped); an Anthropic-native URL
+ * 404s both spellings and says so rather than pretending to pass.
+ */
+export async function testProviderModel(opts: {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  maxOutputTokens?: number;
+}): Promise<ModelTestResult> {
+  const attempts: string[] = [];
+  for (const url of endpointUrls(opts.baseUrl, "chat/completions")) {
+    const started = Date.now();
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(opts.apiKey ? { authorization: `Bearer ${opts.apiKey}`, "x-api-key": opts.apiKey } : {}),
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: opts.model,
+          messages: [{ role: "user", content: "Reply with the single word: ok" }],
+          ...(opts.maxOutputTokens ? { max_tokens: opts.maxOutputTokens } : {}),
+          stream: false,
+        }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      const ms = Date.now() - started;
+      if (res.ok) {
+        const body = (await res.json()) as {
+          choices?: { message?: { content?: unknown }; finish_reason?: unknown }[];
+        };
+        const choice = body.choices?.[0];
+        const content = choice?.message?.content;
+        return {
+          ok: true,
+          ms,
+          reply: (typeof content === "string" ? content : JSON.stringify(content ?? "")).trim().slice(0, 200),
+          ...(typeof choice?.finish_reason === "string" ? { finishReason: choice.finish_reason } : {}),
+        };
+      }
+      /* Only a 404 means "wrong spelling, try the other one". Every other
+         status is the provider's verdict on this request and is the answer —
+         the 400 carrying "max_tokens too big" above all. */
+      const detail = (await res.text().catch(() => "")).trim().slice(0, 600);
+      if (res.status === 404 && !detail.toLowerCase().includes("model")) {
+        attempts.push(`${url} → 404`);
+        continue;
+      }
+      throw new Error(`${res.status}${detail ? `: ${detail}` : ""}`);
+    } catch (err) {
+      if (err instanceof Error && /^\d{3}(:|$)/.test(err.message)) throw err;
+      attempts.push(`${url} → ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  throw new Error(`the provider didn't answer a completion (${attempts.join("; ")})`);
 }
 
 /**

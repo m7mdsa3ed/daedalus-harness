@@ -9,15 +9,16 @@
 //     other reader, chosen by the profile rather than the agent — including the
 //     (unit, number) pair z.ai describes a window with, and zaiQuotaUrl picks
 //     the platform the profile's own base URL implies;
-//   - the MiniMax, Kimi, Synthetic, DeepSeek and OpenRouter folds do the same
-//     for their providers' routes — each fixture is the shape the route answers
-//     (the rejections are verbatim captures; the successes follow the fields
-//     the providers' own dashboards read).
+//   - the MiniMax, Kimi, Synthetic, DeepSeek, OpenRouter and Command Code folds
+//     do the same for their providers' routes — each fixture is the shape the
+//     route answers (the rejections are verbatim captures; the successes follow
+//     the fields the providers' own dashboards read).
 //
 // Pure functions only: no processes, no database. The fixtures are what the two
 // runtimes actually answered on a real install — the Claude report is a verbatim
 // capture, the codex payload follows `codex app-server generate-json-schema`'s
-// GetAccountRateLimitsResponse and the codex refusal is its verbatim error.
+// GetAccountRateLimitsResponse and the codex refusal is its verbatim error, and
+// the Command Code body and its rejected-key answer are verbatim captures.
 // Run: pnpm test:quota
 import "./require-temp-data.js";
 import assert from "node:assert/strict";
@@ -26,6 +27,8 @@ const { parseClaudeUsage, foldCodexQuota } = await import("../src/quota.js");
 const {
   foldZaiQuota,
   zaiQuotaUrl,
+  foldCommandCodeQuota,
+  commandCodeQuotaUrl,
   foldMinimaxQuota,
   minimaxQuotaUrl,
   foldKimiQuota,
@@ -458,6 +461,104 @@ test("zaiQuotaUrl takes an override as an origin, or whole when it names the rou
   assert.equal(
     zaiQuotaUrl(zaiProfile(), { kind: "zai", baseUrl: "https://proxy.example/x/monitor/usage/quota/limit" }),
     "https://proxy.example/x/monitor/usage/quota/limit",
+  );
+});
+
+// ---- Command Code ----------------------------------------------------------
+
+/* Verbatim: what `GET https://api.commandcode.ai/alpha/billing/credits` answered
+   for the Go plan this machine is signed into. It is a *provider-side* reading
+   even though a runtime's login also owns the account, because Command Code's
+   `/usage` has no non-interactive form — the slash command lives only in its
+   interactive panel — so the account route is the only reader there is.
+   `used`/`cap` are in credits (dollars here) and `resetAt` is epoch ms. */
+const COMMAND_CODE_REPORT = {
+  credits: { belowThreshold: false, creditThreshold: 0, monthlyCredits: 9.515087384, purchasedCredits: 0, freeCredits: 0 },
+  windowLimits: {
+    limited: true,
+    exceeded: null,
+    fiveHour: { used: 0.276396188, cap: 3, exceeded: false, resetAt: 1_789_180_183_530 },
+    weekly: { used: 0.484912616, cap: 6, exceeded: false, resetAt: 1_789_657_648_583 },
+  },
+};
+
+test("foldCommandCodeQuota derives both window percentages from used and cap", () => {
+  const snap = foldCommandCodeQuota(COMMAND_CODE_REPORT);
+  assert.equal(snap.status, "subscription");
+  assert.deepEqual(
+    snap.windows.map((w) => [w.id, w.label, Math.round(w.usedPercent * 10) / 10, w.windowMinutes, w.resetsAt]),
+    [
+      // The ids the Claude Code and z.ai adapters mint for the same shapes.
+      ["five_hour", "5-hour", 9.2, 300, 1_789_180_183_530],
+      ["seven_day", "Weekly", 8.1, 10080, 1_789_657_648_583],
+    ],
+  );
+});
+
+test("foldCommandCodeQuota keeps the body verbatim, because the route is internal", () => {
+  assert.deepEqual(JSON.parse(foldCommandCodeQuota(COMMAND_CODE_REPORT).raw), COMMAND_CODE_REPORT);
+});
+
+test("foldCommandCodeQuota shows the plan's remaining credits", () => {
+  assert.deepEqual(foldCommandCodeQuota(COMMAND_CODE_REPORT).credits, { balance: "9.52 credits", unlimited: false });
+});
+
+test("foldCommandCodeQuota reads pay-as-you-go as no plan, not as a failure", () => {
+  // `limited: false` is the endpoint itself saying there are no windows to pace.
+  const snap = foldCommandCodeQuota({ credits: { monthlyCredits: 4 }, windowLimits: { limited: false } });
+  assert.equal(snap.status, "api-key");
+  assert.deepEqual(snap.windows, []);
+});
+
+test("foldCommandCodeQuota reads a rejected key as unauthenticated", () => {
+  // Verbatim: what the route answers a key that is not the account's, with the
+  // HTTP status it answers it under.
+  const snap = foldCommandCodeQuota(
+    { success: false, error: { code: "UNAUTHORIZED", status: 401, message: "Invalid 'Authorization' header or token." } },
+    401,
+  );
+  assert.equal(snap.status, "unauthenticated");
+  assert.match(snap.raw, /Invalid 'Authorization' header/);
+});
+
+test("foldCommandCodeQuota errors on a plan whose windows no longer parse", () => {
+  // Still claimed to be limited, with nothing readable under it: an empty card
+  // would be a lie, so this is the one 200 that is not "no plan".
+  const snap = foldCommandCodeQuota({ windowLimits: { limited: true, fiveHour: { used: 1 } } });
+  assert.deepEqual(snap.windows, []);
+  assert.equal(snap.status, "error");
+});
+
+test("foldCommandCodeQuota normalizes a reset given in seconds", () => {
+  const snap = foldCommandCodeQuota({
+    windowLimits: { limited: true, weekly: { used: 1, cap: 4, resetAt: 1_789_657_648 } },
+  });
+  assert.equal(snap.windows[0].resetsAt, 1_789_657_648_000);
+});
+
+test("commandCodeQuotaUrl picks the platform from the profile's own base URL", () => {
+  assert.equal(
+    commandCodeQuotaUrl(zaiProfile("https://api.commandcode.ai/provider/v1"), { kind: "command-code" }),
+    "https://api.commandcode.ai/alpha/billing/credits",
+  );
+  // The staging twin's keys are not the production account's.
+  assert.equal(
+    commandCodeQuotaUrl(zaiProfile("https://staging-api.commandcode.ai/provider/v1"), { kind: "command-code" }),
+    "https://staging-api.commandcode.ai/alpha/billing/credits",
+  );
+});
+
+test("commandCodeQuotaUrl takes an override as an origin, or whole when it names the route", () => {
+  assert.equal(
+    commandCodeQuotaUrl(zaiProfile(), { kind: "command-code", baseUrl: "https://proxy.example/" }),
+    "https://proxy.example/alpha/billing/credits",
+  );
+  assert.equal(
+    commandCodeQuotaUrl(zaiProfile(), {
+      kind: "command-code",
+      baseUrl: "https://proxy.example/x/alpha/billing/credits",
+    }),
+    "https://proxy.example/x/alpha/billing/credits",
   );
 });
 

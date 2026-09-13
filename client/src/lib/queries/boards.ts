@@ -82,6 +82,9 @@ export function useBoards() {
     /** False until the first load answers — the page must not decide a board
         is empty (and offer to seed one) before it has heard from the server. */
     loaded: query.isSuccess,
+    /** Said, not left to a skeleton that would shimmer forever: a board read
+        that failed is a failure, not a wait. */
+    error: query.error,
   }
 }
 

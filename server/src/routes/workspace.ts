@@ -1,5 +1,9 @@
 import type { Hono } from "hono";
 import { stream } from "hono/streaming";
+import { z } from "zod";
+import { enhancePrompt } from "../enhance.js";
+import { getAgent } from "../registry.js";
+import { getProfile, resolveProfileAgent } from "../profiles.js";
 import {
   ProjectInputSchema,
   createProject,
@@ -19,6 +23,7 @@ import {
   readFile as readWorkspaceFile,
   readFileBytes,
   renameEntry,
+  searchContents,
   searchEntries,
   statFile,
   writeFile as writeWorkspaceFile,
@@ -35,6 +40,37 @@ import {
   updateHelper,
 } from "../project-helpers.js";
 import { crud, flag, workspace } from "./helpers.js";
+
+/** The one kind of address a preview may be — plain http(s). */
+const PREVIEW_SCHEME = /^https?:\/\//i;
+
+/**
+ * Whether the project's dev server answers, probed *from the server* rather
+ * than from the browser. A browser fetch to the dev server is blocked by CORS
+ * (the dev server did not grant this origin), and a cross-origin iframe cannot
+ * be inspected — but the server and the dev server share a machine, so a
+ * loopback fetch answers the real question: "is it running?". The URL stored
+ * is the person's own (localhost, a LAN address, a tunnel) — probing from the
+ * server works because the harness runs where the dev server runs.
+ *
+ * Any HTTP response counts as "up": a dev server that answers 404 on its root
+ * is still running, and the panel's job is to say so and load it.
+ */
+async function probePreview(url: string): Promise<boolean> {
+  if (!PREVIEW_SCHEME.test(url)) return false;
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      // Headers, not the body: a slow-to-stream page is still up, and the
+      // body of something like a deep endpoint is not the point of a probe.
+      signal: AbortSignal.timeout(2500),
+      redirect: "follow",
+    });
+    return typeof res.status === "number";
+  } catch {
+    return false;
+  }
+}
 
 /** Projects and everything scoped to a project's directory: the workspace
     filesystem, source control, the file watcher and the terminals' JSON half. */
@@ -113,6 +149,19 @@ export function workspaceRoutes(app: Hono): void {
      route, because a page that asked six would redraw six times. */
   app.get("/api/projects/:id/stats", (c) => workspace(c, async () => await projectStats(c.req.param("id"))));
 
+  /* The preview probe — `url` is the stored address, `up` is whether it
+     answers from the server's own machine. The panel polls this while it is
+     open: it is what turns "Start the dev server" into "the preview is up",
+     with no CORS and no reading inside a plain iframe. */
+  app.get("/api/projects/:id/preview", (c) =>
+    workspace(c, async () => {
+      const project = await getProject(c.req.param("id"));
+      if (!project) throw new WorkspaceError("no such project", 404);
+      const url = project.previewUrl ?? "";
+      return { url, up: url ? await probePreview(url) : false };
+    }),
+  );
+
   // Feeds the client's path autocomplete; ?path= (empty lists the home dir).
   // Handles its own errors: `not found` vs `not a directory` deserve real codes,
   // and app.onError would flatten both to 500.
@@ -143,6 +192,19 @@ export function workspaceRoutes(app: Hono): void {
     workspace(c, async () => {
       const limit = Number(c.req.query("limit"));
       return await searchEntries(c.req.param("projectId"), c.req.query("q"), {
+        limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
+      });
+    }),
+  );
+
+  /* Content search, for the IDE's "match file contents too" mode. A third
+     question again — the name search answers "where is it", this one answers
+     "where is it written" — and it reads bytes, so it is its own route rather
+     than a flag on the one above. */
+  app.get("/api/projects/:projectId/files/grep", (c) =>
+    workspace(c, async () => {
+      const limit = Number(c.req.query("limit"));
+      return await searchContents(c.req.param("projectId"), c.req.query("q"), {
         limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
       });
     }),
@@ -255,6 +317,44 @@ export function workspaceRoutes(app: Hono): void {
     return workspace(c, () =>
       git.fileAt(c.req.param("projectId"), c.req.query("path") ?? "", side),
     );
+  });
+
+  /* Draft a commit message. A read route on the git prefix but a *write* to a
+     model, so it is a POST, and it names the profile that pays for it — the
+     same bargain the composer's enhancer makes, for the same reason: the key
+     never leaves the server (`enhance.ts`). The diff is gathered here rather
+     than sent up; see `git.commitMessagePrompt`. */
+  const DraftMessageSchema = z.object({
+    profileId: z.string(),
+    agentId: z.string().optional(),
+    model: z.string().optional(),
+    repo: z.string().optional(),
+  });
+
+  app.post("/api/projects/:projectId/git/draft-message", async (c) => {
+    const parsed = DraftMessageSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: "profileId is required" }, 400);
+    const profile = await getProfile(parsed.data.profileId);
+    if (!profile) return c.json({ error: "unknown profile" }, 404);
+    /* The agent only decides which per-agent base URL is NOT used; naming none
+       is still an error, so a profile serving no installed runtime is not
+       silently offered a draft. */
+    const agentId = resolveProfileAgent(profile, parsed.data.agentId);
+    if (!agentId || !await getAgent(agentId)) {
+      return c.json({ error: "unknown agent for this profile" }, 404);
+    }
+    return workspace(c, async () => {
+      const { prompt, files, staged } = await git.commitMessagePrompt(
+        c.req.param("projectId"),
+        parsed.data.repo,
+      );
+      const message = await enhancePrompt(profile, {
+        text: prompt,
+        model: parsed.data.model || undefined,
+        kind: "commit",
+      });
+      return { message, files: files.length, staged };
+    });
   });
 
   app.post("/api/projects/:projectId/git/:action", async (c) => {

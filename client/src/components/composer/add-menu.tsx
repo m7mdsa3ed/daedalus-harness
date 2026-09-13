@@ -4,7 +4,7 @@
    the row. The two hidden pickers are here rather than in the card because
    this menu is the only thing that clicks them. */
 import * as React from "react"
-import { AtSign, Camera, Code, History, Paperclip, Plus, Slash, Trash2 } from "lucide-react"
+import { AtSign, Camera, Code, History, Paperclip, Plus, Slash, SquareTerminal, Trash2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -25,10 +25,12 @@ export function ComposerAddMenu({
   onFiles,
   canMention,
   hasCommands,
+  hasProjectCommands,
   hasHistory,
   hasContent,
   onMention,
   onCommand,
+  onProjectCommand,
   onCodeBlock,
   onHistory,
   onClear,
@@ -41,10 +43,13 @@ export function ComposerAddMenu({
   /** A file can only be mentioned where there is a project to resolve it in. */
   canMention: boolean
   hasCommands: boolean
+  /** The current project has saved shell lines — the `!` menu would list them. */
+  hasProjectCommands: boolean
   hasHistory: boolean
   hasContent: boolean
   onMention: () => void
   onCommand: () => void
+  onProjectCommand: () => void
   onCodeBlock: () => void
   onHistory: () => void
   onClear: () => void
@@ -65,7 +70,7 @@ export function ComposerAddMenu({
             <Button
               variant="ghost"
               size={size}
-              className="shrink-0 rounded-lg text-muted-foreground hover:text-foreground data-popup-open:bg-muted data-popup-open:text-foreground [&_svg]:size-3.5"
+              className="shrink-0 rounded-pill bg-muted text-muted-foreground hover:bg-muted/70 hover:text-foreground data-popup-open:bg-muted data-popup-open:text-foreground [&_svg]:size-3.5"
               disabled={disabled}
               title="Add to the message"
             />
@@ -100,6 +105,16 @@ export function ComposerAddMenu({
               <Slash />
               Run a command
               <DropdownMenuShortcut>/</DropdownMenuShortcut>
+            </DropdownMenuItem>
+          )}
+          {/* The project's own saved shell lines — "Restart server", "Run
+              migrations" — which run as a terminal rather than reaching the
+              agent. Offered only where the project has some. */}
+          {hasProjectCommands && (
+            <DropdownMenuItem onClick={onProjectCommand}>
+              <SquareTerminal />
+              Run a project command
+              <DropdownMenuShortcut>!</DropdownMenuShortcut>
             </DropdownMenuItem>
           )}
           <DropdownMenuItem onClick={onCodeBlock}>

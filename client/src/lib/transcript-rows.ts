@@ -12,8 +12,8 @@
    recursive: a subagent step draws its children through the same row views
    that draw the top level (thread-items), and thread-view already imports
    those — the types have to live somewhere both can reach without a cycle. */
-import type { AsyncTaskItem, SubagentItem, TextItem, ThreadItem, ToolItem } from "./store"
-import { extractBackgroundTask, extractSubagent, isSubagentLaunch, subagentItemId } from "./tools"
+import type { AsyncTaskItem, ShellItem, SubagentItem, TextItem, ThreadItem, ToolItem } from "./store"
+import { extractBackgroundTask, extractSubagent, isSubagentLaunch, subagentItemId, toolKindOf } from "./tools"
 import type { WorkflowPlanPhase } from "./tools"
 import type { WorkflowProgressEntry } from "@daedalus/protocol"
 
@@ -92,14 +92,36 @@ export interface SubagentBatch {
   steps: SubagentGroup[]
 }
 
-export type Row = ThreadItem | ToolRunGroup | SubagentGroup | WorkflowGroup | SubagentBatch
+/**
+ * A run of `!` commands the reader ran back to back, folded into one row when
+ * "Group `!` commands" is on. Adjacency is the rule, exactly as it is for a tool
+ * run: anything between two commands — prose, a step, a turn — means the reader
+ * went and did something else in between, and a run of one stays the block it
+ * was. A command that is still running opens the group, the way a live step
+ * opens a tool run.
+ */
+export interface ShellRun {
+  kind: "shell-run"
+  /** `shells:<first command's id>`. */
+  id: string
+  items: ShellItem[]
+}
+
+export type Row =
+  | ThreadItem
+  | ToolRunGroup
+  | SubagentGroup
+  | WorkflowGroup
+  | SubagentBatch
+  | ShellRun
 
 /** The id of the item a row stands for — for keys, scroll anchors and the
     "where does the Sources strip go" lookup, which is keyed by item id. A
     run's is its last step's, since that is the item that ends the turn; a
-    workflow's is its last step's for the same reason. */
+    workflow's is its last step's for the same reason; a `!` run's is its last
+    command's, which is the one that just finished. */
 export function rowTailId(row: Row): string {
-  if (row.kind === "run") return row.items[row.items.length - 1].id
+  if (row.kind === "run" || row.kind === "shell-run") return row.items[row.items.length - 1].id
   if (row.kind === "workflow-group" || row.kind === "subagent-batch")
     return rowTailId(row.steps[row.steps.length - 1])
   return row.id
@@ -111,7 +133,9 @@ export function rowTailId(row: Row): string {
  * Kept: the user's messages, the agent's prose, the notices that carry an
  * interrupted turn's Continue button, and errors — a failure hidden reads as
  * an answer that never came, which is the one thing this option must not do.
- * Dropped: thoughts, tool calls, plans, compactions, subagent sessions.
+ * A `!` command is kept too: the user ran it, so it is part of the conversation
+ * rather than work the agent did. Dropped: thoughts, tool calls, plans,
+ * compactions, subagent sessions.
  *
  * A `parentId` is dropped whatever its kind: a subagent's own prose is the
  * work, not the thread's answer, and its head is gone anyway — leaving it in
@@ -123,21 +147,32 @@ export function rowTailId(row: Row): string {
 export function isAnswerItem(item: ThreadItem): boolean {
   if (item.parentId) return false
   return (
-    item.kind === "user" || item.kind === "agent" || item.kind === "notice" || item.kind === "error"
+    item.kind === "user" ||
+    item.kind === "agent" ||
+    item.kind === "notice" ||
+    item.kind === "error" ||
+    item.kind === "shell"
   )
 }
 
 /**
  * The transcript as rows: subagents nested, then (optionally) runs grouped.
  * Nesting does not depend on the grouping option — a subagent's rail is not
- * a preference, it is where its steps belong.
+ * a preference, it is where its steps belong. Two kinds fold: runs of tool
+ * steps, and runs of the reader's own `!` commands.
  */
-export function buildRows(items: ThreadItem[], groupTools: boolean, turnActive = false): Row[] {
+export function buildRows(
+  items: ThreadItem[],
+  groupTools: boolean,
+  turnActive = false,
+  groupShells = false
+): Row[] {
   const nested = mergeSubagentBatches(
     mergeWorkflowRuns(nestSubagents(withoutAsyncTasks(items), groupTools, turnActive))
   )
   const placed = placeNativeWorkflows(nested, items)
-  return groupTools ? groupToolRuns(placed) : placed
+  const grouped = groupTools ? groupToolRuns(placed) : placed
+  return groupShells ? groupShellRuns(grouped) : grouped
 }
 
 /* An async-task item is a record, not a row: it is read into a `WorkflowGroup`
@@ -677,9 +712,10 @@ function groupCodexLifecycle(
  * toggling the group shut hides the thinking too. A run still needs a tool —
  * two thoughts alone are two standalone rows, not a "group" with nothing in
  * it — and runs of one stay ungrouped, a lone step wrapped in a "1 step"
- * disclosure is strictly worse than the step. A subagent group breaks a run
- * like any other non-tool row: its rail inside a run's rail would be two
- * rails for one thing.
+ * disclosure is strictly worse than the step. An edit is not one of the steps:
+ * a change is the thing the reader comes to read, so it stands as its own row
+ * and breaks a run like any other non-tool row. A subagent group breaks a run
+ * too: its rail inside a run's rail would be two rails for one thing.
  */
 export function groupToolRuns(rows: Row[]): Row[] {
   const out: Row[] = []
@@ -693,7 +729,37 @@ export function groupToolRuns(rows: Row[]): Row[] {
   }
 
   for (const row of rows) {
-    if (row.kind === "tool" || row.kind === "thought") run.push(row)
+    if ((row.kind === "tool" && toolKindOf(row) !== "edit") || row.kind === "thought") run.push(row)
+    else {
+      flush()
+      out.push(row)
+    }
+  }
+  flush()
+  return out
+}
+
+/**
+ * The same fold for the reader's own `!` commands: a run of two or more
+ * consecutive shell blocks becomes one row, and a lone one is left alone.
+ *
+ * Adjacency here means something slightly different than it does for a tool
+ * run. Two commands with a turn between them are two things the reader did at
+ * two different moments, and a turn is a perfectly good separator; only commands
+ * run back to back — which is the case grouping exists for — merge.
+ */
+export function groupShellRuns(rows: Row[]): Row[] {
+  const out: Row[] = []
+  let run: ShellItem[] = []
+
+  const flush = () => {
+    if (run.length > 1) out.push({ kind: "shell-run", id: `shells-${run[0].id}`, items: run })
+    else out.push(...run)
+    run = []
+  }
+
+  for (const row of rows) {
+    if (row.kind === "shell") run.push(row)
     else {
       flush()
       out.push(row)

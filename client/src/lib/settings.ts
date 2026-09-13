@@ -4,6 +4,7 @@
 // sidebar), and the active one is what every request in the app talks to.
 
 import { uuid } from "./uuid"
+import type { OffPeakWindow } from "./off-peak"
 import { clearPersistedCache } from "./queries/persist"
 import { clearDraftSessions } from "./draft-sessions"
 import { clearLayout } from "./workspace/layout"
@@ -524,6 +525,7 @@ export type ProfileUsageKind =
   | "synthetic"
   | "deepseek"
   | "openrouter"
+  | "command-code"
 
 export interface ProfileUsage {
   kind: ProfileUsageKind
@@ -566,6 +568,14 @@ export interface Profile {
       metadata" notice for threads on this profile. Absent = false (servers
       from before the flag existed, and the virtual Default). */
   suppressModelMetadataWarning?: boolean
+  /** Two selection flags. `hidden`: kept and still resolvable for the threads
+      already on it, but not offered when starting a new thread — while the
+      usage plan keeps tracking it, which is the point of hiding. `disabled`:
+      closed everywhere — the pickers and the usage plan both. Absent = shown
+      and enabled (servers from before the flags existed, and the virtual
+      Default, which can never be either). */
+  hidden?: boolean
+  disabled?: boolean
   /** Library entries every thread on this profile gets, on top of its
       project's. The same three a project and a thread carry; the agent sees
       the union. */
@@ -611,8 +621,11 @@ export interface ModelOption {
   reasoningEfforts: string[]
   /** One-line capability blurb, when known (models.dev or the agent). */
   description?: string
-  /** USD per million tokens. */
+  /** USD per million tokens, at full price. */
   pricing?: { input: number; output: number }
+  /** Hours the provider charges less for, by its own clock. Absent = one rate
+      all day; read live by `lib/off-peak.ts`. */
+  offPeak?: OffPeakWindow
   /** Input modalities, e.g. ["text", "image"]. */
   modalities?: string[]
   /** Provenance when enriched: "providerId/modelId" in models.dev. */
@@ -641,6 +654,11 @@ export interface Project {
   /** Logo shown wherever the project is named — a URL. Empty means "no logo",
       and `ProjectIcon` draws the project's initial instead. */
   logoUrl?: string
+  /** The project's dev server, as the Browser panel should open it. Empty
+      means none. What it is reachable *at* is the person's own call —
+      `localhost` for the machine the server runs on, a LAN or tunnel address
+      for a phone. */
+  previewUrl?: string
   /** Standing rules every thread spawned here starts with — the project layer
       of `server/src/rules.ts`, beneath the global block. Null = none. */
   rules?: string | null
@@ -665,6 +683,9 @@ export interface HelperCommand {
   description: string | null
   /** Ask before running — the dialog shows a confirm step first. */
   confirm: boolean
+  /** This helper starts the project's dev server — the Browser panel offers
+      it when a preview URL is set but nothing answers on it. */
+  preview: boolean
   createdAt: number
 }
 
@@ -688,6 +709,10 @@ export interface SessionMeta {
   /** Whether the agent closes answers with follow-up prompt suggestions.
       Absent from a server that predates the toggle, which reads as off. */
   suggestFollowups?: boolean
+  /** Whether answers may carry a drawn view (a fenced `openui-lang` block the
+      client renders). Absent from a server that predates the switch, which
+      reads as on — the default the row carries. */
+  uiBlocks?: boolean
   title: string
   acpSessionId?: string
   createdAt: number
@@ -804,6 +829,7 @@ export function sameRow(a: SessionMeta, b: SessionMeta): boolean {
     a.effort === b.effort &&
     a.personaId === b.personaId &&
     (a.suggestFollowups ?? false) === (b.suggestFollowups ?? false) &&
+    (a.uiBlocks ?? true) === (b.uiBlocks ?? true) &&
     a.title === b.title &&
     a.acpSessionId === b.acpSessionId &&
     a.createdAt === b.createdAt &&

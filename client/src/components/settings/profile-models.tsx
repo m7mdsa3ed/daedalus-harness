@@ -1,10 +1,12 @@
 import * as React from "react"
-import { ArrowDown, ArrowUp, BotIcon, Download, Pencil, Plus, Trash2 } from "lucide-react"
+import { ArrowDown, ArrowUp, BotIcon, Download, Pencil, PlugZap, Plus, Trash2 } from "lucide-react"
 import { toast } from "@/lib/toast"
+import { Empty } from "@/components/empty"
 import { ErrorNote } from "@/components/error-note"
 import { EntityIcon } from "@/components/entity-icon"
 import { captureError, type InlineError } from "@/lib/errors"
 import { api, type ModelCandidate, type ServerSettings } from "@/lib/settings"
+import type { OffPeakWindow } from "@/lib/off-peak"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -25,6 +27,7 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
+import { PickerSkeleton } from "@/components/ui/skeletons"
 import { Field, Picker } from "./primitives"
 
 /* ── model rows (reference: profile-models.ts) ──
@@ -44,10 +47,31 @@ export interface ModelRow {
   efforts: string
   pricingInput: string
   pricingOutput: string
+  /** The cheaper window of the day, as the provider states it: two clocks, a
+      zone, and the fraction of list price charged inside it. Strings, like
+      every other number here — a half-typed one is a normal editing state. All
+      four together are the window; any blank is a model with one rate. */
+  offPeakFrom: string
+  offPeakTo: string
+  offPeakTz: string
+  offPeakMultiplier: string
   modalities: string
   devRef: string
   iconUrl: string
   group: string
+}
+
+/** The row's off-peak fields as a window, or null when they are not one. All
+    four are required and the rate has to land in (0, 1]: a half-filled window
+    is a typo in progress, not a discount to save. */
+function offPeakWindowOf(row: ModelRow): OffPeakWindow | null {
+  const from = row.offPeakFrom.trim()
+  const to = row.offPeakTo.trim()
+  const tz = row.offPeakTz.trim()
+  const multiplier = Number(row.offPeakMultiplier.trim())
+  if (!from || !to || !tz) return null
+  if (!Number.isFinite(multiplier) || multiplier <= 0 || multiplier > 1) return null
+  return { from, to, tz, multiplier }
 }
 
 let modelUid = 0
@@ -60,6 +84,10 @@ export const blankModelRow = (): ModelRow => ({
   efforts: "",
   pricingInput: "",
   pricingOutput: "",
+  offPeakFrom: "",
+  offPeakTo: "",
+  offPeakTz: "",
+  offPeakMultiplier: "",
   modalities: "",
   devRef: "",
   iconUrl: "",
@@ -77,6 +105,12 @@ export const candidateToRow = (candidate: ModelCandidate): ModelRow => ({
   efforts: candidate.reasoningEfforts.join(", "),
   pricingInput: candidate.pricing ? String(candidate.pricing.input) : "",
   pricingOutput: candidate.pricing ? String(candidate.pricing.output) : "",
+  // models.dev has no peak/off-peak data, so a fetched candidate never brings
+  // a window — the four fields start empty and are typed by hand.
+  offPeakFrom: "",
+  offPeakTo: "",
+  offPeakTz: "",
+  offPeakMultiplier: "",
   modalities: (candidate.modalities ?? []).join(", "),
   devRef: candidate.devRef ?? "",
   iconUrl: candidate.iconUrl ?? "",
@@ -90,6 +124,7 @@ export const toModelRows = (models: {
   maxOutputTokens?: number
   reasoningEfforts: string[]
   pricing?: { input: number; output: number }
+  offPeak?: OffPeakWindow
   modalities?: string[]
   devRef?: string
   iconUrl?: string
@@ -104,6 +139,10 @@ export const toModelRows = (models: {
     efforts: m.reasoningEfforts.join(", "),
     pricingInput: m.pricing ? String(m.pricing.input) : "",
     pricingOutput: m.pricing ? String(m.pricing.output) : "",
+    offPeakFrom: m.offPeak?.from ?? "",
+    offPeakTo: m.offPeak?.to ?? "",
+    offPeakTz: m.offPeak?.tz ?? "",
+    offPeakMultiplier: m.offPeak ? String(m.offPeak.multiplier) : "",
     modalities: (m.modalities ?? []).join(", "),
     devRef: m.devRef ?? "",
     iconUrl: m.iconUrl ?? "",
@@ -118,6 +157,7 @@ export function rowsToModels(rows: ModelRow[]) {
     maxOutputTokens?: number
     reasoningEfforts: string[]
     pricing?: { input: number; output: number }
+    offPeak?: OffPeakWindow
     modalities?: string[]
     devRef?: string
     iconUrl?: string
@@ -130,6 +170,7 @@ export function rowsToModels(rows: ModelRow[]) {
     const maxOut = Number(row.maxOutputTokens.trim())
     const pricingInput = Number(row.pricingInput.trim())
     const pricingOutput = Number(row.pricingOutput.trim())
+    const offPeak = offPeakWindowOf(row)
     const modalities = row.modalities
       .split(/[,\s]+/)
       .map((m) => m.trim().toLowerCase())
@@ -149,6 +190,7 @@ export function rowsToModels(rows: ModelRow[]) {
       pricingOutput > 0
         ? { pricing: { input: pricingInput, output: pricingOutput } }
         : {}),
+      ...(offPeak ? { offPeak } : {}),
       ...(modalities.length ? { modalities } : {}),
       ...(row.devRef.trim() ? { devRef: row.devRef.trim() } : {}),
       ...(row.iconUrl.trim() ? { iconUrl: row.iconUrl.trim() } : {}),
@@ -177,6 +219,11 @@ const summaryBadges = (row: ModelRow) => {
   if (context > 0) badges.push(`${formatTokens(Math.round(context))} context`)
   if (row.pricingInput.trim() && row.pricingOutput.trim())
     badges.push(`$${trimNum(Number(row.pricingInput))} / $${trimNum(Number(row.pricingOutput))} per Mtok`)
+  const offPeak = offPeakWindowOf(row)
+  if (offPeak)
+    badges.push(
+      `${Math.round((1 - offPeak.multiplier) * 100)}% off ${offPeak.from}–${offPeak.to} ${offPeak.tz}`
+    )
   const efforts = row.efforts.split(/[,\s]+/).filter(Boolean)
   if (efforts.length) badges.push(`efforts: ${efforts.join(" · ")}`)
   const modalities = row.modalities.split(/[,\s]+/).filter((m) => m && m !== "text")
@@ -243,10 +290,10 @@ export function ModelsSection({
     >
       <div className="space-y-2">
         {rows.length === 0 ? (
-          <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-pretty text-muted-foreground">
+          <Empty>
             No models — this profile lets the agent use its own catalog. Add or fetch models to
             override it.
-          </p>
+          </Empty>
         ) : (
           <div className="divide-y rounded-lg border">
             {rows.map((row, index) => {
@@ -347,6 +394,9 @@ export function ModelsSection({
                       groups={groups}
                       onSetDefault={() => onSetDefault(row.uid)}
                       settings={settings}
+                      profileId={profileId}
+                      baseUrl={baseUrl}
+                      apiKey={apiKey}
                       onPatch={(p) => patch(row.uid, p)}
                     />
                   )}
@@ -401,6 +451,9 @@ function ModelEditorFields({
   groups,
   onSetDefault,
   settings,
+  profileId,
+  baseUrl,
+  apiKey,
   onPatch,
 }: {
   row: ModelRow
@@ -409,6 +462,9 @@ function ModelEditorFields({
   groups: string[]
   onSetDefault: () => void
   settings: ServerSettings
+  profileId: string
+  baseUrl: string
+  apiKey: string
   onPatch: (patch: Partial<ModelRow>) => void
 }) {
   return (
@@ -512,6 +568,51 @@ function ModelEditorFields({
             className="text-left sm:text-right font-mono text-xs"
           />
         </Field>
+        {/* A window of the day the provider charges less for. All four make the
+            window; a blank one is a model with a single all-day rate, which is
+            what most are. */}
+        <div className="sm:col-span-2 grid gap-3 sm:grid-cols-4">
+          <Field label="Off-peak from" hint="HH:MM, in the zone beside it.">
+            <Input
+              value={row.offPeakFrom}
+              onChange={(e) => onPatch({ offPeakFrom: e.target.value })}
+              placeholder="16:30"
+              className="font-mono text-xs"
+            />
+          </Field>
+          <Field label="Off-peak to" hint="May wrap past midnight.">
+            <Input
+              value={row.offPeakTo}
+              onChange={(e) => onPatch({ offPeakTo: e.target.value })}
+              placeholder="00:30"
+              className="font-mono text-xs"
+            />
+          </Field>
+          <Field label="Zone" hint="The provider's own clock.">
+            <Input
+              value={row.offPeakTz}
+              onChange={(e) => onPatch({ offPeakTz: e.target.value })}
+              placeholder="UTC"
+              className="font-mono text-xs"
+            />
+          </Field>
+          <Field label="Rate" hint="Fraction of list price; 0.5 = half off.">
+            <Input
+              type="number"
+              step="any"
+              min="0.01"
+              max="1"
+              value={row.offPeakMultiplier}
+              onChange={(e) => onPatch({ offPeakMultiplier: e.target.value })}
+              placeholder="0.5"
+              className="text-left sm:text-right font-mono text-xs"
+            />
+          </Field>
+          <p className="sm:col-span-4 text-xs text-muted-foreground">
+            A cheaper window of the day, as the provider states it — the endpoint bills by its
+            own clock, so this only reports the saving; nothing is sent to ask for it.
+          </p>
+        </div>
         <div className="sm:col-span-2">
           <Field label="Icon URL" hint="Optional — shown in the composer trigger when this model is selected.">
             <div className="flex items-center gap-2">
@@ -538,7 +639,93 @@ function ModelEditorFields({
           </Field>
         </div>
       </div>
+      <ModelTest row={row} settings={settings} profileId={profileId} baseUrl={baseUrl} apiKey={apiKey} />
       <ModelsDevMatch row={row} settings={settings} onPatch={onPatch} />
+    </div>
+  )
+}
+
+/* ── the model test ──
+   The listing route proves an id exists; this runs it. One tiny completion
+   through the profile's own credentials, carrying the row's own max output
+   tokens, because a cap the provider rejects is a 400 on every turn and is
+   invisible until one is spent — the failure this was written for. Nothing is
+   saved and nothing is patched: the provider's own words are the result. */
+
+function ModelTest({
+  row,
+  settings,
+  profileId,
+  baseUrl,
+  apiKey,
+}: {
+  row: ModelRow
+  settings: ServerSettings
+  profileId: string
+  baseUrl: string
+  apiKey: string
+}) {
+  const [testing, setTesting] = React.useState(false)
+  const [result, setResult] = React.useState<{ ms: number; reply: string; finishReason?: string } | null>(null)
+  const [error, setError] = React.useState<InlineError | null>(null)
+  const id = row.id.trim()
+  const maxOut = Number(row.maxOutputTokens.trim())
+
+  const run = async () => {
+    setTesting(true)
+    setResult(null)
+    setError(null)
+    try {
+      setResult(
+        await api<{ ms: number; reply: string; finishReason?: string }>(
+          settings,
+          `/api/profiles/${profileId}/test-model`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              model: id,
+              ...(row.maxOutputTokens.trim() && maxOut > 0 ? { maxOutputTokens: Math.round(maxOut) } : {}),
+              ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
+              ...(apiKey ? { apiKey } : {}),
+            }),
+          },
+        ),
+      )
+    } catch (err) {
+      setError(captureError(err, `${id} didn't answer`))
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  return (
+    <div className="space-y-2 border-t border-border/40 pt-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 text-xs"
+          disabled={testing || !id || !baseUrl.trim()}
+          title={baseUrl.trim() ? undefined : "Add a base URL first"}
+          onClick={() => void run()}
+        >
+          <PlugZap className="size-4" /> {testing ? "Testing…" : "Test model"}
+        </Button>
+        <span className="text-[11px] text-muted-foreground">
+          {row.maxOutputTokens.trim() && maxOut > 0
+            ? `One short completion, sent with max_tokens ${Math.round(maxOut)}.`
+            : "One short completion, with no output cap."}
+        </span>
+      </div>
+      {result && (
+        <p className="rounded-md border border-border/60 bg-muted/30 px-2.5 py-2 text-[11px] text-muted-foreground">
+          Answered in {(result.ms / 1000).toFixed(1)}s
+          {result.finishReason ? ` (${result.finishReason})` : ""}
+          {result.reply ? ` — “${result.reply}”` : ""}
+        </p>
+      )}
+      {error && <ErrorNote error={error} onRetry={() => void run()} retryLabel="Test again" />}
     </div>
   )
 }
@@ -922,9 +1109,7 @@ function FetchModelsDialog({
               </ResponsiveDialogDescription>
             </ResponsiveDialogHeader>
             {fetching ? (
-              <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
-                Fetching…
-              </p>
+              <PickerSkeleton rows={5} />
             ) : fetchError ? (
               <ErrorNote error={fetchError} onRetry={() => void fetchModels()} retryLabel="Fetch again" />
             ) : (

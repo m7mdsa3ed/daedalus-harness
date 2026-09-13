@@ -12,6 +12,7 @@ import {
   LABEL,
   PANE,
   PANE_MAX_H,
+  ShellPane,
   ShellScript,
   ShowAll,
   SmartBlock,
@@ -37,33 +38,15 @@ import { useViewOptionsContext } from "@/lib/view-options"
  * which is what a shell run is.
  */
 export function RunDetail({ item, active }: { item: ToolItem; active: boolean }) {
-  const command = toolPrimaryText(item) ?? toolTarget(item)
-  const failed = item.status === "failed"
-  const [out, over, showAll] = useShowAll(toolOutputText(item, 200_000).text)
-
+  /* The pane itself is shared with the reader's own `!` command — see
+     `ShellPane` in tool-parts, which is what makes the two read as one act. */
   return (
-    <div className={cn(PANE, failed && "border-destructive/40 bg-destructive/5")}>
-      <div className="flex items-start gap-2 px-2.5 py-1.5 font-mono text-[11.5px] leading-relaxed">
-        <span aria-hidden className="shrink-0 leading-relaxed select-none text-muted-foreground/60">
-          $
-        </span>
-        <ShellScript command={command} className="min-w-0 flex-1" />
-      </div>
-      {out.trim() && (
-        <pre
-          className={cn(
-            PANE_MAX_H,
-            "overflow-auto border-t border-inherit px-2.5 py-1.5 font-mono text-[11.5px] leading-relaxed break-words whitespace-pre-wrap",
-            failed ? "text-destructive" : "text-muted-foreground"
-          )}
-        >
-          {out}
-        </pre>
-      )}
-      {/* Running with nothing printed yet: breathing lines, not an empty pane. */}
-      {!out.trim() && active && <ToolCallSkeleton className="border-t border-inherit p-2.5" />}
-      {over && <ShowAll onClick={showAll} />}
-    </div>
+    <ShellPane
+      command={toolPrimaryText(item) ?? toolTarget(item)}
+      output={toolOutputText(item, 200_000).text}
+      failed={item.status === "failed"}
+      running={active}
+    />
   )
 }
 

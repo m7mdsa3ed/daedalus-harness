@@ -19,9 +19,11 @@ import { BellIcon, CheckCheckIcon, SearchXIcon, Trash2Icon } from "lucide-react"
 import { useNavigate } from "react-router"
 
 import { useConfirm } from "@/components/confirm-dialog"
+import { Empty } from "@/components/empty"
 import { KIND_META, NotificationRow } from "@/components/notifications/items"
 import { EmptyCard, FormPageHeader } from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
+import { NotificationRowsSkeleton } from "@/components/ui/skeletons"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import type { AppNotification } from "@/lib/notifications-inbox"
 import {
@@ -59,7 +61,7 @@ function groupByPeriod(items: AppNotification[]) {
 export function NotificationsInboxPage() {
   /* Landing on the page is the one moment the list has to be current — the
      cache otherwise refreshes only on return to the window. */
-  const { inbox, refetch } = useInbox()
+  const { inbox, isPending, refetch } = useInbox()
   const markRead = useMarkNotificationsRead()
   const clearInbox = useClearInbox()
   const navigate = useNavigate()
@@ -92,7 +94,15 @@ export function NotificationsInboxPage() {
         onBack={() => void navigate("/")}
       />
 
-      {items.length === 0 ? (
+      {!inbox && isPending ? (
+        /* A read in flight is not an empty inbox. The card below says "nothing
+           here yet", and it would say it while the list is still arriving. */
+        <NotificationRowsSkeleton
+          rows={5}
+          detailed
+          className="overflow-hidden rounded-2xl border border-border/60 bg-card/45 backdrop-blur-md supports-[backdrop-filter]:bg-card/30"
+        />
+      ) : items.length === 0 ? (
         <EmptyCard
           icon={BellIcon}
           text={
@@ -192,15 +202,17 @@ export function NotificationsInboxPage() {
           {shown.length === 0 ? (
             /* A filter that matches nothing is not an empty inbox, so it does
                not get the inbox's empty card — it gets a line and a way back. */
-            <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-6 py-10 text-center">
-              <SearchXIcon className="size-5 text-muted-foreground/60" />
-              <p className="text-sm text-muted-foreground">
-                Nothing matches “{active.label}”.
-              </p>
-              <Button size="sm" variant="outline" onClick={() => setFilter("all")}>
-                Show all
-              </Button>
-            </div>
+            <Empty
+              size="lg"
+              icon={SearchXIcon}
+              action={
+                <Button size="sm" variant="outline" onClick={() => setFilter("all")}>
+                  Show all
+                </Button>
+              }
+            >
+              Nothing matches “{active.label}”.
+            </Empty>
           ) : (
             groups.map((g) => (
               <section key={g.label} className="mb-6 last:mb-0">

@@ -1,9 +1,9 @@
 import type { IDockviewPanelProps } from "dockview-react"
 import { PackageOpenIcon } from "lucide-react"
 
+import { Empty } from "@/components/empty"
 import { Button } from "@/components/ui/button"
 import { useDock } from "@/components/workspace/dock"
-import { PanelEmptyState } from "@/components/workspace/primitives"
 import { PANEL_SPECS, isPanelKind } from "@/lib/workspace/panels"
 
 /**
@@ -20,17 +20,22 @@ export function UnsupportedPanel({ api }: IDockviewPanelProps) {
   const name = isPanelKind(kind) ? PANEL_SPECS[kind].defaultTitle : kind
 
   return (
-    <PanelEmptyState className="text-foreground">
-      <PackageOpenIcon className="size-6 text-muted-foreground" />
-      <div className="space-y-1">
-        <p className="text-sm font-medium">{name} isn't available in this version</p>
-        <p className="text-xs text-muted-foreground">
+    <div className="flex h-full min-h-0 items-center justify-center p-3">
+      <Empty
+        size="lg"
+        icon={PackageOpenIcon}
+        className="max-w-md text-foreground"
+        action={
+          <Button size="sm" variant="outline" onClick={() => void dock.closePanel(api.id)}>
+            Close panel
+          </Button>
+        }
+      >
+        <span className="block font-medium">{name} isn't available in this version</span>
+        <span className="mt-1 block text-xs text-muted-foreground">
           This panel was saved by a build that has it. Everything else in the workspace is fine.
-        </p>
-      </div>
-      <Button size="sm" variant="outline" onClick={() => void dock.closePanel(api.id)}>
-        Close panel
-      </Button>
-    </PanelEmptyState>
+        </span>
+      </Empty>
+    </div>
   )
 }

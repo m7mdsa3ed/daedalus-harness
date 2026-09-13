@@ -40,6 +40,13 @@ export interface ViewOptions {
   showTimestamps: boolean
   /** Fold runs of consecutive tool steps into one expandable block. */
   groupTools: boolean
+  /** Fold a run of consecutive `!` commands into one line you can open. */
+  groupShellCommands: boolean
+  /** The `!` commands you ran, and what they printed. Off, the rows are hidden —
+      the command still ran and the journal still holds it, only the row is
+      silent. This is the switch `answersOnly` deliberately does not cover: a
+      `!` line is the reader's own act, not the agent's work. */
+  showShellCommands: boolean
   /** Tighter vertical rhythm in the transcript. */
   compactDensity: boolean
   /** Pin to the newest content while the agent is streaming. */
@@ -86,6 +93,8 @@ export interface ViewOptions {
 export const VIEW_DEFAULTS: ViewOptions = {
   showTimestamps: false,
   groupTools: false,
+  groupShellCommands: false,
+  showShellCommands: true,
   compactDensity: false,
   autoScroll: true,
   showThinking: false,

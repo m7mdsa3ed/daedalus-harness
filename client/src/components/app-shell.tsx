@@ -40,7 +40,7 @@ import { SessionSettingsDialog } from "@/components/session-settings"
 import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
 import { useSidebarWidth } from "@/components/sidebar/resizer"
 import { ServerMenu } from "@/components/sidebar/server-menu"
-import { GROUP, MENU, ROW, SidebarNav, ThreadSidebar } from "@/components/thread-sidebar"
+import { GROUP, MENU, ROW, SidebarNav, SidebarUsage, ThreadSidebar } from "@/components/thread-sidebar"
 import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
 import { PageRoutesProvider } from "@/components/workspace/page-panel"
 import { useShortcut } from "@/hooks/use-hotkey"
@@ -57,6 +57,7 @@ import {
   threadPath,
 } from "@/lib/router"
 import type { ServerSettings } from "@/lib/settings"
+import { setSidebarLayout, useSidebarLayout } from "@/lib/sidebar-layout"
 import { formatChord } from "@/lib/shortcuts"
 import { useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
@@ -332,15 +333,25 @@ export function AppShell({
         if (existing) dock.openPanel(existing.panel)
         else void openTerminal(dock, projectId)
       } else if (kind === "web") {
+        /* The stored preview URL rides on the descriptor, so a project panel
+           opens on its dev server instead of an empty address bar — and an
+           existing panel is re-pointed to it the same way. */
+        const previewUrl = projects.find((candidate) => candidate.id === projectId)?.previewUrl ?? ""
         dock.openPanel(
-          { kind: "web", trust: "project", projectId, viewId: "default" },
+          {
+            kind: "web",
+            trust: "project",
+            projectId,
+            viewId: "default",
+            ...(previewUrl ? { url: previewUrl } : {}),
+          },
           { direction: "right" }
         )
       } else if (kind === "ide") {
         dock.openPanel({ kind: "ide", projectId }, { direction: "right" })
       }
     },
-    [dock]
+    [dock, projects]
   )
 
   /* Mirrors the palette's "New thread" entry — the palette advertises the
@@ -365,8 +376,18 @@ export function AppShell({
     onOpenSettings: openSettings,
   })
 
+  const sidebarLayout = useSidebarLayout()
+
   return (
     <SidebarProvider
+      /* Controlled, so the open state is the device store's and survives a
+         reload. The primitive's own internal state — and the cookie it writes
+         beside it — is left unused, which is deliberate: the vendored
+         component is reinstallable and the memory belongs to the app. Mobile
+         is unaffected: the sheet toggles `openMobile`, which this does not
+         drive, so a phone never restores an open overlay. */
+      open={sidebarLayout.open}
+      onOpenChange={(open) => setSidebarLayout("open", open)}
       style={{
         "--sidebar-width": sidebar.width,
         height: "100dvh",
@@ -482,6 +503,10 @@ export function AppShell({
           )}
         </SidebarContent>
         <SidebarFooter className="p-2">
+          {/* Above the account row: what is left of the plans this machine
+              spends is account-level, like the server being talked to. Draws
+              itself away when nothing reports a plan (see sidebar/usage.tsx). */}
+          <SidebarUsage />
           <SidebarMenu className={MENU}>
             <SidebarMenuItem>
               <ServerMenu settings={settings} onAddServer={onAddServer} />

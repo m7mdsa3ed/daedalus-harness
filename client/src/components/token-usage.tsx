@@ -24,7 +24,7 @@ import { CoinsIcon } from "lucide-react"
 import type * as acp from "@daedalus/acp"
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { formatDuration, formatRate, formatTokens, promptTokens } from "@/lib/tokens"
+import { formatDuration, formatRate, formatTokens, promptTokens, windowEstimated } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 
 /* The trigger box both popover figures wear. One padding, one line box, one
@@ -119,6 +119,9 @@ export function StepTokens({
   className?: string
 }) {
   const share = usage.size > 0 ? Math.round((usage.used / usage.size) * 100) : null
+  /* Both figures are a fraction of a window the runtime had to guess at — the
+     request count beside them is real either way. */
+  const about = windowEstimated(usage) ? "~" : ""
   const turn = useStepTurnUsage(itemId ?? "")
   const prompt = turn ? promptTokens(turn) : 0
   const cacheRate = turn && prompt > 0 ? Math.round(((turn.cachedReadTokens ?? 0) / prompt) * 100) : null
@@ -141,8 +144,8 @@ export function StepTokens({
         <p className="font-medium">This step</p>
         <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
           <Stat label="Request" value={formatTokens(usage.used)} />
-          <Stat label="Window" value={formatTokens(usage.size)} />
-          {share !== null && <Stat label="Share of window" value={`${share}%`} />}
+          <Stat label="Window" value={`${about}${formatTokens(usage.size)}`} />
+          {share !== null && <Stat label="Share of window" value={`${about}${share}%`} />}
           {usage.cost && (
             <Stat
               label="Session cost"

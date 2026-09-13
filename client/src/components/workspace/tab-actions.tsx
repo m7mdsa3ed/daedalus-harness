@@ -44,10 +44,18 @@ import { PANEL_SPECS, isPanelKind } from "@/lib/workspace/panels"
 import { cn } from "@/lib/utils"
 
 /** Below this many tabs the strip shows them all, and a list of what you can
-    already see is a button that does nothing for you. A phone's bar is two: there
-    the tabs are marks, half of them off the end of the strip, and the list is the
-    only place every name is legible at once. */
+    already see is a button that does nothing for you. A phone's bar is two: its
+    strip is the one tab you are on, so with a second tab open the list is the
+    only place that one is by name — which is what makes it the switcher. */
 const LIST_FROM = 3
+
+/* The strip's own two controls: bare glyphs, like the header's (`HEADER_CHIP`
+   beside them) and like the tab's mark, on the one line-height everything in a
+   strip takes (`--dock-chip-h` in `index.css`). They were `size-6` in a 32px
+   bar — a 24px target to hit for the two controls a strip is used through, and
+   the third height in a row that had one. */
+const STRIP_CONTROL =
+  "size-[var(--dock-chip-h)] rounded-full text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
 
 function TabRow({ panel, onClose }: { panel: IDockviewPanel; onClose: () => void }) {
   const kind = panel.api.component
@@ -112,8 +120,11 @@ export function TabActions({ panels }: IDockviewHeaderActionsProps) {
   const { onNewTab, onOpenPanel } = useDockOpeners()
   const isMobile = useIsMobile()
 
+  /* No padding of its own: the strip's own 6px is the end of the row, and the
+     chip's `mx-0.5` is the gutter between the last tab and the first of these —
+     the same inset the tabs keep between themselves. */
   return (
-    <div className="flex h-full items-center gap-0.5 pr-1 pl-0.5">
+    <div className="flex h-full items-center">
       {onNewTab && (
         <DropdownMenu>
           <Tooltip>
@@ -125,7 +136,7 @@ export function TabActions({ panels }: IDockviewHeaderActionsProps) {
                       size="icon-xs"
                       variant="ghost"
                       aria-label="Open something in this group"
-                      className="size-6 text-muted-foreground hover:text-foreground"
+                      className={STRIP_CONTROL}
                     >
                       <PlusIcon className="size-3.5" />
                     </Button>
@@ -149,11 +160,10 @@ export function TabActions({ panels }: IDockviewHeaderActionsProps) {
         </DropdownMenu>
       )}
       {/* Below `LIST_FROM` the list is a button that does nothing for you — the
-          tabs are all on screen. On a phone the tabs are marks and half of them
-          are off the end of a 360px strip, so the list is the switcher from two
-          tabs up: it is the only place every thread's *name* is legible at once.
-          The + stays either way, which is the whole reason this row no longer
-          returns null. */}
+          tabs are all on screen. On a phone the strip is the one tab you are on
+          and nothing else, so the list is the switcher from two tabs up: it is
+          the only place the other one is, by name. The + stays either way, which
+          is the whole reason this row no longer returns null. */}
       {panels.length >= (isMobile ? 2 : LIST_FROM) && (
       <DropdownMenu>
         <Tooltip>
@@ -165,7 +175,7 @@ export function TabActions({ panels }: IDockviewHeaderActionsProps) {
                     size="icon-xs"
                     variant="ghost"
                     aria-label="All tabs in this group"
-                    className="size-6 text-muted-foreground hover:text-foreground"
+                    className={STRIP_CONTROL}
                   >
                     <ChevronDownIcon className="size-3.5" />
                   </Button>

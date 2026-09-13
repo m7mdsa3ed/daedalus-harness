@@ -510,7 +510,9 @@ function NewRoutinePage({ actions }: { actions: Actions }) {
   const [draft, setDraft] = React.useState<RoutineDraft>(() => {
     const project = projects[0]
     const agent = agents[0]
-    const profile = agent ? profiles.find((p) => profileSupports(p, agent.id)) : undefined
+    const profile = agent
+      ? profiles.find((p) => profileSupports(p, agent.id) && !p.hidden && !p.disabled)
+      : undefined
     return blankDraft({
       projectId: project?.id ?? "",
       agentId: agent?.id ?? "",

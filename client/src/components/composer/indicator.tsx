@@ -10,12 +10,12 @@ import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 
-export function Ring({ percent }: { percent: number }) {
+export function Ring({ percent, className }: { percent: number; className?: string }) {
   const radius = 8.5
   const circumference = 2 * Math.PI * radius
 
   return (
-    <svg aria-hidden viewBox="0 0 24 24" className="size-6 -rotate-90">
+    <svg aria-hidden viewBox="0 0 24 24" className={cn("size-6 -rotate-90", className)}>
       <circle cx="12" cy="12" r={radius} fill="none" strokeWidth="2" stroke="currentColor" className="opacity-15" />
       <circle
         cx="12"
@@ -29,6 +29,81 @@ export function Ring({ percent }: { percent: number }) {
         strokeDashoffset={circumference * (1 - percent / 100)}
       />
     </svg>
+  )
+}
+
+/* ── One row of marks, so one size ──
+   The kernel of the cluster: a 24px ghost button (`icon-xs`), a 16px mark, a
+   count that rides the mark on a narrow panel and becomes a text badge on a
+   wide one. Every reading wears these three, and the dials are no exception —
+   a 24px dial beside a 14px glyph is two rows pretending to be one, which is
+   exactly what it looked like. */
+
+/** How big a reading's mark is — the dial in `Ring` or a lucide glyph. */
+export const READING_MARK = "size-4"
+
+/** The button geometry, minus the mark's own colour. */
+export const READING_TRIGGER =
+  "relative shrink-0 rounded-pill @panel-sm:w-auto! @panel-sm:gap-1 @panel-sm:px-1.5"
+
+/**
+ * The count that rides the mark on a narrow panel — the badge's other dress.
+ *
+ * Never both at once: a reading that has room to write its count in words wears
+ * the badge and hides this, and one that does not wears this. `min-w` rather
+ * than a fixed `size`, so a two-character count (`42`, `9+`) still fits the
+ * pill without pushing the mark off its 24px square.
+ */
+export function ReadingBubble({
+  children,
+  tone = "primary",
+  className,
+}: {
+  children: React.ReactNode
+  tone?: "primary" | "secondary"
+  className?: string
+}) {
+  return (
+    <span
+      className={cn(
+        "absolute -end-0.5 -top-0.5 grid h-3 min-w-3 place-items-center rounded-full px-0.5 text-[8px] font-semibold tabular-nums @panel-sm:hidden",
+        tone === "primary"
+          ? "bg-primary text-primary-foreground"
+          : "bg-secondary text-secondary-foreground",
+        className
+      )}
+    >
+      {children}
+    </span>
+  )
+}
+
+/**
+ * The words a reading grows on a wide panel.
+ *
+ * A badge, not a word floating beside the mark: small (10px — under the
+ * button's own `text-sm`, and the same ring the app's `Badge` and `ChipBadge`
+ * sit on), with a ground of its own (`bg-muted`) so it reads as a label clipped
+ * onto the icon rather than as loose text. It carries the panel breakpoint
+ * itself (`hidden @panel-sm:inline`), so a reading never has to remember when
+ * it may speak — it asks for the badge and the width decides.
+ */
+export function ReadingBadge({
+  children,
+  className,
+}: {
+  children: React.ReactNode
+  className?: string
+}) {
+  return (
+    <span
+      className={cn(
+        "hidden rounded-md bg-muted px-1.5 py-px text-[10px] leading-none font-medium whitespace-nowrap @panel-sm:inline",
+        className
+      )}
+    >
+      {children}
+    </span>
   )
 }
 
@@ -91,16 +166,12 @@ export function StripIndicator({
             size="icon-xs"
             /* w-auto on a wide panel is what lets the label in; `!` because
                `size-6` sets width too and the two are one property apart. */
-            className={cn(
-              "relative shrink-0 gap-1 rounded-lg px-1.5 text-muted-foreground hover:text-foreground",
-              "@panel-sm:w-auto!",
-              tone
-            )}
+            className={cn(READING_TRIGGER, "text-muted-foreground hover:text-foreground", tone)}
             title={title ?? label}
             aria-label={title ?? label}
           >
             {icon}
-            <span className="hidden @panel-sm:inline">{label}</span>
+            <ReadingBadge>{label}</ReadingBadge>
             {badge}
           </Button>
         }

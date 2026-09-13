@@ -280,8 +280,10 @@ export function miscRoutes(
     const refresh = c.req.query("refresh") === "1";
     const probeable = (await listAgents()).filter((agent) => agent.quotaProbe);
     /* Stored profiles only — `await listProfiles()` with no agents synthesizes no
-       virtual Defaults, and a Default never names a provider anyway. */
-    const providers = (await listProfiles()).filter((profile) => profileUsage(profile));
+       virtual Defaults, and a Default never names a provider anyway. A disabled
+       profile is out of the usage plan — that is the half of "everywhere" the
+       pickers are not — while a merely hidden one keeps reporting. */
+    const providers = (await listProfiles()).filter((profile) => profileUsage(profile) && !profile.disabled);
     const [plans, agents] = await Promise.all([
       Promise.all(providers.map((profile) => getProfileQuota(profile, { refresh }))),
       Promise.all(

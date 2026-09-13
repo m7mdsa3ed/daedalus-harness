@@ -137,6 +137,10 @@ export interface GitCommit {
   filesChanged: number
   insertions: number
   deletions: number
+  /** Parent hashes. Two or more means a merge; empty on a root commit. */
+  parents: string[]
+  /** Branch and tag names pointing here. */
+  refs: string[]
 }
 
 export function gitLog(
@@ -221,6 +225,22 @@ export type GitAction =
 
 /** Paths are relative to `repo`, the same way the status that listed them was. */
 export type GitWrite = GitAction & { repo?: string }
+
+/** Draft a commit message from the repository's own diff, through the picked
+    profile's endpoint. The diff is read server-side — this sends a profile, not
+    a patch. */
+export function draftCommitMessage(
+  settings: ServerSettings,
+  projectId: string,
+  input: { profileId: string; agentId?: string; model?: string; repo?: string },
+  signal?: AbortSignal
+): Promise<{ message: string; files: number; staged: boolean }> {
+  return api(settings, `${base(projectId)}/draft-message`, {
+    method: "POST",
+    body: JSON.stringify(input),
+    signal,
+  })
+}
 
 export function gitWrite(
   settings: ServerSettings,

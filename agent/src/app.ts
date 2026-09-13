@@ -122,7 +122,17 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
         agentInfo: { name: "daedalus-agent", version: VERSION },
         agentCapabilities: {
           loadSession: true,
-          promptCapabilities: { image: false, audio: false, embeddedContext: true },
+          /* `image` is a claim about what the *loop* can carry, not about the
+             model behind it: the content part is converted below (turn.ts) and
+             forwarded through `createOpenAICompatible`, which is what every
+             profile is served by. Whether the selected model can actually read
+             it is the model's half and is decided at send time against
+             `modalities` (delivery.ts), so the model-less Default thread — the
+             one place this capability is authoritative — inlines correctly.
+             Advertising it `true` is prerequisite to ever getting there: a
+             `false` here vetoes every image to a file path before `modalities`
+             is even consulted. */
+          promptCapabilities: { image: true, audio: true, embeddedContext: true },
           /* The two remote transports `connectMcpServers` actually speaks. An
              unadvertised kind is a server the client must not send; before this
              claim existed an SSE server arrived, failed to connect, and the

@@ -123,7 +123,16 @@ interface RunResult {
  * the user is running in a terminal next door — this panel refreshes on every
  * file event, and taking the index lock to do it would be a nasty surprise.
  */
-function run(cwd: string, args: string[], env?: Record<string, string>): Promise<RunResult> {
+function run(
+  cwd: string,
+  args: string[],
+  env?: Record<string, string>,
+  /* Exit codes that are an *answer* rather than a failure. `git diff` exits 1
+     exactly when there is a difference to report, which is what some callers
+     are asking for — and re-implementing the diff to avoid the code would be
+     worse than naming it here. */
+  allowExit: number[] = [],
+): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     execFile(
       "git",
@@ -138,6 +147,8 @@ function run(cwd: string, args: string[], env?: Record<string, string>): Promise
       (error, stdout, stderr) => {
         if (!error) return resolve({ stdout, stderr });
         const err = error as NodeJS.ErrnoException & { killed?: boolean; code?: number | string };
+        if (typeof err.code === "number" && allowExit.includes(err.code))
+          return resolve({ stdout, stderr });
         if (err.code === "ENOENT")
           return reject(fail(404, "git is not installed on the Daedalus server"));
         if (err.killed) return reject(fail(409, `git timed out after ${TIMEOUT_MS / 1000}s`));
@@ -545,6 +556,11 @@ export interface GitCommit {
   filesChanged: number;
   insertions: number;
   deletions: number;
+  /** Parent hashes, newest walk order. Two or more means a merge. Empty on a
+      root commit, which is what the graph draws its lanes from. */
+  parents: string[];
+  /** Branch and tag names pointing here, as git decorates them. */
+  refs: string[];
 }
 
 const RS = "\x1e";
@@ -566,7 +582,7 @@ export async function log(
       "log",
       `--max-count=${limit}`,
       "--shortstat",
-      `--format=${RS}%H${US}%h${US}%s${US}%an${US}%at`,
+      `--format=${RS}%H${US}%h${US}%s${US}%an${US}%at${US}%P${US}%D`,
     ]));
   } catch (err) {
     /* No commits yet — `git log` on an unborn branch is a 128, and a fresh
@@ -579,7 +595,8 @@ export async function log(
   for (const chunk of stdout.split(RS)) {
     if (!chunk.trim()) continue;
     const [head = "", ...rest] = chunk.split("\n");
-    const [hash = "", short = "", subject = "", author = "", at = "0"] = head.split(US);
+    const [hash = "", short = "", subject = "", author = "", at = "0", parentList = "", refList = ""] =
+      head.split(US);
     if (!hash) continue;
     const stat = rest.join("\n");
     const files = /(\d+) files? changed/.exec(stat);
@@ -594,6 +611,11 @@ export async function log(
       filesChanged: files ? Number(files[1]) : 0,
       insertions: ins ? Number(ins[1]) : 0,
       deletions: del ? Number(del[1]) : 0,
+      parents: parentList ? parentList.trim().split(/\s+/) : [],
+      refs: refList
+        .split(",")
+        .map((ref) => ref.trim().replace(/^HEAD -> /, ""))
+        .filter(Boolean),
     });
   }
   return out;
@@ -859,6 +881,104 @@ export async function diffTrees(dir: string, from: string, to: string): Promise<
 }
 
 /** The unified patch between two trees, for one path or for everything. */
+/**
+ * What a commit-message draft is written from: the staged diff when anything is
+ * staged, the working tree otherwise, plus the file list.
+ *
+ * Composed **server-side** rather than sent up by the client. The diff is the
+ * whole input to the prompt and it is routinely hundreds of kilobytes, the git
+ * routes already know how to read it, and a client that had to ship it would be
+ * re-implementing `git diff` to ask a question about git's own output.
+ *
+ * Capped: a rewrite is one short answer, and a 500 KB prompt is slow, expensive
+ * and no more accurate than the first slice of it. The cap is applied to the
+ * patch, never to the file list, so a huge diff still says *what* changed.
+ */
+const COMMIT_PROMPT_DIFF_MAX = 60_000;
+
+export async function commitMessagePrompt(
+  projectId: string,
+  repo?: string,
+): Promise<{ prompt: string; files: string[]; staged: boolean }> {
+  const { dir } = await repoOrThrow(projectId, repo);
+  const state = await status(projectId, repo);
+
+  /* Staged work is what a commit would actually contain, so it wins; a tree
+     with nothing staged is the "stage everything first" flow, and its draft is
+     about the working tree. */
+  const staged = state.staged.length > 0;
+  const listed = staged ? state.staged : [...state.unstaged, ...state.untracked];
+  const files = listed.map(
+    (file) => `${staged ? file.index : file.worktree} ${file.path}`,
+  );
+
+  /* A staged diff is `--cached`; the unstaged one is HEAD against the worktree,
+     which is the same two sides the panel's own rows compare. An unborn HEAD
+     has nothing to diff against, so the index is the empty tree. */
+  const { stdout } = await run(dir, [
+    "diff",
+    "--relative",
+    "-M",
+    "--no-color",
+    "--no-ext-diff",
+    ...(staged ? ["--cached"] : []),
+    ...(state.unborn && !staged ? ["--cached"] : []),
+  ]);
+
+  /* Untracked files are in no diff at all — `git diff` only knows about what
+     git knows about — and they are routinely most of what a commit is. Without
+     this the draft describes a change whose files it never saw, which is
+     exactly the "invent work that is not there" failure the system prompt
+     warns against. Read their contents in as added files. */
+  if (!staged && state.untracked.length > 0) {
+    const added: string[] = [];
+    for (const file of state.untracked) {
+      /* `--no-index` against `/dev/null` is what renders a file git does not
+         track as a normal "new file" hunk. It exits 1 whenever there IS a
+         difference — which is every time here — so 1 is an answer, not a
+         failure. */
+      try {
+        const { stdout: one } = await run(
+          dir,
+          ["diff", "--no-index", "--no-color", "--no-ext-diff", "--no-prefix", "/dev/null", file.path],
+          undefined,
+          [1],
+        );
+        if (one.trim()) added.push(one);
+      } catch {
+        /* A binary or unreadable untracked file contributes its name only. */
+      }
+      if (added.join("").length > COMMIT_PROMPT_DIFF_MAX) break;
+    }
+    if (added.length > 0) {
+      return {
+        prompt: buildPrompt(staged, files, `${stdout}${added.join("")}`),
+        files,
+        staged,
+      };
+    }
+  }
+
+  return { prompt: buildPrompt(staged, files, stdout), files, staged };
+}
+
+/** The prompt's own shape, in one place so both exits above agree. */
+function buildPrompt(staged: boolean, files: string[], diff: string): string {
+  const patch = diff.slice(0, COMMIT_PROMPT_DIFF_MAX);
+
+  return [
+    `Write a commit message for these ${staged ? "staged" : "working-tree"} changes.`,
+    "",
+    "Files:",
+    files.length > 0 ? files.join("\n") : "(none)",
+    "",
+    "Diff:",
+    "```diff",
+    patch.trim() || "(empty)",
+    "```",
+  ].join("\n");
+}
+
 export async function patchBetween(dir: string, from: string, to: string, path?: string): Promise<string> {
   const { stdout } = await run(dir, [
     "diff",

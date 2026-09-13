@@ -29,10 +29,12 @@ import {
   ToggleLeftIcon,
   Trash2Icon,
 } from "lucide-react"
+import { ErrorBoundary } from "@/components/error-boundary"
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { CopyButton } from "@/components/ui/copy-button"
 import { DiffView } from "@/components/ui/diff-view"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { ToolCallSkeleton } from "@/components/ui/skeletons"
 import { isPlainClick, useThreadLinks } from "@/lib/workspace/thread-links"
 import {
   fileRangeOf,
@@ -546,6 +548,166 @@ export function ToolLocations({ item }: { item: ToolItem }) {
   )
 }
 
+/* ── The openui view ──
+
+   A fenced `openui` block is not a code block. The model writes a program in a
+   compact line-oriented language (`client/src/lib/openui/library.tsx` holds the
+   component table it may name), and what belongs on screen is the UI it
+   describes, not the source.
+
+   Three things about where this lives:
+
+   — **it stands where the fence stood**, inline in the message that carried it
+     and in that message's own column. Not in a tool-output pane: it is a
+     replacement for a fenced block, a fenced block in prose is inline, and
+     boxing it would make an answer's own words and its picture two surfaces
+     when they are one answer;
+   — **an unclosed fence draws too, from the moment it opens.** This is what the
+     language is *for*: `root` comes first so the shell appears at once, and a
+     forward reference resolves when its statement arrives, so the view fills in
+     over the answer rather than appearing once at the end. Drawing a partial
+     program is not a compromise on streaming — it is the design. What it
+     demands is that the drawing be forgiving, which is why `openui-view.tsx`
+     suspends its "came out empty" verdict while the row is still being written:
+     a one-line program is legitimately an empty shell.
+   — **parse failures fall back to the source.** An agent that puts a fenced
+     `openui` heading on a doc block gets its text read, not a box saying "could
+     not render".
+
+   The view is deliberately inert: no `toolProvider` is passed, so a `Query()`
+   in the program has no tool to reach and is dropped — which is the boundary
+   this feature is built on (see the library's header comment). */
+
+/* The fence tag the generated prompt tells the model to write. `openui` alone
+   is accepted too — it is the shorter name a model reaches for unprompted, and
+   a fence that means this should draw rather than fall through to the source. */
+const OPENUI_LANG = "openui-lang"
+
+/** An openui fenced block found in a message, and the text around it. */
+interface OpenuiFence {
+  start: number
+  end: number
+  code: string
+  /** The closing ``` has not arrived yet — the model is still writing this
+      program. Only ever true for the last fence in a live row. */
+  open: boolean
+}
+
+/* Two patterns, because the two cases are genuinely different and a single one
+   gets one of them wrong. Closed first: a completed fence is paired with its own
+   terminator, and that matters when a message holds more than one. */
+const OPENUI_FENCE_CLOSED_RE =
+  /(^|\n)[ \t]*```+[ \t]*openui(?:-lang)?[ \t]*\r?\n([\s\S]*?)```+[ \t]*(?=\n|$)/g
+
+/* A fence still being written: the info string and its newline have arrived, the
+   closing run has not. Requires the newline, so the partial *info string* itself
+   (` ```openui-lan `) stays prose until the model finishes typing it. */
+const OPENUI_FENCE_OPEN_RE = /(^|\n)[ \t]*```+[ \t]*openui(?:-lang)?[ \t]*\r?\n([\s\S]*)$/
+
+/**
+ * Split a message into prose runs and openui fences.
+ *
+ * `streaming` is what allows a trailing, unclosed fence to be drawn; a settled
+ * row never has one, since a fence the model never closed is not a program.
+ */
+function splitOpenuiFences(text: string, streaming: boolean): (string | OpenuiFence)[] {
+  const parts: (string | OpenuiFence)[] = []
+  let cut = 0
+  for (const match of text.matchAll(OPENUI_FENCE_CLOSED_RE)) {
+    const start = match.index + match[1].length
+    const end = start + match[0].length - match[1].length
+    if (start > cut) parts.push(text.slice(cut, start))
+    parts.push({ start, end, code: match[2], open: false })
+    cut = end
+  }
+  const rest = text.slice(cut)
+  const pending = streaming ? OPENUI_FENCE_OPEN_RE.exec(rest) : null
+  if (pending) {
+    const start = cut + pending.index + pending[1].length
+    if (start > cut) parts.push(text.slice(cut, start))
+    parts.push({ start, end: text.length, code: pending[2], open: true })
+  } else if (rest) {
+    parts.push(rest)
+  }
+  return parts
+}
+
+/**
+ * One generated view, drawn from the program in `code`.
+ *
+ * The renderer is scheduled rather than imported outright. Every reader of a
+ * transcript loads this module, and the vast majority of turns never write an
+ * openui fence — so the parser, the library and recharts are reached only by a
+ * fence that has already been found, and the suspense fallback is the source
+ * pane that was there before it arrived. `React.lazy` only fires the import the
+ * first time a fence actually renders, which also keeps a module that recharts
+ * pulls in out of the entry chunk.
+ */
+const OpenuiView = React.lazy(() =>
+  import("@/components/openui-view").then((module) => ({ default: module.OpenuiView }))
+)
+
+function OpenuiFenceView({ code, open }: { code: string; open: boolean }) {
+  /* The imports are one shared chunk, so a second fence on the same screen is
+     the same lazy component — no per-view identity games there. */
+  return (
+    <React.Suspense fallback={<Prose text={"```" + OPENUI_LANG + "\n" + code + "\n```"} />}>
+      <ErrorBoundary name="openui view" resetKeys={[code]} key={code}>
+        <OpenuiView code={code} streaming={open} />
+      </ErrorBoundary>
+    </React.Suspense>
+  )
+}
+
+/**
+ * Prose that may hold generated views.
+ *
+ * It is not a markdown plugin: a plugin would have to claim the fence from
+ * inside the parse and hand a React node back out of it. Splitting the text
+ * first and handing each run to `Prose` keeps every markdown behaviour a reader
+ * already knows — the tables, the streaming reveal on the tail run — because
+ * those runs are still `Prose`.
+ *
+ * The tail run takes `stream` so the reveal ends where it always did. A view
+ * takes it too, as `streaming` — not for the reveal, but because it is what says
+ * a fence may legitimately be half-written, which suspends the view's "came out
+ * empty" verdict until the row settles.
+ */
+export function ProseWithOpenui({
+  text,
+  stream,
+  className,
+  streaming = false,
+}: {
+  text: string
+  stream?: StreamEffect
+  className?: string
+  /** The row is still being written, so a trailing unclosed fence is a program
+      in progress rather than a fence the model forgot to close. */
+  streaming?: boolean
+}) {
+  const parts = React.useMemo(() => {
+    if (!text.includes("```")) return null
+    const split = splitOpenuiFences(text, streaming)
+    return split.some((part) => typeof part !== "string") ? split : null
+  }, [text, streaming])
+  if (!parts) return <Prose text={text} stream={stream} className={className} />
+
+  return (
+    <div className={className}>
+      {parts.map((part, index) =>
+        typeof part === "string" ? (
+          /* Keyed by offset, not by index: a chunk arriving at the tail must not
+             make React tear down and rebuild the prose above it. */
+          <Prose key={`t${index}`} text={part} stream={index === parts.length - 1 ? stream : undefined} />
+        ) : (
+          <OpenuiFenceView key={`f${part.start}`} code={part.code} open={part.open} />
+        )
+      )}
+    </div>
+  )
+}
+
 /** Tool output as markdown. Agents write it as markdown — tables, lists, fenced
     code — and a `pre` rendered all of that as literal pipes and backticks. */
 export function ToolProse({ text }: { text: string }) {
@@ -730,6 +892,60 @@ export function ShowAll({ onClick }: { onClick: () => void }) {
     >
       Show everything
     </button>
+  )
+}
+
+/**
+ * A shell run as one pane: the command on a `$` line, what it printed under a
+ * hairline. This is the shape of every shell run in the app — an agent's Bash
+ * call (`tool-views/files.tsx`, `RunDetail`) and the reader's own `!` command
+ * (`thread-cards.tsx`, `ShellStep`) both draw through it, so the two read as the
+ * same act rather than as two things that happen to print text.
+ */
+export function ShellPane({
+  command,
+  output,
+  failed = false,
+  running = false,
+  emptyNote,
+}: {
+  command: string
+  output: string
+  failed?: boolean
+  running?: boolean
+  /** What to say when a settled run printed nothing at all. Absent leaves the
+      pane as the command line alone, which is what a Bash step does. */
+  emptyNote?: string
+}) {
+  const [out, over, showAll] = useShowAll(output, 200_000)
+  return (
+    <div className={cn(PANE, failed && "border-destructive/40 bg-destructive/5")}>
+      <div className="flex items-start gap-2 px-2.5 py-1.5 font-mono text-[11.5px] leading-relaxed">
+        <span aria-hidden className="shrink-0 leading-relaxed select-none text-muted-foreground/60">
+          $
+        </span>
+        <ShellScript command={command} className="min-w-0 flex-1" />
+      </div>
+      {out.trim() && (
+        <pre
+          className={cn(
+            PANE_MAX_H,
+            "overflow-auto border-t border-inherit px-2.5 py-1.5 font-mono text-[11.5px] leading-relaxed break-words whitespace-pre-wrap",
+            failed ? "text-destructive" : "text-muted-foreground"
+          )}
+        >
+          {out}
+        </pre>
+      )}
+      {/* Running with nothing printed yet: breathing lines, not an empty pane. */}
+      {!out.trim() && running && <ToolCallSkeleton className="border-t border-inherit p-2.5" />}
+      {!out.trim() && !running && emptyNote && (
+        <p className="border-t border-inherit px-2.5 py-1.5 font-mono text-[11.5px] text-muted-foreground">
+          {emptyNote}
+        </p>
+      )}
+      {over && <ShowAll onClick={showAll} />}
+    </div>
   )
 }
 

@@ -6,6 +6,12 @@ import { GitCompareIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  READING_MARK,
+  READING_TRIGGER,
+  ReadingBadge,
+  ReadingBubble,
+} from "@/components/composer/indicator"
 import { shortPath } from "@/lib/tools"
 import type { ChangedFile, TurnChanges } from "@/lib/workspace/git-api"
 import { cn } from "@/lib/utils"
@@ -71,18 +77,18 @@ export function ChangesIndicator({
           <Button
             variant="ghost"
             size="icon-xs"
-            className="relative shrink-0 rounded-lg text-muted-foreground hover:text-foreground"
+            className={cn(READING_TRIGGER, "text-muted-foreground hover:text-foreground")}
             title={`${label} — +${added} −${removed}`}
             aria-label={label}
           >
-            <GitCompareIcon className="size-3.5" />
-            {/* The count rides the mark, the way the subagent count does — the
-                cluster is a row of 24px squares and a number beside one would
-                make this the only control wider than it is tall. Secondary and
-                not primary: a settled fact, not something still running. */}
-            <span className="absolute -end-0.5 -top-0.5 grid size-3 place-items-center rounded-full bg-secondary text-[8px] font-semibold tabular-nums text-secondary-foreground">
-              {count > 9 ? "9+" : count}
-            </span>
+            <GitCompareIcon className={READING_MARK} />
+            {/* The subagent count's bargain, one tone quieter: the label where
+                the panel has room for words, the bubble on the mark where it does
+                not — one count, two dresses, never both, both shared with the
+                four beside it. Secondary and not primary: a settled fact, not
+                something still running. */}
+            <ReadingBadge>{label}</ReadingBadge>
+            <ReadingBubble tone="secondary">{count > 9 ? "9+" : count}</ReadingBubble>
           </Button>
         }
       />

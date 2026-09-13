@@ -210,9 +210,9 @@ await test("file-stat answers without reading the bytes", async () => {
 });
 
 // ── Writing ──────────────────────────────────────────────────────────────────
-await test("a write is atomic and leaves no temp file behind", () => {
+await test("a write is atomic and leaves no temp file behind", async () => {
   const before = readdirSync(root).length;
-  fs.writeFile(project.id, "src/written.ts", "const a = 1\n");
+  await fs.writeFile(project.id, "src/written.ts", "const a = 1\n");
   assert.equal(readFileSync(join(root, "src", "written.ts"), "utf8"), "const a = 1\n");
   assert.equal(readdirSync(root).length, before, "no stray temp file in the root");
   assert.ok(!readdirSync(join(root, "src")).some((name) => name.includes(".tmp")));
@@ -220,7 +220,7 @@ await test("a write is atomic and leaves no temp file behind", () => {
 
 await test("a stale write is a conflict, not an overwrite", async () => {
   const first = await fs.readFile(project.id, "src/written.ts");
-  fs.writeFile(project.id, "src/written.ts", "changed by someone else\n");
+  await fs.writeFile(project.id, "src/written.ts", "changed by someone else\n");
   assert.equal(
     await status(async () =>
       fs.writeFile(project.id, "src/written.ts", "mine\n", { expectedVersion: first.version }),
@@ -283,7 +283,7 @@ await test("rename moves inside the project only", async () => {
 await test("delete refuses the root and reports a missing target", async () => {
   assert.equal(await status(() => fs.deleteEntry(project.id, "")), 400);
   assert.equal(await status(() => fs.deleteEntry(project.id, "nope")), 404);
-  fs.deleteEntry(project.id, "src/renamed.ts");
+  await fs.deleteEntry(project.id, "src/renamed.ts");
   assert.equal(await status(() => fs.statFile(project.id, "src/renamed.ts")), 404);
   // The escape link itself cannot be removed through here either — resolving it
   // lands outside, which is refused before anything is unlinked.
@@ -578,6 +578,53 @@ await test("a project inside a larger repository sees only its own subtree", asy
   rmSync(repo, { recursive: true, force: true });
 });
 
+// ── Content search ───────────────────────────────────────────────────────────
+mkdirSync(join(root, "src", "nested"));
+writeFileSync(join(root, "src", "needle.ts"), "const nothing = 0\nconst needle = 1\n");
+writeFileSync(join(root, "src", "nested", "deeper.md"), "a needle in prose\n");
+writeFileSync(join(root, ".env"), "NEEDLE=hidden\n");
+writeFileSync(join(root, "node_modules", "needle-junk.js"), "const needle = 2\n");
+
+await test("a content search finds lines, with their paths and numbers", async () => {
+  const found = await fs.searchContents(project.id, "needle");
+  const hits = found.matches.map((m) => `${m.path}:${m.line}`).sort();
+  assert.deepEqual(hits, ["src/needle.ts:2", "src/nested/deeper.md:1"], JSON.stringify(found.matches));
+  assert.equal(found.truncated, false);
+  const line = found.matches.find((m) => m.path === "src/needle.ts");
+  assert.equal(line?.text, "const needle = 1", "the whole matched line comes back");
+});
+
+await test("a content search is case-insensitive and substring-shaped", async () => {
+  assert.equal((await fs.searchContents(project.id, "NEEDLE")).matches.length, 2);
+  assert.equal((await fs.searchContents(project.id, "eedl")).matches.length, 2);
+});
+
+await test("a content search skips what the tree hides", async () => {
+  // Hidden files and ignored directories are the explorer's own rules: a search
+  // that finds what the tree would not show is a search whose results cannot be
+  // opened by clicking them.
+  const found = await fs.searchContents(project.id, "needle");
+  assert.ok(!found.matches.some((m) => m.path.startsWith("node_modules")), "ignored dirs are skipped");
+  assert.ok(!found.matches.some((m) => m.path === ".env"), "dotfiles are skipped");
+});
+
+await test("a content search reads bytes, so binary files do not match", async () => {
+  writeFileSync(join(root, "src", "blob.bin"), Buffer.from("needle\0with a NUL"));
+  const found = await fs.searchContents(project.id, "needle");
+  assert.ok(!found.matches.some((m) => m.path.endsWith("blob.bin")));
+  rmSync(join(root, "src", "blob.bin"));
+});
+
+await test("an empty term searches nothing, and the cap says it was cut", async () => {
+  assert.deepEqual(await fs.searchContents(project.id, ""), { matches: [], truncated: false });
+  assert.deepEqual(await fs.searchContents(project.id, "   "), { matches: [], truncated: false });
+  for (let i = 0; i < 12; i += 1) writeFileSync(join(root, "src", `many-${i}.txt`), "needle\n");
+  const capped = await fs.searchContents(project.id, "needle", { limit: 3 });
+  assert.equal(capped.matches.length, 3);
+  assert.equal(capped.truncated, true);
+  for (let i = 0; i < 12; i += 1) rmSync(join(root, "src", `many-${i}.txt`));
+});
+
 // ── Terminals ────────────────────────────────────────────────────────────────
 await test("a terminal runs in the project directory and is bounded per project", async () => {
   const created = await terminals.createTerminal(project.id, { cols: 100, rows: 30 });
@@ -587,8 +634,11 @@ await test("a terminal runs in the project directory and is bounded per project"
   assert.equal(terminals.listTerminals(project.id).length, 1);
 
   // The cap is per project, and the refusal is a 409 rather than a silent
-  // eighth terminal that nothing owns.
-  for (let i = 1; i < 8; i += 1) terminals.createTerminal(project.id);
+  // eighth terminal that nothing owns. Awaited one by one: `createTerminal`
+  // resolves the project asynchronously before it counts, so firing the loop
+  // without awaiting lets every call read a map the others have not filled yet
+  // and the ninth finds room.
+  for (let i = 1; i < 8; i += 1) await terminals.createTerminal(project.id);
   assert.equal(await status(() => terminals.createTerminal(project.id)), 409);
   assert.equal(terminals.listTerminals(project.id).length, 8);
 });

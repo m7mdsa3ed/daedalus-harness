@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
 import { db, sessionQueue as queueTable } from "./db/index.js";
 import { listAttachments, refOf } from "./attachments.js";
 import type { AttachmentRef, QueuedMessage } from "./protocol.js";
@@ -71,16 +71,7 @@ export async function enqueue(
   text: string,
   attachments: AttachmentRef[] = [],
 ): Promise<QueuedMessage> {
-  const body = requireText(text, attachments);
-  const row = {
-    id: randomUUID(),
-    sessionId,
-    position: await nextPosition(sessionId),
-    text: body,
-    attachmentIds: attachments.length > 0 ? attachments.map((ref) => ref.id) : null,
-    createdAt: Date.now(),
-  };
-  await db.insert(queueTable).values(row);
+  const row = await insertQueued(sessionId, text, attachments, Date.now(), null);
   return {
     id: row.id,
     text: row.text,
@@ -89,13 +80,86 @@ export async function enqueue(
   };
 }
 
-async function nextPosition(sessionId: string): Promise<number> {
-  const row = (await db
-    .select({ max: sql<number | null>`max(${queueTable.position})` })
+/**
+ * Held steers becoming rows again (`SessionQueue.stop`), at the place their
+ * `createdAt` names among the rows already parked — a steer typed at t1 and a
+ * row queued at t2> t1 drain as "steer, then row", the order they were meant
+ * in. The list is ordered by `position`, and position order has been
+ * createdAt order since enqueue learned to append; each insert shifts the
+ * rows from the insertion point up by one to open a slot, steers oldest first
+ * so earlier inserts stay put. Rows the user deleted meanwhile are simply not
+ * there to be counted. The row KEEPS the steer's id: it is the same message,
+ * and the held row every peer was shown converts rather than being replaced.
+ */
+export async function requeueSteers(sessionId: string, steers: QueuedMessage[]): Promise<void> {
+  const parked = await db
+    .select({ createdAt: queueTable.createdAt, position: queueTable.position })
     .from(queueTable)
     .where(eq(queueTable.sessionId, sessionId))
-    .limit(1))[0];
-  return (row?.max ?? 0) + 1;
+    .orderBy(asc(queueTable.position));
+  const order = parked.map((entry) => entry.createdAt);
+  for (const steer of [...steers].sort((a, b) => a.createdAt - b.createdAt)) {
+    const index = order.filter((createdAt) => createdAt <= steer.createdAt).length;
+    if (index < parked.length) {
+      const target = parked[index]!.position;
+      await db
+        .update(queueTable)
+        .set({ position: sql`${queueTable.position} + 1` })
+        .where(and(eq(queueTable.sessionId, sessionId), gte(queueTable.position, target)));
+      await insertQueued(
+        sessionId,
+        steer.text,
+        steer.attachments ?? [],
+        steer.createdAt,
+        target,
+        steer.id,
+      );
+    } else {
+      await insertQueued(sessionId, steer.text, steer.attachments ?? [], steer.createdAt, null, steer.id);
+    }
+    order.splice(index, 0, steer.createdAt);
+  }
+}
+
+/** One insert, two callers: `enqueue` appends at MAX+1, `requeueSteers` names
+    an explicit position between the rows already parked. `position: null`
+    means append; `id` omitted means a fresh one. */
+async function insertQueued(
+  sessionId: string,
+  text: string,
+  attachments: AttachmentRef[],
+  createdAt: number,
+  position: number | null,
+  id: string = randomUUID(),
+) {
+  const body = requireText(text, attachments);
+  const row = {
+    id,
+    sessionId,
+    text: body,
+    attachmentIds: attachments.length > 0 ? attachments.map((ref) => ref.id) : null,
+    createdAt,
+    position:
+      position ??
+      sql`(SELECT COALESCE(MAX(${queueTable.position}), 0) + 1 FROM ${queueTable} WHERE ${queueTable.sessionId} = ${sessionId})`,
+  };
+  /*
+   * The position is read *inside* the insert, not before it.
+   *
+   * Two messages typed in the same breath are two commands off the same socket,
+   * and each used to be a `SELECT max(position)` and then an `INSERT` — two
+   * round trips with the other command's insert free to land between them.
+   * Both then got the same position, and `listQueue` ordered them by whatever
+   * the planner felt like: "a1, b1" came back as "b1, a1", and "send now" on
+   * the second row sent the first one. Synchronous storage could not do this,
+   * which is why the read-then-write survived the port to Postgres.
+   *
+   * ponytail: one statement, not a lock — a tie is now the width of a single
+   * statement's snapshot rather than of a network round trip. A unique index on
+   * (session_id, position) with a retry is the upgrade if one is ever observed.
+   */
+  await db.insert(queueTable).values(row);
+  return row;
 }
 
 /** `attachmentIds` omitted means "leave them alone"; an empty array clears

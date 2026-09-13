@@ -105,3 +105,41 @@ const dir = mkdtempSync(join(tmpdir(), "daedalus-model-prompts-"));
   assert.ok(!systemPrompt(session, env).includes("The engine under this agent"));
   console.log("model-prompts: systemPrompt ok");
 }
+
+// --- the OpenUI lane: offered to a thread with a reader, withheld otherwise ---
+{
+  const env = testEnv({ projectInstructions: false, holdOnError: true });
+  const session = new Session("s1", dir, env);
+  session.modelId = "gemini-2.5-pro";
+
+  const prompt = systemPrompt(session, env, { toolNames: ["bash"] });
+  assert.ok(prompt.includes("## Drawing an answer"), "a live thread is shown the lane");
+  assert.ok(prompt.includes("openui-lang"), "and names the fence tag the client draws");
+  assert.ok(prompt.includes("Stack(children"), "with the component table generated from the client's library");
+  assert.ok(
+    prompt.indexOf("## Drawing an answer") > prompt.indexOf("## The engine under this agent"),
+    "it reads after the engine's calibration",
+  );
+
+  /* A subagent's answer is a report to its caller, not something drawn — so the
+     lane is written for the parent only. */
+  const subagent = systemPrompt(session, env, { subagent: true, toolNames: ["bash"] });
+  assert.ok(!subagent.includes("## Drawing an answer"), "a subagent is not asked to draw");
+
+  /* `holdOnError` off is how a run with nobody in front of it is spawned
+     (DAEDALUS_AGENT_HOLD_ON_ERROR=0), which is the gate that keeps a view out
+     of a workflow step and a scheduled run. */
+  const unattended = systemPrompt(session, testEnv({ projectInstructions: false, holdOnError: false }), {
+    toolNames: ["bash"],
+  });
+  assert.ok(!unattended.includes("## Drawing an answer"), "an unattended run is not asked to draw");
+
+  /* The thread's own switch (`uiBlocks`): off, the lane is not mentioned at all,
+     so a fence the model writes anyway reads as the code block it is. */
+  const off = systemPrompt(session, testEnv({ projectInstructions: false, holdOnError: true, uiBlocks: false }), {
+    toolNames: ["bash"],
+  });
+  assert.ok(!off.includes("## Drawing an answer"), "the thread can turn the lane off");
+  assert.ok(off.includes("## The engine under this agent"), "and keeps the rest of the prompt");
+  console.log("model-prompts: openui lane ok");
+}

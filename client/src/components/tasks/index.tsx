@@ -13,7 +13,7 @@ import {
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { reportError } from "@/lib/errors"
+import { inlineFromQuery, reportError } from "@/lib/errors"
 import { toast } from "@/lib/toast"
 import { boardPath } from "@/lib/router"
 import type { BoardLocation } from "@/lib/tasks-location"
@@ -26,6 +26,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ProjectIcon } from "@/components/entity-icon"
+import { ErrorNote } from "@/components/error-note"
+import { Skeleton } from "@/components/ui/skeleton"
 import { COLOR_DOT, listsOf, sprintsOf, statusesOf, viewsOf, type Board, type BoardList, type BoardStatus, type BoardView, type Sprint } from "@/lib/boards"
 import { taskKey, type ReorderEntry, type Task, type TaskInput } from "@/lib/tasks-board"
 import {
@@ -280,13 +282,66 @@ function useRouteBoardLocation(): BoardLocation {
   }
 }
 
+/** Columns of cards — the shape the board view fills, so the frame is already
+    where it will be when the task read answers. */
+function BoardColumnsSkeleton() {
+  return (
+    <div className="flex min-h-0 flex-1 gap-3 overflow-hidden p-3">
+      {[...Array(4).keys()].map((column) => (
+        <div key={column} className="flex w-72 shrink-0 flex-col gap-2">
+          <Skeleton className="h-4 w-24" />
+          {[...Array(column === 0 ? 3 : 2).keys()].map((card) => (
+            <Skeleton key={card} className="h-20 w-full rounded-xl" />
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** The board's frame before its reads answer: the rail, the header and the
+    columns in their sizes. A pending board used to draw as a board with no
+    cards, which is a claim about the data rather than about the read. */
+function BoardSkeleton() {
+  return (
+    <div aria-busy="true" className="@container flex min-h-0 flex-1">
+      <div className="hidden w-56 shrink-0 space-y-1 border-r p-2 @panel-md:block">
+        {[...Array(4).keys()].map((index) => (
+          <div key={index} className="flex items-center gap-2 rounded-md px-2 py-1.5">
+            <Skeleton className="size-3.5 shrink-0 rounded-sm" />
+            <Skeleton className="h-3 flex-1" />
+          </div>
+        ))}
+      </div>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex items-center gap-2 border-b px-3 py-2 sm:px-4">
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="ml-auto h-7 w-32" />
+        </div>
+        <BoardColumnsSkeleton />
+      </div>
+    </div>
+  )
+}
+
+/** The list, table, calendar and sprint modes while the task read is out. */
+function BoardRowsSkeleton() {
+  return (
+    <div aria-busy="true" className="min-h-0 flex-1 space-y-1.5 overflow-hidden p-3">
+      {[...Array(9).keys()].map((index) => (
+        <Skeleton key={index} className="h-9 w-full rounded-lg" />
+      ))}
+    </div>
+  )
+}
+
 /** One board, however it is being hosted. */
 export function BoardWorkspace({ location }: { location: BoardLocation }) {
   const projects = useProjects()
 
   const tasksQuery = useTasksQuery()
   const tasks = React.useMemo(() => tasksQuery.data ?? [], [tasksQuery.data])
-  const { boards, statuses: allStatuses, sprints: allSprints, views: allViews, lists: allLists, loaded } = useBoards()
+  const { boards, statuses: allStatuses, sprints: allSprints, views: allViews, lists: allLists, loaded, error: boardsError } = useBoards()
   const createTaskMut = useCreateTask()
   const updateTaskMut = useUpdateTask()
   const deleteTaskMut = useDeleteTask()
@@ -467,11 +522,24 @@ export function BoardWorkspace({ location }: { location: BoardLocation }) {
     onToggleSelect: toggleSelect,
   }
 
-  if (!loaded || !board) {
+  if (boardsError) {
+    /* A read that failed is a failure, not a wait: the skeleton below would
+       otherwise shimmer forever over a page that is never going to fill. */
     return (
-      <div className="grid flex-1 place-items-center p-8 text-sm text-muted-foreground">
-        {loaded && boards.length === 0 ? "No boards yet." : "Loading boards…"}
+      <div className="p-6">
+        <ErrorNote error={inlineFromQuery(boardsError, "Couldn't read the boards")} />
       </div>
+    )
+  }
+
+  if (!loaded || !board) {
+    /* "Loading boards…" as a sentence was the whole state, and it read as an
+       empty board with a caption. A board that genuinely has none is the only
+       case that gets words. */
+    return loaded && boards.length === 0 ? (
+      <div className="grid flex-1 place-items-center p-8 text-sm text-muted-foreground">No boards yet.</div>
+    ) : (
+      <BoardSkeleton />
     )
   }
 
@@ -632,40 +700,52 @@ export function BoardWorkspace({ location }: { location: BoardLocation }) {
           />
         )}
 
-        {mode === "board" && (
-          <KanbanView
-            {...viewProps}
-            onMove={handleMove}
-            columns={{
-              onAdd: () => setColumnDialog(true),
-              onEdit: () => setBoardDialog({ open: true, board }),
-              onDelete: setDeletingStatus,
-              onMove: moveColumn,
-            }}
-          />
-        )}
-        {mode === "list" && <ListView {...viewProps} />}
-        {mode === "table" && <TableView {...viewProps} />}
-        {mode === "calendar" && <CalendarView {...viewProps} />}
-        {mode === "timeline" && <TimelineView {...viewProps} />}
-        {mode === "sprints" && (
-          <BacklogView
-            {...viewProps}
-            sprintOps={{
-              onCreate: () => setSprintDialog({ open: true, sprint: null }),
-              onEdit: (sprint) => setSprintDialog({ open: true, sprint }),
-              onStart: (sprint) =>
-                startSprintMut
-                  .mutateAsync(sprint.id)
-                  .then(() => toast.success(`${sprint.name} started`))
-                  .catch((err) => reportError(err, "Couldn't start the sprint")),
-              onComplete: setCompletingSprint,
-              onDelete: (sprint) => {
-                if (!window.confirm(`Delete ${sprint.name}? Its tasks return to the backlog.`)) return
-                deleteSprintMut.mutateAsync(sprint.id).catch((err) => reportError(err, "Couldn't delete the sprint"))
-              },
-            }}
-          />
+        {tasksQuery.isPending ? (
+          /* The board and its columns are known; the cards are not. Drawing
+             them empty says "no tasks", which is the one thing it must not. */
+          mode === "board" ? (
+            <BoardColumnsSkeleton />
+          ) : (
+            <BoardRowsSkeleton />
+          )
+        ) : (
+          <>
+          {mode === "board" && (
+            <KanbanView
+              {...viewProps}
+              onMove={handleMove}
+              columns={{
+                onAdd: () => setColumnDialog(true),
+                onEdit: () => setBoardDialog({ open: true, board }),
+                onDelete: setDeletingStatus,
+                onMove: moveColumn,
+              }}
+            />
+          )}
+          {mode === "list" && <ListView {...viewProps} />}
+          {mode === "table" && <TableView {...viewProps} />}
+          {mode === "calendar" && <CalendarView {...viewProps} />}
+          {mode === "timeline" && <TimelineView {...viewProps} />}
+          {mode === "sprints" && (
+            <BacklogView
+              {...viewProps}
+              sprintOps={{
+                onCreate: () => setSprintDialog({ open: true, sprint: null }),
+                onEdit: (sprint) => setSprintDialog({ open: true, sprint }),
+                onStart: (sprint) =>
+                  startSprintMut
+                    .mutateAsync(sprint.id)
+                    .then(() => toast.success(`${sprint.name} started`))
+                    .catch((err) => reportError(err, "Couldn't start the sprint")),
+                onComplete: setCompletingSprint,
+                onDelete: (sprint) => {
+                  if (!window.confirm(`Delete ${sprint.name}? Its tasks return to the backlog.`)) return
+                  deleteSprintMut.mutateAsync(sprint.id).catch((err) => reportError(err, "Couldn't delete the sprint"))
+                },
+              }}
+            />
+          )}
+          </>
         )}
       </div>
 

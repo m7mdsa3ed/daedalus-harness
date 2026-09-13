@@ -17,7 +17,9 @@
     "electron:dist:win": "pnpm build && electron-builder --win",
     "icons": "node scripts/render-icons.mjs",
     "themes": "node scripts/gen-themes.mjs",
-    "test": "tsc -b"
+    "test": "tsc -b",
+    "openui": "node scripts/gen-openui.mjs",
+    "openui:check": "node scripts/gen-openui.mjs --check"
   },
   "build": {
     "appId": "com.daedalus.harness",
@@ -66,6 +68,7 @@
     "@fontsource/newsreader": "^5.3.0",
     "@hugeicons/core-free-icons": "^4.3.0",
     "@hugeicons/react": "^1.1.10",
+    "@openuidev/react-lang": "0.2.15",
     "@shadcn/react": "^0.3.1",
     "@tailwindcss/typography": "^0.5.20",
     "@tailwindcss/vite": "^4.3.3",
@@ -102,7 +105,8 @@
     "shadcn": "^4.21.0",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.3",
-    "tiptap-markdown": "^0.9.0"
+    "tiptap-markdown": "^0.9.0",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "1.4.0",
@@ -113,6 +117,7 @@
     "@vitejs/plugin-react": "^6.1.1",
     "electron": "^44.2.0",
     "electron-builder": "^26.15.3",
+    "esbuild": "0.27.2",
     "eslint": "^10.10.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.6",

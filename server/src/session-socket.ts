@@ -62,7 +62,7 @@ export interface SocketHost {
   queueSteer(id: string, itemId: string): Promise<{ turnId: string }>;
   queueUpdate(id: string, itemId: string, text: string, attachmentIds?: string[]): Promise<void>;
   queueRemove(id: string, itemId: string): Promise<void>;
-  queueClear(id: string): void;
+  queueClear(id: string): Promise<void>;
   stopTurn(id: string, reclaim: boolean): Promise<CancelReply>;
   /** Continue a held turn, taking a staged change first when there is one. */
   resumeTurn(id: string): Promise<{ paused: boolean }>;
@@ -390,23 +390,28 @@ export class SessionSocket {
     }
     /* The queue edits, for the same reason: a queue parked on a thread whose
        process is gone is still the user's words, and taking one back should
-       not cost a spawn. */
+       not cost a spawn.
+
+       Awaited, all three: the reply is "this is done", and these write to the
+       database now. Left floating, the edit was still in flight when its own
+       reply went out — and a failed one had nobody to reject to, so a row that
+       was never written answered as though it had been. */
     switch (command.cmd) {
       case "queue_update":
         this.run(session, peer, command.id, async () => {
-          this.host.queueUpdate(session.id, command.itemId, command.text, command.attachmentIds);
+          await this.host.queueUpdate(session.id, command.itemId, command.text, command.attachmentIds);
           return {};
         });
         return;
       case "queue_remove":
         this.run(session, peer, command.id, async () => {
-          this.host.queueRemove(session.id, command.itemId);
+          await this.host.queueRemove(session.id, command.itemId);
           return {};
         });
         return;
       case "queue_clear":
         this.run(session, peer, command.id, async () => {
-          this.host.queueClear(session.id);
+          await this.host.queueClear(session.id);
           return {};
         });
         return;

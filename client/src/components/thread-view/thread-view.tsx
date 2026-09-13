@@ -55,6 +55,7 @@ import {
   withTurnSuggestions,
   withTurnUsage,
 } from "@/components/thread-view/turn-footers"
+import { useEarlierAnchor } from "@/components/thread-view/earlier-anchor"
 import { useThreadKeys } from "@/components/thread-view/thread-keys"
 import { StartingLine, useWaitShown } from "@/components/thread-view/starting-line"
 import { ThreadWelcome } from "@/components/thread-view/welcome"
@@ -107,6 +108,12 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
     observer.observe(node)
     return () => observer.disconnect()
   }, [actions, follow.viewport, hasEarlier, thread.earlier, sessionId])
+  /* The click that pages history back is the one thing on this surface that
+     moves the scroll position under the reader: the re-fold replaces every row
+     and the position has to be put back by hand. See the helper. */
+  const loadEarlier = useEarlierAnchor(follow.viewport, thread.loadingEarlier, () =>
+    void actions.loadEarlier(sessionId)
+  )
   /* Memoised separately: `.filter` would hand `rows` a fresh array every render
      even when nothing changed, and `rows`' memo depends on it. Two stable layers
      (items → visible → rows) is what lets a streaming update — which mutates one
@@ -133,17 +140,18 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
       thread.items.filter(
         (item) =>
           (!options.answersOnly || isAnswerItem(item)) &&
+          (options.showShellCommands || item.kind !== "shell") &&
           (options.showConfigNotices || item.kind !== "notice" || item.config !== true)
       ),
-    [thread.items, options.answersOnly, options.showConfigNotices]
+    [thread.items, options.answersOnly, options.showShellCommands, options.showConfigNotices]
   )
   /* Nesting folds a subagent's work under its step; grouping folds a *run*
      of steps into one row. Both are computed here, not in the reducer: they
      are ways of looking at the transcript, not changes to it, and toggling
      the option must not touch a single item. See lib/transcript-rows. */
   const rows = React.useMemo(
-    () => buildRows(visible, options.groupTools, thread.turnActive),
-    [options.groupTools, visible, thread.turnActive]
+    () => buildRows(visible, options.groupTools, thread.turnActive, options.groupShellCommands),
+    [options.groupTools, options.groupShellCommands, visible, thread.turnActive]
   )
   /* Where a Sources strip goes: after the item that ends each finished turn.
      Keyed by that item's id so the lookup below is one map hit per row, and
@@ -491,7 +499,7 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                       size="sm"
                       variant="outline"
                       disabled={thread.loadingEarlier}
-                      onClick={() => void actions.loadEarlier(sessionId)}
+                      onClick={loadEarlier}
                     >
                       <ChevronUp className={cn("size-4", thread.loadingEarlier && "animate-pulse")} />
                       {thread.loadingEarlier ? "Loading…" : "Load earlier steps"}

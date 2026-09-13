@@ -10,6 +10,23 @@
    thing). See `components/token-usage.tsx` for the drawn forms. */
 import type * as acp from "@daedalus/acp"
 
+import { vendorMeta } from "@/lib/tools"
+
+/**
+ * Whether the window this reading is a fraction of was measured or guessed.
+ *
+ * ACP's `size` is a required number with no way to say "unknown", so a runtime
+ * that has no catalog entry for the model it is on has to report *something* —
+ * and a fabricated denominator turns a percentage, a "remaining" figure and a
+ * compaction warning into three confident lies. Our own runtime says so beside
+ * the figure instead (`agent/src/compaction.ts`, `ContextWindow.known`); a
+ * runtime that says nothing is taken at its word, which is the only thing that
+ * can be done with it.
+ */
+export function windowEstimated(usage: acp.UsageUpdate | null | undefined): boolean {
+  return vendorMeta(usage?._meta, "daedalus")?.windowEstimated === true
+}
+
 /** `842`, `12.4k`, `1.3M` — three significant-ish digits at every scale, so a
     column of them stays the same width. */
 export function formatTokens(value: number): string {

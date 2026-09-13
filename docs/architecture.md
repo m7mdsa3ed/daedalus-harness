@@ -63,7 +63,14 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   style `_meta.terminal_output_delta` streaming from `bash`, MCP servers via
   `@modelcontextprotocol/sdk` wrapped in `dynamicTool` (`mcp__<server>__<tool>`),
   materialized commands/skills, persona via `{personaFile}`, compaction past ~80% of
-  the window, and the subagent RFD (`task` tool) with a journal-only fallback.
+  the window **the model it is on right now** declares — the window is a property of the
+  model and the model is a live setting, so `{modelWindows}` ships the whole profile
+  catalog at spawn (`DAEDALUS_AGENT_MODEL_WINDOWS`) rather than the one figure
+  `{contextWindow}` used to freeze, and the 80% is of the window *less the answer's own
+  room*, since a prompt at 80% of a 1M window has nowhere to put a 64k reply. A window no
+  catalog knew is still guessed at, and the guess is flagged
+  (`_meta.daedalus.windowEstimated`) so the ring draws a `~` instead of a percentage of a
+  number nobody measured. Also the subagent RFD (`task` tool) with a journal-only fallback.
   It also reads the instruction files a repo already has — `AGENTS.md`,
   `CLAUDE.md`, `CLAUDE.local.md` from the cwd up to the **git root** (above a
   checkout is somebody's home directory) plus `~/.claude/CLAUDE.md` first and

@@ -4,6 +4,7 @@
    it is on. */
 import * as React from "react"
 import { ArrowLeft, type LucideIcon } from "lucide-react"
+import { Empty } from "@/components/empty"
 import { ErrorNote } from "@/components/error-note"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -94,13 +95,11 @@ export function Row({
   )
 }
 
-export function EmptyCard({ icon: Icon, text, action }: { icon: LucideIcon; text: string; action?: React.ReactNode }) {
+export function EmptyCard({ icon, text, action }: { icon: LucideIcon; text: string; action?: React.ReactNode }) {
   return (
-    <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-6 py-12 text-center">
-      <Icon className="size-6 text-muted-foreground/60" />
-      <p className="text-sm text-muted-foreground">{text}</p>
-      {action}
-    </div>
+    <Empty size="lg" icon={icon} action={action}>
+      {text}
+    </Empty>
   )
 }
 
@@ -199,7 +198,7 @@ export function Picker<T extends { id: string; name: string }>({
   )
 
   if (items.length === 0) {
-    return <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">{empty}</p>
+    return <Empty>{empty}</Empty>
   }
 
   const shownIds = shown.map((item) => item.id)
@@ -209,9 +208,7 @@ export function Picker<T extends { id: string; name: string }>({
 
   const list =
     shown.length === 0 ? (
-      <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
-        Nothing matches “{query.trim()}”.
-      </p>
+      <Empty>Nothing matches “{query.trim()}”.</Empty>
     ) : (
       <div className="max-h-64 divide-y overflow-y-auto rounded-lg border">
         {shown.map((item) => (

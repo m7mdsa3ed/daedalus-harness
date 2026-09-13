@@ -6,9 +6,16 @@ import { BotIcon, LoaderCircleIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  READING_MARK,
+  READING_TRIGGER,
+  ReadingBadge,
+  ReadingBubble,
+} from "@/components/composer/indicator"
 import { extractSubagent } from "@/lib/tools"
 import { activeSubagents, buildRows } from "@/lib/transcript-rows"
 import { type ThreadState } from "@/lib/store"
+import { cn } from "@/lib/utils"
 
 /** One subagent still at work, whichever way its runtime announced it. */
 interface RunningAgent {
@@ -85,17 +92,18 @@ export function AgentsIndicator({ thread }: { thread: ThreadState }) {
           <Button
             variant="ghost"
             size="icon-xs"
-            className="relative shrink-0 rounded-lg text-primary hover:text-primary"
+            className={cn(READING_TRIGGER, "text-primary hover:text-primary")}
             title={`${label} — ${agents.map((agent) => agent.name ?? agent.task).join(", ")}`}
             aria-label={label}
           >
-            <BotIcon className="size-3.5" />
-            {/* The count rides the mark rather than sitting beside it: the
-                cluster is a row of 24px squares and a number outside one would
-                make this the only control that is wider than it is tall. */}
-            <span className="absolute -end-0.5 -top-0.5 grid size-3 place-items-center rounded-full bg-primary text-[8px] font-semibold tabular-nums text-primary-foreground">
-              {count > 9 ? "9+" : count}
-            </span>
+            <BotIcon className={READING_MARK} />
+            {/* Where there is room to write it the count is the text badge, and
+                the bubble is not; on a narrow panel the badge would not fit, so
+                the count rides the mark instead. One count, two dresses, never
+                both — and both come from the shared reading parts, so this row
+                is the same shape as the four beside it. */}
+            <ReadingBadge>{label}</ReadingBadge>
+            <ReadingBubble>{count > 9 ? "9+" : count}</ReadingBubble>
           </Button>
         }
       />

@@ -163,6 +163,11 @@ export interface Session {
       bargain as the persona: read only at session creation/load, so toggling
       it costs a respawn. */
   suggestFollowups: boolean;
+  /** Whether the agent may answer with a fenced `openui-lang` block, which the
+      client draws as real UI (`client/src/lib/openui/`). Same spawn-input
+      bargain as the suggestions trailer: it is system-prompt text, so toggling
+      it costs a respawn. */
+  uiBlocks: boolean;
   title: string;
   /** The current title came from the first-prompt fallback, so an ACP
       `session_info_update` may replace it with the agent's better title. */
@@ -660,6 +665,9 @@ export class SessionManager {
         // Absent on rows written before the toggle existed — which never asked
         // either way — so missing reads as the default: on.
         suggestFollowups: row.suggestFollowups ?? true,
+        // The same default-on bargain: a row written before the switch existed
+        // never asked, and asking is the default.
+        uiBlocks: row.uiBlocks ?? true,
         titleFromPrompt: null,
         profile: null,
         project: null,
@@ -750,41 +758,46 @@ export class SessionManager {
    * every title sniff and every model change; now it touches one row, so it
    * stays cheap however many threads exist.
    *
+   * **An UPDATE, never an upsert — this cannot create a row.** Two reasons, and
+   * both were bugs:
+   *
+   *  - `INSERT … ON CONFLICT DO UPDATE` takes `FOR UPDATE` on the row, which
+   *    conflicts with the `FOR KEY SHARE` every insert into `session_events`
+   *    takes on its parent while the journal's flush transaction is open. A
+   *    streaming turn flushes constantly, so the title sniff behind the first
+   *    prompt — which is what makes that prompt's reply — waited seconds for a
+   *    batch of its own events to commit. A plain UPDATE that leaves the key
+   *    alone takes `FOR NO KEY UPDATE`, which does not conflict.
+   *  - Several of these writes are started and not awaited (the agent's session
+   *    id, a title the agent sent, the title sniff), so one can land after the
+   *    `purge` that was meant to be the end of the thread. An upsert *put the
+   *    row back* — with no links and nobody expecting it — and the journal rows
+   *    buffered behind it then had a parent to attach to again.
+   *
+   * The row's existence belongs to `createRow` and `purge`. Nothing else.
+   *
    * What is NOT here is deliberate: the conversation lives in the agent's own
    * session store and comes back through ACP session/load on revive.
    */
   private async persist(session?: Session): Promise<void> {
     const rows = session ? [session] : [...this.sessions.values()];
     for (const s of rows) {
-      const values = {
-        id: s.id,
-        profileId: s.profileId,
-        projectId: s.projectId,
-        agentId: s.agentId,
-        model: s.model,
-        effort: s.effort,
-        modeId: s.modeId,
-        configChoices: s.configChoices,
-        personaId: s.personaId || null,
-        suggestFollowups: s.suggestFollowups,
-        title: s.title,
-        acpSessionId: s.acpSessionId ?? null,
-        acpSessionProvisional: s.acpSessionProvisional,
-        createdAt: s.createdAt,
-        lastActivityAt: s.lastActivityAt,
-        lastTurnError: s.lastTurnError,
-        context: s.context,
-        deletedAt: s.deletedAt,
-        pinnedAt: s.pinnedAt,
-        parentSessionId: s.parentSessionId,
-        forkedFromSessionId: s.forkedFromSessionId,
-        forkedFromTurnId: s.forkedFromTurnId,
-      };
-      await db.insert(sessionsTable).values(values).onConflictDoUpdate({
-        target: sessionsTable.id,
-        set: values,
-      });
+      // A thread this manager no longer holds is one it has purged; the row is
+      // gone and the update would match nothing anyway. Skipped rather than
+      // sent, so a purge does not answer for every stale write behind it.
+      if (this.sessions.get(s.id) !== s) continue;
+      await db.update(sessionsTable).set(rowValues(s)).where(eq(sessionsTable.id, s.id));
     }
+  }
+
+  /** The row for a thread that does not have one yet — `create`, an import and
+      a fork, which are the three places a session begins. Everything after is
+      `persist`, which only ever updates. */
+  private async createRow(session: Session): Promise<void> {
+    await db.insert(sessionsTable).values(rowValues(session)).onConflictDoUpdate({
+      target: sessionsTable.id,
+      set: rowValues(session),
+    });
   }
 
   /** The thread's own links are written once, at create — they do not change
@@ -1247,6 +1260,9 @@ export class SessionManager {
           picked on the draft like the persona, and free there: nothing is
           running yet, so there is no respawn to pay for. */
       suggestFollowups?: boolean;
+      /** Whether answers may carry a drawn view — the same draft-picked,
+          spawn-input bargain as the suggestions toggle. */
+      uiBlocks?: boolean;
       /** The permission mode picked on the draft, out of the agent's probed
           `modes`. Applied over `session/set_mode` right after session/new —
           the same door a live mode change uses, so a later respawn puts it
@@ -1270,6 +1286,7 @@ export class SessionManager {
       modeId: opts.modeId,
       personaId: opts.personaId,
       suggestFollowups: opts.suggestFollowups,
+      uiBlocks: opts.uiBlocks,
       title: opts.title,
       parentSessionId: opts.parentSessionId,
       autonomy: opts.autonomy,
@@ -1277,13 +1294,21 @@ export class SessionManager {
     this.sessions.set(session.id, session);
     // Before the bridge: the event rows reference this one, so the session has
     // to exist by the time the agent's first update arrives.
-    await this.persist(session);
+    await this.createRow(session);
     await this.persistLinks(session);
     await this.start(session, profile, project, model, effort, {
       configChoices,
       restore: opts.restore,
       modeId: opts.modeId,
     });
+    /* Again, now that the handshake has answered. What it answered with — the
+       agent's session id above all — is written by a callback whose own write
+       is not awaited by anything (`onAcpSessionId`), so it is only as durable
+       as whatever the connection pool is doing. `create` returning is the
+       moment a caller is entitled to assume the row matches the thread, and an
+       id that never reached the row is a conversation the next boot cannot
+       find. */
+    await this.persist(session);
     this.armDeadline(session);
     return session;
   }
@@ -1349,6 +1374,7 @@ export class SessionManager {
       modeId?: string | null;
       personaId?: string;
       suggestFollowups?: boolean;
+      uiBlocks?: boolean;
       title?: string;
       parentSessionId?: string;
       autonomy?: AutonomyPolicy;
@@ -1381,6 +1407,7 @@ export class SessionManager {
       configChoices: {},
       personaId: opts.personaId ?? "",
       suggestFollowups: opts.suggestFollowups ?? true,
+      uiBlocks: opts.uiBlocks ?? true,
       title: opts.title ?? "New thread",
       titleFromPrompt: null,
       acpSessionProvisional: false,
@@ -1454,7 +1481,7 @@ export class SessionManager {
     // openThread — which is the one that revives it.
     session.exited = true;
     this.sessions.set(session.id, session);
-    this.persist(session);
+    void this.createRow(session);
     this.persistLinks(session);
     return session;
   }
@@ -1509,7 +1536,13 @@ export class SessionManager {
        the stale prompt file cleared as much as one that gained a persona needs
        it written. */
     const rules = [...(await globalRules()), ...(await projectRules(project.id))];
-    const persona = await resolvePersonaSpawn(session.id, session.personaId, agent, session.suggestFollowups, rules);
+    const persona = await resolvePersonaSpawn(
+      session.id,
+      session.personaId,
+      agent,
+      { suggestFollowups: session.suggestFollowups, uiBlocks: session.uiBlocks },
+      rules,
+    );
     /* An agent whose children never reach ACP is given a port and a secret so
        the server can read them off its own event bus (opencode-subagents.ts).
        Minted here, per spawn, never stored — like the gateway key. The pool
@@ -1533,6 +1566,9 @@ export class SessionManager {
          is a run that never reports. `autonomy` is null exactly for the thread
          with a human in front of it (see `Session.autonomy`). */
       !!session.parentSessionId || session.autonomy !== null,
+      /* The thread's own ask about drawn views, read off the row like the
+         persona — `start` has to work for a revive with no caller. */
+      session.uiBlocks,
     );
     const feed = sidecar
       ? new OpencodeSubagentFeed({
@@ -1744,7 +1780,16 @@ export class SessionManager {
    */
   async applyConfig(
     id: string,
-    next: { profile: Profile; agentId: string; project: Project; model?: string; effort?: string; personaId?: string; suggestFollowups?: boolean },
+    next: {
+      profile: Profile;
+      agentId: string;
+      project: Project;
+      model?: string;
+      effort?: string;
+      personaId?: string;
+      suggestFollowups?: boolean;
+      uiBlocks?: boolean;
+    },
     opts: { defer?: boolean; follow?: boolean } = {},
   ): Promise<{ live: boolean; staged?: StagedConfig; restarting?: boolean }> {
     const session = this.sessions.get(id);
@@ -1809,6 +1854,7 @@ export class SessionManager {
     const changed = next.personaId !== undefined && next.personaId !== session.personaId;
     if (next.personaId !== undefined) session.personaId = next.personaId;
     if (next.suggestFollowups !== undefined) session.suggestFollowups = next.suggestFollowups;
+    if (next.uiBlocks !== undefined) session.uiBlocks = next.uiBlocks;
     /* A persona that names an effort applies it — but only at the moment it is
        *picked*, never on every later spawn. Otherwise the persona would win
        every argument: the user drops "Think more" to medium, changes their
@@ -1911,6 +1957,7 @@ export class SessionManager {
       effort: session.effort,
       personaId: session.personaId,
       suggestFollowups: session.suggestFollowups,
+      uiBlocks: session.uiBlocks,
     });
     /* The load came back without the conversation, so the journal is no longer
        a record of what this process holds — and the peer that has not been
@@ -1939,7 +1986,14 @@ export class SessionManager {
 
   private stageConfig(
     session: Session,
-    next: { profile: Profile; model?: string; effort?: string; personaId?: string; suggestFollowups?: boolean },
+    next: {
+      profile: Profile;
+      model?: string;
+      effort?: string;
+      personaId?: string;
+      suggestFollowups?: boolean;
+      uiBlocks?: boolean;
+    },
   ): StagedConfig {
     const staged: StagedConfig = {
       ...(session.stagedConfig ?? {}),
@@ -1948,6 +2002,7 @@ export class SessionManager {
       ...(next.effort !== undefined ? { effort: next.effort } : {}),
       ...(next.personaId !== undefined ? { personaId: next.personaId } : {}),
       ...(next.suggestFollowups !== undefined ? { suggestFollowups: next.suggestFollowups } : {}),
+      ...(next.uiBlocks !== undefined ? { uiBlocks: next.uiBlocks } : {}),
     };
     this.setStaged(session, staged);
     return staged;
@@ -2081,6 +2136,7 @@ export class SessionManager {
     "Effort",
     "Persona",
     "Follow-ups",
+    "Drawn UI",
   ];
 
   private async configLabels(session: Session): Promise<Record<ConfigNoticeLabel, string>> {
@@ -2101,6 +2157,7 @@ export class SessionManager {
       // is exactly what the next spawn will give it.
       Persona: persona?.name ?? "None",
       "Follow-ups": session.suggestFollowups ? "On" : "Off",
+      "Drawn UI": session.uiBlocks ? "On" : "Off",
       // Never diffed here: the mode travels its own door and writes its own row
       // (`AcpBridge.setMode`). Present so the record is total.
       Mode: session.modeId ?? "",
@@ -2124,7 +2181,16 @@ export class SessionManager {
       and it is answered before anything about the thread has been changed. */
   private async applyConfigLive(
     session: Session,
-    next: { profile: Profile; agentId: string; project: Project; model?: string; effort?: string; personaId?: string; suggestFollowups?: boolean },
+    next: {
+      profile: Profile;
+      agentId: string;
+      project: Project;
+      model?: string;
+      effort?: string;
+      personaId?: string;
+      suggestFollowups?: boolean;
+      uiBlocks?: boolean;
+    },
   ): Promise<boolean> {
     const agent = await getAgent(session.agentId);
     if (!agent?.liveConfig) return false;
@@ -2136,6 +2202,8 @@ export class SessionManager {
     /* Same door, same rule: the suggestions trailer is spawn text, so a
        thread that flips it needs the new process rather than a live patch. */
     if (next.suggestFollowups !== undefined && next.suggestFollowups !== session.suggestFollowups) return false;
+    /* As are the drawn-UI lane's instructions, for the same reason. */
+    if (next.uiBlocks !== undefined && next.uiBlocks !== session.uiBlocks) return false;
     // Mid-respawn, mid-revive, or no process: whatever is about to exist is
     // going to be spawned with these settings anyway.
     if (session.respawnChain || !session.bridge || session.exited) return false;
@@ -2208,6 +2276,7 @@ export class SessionManager {
       effort,
       personaId: session.personaId,
       suggestFollowups: session.suggestFollowups,
+      uiBlocks: session.uiBlocks,
     });
     /* What moved is said by `applyConfig`, which owns both outcomes and can
        therefore say the same thing whether the change was live or cost the
@@ -2344,6 +2413,7 @@ export class SessionManager {
          reads it off the session. Same bargain as `applyConfig`'s. */
       if (staged.personaId !== undefined) session.personaId = staged.personaId;
       if (staged.suggestFollowups !== undefined) session.suggestFollowups = staged.suggestFollowups;
+      if (staged.uiBlocks !== undefined) session.uiBlocks = staged.uiBlocks;
     }
     this.clearStaged(session);
     /* Captured while the old process is still up — it is the only thing that
@@ -2429,6 +2499,7 @@ export class SessionManager {
         effort: session.effort,
         personaId: session.personaId,
         suggestFollowups: session.suggestFollowups,
+        uiBlocks: session.uiBlocks,
       });
     }
     return session;
@@ -2629,6 +2700,7 @@ export class SessionManager {
       modeId: session.modeId,
       personaId: session.personaId,
       suggestFollowups: session.suggestFollowups,
+      uiBlocks: session.uiBlocks,
       /* A name the user did not type is still a name the sniff must not
          replace — which is why it is set here rather than left to the
          "New thread" default. */
@@ -2643,7 +2715,7 @@ export class SessionManager {
     // Before the bridge, for the same reason `create` does it this way: the
     // event rows reference this row, and the load replay starts arriving the
     // moment the process answers its handshake.
-    await this.persist(child);
+    await this.createRow(child);
     await this.persistLinks(child);
 
     const childBridge = await this.start(child, profile, project, child.model || undefined, child.effort || undefined, {
@@ -2715,9 +2787,13 @@ export class SessionManager {
        dropped rather than refused (attachments.ts). */
     const attachments = await claimAttachments(opts.attachmentIds ?? [], session.id);
     if (bridge.promptActive && !opts.steer) {
-      const item = await enqueue(session.id, text, attachments);
-      this.queue.emitQueue(session);
-      return { queued: true, itemId: item.id };
+      /* The queue's own door, not a second copy of it: `add` writes the row on
+         this thread's queue chain — so two messages typed in one breath keep
+         the order they were sent in — and emits the list before answering, so
+         no peer is told "queued" while holding a list without it in. It drains
+         on an idle thread, which cannot happen here (`promptActive`) and is
+         harmless if the turn ends in between. */
+      return await this.queue.add(session, text, attachments);
     }
     /* A change picked since the last message is taken here, before the turn it
        was picked for. This is the one door every turn comes through — the
@@ -2771,7 +2847,19 @@ export class SessionManager {
     if (text && session.title === "New thread") {
       session.title = text.slice(0, TITLE_SNIFF_MAX);
       session.titleFromPrompt = session.title;
-      await this.persist(session);
+      /* The name is taken in memory — which is what every reader of the thread
+         reads — and written down without holding the answer to the command that
+         caused it. The reply here means "the turn started", and by this line it
+         has: the prompt is on the wire. The row is the one thing that can wait,
+         and on a streaming thread it does wait: the write goes in behind the
+         journal's own, which is flushing this turn's updates as they arrive.
+         Awaited, that was seconds of a send button still saying it was sending.
+         The failure is logged rather than thrown, for the same reason it is not
+         awaited — there is nobody left to tell, and the next `persist` (every
+         turn ends with one) writes the title again. */
+      void this.persist(session).catch((error: unknown) =>
+        console.error(`[sessions] could not write ${session.id.slice(0, 8)}'s title`, error),
+      );
     }
     return deferred ? { turnId, deferred } : { turnId };
   }
@@ -2930,6 +3018,7 @@ export class SessionManager {
       modeId: s.modeId,
       personaId: s.personaId,
       suggestFollowups: s.suggestFollowups,
+      uiBlocks: s.uiBlocks,
       title: s.title,
       ...s.links,
       /* The session anything asking today would mean: a task transcript's
@@ -3147,4 +3236,33 @@ function modelFor(session: Session, profile: Profile, model: string | undefined)
   const bare = bareModelId(profile, model);
   if (catalog.length > 0) return catalog.some((entry) => entry.id === bare) ? bare : "";
   return profile.id === session.profileId ? model : "";
+}
+
+/** The durable half of a session, as the row shape. */
+function rowValues(s: Session) {
+  return {
+    id: s.id,
+    profileId: s.profileId,
+    projectId: s.projectId,
+    agentId: s.agentId,
+    model: s.model,
+    effort: s.effort,
+    modeId: s.modeId,
+    configChoices: s.configChoices,
+    personaId: s.personaId || null,
+    suggestFollowups: s.suggestFollowups,
+    uiBlocks: s.uiBlocks,
+    title: s.title,
+    acpSessionId: s.acpSessionId ?? null,
+    acpSessionProvisional: s.acpSessionProvisional,
+    createdAt: s.createdAt,
+    lastActivityAt: s.lastActivityAt,
+    lastTurnError: s.lastTurnError,
+    context: s.context,
+    deletedAt: s.deletedAt,
+    pinnedAt: s.pinnedAt,
+    parentSessionId: s.parentSessionId,
+    forkedFromSessionId: s.forkedFromSessionId,
+    forkedFromTurnId: s.forkedFromTurnId,
+  };
 }

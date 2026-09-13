@@ -902,7 +902,11 @@ const DEFAULT_AGENTS: SeedAgent[] = [
     // Seed 20 states the workspace layout it has always read (`.claude`, the
     // same one claude-code reads — `agent/src/commands.ts`), its install line
     // and `"app"` for its mark.
-    since: 20,
+    // Seed 22 adds `{modelWindows}`: the whole profile catalog's context
+    // windows, because this runtime takes a model change live (`liveConfig`)
+    // and the single `{contextWindow}` beside it describes only the model the
+    // thread spawned on — see `modelWindowMap`.
+    since: 22,
     introduced: 14,
     backfill: (existing) => ({
       ...backfill20(existing),
@@ -911,6 +915,8 @@ const DEFAULT_AGENTS: SeedAgent[] = [
         // Seed 19: the model-prompt library. Merged only where absent — the
         // spread lets the user's own values win.
         DAEDALUS_AGENT_MODEL_PROMPTS_FILE: "{modelPromptsFile}",
+        // Seed 22: the per-model window map, same bargain.
+        DAEDALUS_AGENT_MODEL_WINDOWS: "{modelWindows}",
         ...existing.env,
       },
       rewindVia: existing.rewindVia ?? "acp-fork-point",
@@ -932,6 +938,7 @@ const DEFAULT_AGENTS: SeedAgent[] = [
       DAEDALUS_AGENT_EFFORT: "{effort}",
       DAEDALUS_AGENT_CONTEXT_WINDOW: "{contextWindow}",
       DAEDALUS_AGENT_MAX_OUTPUT_TOKENS: "{maxOutputTokens}",
+      DAEDALUS_AGENT_MODEL_WINDOWS: "{modelWindows}",
       DAEDALUS_AGENT_PERSONA_FILE: "{personaFile}",
       DAEDALUS_AGENT_MODEL_PROMPTS_FILE: "{modelPromptsFile}",
       DAEDALUS_AGENT_PROJECT_INSTRUCTIONS: "1",
@@ -1261,6 +1268,21 @@ export function modelAllowlistFor(agent: AgentDef, spawning: Profile, profiles: 
   return [...ids];
 }
 
+/**
+ * `{"model-id":[contextWindow,maxOutputTokens]}` for every model the profile
+ * has catalog figures for — the runtime's answer to "how big is the window I
+ * am on *now*", which a single spawn-time number cannot give a thread whose
+ * model changes without a respawn. A model with no context window is left out
+ * entirely: half a pair is not an answer, and the runtime's own fallback says
+ * so honestly.
+ */
+function modelWindowMap(profile: Profile): string {
+  const entries = (profile.models ?? [])
+    .filter((m) => m.contextWindow)
+    .map((m) => [m.id, [m.contextWindow, m.maxOutputTokens ?? 0]] as const);
+  return entries.length > 0 ? JSON.stringify(Object.fromEntries(entries)) : "";
+}
+
 /** Resolve an agent definition against a profile (agent config) + project (workspace). */
 export function resolveSpawn(
   agent: AgentDef,
@@ -1311,6 +1333,22 @@ export function resolveSpawn(
     longContext: wantsLongContext(profile, resolvedModel) ? "1" : "",
     contextWindow: modelMeta?.contextWindow ? String(modelMeta.contextWindow) : "null",
     maxOutputTokens: modelMeta?.maxOutputTokens ? String(modelMeta.maxOutputTokens) : "null",
+    /* The same two figures for *every* model the profile offers, as
+       `{"id":[context,maxOutput]}`. The pair above describes the model the
+       thread spawns on, and for a runtime that takes a model change live
+       (`liveConfig`) that is not the model it is running an hour later — the
+       gauge and the compaction threshold were still measuring against the
+       window of whatever the thread happened to start on. Shipped whole at
+       spawn because nothing can be pushed to the child after one. Empty object
+       for a profile with no catalog, which prunes away like every other
+       empty value.
+
+       ponytail: the spawning profile's models only, not the union
+       `modelAllowlistFor` writes — an id from another profile falls back to the
+       spawn model's figures, which is exactly what every id did before this
+       existed, so it is never worse. Widen it if a profile change ever lands
+       live (today it carries credentials, so it respawns). */
+    modelWindows: modelWindowMap(profile),
     cwd: project.cwd,
     daedalusAgentEntry: DAEDALUS_AGENT_ENTRY,
     /* JSON-escaped, and only ever correct inside a JSON string literal — which

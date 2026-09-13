@@ -52,7 +52,7 @@ async function wipe() {
 
 /** A small install: one of everything that links to something else. */
 async function seed() {
-  wipe();
+  await wipe();
   // Every real install has a board — index.ts seeds one at boot, and a task
   // with no column to point at is not a state the app can produce.
   (await ensureDefaultBoard());
@@ -75,7 +75,11 @@ async function seed() {
     { sessionId: "t1", seq: 1, kind: "turn_ended", payload: { ev: "turn_ended", turnId: "x" }, at: now },
   ]);
   await db.insert(queueTable).values({ id: "q1", sessionId: "t1", position: 0, text: "later", createdAt: now });
-  await db.insert(tasksTable).values({ id: "task1", title: "Do it", createdAt: now, updatedAt: now });
+  /* A number, because every task the app creates has one (`tasks-board.ts`
+     takes it from the board's counter) — and the import backfills any task
+     that lacks one, so a fixture without it is numbered on the way back in and
+     the export is no longer the thing that returns. */
+  await db.insert(tasksTable).values({ id: "task1", number: 1, title: "Do it", createdAt: now, updatedAt: now });
   /* A routine with all three of its tables populated, and a token on the
      trigger — the credential the `secrets=0` rule has to reach. */
   await db.insert(routinesTable).values({
@@ -120,7 +124,7 @@ async function seed() {
 const count = async (table: SQLiteTable) => (await db.select().from(table)).length;
 
 await test("a full export round-trips through the schema", async () => {
-  seed();
+  await seed();
   const bundle = await exportBundle({ includeSecrets: true, includeJournals: true });
   const parsed = BundleSchema.safeParse(JSON.parse(JSON.stringify(bundle)));
   assert.ok(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues));
@@ -145,25 +149,25 @@ await test("a 0 thinking budget survives the round trip as 0, not as absent", as
   // The one value the schema could quietly lose: `thinking: 0` is "no
   // thinking", and a nullish coalesce anywhere on the path turns it into
   // "leave the runtime's default alone" — the opposite instruction.
-  seed();
+  await seed();
   const bundle = await exportBundle({ includeSecrets: true, includeJournals: true });
-  wipe();
-  importBundle(BundleSchema.parse(JSON.parse(JSON.stringify(bundle))), "replace");
+  await wipe();
+  await importBundle(BundleSchema.parse(JSON.parse(JSON.stringify(bundle))), "replace");
   assert.equal((await db.select().from(personasTable))[0]!.thinking, 0);
 });
 
 await test("a routine round-trips with its triggers, runs and links", async () => {
-  seed();
+  await seed();
   const bundle = await exportBundle({ includeSecrets: true, includeJournals: true });
   assert.deepEqual(bundle.routines[0]!.mcpServerIds, ["m1"]);
   assert.equal(bundle.routines[0]!.dryRunCompleted, true, "the grant the user already made informedly");
   assert.equal(bundle.routineTriggers[0]!.secretHash, "deadbeef");
-  wipe();
+  await wipe();
   const summary = await importBundle(BundleSchema.parse(JSON.parse(JSON.stringify(bundle))), "replace");
   assert.equal(summary.routines, 1);
   assert.equal(summary.routineTriggers, 1);
   assert.equal(summary.routineRuns, 1);
-  assert.equal(count(routineMcpServers), 1);
+  assert.equal(await count(routineMcpServers), 1);
   const routine = (await db.select().from(routinesTable).where(eq(routinesTable.id, "r1")))[0]!;
   assert.deepEqual(routine.body, { kind: "prompt", text: "Review yesterday." });
   assert.equal(routine.autonomy.permissions.default, "ask");
@@ -177,16 +181,16 @@ await test("a trigger deleted after the export does not come back on a merge", a
   // only added rows would resurrect a trigger the user deliberately removed,
   // and leave a run history whose NEWEST row came from another install — which
   // is the row `lastRunHeadOid` reads to decide whether anything has changed.
-  seed();
+  await seed();
   const bundle = await exportBundle({ includeSecrets: true, includeJournals: true });
   await db.insert(routineTriggersTable).values({ id: "trg2", routineId: "r1", kind: "api", createdAt: 1 });
-  importBundle(BundleSchema.parse(JSON.parse(JSON.stringify(bundle))), "merge");
-  assert.equal(count(routineTriggersTable), 1);
+  await importBundle(BundleSchema.parse(JSON.parse(JSON.stringify(bundle))), "merge");
+  assert.equal(await count(routineTriggersTable), 1);
   assert.equal((await db.select().from(routineTriggersTable))[0]!.id, "trg1");
 });
 
 await test("a redacted export carries no secrets", async () => {
-  seed();
+  await seed();
   const bundle = await exportBundle({ includeSecrets: false, includeJournals: false });
   assert.equal("apiKey" in bundle.profiles[0]!, false);
   assert.deepEqual(bundle.mcpServers[0]!.headers, [{ name: "Authorization", value: "" }]);
@@ -199,10 +203,10 @@ await test("a redacted export carries no secrets", async () => {
 });
 
 await test("replace restores an emptied install exactly", async () => {
-  seed();
+  await seed();
   const bundle = await exportBundle({ includeSecrets: true, includeJournals: true });
-  wipe();
-  assert.equal(count(sessionsTable), 0);
+  await wipe();
+  assert.equal(await count(sessionsTable), 0);
   const summary = await importBundle(BundleSchema.parse(JSON.parse(JSON.stringify(bundle))), "replace");
   assert.equal(summary.sessions, 1);
   assert.equal(summary.events, 2);
@@ -214,7 +218,7 @@ await test("replace restores an emptied install exactly", async () => {
 });
 
 await test("boards and their columns round-trip", async () => {
-  seed();
+  await seed();
   const bundle = await exportBundle({ includeSecrets: true, includeJournals: true });
   assert.equal(bundle.boards.length, 1);
   assert.equal(bundle.boardStatuses.length, 4);
@@ -225,7 +229,7 @@ await test("boards and their columns round-trip", async () => {
 /* The pre-boards shape: a task row with `board`/`status` instead of ids. Those
    values ARE the seeded ids, so an old bundle has to import unchanged. */
 await test("a pre-boards bundle imports into the default board", async () => {
-  seed();
+  await seed();
   const bundle = await exportBundle({ includeSecrets: true, includeJournals: true });
   const legacy = JSON.parse(JSON.stringify(bundle)) as Record<string, unknown>;
   delete legacy.boards;
@@ -238,8 +242,8 @@ await test("a pre-boards bundle imports into the default board", async () => {
   const summary = await importBundle(parsed.data, "replace");
   assert.equal(summary.tasks, 1);
   // Re-seeded by the import, since the bundle carried no boards.
-  assert.equal(count(boardsTable), 1);
-  assert.equal(count(boardStatusesTable), 4);
+  assert.equal(await count(boardsTable), 1);
+  assert.equal(await count(boardStatusesTable), 4);
   const task = (await db.select().from(tasksTable).where(eq(tasksTable.id, "old1")))[0]!;
   assert.equal(task.boardId, "default");
   assert.equal(task.statusId, "in_progress");
@@ -249,7 +253,7 @@ await test("a pre-boards bundle imports into the default board", async () => {
 /* A bundle whose tasks name a column it did not bring: repaired to the board's
    first column rather than left invisible. */
 await test("a task pointing at a missing column is rehomed, not lost", async () => {
-  seed();
+  await seed();
   const bundle = await exportBundle({ includeSecrets: true, includeJournals: true });
   const broken = BundleSchema.parse(JSON.parse(JSON.stringify(bundle)));
   broken.boardStatuses = broken.boardStatuses.filter((s) => s.id !== "todo");
@@ -260,30 +264,30 @@ await test("a task pointing at a missing column is rehomed, not lost", async () 
 });
 
 await test("replace drops what the bundle does not name; merge keeps it", async () => {
-  seed();
+  await seed();
   const bundle = await exportBundle({ includeSecrets: true, includeJournals: true });
   await db.insert(tasksTable).values({ id: "task2", title: "Extra", createdAt: 1, updatedAt: 1 });
-  importBundle(bundle, "merge");
-  assert.equal(count(tasksTable), 2);
-  importBundle(bundle, "replace");
-  assert.equal(count(tasksTable), 1);
+  await importBundle(bundle, "merge");
+  assert.equal(await count(tasksTable), 2);
+  await importBundle(bundle, "replace");
+  assert.equal(await count(tasksTable), 1);
 });
 
 await test("merge upserts by id without cascading the row's children", async () => {
-  seed();
+  await seed();
   const bundle = await exportBundle({ includeSecrets: true, includeJournals: true });
   bundle.profiles[0]!.name = "renamed";
   bundle.projects[0]!.name = "renamed-ws";
-  importBundle(bundle, "merge");
+  await importBundle(bundle, "merge");
   assert.equal((await db.select().from(profilesTable).where(eq(profilesTable.id, "p1")))[0]?.name, "renamed");
   // The profile's links and the project's knowledge survived the upsert.
-  assert.equal(count(profileMcpServers), 1);
-  assert.equal(count(knowledgeTable), 1);
+  assert.equal(await count(profileMcpServers), 1);
+  assert.equal(await count(knowledgeTable), 1);
 });
 
 await test("a redacted bundle merged over its own install keeps the install's secrets", async () => {
-  seed();
-  const bundle = exportBundle({ includeSecrets: false, includeJournals: true });
+  await seed();
+  const bundle = await exportBundle({ includeSecrets: false, includeJournals: true });
   const summary = await importBundle(BundleSchema.parse(JSON.parse(JSON.stringify(bundle))), "merge");
   assert.equal(summary.missingSecrets, false);
   assert.equal((await db.select().from(profilesTable).where(eq(profilesTable.id, "p1")))[0]?.apiKey, "sk-live");
@@ -298,23 +302,23 @@ await test("a redacted bundle merged over its own install keeps the install's se
 });
 
 await test("a redacted bundle on a fresh install says so", async () => {
-  seed();
+  await seed();
   const bundle = await exportBundle({ includeSecrets: false, includeJournals: true });
-  wipe();
+  await wipe();
   const summary = await importBundle(BundleSchema.parse(JSON.parse(JSON.stringify(bundle))), "replace");
   assert.equal(summary.missingSecrets, true);
   assert.equal((await db.select().from(profilesTable).where(eq(profilesTable.id, "p1")))[0]?.apiKey, "");
 });
 
 await test("a bundle without journals leaves the install's logs alone", async () => {
-  seed();
+  await seed();
   const bundle = await exportBundle({ includeSecrets: true, includeJournals: false });
-  importBundle(bundle, "merge");
-  assert.equal(count(eventsTable), 2);
+  await importBundle(bundle, "merge");
+  assert.equal(await count(eventsTable), 2);
 });
 
 await test("rows whose parent exists nowhere are dropped, not fatal", async () => {
-  seed();
+  await seed();
   const bundle = await exportBundle({ includeSecrets: true, includeJournals: true });
   (await bundle).knowledge.push({ id: "k-orphan", projectId: "nope", title: "t", content: "c", tags: null, createdAt: 1, updatedAt: 1 });
   (await bundle).queue.push({ id: "q-orphan", sessionId: "nope", position: 0, text: "x", createdAt: 1 });
@@ -325,7 +329,7 @@ await test("rows whose parent exists nowhere are dropped, not fatal", async () =
   });
   const summary = await importBundle(bundle, "replace");
   assert.equal(summary.orphaned, 3);
-  assert.equal(count(knowledgeTable), 1);
+  assert.equal(await count(knowledgeTable), 1);
 });
 
 await test("a bundle in the wrong format is refused", () => {
@@ -358,7 +362,7 @@ async function routeTest(name: string, fn: () => Promise<void>) {
   // Only `config.token` is read on this route; the rest of the deps are for
   // handlers these requests never reach.
   miscRoutes(app, { config: { token: "s3cret-tok" }, sessions: {}, push: {} } as MiscDeps);
-  seed();
+  await seed();
 
   await routeTest("a correct token in the query string is refused", async () => {
     const res = await app.request("/api/backup?token=s3cret-tok&secrets=1");
@@ -390,7 +394,7 @@ async function routeTest(name: string, fn: () => Promise<void>) {
   });
 }
 
-wipe();
+await wipe();
 console.log(`backup: ${passed} passed, ${failures.length} failed`);
 for (const failure of failures) console.error(`\nFAIL ${failure}`);
 process.exit(failures.length ? 1 : 0);

@@ -82,6 +82,12 @@ export async function spawnAgent(
       forever instead. Fail fast there. Meaningless to every other runtime,
       which reads none of these vars. */
   unattended?: boolean,
+  /** Whether this thread's answers may carry a drawn view (`uiBlocks`). Absent
+      reads as on at the other end, so only the off case is written — a process
+      nobody told about the lane keeps its default rather than being switched
+      on by a spawn that forgot to say. Meaningless to every other runtime,
+      which reads none of these vars. */
+  uiBlocks?: boolean,
 ): Promise<ChildProcessWithoutNullStreams> {
   const agent = await getAgent(agentId);
   if (!agent) throw new Error(`unknown agent: ${agentId}`);
@@ -105,6 +111,13 @@ export async function spawnAgent(
     env.OPENCODE_SERVER_PASSWORD = sidecar.password;
   }
   if (unattended) env.DAEDALUS_AGENT_HOLD_ON_ERROR = "0";
+  /* The lane's *permission* already reached the process via the persona door,
+     folded in with every other thread-level behaviour (`personas.ts`). This
+     variable carries only the thread's off switch, and it exists for the one
+     thing a server-side instruction file cannot hold: the generated component
+     table, which our runtime pushes into its own system prompt and which must
+     not be pushed for a thread that turned the lane off. */
+  if (uiBlocks === false) env.DAEDALUS_AGENT_UI_BLOCKS = "0";
   return spawn(command, args, {
     cwd,
     env: { ...process.env, ...env },
@@ -440,7 +453,11 @@ export interface BridgeHost {
       answered is the strongest evidence an id can have (the agent found the
       transcript and read it back), while a fresh `session/new` id is one the
       agent holds in memory and may never flush. */
-  onAcpSessionId(acpSessionId: string, proven: boolean): void;
+  /** Awaited: the id has to be *written down* before the handshake is over.
+      A thread killed in the window between the agent minting a session and the
+      row learning about it points at nothing, while the agent's rollout sits on
+      disk with the whole conversation in it. */
+  onAcpSessionId(acpSessionId: string, proven: boolean): void | Promise<void>;
   /** A turn has committed to the current session, so the agent has written it
       to its own store and a later `session/load` can find it.
       Until this fires the id is a promise, not a record: agents create the
@@ -813,7 +830,7 @@ export class AcpBridge {
       mcpServers: opts.mcpServers,
       _meta: this.sessionMeta(opts),
     });
-    this.adoptSession(response.sessionId, response.modes ?? null, response.configOptions ?? [], false);
+    await this.adoptSession(response.sessionId, response.modes ?? null, response.configOptions ?? [], false);
   }
 
   /**
@@ -847,7 +864,7 @@ export class AcpBridge {
         mcpServers: opts.mcpServers,
         _meta: this.sessionMeta(opts),
       });
-      this.adoptSession(acpSessionId, response?.modes ?? null, response?.configOptions ?? [], true);
+      await this.adoptSession(acpSessionId, response?.modes ?? null, response?.configOptions ?? [], true);
     } catch (error) {
       // A deliberate close (respawn, retire) is not a load failure: the bridge
       // was shut on purpose, the fallback would be a `session/new` fired at a
@@ -865,12 +882,12 @@ export class AcpBridge {
     }
   }
 
-  private adoptSession(
+  private async adoptSession(
     acpSessionId: string,
     modes: acp.SessionModeState | null,
     configOptions: acp.SessionConfigOption[],
     proven: boolean,
-  ): void {
+  ): Promise<void> {
     this.acpSessionId = acpSessionId;
     this.modes = modes;
     this.configOptions = configOptions;
@@ -879,7 +896,7 @@ export class AcpBridge {
        Recorded so the row always names the last mode the agent confirmed,
        which is what a revive with no live process restores from. */
     this.host.onSpawnStateChange({ modeId: modes?.currentModeId ?? null });
-    this.host.onAcpSessionId(acpSessionId, proven);
+    await this.host.onAcpSessionId(acpSessionId, proven);
     this.emitConfig();
   }
 
@@ -1052,6 +1069,18 @@ export class AcpBridge {
     const modeIds = new Set(this.modes?.availableModes.map((m) => m.id) ?? []);
     for (const [configId, value] of Object.entries(choices)) {
       const option = this.configOptions.find((o) => o.id === configId);
+      /* The model and the effort are never replayed from here, whatever a
+         caller sent: they have a channel of their own (`agentOwned`, applied
+         just above, or the spawn's env for a profile that owns the catalog),
+         and this one runs last. A draft used to send every option its menu
+         showed — the agent's model selector among them, filled from whatever
+         that pair, or a *sibling* profile's remembered set, was last on — so
+         the thread spawned on the model that was picked and then, one request
+         later, moved off it. Same rule as `captureRestoreState`, which has
+         excluded both from the other direction all along. */
+      if (option?.type === "select" && (option.category === "model" || option.category === "thought_level")) {
+        continue;
+      }
       if (option && isModeTwin(option, modeIds)) {
         if (!draftModeId && typeof value === "string") await this.applyDraftMode(value);
         continue;
@@ -1231,35 +1260,29 @@ export class AcpBridge {
     return this.pendingSteers.map(steerRow);
   }
 
-  /** The newest held steer that is a MESSAGE — a mode or model change waits at
-      the same boundary (`holdConfigNotice`) and is bookkeeping, not words
-      anyone can be handed back. A peek, so a caller can weigh it against the
-      queue before committing to `takeSteer`. */
-  newestSteer(): QueuedMessage | null {
-    const at = this.pendingSteers.findLastIndex((entry) => entry.event.ev === "turn_started");
-    return at < 0 ? null : steerRow(this.pendingSteers[at]!);
-  }
-
   /**
-   * Take a held steer back — the one thing `flushSteers` must not go on to
-   * emit.
+   * Take every held MESSAGE steer off the bridge, oldest first — the stop's
+   * half of the bargain in `SessionQueue.stop`: the turn ends, the words the
+   * user aimed at it do not, and the queue is where they wait for the next
+   * one. `flushSteers` must not go on to emit what this returned.
    *
-   * The words reached the agent, but no runtime reads a second prompt before
-   * its running step ends, and until then the held event is the only place
-   * they exist on this side. So while the steer is still here it can be
-   * unwound; once `flushSteers` has run, its bubble is in the transcript and in
-   * the runtime's own history, and this answers `null` — which is exactly the
-   * "unless a new step already read it" line.
+   * A mode/model/effort change waits at the same boundary
+   * (`holdConfigNotice`) but is bookkeeping, not words anyone can re-queue —
+   * it stays held for its ordinary flush.
    *
-   * The caller emits the queue: this is half of a cancel, not a step of its
+   * The caller emits the queue: this is half of a stop, not a step of its
    * own, and one absolute `queue` event covers both halves.
    */
-  takeSteer(id: string): QueuedMessage | null {
-    const at = this.pendingSteers.findIndex(
-      (entry) => entry.id === id && entry.event.ev === "turn_started",
-    );
-    if (at < 0) return null;
-    return steerRow(this.pendingSteers.splice(at, 1)[0]!);
+  takeSteers(): QueuedMessage[] {
+    const taken: HeldSteer[] = [];
+    this.pendingSteers = this.pendingSteers.filter((entry) => {
+      if (entry.event.ev !== "turn_started") return true;
+      taken.push(entry);
+      return false;
+    });
+    if (taken.length === 0) return [];
+    this.host.onHeldSteersChanged();
+    return taken.map(steerRow);
   }
 
   /**
@@ -1460,15 +1483,34 @@ export class AcpBridge {
       this.turnStartedAt = performance.now();
       this.ttftSent = false;
     }
+    /* The turn is in flight from **here**, not from the dispatch below, and the
+       gap between the two is an `await`.
+     *
+     * A steer counted itself against `inflight` only after its attachments had
+     * been read, and reading them is a database round trip now. The turn it was
+     * joining could answer inside that window: its settle took `inflight` to
+     * zero and cleared `currentTurnId`, and the steer's own answer then arrived
+     * to a turn that no longer existed — "logical turn ended without an id",
+     * with the whole thread's process taken down by the throw. Counted here,
+     * the turn stays open across the join, which is what a steer means. */
+    this.inflight++;
     /* Decided here, at send. Reading the files costs a `readFileSync` per
        attachment and the base64 is never held between turns. */
-    const attach = await attachmentBlocks({
-      refs: attachments,
-      caps: this.agentCapabilities.promptCapabilities,
-      cwd: this.cwd,
-      forceLink: opts.forceLink,
-      ...(await this.host.deliveryContext()),
-    });
+    let attach: Awaited<ReturnType<typeof attachmentBlocks>>;
+    try {
+      attach = await attachmentBlocks({
+        refs: attachments,
+        caps: this.agentCapabilities.promptCapabilities,
+        cwd: this.cwd,
+        forceLink: opts.forceLink,
+        ...(await this.host.deliveryContext()),
+      });
+    } catch (error) {
+      // Nothing was sent, so nothing will answer: give the count back by hand,
+      // or the thread reads as busy for as long as it lives.
+      this.inflight--;
+      throw error;
+    }
     for (const note of attach.notes) {
       // Logged even on the happy branch: "sent as an image" is the line that
       // makes the degrade below it legible when it appears.
@@ -1477,7 +1519,6 @@ export class AcpBridge {
     const outgoing = text + attach.textSuffix;
     const blocks = attach.blocks;
 
-    this.inflight++;
     void this.connection.agent
       .request(acp.methods.agent.session.prompt, {
         sessionId,
@@ -1490,8 +1531,8 @@ export class AcpBridge {
            queued twenty minutes ago must be resolved against the model it is
            actually being sent to. And the links are what an `@path` in the text
            refers to, for an agent that reads the protocol rather than the
-           prose; only paths that exist inside the cwd become links — see
-           mentions.ts.
+           prose; a link is made for any `@path` that names something that
+           exists, anywhere on the machine — see mentions.ts.
 
            `attachmentBlocks` may append to the text as well (a materialised
            path, or `[attached: shot.png]`), for the reason mentions.ts states:
@@ -2142,7 +2183,8 @@ export type ConfigNoticeLabel =
   | "Profile"
   | "Persona"
   | "Agent"
-  | "Follow-ups";
+  | "Follow-ups"
+  | "Drawn UI";
 
 /** One transcript line for a setting change (`Mode: Plan → Build`).
     Exported for tests. */

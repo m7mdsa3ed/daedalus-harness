@@ -11,14 +11,17 @@ import { createLocalStore } from "./local-store"
 import { api, type Profile, type ServerSettings } from "./settings"
 
 /** The stored profiles that can actually do a rewrite: a real endpoint behind
-    them. Virtual Defaults carry no baseUrl and 409 on the server. */
+    them. Virtual Defaults carry no baseUrl and 409 on the server, and a hidden
+    or disabled profile is out of the pickers — a rewrite is new work. */
 export const enhanceCapable = (profiles: readonly Profile[]): Profile[] =>
-  profiles.filter((p) => !p.virtual && p.baseUrl.trim().length > 0)
+  profiles.filter((p) => !p.virtual && !p.hidden && !p.disabled && p.baseUrl.trim().length > 0)
 
 /** The same gate, for one row — so the composer and anything drawing the
     picker agree on what "capable" means. */
-export const canEnhance = (profile: Pick<Profile, "virtual" | "baseUrl"> | null | undefined): boolean =>
-  Boolean(profile && !profile.virtual && profile.baseUrl.trim().length > 0)
+export const canEnhance = (
+  profile: Pick<Profile, "virtual" | "baseUrl" | "hidden" | "disabled"> | null | undefined
+): boolean =>
+  Boolean(profile && !profile.virtual && !profile.hidden && !profile.disabled && profile.baseUrl.trim().length > 0)
 
 const store = createLocalStore<string | null>(
   "ui.enhanceProfile",

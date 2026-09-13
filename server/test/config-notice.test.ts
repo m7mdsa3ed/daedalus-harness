@@ -105,6 +105,13 @@ send(b, { id: 10, cmd: "set_mode", modeId: "acceptEdits" });
 send(b, { id: 11, cmd: "set_config_option", configId: "model", value: "smart" });
 send(b, { id: 12, cmd: "set_config_option", configId: "effort", value: "high" });
 await waitFor(() => b.of("reply").filter((r) => r.id >= 10).length === 3, "all three changes accepted");
+/* And then for the rows themselves. The reply says the change was accepted;
+   the held row is a fan-out that follows it, so counting rows straight after
+   the third reply caught the third one still on its way. */
+await waitFor(
+  () => b.of("queue").at(-1)!.items.filter((i) => i.steer).length === 3,
+  "all three held rows fan out",
+);
 
 const expected = [
   "Mode: Always ask → Accept edits",
@@ -120,7 +127,12 @@ for (const peer of [a, b]) {
   );
   assert.equal(peer.of("config_notice").length, 0, "nothing lands before the step lets go");
 }
-assert.ok(b.of("session_config").length >= 2, "the absolute state still rides alongside");
+/* On the peer that did NOT ask. An event fans out minus the peer that caused
+   it (see CLAUDE.md), and the asker already has the new state in its own reply
+   — `set_config_option` answers with `configOptions`. So `b`, which sent all
+   three changes, is told nothing here, and it is `a` that has to see the
+   absolute state arrive alongside the held notices. */
+assert.ok(a.of("session_config").length >= 2, "the absolute state still rides alongside");
 
 // Repeating the same value is not a change: no second row.
 send(b, { id: 13, cmd: "set_config_option", configId: "model", value: "smart" });
@@ -162,13 +174,26 @@ for (const peer of [a, b]) {
   );
 }
 
-// The same settings changed while idle: silent.
+/* The same settings changed while idle. Not silent — see `noteConfigChange`:
+   a change is said whether or not a turn was running, and an idle one lands at
+   once because there is no step boundary to hold it for. Only the three the
+   transcript has words for (mode, model, effort) draw a line, so `verbose`
+   changes nothing here. */
 send(b, { id: 14, cmd: "set_config_option", configId: "model", value: "fast" });
 send(b, { id: 15, cmd: "set_config_option", configId: "verbose", value: true });
 await waitFor(() => b.of("reply").filter((r) => r.id >= 14).length === 2, "idle changes accepted");
-assert.equal(b.of("config_notice").length, 3, "idle changes draw no line");
+await waitFor(
+  () => b.of("config_notice").length === 4,
+  "the idle model change is said at once",
+);
+assert.equal(
+  b.of("config_notice").at(-1)!.text,
+  "Model: Smart → Fast",
+  "…and says what it changed, like every other one",
+);
 
-// A late joiner replays the three lines inline, between the turn's brackets.
+/* A late joiner replays every line: the three the turn held, inline between
+   its brackets, and the idle one after them. */
 const c = new MockWs();
 assert.equal(await manager.attach(session.id, c as never, 0), null);
 const order = c.events.map((e) => e.ev);
@@ -178,14 +203,15 @@ const notices = order
   .map((ev, i) => ({ ev, i }))
   .filter(({ ev }) => ev === "config_notice")
   .map(({ i }) => i);
-assert.equal(notices.length, 3, "the journal kept all three mid-turn lines");
+assert.equal(notices.length, 4, "the journal kept all three mid-turn lines and the idle one");
 assert.ok(
-  notices.every((i) => i > turnStart && i < turnEnd),
+  notices.slice(0, 3).every((i) => i > turnStart && i < turnEnd),
   "the lines replay inside the turn they landed in",
 );
+assert.ok(notices[3] > turnEnd, "…and the idle one after it, where it happened");
 assert.deepEqual(
   c.of("config_notice").map((e) => e.text),
-  expected,
+  [...expected, "Model: Smart → Fast"],
 );
 assert.deepEqual(
   ((await manager.journal(session.id))!).events.filter((e) => e.ev === "config_notice"),
@@ -197,3 +223,7 @@ a.close();
 b.close();
 c.close();
 console.log("config-notice: all assertions passed");
+/* Like bridge.test.ts: the thread's agent process and the manager's timers are
+   still up, and this file has never reached its own end before — it threw, and
+   a throw exits. Nothing here is waiting on anything. */
+process.exit(0);

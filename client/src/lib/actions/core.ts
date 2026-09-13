@@ -16,6 +16,7 @@ import { loadLayout } from "../workspace/layout"
 import { panelId } from "../workspace/panels"
 import { api, profileSupports, type ServerSettings, type SessionMeta } from "../settings"
 import { knownAgentOptions, optionKey, shownOptions } from "../agent-options"
+import { partitionSessionOptions } from "../session-options"
 import { scheduledKey } from "../queries/keys"
 import type { useCatalogReader } from "../queries/catalog"
 import type { ScheduleInput } from "../queries/routines"
@@ -148,8 +149,18 @@ export function createCore(deps: CoreDeps) {
         .map((p) => optionKey(p.id, meta.agentId))
     )
     const modeId = meta.modeId || known.modes?.currentModeId
+    /* …minus the model and the effort. Those two travel as `model`/`effort`
+       below — the draft picked them there — and sending them here as well
+       means sending them twice, from two different memories: the pick, and
+       whatever the remembered set (possibly a *sibling* profile's, borrowed
+       above) was last on. The server applies this set after the spawn, so the
+       second one won and the thread ran on a model nobody chose. `rest` is the
+       same partition every menu draws these with. */
     const configChoices = Object.fromEntries(
-      shownOptions(known, meta.configChoices).map((o) => [o.id, o.currentValue])
+      partitionSessionOptions(
+        shownOptions(known, meta.configChoices, meta.model, meta.effort),
+        new Set(known.modes?.availableModes.map((m) => m.id) ?? [])
+      ).rest.map((o) => [o.id, o.currentValue])
     )
     await api<{ id: string }>(settings, "/api/sessions", {
       method: "POST",
@@ -175,6 +186,10 @@ export function createCore(deps: CoreDeps) {
            unless the draft turned it off — `??` rather than `||`, so an
            explicit off survives the trip instead of reading as unset. */
         suggestFollowups: meta.suggestFollowups ?? true,
+        /* Whether an answer may carry a drawn view. The same draft-picked,
+           spawn-input bargain as the suggestions trailer: on unless the draft
+           turned it off. */
+        uiBlocks: meta.uiBlocks ?? true,
         /* The agent options as the draft showed them. The server applies them
            the moment session/new answers, best-effort and only where they
            differ from what it came up on: a remembered option the agent no

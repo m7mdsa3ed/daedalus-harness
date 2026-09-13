@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { GroupRowsSkeleton } from "@/components/ui/skeletons"
 import { ErrorNote } from "@/components/error-note"
 import { captureError, reportError, type InlineError } from "@/lib/errors"
 import { useAddKnowledge, useAllKnowledge, useDeleteKnowledge } from "@/lib/queries/surfaces"
@@ -112,9 +113,7 @@ export function KnowledgePage() {
     <>
       <PageHeader meta={meta} action={actions} />
       {entries === undefined ? (
-        <p className="rounded-lg border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
-          Loading…
-        </p>
+        <GroupRowsSkeleton rows={5} label />
       ) : shown.length === 0 ? (
         <EmptyCard
           icon={BookOpen}

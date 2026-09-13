@@ -319,6 +319,38 @@ export interface AsyncTaskItem {
   parentId?: string
 }
 
+/**
+ * A `!` line the user ran against the thread's project, from the journaled
+ * `_daedalus/shell` update.
+ *
+ * Not a prompt and not a tool call: nothing was sent to the agent and no turn
+ * runs. It is a row the harness wrote into the thread's own conversation — the
+ * command and what it printed — which is why it comes back on a reload (it is
+ * journaled like any update) and why it reads as something that happened in the
+ * thread rather than as a message anyone answered.
+ */
+export interface ShellItem {
+  kind: "shell"
+  /** `shell:<shellId>` — the id the server journals under, so the running row
+      the composer drew and the updates that settle it are the same item. */
+  id: string
+  /** The line as it ran — a saved helper's own command when the line named one. */
+  command: string
+  /** `running` until the line settles. Not a turn: the thread's own
+      `turnActive` never moves for this, so the row has to say its own state. */
+  status: "running" | "done"
+  /** stdout then stderr, joined as a terminal would have shown them. */
+  output: string
+  /** The exit code, or null when the process could not be started at all. */
+  exitCode: number | null
+  /** The shell was killed at the timeout; `output` is what it printed first. */
+  timedOut: boolean
+  at?: number
+  /** Never set today — a `!` run is the thread's, not a step's — but every item
+      carries the field so the row builder can read it without narrowing. */
+  parentId?: string
+}
+
 export type ThreadItem =
   | TextItem
   | ToolItem
@@ -328,6 +360,7 @@ export type ThreadItem =
   | SubagentItem
   | AutonomyItem
   | AsyncTaskItem
+  | ShellItem
 
 export interface PendingPermission {
   /** The server's id for the question, so an answer from another device can be

@@ -757,6 +757,140 @@ async function readOpenrouterUsage(profile: Profile, usage: ProfileUsage): Promi
 }
 
 // ---------------------------------------------------------------------------
+// Adapter: Command Code — plan credits and the two rolling windows
+// ---------------------------------------------------------------------------
+
+/*
+ * `GET https://api.commandcode.ai/alpha/billing/credits`, `x-api-key: <key>` —
+ * the route Command Code's own `/usage` panel calls, answering
+ *
+ *   { "credits": { "monthlyCredits": 9.515, "purchasedCredits": 0, "freeCredits": 0 },
+ *     "windowLimits": { "limited": true,
+ *       "fiveHour": { "used": 0.276, "cap": 3, "exceeded": false, "resetAt": 1789180183530 },
+ *       "weekly":   { "used": 0.485, "cap": 6, "exceeded": false, "resetAt": 1789657648583 } } }
+ *
+ * A key that is not the account's answers
+ * `401 {success:false, error:{code:"UNAUTHORIZED", message:"Invalid 'Authorization' header or token."}}`.
+ *
+ * This is the one provider here whose route a *runtime's own login* also knows:
+ * unlike `claude -p /usage`, Command Code has no non-interactive form of
+ * `/usage` — the slash command exists only inside its interactive panel, and its
+ * print mode sends the string to the model like any other prompt. So the account
+ * API is the only reader there is, which is why this exists as a profile
+ * provider rather than as an agent probe (`quota.ts`).
+ *
+ * The amounts are credits, not money — on most plans one credit is $1 of usage
+ * and on GOAT and Pro it is a usage-value unit — so `used`/`cap` are only ever
+ * turned into a percentage and the balance is labelled in credits.
+ *
+ * The inference side of the same account is a separate thing and not this
+ * adapter's business: `/provider/v1/chat/completions` and `/provider/v1/messages`
+ * for a profile's base URL, with the same key.
+ */
+
+const COMMAND_CODE_API = "https://api.commandcode.ai";
+/** The CLI's own staging twin, picked the way z.ai's CN platform is: the profile
+    says which platform its key belongs to, and a key minted on one is not the
+    other's. */
+const COMMAND_CODE_STAGING_API = "https://staging-api.commandcode.ai";
+const COMMAND_CODE_CREDITS_PATH = "/alpha/billing/credits";
+
+/** One of the two rolling windows. `used`/`cap` are credits; `resetAt` is epoch
+    milliseconds, unlike codex's seconds (and `when` reads both). */
+interface CommandCodeWindow {
+  used?: unknown;
+  cap?: unknown;
+  exceeded?: unknown;
+  resetAt?: unknown;
+}
+
+interface CommandCodeCreditsBody {
+  success?: boolean;
+  credits?: {
+    monthlyCredits?: unknown;
+    purchasedCredits?: unknown;
+    freeCredits?: unknown;
+    belowThreshold?: unknown;
+  } | null;
+  windowLimits?: {
+    limited?: boolean;
+    exceeded?: unknown;
+    fiveHour?: CommandCodeWindow | null;
+    weekly?: CommandCodeWindow | null;
+  } | null;
+  error?: { code?: string; status?: number; message?: string } | null;
+}
+
+/** Where to GET. A `baseUrl` that already names the route is used whole (someone
+    pointing at a proxy); otherwise it is an origin the path is joined onto. With
+    nothing set, the profile's own base URL picks the platform — the CLI reads
+    the same hint out of its environment. */
+export function commandCodeQuotaUrl(profile: Profile, usage: ProfileUsage): string {
+  const override = usage.baseUrl?.trim().replace(/\/+$/, "");
+  if (override) return override.includes("/alpha/") ? override : override + COMMAND_CODE_CREDITS_PATH;
+  const staging = /staging/i.test(profile.baseUrl || "");
+  return (staging ? COMMAND_CODE_STAGING_API : COMMAND_CODE_API) + COMMAND_CODE_CREDITS_PATH;
+}
+
+/** A window with no cap is dropped rather than read as 0% — that number would be
+    invented, which is the one thing keeping `raw` exists to avoid. */
+function commandCodeWindow(
+  id: string,
+  label: string,
+  window: CommandCodeWindow | null | undefined,
+  windowMinutes: number,
+): QuotaWindow | null {
+  const used = num(window?.used);
+  const cap = num(window?.cap);
+  if (used === null || cap === null || cap <= 0) return null;
+  return { id, label, usedPercent: pct(used, cap), resetsAt: when(window?.resetAt), windowMinutes };
+}
+
+export function foldCommandCodeQuota(body: CommandCodeCreditsBody, status = 200): Fold {
+  const limits = body?.windowLimits;
+  /* The ids Claude Code's and z.ai's adapters mint for the same shapes of
+     window. The labels are Command Code's own, as its panel prints them. */
+  const windows = [
+    commandCodeWindow("five_hour", "5-hour", limits?.fiveHour, 300),
+    commandCodeWindow("seven_day", "Weekly", limits?.weekly, 7 * 24 * 60),
+  ].filter((w): w is QuotaWindow => w !== null);
+
+  const quotaStatus: QuotaStatus =
+    windows.length
+      ? "subscription"
+      : /* A 200 the endpoint itself calls `limited: false` is the pay-as-you-go
+           account: no subscription, so no windows to pace — "no plan" in words
+           rather than a card claiming 0%, the same answer an account with no
+           coding plan gets from every other adapter here. A 200 that still
+           claims a limit, with nothing readable under it, is a shape that has
+           moved and is an error. */
+        (httpStatus(status) ?? (limits?.limited === false ? "api-key" : "error"));
+
+  const monthly = num(body?.credits?.monthlyCredits);
+  return {
+    status: quotaStatus,
+    windows,
+    raw: JSON.stringify(body, null, 2),
+    /* The plan's name lives on `/alpha/billing/subscriptions`. A second call for
+       a label the card can live without is not worth it yet. */
+    planName: null,
+    credits: monthly === null ? null : { balance: `${Math.round(monthly * 100) / 100} credits`, unlimited: false },
+  };
+}
+
+async function readCommandCodeUsage(profile: Profile, usage: ProfileUsage): Promise<Fold> {
+  const key = usageKey(profile, usage);
+  if (!key) throw new Error("this profile has no API key to read Command Code usage with");
+  const { body, status } = await fetchJson<CommandCodeCreditsBody>(
+    commandCodeQuotaUrl(profile, usage),
+    /* `x-api-key`, not `Authorization` — the same header the CLI sends. */
+    { method: "GET", headers: { "x-api-key": key, Accept: "application/json" } },
+    "Command Code",
+  );
+  return foldCommandCodeQuota(body, status);
+}
+
+// ---------------------------------------------------------------------------
 // The dispatch
 // ---------------------------------------------------------------------------
 
@@ -781,6 +915,8 @@ export function readProfileUsage(profile: Profile): Promise<Fold> {
       return readDeepseekUsage(profile, usage);
     case "openrouter":
       return readOpenrouterUsage(profile, usage);
+    case "command-code":
+      return readCommandCodeUsage(profile, usage);
     default:
       /* Deliberately not a fall-through to some default adapter: a `kind` this
          build does not know is a profile written by a newer one, and answering

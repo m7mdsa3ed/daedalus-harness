@@ -204,6 +204,12 @@ assert.ok(
   ws1.of("update").some((e) => e.update.sessionUpdate === "subagent_state_update"),
   "…and the child's terminal state arrives on the parent",
 );
+/* Awaited, not asserted outright: a prompt's reply is what `host.prompt`
+   resolves to, and the turn's end is emitted from inside that call — so the
+   reply is always at least a tick behind the `turn_ended` this test waited for.
+   Reading it in the same tick was a race that only ever passed because the
+   journal write in between happened to be synchronous. */
+await waitFor(() => ws1.of("reply").length === 1, "the prompt's reply");
 assert.deepEqual(
   ws1.of("reply").map((r) => r.id),
   [1],
@@ -345,6 +351,7 @@ assert.equal(
 /* Answering both releases the turn. A turn ending is a boundary like any
    other, so the held bubble comes out — and before the `turn_ended` it belongs
    inside, rather than being lost. */
+const steerEnded = a.of("turn_ended").length;
 for (const requestId of b.of("permission").slice(-2).map((p) => p.requestId)) {
   send(a, { cmd: "answer_permission", requestId, response: allowOnce });
 }
@@ -356,7 +363,12 @@ assert.equal(b.of("turn_started").at(-1)!.text, "steered, also needs permission"
 // To every peer INCLUDING the sender: it dropped its optimistic bubble, so this
 // event is the only thing that draws one.
 assert.equal(a.of("turn_started").at(-1)!.text, "steered, also needs permission", "the origin gets it too");
-await waitFor(() => session.bridge!.promptActive === false, "the steered turn settles");
+/* Until the event, not until the flag. `promptActive` goes false the moment the
+   last prompt in the turn is answered, and `turn_ended` is emitted a few awaits
+   later — the settle asks the queue whether anything follows the turn first.
+   The sections below count turn ends from here, so leaving on the flag left the
+   previous turn's end to land inside the next section and be read as its. */
+await waitFor(() => a.of("turn_ended").length > steerEnded, "the steered turn's end");
 
 // --- the queue ---
 
@@ -398,6 +410,11 @@ assert.equal(ended[0].continued, true, "the turn before a drain says the queue f
 assert.equal(ended[1].continued, undefined, "the drained turn is followed by nothing");
 assert.equal(a.of("turn_started").at(-1)!.text, "queued one!\n\nqueued two", "combined, blank-line separated");
 assert.equal(b.of("turn_started").at(-1)!.text, "queued one!\n\nqueued two", "…on every peer");
+/* Awaited for the reason the prompt's reply is: the rows are deleted *after*
+   the drained prompt is dispatched — deliberately, so nothing can be lost — and
+   the delete is a round trip to Postgres, which the fake agent's whole turn can
+   outrun. The empty list is the drain's last step, not the turn's. */
+await waitFor(() => lastQueue(a).length === 0, "the drained queue to empty");
 assert.deepEqual(lastQueue(a), [], "the queue is empty after the drain");
 const journalAfterDrain = (await manager.journal(session.id))!.events;
 const continuedAt = journalAfterDrain.findIndex((e) => e.ev === "turn_ended" && e.continued);
@@ -619,7 +636,7 @@ assert.match(
 assert.equal(manager.softDelete(session.id), false, "deleting twice is a no-op");
 assert.ok(manager.restore(session.id));
 assert.equal(manager.list().find((s) => s.id === session.id)!.deletedAt, null);
-assert.ok(manager.purge(session.id));
+assert.ok(await manager.purge(session.id));
 assert.equal(manager.list().find((s) => s.id === session.id), undefined, "purge forgets it");
 
 // --- a reload while a question is open ---
@@ -667,7 +684,7 @@ assert.equal(later.of("permission").length, 0, "an answered request is not repla
 send(later, { id: 2, cmd: "prompt", text: "needs permission again" });
 await waitFor(() => later.of("permission").length === 1, "a second question");
 assert.equal(reloading.bridge!.pending.size, 1);
-manager.purge(reloading.id);
+await manager.purge(reloading.id);
 assert.equal(reloading.bridge, null, "purge retires the bridge with the process");
 
 // --- storage ---
@@ -764,7 +781,7 @@ assert.ok(
   "…and the turn arrived after it, as live",
 );
 slow.close();
-assert.ok(manager.purge(interleaved.id));
+assert.ok(await manager.purge(interleaved.id));
 
 // --- a retired thread keeps its log, and can be read from it ---
 
@@ -830,7 +847,15 @@ assert.equal(page.events.length, turnStarts[3], "…and ends where the window be
 assert.equal(page.earlier, 0, "…and nothing is left above it");
 send(reader, { id: 902, cmd: "load_earlier", before: 0 });
 await waitFor(() => reader.of("reply").length === 3, "the head of the log");
-assert.deepEqual(reader.of("reply")[2].result, { events: [], earlier: 0 }, "nothing before the head");
+/* `from` rides every page, the empty one included: it is the seq the page
+   starts at, and downstream everything that spans the log is counted in seqs
+   (see CLAUDE.md). A page with nothing in it still has to say where "nothing"
+   was, or the caller has no cursor to have reached the head with. */
+assert.deepEqual(
+  reader.of("reply")[2].result,
+  { events: [], from: 0, earlier: 0 },
+  "nothing before the head",
+);
 
 // A ping is about the socket, not the agent, so it is answered where a prompt
 // is refused: an archived thread has no process and must still say it is there.
@@ -905,7 +930,7 @@ assert.equal(delta.frames.flatMap((f) => f.events).length, 0, "…of nothing, he
 
 // Paging back needs no socket either: the archive is where it mostly happens.
 assert.deepEqual(
-  manager.earlierPage(logged.id, windowAttach.from),
+  await manager.earlierPage(logged.id, windowAttach.from),
   tailPage,
   "the HTTP page is the socket's page",
 );
@@ -953,7 +978,7 @@ assert.deepEqual(await snapshot("no-such-thread"), { refused: "no such thread on
   );
   // The small thread's rows would trip the cascade assertion at the end of the
   // file, so it is purged here — its only job was the shape check above.
-  assert.ok(manager.purge(small.id));
+  assert.ok(await manager.purge(small.id));
 
   // --- the window is capped in bytes too, because a step is not a size ---
 
@@ -1031,8 +1056,8 @@ assert.equal(manager.list().find((s) => s.id === logged.id)?.deletedAt !== null,
 assert.equal(await manager.attach(logged.id, new MockWs() as never, 0), "this thread is in the trash");
 assert.ok(manager.restore(logged.id));
 assert.equal(manager.list().find((s) => s.id === logged.id)?.deletedAt, null);
-assert.ok(manager.purge(logged.id));
-assert.equal(manager.journal(logged.id), undefined, "purge forgets the thread");
+assert.ok(await manager.purge(logged.id));
+assert.equal(await manager.journal(logged.id), undefined, "purge forgets the thread");
 
 // --- a refused session/load must not cost the thread its history ---
 
@@ -1072,7 +1097,7 @@ send(orphanWs2, { id: 1, cmd: "prompt", text: "start over" });
 await waitFor(() => orphanWs2.of("turn_ended").length === 1, "the turn on the new session");
 assert.equal(orphan.acpSessionId, "acp-123", "a session with a turn in it takes over the record");
 assert.equal(orphan.historyLost, null, "and the warning goes with it");
-assert.ok(manager.purge(orphan.id));
+assert.ok(await manager.purge(orphan.id));
 
 // --- the same refusal, on an id no turn ever committed to ---
 
@@ -1088,7 +1113,7 @@ await manager.respawn(unproven.id, profile, "fake", project);
 assert.equal(unproven.acpSessionId, "acp-123", "an unproven id yields to the fallback");
 assert.equal(unproven.acpSessionProvisional, true, "which is itself still unproven");
 assert.equal(unproven.historyLost, null, "and nothing was lost to report");
-assert.ok(manager.purge(unproven.id));
+assert.ok(await manager.purge(unproven.id));
 
 // --- persistence across a restart ---
 
@@ -1103,6 +1128,9 @@ await session2.bridge!.ready;
    owning the database — see CLAUDE.md). */
 manager.retire(manager.get(session2.id)!);
 const manager2 = new SessionManager({}, 1);
+/* The constructor cannot await, so the boot read is held on `ready` — and
+   `list()` before it is the empty map, not a manager that lost the thread. */
+await manager2.ready;
 const restored = manager2.list().find((s) => s.id === session2.id);
 assert.ok(restored, "session survives a manager restart");
 assert.equal(restored!.exited, true);
@@ -1116,14 +1144,16 @@ assert.equal(revived.exited, false);
 assert.equal(revived.acpSessionId, "acp-123", "and the revive loaded it");
 assert.equal(revived.acpSessionProvisional, false, "a load that answered proves the id");
 assert.equal(revived.historyLost, null);
-assert.ok(manager2.purge(session2.id));
-assert.ok(manager.purge(session2.id));
+assert.ok(await manager2.purge(session2.id));
+assert.ok(await manager.purge(session2.id));
 
-// Purging cascades: no orphan event rows are left behind for any session.
+/* Purging cascades: no orphan event rows are left behind for any session.
+   Polled, because the journal buffers: an append made before the purge flushes
+   after it, and the foreign key is what refuses it (the journal's own "dropped
+   event" path). The count settles at zero once that batch has been through. */
 const { db, sessionEvents } = await import("../src/db/index.js");
-assert.equal(
-  (await db.select().from(sessionEvents)).length,
-  0,
+await waitFor(
+  async () => (await db.select().from(sessionEvents)).length === 0,
   "event rows cascade with the session",
 );
 
@@ -1198,7 +1228,7 @@ assert.deepEqual(JSON.parse(spec.env.C), { model_context_window: 200_000 });
 // file is empty" rule could never reach. Seeding again adds nothing.
 const { listAgents, seedAgents } = await import("../src/registry.js");
 assert.ok((await listAgents()).some((a) => a.id === "fake"), "the imported agent survived");
-seedAgents();
+await seedAgents();
 const seeded = await listAgents();
 assert.ok((await seeded).some((a) => a.id === "opencode"), "a built-in reaches an install that has rows");
 assert.ok((await seeded).some((a) => a.id === "fake"), "seeding leaves the user's own agents alone");
@@ -1220,13 +1250,15 @@ const profileInput = {
   smallModel: "",
   logoUrl: "",
   suppressModelMetadataWarning: false,
+  hidden: false,
+  disabled: false,
   mcpServerIds: [server1.id],
   skillIds: [],
   commandIds: [],
 };
 const linkedProfile = await createProfile(profileInput);
 assert.deepEqual((await getProfile(linkedProfile.id))!.mcpServerIds, [server1.id]);
-mcpServers.remove(server1.id);
+await mcpServers.remove(server1.id);
 assert.deepEqual((await getProfile(linkedProfile.id))!.mcpServerIds, [], "the link went with the server");
 // A stale id in a request links nothing rather than failing the whole write.
 const staleProfile = await createProfile({ ...profileInput, name: "stale", mcpServerIds: ["gone"] });
@@ -1238,8 +1270,27 @@ assert.deepEqual((await getProfile(staleProfile.id))!.mcpServerIds, []);
 const quietProfile = await createProfile({ ...profileInput, name: "quiet", suppressModelMetadataWarning: true });
 assert.equal((await getProfile(quietProfile.id))!.suppressModelMetadataWarning, true);
 const { updateProfile } = await import("../src/profiles.js");
-updateProfile(quietProfile.id, { ...profileInput, name: "quiet" });
+await await updateProfile(quietProfile.id, { ...profileInput, name: "quiet" });
 assert.equal((await getProfile(quietProfile.id))!.suppressModelMetadataWarning, false, "absent means off");
+
+// Hidden/shown and disabled/enabled are stored columns, and the list's
+// one-field write flips either without touching the rest of the row. A profile
+// that predates the flags (reads undefined here) is shown and enabled, which is
+// what a picker must assume.
+const { setProfileFlags } = await import("../src/profiles.js");
+const offProfile = await createProfile({ ...profileInput, name: "off" });
+assert.equal((await getProfile(offProfile.id))!.hidden, false, "new profiles are shown");
+assert.equal((await getProfile(offProfile.id))!.disabled, false, "and enabled");
+await setProfileFlags(offProfile.id, { hidden: true });
+assert.equal((await getProfile(offProfile.id))!.hidden, true);
+assert.equal((await getProfile(offProfile.id))!.disabled, false, "hiding leaves enabled alone");
+await setProfileFlags(offProfile.id, { hidden: false, disabled: true });
+assert.equal((await getProfile(offProfile.id))!.hidden, false);
+assert.equal((await getProfile(offProfile.id))!.disabled, true);
+await setProfileFlags(offProfile.id, {});
+assert.equal((await getProfile(offProfile.id))!.disabled, true, "an empty patch changes nothing");
+await setProfileFlags(offProfile.id, { disabled: false });
+assert.equal((await getProfile(offProfile.id))!.disabled, false, "and back");
 
 // A profile that opted out of Codex's fallback-metadata notice never sees it,
 // and one that did not still does: the bridge drops the update before it is
@@ -1293,19 +1344,23 @@ const metaLog = (): { method: string; meta: Record<string, any> | null }[] =>
 
 // A thread with no persona says nothing about one: `_meta` carries no
 // systemPrompt at all, rather than an empty append the agent would still apply.
+// Both behaviour toggles are off: each folds a trailer of its own, and the
+// `openui` lane is on by default, so leaving it on would make this assert the
+// trailer rather than the absence of a persona.
 const beforePlain = metaLog().length;
 const plain = await manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, {
   suggestFollowups: false,
+  uiBlocks: false,
 });
 await plain.bridge!.ready;
 const plainMeta = metaLog().slice(beforePlain).find((e) => e.method === "session/new");
 assert.ok(plainMeta, "session/new was recorded");
-assert.equal(plainMeta!.meta?.systemPrompt, undefined, "no persona means no systemPrompt");
+assert.equal(plainMeta!.meta?.systemPrompt, undefined, "no persona and no toggles means no systemPrompt");
 assert.equal(plainMeta!.meta?.claudeCode?.options?.thinking, undefined, "…and no thinking budget");
 
 // Picked at create time, before any process exists. Suggestions are off so
-// this asserts the persona alone — the trailer is a separate statement and
-// the plain thread above already turns it off; this one must too, or the
+// this asserts the persona alone — the trailers are separate statements and
+// the plain thread above already turns them off; this one must too, or the
 // append below is persona + trailer and says nothing about either.
 const mark = metaLog().length;
 const styled = await manager.create(
@@ -1317,7 +1372,7 @@ const styled = await manager.create(
   undefined,
   undefined,
   { mcpServerIds: [], skillIds: [], commandIds: [] },
-  { personaId: persona.id, suggestFollowups: false },
+  { personaId: persona.id, suggestFollowups: false, uiBlocks: false },
 );
 await styled.bridge!.ready;
 const newMeta = metaLog().slice(mark).find((e) => e.method === "session/new");
@@ -1359,7 +1414,7 @@ const dropped = metaLog().length;
 // taken by the next spawn — and this asserts on the spawn itself.
 await manager.applyConfig(
   styled.id,
-  { profile, agentId: "fake", project, personaId: "" },
+  { profile, agentId: "fake", project, personaId: "", suggestFollowups: false, uiBlocks: false },
   { defer: false },
 );
 assert.equal(styled.personaId, "", "the row records that the thread has no persona now");
@@ -1404,7 +1459,7 @@ await waitFor(() => phone.of("turn_ended").length === 3, "the resumed turn ends"
 await new Promise((r) => setTimeout(r, 200));
 assert.equal(pushed.length, 1, "resuming stops the push again");
 notifying.retire(notifying.get(frozen.id)!);
-assert.ok(notifying.purge(frozen.id));
+assert.ok(await notifying.purge(frozen.id));
 
 console.log("bridge.test.ts OK");
 process.exit(0);

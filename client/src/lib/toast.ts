@@ -119,8 +119,18 @@ export const toast = Object.assign(toastBase, {
 
   /** Change a toast that is already on screen — how a loading row becomes its
       own result without the stack shuffling underneath the reader. */
-  update: (id: string, title: ReactNode, options?: ToastOptions & { type?: ToastType }) =>
-    manager.update(id, optionsOf(title, options?.type, options)),
+  update: (id: string, title: ReactNode, options?: ToastOptions & { type?: ToastType }) => {
+    /* `id` is the add-only half of the shape, exactly as it is for a promise's
+       states below. Base UI spreads this bag straight onto the toast being
+       updated, so an `id` carried in it — even the `undefined` `optionsOf`
+       always writes — overwrites the very id the toast was added under. The
+       toast is then unfindable: every later `toast.update(id, …)` is a no-op
+       and a same-id `add` raises a SECOND toast instead of replacing the first.
+       (That is the pwa install progress freezing at its first tick and the
+       update offer arriving as a second card.) */
+    const { id: _id, ...updates } = optionsOf(title, options?.type, options)
+    return manager.update(id, updates)
+  },
 
   /**
    * One toast for the whole of an async job: a spinner while it runs, then the

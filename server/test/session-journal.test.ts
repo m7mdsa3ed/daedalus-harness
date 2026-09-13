@@ -141,7 +141,7 @@ await test("turn arithmetic: turnCount / turnStartAt / countTurnsBefore agree", 
   assert.equal(await journal.turnStartAt(s.id, 4), null, "past the end is null, not a guess");
   assert.equal(await journal.countTurnsBefore(s.id, 0), 0);
   assert.equal(await journal.countTurnsBefore(s.id, 8), 2);
-  assert.equal(await journal.countTurnsBefore(s.id, Number.MAX_SAFE_INTEGER), 4);
+  assert.equal(await journal.countTurnsBefore(s.id), 4, "omitted is every turn, not a sentinel");
 });
 
 await test("the step budget cuts at a turn_started, and only when a turn is withheld", async () => {
@@ -193,7 +193,7 @@ await test("revive: a log that is all head (no turn_started) replays whole from 
   const s = await owner();
   for (let i = 0; i < 20; i += 1) journal.append(s, update(`loaded ${i}`));
   assert.equal(await journal.windowStart(s.id, 5, Number.MAX_SAFE_INTEGER), 0);
-  assert.equal(await journal.countTurnsBefore(s.id, Number.MAX_SAFE_INTEGER), 0, "`earlier` says 0 too");
+  assert.equal(await journal.countTurnsBefore(s.id), 0, "`earlier` says 0 too");
 });
 
 await test("revive: a head plus one turn inside the window replays whole — the regression", async () => {
@@ -268,7 +268,7 @@ await test("trace pages newest-first with the journaled clock on each row", asyn
     assert.equal(row.ev, row.payload.ev, "the kind column duplicates the payload discriminant");
   }
   // A window of zero is empty rather than the head of the log.
-  assert.deepEqual(journal.trace(s.id, 0, 4), []);
+  assert.deepEqual(await journal.trace(s.id, 0, 4), []);
 });
 
 await test("replayFrames respects the `to` bound the attached event names", async () => {

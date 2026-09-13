@@ -29,13 +29,14 @@ export const HEADER_BADGE =
     wrapper's ground now rather than over a transcript, so there is nothing to
     lift them off (the frosted chip they wore is the tab's alone, `index.css`).
 
-    `size-7` is the **tab's** height (`h-7` in `workspace/panel-tab`), which is
-    the number that matters: these two controls and that group's tabs are one
+    Its height is the **tab's** (`--dock-chip-h`, spelled in `index.css`), which
+    is the number that matters: these two controls and that group's tabs are one
     row whenever a group joins the band, and a 24px control beside a 28px tab
     reads as a strip tucked under the header rather than as the header's own
-    line. The sidebar header's own buttons are not bound by this — they stand on
-    a surface of their own, with nothing to line up with. */
-export const HEADER_CHIP = "size-7"
+    line. It is the same token `WORKSPACE/DOCK`'s strip takes, so the three
+    cannot drift apart. The sidebar header's own buttons are not bound by this —
+    they stand on a surface of their own, with nothing to line up with. */
+export const HEADER_CHIP = "size-[var(--dock-chip-h)]"
 
 /** The ground of a surface the app *raises over* its own content — what a
     capsule opens (the bell's glance) and what the app raises on its own (a

@@ -8,6 +8,7 @@ import {
   queuedAttachmentIds,
   removeQueued,
   removeQueuedMany,
+  requeueSteers,
   updateQueued,
 } from "./queue.js";
 import type { Peer, Session } from "./sessions.js";
@@ -40,40 +41,134 @@ export async function queueItems(session: Session): Promise<QueuedMessage[]> {
   return [...(session.bridge?.heldSteers() ?? []), ...(await listQueue(session.id))];
 }
 
+/** The newest `emitQueue` read per session — see `emitQueue`. Off to the side
+    rather than on `Session`, because it is this module's bookkeeping and
+    nothing else ever asks. */
+const emitTickets = new WeakMap<Session, number>();
+
 export class SessionQueue {
   constructor(private host: QueueHost) {}
 
-  /** The whole queue to every peer, the origin included: ids are minted here,
-      so no peer's own picture of the list is the one to keep. */
+  /**
+   * The whole queue to every peer, the origin included: ids are minted here, so
+   * no peer's own picture of the list is the one to keep.
+   *
+   * The event is absolute, and its payload is a *read* — so two of them in
+   * flight can be delivered in the order their reads finished rather than the
+   * order they were asked for, and the peer's last picture is then an older
+   * one. Three settings changed in the same breath left the last `queue` event
+   * carrying two of the three held rows, permanently. A ticket per session
+   * fixes it without serialising anything: a read that is no longer the newest
+   * is dropped on arrival, because a newer one is already on its way with
+   * everything it would have said.
+   */
   async emitQueue(session: Session): Promise<void> {
-    this.host.emit(session, { ev: "queue", items: await queueItems(session) });
+    const ticket = (emitTickets.get(session) ?? 0) + 1;
+    emitTickets.set(session, ticket);
+    const items = await queueItems(session);
+    if (emitTickets.get(session) !== ticket) return;
+    this.host.emit(session, { ev: "queue", items });
   }
 
   /**
    * Combine everything queued into ONE prompt and start a turn on it. Only on
-   * an idle bridge with no "send now" mid-flight — that path is about to send
-   * some of these rows itself and must not find them gone. Rows are deleted
-   * after the prompt is dispatched, so nothing here can lose a message.
+   * an idle bridge — a running turn is what the queue is waiting for.
+   *
+   * **Behind the chain rather than refused by it.** A "send now" mid-flight is
+   * about to send some of these rows itself, so a drain must not race it — but
+   * a drain that gave up on finding one used to be a drain that never happened:
+   * the settle that asked for it had already reported `continued`, and nothing
+   * asked again. Waiting instead costs one queue operation's latency and is the
+   * same answer a moment later, with the rows the other path claimed already
+   * gone (`send`).
    */
   async drain(session: Session): Promise<{ turnId: string } | null> {
     const bridge = session.bridge;
-    if (!bridge || bridge.promptActive || session.queueChain) return null;
-    const items = await listQueue(session.id);
-    if (items.length === 0) return null;
-    const result = await this.host.startTurn(session, bridge, combineQueued(items), undefined, {
-      attachments: attachmentsOf(items),
+    if (!bridge || bridge.promptActive) return null;
+    return this.chain(session, async () => {
+      /* Re-read inside the chain: whatever ran ahead of this may have sent some
+         of them, and — the case this ordering is for — the thread may have
+         started a turn while it did. */
+      if (session.bridge !== bridge || bridge.promptActive) return null;
+      const items = await listQueue(session.id);
+      if (items.length === 0) return null;
+      return this.send(session, bridge, items);
     });
+  }
+
+  /**
+   * Claim these rows and send them as one prompt.
+   *
+   * **Claiming is deleting.** The rows go before the prompt is dispatched, not
+   * after, and that ordering is the whole of what makes `hasQueued` — read at
+   * every turn end, by a turn that may end in the middle of this — tell the
+   * truth. Deleted after dispatch (which was safe while storage was synchronous
+   * and the delete could not be interleaved), the turn started *from* these
+   * rows found them still in the table when it ended, said the queue follows
+   * it, and sent the same combined message a second time.
+   *
+   * Nothing is lost by going first: a dispatch that throws puts them back. The
+   * one thing that changes across that is their order among rows queued
+   * meanwhile, since `enqueue` appends.
+   *
+   * ponytail: restored by re-queueing, not by a transaction — the prompt is on
+   * a socket to another process, so there is nothing for a database to roll
+   * back with it.
+   */
+  private async send(
+    session: Session,
+    bridge: AcpBridge,
+    items: QueuedMessage[],
+  ): Promise<{ turnId: string }> {
     await removeQueuedMany(session.id, items.map((item) => item.id));
     await this.emitQueue(session);
-    return result;
+    try {
+      return await this.host.startTurn(session, bridge, combineQueued(items), undefined, {
+        attachments: attachmentsOf(items),
+      });
+    } catch (error) {
+      for (const item of items) await enqueue(session.id, item.text, item.attachments ?? []);
+      await this.emitQueue(session);
+      throw error;
+    }
+  }
+
+  /** This thread's queue work, one at a time: behind whatever is already
+      running, and — for as long as it runs — what stands another drain down
+      (`drain` returns null on a thread that has one going). */
+  private chain<T>(session: Session, work: () => Promise<T>): Promise<T> {
+    const ahead = session.queueChain;
+    const run = (async () => {
+      await ahead?.catch(() => {});
+      return work();
+    })();
+    session.queueChain = run;
+    void run
+      .finally(() => {
+        if (session.queueChain === run) session.queueChain = null;
+      })
+      .catch(() => {});
+    return run;
   }
 
   /** `prompt` from a client that already knows the thread is busy. On an idle
       thread it drains straight away — one path, so a client whose picture of
       the turn was stale still gets its words sent. */
   async add(session: Session, text: string, attachments: AttachmentRef[] = []): Promise<PromptReply> {
-    const item = await enqueue(session.id, text, attachments);
-    await this.emitQueue(session);
+    /* On the chain, because two messages typed in one breath are two commands
+       racing each other to the table, and the queue is an ordered list. The
+       socket hands them to us in order and `chain` links synchronously, so the
+       order they were sent in is the order they are written in — which is what
+       the position column was already trying to say, and could not while both
+       inserts were in flight at once.
+
+       The drain is deliberately outside it: `drain` chains too, and a chain
+       waiting on itself waits forever. */
+    const item = await this.chain(session, async () => {
+      const row = await enqueue(session.id, text, attachments);
+      await this.emitQueue(session);
+      return row;
+    });
     return (await this.drain(session)) ?? { queued: true, itemId: item.id };
   }
 
@@ -111,38 +206,43 @@ export class SessionQueue {
   }
 
   /**
-   * Stop the running turn, and — with `reclaim` — take back the newest message
-   * that has not landed, so the caller can put it back in the composer.
+   * Stop the running turn, and — with `reclaim` — take back the newest QUEUED
+   * row, so the caller can put it back in the composer.
    *
-   * Atomic and server-side for the reason `sendNow` is: take-back → cancel is
-   * two steps, and a browser driving them could cancel with the words already
-   * flushed into the transcript, or take them back and never send the cancel.
+   * A held STEER is no longer the take-back's to touch: the steer's promise
+   * was "these words run", so the stop keeps the promise instead of revoking
+   * it — the words are re-queued (`takeSteers`, `requeueSteers`) and, once the
+   * cancelled turn has settled, run as the next turn. The rows are ordinary
+   * queue rows from there: editable, removable, drainable, which is the way
+   * back a take-back used to be. A stop that ends a turn the user steered
+   * words into no longer strands those words as bubbles in an interrupted
+   * transcript.
    *
-   * The take-back happens BEFORE the cancel, and that ordering is the whole
-   * mechanism. A cancel settles the turn, and `settleTurn` treats a settle as a
-   * step boundary — it calls `flushSteers`, which emits every held steer as the
-   * real `turn_started` it was waiting to become. Taken first, the steer is
-   * gone before that runs and the bubble never appears; taken after, the words
-   * are in the transcript and the composer would be a second copy of them.
+   * Atomic and server-side for the reason `sendNow` is: take-back → cancel →
+   * send is three steps, and a browser driving them could cancel with the
+   * words already flushed into the transcript, or take them back and never
+   * send the cancel.
    *
-   * Exactly one message, because the composer is one box. A steer outranks a
-   * queued row only by being newer — the rows are ordered by `createdAt` and
-   * the last one is the one the user just sent, which is the one Escape is
-   * about. Everything older stays parked with its own Edit and ✕.
+   * The take-back and the steer conversion happen BEFORE the cancel, and that
+   * ordering is the whole mechanism. A cancel settles the turn, and
+   * `settleTurn` treats a settle as a step boundary — it calls `flushSteers`,
+   * which emits every held steer as the real `turn_started` it was waiting to
+   * become. Taken first, the steers are gone before that runs and the bubbles
+   * never appear; the re-queued rows are what survive, in the queue where
+   * they are visible.
    *
-   * `reclaimed` absent means nothing was taken: an ordinary stop, or a steer
-   * whose step boundary beat this call. Nothing is lost either way — a steer
-   * past its boundary is a bubble in the transcript, not a message dropped.
+   * `reclaimed` absent means no row was taken: an ordinary stop, or a queue
+   * that was empty. Nothing is lost either way.
    *
    * ponytail: a QUEUED row never left this server, so taking it back is total.
-   * A reclaimed STEER is not: its words went out as a `session/prompt` the
+   * A re-queued STEER is not: its words went out as a `session/prompt` the
    * moment they were sent, so the runtime has them buffered even though no
-   * step read them, and a runtime that keeps that buffer on cancel keeps them
-   * as context for the next turn. The harness undoes everything on its own
-   * side — no bubble, no journal row, the words back in the box. Making it
-   * total needs a withdraw the runtime participates in (an `AgentDef` column,
-   * like every other thing the harness believes about a runtime), which is
-   * worth building when a doubled steer is actually observed.
+   * step read them — and one that keeps that buffer on cancel (this repo's own
+   * agent persists it as context) will see the words twice when the next turn
+   * runs. Making it total needs a withdraw the runtime participates in (an
+   * `AgentDef` column, like every other thing the harness believes about a
+   * runtime), which is worth building when a doubled steer is actually
+   * observed.
    */
   async stop(session: Session, reclaim: boolean): Promise<{ reclaimed?: QueuedMessage }> {
     const bridge = session.bridge;
@@ -150,26 +250,47 @@ export class SessionQueue {
     /* The cancel still goes out when nothing was reclaimed: Escape means stop
        first and take back second, never "stop only if there was something to
        take". */
+    const steered = bridge?.takeSteers() ?? [];
+    if (steered.length > 0) {
+      await requeueSteers(session.id, steered);
+      await this.emitQueue(session);
+    }
     if (bridge) await bridge.cancel();
+    if (bridge && steered.length > 0) {
+      void this.runSteeredAfter(session, bridge, steered).catch((error: unknown) =>
+        console.error(`[queue] steered words could not follow the stop`, error),
+      );
+    }
     if (reclaimed) await this.emitQueue(session);
     return reclaimed ? { reclaimed } : {};
   }
 
-  /** The newest un-landed message, removed from wherever it lives: a held
-      steer is the bridge's, a queued row is the table's. Newest by
-      `createdAt`, not by which list it is in — a steer sent into the turn and
-      then a second message typed behind it leaves the queued row the newer of
-      the two. */
+  /** The steered rows' turn, started once the cancelled one has finished
+      settling. The rows are claimed by `send` like any drain — re-read from
+      the table inside the chain, so rows the user edited or deleted in the
+      window are respected, and a queue that a concurrent drain already sent
+      (the bridge is busy again) is left to that turn's own settle-drain. */
+  private async runSteeredAfter(
+    session: Session,
+    bridge: AcpBridge,
+    steered: QueuedMessage[],
+  ): Promise<void> {
+    await bridge.whenIdle();
+    if (session.bridge !== bridge) return;
+    await this.chain(session, async () => {
+      if (session.bridge !== bridge || bridge.promptActive) return;
+      const ids = new Set(steered.map((item) => item.id));
+      const items = (await listQueue(session.id)).filter((item) => ids.has(item.id));
+      if (items.length === 0) return;
+      await this.send(session, bridge, items);
+    });
+  }
+
+  /** The newest queued row — the take-back's whole domain. A held steer is
+      not one: its words re-queue on the stop instead of coming back to a
+      composer (`stop`). */
   private async takeNewest(session: Session): Promise<QueuedMessage | null> {
-    const rows = await listQueue(session.id);
-    const row = rows[rows.length - 1];
-    const steer = session.bridge?.newestSteer();
-    if (steer && (!row || steer.createdAt >= row.createdAt)) {
-      /* `null` if the step boundary emitted it between the peek and here: the
-         words landed, and that is an answer — never a reason to reach past it
-         and take back some older message the user did not mean. */
-      return session.bridge?.takeSteer(steer.id) ?? null;
-    }
+    const row = (await listQueue(session.id)).at(-1);
     if (!row) return null;
     return (await removeQueued(session.id, row.id)) ? row : null;
   }
@@ -183,18 +304,7 @@ export class SessionQueue {
    * `queueChain`, which is also what stands the auto-drain down meanwhile.
    */
   sendNow(session: Session, itemId?: string): Promise<{ turnId: string }> {
-    const ahead = session.queueChain;
-    const run = (async () => {
-      await ahead?.catch(() => {});
-      return this.sendNowNow(session, itemId);
-    })();
-    session.queueChain = run;
-    void run
-      .finally(() => {
-        if (session.queueChain === run) session.queueChain = null;
-      })
-      .catch(() => {});
-    return run;
+    return this.chain(session, () => this.sendNowNow(session, itemId));
   }
 
   private async sendNowNow(session: Session, itemId?: string): Promise<{ turnId: string }> {
@@ -215,12 +325,7 @@ export class SessionQueue {
       throw new Error(
         "This thread's agent process ended while the queue was waiting for it. The queued messages are kept — sending or reviving the thread runs them.",
       );
-    const result = await this.host.startTurn(session, bridge, combineQueued(items), undefined, {
-      attachments: attachmentsOf(items),
-    });
-    await removeQueuedMany(session.id, items.map((item) => item.id));
-    await this.emitQueue(session);
-    return result;
+    return this.send(session, bridge, items);
   }
 }
 

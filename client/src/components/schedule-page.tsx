@@ -31,6 +31,7 @@ import { toast } from "@/lib/toast"
 
 import { useConfirm } from "@/components/confirm-dialog"
 import { AgentIcon, ProjectIcon } from "@/components/entity-icon"
+import { Notice } from "@/components/notice"
 import { MetaFact, StatGrid, StatTile, SurfaceCard, SurfaceHeader } from "@/components/page-primitives"
 import { EmptyCard, Field, FormPageHeader, FormSection, PageForm } from "@/components/settings/primitives"
 import { Button } from "@/components/ui/button"
@@ -176,31 +177,32 @@ const useThreadOf = (sessionId: string): SessionMeta | undefined =>
 function SkipNote({ item, onResume }: { item: ScheduledMessage; onResume: () => void }) {
   const parked = scheduleParked(item)
   return (
-    <div className="flex flex-wrap items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 sm:flex-nowrap dark:text-amber-400">
-      <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-      <div className="min-w-0 flex-1">
-        <p>
-          {parked
-            ? `Parked after ${item.skipCount} failed deliveries — the server has stopped retrying.`
-            : `Couldn't deliver${item.skipCount > 1 ? ` (${item.skipCount} attempts)` : ""}.`}
-          {item.lastError && ` Last error: ${item.lastError}.`}
+    <Notice
+      tone="warn"
+      action={
+        <Button size="xs" variant="outline" className="shrink-0" onClick={onResume}>
+          Resume
+        </Button>
+      }
+    >
+      <p>
+        {parked
+          ? `Parked after ${item.skipCount} failed deliveries — the server has stopped retrying.`
+          : `Couldn't deliver${item.skipCount > 1 ? ` (${item.skipCount} attempts)` : ""}.`}
+        {item.lastError && ` Last error: ${item.lastError}.`}
+      </p>
+      {item.skippedAt !== null && (
+        <p className="opacity-80">
+          Last attempt{" "}
+          {new Date(item.skippedAt).toLocaleString(undefined, {
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
         </p>
-        {item.skippedAt !== null && (
-          <p className="mt-0.5 opacity-80">
-            Last attempt{" "}
-            {new Date(item.skippedAt).toLocaleString(undefined, {
-              month: "short",
-              day: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
-          </p>
-        )}
-      </div>
-      <Button size="xs" variant="outline" className="shrink-0" onClick={onResume}>
-        Resume
-      </Button>
-    </div>
+      )}
+    </Notice>
   )
 }
 

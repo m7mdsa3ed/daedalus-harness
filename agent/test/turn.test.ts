@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type * as acp from "../src/acp.js";
 import { APICallError } from "@ai-sdk/provider";
+import { MockLanguageModelV4, convertArrayToReadableStream } from "ai/test";
 import { buildAgentApp } from "../src/app.js";
 import { SessionStore } from "../src/persistence.js";
 import {
@@ -93,6 +94,55 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
     assert.equal(b.stopReason, "end_turn");
   });
   console.log("turn: steering ok");
+}
+
+// --- a steer that lands after the last step still gets read, not stranded ---
+{
+  /* The bug this covers: a steer arriving after the final `prepareStep` — the
+     model had already streamed its answer, so no boundary is left to read it —
+     used to be pushed into the history for the *next* turn while the running
+     one ended. The harness draws a held steer's bubble at turn end, so the
+     user saw their words land as part of a turn that never acted on them, and
+     no new turn followed. The turn must read one more step instead. */
+  let calls = 0;
+  const promptsSeen: string[] = [];
+  const agent = buildAgentApp({
+    env: testEnv(),
+    makeModel: () =>
+      new MockLanguageModelV4({
+        doStream: async (params) => {
+          calls += 1;
+          promptsSeen.push(JSON.stringify(params.prompt));
+          /* The first step stalls before streaming — the window a late steer
+             arrives in: `turnActive` is true and no `prepareStep` runs again. */
+          if (calls === 1) await new Promise((r) => setTimeout(r, 300));
+          return {
+            stream: convertArrayToReadableStream(
+              calls === 1 ? textScript("first answer ") : textScript("second answer "),
+            ),
+          };
+        },
+      }),
+  });
+  const { app: client, harness } = makeClient();
+  await client.connectWith(agent, async (ctx) => {
+    await initialize(ctx);
+    const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
+    const first = ctx.request("session/prompt", { sessionId, prompt: promptOf("start") });
+    await new Promise((r) => setTimeout(r, 100));
+    const steer = ctx.request("session/prompt", { sessionId, prompt: promptOf("late thought") });
+    const [a, b] = await Promise.all([first, steer]);
+    assert.equal(a.stopReason, "end_turn");
+    assert.equal(b.stopReason, "end_turn");
+    assert.equal(calls, 2, "the late steer should drive a second model step");
+    assert.ok(promptsSeen[1]?.includes("late thought"), "the second step must carry the steer");
+    const text = harness
+      .updatesOf("agent_message_chunk")
+      .map((u) => ((u.update as { content?: { text?: string } }).content?.text ?? ""))
+      .join("");
+    assert.ok(text.includes("second answer"), "the model must answer after the steer");
+  });
+  console.log("turn: a late steer is read, not stranded ok");
 }
 
 // --- cancel: session/cancel ends the turn with stopReason cancelled ---
@@ -388,6 +438,96 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
   console.log("turn: a usage cap holds at once ok");
 }
 
+// --- a 400 is the request, not the moment: held at once, and said in full ---
+{
+  /* The real one, from a gateway whose ceiling is below what the profile's
+     catalog claimed the model's output limit was. One line, ~230 characters,
+     and the part that says *which* parameter is at the end of it — which is
+     what a 200-character headline with nothing behind it threw away. */
+  const tooBig = new APICallError({
+    message:
+      '[commandcode/deepseek/deepseek-v4.1-flash] [400]: Invalid request error. Often missing required parameters or typo. ' +
+      'HINT: Validation error: Too big: expected number to be <=200000 at "params.max_tokens"',
+    url: "http://provider/chat/completions",
+    requestBodyValues: {},
+    statusCode: 400,
+  });
+  const agent = buildAgentApp({
+    env: testEnv({ holdOnError: true }),
+    makeModel: scriptedModel([
+      [
+        { type: "stream-start", warnings: [] },
+        { type: "error", error: tooBig },
+        { type: "finish", finishReason: { unified: "error", raw: "error" } as never, usage: usage(1, 0) },
+      ],
+      textScript("after the fix "),
+    ]),
+  });
+  const { app: client, harness } = makeClient();
+  await client.connectWith(agent, async (ctx) => {
+    await initialize(ctx);
+    const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
+    const turn = ctx.request("session/prompt", { sessionId, prompt: promptOf("go") }) as Promise<acp.PromptResponse>;
+    await waitFor(() => harness.holds.some((h) => h.paused), "the 400 to hold", 1_000);
+    // Four backoffs re-sending bytes the provider already rejected as invalid
+    // is a minute of silence in front of the same hold.
+    assert.equal(harness.retries.length, 0, "an invalid request is not retried");
+    const hold = harness.holds.find((h) => h.paused)!;
+    assert.ok((hold.message ?? "").endsWith("…"), "the headline is cut to a headline's length");
+    assert.match(hold.detail ?? "", /params\.max_tokens/, "…and the cut text is kept whole underneath");
+    await ctx.request("_daedalus/session/resume", { sessionId });
+    assert.equal((await turn).stopReason, "end_turn");
+  });
+  console.log("turn: a 400 holds at once and keeps its whole message ok");
+}
+
+// --- an image attachment reaches the provider as a content part ---
+{
+  /* The bridge sends an image as an ACP `image` block only because this
+     runtime advertises `promptCapabilities.image` (app.ts); a `false` there
+     degrades every image to a file path before `modalities` is consulted, and
+     the model sees prose about a screenshot instead of the screenshot. Even
+     with the flag on, a block the loop cannot convert is dropped — so both
+     halves are asserted here: the capability the harness reads, and the part
+     the provider receives. */
+  const model = new MockLanguageModelV4({
+    doStream: async () => ({ stream: convertArrayToReadableStream(textScript("I see it. ")) }),
+  });
+  const agent = buildAgentApp({ env: testEnv(), makeModel: () => model });
+  const { app: client } = makeClient();
+  await client.connectWith(agent, async (ctx) => {
+    const init = await initialize(ctx);
+    assert.equal(
+      init.agentCapabilities?.promptCapabilities?.image,
+      true,
+      "the runtime claims it can carry an image",
+    );
+    const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
+    await ctx.request("session/prompt", {
+      sessionId,
+      prompt: [
+        { type: "text", text: "what is this?" },
+        { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+      ],
+    });
+    const prompt = model.doStreamCalls.at(-1)?.prompt ?? [];
+    const user = prompt.find((m) => m.role === "user") as { content: unknown[] } | undefined;
+    const parts = Array.isArray(user?.content) ? user.content : [];
+    const image = parts.find((p) => (p as { type?: string }).type === "file") as
+      | { mediaType?: string; data?: { data?: unknown } }
+      | undefined;
+    assert.equal(image?.mediaType, "image/png", "the image rides as a file part");
+    /* The SDK tags raw bytes `{ type: "data", data }` on the way to the
+       provider (the file part's data is a union of data/url/text). */
+    assert.equal(image?.data?.data, "aGVsbG8=", "with its base64 payload intact");
+    assert.ok(
+      parts.some((p) => (p as { type?: string }).type === "text"),
+      "and the prose is still there beside it",
+    );
+  });
+  console.log("turn: an image attachment reaches the provider ok");
+}
+
 // --- a tool that fails is the model's problem, not the reader's ---
 {
   const agent = buildAgentApp({
@@ -473,3 +613,54 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
 }
 
 console.log("turn.test.ts passed");
+
+// --- a steer carries its image blocks, not just its prose ---
+{
+  /* The bug this covers: a prompt landing mid-turn was flattened to its text,
+     so an attached screenshot reached the model as the `[attached: …]` line and
+     nothing else — the harness had already decided to inline the bytes, and the
+     model was told a screenshot was there and never given it.
+
+     The first step is a tool call, which is what guarantees a second step (and
+     so a `prepareStep` for the steer to be drained at) without racing a timer. */
+  let calls = 0;
+  const promptsSeen: string[] = [];
+  const agent = buildAgentApp({
+    env: testEnv(),
+    makeModel: () =>
+      new MockLanguageModelV4({
+        doStream: async (params) => {
+          calls += 1;
+          promptsSeen.push(JSON.stringify(params.prompt));
+          return {
+            stream: convertArrayToReadableStream(
+              calls === 1
+                ? toolCallScript("bash", { command: "sleep 0.4; echo done" })
+                : textScript("answer "),
+            ),
+          };
+        },
+      }),
+  });
+  const { app: client } = makeClient();
+  await client.connectWith(agent, async (ctx) => {
+    await initialize(ctx);
+    const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
+    await ctx.request("session/set_mode", { sessionId, modeId: "bypassPermissions" });
+    const first = ctx.request("session/prompt", { sessionId, prompt: promptOf("start") });
+    await new Promise((r) => setTimeout(r, 150));
+    const steer = ctx.request("session/prompt", {
+      sessionId,
+      prompt: [
+        ...promptOf("look at this"),
+        { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" },
+      ],
+    });
+    await Promise.all([first, steer]);
+    assert.ok(
+      promptsSeen.slice(1).some((p) => p.includes("iVBORw0KGgo=")),
+      "the steer must carry its image bytes to the model",
+    );
+  });
+  console.log("turn: steered image ok");
+}

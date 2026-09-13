@@ -1,6 +1,6 @@
 import * as React from "react"
 import type * as acp from "@daedalus/acp"
-import { BotIcon } from "lucide-react"
+import { BotIcon, Loader2, RefreshCwIcon } from "lucide-react"
 import { AgentIcon, EntityIcon, ModelIcon, ProfileIcon, ProjectIcon } from "@/components/entity-icon"
 import { AvatarGroup } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -19,8 +19,8 @@ import {
 import { MenuRow, selectChoices } from "@/components/config-menu"
 import { ThreadToolsMenu, useThreadToolCount } from "@/components/thread-tools"
 import type { Actions } from "@/lib/actions"
-import { optionKey, shownOptions, useAgentOptions } from "@/lib/agent-options"
-import { partitionSessionOptions } from "@/lib/session-options"
+import { optionKey, shownOptions, useAgentOptions, useProbeStatus } from "@/lib/agent-options"
+import { currentChoiceLabel, partitionSessionOptions } from "@/lib/session-options"
 import { profileSupports, type SessionMeta } from "@/lib/settings"
 import { saveThreadDefaults } from "@/lib/thread-defaults"
 import { useAgents, usePersonas, useProfiles, useProjects } from "@/lib/queries/catalog"
@@ -43,10 +43,14 @@ function useDraft(meta: SessionMeta, actions: Actions, remember = true) {
   const profile = profiles.find((p) => p.id === meta.profileId)
   // The draft's own agent, not the profile's: a profile may serve several.
   const agent = agents.find((a) => a.id === meta.agentId)
-  /* The profiles this thread could run on — every one configured for its
-     agent. The profile only overrides model and effort; the agent is what the
-     rest of the menu belongs to, so switching profile keeps it. */
-  const agentProfiles = profiles.filter((p) => profileSupports(p, meta.agentId))
+  /* The profiles this thread could run on — every *shown* one configured for
+     its agent. The profile only overrides model and effort; the agent is what
+     the rest of the menu belongs to, so switching profile keeps it. The draft's
+     own profile stays listed even when it has been hidden or disabled since:
+     the row must still read what the thread is actually on. */
+  const agentProfiles = profiles.filter(
+    (p) => profileSupports(p, meta.agentId) && (p.id === meta.profileId || (!p.hidden && !p.disabled))
+  )
 
   const configure = (next: Parameters<Actions["configureDraft"]>[1]) => {
     actions.configureDraft(meta.id, next)
@@ -66,6 +70,7 @@ function useDraft(meta: SessionMeta, actions: Actions, remember = true) {
       effort: next.effort ?? meta.effort,
       personaId: next.personaId ?? meta.personaId,
       suggestFollowups: next.suggestFollowups ?? meta.suggestFollowups,
+      uiBlocks: next.uiBlocks ?? meta.uiBlocks,
     })
   }
 
@@ -198,7 +203,7 @@ export function PickerMenu({
           <Button
             variant="ghost"
             title={title}
-            className="h-6 min-w-0 gap-1.5 rounded-md border-0 bg-transparent px-1.5 text-[11px] font-normal text-muted-foreground shadow-none hover:bg-accent/50 hover:text-foreground data-popup-open:bg-accent/50"
+            className="h-6 min-w-0 gap-1.5 rounded-pill border-0 bg-transparent px-1.5 text-[11px] font-normal text-muted-foreground shadow-none hover:bg-accent/50 hover:text-foreground data-popup-open:bg-accent/50"
           >
             {icon}
             <span className="max-w-40 truncate">{label}</span>
@@ -277,9 +282,9 @@ export function DraftConfigPopover({
      the other. */
   const chooseAgent = (agentId: string) => {
     const next =
-      profile && profileSupports(profile, agentId)
+      profile && profileSupports(profile, agentId) && !profile.hidden && !profile.disabled
         ? profile
-        : profiles.find((p) => profileSupports(p, agentId))
+        : profiles.find((p) => profileSupports(p, agentId) && !p.hidden && !p.disabled)
     if (!next) return
     configure({ agentId, profileId: next.id, model: "", effort: "" })
   }
@@ -311,8 +316,8 @@ export function DraftConfigPopover({
      offers `effort` on its reasoning models — so read the set recorded for the
      chosen model rather than the one that happened to be live when we looked. */
   const remembered = React.useMemo(
-    () => shownOptions(known, meta.configChoices),
-    [known, meta.configChoices]
+    () => shownOptions(known, meta.configChoices, meta.model, meta.effort),
+    [known, meta.configChoices, meta.model, meta.effort]
   )
   const agentOptions = partitionSessionOptions(
     remembered,
@@ -339,21 +344,27 @@ export function DraftConfigPopover({
     option?.type === "select" ? option.currentValue : ""
 
   const persona = personas.find((p) => p.id === meta.personaId)
+  /* `currentChoiceLabel`, the same reading the started menu draws with — the
+     two chips must name the model identically or the pick looks like it moved
+     the moment the thread starts. */
   const modelLabel = overridden
     ? (resolvedModel?.label ?? (meta.model || "Profile default"))
     : agentOptions.model
-      ? (selectChoices(agentOptions.model).find((c) => c.value === optionValue(agentOptions.model))
-          ?.name ?? (profile?.name ?? "Agent"))
+      ? currentChoiceLabel(agentOptions.model)
       : (profile?.name ?? "Agent")
   const effortLabel = profileEffort
     ? meta.effort || null
     : liveEffort
-      ? (selectChoices(liveEffort).find((c) => c.value === optionValue(liveEffort))?.name ?? null)
+      ? currentChoiceLabel(liveEffort)
       : null
 
   const choose = (configId: string, value: string | boolean) =>
     actions.chooseDraftConfigOption(meta.id, configId, value)
   const nothingYet = !overridden && remembered.length === 0 && !modes
+  /* Why the menu is empty, not just that it is: the probe above is a spawn, so
+     "asking" is a real wait, and a failed one is worth a retry rather than a
+     sentence that reads like a design decision. */
+  const probeStatus = useProbeStatus(optionKey(meta.profileId, meta.agentId))
 
   return (
     <DropdownMenu>
@@ -364,7 +375,7 @@ export function DraftConfigPopover({
             /* Ellipsized rather than collapsed, on a phone as in a narrow dock
                panel — same rule as SessionConfigPopover's trigger, which
                replaces this one the moment the thread starts. */
-            className="h-6 gap-1 border-0 bg-transparent px-1.5 text-[11px] shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent"
+            className="h-6 gap-1 rounded-pill border-0 bg-transparent px-1.5 text-[11px] shadow-none text-muted-foreground hover:bg-transparent hover:text-foreground aria-expanded:bg-transparent data-popup-open:bg-transparent"
             title={[persona?.name, modelLabel, effortLabel, modeLabel].filter(Boolean).join(" · ")}
           >
             {/* The model's own icon replaces the profile's logo in the pair —
@@ -489,7 +500,13 @@ export function DraftConfigPopover({
                   ...c,
                   icon: <BotIcon className="size-4 text-muted-foreground" />,
                 }))}
-                onSelect={(value) => choose(agentOptions.model!.id, value)}
+                /* The row's own `model`, not a config choice: the agent's model
+                   and effort have a channel of their own at spawn
+                   (`agentOwned`) and are never replayed from `configChoices`,
+                   so a pick left in there would be dropped and the thread would
+                   come up on the agent's default. Same field the profile
+                   catalog writes — one record either way. */
+                onSelect={(value) => configure({ model: value })}
               />
             )
           )}
@@ -509,17 +526,47 @@ export function DraftConfigPopover({
                 label="Effort"
                 value={optionValue(liveEffort)}
                 choices={selectChoices(liveEffort)}
-                onSelect={(value) => choose(liveEffort.id, value)}
+                /* Effort travels the same channel as the model — see above. */
+                onSelect={(value) => configure({ effort: value })}
               />
             )
           )}
-          {nothingYet && (
-            <DropdownMenuItem disabled className="whitespace-normal text-xs">
-              {profile
-                ? `${profile.name} lets the agent choose. Its settings appear here once this agent has run once.`
-                : "Pick a profile to start this thread."}
-            </DropdownMenuItem>
-          )}
+          {nothingYet &&
+            (!profile ? (
+              <DropdownMenuItem disabled className="whitespace-normal text-xs">
+                Pick a profile to start this thread.
+              </DropdownMenuItem>
+            ) : probeStatus === "failed" ? (
+              /* The one row here that is not disabled: a failed probe is the
+                 only one of the three states the reader can do something
+                 about, and `force` is what lets it step over the
+                 once-per-page-load guard. */
+              <DropdownMenuItem
+                className="whitespace-normal text-xs"
+                onSelect={(event) => {
+                  event.preventDefault()
+                  void actions.learnAgentOptions(
+                    meta.profileId,
+                    meta.agentId,
+                    meta.projectId,
+                    true
+                  )
+                }}
+              >
+                <RefreshCwIcon className="size-4 text-muted-foreground" />
+                Couldn't reach {agent?.name ?? "this agent"} — try again
+              </DropdownMenuItem>
+            ) : probeStatus === "asking" ? (
+              <DropdownMenuItem disabled className="whitespace-normal text-xs">
+                <Loader2 className="size-4 animate-spin" />
+                Asking {agent?.name ?? "the agent"} what it supports…
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem disabled className="whitespace-normal text-xs">
+                {agent?.name ?? "This agent"} offers nothing to configure before the thread
+                starts.
+              </DropdownMenuItem>
+            ))}
         </DropdownMenuGroup>
         {/* Its own group, mirroring the started thread's menu: suggestions are
             how the thread's answers should behave, not who answers — and with
@@ -532,6 +579,12 @@ export function DraftConfigPopover({
             onCheckedChange={(checked) => configure({ suggestFollowups: checked === true })}
           >
             Suggest follow-ups
+          </DropdownMenuCheckboxItem>
+          <DropdownMenuCheckboxItem
+            checked={meta.uiBlocks !== false}
+            onCheckedChange={(checked) => configure({ uiBlocks: checked === true })}
+          >
+            Draw answers as UI
           </DropdownMenuCheckboxItem>
         </DropdownMenuGroup>
         {/* Never touched by the profile: mode and the rest are the agent's, and

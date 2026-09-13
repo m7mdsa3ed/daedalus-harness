@@ -31,6 +31,14 @@
    the **pointer's** question, not the width's), so the caption itself is only
    ever what it says it is: state, then time.
 
+   ── And on a phone the actions get their own line ──
+   A pill, a time and four 32px touch targets are a phone's whole width, so
+   below `@panel-sm:` — the **panel's** width, not the window's — the caption
+   stacks: state and time keep the line under the bubble where a sent
+   message's timestamp sits, and the actions drop to a line of their own
+   beneath it, still full size and still hittable. `order` moves the group, so
+   the same markup is one line on a wide panel and two on a narrow one.
+
    ── Editing takes it back ──
    There is no in-place editor. "Edit" removes the message from the queue and
    puts its words back in the composer, which is where a message is composed:
@@ -70,7 +78,7 @@ import { cn } from "@/lib/utils"
    Same shell for the whole-queue pair on the rule, so the two halves of this
    surface are visibly the same kind of control. */
 const ACTION_GROUP =
-  "flex shrink-0 items-center gap-0.5 rounded-pill border border-border/60 bg-background/80 p-0.5 shadow-xs backdrop-blur-sm"
+  "flex max-w-full shrink-0 flex-wrap items-center justify-end gap-0.5 rounded-pill border border-border/60 bg-background/80 p-0.5 shadow-xs backdrop-blur-sm"
 /* Taller on a finger than under a cursor — the device's question, not the
    panel width's. */
 const ROW_BUTTON = "shrink-0 gap-1 rounded-pill px-2 text-[11px]"
@@ -265,16 +273,27 @@ function QueuedMessageRow({
         </Bubble>
       </MessageContent>
       {/* State, time, and the actions — under the bubble on the same right
-          edge a timestamp uses, so the row reads as one object. The actions
-          are revealed on hover under a cursor and always drawn where there is
-          no hover to reveal them with — the *pointer's* question, not the
-          panel width's. Focus counts as hover, or the row would be unusable
-          from the keyboard. */}
-      <div className="flex items-center gap-1.5 pe-1 text-[10px] text-muted-foreground/60">
+          edge a timestamp uses, so the row reads as one object.
+
+          Wide: one line, actions first. Narrow (`@panel-sm:`, the panel's own
+          width and not the window's): two, the state and time keeping the
+          line a sent message's timestamp sits on and the actions dropping
+          beneath it — a pill, a time and four 32px touch targets are a phone's
+          whole width, and a row that reflows by itself keeps its buttons
+          hittable instead of letting them run off the edge. The cluster is
+          `order-1` below the breakpoint and `order-2` above it, so the line
+          the reader scans first is the one saying what the message is doing.
+
+          The actions are revealed on hover under a cursor and always drawn
+          where there is no hover to reveal them with — the *pointer's*
+          question, not the panel width's. Focus counts as hover, or the row
+          would be unusable from the keyboard. */}
+      <div className="flex flex-col items-end gap-1 pe-1 text-[10px] text-muted-foreground/60 @panel-sm:flex-row @panel-sm:items-center @panel-sm:gap-1.5">
         {!item.steer && (
           <span
             className={cn(
               ACTION_GROUP,
+              "order-2 @panel-sm:order-1",
               "transition-opacity",
               !coarse &&
                 "opacity-0 group-hover/queued:opacity-100 group-focus-within/queued:opacity-100"
@@ -324,25 +343,27 @@ function QueuedMessageRow({
             </Button>
           </span>
         )}
-        {item.steer ? (
-          /* Already on the wire, joining the running turn at its next step
-             boundary — which is where its bubble will land. Until then this
-             row is the only place the words are, which is also why it has no
-             actions: there is nothing left to take back. The dot pulses
-             because this one is happening, not waiting. */
-          <span className={STATE_PILL}>
-            <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-primary" />
-            Steering
-          </span>
-        ) : (
-          next && (
+        <span className="order-1 flex items-center gap-1.5 @panel-sm:order-2">
+          {item.steer ? (
+            /* Already on the wire, joining the running turn at its next step
+               boundary — which is where its bubble will land. Until then this
+               row is the only place the words are, which is also why it has no
+               actions: there is nothing left to take back. The dot pulses
+               because this one is happening, not waiting. */
             <span className={STATE_PILL}>
-              <span aria-hidden className="size-1.5 rounded-full bg-primary/50" />
-              Next
+              <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-primary" />
+              Steering
             </span>
-          )
-        )}
-        <Timestamp at={item.createdAt} className="text-[10px]" />
+          ) : (
+            next && (
+              <span className={STATE_PILL}>
+                <span aria-hidden className="size-1.5 rounded-full bg-primary/50" />
+                Next
+              </span>
+            )
+          )}
+          <Timestamp at={item.createdAt} className="text-[10px]" />
+        </span>
       </div>
     </Message>
   )

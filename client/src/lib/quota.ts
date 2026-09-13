@@ -7,8 +7,10 @@ import { api, type AgentDef, type Profile, type ServerSettings } from "@/lib/set
     its threads are billed to an API key, and the reading an agent probe would
     return belongs to the machine's login, not to the profile — which is why the
     composer's Plan usage card is drawn for profiles that have this, and nowhere
-    else. */
-export const profileHasUsage = (profile: Pick<Profile, "usage"> | null | undefined): boolean => {
+    else. A disabled profile reads as having none: that is the half of
+    "everywhere" the pickers are not. */
+export const profileHasUsage = (profile: Pick<Profile, "usage" | "disabled"> | null | undefined): boolean => {
+  if (profile?.disabled) return false
   const usage = profile?.usage
   return Boolean(usage && usage.kind && usage.kind !== "none")
 }
@@ -29,10 +31,11 @@ export const profileHasUsage = (profile: Pick<Profile, "usage"> | null | undefin
  * token, and the machine's subscription says nothing about what it spent.
  */
 export function planReadable(
-  profile: Pick<Profile, "id" | "usage"> | null | undefined,
+  profile: Pick<Profile, "id" | "usage" | "disabled"> | null | undefined,
   agent: Pick<AgentDef, "quotaProbe"> | null | undefined
 ): boolean {
   if (!profile) return false
+  if (profile.disabled) return false
   if (profileHasUsage(profile)) return true
   return profile.id.startsWith("default:") && Boolean(agent?.quotaProbe)
 }
@@ -109,6 +112,31 @@ export function quotaTone(percent: number): { text: string; bar: string } {
   if (percent >= 90) return { text: "text-destructive", bar: "bg-destructive" }
   if (percent >= 75) return { text: "text-amber-600 dark:text-amber-400", bar: "bg-amber-500" }
   return { text: "text-emerald-600 dark:text-emerald-400", bar: "bg-emerald-500" }
+}
+
+/** Short display name for a provider usage kind — the card label when several
+    accounts share one provider (two Z.AI keys, three Command Code seats). The
+    only client-side copy: `profiles.tsx` keeps its own longer form labels for
+    the setup form, so a new adapter adds its short name here too. */
+export function providerKindLabel(kind: string): string {
+  switch (kind) {
+    case "zai":
+      return "Z.AI"
+    case "minimax":
+      return "MiniMax"
+    case "kimi":
+      return "Kimi"
+    case "synthetic":
+      return "Synthetic"
+    case "deepseek":
+      return "DeepSeek"
+    case "openrouter":
+      return "OpenRouter"
+    case "command-code":
+      return "Command Code"
+    default:
+      return kind || "Other"
+  }
 }
 
 /**

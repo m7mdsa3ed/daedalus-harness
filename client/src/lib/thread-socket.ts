@@ -136,7 +136,14 @@ export interface ThreadCallbacks {
   /** The thread moved to another profile, model or effort without restarting.
       Fanned out to every device, this one included — the server resolves what
       a cleared value means, so the answer is what to draw. */
-  onSpawnConfig: (profileId: string, model: string, effort: string, personaId?: string, suggestFollowups?: boolean) => void
+  onSpawnConfig: (
+    profileId: string,
+    model: string,
+    effort: string,
+    personaId?: string,
+    suggestFollowups?: boolean,
+    uiBlocks?: boolean
+  ) => void
   /** A config change is waiting for the running turn to end, or no longer is
       (`null`). Absolute and from every peer's point of view identical — this
       device's own staging comes back through here like anyone else's. */
@@ -681,7 +688,14 @@ export class ThreadSocket {
         this.callbacks.onQueue(event.items)
         return
       case "spawn_config":
-        this.callbacks.onSpawnConfig(event.profileId, event.model, event.effort, event.personaId, event.suggestFollowups)
+        this.callbacks.onSpawnConfig(
+          event.profileId,
+          event.model,
+          event.effort,
+          event.personaId,
+          event.suggestFollowups,
+          event.uiBlocks
+        )
         return
       case "staged_config":
         this.callbacks.onStagedConfig(event.config)

@@ -183,6 +183,7 @@ export interface StagedConfig {
   effort?: string;
   personaId?: string;
   suggestFollowups?: boolean;
+  uiBlocks?: boolean;
 }
 
 /**
@@ -414,6 +415,42 @@ export interface AutonomyAnswer {
   _meta?: Record<string, unknown> | null;
 }
 
+/**
+ * A `!` line the user ran against this thread's project, and what it printed.
+ *
+ * The harness's own, hence the prefix — a `_daedalus/` update and not a sixth
+ * journaled event kind, for the reason `AutonomyAnswer` gives: the reducer
+ * already folds updates, the replay already carries them, and live and replay
+ * stay one code path.
+ *
+ * Journaled, which is the whole point of it: the row is part of the
+ * conversation — it sits in the transcript where it was run and comes back on a
+ * reload — but it is **not a prompt**. No turn runs, `turnActive` never moves,
+ * and the agent is never told the command happened.
+ */
+export interface ShellCommand {
+  sessionUpdate: "_daedalus/shell";
+  /** The run's identity, minted by the caller and carried by every update for
+      it: the composer draws the row before the server has answered, so the
+      updates that follow have to *patch* that row rather than add a second. */
+  shellId: string;
+  /** `running` when the line starts, `done` when it settles. Two updates per
+      run is what lets the row draw — and say it is working — from the first
+      moment, instead of appearing only once the command has finished. */
+  status: "running" | "done";
+  /** The line as it ran — a saved helper's own command when the line named one. */
+  command: string;
+  /** stdout then stderr, joined the way a terminal would have shown them.
+      Absent while `running`. */
+  output?: string;
+  /** The process's exit code, or null when it could not be started at all.
+      Absent while `running`. */
+  exitCode?: number | null;
+  /** The shell was killed at the timeout. Absent while `running`. */
+  timedOut?: boolean;
+  _meta?: Record<string, unknown> | null;
+}
+
 /** Everything a `session/update` can carry: the SDK's union plus the RFD's. */
 export type { ChangedFile } from "./db/schema.js";
 
@@ -439,7 +476,8 @@ export type SessionUpdate =
   | AsyncTaskProgress
   | AsyncTaskStateUpdate
   | WorkflowStateUpdate
-  | AutonomyAnswer;
+  | AutonomyAnswer
+  | ShellCommand;
 
 export interface SessionInfoUpdate {
   sessionUpdate: "session_info_update";
@@ -938,7 +976,15 @@ export type ThreadEvent =
       peer including the one that asked — the change may have been rewritten on
       the way (a profile's default model standing in for a cleared one), so the
       answer, not the request, is what every menu should draw. */
-  | { ev: "spawn_config"; profileId: string; model: string; effort: string; personaId?: string; suggestFollowups?: boolean }
+  | {
+      ev: "spawn_config";
+      profileId: string;
+      model: string;
+      effort: string;
+      personaId?: string;
+      suggestFollowups?: boolean;
+      uiBlocks?: boolean;
+    }
   /** A config change is waiting for the running turn to end, or is no longer
       (`config: null` — it was applied, cancelled, or the process went away).
       Absolute and live-only, like `queue` and `paused`: it is current state

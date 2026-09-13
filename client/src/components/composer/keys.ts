@@ -19,6 +19,7 @@ interface KeyConsumer {
 
 export function composerKeyDown({
   slash,
+  commands,
   mentions,
   history,
   isMobile,
@@ -27,6 +28,7 @@ export function composerKeyDown({
   send,
 }: {
   slash: KeyConsumer
+  commands: KeyConsumer
   mentions: KeyConsumer
   history: KeyConsumer
   /** The panel's width, not the device's pointer. */
@@ -38,6 +40,9 @@ export function composerKeyDown({
   return (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // The command menu owns navigation keys (and Enter) while open.
     if (slash.onKeyDown(e)) return
+    // Then the `!` project menu — the other start-anchored completers. The two
+    // cannot both be open (`!/name` holds no lone token) but the order is stated.
+    if (commands.onKeyDown(e)) return
     // Then the `@` menu, for the same reason.
     if (mentions.onKeyDown(e)) return
     if (history.onKeyDown(e)) return

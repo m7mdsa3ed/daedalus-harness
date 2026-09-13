@@ -10,13 +10,29 @@ export interface AgentEnv {
   model: string;
   smallModel: string;
   effort: Effort | null;
+  /** The *spawn* model's window, and the fallback for any model the map below
+      has no entry for. Not the reading to threshold against on its own — see
+      `modelWindows`. */
   contextWindow: number | null;
   maxOutputTokens: number | null;
+  /** Every model this profile offers, by id → `[contextWindow, maxOutput]`.
+      The model is a *live* setting (`Session.setConfig`) while env is read once
+      at spawn, so a single `contextWindow` describes whichever model the thread
+      happened to start on: switching a live thread to a 1M model pinned the
+      ring at 100%, and switching down to a small one meant it never compacted
+      until the provider refused the request. The whole map ships at spawn so
+      nothing has to be pushed after one. */
+  modelWindows: Record<string, [context: number, maxOutput: number]>;
   personaFile: string | null;
   /** Path to the model-prompt library (`{version, entries:[{match, prompt}]}`),
       re-read every turn so a library edit or a live model change lands on the
       next pass. Absent: the built-in family calibrations stand alone. */
   modelPromptsFile: string | null;
+  /** Whether the turn may answer with a fenced `openui-lang` block, which the
+      client draws as real UI. On unless the thread turned it off, and a spawn
+      input rather than a live one — the lane is system-prompt text, read only
+      at `session/new`/`session/load`, so changing it costs a respawn. */
+  uiBlocks: boolean;
   /** Read AGENTS.md / CLAUDE.md from the workspace. Off with `0`/`false`. */
   projectInstructions: boolean;
   /** Send `prompt_cache_key` so a router keeps a thread on one backend. Off with `0`/`false`. */
@@ -44,6 +60,28 @@ function num(v: string | undefined): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+/* A malformed map is treated as an absent one: the window falls back to the
+   spawn model's single figure, which is what this replaced. A gauge is not
+   worth failing a spawn over. */
+function windows(v: string | undefined): AgentEnv["modelWindows"] {
+  const s = str(v);
+  if (s === null) return {};
+  try {
+    const raw: unknown = JSON.parse(s);
+    if (!raw || typeof raw !== "object") return {};
+    const out: AgentEnv["modelWindows"] = {};
+    for (const [id, pair] of Object.entries(raw as Record<string, unknown>)) {
+      if (!Array.isArray(pair)) continue;
+      const [ctx, max] = pair;
+      if (typeof ctx !== "number" || !Number.isFinite(ctx) || ctx <= 0) continue;
+      out[id] = [ctx, typeof max === "number" && Number.isFinite(max) && max > 0 ? max : 0];
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 export function readEnv(env: NodeJS.ProcessEnv = process.env): AgentEnv {
   const model = str(env.DAEDALUS_AGENT_MODEL) ?? "";
   const effortRaw = str(env.DAEDALUS_AGENT_EFFORT);
@@ -55,8 +93,15 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env): AgentEnv {
     effort: EFFORTS.includes(effortRaw as Effort) ? (effortRaw as Effort) : null,
     contextWindow: num(env.DAEDALUS_AGENT_CONTEXT_WINDOW),
     maxOutputTokens: num(env.DAEDALUS_AGENT_MAX_OUTPUT_TOKENS),
+    modelWindows: windows(env.DAEDALUS_AGENT_MODEL_WINDOWS),
     personaFile: str(env.DAEDALUS_AGENT_PERSONA_FILE),
     modelPromptsFile: str(env.DAEDALUS_AGENT_MODEL_PROMPTS_FILE),
+    /* Default-on, and off only when the thread said so: a value the harness has
+       never written (a hand-run agent, an older spawn) reads as the default,
+       which is what "on unless turned off" has to mean at a process boundary. */
+    uiBlocks: !["0", "false", "off"].includes(
+      (str(env.DAEDALUS_AGENT_UI_BLOCKS) ?? "").toLowerCase(),
+    ),
     projectInstructions: !["0", "false", "off"].includes(
       (str(env.DAEDALUS_AGENT_PROJECT_INSTRUCTIONS) ?? "").toLowerCase(),
     ),

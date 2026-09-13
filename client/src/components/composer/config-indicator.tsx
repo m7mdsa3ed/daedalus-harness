@@ -4,7 +4,8 @@
 import { ClockIcon, LoaderCircleIcon, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { StripIndicator } from "@/components/composer/indicator"
+import { READING_MARK, StripIndicator } from "@/components/composer/indicator"
+import { cn } from "@/lib/utils"
 import type { Actions } from "@/lib/actions"
 import { describeConfig } from "@/lib/actions"
 import { useProfiles } from "@/lib/queries/catalog"
@@ -48,7 +49,7 @@ export function ConfigIndicator({
   if (pending) {
     return (
       <StripIndicator
-        icon={<LoaderCircleIcon className="size-3.5 animate-spin" />}
+        icon={<LoaderCircleIcon className={cn(READING_MARK, "animate-spin")} />}
         label="Applying…"
         heading="Applying this change"
         title={`Applying — ${describeConfig(pending, profiles)}`}
@@ -67,7 +68,7 @@ export function ConfigIndicator({
 
   return (
     <StripIndicator
-      icon={<ClockIcon className="size-3.5" />}
+      icon={<ClockIcon className={READING_MARK} />}
       label="Applies on send"
       heading="Applies with your next message"
       title={`Applies with your next message — ${describeConfig(held, profiles)}`}

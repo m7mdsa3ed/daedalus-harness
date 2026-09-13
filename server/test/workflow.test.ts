@@ -314,7 +314,7 @@ await test("pause holds the run, resume carries it on", async () => {
   await new Promise((r) => setTimeout(r, 400));
   assert.equal((await stepOf("b")).status, "pending", "b did not start while paused");
   assert.equal((await runner.status(view.id))!.status, "paused");
-  assert.equal(runner.statusFor("someone-else", view.id), null, "a run is only its thread's");
+  assert.equal(await runner.statusFor("someone-else", view.id), null, "a run is only its thread's");
   assert.equal((await runner.statusFor(parent.id, view.id))?.id, view.id);
   assert.equal(runner.resume(view.id), true);
   const done = (await runner.wait(view.id, 20_000))!;
@@ -348,12 +348,12 @@ await test("the loopback key resolves the caller and a step may not start a work
   assert.equal(runner.resolveCaller(key, "nope"), null);
   const child = await manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, { parentSessionId: parent.id, title: "step" });
   await child.bridge!.ready;
-  assert.throws(() => runner.start(child, { name: "x", steps: [{ name: "a", prompt: "echo:x" }] }), (e: unknown) => e instanceof WorkflowError && e.status === 409);
+  await assert.rejects(async () => runner.start(child, { name: "x", steps: [{ name: "a", prompt: "echo:x" }] }), (e: unknown) => e instanceof WorkflowError && e.status === 409);
   manager.retire(child);
 });
 
 await test("a step is never handed the workflow server", async () => {
-  mcpServers.ensureBuiltin("workflow");
+  await mcpServers.ensureBuiltin("workflow");
   const links = { mcpServerIds: ["builtin:workflow"] };
   const { servers: top } = await mcpServersFor(links, project, getConfig(), workflowServer(parent, runner));
   assert.equal(top.length, 1);
@@ -362,10 +362,10 @@ await test("a step is never handed the workflow server", async () => {
   assert.equal((await mcpServersFor(links, project, getConfig(), null)).servers.length, 0);
 });
 
-await test("bad definitions are refused before anything spawns", () => {
-  assert.throws(() => runner.start(parent, { name: "x", steps: [] }), /invalid workflow/);
-  assert.throws(() => runner.start(parent, { name: "x", steps: [{ name: "a", prompt: "{{inputs.q}}" }] }), /inputs that were not given: q/);
-  assert.throws(() => runner.start(parent, { name: "x", steps: [{ name: "a", prompt: "x", dependsOn: ["zz"] }] }), /invalid workflow/);
+await test("bad definitions are refused before anything spawns", async () => {
+  await assert.rejects(async () => runner.start(parent, { name: "x", steps: [] }), /invalid workflow/);
+  await assert.rejects(async () => runner.start(parent, { name: "x", steps: [{ name: "a", prompt: "{{inputs.q}}" }] }), /inputs that were not given: q/);
+  await assert.rejects(async () => runner.start(parent, { name: "x", steps: [{ name: "a", prompt: "x", dependsOn: ["zz"] }] }), /invalid workflow/);
 });
 
 await test("the parent's process going away cancels its runs", async () => {
@@ -385,13 +385,21 @@ await test("recoverAtBoot closes what the last process left running", async () =
       createdAt: 1, endedAt: null,
     })
     ;
-  const before = updatesOf(ws, "subagent_state_update").length;
-  new WorkflowRunner(manager, { port: 4999 }).recoverAtBoot();
+  /* The disconnect this test is about, and the only one it may count: earlier
+     tests leave runs of their own interrupted (a cancelled one retires its
+     child rather than finishing it), and `recoverAtBoot` closes every such row
+     in the database — so a bare `before + 1` measures the whole file, not this
+     run. The row below is the one this test inserted. */
+  const before = ((await manager.journal(parent.id))!).events
+    .filter((e) => e.ev === "update" && e.update.sessionUpdate === "subagent_state_update").length;
+  await new WorkflowRunner(manager, { port: 4999 }).recoverAtBoot();
   const row = (await db.select().from(schema.workflowRuns).where(eq(schema.workflowRuns.id, "stale")))[0]!;
   assert.equal(row.status, "failed");
   assert.equal(row.steps[0].status, "failed");
   // The parent is retired but its log is not: the disconnect is journaled.
-  assert.equal(((await manager.journal(parent.id))!).events.filter((e) => e.ev === "update" && e.update.sessionUpdate === "subagent_state_update").length, before + 1);
+  const after = ((await manager.journal(parent.id))!).events
+    .filter((e) => e.ev === "update" && e.update.sessionUpdate === "subagent_state_update" && e.update.subagentSessionId === "gone").length;
+  assert.equal(after, 1, "the stale step's own disconnect is journaled once");
 });
 
 // ── scripts ───────────────────────────────────────────────────────────────
@@ -507,25 +515,25 @@ await test("an unguarded agent failure fails the run; cancel stops one mid-fligh
 });
 
 await test("a script is refused what it may not do", async () => {
-  assert.throws(
-    () => runner.startScript(parent, "const meta = { name: 'x', description: 'y' }"),
+  await assert.rejects(
+    async () => runner.startScript(parent, "const meta = { name: 'x', description: 'y' }"),
     (e: unknown) => e instanceof WorkflowError,
     "meta must be exported",
   );
-  assert.throws(
-    () => runner.startScript(parent, "export const meta = { name: computed(), description: 'y' }"),
+  await assert.rejects(
+    async () => runner.startScript(parent, "export const meta = { name: computed(), description: 'y' }"),
     (e: unknown) => e instanceof WorkflowError,
     "meta must be a literal, or the run could not be named before it runs",
   );
   const child = await manager.create(profile, "fake", project, undefined, undefined, undefined, undefined, undefined, {
     parentSessionId: parent.id,
   });
-  assert.throws(
-    () => runner.startScript(child, "export const meta = { name: 'x', description: 'y' }"),
+  await assert.rejects(
+    async () => runner.startScript(child, "export const meta = { name: 'x', description: 'y' }"),
     (e: unknown) => e instanceof WorkflowError && e.status === 409,
     "a step may not start a workflow, whichever engine it would use",
   );
-  manager.retire(child);
+  await manager.retire(child);
   // The clock ban is the sandbox's, but it has to reach the run's own error.
   const clock = await runner.startScript(parent, "export const meta = { name: 'clock', description: 'reads a clock' }\nreturn Date.now()");
   const done = await runner.wait(clock.id, 20_000);

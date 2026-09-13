@@ -95,7 +95,10 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   is pinned exactly in all three manifests.
 - **`session_config` is absolute — never make it a delta.** Replay start is *stated* on
   `attached`, never inferred. **Windows and `load_earlier` pages are counted in steps
-  (turns), never events.** Thread-scoped callbacks go through `send`, never `dispatch`.
+  (turns), never events** — and a window opens at a turn boundary, so the gap above it comes
+  too, along with **every `!` command**: a shell row belongs to no turn, and one the reader ran
+  can never be something the replay withholds. Thread-scoped callbacks go through `send`, never
+  `dispatch`.
 - **ACP schema is the source for modes, config options and usage** — render generically,
   never hardcode per-agent knowledge in the client.
 - **The client mints session ids and threads start as drafts**: no row and no agent until the
@@ -258,6 +261,38 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   `kind` decides the layout family only; web views match the tool's **leaf** name. A vendor's
   `_meta` namespace is named once, in `lib/tools/helpers.ts` (`vendorMeta`); the readers know
   the shape, never the key.
+- **A fenced `openui-lang` block is a generated view, and it is inert.** The model writes a program
+  in `openui-lang` (`@openuidev/react-lang`) and the client draws the UI it describes —
+  splitting the message and handing each prose run to `Prose` is what turns the fence
+  (`ProseWithOpenui` in `tool-parts.tsx`; **every** run of agent prose goes through it, not
+  just the tail of one that also carries an insight or plan block), and the
+  parser, the library and recharts ride the lazy `components/openui-view.tsx` chunk, so a
+  transcript that never holds a fence never pays for any of it. **Nothing it writes can act**:
+  no `toolProvider` is passed, so a `Query()`/`Mutation()` is dropped rather than run, and the
+  prompt carries `bindings:false`/`toolCalls:false` so a form is never offered — a generated
+  view composes what the model already knows, and every tool call stays an ACP one with a
+  permission in front of it. **An unclosed fence draws too, from the moment it opens** — the
+  language puts `root` first and resolves forward references as their statements arrive, so a
+  program fills in over the answer rather than appearing at the end; what that demands is that
+  the drawing be forgiving, so the "came out empty" fallback is suspended while the row is
+  still being written (a one-line program is legitimately an empty shell). A fence that will
+  not parse falls back to the source, and the components are the harness's own (`Notice`, `Empty`,
+  `harness-table`, the `--chart-*` tokens) in `lib/openui/library.tsx` — the component table,
+  which is one file's edit. **The prompt is generated from that table, never hand-written**:
+  `pnpm openui` in client/ runs `scripts/gen-openui.mjs` (the library's own prompt generator,
+  under Node) into `agent/src/openui-prompt.ts`, and `pnpm openui:check` is the drift gate —
+  so the text the model is told and the components the reader gets cannot disagree. Adding a
+  component is the library edit and one regeneration. **A generated view reflows on the panel's
+  width, not the window's** — the components carry `@panel-sm:` variants (`StatRow` falls two-up,
+  `KeyValue` stacks key over value, the chart's tick gutters shrink), because the one thing the
+  model cannot control is how wide the box it lands in is. The lane is written for a thread with a
+  **reader**: a subagent's answer is a report to its caller, and an unattended run
+  (`holdOnError` off, the workflow-step and scheduled-run case) wants prose it can grep.
+  **The toggle governs the asking, never the drawing** (`sessions.ui_blocks`, "Draw answers as
+  UI"): off, the model is not told the lane exists — and a fence that arrives anyway, whether
+  the user typed it or the toggle was flipped back on mid-thread, still renders, because the
+  renderer reads no switch. That is what makes a mid-thread flip change nothing already on
+  screen.
 - **⌘K's root page never asks the server**; searching is a destination owning its own query,
   debounce and abort. Rows are data, not JSX, and cmdk's own filter is off.
 - Device-local state lives in tiny stores (`lib/drafts.ts`, `lib/view-options.ts`,
@@ -326,12 +361,15 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   `--composer` is already the lighter of the two tones. It wore `--surface`, which is the
   *page's* ground and resolves to the same thing `--composer` does in a light palette, so the
   shelf, the composer and the page were one flat band with an invisible tuck between them.
-  Derived, never picked, so every generated palette gets it for nothing.
+  Derived, never picked, so every generated palette gets it for nothing. **Neither the composer
+  nor the shelf draws a hairline ring** — the two grounds meeting is the seam, and the
+  composer's only ring is the destructive one while voice is listening.
 - **The shelf has a floor and a pile, and the floor is what is permanently true.** Project,
   tools and the context ring are `ComposerStrip`'s `footer` (`DraftScopeRow`) — always drawn,
   never a card, on **both** sides of the first message: a started thread's project only stops
-  being *editable*, it never stops being *said*, and the tab does not repeat it. It wears
-  `--composer`, not the pile's `--surface`: it belongs to the box below it, not to the shelf.
+  being *editable*, it never stops being *said*, and the tab does not repeat it. It wears the
+  shelf's `--shelf`, never the composer's `--composer`: the strip and the box below it are two
+  surfaces, and giving the floor the composer's ground made them one flat band.
   **The tuck is worn by whoever is last** — the footer when there is one, the cards when there
   is not, never both. **A tools menu's side is the caller's, never inferred from `editable`.**
 - **The pile is only what is about the message being typed** — attachments, parked pastes, the
@@ -351,7 +389,18 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   gates (`thread.queue.length`) and the component only draws.
 - **A slash command is either the agent's or the harness's and the composer draws one list**;
   the agent's shadows the harness's, and a draft is offered no harness commands. An `@`
-  mention is text *and* a `resource_link`, added server-side only when it resolves inside cwd.
+  mention is text *and* a `resource_link`, added server-side for any `~`/absolute/relative
+  path that exists — the scope is the person's, never only the cwd.
+  A `!` line is a **shell command and the composer's third completer**: the project's helpers
+  are suggested, picking one fills its *command* into the box, and the send path *consumes* the
+  line rather than prompting (`shellLineFor`) so it never reaches the agent. It runs on the
+  server against the project, and the result is **journaled as a `_daedalus/shell` row** — two
+  updates, `running` then `done`, under one caller-minted `shellId` — part of the transcript,
+  replayed on reload, no turn and no prompt; the one route that takes a command up from the
+  browser (`POST /api/sessions/:id/shell`). A line that IS a saved helper's command runs as that
+  helper (its cwd and env); anything else runs as itself. It draws as a **Bash step** — the same
+  icon, heading rule (`toolHeading`) and `ShellPane` as an `execute` tool call, open by default
+  and from the moment it starts — because that is what it is; only the agent's absence differs.
 - **Every surface a caret can land in clears the soft keyboard.** The page does not resize
   when one opens (`overlays-content`), so a fixed surface at the bottom is a surface
   *behind* the keys. Ride it with a named recipe from `lib/keyboard-inset.ts` —
@@ -427,9 +476,9 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   opens the menu on the tab itself, and the tab draws a focus ring. What dockview cannot know
   is what the panel is doing, so `useTabLabel` folds the reading and the pin into its
   `aria-label`. **Dockview's own overflow list is off** — `TabActions` draws the better one.
-  A narrow strip **collapses the title to `0fr`** (one animatable grid column, not four
-  choreographed widths); the mark is picked in JS because it keys on the viewport, never on
-  which tab is active.
+  A narrow strip **keeps the tab and nothing else** (`index.css`): every other one is in
+  `TabActions`' list, so nothing is collapsed, swapped or picked by viewport — one tab is laid
+  out where four marks used to be, and hiding one is `display`.
 - **Every strip is the app header's own row** (`--dv-tabs-and-actions-container-height`): a
   strip in the band and a strip docked under it are the same bar, and a shorter one below
   reads as a lesser thing rather than as another group of the same kind. **The header row and
@@ -452,17 +501,16 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   belongs to is `app-shell`'s answer, and every surface calls the one `openWorkspacePanel`.
   The bell and the palette trigger stay in the sidebar header, which does not split and is on
   every route.
-- **On a narrow screen only the active tab says its name** — every other tab is its mark: the
-  kind's glyph, or for a chat the **initials of its title** (`initialsOf`, the assignee
-  avatar's). Four titles truncated to "Fix th…" are four identical tabs. **It is entirely
-  `index.css`, keyed on dockview's `dv-active-tab`/`dv-inactive-tab`, because it has to
-  animate**: the mark and the title are both always in the DOM and the CSS collapses whichever
-  the tab is not (a width and an opacity, which interpolate). Branching on `useIsMobile()` in
-  the component was the first version and could never move — React swaps one element for
-  another, and there is nothing between two different nodes to transition. For the same reason
-  nothing here is unmounted: a node leaving takes its width in one frame. **Transition the
-  width *cap*, never the flex basis** — a `flex-grow` that jumps 0→1 resolves in one frame no
-  matter what the basis is doing.
+- **On a narrow screen only the tab you are on is drawn** — every other tab is in the strip's
+  list (`TabActions`, the switcher from two tabs up), because a row of marks is a second thing
+  to read beside the list that already names every tab. It is entirely `index.css`, keyed on
+  dockview's `dv-active-tab`/`dv-inactive-tab`: **a hide and not a collapse** (`display: none`,
+  the class it already toggles), so there is no width or opacity to interpolate and a tab
+  switch is one frame — the instant a browser gives a tab switch. Nothing is picked by
+  viewport either: the mark is the panel's own (`PanelIcon`) on every strip, and `initialsOf`
+  is the assignee avatar's again. What is *not* hidden keeps the wide strip's one-column title
+  container, whose `transition` was for a collapse that no longer happens; dockview's own
+  reorder is the strip's only motion (`--dock-tab-duration`).
 - **The app header's controls are the tab's material *and its height*** (`.header-chip` beside
   `.panel-tab-chip` in `index.css`; `HEADER_CHIP` carries `size-8`, the tab's `h-8`): the
   sidebar toggle, the view-settings sliders and that group's tabs are one row whenever a group
@@ -507,7 +555,9 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   The old constant reserved the header's height in every group, including the ones nowhere near
   it — twice, in the strip's margin and the panel's own padding.
 - **What is open inside the IDE is the IDE's state, never the dock's** (`lib/ide/editors.ts`,
-  a module store). **`open.ts` and `editors.ts` name nothing from Monaco**, because every
+  a module store — persisted per server and project, so its tabs survive a reload). Only the
+  tabs and the focus are stored; a reveal is one-shot and a dirty flag is derived, rebuilt by
+  the editor re-reading its buffer. **`open.ts` and `editors.ts` name nothing from Monaco**, because every
   reader loads the transcript that imports them; Monaco is a dynamic import, excluded by
   chunk name from the service worker's precache.
 - **A turn's changes are measured by git, never read off the transcript** — tree snapshots at
@@ -532,6 +582,17 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   shell line asks things, and only a PTY can be answered — so it has no timeout, its stored
   `cwd`/`env` are read server-side and never sent up, and `confirm` asks before the terminal
   exists.
+- **A message the app draws is one of two boxes, never a bespoke one.** `Notice`
+  (`components/notice.tsx`) is every alert — four semantic tones, two densities, glyph and
+  `role` derived from the tone. `Empty` (`components/empty.tsx`) is the dashed box for "there is
+  nothing here" (`sm` inline, `lg` page — what `EmptyCard` used to re-spell). Absence and news
+  never share a component.
+- **The composer's two surfaces split by subject.** A note above the strip
+  (`components/composer/notices.tsx`) is about *sending*; everything about the *turn* — the wait,
+  the working line, a held turn, an approval, a question, the queue — is at the foot of the
+  transcript (`thread-view.tsx`), where the next thing happens. **A footer reading is a mark that
+  grows words**: icon always, label `@panel-sm` only, and its count as a text badge where the
+  label shows and a bubble on the mark where it does not.
 
 ## Tasks → `docs/tasks.md`
 

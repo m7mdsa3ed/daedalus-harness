@@ -76,5 +76,14 @@ function itemText(item: ThreadItem): string {
       ]
         .filter(Boolean)
         .join("\n\n")
+    /* A `!` command the user ran. The line and what it printed, fenced, so a
+       pasted transcript says both — a shell command with no output reads as one
+       that did nothing. */
+    case "shell": {
+      const exit =
+        item.status === "done" && item.exitCode && item.exitCode !== 0 ? ` (exit ${item.exitCode})` : ""
+      const body = item.output ? `\n\n\`\`\`\n${item.output}\n\`\`\`` : ""
+      return `**\`!${item.command}\`**${exit}${body}`
+    }
   }
 }

@@ -84,9 +84,14 @@ function finishedTurns(
   const hidden = (item: ThreadItem): boolean =>
     item.kind === "notice" && item.config === true && !showConfigNotices
   const tailOf = (turn: ThreadItem[]): ThreadItem | undefined => {
-    if (!answersOnly && showConfigNotices) return turn[turn.length - 1]
     for (let i = turn.length - 1; i >= 0; i--) {
       const item = turn[i]
+      /* A `!` command is not the turn's — it is the reader's own, run in the gap
+         after it — so a footer never hangs off one: not when it is drawn (the
+         strip would sit under the command instead of under the answer) and not
+         when it is hidden (the anchor would be a row nothing draws, and the
+         footer would vanish with it). */
+      if (item.kind === "shell") continue
       if (hidden(item)) continue
       if (!answersOnly || isAnswerItem(item)) return item
     }

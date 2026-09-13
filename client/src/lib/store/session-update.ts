@@ -16,6 +16,7 @@ import type {
   AutonomyItem,
   CompactionItem,
   PlanItem,
+  ShellItem,
   SubagentItem,
   TextItem,
   ThreadItem,
@@ -477,6 +478,48 @@ export function applySessionUpdate(
         ...(owner ? { parentId: owner } : {}),
       }
       return [...items, item]
+    }
+    /* A `!` line the user ran, in the thread where it was run. Appended, like
+       the autonomy row above: it is an act of the user's, not a patch to
+       anything already on screen. Unlike the agent's own tool steps it fired no
+       turn — the server ran the line and wrote this row — so `turnActive` never
+       moved and the agent was never told. */
+    case "_daedalus/shell": {
+      /* Keyed by the caller's id, not appended: the composer draws the row the
+         moment the line starts, and the `running`/`done` updates that follow are
+         that same row with more said about it. The first update to arrive fixes
+         its place, the way a compaction's first one does. */
+      const id = `shell:${update.shellId}`
+      const index = items.findIndex((i) => i.kind === "shell" && i.id === id)
+      const prev = index >= 0 ? (items[index] as ShellItem) : undefined
+      const output = update.output ?? ""
+      const exitCode = update.exitCode ?? null
+      const timedOut = update.timedOut ?? false
+      /* The same update a second time — the fan-out and this device's own
+         dispatch are the same news — must not rebuild the item, or the row
+         re-renders for nothing. */
+      if (
+        prev &&
+        prev.command === update.command &&
+        prev.status === update.status &&
+        prev.output === output &&
+        prev.exitCode === exitCode &&
+        prev.timedOut === timedOut
+      ) {
+        return items
+      }
+      const item: ShellItem = {
+        kind: "shell",
+        id,
+        command: update.command,
+        status: update.status,
+        output,
+        exitCode,
+        timedOut,
+        at: prev?.at ?? Date.now(),
+        ...(owner ? { parentId: owner } : {}),
+      }
+      return index >= 0 ? items.map((i, n) => (n === index ? item : i)) : [...items, item]
     }
     /* A child's context occupancy. Session-level for the thread — and dropped
        there — but a step IS a session, so on this side of the fence it is the

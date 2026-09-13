@@ -5,10 +5,12 @@
 
    Deliberately only the rows that start something. Plan usage used to sit here
    too, as a peak-percentage badge that polled `GET /api/quota` every ten
-   minutes; it lives in Settings › Usage alone now. It was the one row that
-   worked rather than navigated — it made the sidebar ask the server a question
-   nobody had posed, on a timer, for a number that is only ever acted on by
-   going to the page that shows it properly. */
+   minutes; it was taken out for that timer and for being the one row that
+   worked rather than navigated. It is back, and below this nav rather than in
+   it: `sidebar/usage.tsx`, in the footer beside the account row, reading the
+   list route the Usage page already reads instead of a timer of its own. A nav
+   row is a place you go; the plans are a reading, and they belong with the
+   server's name. */
 import * as React from "react"
 import { CalendarClock, SquareKanban, SquarePen, Zap } from "lucide-react"
 import { useLocation, useNavigate } from "react-router"

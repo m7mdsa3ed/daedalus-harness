@@ -1,4 +1,5 @@
 import { Skeleton } from "@/components/ui/skeleton"
+import { cn } from "@/lib/utils"
 
 export function SkeletonText({
   lines = 3,
@@ -113,6 +114,137 @@ export function PickerSkeleton({ rows = 3 }: { rows?: number }) {
             <Skeleton className="h-3 w-36" />
             <Skeleton className="mt-1.5 h-3 w-52" />
           </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** Rows in a settings `Group`, in the shape `Row` draws them: an optional group
+    caption, then a bordered card of icon/title/subtitle lines. */
+export function GroupRowsSkeleton({
+  rows = 4,
+  label = false,
+  className,
+}: {
+  rows?: number
+  label?: boolean
+  className?: string
+}) {
+  return (
+    <section aria-busy="true" className={cn("mb-6 last:mb-0", className)}>
+      {label && <Skeleton className="mb-2 ml-1 h-3 w-16" />}
+      <div className="divide-y overflow-hidden rounded-xl border bg-card">
+        {[...Array(rows).keys()].map((index) => (
+          <div key={index} className="flex items-center gap-3 px-3.5 py-3 sm:px-4">
+            <Skeleton className="mt-0.5 size-4 shrink-0 self-start rounded-sm" />
+            <div className="min-w-0 flex-1">
+              <Skeleton className="h-3.5 w-40 max-w-full" />
+              <Skeleton className="mt-1.5 h-3 w-64 max-w-full" />
+            </div>
+            <Skeleton className="size-7 shrink-0 rounded-full" />
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+/** One notice, in the shape the inbox draws it: glyph disc, title, age, body.
+    `detailed` is the page's face, matching `NotificationRow`'s own paddings and
+    minimum height so the list does not jump when the real rows land. */
+export function NotificationRowsSkeleton({
+  rows = 4,
+  detailed = false,
+  className,
+}: {
+  rows?: number
+  detailed?: boolean
+  className?: string
+}) {
+  return (
+    <ul aria-busy="true" className={cn("divide-y divide-border/60", className)}>
+      {[...Array(rows).keys()].map((index) => (
+        <li
+          key={index}
+          className={cn("flex items-start gap-3", detailed ? "min-h-[116px] px-4 py-3.5" : "px-3 py-2.5")}
+        >
+          <Skeleton className={cn("shrink-0 rounded-full", detailed ? "mt-0.5 size-8" : "size-7")} />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline gap-2">
+              <Skeleton className="h-3.5 flex-1" />
+              <Skeleton className="h-3 w-8 shrink-0" />
+            </div>
+            <Skeleton className="mt-1.5 h-3 w-3/4" />
+            {detailed && <Skeleton className="mt-2.5 h-3 w-24" />}
+          </div>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** The lines of a text surface — a file in a tab — with a gutter for the
+    numbers, so the pane is already laid out when the read lands. */
+export function CodeLinesSkeleton({ lines = 14, className }: { lines?: number; className?: string }) {
+  return (
+    <div aria-busy="true" className={cn("space-y-2 p-4", className)}>
+      {[...Array(lines).keys()].map((index) => (
+        <div key={index} className="flex items-center gap-3">
+          <Skeleton className="h-3 w-6 shrink-0 rounded-sm opacity-60" />
+          <Skeleton className="h-3" style={{ width: `${35 + ((index * 29) % 55)}%` }} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** Hunks of a diff before either side has landed: a header and lines whose
+    added/removed tints say what a diff is. */
+export function DiffRowsSkeleton({ hunks = 3, className }: { hunks?: number; className?: string }) {
+  return (
+    <div aria-busy="true" className={cn("space-y-4 p-3", className)}>
+      {[...Array(hunks).keys()].map((hunk) => (
+        <div key={hunk} className="overflow-hidden rounded-lg border">
+          <Skeleton className="h-6 w-full rounded-none opacity-70" />
+          {[...Array(4).keys()].map((line) => (
+            <div key={line} className="flex items-center gap-3 px-3 py-1">
+              <Skeleton className="h-3 w-6 shrink-0 rounded-sm opacity-50" />
+              <Skeleton
+                className={cn(
+                  "h-3",
+                  line === 1 || line === 2 ? "bg-emerald-500/30" : line === 3 ? "bg-destructive/25" : ""
+                )}
+                style={{ width: `${30 + ((line * 31) % 60)}%` }}
+              />
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** Short rows in a panel's list — a log, a stash list, a repository's files.
+    `split` is the name-then-path shape a file search draws. */
+export function PanelRowsSkeleton({
+  rows = 4,
+  split = false,
+  className,
+}: {
+  rows?: number
+  split?: boolean
+  className?: string
+}) {
+  return (
+    <div aria-busy="true" className={cn("space-y-2 p-2", className)}>
+      {[...Array(rows).keys()].map((index) => (
+        <div key={index} className="flex items-center gap-2 px-1">
+          <Skeleton
+            className={cn("h-3", split && "w-20 shrink-0")}
+            style={split ? undefined : { width: `${45 + ((index * 23) % 45)}%` }}
+          />
+          {split && <Skeleton className="h-3 flex-1 opacity-60" />}
         </div>
       ))}
     </div>

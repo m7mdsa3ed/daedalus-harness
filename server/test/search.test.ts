@@ -72,10 +72,13 @@ await test("extractor: prose in, noise out", () => {
   assert.equal(extractSearchText("update", "not an object"), null);
 });
 
-await test("ftsQuery neutralizes FTS5 syntax", () => {
-  assert.equal(ftsQuery("hello world"), '"hello" "world"*');
-  assert.equal(ftsQuery('  spaced   out '), '"spaced" "out"*');
-  assert.equal(ftsQuery('"foo AND'), '"""foo" "AND"*');
+await test("ftsQuery neutralizes tsquery syntax", () => {
+  // Postgres `to_tsquery`, not FTS5: every term is quoted so a raw operator or
+  // an unbalanced quote is a term rather than syntax, and only the last one
+  // gets the `:*` prefix so the query narrows rather than expanding every word.
+  assert.equal(ftsQuery("hello world"), "'hello' & 'world':*");
+  assert.equal(ftsQuery('  spaced   out '), "'spaced' & 'out':*");
+  assert.equal(ftsQuery('"foo AND'), "'\"foo' & 'AND':*");
   assert.equal(ftsQuery('""'), null);
   assert.equal(ftsQuery("   "), null);
 });
@@ -95,20 +98,20 @@ const session = async (id: string, title: string, projectId: string, deletedAt: 
   });
 
 await db.insert(schema.projects).values({ id: "proj-1", name: "Harness", cwd: "/tmp" });
-session("s-alpha", "Login fixes", "proj-1");
-session("s-beta", "Deploy notes", "proj-none");
-session("s-gone", "Trashed", "proj-1", now);
+await session("s-alpha", "Login fixes", "proj-1");
+await session("s-beta", "Deploy notes", "proj-none");
+await session("s-gone", "Trashed", "proj-1", now);
 
 const journal = async (sessionId: string, seq: number, payload: object, at: number) => {
   const kind = (payload as { ev: string }).ev;
   await db.insert(schema.sessionEvents).values({ sessionId, seq, kind, payload, at });
-  indexEventRow(db, { sessionId, seq, kind, payload, at });
+  await indexEventRow(db, { sessionId, seq, kind, payload, at });
 };
 
-journal("s-alpha", 0, { ev: "turn_started", seq: 0, turnId: "t1", text: "investigate the flaky login redirect" }, now - 3000);
-journal("s-alpha", 1, chunk("agent_message_chunk", "the login redirect loops because the cookie is stale"), now - 2500);
-journal("s-beta", 0, chunk("agent_message_chunk", "deploy went fine, no login issues at all"), now - 1000);
-journal("s-gone", 0, chunk("agent_message_chunk", "login secrets of a trashed thread"), now - 500);
+await journal("s-alpha", 0, { ev: "turn_started", seq: 0, turnId: "t1", text: "investigate the flaky login redirect" }, now - 3000);
+await journal("s-alpha", 1, chunk("agent_message_chunk", "the login redirect loops because the cookie is stale"), now - 2500);
+await journal("s-beta", 0, chunk("agent_message_chunk", "deploy went fine, no login issues at all"), now - 1000);
+await journal("s-gone", 0, chunk("agent_message_chunk", "login secrets of a trashed thread"), now - 500);
 
 await test("searchEvents: shape, markers, resolution, order, trash filter", async () => {
   const results = await searchEvents("login");
@@ -134,21 +137,21 @@ await test("prefix search and operator input", async () => {
 
 await test("one thread cannot fill the page", async () => {
   for (let seq = 2; seq < 12; seq++) {
-    journal("s-alpha", seq, chunk("agent_message_chunk", `still poking at login attempt ${seq}`), now - 100 + seq);
+    await journal("s-alpha", seq, chunk("agent_message_chunk", `still poking at login attempt ${seq}`), now - 100 + seq);
   }
   const hits = (await searchEvents("login")).filter((r) => r.sessionId === "s-alpha");
   assert.equal(hits.length, 3);
 });
 
 await test("deleteSearchIndex drops a session's rows", async () => {
-  deleteSearchIndex(["s-alpha"]);
+  await deleteSearchIndex(["s-alpha"]);
   assert.ok(!(await searchEvents("login")).some((r) => r.sessionId === "s-alpha"));
   assert.ok((await searchEvents("deploy")).some((r) => r.sessionId === "s-beta"), "other sessions untouched");
 });
 
 await test("backfill indexes journal rows the index has never seen, once", async () => {
   const { sql } = await import("drizzle-orm");
-  session("s-old", "Archived wisdom", "proj-1");
+  await session("s-old", "Archived wisdom", "proj-1");
   await db.insert(schema.sessionEvents).values({
     sessionId: "s-old", seq: 0, kind: "update",
     payload: chunk("agent_message_chunk", "an ancient zanzibar reference"), at: now,

@@ -17,6 +17,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { PanelRowsSkeleton } from "@/components/ui/skeletons"
 import { usePrompt } from "@/components/prompt-dialog"
 import { useCoarsePointer } from "@/hooks/use-device"
 import { describeError } from "@/lib/errors"
@@ -104,7 +105,7 @@ export function BranchMenu({
         ) : error ? (
           <DropdownMenuLabel className="text-destructive">{error}</DropdownMenuLabel>
         ) : branches === null ? (
-          <DropdownMenuLabel>Reading branches…</DropdownMenuLabel>
+          <PanelRowsSkeleton rows={4} className="space-y-1.5 p-1.5" />
         ) : branches.length === 0 ? (
           <DropdownMenuLabel>No branches.</DropdownMenuLabel>
         ) : (

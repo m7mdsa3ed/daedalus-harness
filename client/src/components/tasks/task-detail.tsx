@@ -23,6 +23,7 @@ import {
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import {
   ResponsiveDialog,
@@ -244,6 +245,28 @@ function CustomFieldInput({ def, value, onChange }: { def: CustomFieldDef; value
   }
 }
 
+/** The dialog before its task read answers. A deep link has no card in the list
+    to stand in, and "Loading…" was a sentence where the dialog's own frame —
+    title, meta, description — is the thing that is coming. */
+function TaskDetailSkeleton() {
+  return (
+    <div aria-busy="true" className="space-y-4">
+      <Skeleton className="h-5 w-2/3" />
+      <div className="flex flex-wrap gap-2">
+        {[...Array(4).keys()].map((index) => (
+          <Skeleton key={index} className="h-6 w-24 rounded-full" />
+        ))}
+      </div>
+      <Skeleton className="h-24 w-full rounded-xl" />
+      <div className="space-y-2">
+        <Skeleton className="h-3 w-full" />
+        <Skeleton className="h-3 w-5/6" />
+        <Skeleton className="h-3 w-3/5" />
+      </div>
+    </div>
+  )
+}
+
 export function TaskDetailDialog({
   taskId,
   onClose,
@@ -301,7 +324,11 @@ export function TaskDetailDialog({
         <ResponsiveDialogContent className="sm:max-w-lg">
           <ResponsiveDialogTitle className="sr-only">Task</ResponsiveDialogTitle>
           <ResponsiveDialogDescription className="sr-only">Loading</ResponsiveDialogDescription>
-          <div className="text-sm text-muted-foreground">{detail.isError ? "This task could not be loaded." : "Loading…"}</div>
+          {detail.isError ? (
+            <div className="text-sm text-muted-foreground">This task could not be loaded.</div>
+          ) : (
+            <TaskDetailSkeleton />
+          )}
         </ResponsiveDialogContent>
       </ResponsiveDialog>
     )

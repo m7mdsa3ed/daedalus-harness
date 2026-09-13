@@ -86,9 +86,16 @@ export function useProjectStats(projectId: string) {
 /* The server's own quota cache is minutes deep, so a reading is stale long
    before React Query's default would re-ask. */
 
-/** Every reading the machine can take, in one call — the Usage page's list.
-    The server caches these; `?refresh=1` is its bypass and stays a write (a
-    mutation that rewrites the cache) rather than a second key. */
+/** Every reading the machine can take, in one call.
+
+    The Usage page no longer draws from this: its cards come from the catalog and
+    each takes its own reading, so a provider that is slow holds up its own card
+    and no one else's. What is left here is the two things a list is still good
+    for — the **seed** (a card whose reading this already took is drawn from it
+    without asking again) and **Refresh all**, which is one bypass of the
+    server's cache rather than N. The server caches these; `?refresh=1` is its
+    bypass and stays a write (a mutation that rewrites the cache) rather than a
+    second key. */
 export function useAllQuotaQuery() {
   const settings = useServer()
   const query = useQuery({
@@ -99,7 +106,20 @@ export function useAllQuotaQuery() {
   const qc = useQueryClient()
   const reload = useMutation({
     mutationFn: (refresh: boolean) => fetchAllQuota(settings, refresh),
-    onSuccess: (data) => qc.setQueryData(allQuotaKey(settings), data),
+    onSuccess: (data) => {
+      qc.setQueryData(allQuotaKey(settings), data)
+      /* And onto the per-card keys, or "Refresh all" would rewrite a list
+         nothing draws from while every card kept the reading it took for
+         itself. A reading names its own ids, so it is its own key. */
+      for (const quota of data) {
+        qc.setQueryData(
+          quota.source === "profile"
+            ? profileQuotaKey(settings, quota.profileId)
+            : agentQuotaKey(settings, quota.agentId, quota.profileId),
+          quota
+        )
+      }
+    },
   })
   return {
     quotas: query.data ?? null,
@@ -134,6 +154,14 @@ export function useAgentQuota(agentId: string, profileId: string, seed?: QuotaSn
   })
   return {
     quota: query.data ?? seed ?? null,
+    /* The card draws its own failure: with every card reading on its own, a
+       provider that cannot be reached is one empty card rather than a page that
+       never loads, and an empty card that never says why is the same lie as an
+       empty one that claims "no plan". The retry is this query's own refetch
+       rather than the Refresh button's bypass, so a second failure lands in the
+       same `error` the card is already drawing. */
+    error: query.error ?? null,
+    refetch: () => void query.refetch(),
     busy: refresh.isPending,
     refresh: () => refresh.mutate(),
   }
@@ -161,6 +189,8 @@ export function useProfileQuota(profileId: string, seed?: QuotaSnapshot | null) 
   })
   return {
     quota: query.data ?? seed ?? null,
+    error: query.error ?? null,
+    refetch: () => void query.refetch(),
     busy: refresh.isPending,
     refresh: () => refresh.mutate(),
   }

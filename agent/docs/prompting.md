@@ -12,13 +12,13 @@ question. Knowing the layers is most of knowing where to put an instruction.
    bullets rather than shouted `IMPORTANT:` paragraphs. In order: *General*,
    *Personality*, *Responsiveness* (a one-line preamble before a batch of tool
    calls, which is not the same thing as preamble on a final answer),
-   *Planning*, *Task execution*, *Testing your work*, *Ambition vs. precision*,
-   *Working from what you already have*, *Tool usage*, *Editing constraints*
-   and *Git and workspace hygiene*, *Frontend tasks*, *Sharing progress
-   updates*, *Presenting your work and final message*, and *Final answer
-   structure and style guidelines*. A subagent gets a different first paragraph
-   and none of this — it is on a delegated task and its final message is the
-   whole report the caller sees.
+   *Planning*, *Task execution*, *Code quality*, *Working efficiently*, *Testing
+   your work*, *Reviews*, *Ambition vs. precision*, *Working from what you already
+   have*, *Tool usage*, *Editing constraints* and *Git and workspace hygiene*,
+   *Frontend tasks*, *Sharing progress updates*, *Presenting your work and final
+   message*, and *Final answer structure and style guidelines*. A subagent gets a different
+   first paragraph and none of this — it is on a delegated task and its final
+   message is the whole report the caller sees.
 
    Two of those sections are calibrations rather than rules, and they are the
    ones to read before editing. **Planning** says to *skip* the todo list for
@@ -28,6 +28,35 @@ question. Knowing the layers is most of knowing where to put an instruction.
    split between a greenfield task, where the agent should build the whole
    thing, and an existing codebase, where a drive-by refactor is a cost the
    user has to review.
+
+   **Code quality** and **Reviews** are the pair taken from OpenAI's current
+   Codex prompting guide (the starter prompt behind gpt-5.1-codex-max and
+   gpt-5.3-codex). *Code quality* is the "deliver working code, not a plan" half:
+   root cause over symptom, the repo's own conventions, no silent-failure error
+   handling, honest types, DRY-by-search. *Reviews* is the review mindset that
+   both upstream prompts carry — findings first and worst-first with file/line
+   references, summary last, an explicit "no findings" when there are none — and
+   which this prompt previously left to the model to improvise. The autonomy half
+   of the same guide is folded into *Task execution* (bias to action, persist to
+   the end, no turn that ends on a clarification unless truly blocked) and into
+   *Planning* (reconcile the plan before finishing; a plan is a guide, not the
+   deliverable). What was deliberately *not* taken is the guide's instruction to
+   suppress all mid-turn narration: this harness draws progress in a live
+   transcript, so *Responsiveness* and *Sharing progress updates* stand.
+
+   **Working efficiently** is the "smart and fast" half of the base prompt, and
+   every line in it is a cost the transcript measured: a step is a full round
+   trip, so the section asks the agent to begin at the *decisive* read or search
+   rather than a survey, to read the range a decision needs rather than the whole
+   file, to batch independent calls into one message so their round trips
+   overlap, to read a failure before repeating the call, and to add no helper it
+   was not asked for. It is deliberately behavioural — it names no tool, since
+   the two tool-shaped facts in it (prefer the native tool over its shell
+   equivalent, and stop when a failed call repeats) are already carried by the
+   *Tool usage* section and by the model family calibration, where a missing tool
+   is a conditional rather than a lie. It is not one of the two *calibrations*
+   above: nothing in it depends on the task being greenfield or small, so unlike
+   **Planning** it is always in force.
 2. **The engine under this agent.** Which model the thread is running on, and
    how that model is best driven — an assigned row from the model-prompt
    library, or the built-in family calibration, whichever applies. See below.

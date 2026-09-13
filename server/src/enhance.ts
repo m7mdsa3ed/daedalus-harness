@@ -34,11 +34,26 @@ const ENHANCE_SYSTEM = `Rewrite this draft into a clear, specific prompt for an 
 
 Preserve verbatim, never reword: @file mentions, /slash commands, code fences, and [pasted text #n] tokens.`;
 
+/**
+ * The commit-message half, which is a different question from the prompt half
+ * and therefore a different system prompt: a commit message describes work that
+ * has already happened, in a house style, rather than instructing anyone.
+ *
+ * It is still one `enhancePrompt` call — the endpoint resolution, the timeout,
+ * the key handling and the "not a turn on a thread" bargain are all identical,
+ * and the only thing that actually differs is what the model is asked to write.
+ */
+const COMMIT_SYSTEM = `Write a commit message for the changes shown. Follow the conventional-commit style: a subject line of at most 72 characters ("feat: …", "fix: …", "refactor: …"), then a blank line and, only where the change needs it, a short body saying why rather than what.
+
+Describe what the diff actually does — read it, do not invent work that is not there. The file list is a summary of the diff, not a substitute for reading it. Return only the commit message, no preamble and no code fences.`;
+
 export interface EnhanceInput {
   text: string;
   /** Explicit model; falls back to the profile default, then its first model. */
   model?: string;
   signal?: AbortSignal;
+  /** Which house style to write in. Defaults to the prompt rewrite. */
+  kind?: "prompt" | "commit";
 }
 
 export async function enhancePrompt(profile: Profile, input: EnhanceInput): Promise<string> {
@@ -69,7 +84,7 @@ export async function enhancePrompt(profile: Profile, input: EnhanceInput): Prom
   try {
     const result = await generateText({
       model: provider.chatModel(modelId),
-      system: ENHANCE_SYSTEM,
+      system: input.kind === "commit" ? COMMIT_SYSTEM : ENHANCE_SYSTEM,
       prompt: text,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       abortSignal: signal,

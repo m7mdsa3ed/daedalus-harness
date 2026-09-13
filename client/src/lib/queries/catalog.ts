@@ -62,6 +62,21 @@ export function useProfiles(): Profile[] {
   }).data)
 }
 
+/** Hide or disable a profile without editing it. A dedicated `PATCH`, not the
+    editor's `PUT`: the client never holds the API key, so changing one flag
+    must not have to mean "keep the stored key". One route, either field. */
+export function useSetProfileFlags() {
+  const settings = useServer()
+  return useApiMutation<{ id: string; hidden?: boolean; disabled?: boolean }, Profile>(
+    [profilesKey(settings), agentsKey(settings)],
+    (s, { id, ...flags }) =>
+      api<Profile>(s, `/api/profiles/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ ...flags }),
+      }),
+  )
+}
+
 /** The coding-plan presets (`GET /api/profile-presets`). Read lazily — only
     the new-profile form asks — and kept for the session: the answer is the
     server build's list plus models.dev's catalogs, neither of which moves
