@@ -43,7 +43,7 @@ export function crud<S extends z.ZodType>(schema: S, opts: { lenientJson?: boole
       async (c: Context) => {
         const parsed = schema.safeParse(await body(c));
         if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
-        return c.json(make(parsed.data) as object, 201);
+        return c.json((await make(parsed.data)) as object, 201);
       },
     update:
       (apply: (id: string, data: z.infer<S>) => unknown) =>
@@ -52,7 +52,7 @@ export function crud<S extends z.ZodType>(schema: S, opts: { lenientJson?: boole
         if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
         // Untyped Context can't prove the `:id` param exists; every caller
         // mounts these on a `/:id` path.
-        const updated = apply(c.req.param("id") as string, parsed.data);
+        const updated = await apply(c.req.param("id") as string, parsed.data);
         return updated ? c.json(updated as object) : c.json({ error: "not found" }, 404);
       },
   };

@@ -310,7 +310,11 @@ export type ProfileUsageKind =
   | "openrouter"
   /** Command Code's plan credits (`/alpha/billing/credits`) — the route its own
       `/usage` panel calls, which no CLI flag can reach. */
-  | "command-code";
+  | "command-code"
+  /** A self-hosted 9Router gateway's own quota tracker (`/api/providers/client`
+      + `/api/usage/:connectionId`) — one window per linked account, not one
+      plan. Its credential is the dashboard password, not the `sk-` key. */
+  | "9router";
 
 /** Every `kind` a profile may name, for the form's picker and for validating a
     saved profile. Adding a provider is this array, the union above, and a branch
@@ -324,6 +328,7 @@ export const USAGE_KINDS = [
   "deepseek",
   "openrouter",
   "command-code",
+  "9router",
 ] as const satisfies readonly ProfileUsageKind[];
 
 export interface ProfileUsage {
@@ -413,6 +418,12 @@ export const projects = pgTable("projects", {
       Empty means none. The server probes it loopback-side (`/preview` route)
       but never rewrites where the browser points. */
   previewUrl: text("preview_url"),
+  /** Where the project sits in every list that names projects — the settings
+      page, the sidebar's folders, the pickers. A fact about the project like
+      `sessions.pinned_at` is a fact about the thread, so it follows the person
+      to every device rather than living in a device-local store. Ties (rows
+      from before the column, or an import) fall back to name. */
+  sortOrder: integer("sort_order").notNull().default(0),
 });
 
 /** The harness's own MCP servers, as library rows. `builtin` names which; the
@@ -441,6 +452,28 @@ export const mcpServers = pgTable("mcp_servers", {
       because a spawn must not make a network call to find out what to hand
       the agent. Only ever meaningful on an `http` row. */
   auth: text("auth", { enum: ["none", "oauth"] }).notNull().default("none"),
+});
+
+/**
+ * What one MCP server last said it advertises — tools, prompts and resources.
+ *
+ * Cached for the reason `agent_options` is: the only way to ask is to connect
+ * as a thread's agent would, which spawns a stdio child or makes a network
+ * call, and every settings visit wants the same three lists. Keyed by the row
+ * and taken with it (cascade), expiring like the quota does (`CATALOG_TTL_MS`)
+ * — what a server advertises moves on its own, with no local event to say so.
+ *
+ * Derived state, so it is not in a backup: a bundle restored elsewhere would
+ * carry a listing of a server that machine may not even be able to reach.
+ */
+export const mcpCatalog = pgTable("mcp_catalog", {
+  mcpServerId: text("mcp_server_id")
+    .primaryKey()
+    .references(() => mcpServers.id, { onDelete: "cascade" }),
+  /** The whole `McpCheckResult`, a failure included — "it did not connect" is
+      an answer worth drawing without connecting again to rediscover it. */
+  result: jsonb("result").$type<unknown>().notNull(),
+  checkedAt: bigint("checked_at", { mode: "number" }).notNull(),
 });
 
 /** RFC 8414 / OIDC authorization server metadata, as discovered. Stored whole
@@ -655,50 +688,9 @@ export const knowledge = pgTable(
   (t) => [index("knowledge_project").on(t.projectId)],
 );
 
-/* The library links — MCP servers, skills, slash commands — on a profile:
-   what the *provider setup* brings to every thread started on it (a gateway
-   with its own MCP servers, the skills that go with a house style). A thread
-   adds its own (the `session_*` tables below); the agent gets the union — see
-   `SessionManager.effectiveLinks`. Projects used to carry these too and no
-   longer do: a project is a directory. */
-export const profileMcpServers = pgTable(
-  "profile_mcp_servers",
-  {
-    profileId: text("profile_id")
-      .notNull()
-      .references(() => profiles.id, { onDelete: "cascade" }),
-    mcpServerId: text("mcp_server_id")
-      .notNull()
-      .references(() => mcpServers.id, { onDelete: "cascade" }),
-  },
-  (t) => [primaryKey({ columns: [t.profileId, t.mcpServerId] })],
-);
-
-export const profileSkills = pgTable(
-  "profile_skills",
-  {
-    profileId: text("profile_id")
-      .notNull()
-      .references(() => profiles.id, { onDelete: "cascade" }),
-    skillId: text("skill_id")
-      .notNull()
-      .references(() => skills.id, { onDelete: "cascade" }),
-  },
-  (t) => [primaryKey({ columns: [t.profileId, t.skillId] })],
-);
-
-export const profileCommands = pgTable(
-  "profile_commands",
-  {
-    profileId: text("profile_id")
-      .notNull()
-      .references(() => profiles.id, { onDelete: "cascade" }),
-    commandId: text("command_id")
-      .notNull()
-      .references(() => commands.id, { onDelete: "cascade" }),
-  },
-  (t) => [primaryKey({ columns: [t.profileId, t.commandId] })],
-);
+/* A thread's own library links — MCP servers, skills, slash commands —
+   picked at draft time. The agent gets these alone; profiles carry no links:
+   a profile is provider credentials, and the thread is where tools are chosen. */
 
 /* A project's helper commands — the small shell actions a person runs against
    this workspace from its page's header ("Restart server", "Run migrations").
@@ -1449,6 +1441,38 @@ export const composerHistory = pgTable(
     /** The newest row carrying a given text — what the insert reads to collapse
         a repeat instead of writing it twice. */
     index("composer_history_text").on(t.text),
+  ],
+);
+
+/**
+ * The `!` lines this harness has run in a project, and how often — what the
+ * composer's `!` completer offers first (`shell-history.ts`).
+ *
+ * A tally, not a log: one row per (project, line), bumped on every run, so
+ * "most used" is an ordering rather than a scan of a history. That is also
+ * why it is not `composer_history` — a prompt history recalls *when* you said
+ * something, this one answers *what you keep running here*.
+ *
+ * Server-side and per project, unlike the drafts: the line you build with is
+ * a property of the workspace, so the phone offers what the desktop ran. The
+ * project reference cascades, because a line has no meaning without the
+ * directory it ran in.
+ */
+export const shellHistory = pgTable(
+  "shell_history",
+  {
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    /** The command as typed, after the `!` and trimmed. */
+    line: text("line").notNull(),
+    count: bigint("count", { mode: "number" }).notNull().default(1),
+    /** Epoch ms of the last run — the tie-break, and what the cap drops. */
+    lastAt: bigint("last_at", { mode: "number" }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.projectId, t.line] }),
+    index("shell_history_project").on(t.projectId, t.count),
   ],
 );
 

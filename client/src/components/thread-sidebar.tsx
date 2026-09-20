@@ -10,7 +10,8 @@
    `app-shell.tsx` for the nav and the scale (the settings nav draws from the
    same one, so the whole panel has one spacing voice), `project-page.tsx` for
    the "new thread in this project" front door. */
-export { GROUP, GROUP_LABEL, MENU, ROW, TIER } from "@/components/sidebar/scale"
+export { FOOTER_ICON, GROUP, GROUP_LABEL, MENU, ROW, TIER } from "@/components/sidebar/scale"
 export { SidebarNav } from "@/components/sidebar/nav"
+export { SettingsNav, inSettingsPanel } from "@/components/sidebar/settings-nav"
 export { SidebarUsage } from "@/components/sidebar/usage"
 export { ThreadSidebar, useStartThreadIn } from "@/components/sidebar/sidebar"

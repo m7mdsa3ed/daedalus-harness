@@ -2,8 +2,8 @@ import type { Hono } from "hono";
 import { stream } from "hono/streaming";
 import { z } from "zod";
 import { enhancePrompt } from "../enhance.js";
-import { getAgent } from "../registry.js";
-import { getProfile, resolveProfileAgent } from "../profiles.js";
+import { profileHasAgent } from "../registry.js";
+import { getProfile } from "../profiles.js";
 import {
   ProjectInputSchema,
   createProject,
@@ -11,6 +11,7 @@ import {
   getProject,
   updateProject,
   listProjects,
+  reorderProjects,
 } from "../projects.js";
 import { listDirectory } from "../fs.js";
 import { projectStats } from "../project-stats.js";
@@ -39,6 +40,8 @@ import {
   listHelpers,
   updateHelper,
 } from "../project-helpers.js";
+import { listProjectScripts } from "../project-scripts.js";
+import { clearShellHistory, listShellHistory } from "../shell-history.js";
 import { crud, flag, workspace } from "./helpers.js";
 
 /** The one kind of address a preview may be — plain http(s). */
@@ -78,6 +81,14 @@ export function workspaceRoutes(app: Hono): void {
   app.get("/api/projects", async (c) => c.json(await listProjects()));
   const projectCrud = crud(ProjectInputSchema);
   app.post("/api/projects", projectCrud.create(createProject));
+  /* Declared before `:id` so the literal wins the match, and answering with
+     the reordered list means the client's invalidate has the truth already. */
+  app.post("/api/projects/reorder", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const ids = z.array(z.string().min(1)).safeParse((body as { ids?: unknown } | null)?.ids);
+    if (!ids.success) return c.json({ error: "ids must be an array of project ids" }, 400);
+    return c.json(await reorderProjects(ids.data));
+  });
   app.put("/api/projects/:id", projectCrud.update(updateProject));
   app.delete("/api/projects/:id", async (c) => {
     const id = c.req.param("id");
@@ -94,6 +105,29 @@ export function workspaceRoutes(app: Hono): void {
      workspace from its page's header. The rows are read back embedded on the
      project itself; these are the writes and the one async run. */
   app.get("/api/projects/:id/helpers", (c) => workspace(c, async () => await listHelpers(c.req.param("id"))));
+
+  /* The scripts the project's own package.json files declare (root and one
+     directory deep) — read off the disk, never stored, and suggested by the
+     composer's `!` completer beside the saved helpers. */
+  app.get("/api/projects/:id/scripts", (c) =>
+    workspace(c, async () => await listProjectScripts(c.req.param("id")))
+  );
+
+  /* The `!` lines this project keeps running, most used first — the
+     completer's third list, and the only one nobody wrote down. Recorded by
+     the shell route itself, so there is no POST here. */
+  app.get("/api/projects/:id/shell-history", (c) =>
+    workspace(c, async () => await listShellHistory(c.req.param("id")))
+  );
+
+  /* Forget one line (`?line=`) or the project's whole history. Explicit
+     gesture only, like the composer history's delete. */
+  app.delete("/api/projects/:id/shell-history", (c) =>
+    workspace(c, async () => ({
+      ok: true as const,
+      removed: await clearShellHistory(c.req.param("id"), c.req.query("line") || undefined),
+    }))
+  );
 
   app.post("/api/projects/:id/helpers", async (c) => {
     const parsed = HelperInputSchema.safeParse(await c.req.json().catch(() => ({})));
@@ -160,6 +194,17 @@ export function workspaceRoutes(app: Hono): void {
       const url = project.previewUrl ?? "";
       return { url, up: url ? await probePreview(url) : false };
     }),
+  );
+
+  /* The same probe, for an address the panel was *given* rather than one the
+     project stores. The Browser panel's frame is sandboxed and cross-origin, so
+     it cannot tell a refused connection (a port nobody is on) from a page that
+     drew — both fire `load`. The one thing that can is a fetch from this side,
+     so "nothing is answering" is measured rather than guessed. `up` is false
+     only for an address that was actually tried and failed; a malformed one is
+     the client's own to reject before it is ever framed. */
+  app.get("/api/preview", async (c) =>
+    c.json({ up: await probePreview(c.req.query("url") ?? "") }),
   );
 
   // Feeds the client's path autocomplete; ?path= (empty lists the home dir).
@@ -326,9 +371,13 @@ export function workspaceRoutes(app: Hono): void {
      than sent up; see `git.commitMessagePrompt`. */
   const DraftMessageSchema = z.object({
     profileId: z.string(),
-    agentId: z.string().optional(),
     model: z.string().optional(),
     repo: z.string().optional(),
+    /* The same diff, asked a different question: a commit message or a branch
+       name (`enhance.ts` holds both house styles). One route, because
+       everything around the model call — the profile, the agent check, the
+       gathering — is identical. */
+    kind: z.enum(["commit", "branch"]).optional(),
   });
 
   app.post("/api/projects/:projectId/git/draft-message", async (c) => {
@@ -336,23 +385,35 @@ export function workspaceRoutes(app: Hono): void {
     if (!parsed.success) return c.json({ error: "profileId is required" }, 400);
     const profile = await getProfile(parsed.data.profileId);
     if (!profile) return c.json({ error: "unknown profile" }, 404);
-    /* The agent only decides which per-agent base URL is NOT used; naming none
-       is still an error, so a profile serving no installed runtime is not
+    /* The agent only decides which per-agent base URL is NOT used, so a profile
+       serving several is as usable here as one serving a single runtime and
+       naming none is not an error — see `profileHasAgent`. What is still
+       refused: a profile with nothing known behind it, which must not be
        silently offered a draft. */
-    const agentId = resolveProfileAgent(profile, parsed.data.agentId);
-    if (!agentId || !await getAgent(agentId)) {
+    if (!await profileHasAgent(profile)) {
       return c.json({ error: "unknown agent for this profile" }, 404);
     }
+    const kind = parsed.data.kind ?? "commit";
     return workspace(c, async () => {
       const { prompt, files, staged } = await git.commitMessagePrompt(
         c.req.param("projectId"),
         parsed.data.repo,
+        kind,
       );
-      const message = await enhancePrompt(profile, {
+      const answer = await enhancePrompt(profile, {
         text: prompt,
         model: parsed.data.model || undefined,
-        kind: "commit",
+        kind,
       });
+      /* A branch name is handed to `checkout -b` as typed, so the one thing a
+         chatty model can add — a code fence, quotes, a trailing sentence — is
+         taken back off here. Nothing is *rewritten*: what is left is the first
+         line the model wrote, and a name that is still invalid fails at git
+         with git's own message rather than being guessed at. */
+      const message =
+        kind === "branch"
+          ? (answer.split("\n").find((line) => line.trim()) ?? "").trim().replace(/^[`'"]+|[`'"]+$/g, "")
+          : answer;
       return { message, files: files.length, staged };
     });
   });
@@ -365,6 +426,7 @@ export function workspaceRoutes(app: Hono): void {
       message?: unknown;
       branch?: unknown;
       create?: unknown;
+      track?: unknown;
       amend?: unknown;
       repo?: unknown;
       patch?: unknown;
@@ -411,10 +473,21 @@ export function workspaceRoutes(app: Hono): void {
           });
           return git.status(projectId, repo);
         });
+      /* The two that leave the machine. They answer `{output, status}` like a
+         commit does, because what the remote said is most of the answer — "Already
+         up to date", a rejected non-fast-forward, the URL a branch was published
+         to — and the status behind it is what repaints the ahead/behind. */
+      case "pull":
+      case "push":
+        return workspace(c, async () => {
+          const result = await git.sync(projectId, action, repo);
+          return { ...result, status: await git.status(projectId, repo) };
+        });
       case "checkout":
         return workspace(c, async () => {
           await git.checkout(projectId, String(body.branch ?? ""), {
             create: body.create === true,
+            track: body.track === true,
             repo,
           });
           return git.status(projectId, repo);

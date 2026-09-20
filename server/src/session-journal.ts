@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, gte, inArray, lt, or, sql, type SQL } from "drizzle-orm";
-import { db as defaultDb, sessionEvents as eventsTable } from "./db/index.js";
+import { db as defaultDb, scrubJson, sessionEvents as eventsTable } from "./db/index.js";
 import { deleteSearchIndex, indexEventRow } from "./search.js";
 import {
   EARLIER_PAGE_STEPS,
@@ -66,11 +66,24 @@ export class SessionJournal {
   append(session: JournalOwner, event: ThreadEvent): ThreadEvent {
     const seq = session.eventCount++;
     const stamped = { ...event, seq } as ThreadEvent;
+    /* Postgres cannot represent a NUL in `text` or inside a `jsonb` string
+       (22P05), and a transcript quoting code carries them as data - a NUL
+       separator in a tool result is enough. Unscrubbed, the insert throws, the
+       batch rolls back and the row-by-row retry drops the event: the turn plays
+       on screen and is gone on reload. Scrubbed here rather than at the insert
+       so the search index, built from this same payload, is clean too; the
+       peers' copy keeps the character, because JSON over a socket can carry it.
+
+       The test is `scrubJson`'s own and never `includes("\\0")`: once
+       serialised the character is the six-character escape, not a NUL byte, and
+       only the former is what reaches the driver. */
+    const raw = JSON.stringify(stamped);
+    const clean = scrubJson(raw);
     this.pendingWrites.push({
       sessionId: session.id,
       seq,
       kind: event.ev,
-      payload: stamped,
+      payload: clean === raw ? stamped : (JSON.parse(clean) as ThreadEvent),
       at: Date.now(),
     });
     if (!this.flushScheduled) {

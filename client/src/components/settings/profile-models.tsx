@@ -28,7 +28,8 @@ import {
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
 import { PickerSkeleton } from "@/components/ui/skeletons"
-import { Field, Picker } from "./primitives"
+import { cn } from "@/lib/utils"
+import { Field, INSET, Picker } from "./primitives"
 
 /* ── model rows (reference: profile-models.ts) ──
    The form edits rows and converts to ModelOption[] on save. Numbers live as
@@ -295,26 +296,26 @@ export function ModelsSection({
             override it.
           </Empty>
         ) : (
-          <div className="divide-y rounded-lg border">
+          <div className={cn("divide-y divide-border/60", INSET)}>
             {rows.map((row, index) => {
               const isDefault = row.id.trim() !== "" && row.id.trim() === defaultModel
               const badges = summaryBadges(row)
               return (
                 <div key={row.uid} className="transition-colors hover:bg-muted/10">
-                  <div className="flex items-start gap-2.5 p-3 sm:items-center">
+                  <div className="flex items-start gap-2.5 p-3 @panel-sm:items-center">
                     <button
                       type="button"
-                      className="flex min-w-0 flex-1 items-start gap-3 text-left sm:items-center"
+                      className="flex min-w-0 flex-1 items-start gap-3 text-left @panel-sm:items-center"
                       title={row.id}
                       onClick={() => setEditingUid(editingUid === row.uid ? null : row.uid)}
                     >
                       <EntityIcon
                         src={row.iconUrl}
                         fallback={<BotIcon className="size-4 text-muted-foreground" />}
-                        className="mt-0.5 size-5 shrink-0 sm:mt-0"
+                        className="mt-0.5 size-5 shrink-0 @panel-sm:mt-0"
                       />
                       <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                        <div className="flex flex-wrap items-center gap-1.5 @panel-sm:gap-2">
                           <span className="truncate text-sm font-medium">
                             {row.label.trim() || "Unnamed model"}
                           </span>
@@ -379,7 +380,7 @@ export function ModelsSection({
                     </div>
                   </div>
                   {badges.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 px-3 pb-3 sm:pl-10.5">
+                    <div className="flex flex-wrap gap-1.5 px-3 pb-3 @panel-sm:pl-10.5">
                       {badges.map((badge) => (
                         <Badge key={badge} variant="outline" className="font-normal text-muted-foreground text-[11px] break-words">
                           {badge}
@@ -405,8 +406,8 @@ export function ModelsSection({
             })}
           </div>
         )}
-        <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2">
-          <Button type="button" variant="outline" size="lg" className="w-full sm:w-auto" onClick={onAdd}>
+        <div className="flex flex-col @panel-sm:flex-row @panel-sm:flex-wrap items-stretch @panel-sm:items-center gap-2">
+          <Button type="button" variant="outline" size="lg" className="w-full @panel-sm:w-auto" onClick={onAdd}>
             <Plus className="size-4" /> Add model
           </Button>
           {/* Opens the panel below, which fetches at once — there is no source
@@ -416,7 +417,7 @@ export function ModelsSection({
             type="button"
             variant="outline"
             size="lg"
-            className="w-full sm:w-auto"
+            className="w-full @panel-sm:w-auto"
             disabled={!baseUrl.trim()}
             title={baseUrl.trim() ? undefined : "Add a base URL first"}
             onClick={() => setImporting(true)}
@@ -468,7 +469,7 @@ function ModelEditorFields({
   onPatch: (patch: Partial<ModelRow>) => void
 }) {
   return (
-    <div className="space-y-3 border-t bg-muted/20 p-3 sm:p-4">
+    <div className="space-y-3 border-t bg-muted/20 p-3 @panel-sm:p-4">
       <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-border/40">
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
           <EntityIcon
@@ -489,13 +490,13 @@ function ModelEditorFields({
           type="button"
           variant={isDefault ? "secondary" : "outline"}
           size="sm"
-          className="text-xs h-7 w-full sm:w-auto"
+          className="text-xs h-7 w-full @panel-sm:w-auto"
           onClick={onSetDefault}
         >
           {isDefault ? "Default model" : "Set as default"}
         </Button>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 @panel-sm:grid-cols-2">
         <Field label="Model id">
           <Input
             value={row.id}
@@ -518,7 +519,7 @@ function ModelEditorFields({
             value={row.contextWindow}
             onChange={(e) => onPatch({ contextWindow: e.target.value })}
             placeholder="200000"
-            className="text-left sm:text-right font-mono text-xs"
+            className="text-left @panel-sm:text-right font-mono text-xs"
           />
         </Field>
         <Field label="Max output tokens">
@@ -527,7 +528,7 @@ function ModelEditorFields({
             value={row.maxOutputTokens}
             onChange={(e) => onPatch({ maxOutputTokens: e.target.value })}
             placeholder="64000"
-            className="text-left sm:text-right font-mono text-xs"
+            className="text-left @panel-sm:text-right font-mono text-xs"
           />
         </Field>
         <Field label="Reasoning efforts" hint="Comma-separated; empty = no effort control.">
@@ -554,7 +555,7 @@ function ModelEditorFields({
             value={row.pricingInput}
             onChange={(e) => onPatch({ pricingInput: e.target.value })}
             placeholder="3"
-            className="text-left sm:text-right font-mono text-xs"
+            className="text-left @panel-sm:text-right font-mono text-xs"
           />
         </Field>
         <Field label="Price out (USD / Mtok)">
@@ -565,13 +566,13 @@ function ModelEditorFields({
             value={row.pricingOutput}
             onChange={(e) => onPatch({ pricingOutput: e.target.value })}
             placeholder="15"
-            className="text-left sm:text-right font-mono text-xs"
+            className="text-left @panel-sm:text-right font-mono text-xs"
           />
         </Field>
         {/* A window of the day the provider charges less for. All four make the
             window; a blank one is a model with a single all-day rate, which is
             what most are. */}
-        <div className="sm:col-span-2 grid gap-3 sm:grid-cols-4">
+        <div className="@panel-sm:col-span-2 grid gap-3 @panel-sm:grid-cols-4">
           <Field label="Off-peak from" hint="HH:MM, in the zone beside it.">
             <Input
               value={row.offPeakFrom}
@@ -605,15 +606,15 @@ function ModelEditorFields({
               value={row.offPeakMultiplier}
               onChange={(e) => onPatch({ offPeakMultiplier: e.target.value })}
               placeholder="0.5"
-              className="text-left sm:text-right font-mono text-xs"
+              className="text-left @panel-sm:text-right font-mono text-xs"
             />
           </Field>
-          <p className="sm:col-span-4 text-xs text-muted-foreground">
+          <p className="@panel-sm:col-span-4 text-xs text-muted-foreground">
             A cheaper window of the day, as the provider states it — the endpoint bills by its
             own clock, so this only reports the saving; nothing is sent to ask for it.
           </p>
         </div>
-        <div className="sm:col-span-2">
+        <div className="@panel-sm:col-span-2">
           <Field label="Icon URL" hint="Optional — shown in the composer trigger when this model is selected.">
             <div className="flex items-center gap-2">
               <EntityIcon
@@ -630,7 +631,7 @@ function ModelEditorFields({
             </div>
           </Field>
         </div>
-        <div className="sm:col-span-2">
+        <div className="@panel-sm:col-span-2">
           <Field
             label="Group"
             hint="Pick one this profile already uses, or type a new name. Models sharing a group appear under a shared heading in the picker."
@@ -719,7 +720,7 @@ function ModelTest({
         </span>
       </div>
       {result && (
-        <p className="rounded-md border border-border/60 bg-muted/30 px-2.5 py-2 text-[11px] text-muted-foreground">
+        <p className={cn("px-2.5 py-2 text-[11px] text-muted-foreground", INSET)}>
           Answered in {(result.ms / 1000).toFixed(1)}s
           {result.finishReason ? ` (${result.finishReason})` : ""}
           {result.reply ? ` — “${result.reply}”` : ""}
@@ -862,7 +863,7 @@ function ModelsDevMatch({
   const matched = row.devRef.trim()
 
   return (
-    <div className="flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center gap-2">
+    <div className="flex flex-col @panel-sm:flex-row @panel-sm:flex-wrap items-start @panel-sm:items-center gap-2">
       <Combobox
         items={results}
         filter={null}
@@ -879,7 +880,7 @@ function ModelsDevMatch({
         itemToStringLabel={(hit: ModelCandidate | null) => hit?.label || hit?.id || ""}
         onValueChange={(hit: ModelCandidate | null) => hit && apply(hit)}
       >
-        <ComboboxTrigger render={<Button type="button" variant="outline" size="sm" className="w-full sm:w-auto" />}>
+        <ComboboxTrigger render={<Button type="button" variant="outline" size="sm" className="w-full @panel-sm:w-auto" />}>
           {matched ? "Change models.dev match" : "Match on models.dev"}
         </ComboboxTrigger>
         <ComboboxContent>
@@ -1099,7 +1100,7 @@ function FetchModelsDialog({
 
   return (
     <ResponsiveDialog open onOpenChange={(open) => !open && onClose()}>
-      <ResponsiveDialogContent className="sm:max-w-lg">
+      <ResponsiveDialogContent className="@panel-sm:max-w-lg">
         {step === "pick" ? (
           <>
             <ResponsiveDialogHeader>
@@ -1119,16 +1120,16 @@ function FetchModelsDialog({
               <Button
                 type="button"
                 variant="ghost"
-                className="w-full sm:w-auto sm:mr-auto"
+                className="w-full @panel-sm:w-auto @panel-sm:mr-auto"
                 disabled={fetching}
                 onClick={fetchModels}
               >
                 Fetch again
               </Button>
-              <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={onClose}>
+              <Button type="button" variant="outline" className="w-full @panel-sm:w-auto" onClick={onClose}>
                 Cancel
               </Button>
-              <Button type="button" className="w-full sm:w-auto" disabled={fetching || picked.length === 0} onClick={next}>
+              <Button type="button" className="w-full @panel-sm:w-auto" disabled={fetching || picked.length === 0} onClick={next}>
                 Next{picked.length ? ` · ${picked.length}` : ""}
               </Button>
             </ResponsiveDialogFooter>
@@ -1142,13 +1143,13 @@ function FetchModelsDialog({
                 to get the name, context window, pricing and efforts.
               </ResponsiveDialogDescription>
             </ResponsiveDialogHeader>
-            <div className="max-h-[50vh] sm:max-h-[60vh] divide-y overflow-y-auto rounded-lg border">
+            <div className={cn("max-h-[50vh] divide-y divide-border/60 overflow-y-auto @panel-sm:max-h-[60vh]", INSET)}>
               {picked.map((c) => {
                 const row = drafts[c.id]
                 if (!row) return null
                 const badges = summaryBadges(row)
                 return (
-                  <div key={c.id} className="space-y-2 p-2.5 sm:p-3 min-w-0">
+                  <div key={c.id} className="space-y-2 p-2.5 @panel-sm:p-3 min-w-0">
                     <div className="flex items-center gap-2.5 min-w-0">
                       <EntityIcon
                         src={row.iconUrl}
@@ -1183,10 +1184,10 @@ function FetchModelsDialog({
               })}
             </div>
             <ResponsiveDialogFooter>
-              <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={() => setStep("pick")}>
+              <Button type="button" variant="outline" className="w-full @panel-sm:w-auto" onClick={() => setStep("pick")}>
                 Back
               </Button>
-              <Button type="button" className="w-full sm:w-auto" onClick={importAll}>
+              <Button type="button" className="w-full @panel-sm:w-auto" onClick={importAll}>
                 Import {picked.length} model{picked.length === 1 ? "" : "s"}
               </Button>
             </ResponsiveDialogFooter>

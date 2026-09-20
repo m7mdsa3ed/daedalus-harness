@@ -7,6 +7,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { loadConfig } from "./config.js";
 import { HttpError } from "./http-error.js";
 import { seedPersonas } from "./personas.js";
+import { retitleBuiltinMcp } from "./library.js";
 import { seedModelPrompts, writeModelPromptsLibrary } from "./model-prompts.js";
 import { seedAgents } from "./registry.js";
 import { ensureDefaultBoard } from "./boards.js";
@@ -63,6 +64,7 @@ await seedPersonas();
    state, and a boot after a hand-edited `data/` — or after an import, which
    writes rows straight into the table — must leave the file agreeing with the
    database whether or not anything was seeded. */
+await retitleBuiltinMcp();
 await seedModelPrompts();
 await writeModelPromptsLibrary();
 /* The tasks board's first board and its four columns, seeded only into an

@@ -70,8 +70,8 @@ const persona = { id: "p1", prompt: "PERSONA TEXT", thinking: null };
   assert.ok(/positional/i.test(OPENUI_INSTRUCTIONS), "warns about positional arguments");
   assert.ok(OPENUI_INSTRUCTIONS.includes("root"), "and insists on a root");
   assert.ok(
-    /if it has not/i.test(OPENUI_INSTRUCTIONS),
-    "and says what to do when the components were not provided",
+    OPENUI_INSTRUCTIONS.includes("StatRow(") && OPENUI_INSTRUCTIONS.includes("Chart("),
+    "and carries the generated component table, so every runtime gets the same one",
   );
   console.log("openui-trailer: instructions ok");
 }

@@ -1,0 +1,243 @@
+/* ── Shared shell, for the sidebar prototypes ──
+   Tokens lifted from client/src/index.css (light + dark), plus the handful of
+   primitives every variant needs. The point of factoring this out: the variants
+   differ only in *structure*, so anything they are meant to share lives here and
+   a difference on screen is a difference in the design under test, not in the
+   chrome around it.
+
+   Classic stylesheet, no build step — the variants are static files served by
+   the Vite dev server from /prototypes/ (see the gallery, index.html). */
+
+:root {
+  --radius: 0.625rem;
+  --radius-xl: calc(var(--radius) * 1.4);
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --primary: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --sidebar: var(--background);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-accent: oklch(0.9 0 0);
+  --sidebar-border: oklch(0.91 0 0);
+  --app-ground: oklch(0.97 0 0);
+  --amber: oklch(0.769 0.188 70.08);
+  --green: oklch(0.723 0.219 149.579);
+  --blue: oklch(0.707 0.165 254.624);
+  --violet: oklch(0.606 0.25 292.717);
+  --on-accent: oklch(0.985 0 0);
+}
+html.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --primary: oklch(0.922 0 0);
+  --sidebar: var(--background);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --app-ground: oklch(0.12 0 0);
+  --on-accent: oklch(0.145 0 0);
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: "Figtree", ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px; line-height: 1.38;
+  color: var(--foreground); background: var(--app-ground);
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+input { font: inherit; color: inherit; background: none; border: 0; outline: none; }
+svg { width: 16px; height: 16px; flex: 0 0 auto; }
+[hidden] { display: none !important; }
+.spacer { flex: 1 1 auto; }
+
+/* ── The two columns ── */
+.app { display: flex; height: 100vh; overflow: hidden; }
+
+.sidebar {
+  --w: 264px;
+  width: var(--w); min-width: 200px; max-width: 420px; flex: 0 0 auto;
+  display: flex; flex-direction: column; position: relative; overflow: hidden;
+  background: var(--sidebar); border-right: 1px solid var(--sidebar-border);
+}
+
+.main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; padding: 6px 6px 6px 0; }
+.tabs { display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 4px; }
+.tab {
+  display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px 0 10px; min-width: 0;
+  border-radius: 8px; color: var(--muted-foreground); box-shadow: inset 0 0 0 1px var(--sidebar-border);
+}
+.tab[data-active="true"] {
+  color: var(--foreground); background: var(--card);
+  box-shadow: inset 2px 0 0 0 var(--primary), 0 1px 2px rgba(0,0,0,.12);
+}
+.tab .dot { width: 6px; height: 6px; }
+.card {
+  flex: 1 1 auto; border-radius: var(--radius-xl); background: var(--card);
+  display: grid; place-items: center; color: var(--muted-foreground); font-size: 12px;
+}
+
+/* ── Head, brand, controls ── */
+.sb-head { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; padding: 10px 8px 6px; }
+.sb-title-row { display: flex; align-items: center; gap: 8px; height: 30px; padding-left: 4px; }
+.sb-title-row h2 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+.head-actions { margin-left: auto; display: flex; gap: 2px; }
+.brand { display: flex; align-items: center; gap: 8px; padding-left: 4px; border-radius: 6px; }
+.brand .logo {
+  width: 20px; height: 20px; border-radius: 6px; flex: 0 0 auto;
+  background: linear-gradient(140deg, var(--violet), var(--blue)); display: grid; place-items: center; color: white;
+}
+.brand .logo svg { width: 12px; height: 12px; }
+.brand span { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.icon-btn {
+  width: 26px; height: 26px; display: grid; place-items: center; border-radius: 7px;
+  color: var(--muted-foreground); transition: background 120ms, color 120ms;
+}
+.icon-btn:hover { background: var(--sidebar-accent); color: var(--sidebar-foreground); }
+kbd {
+  font: inherit; font-size: 10px; padding: 1px 5px; border-radius: 4px; margin-left: auto;
+  color: var(--muted-foreground); background: var(--muted); box-shadow: 0 0 0 1px var(--sidebar-border);
+}
+
+/* The primary action, once, where "new" belongs. */
+.primary {
+  display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 10px;
+  border-radius: 8px; background: var(--sidebar-accent); color: var(--sidebar-foreground); font-weight: 500;
+}
+.primary:hover { filter: brightness(1.07); }
+.primary kbd { background: var(--sidebar); }
+
+.search, .omnibox {
+  display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: 8px;
+  color: var(--muted-foreground); box-shadow: inset 0 0 0 1px var(--sidebar-border);
+}
+.search:hover { background: var(--sidebar-accent); }
+.omnibox:focus-within { box-shadow: inset 0 0 0 1px var(--primary); color: var(--foreground); }
+.omnibox input { flex: 1; min-width: 0; color: var(--foreground); }
+.omnibox input::placeholder { color: var(--muted-foreground); }
+
+/* A segmented control — the one filter shape the variants share. */
+.segment { display: flex; gap: 2px; padding: 2px; border-radius: 9px; background: var(--muted); }
+.seg {
+  flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  height: 24px; padding: 0 8px; border-radius: 7px; font-size: 12px; color: var(--muted-foreground);
+}
+.seg:hover { color: var(--sidebar-foreground); }
+.seg[data-active="true"] { background: var(--sidebar); color: var(--sidebar-foreground); font-weight: 500; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.seg .seg-n { font-size: 10px; font-variant-numeric: tabular-nums; opacity: 0.75; }
+
+/* ── The list ── */
+.scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 2px 8px 10px; }
+.scroll::-webkit-scrollbar { width: 8px; }
+.scroll::-webkit-scrollbar-thumb { background: color-mix(in oklab, var(--foreground) 18%, transparent); border-radius: 999px; }
+
+.section + .section { margin-top: 10px; }
+.section-head {
+  display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase;
+  color: color-mix(in oklab, var(--sidebar-foreground) 55%, transparent);
+}
+.section-head .n { margin-left: auto; letter-spacing: 0; font-weight: 600; opacity: 0.7; }
+.section-head.clickable { cursor: pointer; border-radius: 6px; }
+.section-head.clickable:hover { color: var(--sidebar-foreground); }
+.chev { color: var(--muted-foreground); transition: transform 180ms ease; }
+[aria-expanded="true"] > .chev { transform: rotate(90deg); }
+
+/* A thread row. `<div>` rather than `<button>` wherever the row carries its own
+   controls — a button inside a button is not a thing. */
+.row {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px;
+  padding: 0 8px; border-radius: 8px; text-align: left; position: relative;
+}
+.row:hover { background: var(--sidebar-accent); }
+.row[data-active="true"] { background: var(--sidebar-accent); font-weight: 500; }
+.row .title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .sub { font-size: 11px; color: var(--muted-foreground); }
+.row .tail { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.row .swatch { width: 3px; height: 18px; border-radius: 999px; flex: 0 0 auto; }
+.row.ask { background: color-mix(in oklab, var(--amber) 7%, transparent); }
+.row.ask:hover { background: color-mix(in oklab, var(--amber) 13%, transparent); }
+.row.bad { background: color-mix(in oklab, var(--destructive) 7%, transparent); }
+.row.bad:hover { background: color-mix(in oklab, var(--destructive) 13%, transparent); }
+
+/* A row's inline control — "Answer", "Retry", "Stop". */
+.act {
+  display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 6px;
+  font-size: 11px; font-weight: 500; color: var(--sidebar-foreground); background: var(--sidebar);
+  box-shadow: inset 0 0 0 1px var(--sidebar-border);
+}
+.act:hover { background: var(--muted); }
+.act.danger { color: var(--destructive); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--destructive) 35%, transparent); }
+
+/* Status is a dot beside the title of a row that is *not* idle. */
+.dot { width: 7px; height: 7px; border-radius: 999px; flex: 0 0 auto; }
+.dot.running { background: var(--green); animation: pulse 1.6s ease-in-out infinite; }
+.dot.waiting { background: var(--amber); }
+.dot.failed { background: var(--destructive); }
+.dot.reconnect { background: var(--muted-foreground); animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* A project folder and its nested threads. */
+.folder {
+  display: flex; align-items: center; gap: 7px; width: 100%; height: 30px; padding: 0 8px;
+  border-radius: 8px; text-align: left; position: relative;
+}
+.folder:hover { background: var(--sidebar-accent); }
+.folder .mark {
+  width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; flex: 0 0 auto;
+  color: white; font-size: 10px; font-weight: 700;
+}
+.folder .name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder .n { font-size: 11px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.tree { margin-left: 14px; padding-left: 8px; border-left: 1px solid var(--sidebar-border); }
+
+/* A chip — a pinned thread, a project filter. */
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 26px; padding: 0 9px 0 7px;
+  border-radius: 999px; font-size: 12px; background: var(--muted); box-shadow: inset 0 0 0 1px var(--sidebar-border);
+}
+.chip:hover { background: var(--sidebar-accent); }
+.chip .dot { width: 6px; height: 6px; }
+.chip[data-active="true"] { background: var(--sidebar-accent); font-weight: 500; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 8px 2px; }
+
+/* A project tag on a flat row — a coloured dot and the short name. */
+.tag { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted-foreground); flex: 0 0 auto; }
+.tag i { width: 7px; height: 7px; border-radius: 999px; display: block; }
+
+/* The timeline's spine. */
+.spine { position: relative; }
+.spine::before {
+  content: ""; position: absolute; left: 15px; top: 4px; bottom: 4px; width: 1px;
+  background: var(--sidebar-border);
+}
+.spine .row { padding-left: 26px; }
+.spine .row::before {
+  content: ""; position: absolute; left: 12px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px;
+  border-radius: 999px; background: var(--muted-foreground);
+}
+.spine .row.running::before { background: var(--green); }
+.spine .row.waiting::before { background: var(--amber); }
+.spine .row.failed::before { background: var(--destructive); }
+.spine .row.idle::before { background: color-mix(in oklab, var(--foreground) 25%, transparent); }
+
+/* The bottom band — the device's rows, always at the foot. */
+.sb-foot { flex: 0 0 auto; display: flex; flex-direction: column; gap: 1px; padding: 6px 8px 8px; border-top: 1px solid var(--sidebar-border); }
+.sb-foot .row { min-height: 30px; }
+.foot-nav { display: flex; flex-wrap: wrap; gap: 2px; padding: 0 2px; }
+.nav-link {
+  display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 7px; border-radius: 6px;
+  font-size: 12px; color: var(--muted-foreground);
+}
+.nav-link:hover { background: var(--sidebar-accent); color: var(--sidebar-foreground); }
+.nav-link .n { font-size: 11px; font-variant-numeric: tabular-nums; opacity: 0.8; }
+
+.empty { padding: 22px 14px; text-align: center; font-size: 12px; color: var(--muted-foreground); }
+.hl { background: color-mix(in oklab, var(--amber) 35%, transparent); border-radius: 2px; }

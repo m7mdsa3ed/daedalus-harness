@@ -54,7 +54,12 @@ export function PagePanel(props: IDockviewPanelProps<{ path: string }>) {
   return (
     <div className="flex h-full min-h-0 flex-col [--app-header-h:var(--dock-content-overlap,0px)]">
       {title && <h1 className="sr-only">{title}</h1>}
-      <Routes location={path}>{routes}</Routes>
+      {/* Keyed on the pathname so a repointed tab remounts into the
+          transcript's own entrance (`harness-item-in`); a query or hash
+          change is the same page and does not replay it. */}
+      <div key={path.split(/[?#]/)[0]} className="harness-item-in flex min-h-0 flex-1 flex-col">
+        <Routes location={path}>{routes}</Routes>
+      </div>
     </div>
   )
 }

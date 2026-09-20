@@ -1,0 +1,98 @@
+<!doctype html>
+<!--
+  Tabs-A — Current (and the two weights, stacked).
+
+  The shipped strip, as a reference, then the same tab in each of its three
+  states drawn on their own so the *material* can be judged: resting (a 4% wash
+  of the foreground), hover (the same wash at 8%, between the resting tab and
+  the active one — pointing must not look like selecting), and active (the
+  card's own ground and its shadow). No tab wears a colour: the reading is the
+  dot.
+
+  The second row shows the controls: hidden at rest, drawn on hover/focus as an
+  overlay that reserves no room, with the title fading under them
+  (`--tab-fade-w`) rather than re-truncating, and the pin drawn before you
+  point because it is a state and not an action.
+-->
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="/logo.svg" type="image/svg+xml" />
+<title>Tabs-A — Current</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./transcript.css" />
+<link rel="stylesheet" href="./tabs.css" />
+<style>
+  .page { max-width: 940px; margin: 0 auto; padding: 28px 24px 64px; }
+  h1 { font-size: 19px; margin: 0 0 6px; letter-spacing: -0.02em; }
+  .lede { color: var(--muted-foreground); margin: 0 0 26px; max-width: 70ch; text-wrap: pretty; }
+  .pane { border-radius: var(--radius-xl); background: var(--card); box-shadow: 0 1px 3px rgba(0,0,0,.08); overflow: hidden; }
+  .pane .strip { background: color-mix(in oklab, var(--card) 90%, transparent); }
+  .stage { padding: 22px 16px; color: var(--muted-foreground); font-size: 12px; display: grid; place-items: center; min-height: 120px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Tabs-A — Current</h1>
+  <p class="lede">
+    The shipped strip over a panel, then the tab's own states laid out so the three weights of one
+    material can be compared without pointing at anything. The rule the variants keep: no colour on
+    any tab, and the reading is the dot at the mark's end.
+  </p>
+
+  <div class="pane">
+    <div id="strip1"></div>
+    <div class="stage">the panel — Ship the composer width fix</div>
+  </div>
+
+  <div class="pairgrid" style="margin-top: 22px">
+    <div class="pair">
+      <span class="cap">Resting — 4% wash</span>
+      <div class="demo"><div id="s-resting"></div></div>
+    </div>
+    <div class="pair">
+      <span class="cap">Hover — 8% wash</span>
+      <div class="demo"><div id="s-hover"></div></div>
+    </div>
+    <div class="pair">
+      <span class="cap">Active — the card's ground</span>
+      <div class="demo"><div id="s-active"></div></div>
+    </div>
+    <div class="pair">
+      <span class="cap">Controls drawn (hover / focus)</span>
+      <div class="demo"><div id="s-controls"></div></div>
+    </div>
+    <div class="pair">
+      <span class="cap">Pinned — drawn before you point</span>
+      <div class="demo"><div id="s-pinned"></div></div>
+    </div>
+    <div class="pair">
+      <span class="cap">Narrow — the tab, and the rest in a list</span>
+      <div class="demo"><div id="s-narrow"></div></div>
+    </div>
+  </div>
+</div>
+<script src="./shared-transcript.js"></script>
+<script src="./shared-tabs.js"></script>
+<script>
+  const { tabs, tab, strip, I } = TB
+  const all = tabs()
+  document.querySelector("#strip1").innerHTML = strip(all, { band: true })
+  document.querySelector("#s-resting").innerHTML = strip([{ ...all[1], active: false }])
+  document.querySelector("#s-hover").innerHTML = `<div style="--hover-here:1">${strip([{ ...all[1], active: false }])}</div>`
+  document.querySelector("#s-active").innerHTML = strip([{ ...all[0] }])
+  document.querySelector("#s-controls").innerHTML = strip([{ ...all[0], active: true }]).replace(
+    'class="controls"',
+    'class="controls" style="opacity:1;pointer-events:auto"'
+  )
+  document.querySelector("#s-pinned").innerHTML = strip([{ ...all[3], active: true, pinned: true }])
+  document.querySelector("#s-narrow").innerHTML = `<div class="strip">${tab(all[0])}<span class="void"></span><button class="list" title="All tabs">${I.list}</button></div>`
+  /* A hover demonstration cannot be hovered in a screenshot, so the demo tab is
+     given the hover wash directly. */
+  document.querySelector("#s-hover .tab").style.background = "color-mix(in oklch, var(--foreground) 8%, transparent)"
+  document.querySelector("#s-hover .tab").style.setProperty("--tab-fade-w", "calc(2 * var(--dock-control-h) + 14px)")
+  TX.theme()
+</script>
+</body>
+</html>

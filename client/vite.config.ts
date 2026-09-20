@@ -167,7 +167,12 @@ export default defineConfig({
     /* One Monaco per page: two copies would be two theme registries and two
        language registries, and a model created by one would be invisible to
        the other. */
-    dedupe: ["monaco-editor"],
+    /* And one highlight.js: `lowlight` pins its own copy, so the grammars
+       `lib/highlight.ts` imports directly came from a different version than
+       the core they were being registered into — two engines in the entry
+       chunk, and a grammar authored against the newer one running inside the
+       older. */
+    dedupe: ["monaco-editor", "highlight.js"],
     alias: {
       "@": path.resolve(import.meta.dirname, "./src"),
       /* The one module the browser imports from the server for its *value*

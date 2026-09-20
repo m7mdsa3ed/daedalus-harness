@@ -19,7 +19,7 @@ import { modelPromptsFilePath } from "./model-prompts.js";
 // Type-only: personas.ts imports `usesPersonaFile` from here at runtime, and
 // the dependency has to stay one-directional.
 import type { PersonaSpawn } from "./personas.js";
-import { profileBaseUrl, profileSupports, type Profile } from "./profiles.js";
+import { profileAgentIds, profileBaseUrl, profileSupports, type Profile } from "./profiles.js";
 import type { Project } from "./projects.js";
 
 /**
@@ -1140,6 +1140,28 @@ export function isBuiltInAgent(id: string): boolean {
 
 export async function getAgent(id: string): Promise<AgentDef | undefined> {
   return (await db.select().from(agentsTable).where(eq(agentsTable.id, id)).limit(1))[0];
+}
+
+/**
+ * Whether at least one runtime this profile names is known to the harness.
+ *
+ * The strict question — "which agent did you mean" — is `resolveProfileAgent`,
+ * which refuses to guess between several, because spawning "some" agent on a
+ * profile that serves four is not what anyone asked for. The harness's own
+ * model calls (`enhance.ts`) ask a different one: they go to the profile's
+ * **shared** base URL, and a per-agent override is exactly what is *not* used,
+ * so a profile serving four runtimes is as usable to them as one serving a
+ * single runtime, and naming none is not an answer it needs. This is that
+ * check, and it keeps the one gate worth keeping: a profile with nothing known
+ * behind it is not silently offered a draft.
+ *
+ * There is deliberately no "which one" argument: a caller that named an agent
+ * would be narrowing by a fact its own call does not read, and a draft's agent
+ * need not be one the picked rewrite profile names.
+ */
+export async function profileHasAgent(profile: Profile): Promise<boolean> {
+  const known = new Set((await listAgents()).map((agent) => agent.id));
+  return profileAgentIds(profile).some((id) => known.has(id));
 }
 
 /**

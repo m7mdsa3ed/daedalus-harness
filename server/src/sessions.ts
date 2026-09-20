@@ -33,7 +33,7 @@ import { SessionQueue } from "./session-queue.js";
 import type { AutonomyPolicy } from "./autonomy.js";
 import { WORKFLOW_SERVER_NAME } from "./workflow-schema.js";
 import { deleteSearchIndex } from "./search.js";
-import { getQuota, invalidateQuota, planReadable } from "./quota.js";
+import { getQuota, invalidateQuota, planReadable, setRuntimeLiveCheck } from "./quota.js";
 import { profileUsage } from "./usage-api.js";
 import { SessionJournal } from "./session-journal.js";
 import { TurnChangesRecorder } from "./turn-changes.js";
@@ -538,6 +538,13 @@ export class SessionManager {
     idleMinutes = 30,
     private journalRetentionDays = 30,
   ) {
+    /* A quota probe is a second copy of the runtime's CLI on the same login, so
+       it must not be spawned while one of ours is holding it — see the header in
+       quota.ts. The manager owns the children, so it is what answers. */
+    setRuntimeLiveCheck((agentId) => {
+      for (const s of this.sessions.values()) if (s.proc && s.agentId === agentId) return true;
+      return false;
+    });
     /* Sessions from before the last server restart: the processes are gone, but
        the thread identity remains and the client can revive it (respawn +
        session/load), which is the agent's account and the canonical one.
@@ -809,13 +816,11 @@ export class SessionManager {
   }
 
   /**
-   * Everything a thread's agent is given: the profile's links (the provider
-   * setup) and the thread's own picks, as one set. Profile first so a server
-   * the profile names keeps its position; duplicates collapse. The project
-   * contributes nothing — it is the directory, not the toolset.
+   * Everything a thread's agent is given: the thread's own picks.
+   * Profiles carry no links — a profile is provider credentials.
    */
-  effectiveLinks(session: Session, profile = session.profile): LinkSet {
-    return unionLinks(profile, session.links);
+  effectiveLinks(session: Session, _profile = session.profile): LinkSet {
+    return session.links;
   }
 
   /**
@@ -1536,11 +1541,19 @@ export class SessionManager {
        the stale prompt file cleared as much as one that gained a persona needs
        it written. */
     const rules = [...(await globalRules()), ...(await projectRules(project.id))];
+    /* Nobody in front of a workflow step or a scheduled run: `autonomy` is null
+       exactly for the thread with a human at it (see `Session.autonomy`). */
+    const unattended = !!session.parentSessionId || session.autonomy !== null;
     const persona = await resolvePersonaSpawn(
       session.id,
       session.personaId,
       agent,
-      { suggestFollowups: session.suggestFollowups, uiBlocks: session.uiBlocks },
+      {
+        suggestFollowups: session.suggestFollowups,
+        /* A drawn view is read by a person; an unattended run's output goes to
+           a log and wants prose it can grep. */
+        uiBlocks: session.uiBlocks && !unattended,
+      },
       rules,
     );
     /* An agent whose children never reach ACP is given a port and a secret so
@@ -1563,12 +1576,8 @@ export class SessionManager {
       sidecar,
       /* Nobody is going to change the model for a workflow step or a scheduled
          run, and `whenTurnSettled` is what both wait on — so a held turn there
-         is a run that never reports. `autonomy` is null exactly for the thread
-         with a human in front of it (see `Session.autonomy`). */
-      !!session.parentSessionId || session.autonomy !== null,
-      /* The thread's own ask about drawn views, read off the row like the
-         persona — `start` has to work for a revive with no caller. */
-      session.uiBlocks,
+         is a run that never reports. */
+      unattended,
     );
     const feed = sidecar
       ? new OpencodeSubagentFeed({

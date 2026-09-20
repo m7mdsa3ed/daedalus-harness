@@ -21,6 +21,7 @@ import {
   ArrowRight01Icon,
   Archive02Icon,
   Clock01Icon,
+  GitBranchIcon,
   MoreHorizontalIcon,
   PackageIcon,
   PlusSignIcon,
@@ -43,7 +44,8 @@ import { useConfirm } from "@/components/confirm-dialog"
 import { HistorySection, StashSection } from "@/components/workspace/scm-log"
 import { PanelRowsSkeleton } from "@/components/ui/skeletons"
 import { Notice } from "@/components/notice"
-import { BranchMenu, Tracking } from "@/components/workspace/scm/branch-menu"
+import { Tracking } from "@/components/workspace/scm/branch-menu"
+import { BranchPicker } from "@/components/workspace/scm/branch-picker"
 import { Group } from "@/components/workspace/scm/file-rows"
 import {
   IconAction,
@@ -54,11 +56,7 @@ import {
 } from "@/components/workspace/scm/shared"
 import { useCoarsePointer } from "@/hooks/use-device"
 import { describeError } from "@/lib/errors"
-import {
-  canEnhance,
-  resolveEnhanceModelId,
-  resolveEnhanceProfile,
-} from "@/lib/enhance"
+import { canUseAi, gitPick } from "@/lib/ai-picks"
 import { useProfiles } from "@/lib/queries/catalog"
 import type { FileLayout } from "@/lib/ide/prefs"
 import type { ScmFilter } from "@/lib/ide/scm-filter"
@@ -188,13 +186,14 @@ export function RepoSection({
     [confirm, write]
   )
 
-  /* Draft a commit message. The profile pick is the enhancer's, resolved the
-     same way and remembered device-locally — writing commit messages and
-     sharpening prompts are the same habit, and the picker is the same picker. */
+  /* Draft a commit message. Source control has its own device-local pick
+     (Settings › AI helpers), separate from the composer's enhancer: reading a
+     diff and sharpening a prompt are different jobs, and the provider you want
+     on your patches is not necessarily the one you want on your sentences. */
   const profiles = useProfiles()
   const draftProfile = React.useMemo(() => {
-    const picked = resolveEnhanceProfile(profiles)
-    return canEnhance(picked) ? picked : null
+    const picked = gitPick.resolveProfile(profiles)
+    return canUseAi(picked) ? picked : null
   }, [profiles])
 
   const draftMessage = React.useCallback(async () => {
@@ -204,7 +203,7 @@ export function RepoSection({
     try {
       const { message: drafted } = await draftCommitMessage(settings, projectId, {
         profileId: draftProfile.id,
-        model: resolveEnhanceModelId(draftProfile) || undefined,
+        model: gitPick.resolveModelId(draftProfile) || undefined,
         repo: repo.path || undefined,
       })
       setMessage(drafted)
@@ -358,14 +357,32 @@ export function RepoSection({
             <span className="min-w-0 truncate font-medium">{repo.name}</span>
           </button>
         )}
-        <BranchMenu
+        {/* The app's one branch switcher (`branch-picker.tsx`) — the same
+            control the composer's popover draws, so switching, creating and
+            checking out a remote behave identically in both places. The trigger
+            stays the header's: a branch is a control, not a caption. */}
+        <BranchPicker
           projectId={projectId}
           repo={repo.path}
           branch={branch}
           unborn={status?.unborn ?? false}
           disabled={busy || !status?.repository}
-          onCheckout={(name, create) => void write({ action: "checkout", branch: name, create })}
-        />
+          onPick={(choice) =>
+            void write({
+              action: "checkout",
+              branch: choice.branch,
+              create: choice.create,
+              track: choice.track,
+            })
+          }
+          className={cn(
+            "flex shrink items-center gap-1 rounded-md px-1.5 py-1 font-mono text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground",
+            coarse && "min-h-11"
+          )}
+        >
+          <HugeiconsIcon icon={GitBranchIcon} strokeWidth={2} className="size-3 shrink-0" />
+          <span className="min-w-0 truncate">{branch}</span>
+        </BranchPicker>
         <Tracking status={status} />
         <span className="flex-1" />
         {count !== null && count > 0 && (

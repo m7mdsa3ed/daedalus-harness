@@ -1,19 +1,56 @@
 /* ── Settings layout route ──
-   The frame every settings page renders inside: centered column, one error
+   The frame every settings page renders inside: one scroller, one error
    boundary per page, and the outlet context that hands each page the server
    connection and the actions. Pages read it back via useSettingsPage().
 
-   The column's width is `settingsMaxWidth` (sections.ts) rather than a
-   constant, because a couple of pages — the theme studio above all — are not
-   forms and cannot be read at a form's measure. */
-import { Outlet, useLocation, useOutletContext } from "react-router"
+   ── Where the section list is ──
+   In the **app sidebar** (`components/sidebar/settings-nav.tsx`), which swaps
+   its content while the panel in front of you is a settings page. Settings had
+   a second sidebar of its own here — a column inside the tab, on the app's
+   sidebar material — because an earlier attempt to put the nav in the app
+   sidebar followed the *route* and rewrote the sidebar of a chat you were
+   reading beside it. The dock writes the focused panel's path to the URL now,
+   so the route is the active panel, and one sidebar can answer for both. Two
+   sidebars side by side was, in the end, two columns of nav before any setting.
+
+   ── The one place the list is still in the page ──
+   A phone, where the app sidebar is a drawer that closes the moment you pick
+   anything. `SectionPicker` is the section list as a single full-width control
+   there — not a scrolling chip strip, which hides most of itself off the right
+   edge and never shows the section you want. On a desktop the sidebar carries
+   it, open or collapsed to its icon rail (where the rows are labelled icons,
+   because `SidebarMenuButton`'s tooltip finally asks the sidebar it is in).
+
+   The restored scroll position (`useScrollRestoration`) is this scroller's —
+   coming back to a section lands where you left it. */
+import * as React from "react"
+import { ChevronsUpDown } from "lucide-react"
+import { Outlet, useLocation, useNavigate, useOutletContext } from "react-router"
 import { ErrorBoundary } from "@/components/error-boundary"
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { useSidebar } from "@/components/ui/sidebar"
 import { SettingsSectionSkeleton } from "@/components/ui/skeletons"
+import { settingsSectionFor } from "@/components/sidebar/settings-nav"
 import type { Actions } from "@/lib/actions"
+import { settingsPath, settingsRootPath } from "@/lib/router"
 import { useScrollRestoration } from "@/lib/scroll-restoration"
-import { cn } from "@/lib/utils"
 import type { ServerSettings } from "@/lib/settings"
-import { settingsMaxWidth } from "./sections"
+import {
+  SETTINGS_NAV_GROUPS,
+  SETTINGS_OVERVIEW,
+  isFullWidthSettings,
+  sectionMeta,
+  type SettingsSectionId,
+} from "./sections"
 
 export interface SettingsPageContext {
   settings: ServerSettings
@@ -26,6 +63,60 @@ export function useSettingsPage(): SettingsPageContext {
   return useOutletContext<SettingsPageContext>()
 }
 
+/** The section list as one control, for the one surface the sidebar cannot
+    reach: a phone, where it is a drawer that closed when you tapped Settings. */
+function SectionPicker({
+  section,
+  go,
+}: {
+  section: SettingsSectionId | null
+  go: (id: SettingsSectionId | null) => void
+}) {
+  const current = section ? sectionMeta(section) : null
+  const Icon = current?.icon ?? SETTINGS_OVERVIEW.icon
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button variant="outline" className="mb-6 h-11 w-full justify-start gap-2.5">
+            <Icon className="size-4 shrink-0 text-muted-foreground" />
+            <span className="truncate">{current?.label ?? "All settings"}</span>
+            <ChevronsUpDown className="ml-auto size-4 shrink-0 text-muted-foreground" />
+          </Button>
+        }
+      />
+      <DropdownMenuContent
+        align="start"
+        className="max-h-[60svh] w-[min(18rem,calc(100vw-2rem))] overflow-y-auto"
+      >
+        <DropdownMenuItem onClick={() => go(null)}>
+          <SETTINGS_OVERVIEW.icon className="size-4" />
+          All settings
+        </DropdownMenuItem>
+        {SETTINGS_NAV_GROUPS.map((group) => (
+          <React.Fragment key={group.label}>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuLabel className="text-[11px] tracking-wider uppercase">
+                {group.label}
+              </DropdownMenuLabel>
+              {group.sections.map((id) => {
+                const meta = sectionMeta(id)
+                return (
+                  <DropdownMenuItem key={id} onClick={() => go(id)}>
+                    <meta.icon className="size-4" />
+                    {meta.label}
+                  </DropdownMenuItem>
+                )
+              })}
+            </DropdownMenuGroup>
+          </React.Fragment>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 export function SettingsLayout({
   settings,
   actions,
@@ -33,23 +124,46 @@ export function SettingsLayout({
   loading,
 }: SettingsPageContext & { loading: boolean }) {
   const location = useLocation()
-  // Coming back to a section lands where you left it, not at the top.
+  const navigate = useNavigate()
   const scrollRef = useScrollRestoration<HTMLDivElement>(location.pathname)
+  const section = settingsSectionFor(location.pathname)
+  /* The device, not the panel's width: a narrow settings panel on a desktop
+     still has the app sidebar beside it, and a drawer is only a drawer on a
+     phone. This is the `useIsMobile`/`@panel-*` split docs/client.md draws. */
+  const { isMobile } = useSidebar()
+  const go = React.useCallback(
+    (id: SettingsSectionId | null) => void navigate(id ? settingsPath(id) : settingsRootPath()),
+    [navigate]
+  )
+
+  /* The theme studio is two columns of its own and takes the whole frame. It
+     keeps its Back button, so nothing is unreachable. */
+  const bare = isFullWidthSettings(location.pathname)
+
+  const page = loading ? (
+    <SettingsSectionSkeleton />
+  ) : (
+    <ErrorBoundary name="settings" resetKeys={[location.pathname]}>
+      <Outlet context={{ settings, actions, onAddServer } satisfies SettingsPageContext} />
+    </ErrorBoundary>
+  )
+
   return (
-    <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto pt-[var(--app-header-h)]">
+    <div
+      ref={scrollRef}
+      className="min-h-0 min-w-0 flex-1 overflow-y-auto pt-[var(--app-header-h)]"
+    >
+      {/* `min-w-0` above, or a wide row (a command's textarea, a table) makes
+          the flex item refuse to shrink and the pane scrolls sideways. */}
       <div
-        className={cn(
-          "mx-auto w-full px-4 pt-6 pb-16 sm:px-8",
-          settingsMaxWidth(location.pathname)
-        )}
+        className={
+          bare
+            ? "w-full px-4 pt-6 pb-16 @panel-sm:px-8"
+            : "mx-auto w-full max-w-4xl px-4 pt-6 pb-24 @panel-sm:px-8"
+        }
       >
-        {loading ? (
-          <SettingsSectionSkeleton />
-        ) : (
-          <ErrorBoundary name="settings" resetKeys={[location.pathname]}>
-            <Outlet context={{ settings, actions, onAddServer } satisfies SettingsPageContext} />
-          </ErrorBoundary>
-        )}
+        {!bare && !loading && isMobile && <SectionPicker section={section} go={go} />}
+        {page}
       </div>
     </div>
   )

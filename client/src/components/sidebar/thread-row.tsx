@@ -14,15 +14,17 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
+import { Badge } from "@/components/ui/badge"
 import { ItemContextMenu, renderMenuItems } from "@/components/item-context-menu"
 import { AgentIcon, ProjectIcon } from "@/components/entity-icon"
 import { threadMenuItems, trashMenuItems } from "@/components/thread-menu"
 import { activityAt, type SessionMeta } from "@/lib/settings"
+import { shortAge } from "@/lib/time"
 import { useAgents, useProfiles, useProjects } from "@/lib/queries/catalog"
 import { useStoreSelect } from "@/lib/store"
 import type { ThreadActivity } from "@/lib/thread/phase"
 import { cn } from "@/lib/utils"
-import { FLOAT_ACTION, FLOAT_ROW, ROW } from "./scale"
+import { FLOAT_ACTION, FLOAT_ROW, ROW_TWO_LINE } from "./scale"
 
 /* The reading a row shows comes from `lib/thread/phase.ts` and is shared with
    the dock tabs and the project page. It used to be declared here as
@@ -33,10 +35,10 @@ import { FLOAT_ACTION, FLOAT_ROW, ROW } from "./scale"
    the store, which made both hard to grep for. */
 export type ThreadStatus = ThreadActivity
 
-/** One thread, one line. The title and — when there is one — a status dot;
-    nothing else on the row. The actions live in the ⋯ that floats over the
-    title on hover and in the right-click (long-press, on a phone) context
-    menu — the same list, built once.
+/** One thread, two lines: the title with its status badge, over the project and
+    when the thread last spoke. Nothing else on the row. The actions live in the
+    ⋯ that floats over the title on hover and in the right-click (long-press, on
+    a phone) context menu — the same list, built once.
 
     Memoized on narrow props — the session object (stable between server
     refreshes), three flags and four hoisted callbacks — so the per-token
@@ -81,46 +83,59 @@ export const ThreadRow = React.memo(function ThreadRow({
     [session, trash, pinned, onOpen, onRename, onDelete, onRestore, onPurge, onPin]
   )
   const { isMobile } = useSidebar()
+  /* The second line's first half. A project the catalog has not landed yet reads
+     "Other", the same word the orphan folder uses. */
+  const project = useProjects().find((p) => p.id === session.projectId)?.name ?? "Other"
 
+  /* ── Two lines ──
+     The title owns the first line and the status is *beside* it, because the
+     status is about the title; the second line says where the thread runs and
+     when it last spoke. One line could hold neither once a title was long, and
+     the project — which the ⋯ card was the only place to find — is on every row
+     here, which is what a list holding several projects needs. */
   const row = (
-    <>
-      {/* A running turn is the title itself shimmering — the pale band that
-          the working line and a live thought already use — rather than a dot
-          beside it: the row *is* the thing in motion. A thread waiting on you
-          keeps the amber dot at the trailing edge — the floating ⋯ covers it
-          while the pointer is on the row, which is fine: it is the one row
-          you must act on, and a still mark is what says "stopped, for you". */}
+    <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2">
+      {/* A running turn is the title itself shimmering — the pale band that the
+          working line and a live thought already use — rather than a badge
+          beside it: the row *is* the thing in motion. A reconcile pulse is the
+          opposite: something happening *to* the thread, not in it. */}
       <span
         className={cn(
-          "min-w-0 flex-1 truncate",
+          "col-start-1 row-start-1 truncate",
           (session.exited || trash) && "text-muted-foreground",
           trash && "line-through",
           state === "running" && "harness-shimmer",
-          /* A different animation from `running` on purpose: the shimmer means
-             the agent is writing, and a reconnect is the opposite of that —
-             something is happening *to* the thread, not in it. Before this the
-             two were indistinguishable, because a row could not see the
-             connection at all and a reconnecting thread simply read as idle. */
           (state === "reconnecting" || state === "offline") && "animate-pulse"
         )}
       >
         {session.title}
       </span>
-      {state === "waiting" && (
-        <span aria-hidden className="size-2 shrink-0 rounded-full bg-amber-500" />
-      )}
-      {/* A turn that ended badly is the other still mark that means "for you",
-          and it is destructive rather than amber because the two are different
-          asks: one is a question waiting to be answered, the other is work that
-          stopped. It draws for a thread this device has never opened — the
-          verdict is on the session row, not in the transcript. */}
-      {state === "failed" && (
-        <span aria-hidden className="size-2 shrink-0 rounded-full bg-destructive" />
-      )}
-      {(state === "reconnecting" || state === "offline") && (
-        <span aria-hidden className="size-2 shrink-0 rounded-full bg-muted-foreground/60" />
-      )}
-    </>
+      {/* The ⋯ floats over this cell (`FLOAT_ACTION`, `right-1`, a 20px box), so
+          a badge clears its footprint — covering a 6px dot on hover was fine,
+          covering the two words that say what is wrong with the thread is not.
+          `pr-6` is the ⋯'s 24px; a row with no badge reserves nothing, so its
+          title still runs to the edge as it did. */}
+      <span
+        className={cn(
+          "col-start-2 row-start-1 flex shrink-0 items-center gap-1.5",
+          (state === "waiting" || state === "failed") && "pr-6"
+        )}
+      >
+        <ThreadStateBadge state={state} />
+        {(state === "reconnecting" || state === "offline") && (
+          <span aria-hidden className="size-2 shrink-0 rounded-full bg-muted-foreground/60" />
+        )}
+      </span>
+      {/* The second line: where it runs, and when it last spoke — the two facts a
+          title cannot carry and the ⋯ card was the only place to read. */}
+      <span className="col-span-2 row-start-2 flex min-w-0 items-center gap-1 text-[11px] leading-4 text-muted-foreground">
+        <span className="truncate">{project}</span>
+        <span aria-hidden className="opacity-50">
+          ·
+        </span>
+        <span className="shrink-0 tabular-nums">{shortAge(activityAt(session))}</span>
+      </span>
+    </span>
   )
 
   const card = <ThreadInfoCard session={session} state={state} trash={trash} />
@@ -141,7 +156,7 @@ export const ThreadRow = React.memo(function ThreadRow({
           onContextMenu={(event) => {
             if (isMobile) event.preventDefault()
           }}
-          className={cn(ROW, FLOAT_ROW, isMobile && "select-none [-webkit-touch-callout:none]")}
+          className={cn(ROW_TWO_LINE, FLOAT_ROW, isMobile && "select-none [-webkit-touch-callout:none]")}
         >
           {row}
         </SidebarMenuButton>
@@ -170,6 +185,40 @@ export const ThreadRow = React.memo(function ThreadRow({
     </SidebarMenuItem>
   )
 })
+
+/** ── The status, as a word rather than a dot ──
+    A dot was the whole ornament while the row was one line: there was room for a
+    mark and none for a word, and colour was the only thing a 6px disc could
+    say. Two lines changed the arithmetic — the second line exists, and a badge
+    in the first line's trailing slot costs the title nothing the dot did not
+    already cost it — so the two states addressed to the reader say what they
+    are. That matters most for `failed`, which was a red dot for "work that
+    stopped" and read as decoration on a row whose title gave no hint of it.
+
+    Only the two *asks* get a badge. Running is the title's shimmer, and the
+    connection states are a pulse on the title plus a dot, because a label that
+    changes every few seconds is noise on every row of a working list. */
+function ThreadStateBadge({ state }: { state: ThreadStatus }) {
+  if (state === "waiting") {
+    return (
+      <Badge
+        variant="outline"
+        title="Waiting on your answer"
+        className="h-4 gap-0 border-amber-500/40 bg-amber-500/10 px-1.5 text-[10px] font-medium text-amber-700 dark:text-amber-400"
+      >
+        Needs you
+      </Badge>
+    )
+  }
+  if (state === "failed") {
+    return (
+      <Badge variant="destructive" title="The last turn failed" className="h-4 px-1.5 text-[10px]">
+        Error
+      </Badge>
+    )
+  }
+  return null
+}
 
 /** What the row does not say: the thread's status, who runs it and where,
     and when it began. It rides on the ⋯ menu, above the actions. */

@@ -9,8 +9,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import {
   READING_MARK,
   READING_TRIGGER,
-  ReadingBadge,
   ReadingBubble,
+  ReadingFace,
 } from "@/components/composer/indicator"
 import { extractSubagent } from "@/lib/tools"
 import { activeSubagents, buildRows } from "@/lib/transcript-rows"
@@ -96,14 +96,17 @@ export function AgentsIndicator({ thread }: { thread: ThreadState }) {
             title={`${label} — ${agents.map((agent) => agent.name ?? agent.task).join(", ")}`}
             aria-label={label}
           >
-            <BotIcon className={READING_MARK} />
-            {/* Where there is room to write it the count is the text badge, and
-                the bubble is not; on a narrow panel the badge would not fit, so
-                the count rides the mark instead. One count, two dresses, never
-                both — and both come from the shared reading parts, so this row
-                is the same shape as the four beside it. */}
-            <ReadingBadge>{label}</ReadingBadge>
-            <ReadingBubble>{count > 9 ? "9+" : count}</ReadingBubble>
+            {/* The mark rides inside the pill — one face, not a glyph beside a
+                label. Where there is room the count is the words and the bubble
+                is not; on a narrow panel the pill is gone, so the count rides
+                the bare mark instead. One count, two dresses, never both — both
+                from the shared reading parts, so this row is the same shape as
+                the four beside it. */}
+            <ReadingFace
+              icon={<BotIcon className={READING_MARK} />}
+              label={label}
+              after={<ReadingBubble>{count > 9 ? "9+" : count}</ReadingBubble>}
+            />
           </Button>
         }
       />

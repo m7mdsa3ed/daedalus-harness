@@ -109,8 +109,16 @@ export function ProjectFolder({
               isActive={onProjectPage || (!open && holdsActive)}
               /* Two hover controls need twice the gutter the primitive
                  reserves for one — the count sits inside it and would land
-                 under the overview button otherwise. */
-              className={cn(ROW, "text-sidebar-foreground/90", onOpenProject && "pr-14")}
+                 under the overview button otherwise.
+
+                 `!` because the primitive's own `pr-8` arrives from a
+                 `group-has-data-[sidebar=menu-action]/menu-item:` variant, which
+                 is a two-class specificity and beat a plain `pr-14`: the row
+                 reserved 32px, one control's width, and the overview icon at
+                 `right-8` (32–52px) sat exactly on the count. The same `!` the
+                 scale's `FLOAT_ROW` and `ACTION` already carry, for the same
+                 reason. */
+              className={cn(ROW, "text-sidebar-foreground/90", onOpenProject && "pr-14!")}
             />
           }
         >

@@ -13,6 +13,7 @@
    Split out of the one 1500-line `useActions` memo; see `lib/actions.ts`. */
 
 import type { AttachmentRef } from "@daedalus/protocol"
+import { errorText } from "../errors"
 import { toast } from "../toast"
 import { uuid } from "../uuid"
 import { postJson, type ActionsCore } from "./core"
@@ -394,7 +395,28 @@ export function sendActions(
         output: string
         exitCode: number | null
         timedOut: boolean
-      }>(settings, `/api/sessions/${sessionId}/shell`, { command, shellId })
+      }>(settings, `/api/sessions/${sessionId}/shell`, { command, shellId }).catch((err) => {
+        /* The row must settle even when the request dies: the composer no
+           longer holds the line (a `!` send is send-and-forget, like a
+           prompt), so a `running` row left standing is the only place the
+           failure would ever be said. Settled as a failed run — a non-zero
+           exit with the error as its output — then rethrown for the caller's
+           own error surface. */
+        dispatch({
+          type: "update",
+          id: sessionId,
+          update: {
+            sessionUpdate: "_daedalus/shell",
+            shellId,
+            status: "done",
+            command,
+            output: errorText(err, "the request failed"),
+            exitCode: 1,
+            timedOut: false,
+          },
+        })
+        throw err
+      })
       dispatch({
         type: "update",
         id: sessionId,

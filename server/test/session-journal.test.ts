@@ -413,5 +413,14 @@ await test("the byte budget measures what the wire carries, not the envelope", a
   );
 });
 
+await test("an event carrying a NUL is journaled, not dropped", async () => {
+  const s = await owner();
+  journal.append(s, update("before\0after"));
+  await journal.flush();
+  const [back] = await journal.eventsFrom(s.id, 0);
+  assert.ok(back, "the row landed — unscrubbed, Postgres refuses it with 22P05");
+  assert.ok(!JSON.stringify(back).includes("\\u0000"), "and the NUL is gone");
+});
+
 console.log(`\n${passed} passed${failures.length ? `, ${failures.length} failed: ${failures.join(", ")}` : ""}`);
 process.exit(failures.length ? 1 : 0);

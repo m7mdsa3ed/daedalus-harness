@@ -18,7 +18,6 @@ import { expandCommand } from "./commands.js";
 import { compact, needsCompaction, windowFor } from "./compaction.js";
 import type { AgentEnv } from "./env.js";
 import { findInstructionFiles, readInstructions } from "./instructions.js";
-import { OPENUI_PROMPT } from "./openui-prompt.js";
 import { loadModelPrompts, modelPromptLayer } from "./model-prompts.js";
 import type { SessionStore } from "./persistence.js";
 import { PROVIDER_OPTIONS_KEY, type ModelFactory } from "./provider.js";
@@ -77,7 +76,7 @@ export async function handlePrompt(
   if (session.compacting) await session.compacting;
 
   const text = promptText(params.prompt);
-  const expanded = expandCommand(session.commands, text) ?? text;
+  const expanded = (await expandCommand(session.commands, text)) ?? text;
 
   /* A prompt landing mid-turn is steering: its content joins the running turn
      at the next model step (prepareStep drains the queue), and its JSON-RPC
@@ -1245,44 +1244,10 @@ assistant: Clients are marked as failed in the \`connectToServer\` function in s
       ),
     );
   }
-  /* ── The component table ──
-     Only for our own runtime, and only the *table*.
-
-     The permission to produce a view at all is not decided here any more: it
-     rides the persona door with every other thread-level behaviour
-     (`server/src/personas.ts`), so any runtime on a profile is asked in its own
-     instructions rather than only this one being told by a variable. What is
-     left for this block is the half a server-side file cannot carry — the
-     generated component list, which is produced from the client's own library
-     (`client/scripts/gen-openui.mjs` → `openui-prompt.ts`) and describes what
-     the reader's app will actually draw. `OPENUI_PROMPT` supersedes the trailer
-     server-side writes whenever both arrive, because it carries the same rules
-     plus the components.
-
-     Two gates, and both are about who is reading:
-
-     — a **subagent** is not drawing anything: its final message is a report to
-       its caller, and a generated view in a worker's handoff is a picture the
-       parent cannot see. It gets the brief;
-     — an **unattended run** has nobody in front of it. `holdOnError` is off for
-       exactly that case and nothing else (a workflow step, a scheduled run),
-       and it is the honest test to reuse rather than inventing a second flag: a
-       view is read by a person, and a run whose output goes to a log wants
-       prose it can grep.
-
-     `env.uiBlocks` still reaches this process (the server sets it from the
-     thread's column), so it is the switch for *this* half too — a thread that
-     turned the lane off should not have its table pushed at it. It is
-     byte-stable per generated file, so it sits in the cacheable prefix. */
-  if (!opts.subagent && env.holdOnError && env.uiBlocks) {
-    parts.push(
-      `## Drawing an answer
-
-The client draws a fenced \`openui-lang\` block as real UI, inline where the fence stood. It is a presentation lane and nothing else: nothing in it can read a file, run a command or reach the network — every tool call stays a tool call above.
-
-${OPENUI_PROMPT}`,
-    );
-  }
+  /* Drawn answers (the `openui-lang` lane) are not this runtime's to teach:
+     the whole trailer, component table included, rides the persona door with
+     every other thread-level behaviour (`server/src/personas.ts`), so this
+     runtime is told exactly what any other on the profile is told. */
   /* Its own block, and pushed for a subagent as well as for a root turn.
      Every failure this section exists to stop — a call to a tool the turn did
      not build, two calls' arguments run into one buffer, an `edit_file` that
@@ -1571,6 +1536,11 @@ function isRetriableStreamError(err: unknown): boolean {
      a `max_tokens` above its ceiling. The same bytes sent again get the same
      answer, so four backoffs only put a minute in front of the hold. */
   if ((err as { statusCode?: number }).statusCode === 400) return false;
+  /* A relay that passes an upstream 400 through under its own 503 defeats the
+     status check above, and its `retry-after` then books four rounds of the
+     same rejection before the hold. The upstream's words survive the relay, so
+     a request the text itself calls invalid is held like the 400 it is. */
+  if (/\[400\]|(?:bad|invalid) request/i.test(err.message)) return false;
   if (err.name === "AI_InvalidResponseDataError") return true;
   if (err.name === "AI_APICallError" && (err as { isRetryable?: boolean }).isRetryable) return true;
   return /ECONNRESET|EPIPE|ETIMEDOUT|socket hang up|network|fetch failed|terminated/i.test(err.message);

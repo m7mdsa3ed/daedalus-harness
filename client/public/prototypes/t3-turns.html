@@ -1,0 +1,111 @@
+<!doctype html>
+<!--
+  T3 — Turns as cards.
+
+  The unit of the transcript is the turn, not the message. Every exchange is
+  one rounded surface on a quiet page ground: your prompt is its header, the
+  agent's work is its body, and the turn's readings (what it cost, what it
+  touched, whether it failed) live in its footer. The gap between two turns is
+  the page showing through, so "where did that turn end" is answered by the
+  shape rather than by a hairline.
+
+  Two widths here: your bubble stays 80% inside the card, and the card itself
+  is the 748px column, so a turn is one object you can scan without reading.
+-->
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="/logo.svg" type="image/svg+xml" />
+<title>T3 — Turns as cards</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./transcript.css" />
+<style>
+  :root { --dock-h: 220px; }
+  .tv-scroll { padding-top: 22px; }
+  .turn { margin: 0 0 14px; border-radius: 16px; border: 1px solid var(--border-60); background: var(--card); overflow: hidden; }
+  /* On a page ground, a card wants a touch more contrast than the flat column. */
+  .turn { box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+  .turn-head { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px 10px; border-bottom: 1px solid var(--border-60); background: color-mix(in oklab, var(--muted) 30%, transparent); }
+  .turn-head .u-bubble { max-width: 100%; padding: 6px 12px; font-size: 0.875rem; }
+  .turn-head .u-msg { padding: 0; flex: 1 1 auto; align-items: flex-start; }
+  .turn-head .u-meta { padding: 2px 0 0; }
+  .turn-head .avatar { width: 26px; height: 26px; border-radius: 8px; background: linear-gradient(140deg, var(--violet), var(--blue)); flex: 0 0 auto; display: grid; place-items: center; color: #fff; font-size: 11px; font-weight: 700; }
+  .turn-body { padding: 10px 16px 4px; }
+  .turn-body .u-msg { padding: 6px 0 4px; }
+  .turn-body .a-msg { padding: 6px 0; }
+  .turn-foot { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-top: 1px solid var(--border-60); font-size: 0.6875rem; color: color-mix(in oklab, var(--muted-foreground) 80%, transparent); background: color-mix(in oklab, var(--muted) 20%, transparent); }
+  .turn-foot .chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px; background: var(--muted); font-variant-numeric: tabular-nums; }
+  .turn-foot .chip svg { width: 12px; height: 12px; }
+  .turn-foot .spacer { flex: 1; }
+  .turn-foot .dur { font-variant-numeric: tabular-nums; }
+  .turn[data-live] { border-color: color-mix(in oklab, var(--primary) 35%, var(--border-60)); }
+  /* The ask and the error are the turn's tail, inside the card. */
+  .turn-body .card { margin: 8px 0; }
+  .turn-body .notice { margin: 6px 0 10px; }
+  .notice { display: flex; align-items: center; gap: 10px; font-size: 0.6875rem; color: color-mix(in oklab, var(--muted-foreground) 75%, transparent); }
+  .notice::before, .notice::after { content: ""; height: 1px; flex: 1; background: var(--border); }
+  .notice .btn svg { width: 10px; height: 10px; }
+  .todos .todo { display: flex; align-items: center; gap: 8px; font-size: 0.75rem; color: var(--muted-foreground); padding: 2px 0; }
+  .todos .box { width: 14px; height: 14px; border-radius: 4px; box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--muted-foreground) 50%, transparent); display: grid; place-items: center; }
+  .todos .box svg { width: 9px; height: 9px; }
+  .todos .todo[data-done="true"] .box { background: var(--primary); color: var(--primary-foreground); box-shadow: none; }
+  .todos .todo[data-done="true"] .txt { text-decoration: line-through; opacity: 0.6; }
+  .todos .todo[data-active="true"] .txt { color: var(--foreground); }
+  /* The header's rule is a small caret so the turn reads as one object. */
+  .zebra { color: var(--muted-foreground); }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" data-sidebar></aside>
+  <main class="main">
+    <div data-tabs></div>
+    <div class="panel">
+      <div class="tv">
+        <div class="tv-scroll"><div class="col" data-flow></div></div>
+        <div data-dock></div>
+      </div>
+    </div>
+  </main>
+</div>
+<script src="./shared-transcript.js"></script>
+<script>
+  const rows = TX.flow()
+  const { esc } = TX
+
+  /* A turn's body, from its rows — reusing the shared shapes so the only
+     difference here is the card around them. */
+  const body = (list) => list.map((r) => TX.render([r])).join("")
+
+  /* The scenario is two prompt→answer turns, a question, then the failure
+     (the plan and the ask belong to the second turn). */
+  const userRows = rows.filter((r) => r.t === "user")
+  const i0 = rows.indexOf(userRows[0])
+  const i1 = rows.indexOf(userRows[1])
+  const A = { head: rows[i0], body: rows.slice(i0 + 1, i1), foot: { files: 3, cost: "18.4k", dur: "1m 12s" } }
+  const B2 = { head: rows[i1], body: rows.slice(i1 + 1), foot: { files: 1, cost: "6.1k", dur: "24s", live: true } }
+
+  const turn = (t) => `
+    <section class="turn"${t.foot.live ? " data-live" : ""}>
+      <header class="turn-head">
+        <span class="avatar">D</span>
+        ${TX.user(t.head).replace('class="u-msg"', 'class="u-msg"')}
+      </header>
+      <div class="turn-body">${body(t.body)}</div>
+      <footer class="turn-foot">
+        <span class="chip">${TX.I.list}${t.foot.files} file${t.foot.files === 1 ? "" : "s"}</span>
+        <span class="chip">${t.foot.cost} tokens</span>
+        <span class="spacer"></span>
+        <span class="dur">${t.foot.dur}</span>
+      </footer>
+    </section>`
+
+  document.querySelector("[data-tabs]").innerHTML = TX.tabs("Ship the composer width fix")
+  document.querySelector("[data-flow]").innerHTML = turn(A) + turn(B2)
+  document.querySelector("[data-dock]").innerHTML = TX.composer({ placeholder: "Reply…", queue: ["and check it at 320px too"] })
+  TX.sidebar(document.querySelector("[data-sidebar]"))
+  TX.theme()
+</script>
+</body>
+</html>

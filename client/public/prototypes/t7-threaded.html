@@ -1,0 +1,86 @@
+<!doctype html>
+<!--
+  T7 — Threaded.
+
+  Your message stops being a bubble and becomes a heading: a node on a spine,
+  a title, a time, and everything the agent did threaded underneath it. The
+  spine is the conversation's order made visible — two nodes, two requests,
+  and the work hanging off each one — which is the reading a card (T3) hides
+  behind its own shape and a flat column (T1) leaves implicit.
+
+  What it costs: your words no longer look like speech; the thread is a log.
+  What it buys: "what did I ask for, and what came of it" is answered by the
+  page's own indentation, with no card to scan and no bubble to size.
+-->
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="/logo.svg" type="image/svg+xml" />
+<title>T7 — Threaded</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./transcript.css" />
+<style>
+  :root { --dock-h: 220px; }
+  .tl { padding-top: 6px; }
+  .turn { position: relative; padding: 0 0 20px 40px; }
+  .turn::before { content: ""; position: absolute; left: 10px; top: 22px; bottom: 0; width: 1px; background: var(--border-60); }
+  .turn:last-child { padding-bottom: 4px; }
+  .turn:last-child::before { display: none; }
+  .turn .node {
+    position: absolute; left: 0; top: 2px; width: 21px; height: 21px; border-radius: 999px;
+    background: color-mix(in oklab, var(--primary) 78%, var(--card));
+    display: grid; place-items: center; color: var(--primary-foreground); font-size: 9px; font-weight: 700;
+    box-shadow: 0 0 0 4px var(--card);
+  }
+  .turn[data-live] .node { background: var(--green); box-shadow: 0 0 0 4px var(--card), 0 0 0 6px color-mix(in oklab, var(--green) 25%, transparent); }
+  .turn .uh { font-size: 0.9375rem; font-weight: 600; line-height: 1.35; letter-spacing: -0.015em; padding-top: 1px; }
+  .turn .uh code { font-family: ui-monospace, Menlo, monospace; font-size: 0.8125rem; font-weight: 400; background: var(--muted); padding: 0.1em 0.35em; border-radius: 5px; }
+  .turn .uh .at { margin-left: 8px; font-size: 11px; font-weight: 400; color: var(--muted-foreground); white-space: nowrap; }
+  .turn .body { margin-top: 10px; }
+  .turn .body > *:first-child { margin-top: 0; }
+  /* The live node's the whole tell; the working line closes the thread. */
+  .turn .working { padding-top: 8px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" data-sidebar></aside>
+  <main class="main">
+    <div data-tabs></div>
+    <div class="panel">
+      <div class="tv">
+        <div class="tv-scroll"><div class="col" data-flow></div></div>
+        <div data-dock></div>
+      </div>
+    </div>
+  </main>
+</div>
+<script src="./shared-transcript.js"></script>
+<script>
+  const rows = TX.flow()
+  const { esc } = TX
+  const fmt = (s) => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>")
+  const userRows = rows.filter((r) => r.t === "user")
+  const i0 = rows.indexOf(userRows[0])
+  const i1 = rows.indexOf(userRows[1])
+
+  const turn = (head, body, opts) => `
+    <section class="turn"${(opts || {}).live ? " data-live" : ""}>
+      <span class="node">${(opts || {}).live ? "" : "D"}</span>
+      <h2 class="uh">${fmt(head.text)}<span class="at">${esc(head.at || "")}</span></h2>
+      <div class="body">${body.map((r) => TX.render([r])).join("")}</div>
+    </section>`
+
+  document.querySelector("[data-tabs]").innerHTML = TX.tabs("Ship the composer width fix")
+  document.querySelector("[data-flow]").innerHTML = `
+    <div class="tl">
+      ${turn(rows[i0], rows.slice(i0 + 1, i1))}
+      ${turn(rows[i1], rows.slice(i1 + 1), { live: true })}
+    </div>`
+  document.querySelector("[data-dock]").innerHTML = TX.composer({ placeholder: "Reply…", ready: true, queue: ["and check it at 320px too"] })
+  TX.sidebar(document.querySelector("[data-sidebar]"))
+  TX.theme()
+</script>
+</body>
+</html>

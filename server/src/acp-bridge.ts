@@ -82,12 +82,6 @@ export async function spawnAgent(
       forever instead. Fail fast there. Meaningless to every other runtime,
       which reads none of these vars. */
   unattended?: boolean,
-  /** Whether this thread's answers may carry a drawn view (`uiBlocks`). Absent
-      reads as on at the other end, so only the off case is written — a process
-      nobody told about the lane keeps its default rather than being switched
-      on by a spawn that forgot to say. Meaningless to every other runtime,
-      which reads none of these vars. */
-  uiBlocks?: boolean,
 ): Promise<ChildProcessWithoutNullStreams> {
   const agent = await getAgent(agentId);
   if (!agent) throw new Error(`unknown agent: ${agentId}`);
@@ -111,13 +105,6 @@ export async function spawnAgent(
     env.OPENCODE_SERVER_PASSWORD = sidecar.password;
   }
   if (unattended) env.DAEDALUS_AGENT_HOLD_ON_ERROR = "0";
-  /* The lane's *permission* already reached the process via the persona door,
-     folded in with every other thread-level behaviour (`personas.ts`). This
-     variable carries only the thread's off switch, and it exists for the one
-     thing a server-side instruction file cannot hold: the generated component
-     table, which our runtime pushes into its own system prompt and which must
-     not be pushed for a thread that turned the lane off. */
-  if (uiBlocks === false) env.DAEDALUS_AGENT_UI_BLOCKS = "0";
   return spawn(command, args, {
     cwd,
     env: { ...process.env, ...env },

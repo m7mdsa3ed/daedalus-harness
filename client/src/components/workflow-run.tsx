@@ -383,10 +383,11 @@ function RunRow({
       control={control}
       /* A run that is running when it mounts opens itself — it is the liveliest
          thing on the screen and a folded line is not what a reader wants of it
-         — and then stays wherever the reader leaves it (StepRow reads its
-         default once, so a list you were watching does not snap shut under
-         you). A settled run, and every replayed one, is folded like every
-         other step. */
+         — and then stays wherever the reader leaves it: a `defaultOpen` that
+         goes false never closes anything (`StepRow` applies the default only
+         toward opening), so the run finishing takes nothing the reader was
+         watching away from them. A settled run, and every replayed one, is
+         folded like every other step. */
       defaultOpen={active || view.showToolDetails}
       openSetting={view.showToolDetails}
       detail={

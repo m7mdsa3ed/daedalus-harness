@@ -15,7 +15,7 @@ import {
   db,
   knowledge as knowledgeTable,
   mcpServers as mcpServersTable,
-  profileMcpServers,
+  
   profiles as profilesTable,
   projects as projectsTable,
   routineMcpServers,
@@ -66,7 +66,7 @@ async function seed() {
      persona that no longer exists. */
   await db.insert(personasTable).values({ id: "builtin:terse", name: "Terse", description: "d", prompt: "One line.", thinking: 0, effort: "low", seededVersion: 1, sortOrder: 10 });
   await db.insert(profilesTable).values({ id: "p1", name: "gw", agents: { fake: {} }, baseUrl: "http://gw", apiKey: "sk-live", defaultModel: "m", smallModel: "", logoUrl: "", models: [{ id: "m", label: "M", reasoningEfforts: [] }] });
-  await db.insert(profileMcpServers).values({ profileId: "p1", mcpServerId: "m1" });
+  
   await db.insert(projectsTable).values({ id: "w1", name: "ws", cwd: "/tmp/ws", logoUrl: "" });
   await db.insert(knowledgeTable).values({ id: "k1", projectId: "w1", title: "t", content: "c", createdAt: now, updatedAt: now });
   await db.insert(sessionsTable).values({ id: "t1", profileId: "p1", projectId: "w1", agentId: "fake", model: "m", effort: "", personaId: "builtin:terse", title: "Thread", acpSessionId: "acp-1", createdAt: now });
@@ -129,7 +129,7 @@ await test("a full export round-trips through the schema", async () => {
   const parsed = BundleSchema.safeParse(JSON.parse(JSON.stringify(bundle)));
   assert.ok(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues));
   assert.equal(bundle.profiles[0]!.apiKey, "sk-live");
-  assert.deepEqual(bundle.profiles[0]!.mcpServerIds, ["m1"]);
+  assert.ok(!("mcpServerIds" in (bundle.profiles[0] as object)));
   assert.equal(bundle.events.length, 2);
   assert.equal(bundle.queue.length, 1);
   assert.deepEqual(bundle.personas[0], {
@@ -159,7 +159,6 @@ await test("a 0 thinking budget survives the round trip as 0, not as absent", as
 await test("a routine round-trips with its triggers, runs and links", async () => {
   await seed();
   const bundle = await exportBundle({ includeSecrets: true, includeJournals: true });
-  assert.deepEqual(bundle.routines[0]!.mcpServerIds, ["m1"]);
   assert.equal(bundle.routines[0]!.dryRunCompleted, true, "the grant the user already made informedly");
   assert.equal(bundle.routineTriggers[0]!.secretHash, "deadbeef");
   await wipe();
@@ -281,7 +280,6 @@ await test("merge upserts by id without cascading the row's children", async () 
   await importBundle(bundle, "merge");
   assert.equal((await db.select().from(profilesTable).where(eq(profilesTable.id, "p1")))[0]?.name, "renamed");
   // The profile's links and the project's knowledge survived the upsert.
-  assert.equal(await count(profileMcpServers), 1);
   assert.equal(await count(knowledgeTable), 1);
 });
 

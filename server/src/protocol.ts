@@ -34,6 +34,14 @@ export interface QuotaWindow {
   /** What the runtime calls it, shown as-is. */
   label: string;
   usedPercent: number;
+  /** The amounts the percentage was computed from, when the runtime gave them —
+      credits, requests, tokens, whatever `unit` names. Optional because one
+      adapter only ever prints a percentage: a renderer says the numbers when
+      they are there and the bar alone when they are not. */
+  used?: number | null;
+  cap?: number | null;
+  /** What `used`/`cap` are counted in, as a word to put after them. */
+  unit?: string | null;
   /** Epoch ms when the window rolls over, when the runtime gives a timestamp. */
   resetsAt?: number | null;
   /** The runtime's own already-formatted reset string, when that is all it gave.
@@ -43,6 +51,14 @@ export interface QuotaWindow {
       both are present. */
   resetsLabel?: string;
   windowMinutes?: number | null;
+  /** Which *account* inside this reading the window belongs to, when the reading
+      is of more than one — a gateway (9Router) is many subscriptions behind one
+      endpoint, and its five-hour window is a different five hours per account.
+      The label and the identity at once: a renderer draws a section per distinct
+      value, in first-seen order, so an adapter that puts two accounts under one
+      string is saying they are one account. Absent on every ordinary plan, where
+      the profile *is* the account and the windows are one flat set. */
+  group?: string | null;
 }
 
 export type QuotaStatus =

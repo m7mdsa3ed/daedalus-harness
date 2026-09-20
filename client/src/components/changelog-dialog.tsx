@@ -4,7 +4,10 @@
    About group. Opening it marks the release seen on this device
    (lib/whats-new), which is what the ⋯ menu's dot reads. */
 import * as React from "react"
+import Markdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 
+import { MARKDOWN_COMPONENTS } from "@/components/tool-parts"
 import { Button } from "@/components/ui/button"
 import {
   ResponsiveDialog,
@@ -42,6 +45,9 @@ export function ChangelogDialog({ open, onOpenChange }: { open: boolean; onOpenC
   )
 }
 
+/* One release: its version and date as the row's own head, the body as the
+   markdown the changelog file holds — so `### Added`, a bold lead-in, a table or
+   a link read the way they were written rather than as a flattened list. */
 function ChangelogEntryView({ entry }: { entry: ChangelogEntry }) {
   return (
     <div className="border-b py-3 last:border-b-0">
@@ -49,21 +55,14 @@ function ChangelogEntryView({ entry }: { entry: ChangelogEntry }) {
         <span className="font-medium">{entry.version}</span>
         {entry.date && <span className="text-xs text-muted-foreground">{entry.date}</span>}
       </div>
-      {entry.sections.length === 0 ? (
-        <p className="mt-1 text-sm text-muted-foreground">Nothing yet.</p>
-      ) : (
-        entry.sections.map((section) => (
-          <div key={section.title} className="mt-1.5">
-            {section.title && (
-              <div className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{section.title}</div>
-            )}
-            <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-sm">
-              {section.items.map((item, i) => (
-                <li key={i}>{item}</li>
-              ))}
-            </ul>
-          </div>
-        ))
+      {/* A release whose body is empty draws nothing under its head — no
+          placeholder: the heading row is the whole of what there is to say. */}
+      {entry.markdown && (
+        <div className="prose prose-sm max-w-none [&_h3:first-child]:mt-2">
+          <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+            {entry.markdown}
+          </Markdown>
+        </div>
       )}
     </div>
   )

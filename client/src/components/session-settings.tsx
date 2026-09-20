@@ -359,7 +359,11 @@ export function SessionSettingsDialog({
   const changedKeys = React.useMemo(
     () =>
       new Set(
-        ([...ALL_OPTIONS.map((o) => o.key), "streamEffect"] as (keyof ViewOptions)[]).filter(
+        ([
+          ...ALL_OPTIONS.map((o) => o.key),
+          "streamEffect",
+          "streamSpeed",
+        ] as (keyof ViewOptions)[]).filter(
           (key) => options[key] !== VIEW_DEFAULTS[key]
         )
       ),
@@ -411,8 +415,10 @@ export function SessionSettingsDialog({
                 ))}
                 {group.picker === "streamEffect" && (
                   <StreamEffectPicker
-                    value={options.streamEffect}
-                    onChange={(effect) => setViewOption("streamEffect", effect)}
+                    effect={options.streamEffect}
+                    onEffectChange={(effect) => setViewOption("streamEffect", effect)}
+                    speed={options.streamSpeed}
+                    onSpeedChange={(speed) => setViewOption("streamSpeed", speed)}
                     moot={mootKeys.has("streamEffect") ? CALM_NOTE : undefined}
                   />
                 )}

@@ -32,7 +32,9 @@ function HoverCardContent({
         alignOffset={alignOffset}
         side={side}
         sideOffset={sideOffset}
-        className="isolate z-50"
+        /* No `isolate` — see popover.tsx: it empties the popup's backdrop
+           and the frosted blur draws nothing. */
+        className="z-50"
       >
         <PreviewCardPrimitive.Popup
           data-slot="hover-card-content"

@@ -28,21 +28,16 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   ExternalLinkIcon,
-  GlobeIcon,
-  LoaderCircleIcon,
   MonitorIcon,
-  PlayIcon,
   RefreshCwIcon,
-  ShieldAlertIcon,
   SmartphoneIcon,
   TabletIcon,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Empty } from "@/components/empty"
-import { Notice } from "@/components/notice"
 import { PanelToolbar } from "@/components/workspace/primitives"
+import { WebFrameHint, WebProblemView, type WebProblem } from "@/components/workspace/web-state"
 import { useServer } from "@/lib/server-context"
 /* Aliased: this component's `api` prop is dockview's panel handle. */
 import { api as request, type HelperCommand } from "@/lib/settings"
@@ -141,6 +136,9 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
   /* Per panel, not persisted: it is a reminder about the page in front of you,
      and it is cheap to have said once per browser panel you open. */
   const [hint, setHint] = React.useState(true)
+  /* Whether anything is answering at the address. `null` is "not asked yet",
+     which is why it is not `false`: an unanswered question is not a failure. */
+  const [reachable, setReachable] = React.useState<boolean | null>(null)
 
   /* ── The project preview ──
      Trust-level "project" polls the server's own answer while it has a URL:
@@ -247,9 +245,72 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
   /* `https:` page framing an `http:` dev server is blocked as mixed content,
      and the frame just stays blank — which reads as "the preview is broken".
      The PWA is served over https (`pnpm dev:tunnel`), so this is the common
-     case on a phone, not an edge one. Say it rather than show nothing. */
+     case on a phone, not an edge one. `WebProblemView` says it *and* the way
+     out, which is the half the old line was missing. */
   const mixedContent =
     window.location.protocol === "https:" && url.startsWith("http://")
+
+  /* ── Is anything listening there? ──
+     The one question a sandboxed frame cannot answer. A blocked or refused
+     frame fires `load` exactly like a real page — an error page is still a page
+     as far as the frame is concerned — so a load-timeout heuristic cannot tell
+     "nothing is there" from "here is what the browser drew instead", and a
+     wrong "no page came back" over a page that loaded is worse than saying
+     nothing. So the address is *measured*, by the server (`/api/preview`): it
+     can reach loopback and a LAN host, which this page's origin cannot.
+
+     Asked on every new address, not polled: this is what a person typed, and
+     the answer is for the frame about to be drawn against it. A failing check
+     is a `null` rather than a `false` — an unreachable server or an old build
+     without the route must not paint "nothing is answering" over a page that
+     is. Only a measured `false` does. */
+  React.useEffect(() => {
+    if (!url || mixedContent) {
+      setReachable(null)
+      return
+    }
+    let live = true
+    setReachable(null)
+    request<{ up: boolean }>(settings, `/api/preview?url=${encodeURIComponent(url)}`)
+      .then((answer) => {
+        if (live) setReachable(answer.up)
+      })
+      .catch(() => {
+        if (live) setReachable(null)
+      })
+    return () => {
+      live = false
+    }
+  }, [url, reloadKey, mixedContent, settings])
+
+  /* ── The one failure being shown, if any ──
+     Derived rather than stored, so nothing has to remember to clear it: `url`
+     changes and the answer recomputes. Order is certainty — something the
+     browser will certainly refuse, then something that has been *measured*
+     (the project's own configured preview, or the address as typed), and
+     nothing after that. `null` is a page that is up, or one still on its way. */
+  const unreachable =
+    (trust === "project" && probe?.url === url && !probe.up) ||
+    (url !== "" && reachable === false)
+  const problem: WebProblem | null = !url
+    ? { kind: "empty" }
+    : mixedContent
+      ? { kind: "mixed", url }
+      : unreachable
+        ? { kind: "unreachable", url }
+        : null
+
+  /* "Change the address" is a focus on the toolbar's own field, which is where
+     the address lives — the panel does not grow a second input to say the same
+     thing in a modal. The ref is the field's; the frame is the next paint, so
+     the focus lands after the notice has given way to it. */
+  const addressRef = React.useRef<HTMLInputElement>(null)
+  const focusAddress = React.useCallback(() => {
+    requestAnimationFrame(() => {
+      addressRef.current?.focus()
+      addressRef.current?.select()
+    })
+  }, [])
 
   const width = VIEWPORTS.find((entry) => entry.id === viewport)?.width ?? null
 
@@ -294,6 +355,7 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
           }}
         >
           <Input
+            ref={addressRef}
             value={typed}
             onChange={(event) => setTyped(event.target.value)}
             placeholder="localhost:5173"
@@ -353,109 +415,75 @@ export function WebPanel({ api, params }: IDockviewPanelProps<WebPanelParams>) {
         </Button>
       </PanelToolbar>
 
-      {/* Plenty of the web refuses to be framed at all — `X-Frame-Options` and
-          `frame-ancestors` are the publisher's call, the refusal is enforced by
-          the browser, and a blocked frame is indistinguishable from a slow one
-          from in here (no error crosses the boundary, and a cross-origin frame
-          cannot be inspected). So this is said once, up front, rather than
-          detected badly after the fact: the frame may stay blank, and the
-          button that always works is in the toolbar. */}
-      {trust === "external" && url && !mixedContent && hint && (
-        <div className="px-2 py-1.5">
-          <Notice
-            icon={<ShieldAlertIcon />}
-            action={
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-xs"
-                onClick={() => setHint(false)}
-              >
-                Got it
-              </Button>
-            }
-          >
-            Some sites refuse to be shown inside another page. If this stays blank, use{" "}
-            <span className="text-foreground">Open in your browser</span>.
-          </Notice>
-        </div>
-      )}
-      {mixedContent && (
-        <div className="px-2 py-1.5">
-          <Notice tone="warn" className="text-foreground">
-            This page is served over https, so the browser will not let it frame an{" "}
-            <code className="font-mono">http://</code> address. Open it in a browser tab instead, or
-            serve the dev server over https.
-          </Notice>
-        </div>
-      )}
-      {/* The dev server is down and the panel knows a command that starts it —
-          the two halves of "link the project to the browser" meeting. The run
-          lives in a terminal (helpers always do — a dev server asks things
-          and only a PTY can be answered), and the probe's fast lane reloads
-          the frame the moment it answers. If nothing is marked as the preview
-          command, the hint is all there is to say. */}
-      {trust === "project" && url && probe && probe.url === url && !probe.up && (
-        <div className="px-2 py-1.5">
-          <Notice
-            icon={<GlobeIcon />}
-            action={
-              previewHelper && !starting ? (
-                <Button size="sm" variant="outline" onClick={() => void startPreview(previewHelper)}>
-                  <PlayIcon /> Start {previewHelper.name}
-                </Button>
-              ) : undefined
-            }
-          >
-            Nothing is answering at <code className="font-mono">{probe.url}</code>.{" "}
-            {previewHelper
-              ? "The dev server looks stopped."
-              : "Start the dev server, then reload it here."}
-            {starting && <LoaderCircleIcon aria-label="Starting…" className="ml-1 inline size-3.5 animate-spin" />}
-          </Notice>
+      {/* ── One failure at a time ──
+          Every reason this panel can be showing no page is derived once, here,
+          and exactly one of them is what is happening — a frame can be blank
+          for one reason, and three stacked notices about it is the panel
+          talking past itself. The order is the order of certainty: something
+          the browser will certainly refuse, then something the project's own
+          probe has said, then the frame that was asked for and did not answer.
+
+          Below `md`-wide the notice goes *in place of* the frame rather than
+          above it: a phone's panel is one screen, and a paragraph over a blank
+          white box is a page that looks broken under an explanation of why. */}
+      {problem && (
+        <div className="min-h-0 flex-1 overflow-auto">
+          <WebProblemView
+            problem={problem}
+            trust={trust}
+            starting={starting}
+            previewHelperName={previewHelper?.name}
+            onReload={() => setReloadKey((current) => current + 1)}
+            onEditAddress={focusAddress}
+            onOpenExternal={() => url && window.open(url, "_blank", "noopener")}
+            onStartPreview={previewHelper ? () => void startPreview(previewHelper) : undefined}
+          />
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-auto bg-muted/20">
-        {url ? (
-          <div className="mx-auto h-full" style={width ? { width, maxWidth: "100%" } : undefined}>
-            <iframe
-              key={reloadKey}
-              src={url}
-              title={`Browser: ${url}`}
-              className="h-full w-full border-0 bg-white"
-              /* No `allow-same-origin`: a dev server is code being written and
-                 does not get to reach into the app framing it. Scripts and
-                 forms yes — it is a web page — but not the app's origin, its
-                 storage, or its token. */
-              sandbox={SANDBOX}
-              referrerPolicy="no-referrer"
-            />
-          </div>
-        ) : (
-          <Centered>
-            {trust === "external"
-              ? "Enter an address, or follow a source from a thread — the pages an agent read open here."
-              : null}
-            {trust === "project" && (
-              <>
-                Enter the address of this project's development server —{" "}
-                <code className="font-mono">localhost:5173</code>, or whatever your{" "}
-                <code className="font-mono">dev</code> script prints.
-              </>
-            )}
-          </Centered>
+      {/* The frame is hidden while a *terminal* failure is on screen and kept
+          mounted while the address is merely empty: a blank half gets out of
+          the notice's way, and a page that is only waiting for an address
+          needs no iframe at all. */}
+      <div
+        className={cn(
+          "min-h-0 flex-1 overflow-auto bg-muted/20",
+          problem && problem.kind !== "empty" && "hidden"
         )}
+      >
+        {url ? (
+          <>
+            {/* The publisher's own refusal — `X-Frame-Options`, `frame-ancestors`
+                — is the one failure nothing here can detect: the browser
+                enforces it, no error crosses the boundary, and a blocked frame
+                is indistinguishable from a slow one. So it is only said while
+                the frame is *unproven*, and it goes the moment the frame
+                reports that it loaded (`onLoad`). A page already drawing needs
+                no warning about the pages that might not have. */}
+            {hint && <WebFrameHint onDismiss={() => setHint(false)} />}
+            <div className="mx-auto h-full" style={width ? { width, maxWidth: "100%" } : undefined}>
+              <iframe
+                key={reloadKey}
+                src={url}
+                title={`Browser: ${url}`}
+                className="h-full w-full border-0 bg-white"
+                /* Something drew here — the addressed page or the browser's own
+                   error page, which this cannot tell apart (that is what the
+                   server's check above is for). What it does settle is the one
+                   hint: the frame is not *blank*, so "if this stays blank" has
+                   nothing left to say and goes. */
+                onLoad={() => setHint(false)}
+                /* No `allow-same-origin`: a dev server is code being written and
+                   does not get to reach into the app framing it. Scripts and
+                   forms yes — it is a web page — but not the app's origin, its
+                   storage, or its token. */
+                sandbox={SANDBOX}
+                referrerPolicy="no-referrer"
+              />
+            </div>
+          </>
+        ) : null}
       </div>
-    </div>
-  )
-}
-
-function Centered({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="p-3">
-      <Empty size="lg">{children}</Empty>
     </div>
   )
 }

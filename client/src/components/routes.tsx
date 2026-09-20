@@ -30,18 +30,6 @@ import * as React from "react"
 import { Navigate, Route } from "react-router"
 import { LandingPage } from "@/components/landing/landing-page"
 import {
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  useSidebar,
-} from "@/components/ui/sidebar"
-import { GROUP, GROUP_LABEL, MENU, ROW, TIER } from "@/components/thread-sidebar"
-import {
-  SETTINGS_NAV_GROUPS,
-  SETTINGS_OVERVIEW,
   sectionMeta,
   sectionOf,
   settingsMaxWidth,
@@ -87,11 +75,13 @@ const settingsModules = {
   quota: () => import("@/components/settings/quota"),
   webSearch: () => import("@/components/settings/web-search"),
   backup: () => import("@/components/settings/backup"),
+  ai: () => import("@/components/settings/ai"),
 }
 
 const SettingsLayout = lazyPage(settingsModules.layout, "SettingsLayout")
 const SettingsOverviewPage = lazyPage(settingsModules.overview, "SettingsOverviewPage")
 const GeneralPage = lazyPage(settingsModules.general, "GeneralPage")
+const AiPage = lazyPage(settingsModules.ai, "AiPage")
 const KnowledgePage = lazyPage(settingsModules.knowledge, "KnowledgePage")
 const AppearancePage = lazyPage(settingsModules.appearance, "AppearancePage")
 const KeyboardPage = lazyPage(settingsModules.keyboard, "KeyboardPage")
@@ -101,6 +91,9 @@ const ProjectFormPage = lazyPage(settingsModules.projects, "ProjectFormPage")
 const McpPage = lazyPage(settingsModules.mcp, "McpPage")
 const McpImportPage = lazyPage(settingsModules.mcp, "McpImportPage")
 const McpFormPage = lazyPage(settingsModules.mcp, "McpFormPage")
+/* A chunk of its own: the playground and the schema rendering are a page
+   somebody navigates to, and the library list must not carry them. */
+const McpDetailPage = lazyPage(() => import("@/components/settings/mcp-detail"), "McpDetailPage")
 const SkillsPage = lazyPage(settingsModules.skills, "SkillsPage")
 const SkillImportPage = lazyPage(settingsModules.skills, "SkillImportPage")
 const SkillFormPage = lazyPage(settingsModules.skills, "SkillFormPage")
@@ -167,6 +160,7 @@ const SETTINGS_PAGES: readonly {
   sub?: readonly { path: string; element: React.ReactNode }[]
 }[] = [
   { id: "general", element: <GeneralPage /> },
+  { id: "ai", element: <AiPage /> },
   {
     id: "appearance",
     element: <AppearancePage />,
@@ -181,6 +175,7 @@ const SETTINGS_PAGES: readonly {
     element: <McpPage />,
     sub: [
       { path: "import", element: <McpImportPage /> },
+      { path: ":entryId/tools", element: <McpDetailPage /> },
       { path: ":entryId", element: <McpFormPage /> },
     ],
   },
@@ -215,77 +210,6 @@ const SETTINGS_PAGES: readonly {
   { id: "backup", element: <BackupPage /> },
   { id: "web-search", element: <WebSearchPage /> },
 ]
-
-/** Settings sections as sidebar nav — the app has no horizontal tabs. The
-    first row is the overview (`/settings`), lit when no section is. Rows are
-    `SETTINGS_PAGES` filtered by the group that claims them, so a section only
-    gets a row where it has a page to open. */
-export function SettingsNav({
-  section,
-  onSelect,
-  onOverview,
-}: {
-  section: SettingsSectionId | null
-  onSelect: (id: SettingsSectionId) => void
-  onOverview: () => void
-}) {
-  const { isMobile, setOpenMobile } = useSidebar()
-
-  const select = (id: SettingsSectionId | null) => {
-    if (isMobile) setOpenMobile(false)
-    if (id) onSelect(id)
-    else onOverview()
-  }
-
-  return (
-    <>
-      <SidebarGroup className={cn(TIER, GROUP)}>
-        <SidebarGroupContent>
-          <SidebarMenu className={MENU}>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                size="sm"
-                tooltip={SETTINGS_OVERVIEW.label}
-                isActive={section === null}
-                onClick={() => select(null)}
-                className={ROW}
-              >
-                <SETTINGS_OVERVIEW.icon className="size-4" />
-                <span>All settings</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarGroupContent>
-      </SidebarGroup>
-      {SETTINGS_NAV_GROUPS.map((group) => (
-        <SidebarGroup key={group.label} className={cn(TIER, GROUP)}>
-          <SidebarGroupLabel className={GROUP_LABEL}>{group.label}</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu className={MENU}>
-              {SETTINGS_PAGES.filter((entry) => group.sections.includes(entry.id)).map((entry) => {
-                const meta = sectionMeta(entry.id)
-                return (
-                  <SidebarMenuItem key={entry.id}>
-                    <SidebarMenuButton
-                      size="sm"
-                      tooltip={meta.label}
-                      isActive={entry.id === section}
-                      onClick={() => select(entry.id)}
-                      className={ROW}
-                    >
-                      <meta.icon className="size-4" />
-                      <span>{meta.label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                )
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      ))}
-    </>
-  )
-}
 
 /** What a page route is called — a page tab's title. Beside the route table
     because adding a page is adding a name for it: the section over the page's

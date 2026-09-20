@@ -27,7 +27,6 @@ import { useAppMeta } from "@/lib/queries"
 import { ChangelogDialog } from "@/components/changelog-dialog"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
-import { EnhanceGroup } from "./enhance"
 
 /* ── General ──
    The servers this device knows (lib/settings stores several side by side),
@@ -49,7 +48,6 @@ export function GeneralPage() {
         }
       />
       <ServersGroup active={settings} />
-      <EnhanceGroup />
       <InstallGroup />
       <SecurityGroup />
       <SiteDataGroup />
@@ -128,34 +126,34 @@ function ServersGroup({ active }: { active: ServerSettings }) {
           return (
             <div
               key={server.id}
-              className="flex flex-col gap-3 px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4"
+              className="flex min-h-11 flex-col gap-3 py-3 @panel-sm:flex-row @panel-sm:items-center @panel-sm:justify-between @panel-sm:gap-4"
             >
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{server.name}</div>
                 <div className="mt-0.5 break-all font-mono text-xs text-muted-foreground">{server.url}</div>
               </div>
-              <div className="flex w-full shrink-0 flex-col gap-1.5 sm:w-auto sm:flex-row sm:items-center">
+              <div className="flex w-full shrink-0 flex-col gap-1.5 @panel-sm:w-auto @panel-sm:flex-row @panel-sm:items-center">
                 {isActive ? (
                   <Badge
                     variant="secondary"
-                    className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-md border px-3 text-sm sm:w-auto"
+                    className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-md border px-3 text-sm @panel-sm:w-auto"
                   >
                     <span className="size-1.5 rounded-full bg-emerald-500" />
                     Connected
                   </Badge>
                 ) : (
-                  <Button variant="outline" size="sm" className="h-9 w-full sm:w-auto" onClick={() => switchTo(server)}>
+                  <Button variant="outline" size="sm" className="h-9 w-full @panel-sm:w-auto" onClick={() => switchTo(server)}>
                     Switch
                   </Button>
                 )}
-                <Button variant="outline" size="sm" className="h-9 w-full sm:w-auto" onClick={() => startRename(server)}>
+                <Button variant="outline" size="sm" className="h-9 w-full @panel-sm:w-auto" onClick={() => startRename(server)}>
                   Rename
                 </Button>
                 {isActive ? (
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-9 w-full text-destructive sm:w-auto"
+                    className="h-9 w-full text-destructive @panel-sm:w-auto"
                     onClick={() => void forget(server)}
                   >
                     Disconnect
@@ -164,7 +162,7 @@ function ServersGroup({ active }: { active: ServerSettings }) {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-9 w-full text-destructive sm:w-auto"
+                    className="h-9 w-full text-destructive @panel-sm:w-auto"
                     onClick={() => void forget(server)}
                   >
                     Forget
@@ -176,7 +174,7 @@ function ServersGroup({ active }: { active: ServerSettings }) {
         })}
       </Group>
       <ResponsiveDialog open={renaming !== null} onOpenChange={(open) => !open && setRenaming(null)}>
-        <ResponsiveDialogContent className="sm:max-w-sm">
+        <ResponsiveDialogContent className="@panel-sm:max-w-sm">
           <ResponsiveDialogHeader>
             <ResponsiveDialogTitle>Rename server</ResponsiveDialogTitle>
           </ResponsiveDialogHeader>
@@ -228,7 +226,7 @@ function AboutGroup() {
         <Button
           variant="outline"
           size="sm"
-          className="h-9 w-full sm:w-auto"
+          className="h-9 w-full @panel-sm:w-auto"
           disabled={!meta.data}
           onClick={() => setChangelogOpen(true)}
         >

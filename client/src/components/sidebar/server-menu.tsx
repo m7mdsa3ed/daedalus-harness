@@ -1,26 +1,27 @@
-/* ── The "account" row ──
-   How both desktop apps end their sidebar: the server this client is on, name
-   over address. Clicking it switches servers — everything this device knows
-   is one card away, plus Add and Settings › General for the rest (rename,
-   forget, teardown before disconnect).
+/* ── The servers button ──
+   The server this client is on, in the footer's row of icons. Clicking it
+   switches servers — everything this device knows is one card away, plus Add
+   and Settings › General for the rest (rename, forget, teardown before
+   disconnect). The name and the address are the button's tooltip now; the row
+   it used to fill is gone, which is what made room for the icons beside it.
 
-   The card is the same popover the plan-usage row above it opens
+   The card is the same popover the plan-usage button opens
    (`sidebar/usage.tsx`): same side, same width, same header/list/footer, same
    glass — one voice for the footer's two popovers. */
 import * as React from "react"
-import { Check, ChevronDown, ChevronRightIcon, Plus, ServerIcon } from "lucide-react"
+import { Check, ChevronRightIcon, Plus, ServerIcon } from "lucide-react"
 import { useLocation, useNavigate } from "react-router"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { SidebarMenuButton, useSidebar } from "@/components/ui/sidebar"
+import { useSidebar } from "@/components/ui/sidebar"
 import { GLASS_SURFACE } from "@/lib/header-chrome"
 import { settingsPath } from "@/lib/router"
 import { loadServers, setActiveServer, type ServerSettings } from "@/lib/settings"
 import { cn } from "@/lib/utils"
-import { ROW } from "./scale"
+import { FOOTER_ICON } from "./scale"
 
-/** The address without its scheme — what identifies a server on a footer row
-    the width of a sidebar. */
+/** The address without its scheme — what identifies a server in a tooltip or a
+    row of a card, where there is no room for the whole URL. */
 function serverHost(url: string): string {
   try {
     const u = new URL(url)
@@ -30,14 +31,13 @@ function serverHost(url: string): string {
   }
 }
 
-export function ServerMenu({
+export function ServerIconButton({
   settings,
   onAddServer,
 }: {
   settings: ServerSettings
   onAddServer: () => void
 }) {
-  const location = useLocation()
   const navigate = useNavigate()
   const { isMobile, setOpenMobile } = useSidebar()
   const [open, setOpen] = React.useState(false)
@@ -63,31 +63,20 @@ export function ServerMenu({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
-          <SidebarMenuButton
-            size="sm"
-            tooltip={`${settings.name} · ${settings.url}`}
-            isActive={location.pathname === settingsPath("general")}
-            /* ROW like every other sidebar row — the same `px-2` inset, bare
-               `size-4` icon and 13px label, differing only in height, for the
-               two lines. The icon wears no tile: a 28px tile would push the
-               name 12px right of the plan-usage and Settings labels. */
-            className={cn(ROW, "h-11")}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            /* The name and the address are the tooltip's now — a footer of icons
+               says nothing else, and the address is what a person has two of. */
+            title={`${settings.name} · ${serverHost(settings.url)}`}
+            className={FOOTER_ICON}
           >
             <ServerIcon />
-            <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
-              <span className="block truncate text-[13px] font-medium leading-tight">{settings.name}</span>
-              <span className="block truncate text-[11px] leading-tight text-muted-foreground">
-                {serverHost(settings.url)}
-              </span>
-            </span>
-            <span className="text-sidebar-foreground/40 group-data-[collapsible=icon]:hidden">
-              <ChevronDown className="size-3.5" />
-            </span>
-          </SidebarMenuButton>
+          </Button>
         }
       />
       {/* Upward on the rail, downward on a phone — the same placement the
-          usage popover above this row uses, for the same reason: on a desk
+          usage popover beside this button uses, for the same reason: on a desk
           the row is the last thing in the sidebar, on a phone its footer is
           mid-screen. */}
       <PopoverContent

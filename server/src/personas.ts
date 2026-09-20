@@ -5,6 +5,7 @@ import { asc, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { DATA_DIR } from "./config.js";
 import { db, personas as personasTable } from "./db/index.js";
+import { OPENUI_PROMPT } from "./openui-prompt.js";
 import { usesPersonaFile, type AgentDef } from "./registry.js";
 import { globalRules, projectRules, type Rule } from "./rules.js";
 
@@ -497,32 +498,17 @@ export const OPENUI_FENCE = "openui-lang";
 /**
  * Trailer appended to the spawn instructions while a thread wants drawn answers.
  *
- * The component table is NOT here: it is generated from the client's own library
- * (`client/scripts/gen-openui.mjs` → `agent/src/openui-prompt.ts`) and delivered
- * to our runtime in its system prompt. Pointing at that generated prompt is what
- * keeps one component list rather than two that drift — another runtime gets the
- * pointer and no components, which is the honest amount to say when the
- * components belong to the client that draws them. */
-export const OPENUI_INSTRUCTIONS = `You may answer with a small program that the client draws as real UI, inline where you write it — a comparison, a trend, a handful of figures or a status board. It is a presentation lane and nothing else: nothing in it can read a file, run a command or reach the network, and every tool call stays a normal tool call.
+ * The component table IS here, generated from the client's own library
+ * (`client/scripts/gen-openui.mjs` → `openui-prompt.ts`) — so the trailer is
+ * self-contained exactly like the suggestions one, and every runtime on a
+ * profile is told the same components the reader's app will draw. It used to
+ * be a pointer, with the table pushed by our own runtime into its system prompt
+ * — which meant every other runtime was told "this lane is not for you". */
+export const OPENUI_INSTRUCTIONS = `## Drawing an answer
 
-Write it in one fenced block named \`${OPENUI_FENCE}\`:
+The client draws a fenced \`${OPENUI_FENCE}\` block as real UI, inline where the fence stood. It is a presentation lane and nothing else: nothing in it can read a file, run a command or reach the network — every tool call stays a normal tool call.
 
-\`\`\`${OPENUI_FENCE}
-root = Stack([title, figures])
-title = Section("Build health", "The last 24 hours.")
-figures = StatRow([builds, fails])
-builds = Stat("Builds", "412")
-fails = Stat("Failures", "7", "-2 vs yesterday")
-\`\`\`
-
-Four rules, and the first is the one that is most often got wrong:
-
-- **Every argument is positional and in the component's declared order** — \`Stat("Builds", "412")\`, never \`Stat(label="Builds", value="412")\`. A named argument is dropped, every prop on that component comes out empty, and the view renders as a blank shell.
-- **\`root\` must be defined, and it is written first.** A program with no \`root\` draws nothing at all, whatever else it contains.
-- **Reach for it only when the answer is a structure**, and keep the prose around it short. A question, an explanation or a single fact is prose.
-- **Keep it small** — roughly a dozen statements — and keep every label and title short, because the view may be read on a phone.
-
-If the harness has told you the available components, use exactly those and their signatures. If it has not, this lane is not for you here: write the answer as prose.`;
+${OPENUI_PROMPT}`;
 
 /**
  * The spawn instructions for a thread: its persona, plus a trailer for each

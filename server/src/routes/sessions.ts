@@ -2,13 +2,14 @@ import { randomUUID } from "node:crypto";
 import type { Hono } from "hono";
 import { z } from "zod";
 import { enhancePrompt } from "../enhance.js";
-import { getAgent } from "../registry.js";
+import { getAgent, profileHasAgent } from "../registry.js";
 import { getProfile, profileSupports, resolveProfileAgent } from "../profiles.js";
 import { getProject } from "../projects.js";
 import { listAgentSessions } from "../session-list.js";
 import type { SessionManager } from "../sessions.js";
 import { TRACE_PAGE_LIMIT } from "../protocol.js";
 import { listHelpers } from "../project-helpers.js";
+import { recordShellRun } from "../shell-history.js";
 import { runShellLine } from "../shell.js";
 import type { Scope } from "../turn-changes.js";
 import { containedPath, projectRoot } from "../workspace-fs.js";
@@ -618,6 +619,14 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     const command = helper?.command ?? typed;
     const run = { sessionUpdate: "_daedalus/shell" as const, shellId, command };
 
+    /* Counted here rather than in the composer: this is the one door a line
+       comes through, so every run counts and the browser keeps no books. The
+       *resolved* line, so a helper reached by its name and one reached by its
+       command are one row — and one that orders the helper itself, which the
+       completer ranks by the same tally. A thread with no project has nowhere
+       to file it. */
+    if (session.projectId) await recordShellRun(session.projectId, command);
+
     /* Said BEFORE the work, not after: the row has to be on screen while the
        line runs, or a command that takes a few seconds reads as one that did
        nothing at all. The two updates carry the same `shellId`, so the second
@@ -650,14 +659,15 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     return c.json({ shellId, command, ...result });
   });
 
-  /* The same rewrite for a draft, which has no server row yet: the profile (and
-     agent, and model) travel in the body instead of being read off a session.
-     `profileId` is the rewrite's provider — the thread's own draft profile
-     unless the picker chose another. */
+  /* The same rewrite for a draft, which has no server row yet: the profile and
+     the model travel in the body instead of being read off a session. The
+     draft's *agent* deliberately does not — the rewrite goes to the profile's
+     shared endpoint, so there is nothing here for it to select (see
+     `profileHasAgent`). `profileId` is the rewrite's provider — the thread's
+     own draft profile unless the picker chose another. */
   const DraftEnhanceSchema = z.object({
     text: z.string(),
     profileId: z.string(),
-    agentId: z.string().optional(),
     model: z.string().optional(),
   });
 
@@ -667,10 +677,10 @@ export function sessionRoutes(app: Hono, deps: { sessions: SessionManager }): vo
     const profile = await getProfile(parsed.data.profileId);
     if (!profile) return c.json({ error: "unknown profile" }, 404);
     // The agent only decides which per-agent base URL is NOT used (see
-    // `enhance.ts`): resolution still 404s when it names nothing usable, so a
-    // profile that serves no installed runtime is not offered it silently.
-    const agentId = resolveProfileAgent(profile, parsed.data.agentId);
-    if (!agentId || !await getAgent(agentId)) {
+    // `enhance.ts`), so a profile serving several is as usable as one serving a
+    // single runtime (`profileHasAgent`). What is refused: a profile with
+    // nothing known behind it, which must not be offered the rewrite silently.
+    if (!await profileHasAgent(profile)) {
       return c.json({ error: "unknown agent for this profile" }, 404);
     }
     const enhanced = await enhancePrompt(profile, {

@@ -6,6 +6,10 @@ export interface CommandDef {
   name: string;
   description: string;
   body: string;
+  /* An MCP prompt is not a body on disk — it is a `prompts/get` call whose
+     answer is the body. When present this is what expansion asks, and `body`
+     is only the fallback if it fails. */
+  fetch?: (args: string) => Promise<string>;
 }
 
 /* The harness materializes commands as `<cwd>/.claude/commands/*.md` and
@@ -51,12 +55,21 @@ export function toAvailableCommands(commands: CommandDef[]): acp.AvailableComman
 }
 
 /** `/name args` → the command body with $ARGUMENTS filled; null when it is not a known command. */
-export function expandCommand(commands: CommandDef[], text: string): string | null {
+export async function expandCommand(commands: CommandDef[], text: string): Promise<string | null> {
   const match = /^\/([\w:-]+)(?:\s+([\s\S]*))?$/.exec(text.trim());
   if (!match) return null;
   const command = commands.find((c) => c.name === match[1]);
   if (!command) return null;
   const args = match[2]?.trim() ?? "";
+  if (command.fetch) {
+    try {
+      return await command.fetch(args);
+    } catch (err) {
+      /* A prompt the server refused is still a message the user sent: fall
+         through to the placeholder body rather than failing the turn. */
+      return `${command.body}\n\n(could not be fetched: ${(err as Error).message})`;
+    }
+  }
   if (command.body.includes("$ARGUMENTS")) return command.body.replaceAll("$ARGUMENTS", args);
   return args ? `${command.body}\n\nArguments: ${args}` : command.body;
 }

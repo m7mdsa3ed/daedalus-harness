@@ -1,84 +1,28 @@
 /* ── Prompt enhancer, client half ──
    The composer sends its draft to the server, which rewrites it through the
-   AI SDK against a profile's own endpoint (`server/src/enhance.ts`). The key
-   never leaves the server, so there is deliberately no client-side provider
-   call here — just the two routes, through the one `api` wrapper.
+   AI SDK against a profile's own endpoint (`server/src/ai.ts` makes the call,
+   `server/src/enhance.ts` holds the house style). The key never leaves the
+   server, so there is deliberately no client-side provider call here — just
+   the two routes, through the one `api` wrapper.
 
-   Which profile does the rewrite is the user's pick, remembered device-locally
-   like the thread defaults: enhancing is instructions work, and the profile
-   you trust with it is a habit, not a property of the thread. */
-import { createLocalStore } from "./local-store"
-import { api, type Profile, type ServerSettings } from "./settings"
+   Which profile does the rewrite is a device-local pick, and it is one of
+   several the harness now keeps (source control has its own): the shape they
+   share lives in `lib/ai-picks.ts`, and what is left here is the two routes
+   plus this file's names for that pick, which its callers already use. */
+import { aiCapable, canUseAi, enhancePick, modelPickLabel } from "./ai-picks"
+import { api, type ServerSettings } from "./settings"
 
-/** The stored profiles that can actually do a rewrite: a real endpoint behind
-    them. Virtual Defaults carry no baseUrl and 409 on the server, and a hidden
-    or disabled profile is out of the pickers — a rewrite is new work. */
-export const enhanceCapable = (profiles: readonly Profile[]): Profile[] =>
-  profiles.filter((p) => !p.virtual && !p.hidden && !p.disabled && p.baseUrl.trim().length > 0)
+/** The profiles that can do a rewrite, and the same gate for one row. */
+export const enhanceCapable = aiCapable
+export const canEnhance = canUseAi
 
-/** The same gate, for one row — so the composer and anything drawing the
-    picker agree on what "capable" means. */
-export const canEnhance = (
-  profile: Pick<Profile, "virtual" | "baseUrl" | "hidden" | "disabled"> | null | undefined
-): boolean =>
-  Boolean(profile && !profile.virtual && !profile.hidden && !profile.disabled && profile.baseUrl.trim().length > 0)
-
-const store = createLocalStore<string | null>(
-  "ui.enhanceProfile",
-  (raw) => (typeof raw === "string" && raw ? raw : null),
-  null
-)
-
-export const useEnhanceProfileId = store.use
-
-export function setEnhanceProfileId(id: string | null): void {
-  store.set(id)
-}
-
-/** Explicit model pick for the rewrite, device-local like the profile pick:
-    "" means "no pick — fall back to the thread's model, then the profile's
-    own default". A model id that the picked profile no longer serves reads as
-    no pick rather than as a stale id. */
-const modelStore = createLocalStore<string>(
-  "ui.enhanceModel",
-  (raw) => (typeof raw === "string" ? raw : ""),
-  ""
-)
-
-export const useEnhanceModelId = modelStore.use
-
-export function setEnhanceModelId(id: string): void {
-  modelStore.set(id)
-}
-
-/** The remembered model when the profile still serves it, else "" (no pick). */
-export function resolveEnhanceModelId(profile: Profile | null | undefined): string {
-  if (!profile) return ""
-  const id = modelStore.get()
-  if (!id) return ""
-  return profile.models.some((m) => m.id === id) ? id : ""
-}
-
-/** Display label for the enhance model pick: the model's own label, else
-    "Profile default". */
-export function enhanceModelLabel(profile: Profile | null | undefined, modelId: string): string {
-  if (!modelId) return "Profile default"
-  return profile?.models.find((m) => m.id === modelId)?.label ?? "Profile default"
-}
-
-/** The remembered profile when it still exists and still can, else the
-    thread's own when that can, else the first capable one. */
-export function resolveEnhanceProfile(
-  profiles: readonly Profile[],
-  threadProfileId?: string
-): Profile | null {
-  const capable = enhanceCapable(profiles)
-  if (capable.length === 0) return null
-  const remembered = store.get()
-  const byId = (id: string | null | undefined) =>
-    (id && capable.find((p) => p.id === id)) || null
-  return byId(remembered) ?? byId(threadProfileId) ?? capable[0]
-}
+export const useEnhanceProfileId = enhancePick.useProfileId
+export const setEnhanceProfileId = enhancePick.setProfileId
+export const useEnhanceModelId = enhancePick.useModelId
+export const setEnhanceModelId = enhancePick.setModelId
+export const resolveEnhanceProfile = enhancePick.resolveProfile
+export const resolveEnhanceModelId = enhancePick.resolveModelId
+export const enhanceModelLabel = modelPickLabel
 
 export async function enhanceThread(
   settings: ServerSettings,
@@ -95,11 +39,13 @@ export async function enhanceThread(
   return enhanced
 }
 
-/** Drafts have no server row yet, so the provider travels in the body. */
+/** Drafts have no server row yet, so the provider travels in the body. The
+    draft's agent does not: the rewrite goes to the profile's shared endpoint,
+    so the server neither needs nor reads one. */
 export async function enhanceDraft(
   settings: ServerSettings,
   text: string,
-  opts: { profileId: string; agentId?: string; model?: string },
+  opts: { profileId: string; model?: string },
   signal?: AbortSignal
 ): Promise<string> {
   const { enhanced } = await api<{ enhanced: string }>(settings, "/api/enhance", {

@@ -1,6 +1,6 @@
 import type { BuiltinMcp } from "./db/schema.js";
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import {
   commands as commandsTable,
@@ -25,22 +25,34 @@ import {
 export const BUILTIN_MCP: Record<BuiltinMcp, { id: string; name: string; description: string }> = {
   "web-search": {
     id: "builtin:web-search",
-    name: "web-search",
+    name: "Web search",
     description:
       "The harness's web search + fetch tools, on the backend in Settings › Web search. Replaces Claude Code's built-in WebSearch/WebFetch on threads that link it.",
   },
   knowledge: {
     id: "builtin:knowledge",
-    name: "knowledge",
+    name: "Knowledge base",
     description: "A per-project knowledge base the agent can read and write, scoped to the thread's project.",
   },
   workflow: {
     id: "builtin:workflow",
-    name: "workflow",
+    name: "Workflows",
     description:
       "Run a declarative multi-step workflow: every step is a real thread on this server, mirrored into the calling thread as a subagent. Works on any agent; replaces Claude Code's built-in Workflow tool on threads that link it.",
   },
 };
+
+/**
+ * Built-ins were injected under their kind slug ("web-search") before they had
+ * titles. Only that exact value is replaced — like seeding, a name the user
+ * chose is theirs. Cheap enough to run on every boot.
+ */
+export async function retitleBuiltinMcp(): Promise<void> {
+  for (const [kind, { id, name }] of Object.entries(BUILTIN_MCP)) {
+    await db.update(mcpServersTable).set({ name })
+      .where(and(eq(mcpServersTable.id, id), eq(mcpServersTable.name, kind)));
+  }
+}
 
 export function isBuiltinMcp(kind: string): kind is BuiltinMcp {
   return Object.hasOwn(BUILTIN_MCP, kind);

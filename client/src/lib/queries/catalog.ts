@@ -14,6 +14,7 @@ import {
   type AgentDef,
   type AgentsStatus,
   type CommandDef,
+  type McpCheckResult,
   type McpServerDef,
   type ModelPrompt,
   type Persona,
@@ -28,6 +29,7 @@ import {
   agentsKey,
   agentsStatusKey,
   commandsKey,
+  mcpCatalogKey,
   mcpServersKey,
   modelPromptsKey,
   personasKey,
@@ -120,6 +122,21 @@ export function useAgentsStatus(): {
   return { status: query.data, loading: query.isPending, error: query.error, refresh }
 }
 
+/** One model appended to a profile's catalog, for the composer's model menu
+    (`POST /api/profiles/:id/models`). A dedicated route for the same reason
+    the flags PATCH is one — see `useSetProfileFlags`. */
+export function useAddProfileModel() {
+  const settings = useServer()
+  return useApiMutation<{ profileId: string; id: string; label: string }, Profile>(
+    [profilesKey(settings), agentsKey(settings)],
+    (s, { profileId, ...model }) =>
+      api<Profile>(s, `/api/profiles/${encodeURIComponent(profileId)}/models`, {
+        method: "POST",
+        body: JSON.stringify(model),
+      }),
+  )
+}
+
 export function useProjects(): Project[] {
   const settings = useServer()
   return list<Project>(useApiQuery<Project[]>(projectsKey(settings), "/api/projects", {
@@ -132,6 +149,27 @@ export function useMcpServers(): McpServerDef[] {
   return list<McpServerDef>(useApiQuery<McpServerDef[]>(mcpServersKey(settings), "/api/mcp-servers", {
     staleTime: CATALOG_STALE_MS,
   }).data)
+}
+
+/**
+ * What one MCP server advertises — tools, prompts and resources.
+ *
+ * The one catalog read, shared by the library row's reading and the server's
+ * own page, so opening the page draws what the list already knew rather than
+ * connecting again. The whole query is returned, not just the data: both
+ * callers draw the failure and the in-flight state.
+ *
+ * `staleTime: Infinity` because the listing already expires server-side
+ * (`mcp_catalog`'s TTL) — refetching on a tab switch would spend a connect to
+ * be told the same thing. The Check button is the live door.
+ */
+export function useMcpCatalog(id: string) {
+  const settings = useServer()
+  return useApiQuery<McpCheckResult>(mcpCatalogKey(settings, id), `/api/mcp-servers/${id}/catalog`, {
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    retry: false,
+  })
 }
 
 export function useSkills(): SkillDef[] {

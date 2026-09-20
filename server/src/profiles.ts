@@ -10,7 +10,6 @@ import {
   type ProfileAgentLink,
   type ProfileUsage,
 } from "./db/index.js";
-import { PROFILE_LINKS, emptyLinks, linksOf, readLinks, writeLinks, type LinkSet } from "./db/links.js";
 
 // A profile is the PROVIDER configuration used in a session (credentials,
 // models); the workspace side lives in projects.ts. It is not bound to one
@@ -91,12 +90,6 @@ export const ProfileInputSchema = z.object({
       provider marks at https://models.dev/logos/<provider>.svg). Empty means
       "no logo of its own", and the client falls back to the agent's mark. */
   logoUrl: z.string().optional().default(""),
-  /** Library entries this profile brings to every thread started on it, on
-      top of the project's (db/links.ts). The web-search and knowledge flags
-      above are the harness's own two servers; these are the user's. */
-  mcpServerIds: z.array(z.string()).default([]),
-  skillIds: z.array(z.string()).default([]),
-  commandIds: z.array(z.string()).default([]),
 });
 
 export type ProfileInput = z.infer<typeof ProfileInputSchema>;
@@ -158,7 +151,6 @@ export function defaultProfileFor(agentId: string, _agentName?: string): Profile
     // and the one profile that must always be pickable next to the user's own.
     hidden: false,
     disabled: false,
-    ...emptyLinks(),
     virtual: true,
   };
 }
@@ -195,12 +187,11 @@ export function profileBaseUrl(profile: Profile, agentId: string): string {
   return link?.baseUrl?.trim() || profile.baseUrl || "";
 }
 
-/** A row plus its links, with the nullable columns read back as the empty
+/** A row with the nullable columns read back as the empty
     strings the schema defaults them to. */
-function toProfile(row: Record<string, unknown>, links: LinkSet): Profile {
+function toProfile(row: Record<string, unknown>): Profile {
   const { id, ...rest } = row;
   return {
-    ...links,
     ...(rest as Omit<ProfileInput, "smallModel">),
     id: id as string,
     // A row from before the column existed reads back `{}` (the column
@@ -218,8 +209,7 @@ function toProfile(row: Record<string, unknown>, links: LinkSet): Profile {
 /** Stored profiles only. `listProfiles` is what the API and spawning use. */
 async function storedProfiles(): Promise<Profile[]> {
   const rows = await db.select().from(profilesTable);
-  const links = await readLinks(PROFILE_LINKS, rows.map((r) => r.id));
-  return rows.map((row) => toProfile(row, links.get(row.id) ?? emptyLinks()));
+  return rows.map((row) => toProfile(row));
 }
 
 /**
@@ -240,7 +230,7 @@ export async function getProfile(id: string): Promise<Profile | undefined> {
     return defaultProfileFor(id.slice(DEFAULT_PROFILE_PREFIX.length));
   }
   const row = (await db.select().from(profilesTable).where(eq(profilesTable.id, id)).limit(1))[0];
-  return row ? toProfile(row, await linksOf(PROFILE_LINKS, id)) : undefined;
+  return row ? toProfile(row) : undefined;
 }
 
 /** Secrets never leave the server: each key is replaced by a boolean the client
@@ -257,10 +247,9 @@ export function redact(profile: Profile) {
   };
 }
 
-/** The columns of the profiles table, without the link arrays that live in
-    their own tables. */
+/** The columns of the profiles table. */
 function columnsOf(profile: Profile) {
-  const { mcpServerIds: _m, skillIds: _s, commandIds: _c, virtual: _v, ...columns } = profile;
+  const { virtual: _v, ...columns } = profile;
   return columns;
 }
 
@@ -268,7 +257,6 @@ export async function createProfile(input: ProfileInput): Promise<Profile> {
   const profile: Profile = { id: randomUUID(), ...input };
   await db.transaction(async (tx) => {
     await tx.insert(profilesTable).values(columnsOf(profile));
-    await writeLinks(tx, PROFILE_LINKS, profile.id, profile);
   });
   return (await getProfile(profile.id))!;
 }
@@ -297,7 +285,6 @@ export async function updateProfile(id: string, input: ProfileInput): Promise<Pr
   };
   await db.transaction(async (tx) => {
     await tx.update(profilesTable).set(columnsOf(updated)).where(eq(profilesTable.id, id));
-    await writeLinks(tx, PROFILE_LINKS, id, updated);
     /* The probe cache is keyed `profileId:agentId:cwd`, and the answer depends
        on what was just edited (a new base URL is a new gateway catalog, a new
        key may change what it serves). A stale row would keep answering the
@@ -334,6 +321,32 @@ export async function setProfileFlags(
   const result = await db.update(profilesTable).set(patch).where(eq(profilesTable.id, id));
   if ((result.rowCount ?? 0) === 0) return undefined;
   return await getProfile(id);
+}
+
+/**
+ * A copy of a stored profile, credentials included, under a fresh id.
+ *
+ * Server-side because `redact` is: the client is sent `hasApiKey` and never the
+ * key, so a duplicate assembled in the browser would come back keyless — the
+ * same argument the flags PATCH and the `/models` append make. The virtual
+ * Default has nothing to copy (no credentials, no catalog) and is refused.
+ *
+ * The copy is hidden from the pickers until it is edited: a duplicate exists to
+ * be changed, and two identically-named profiles in the composer is the one
+ * outcome nobody wants.
+ */
+export async function duplicateProfile(id: string): Promise<Profile | undefined> {
+  const source = await getProfile(id);
+  if (!source || source.virtual) return undefined;
+  const { id: _id, virtual: _virtual, ...input } = source;
+  return await createProfile({
+    ...input,
+    name: `${source.name} (copy)`,
+    smallModel: source.smallModel ?? "",
+    suppressModelMetadataWarning: source.suppressModelMetadataWarning ?? false,
+    hidden: true,
+    disabled: source.disabled ?? false,
+  });
 }
 
 export async function deleteProfile(id: string): Promise<boolean> {

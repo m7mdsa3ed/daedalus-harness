@@ -1,0 +1,107 @@
+<!doctype html>
+<!-- v7 — Two pinned bands over one flat index. The near half of the sidebar does
+     not move: Needs you and Running sit above the fold as fixed bands, and
+     everything else is one dense, quiet list under them. The middle ground
+     between the current tiers (three folds that scroll away) and v5 (a board
+     that takes the whole column). Cost: two permanent bands of chrome, and the
+     quiet list is a "by project" sort away from being a tree. -->
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="/logo.svg" type="image/svg+xml" />
+<title>v7 — Pinned bands</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./shared.css" />
+<style>
+  /* The bands are the one difference from the shared row: they are *dimmed* at
+     rest and rise on hover, so the eye lands on the index below by default and
+     the bands are the exception it looks up for. */
+  .band { padding: 0 8px; }
+  .band .row { min-height: 28px; }
+  .band .row .title { font-size: 12.5px; }
+  .band-head { display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; margin-top: 8px; }
+  .band-head .label { font-size: 10px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: color-mix(in oklab, var(--sidebar-foreground) 50%, transparent); }
+  .band-head .n { font-size: 10px; font-weight: 600; color: var(--muted-foreground); }
+  .band-head .head-action { margin-left: auto; font-size: 11px; color: var(--muted-foreground); border-radius: 5px; padding: 1px 5px; }
+  .band-head .head-action:hover { background: var(--sidebar-accent); color: var(--sidebar-foreground); }
+  .divide { height: 1px; background: var(--sidebar-border); margin: 8px 16px 0; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <header class="sb-head">
+      <div class="sb-title-row">
+        <span class="brand"><span class="logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        </span><span>Daedalus</span></span>
+        <div class="head-actions"><button class="icon-btn" data-new></button></div>
+      </div>
+    </header>
+
+    <!-- The fixed half: two bands, never scrolled away. -->
+    <div class="band" id="bands"></div>
+    <div class="divide"></div>
+
+    <!-- The moving half: one index. -->
+    <div class="scroll" id="scroll">
+      <div class="section-head" style="padding:0 16px">All threads<span class="n" id="rest-n"></span></div>
+      <div id="rest"></div>
+    </div>
+
+    <footer class="sb-foot" id="foot"></footer>
+  </aside>
+  <main class="main">
+    <div class="tabs">
+      <button class="tab" data-active="true"><span class="dot running"></span>Ship the composer width fix</button>
+      <button class="tab">Index the rules table</button>
+      <button class="tab" style="width:30px;padding:0;justify-content:center" id="add-tab"></button>
+    </div>
+    <div class="card">the dock — the transcript in front of you</div>
+  </main>
+</div>
+<script src="./shared.js"></script>
+<script>
+  const { data, HTML, esc, dot, tag, theme, render, ICONS } = PROTO
+  const { projects, threads } = data()
+  document.querySelector("[data-new]").innerHTML = ICONS.plus
+  document.getElementById("add-tab").innerHTML = ICONS.plus
+
+  const needs = threads.filter((t) => t.s === "waiting" || t.s === "failed")
+  const running = threads.filter((t) => t.s === "running")
+  const rest = threads.filter((t) => t.s === "idle")
+
+  const bandRow = (t) => HTML`
+    <div class="row ${t.s === "waiting" ? "ask" : t.s === "failed" ? "bad" : ""}">
+      ${dot(t.s)}<span class="title">${esc(t.t)}</span>
+      <span class="tail"><span class="sub">${projectShort(t.p)}</span></span>
+    </div>`
+
+  const projectShort = (id) => (projects.find((p) => p.id === id) || {}).short || id
+
+  document.getElementById("bands").innerHTML = HTML`
+    <div class="band-head"><span class="label">Needs you</span><span class="n">${needs.length}</span><button class="head-action" data-no-activate>Review all</button></div>
+    ${needs.map(bandRow).join("")}
+    <div class="band-head"><span class="label">Running</span><span class="n">${running.length}</span></div>
+    ${running.map(bandRow).join("")}`
+
+  document.getElementById("rest-n").textContent = rest.length
+  render(document.getElementById("rest"), rest.map((t) => HTML`
+    <button class="row" data-thread="${t.id}">
+      <span class="title">${esc(t.t)}</span>
+      <span class="tail">${tag(t.p)}<span class="sub">${t.when}</span></span>
+    </button>`).join(""))
+
+  document.getElementById("foot").innerHTML = HTML`
+    <div class="foot-nav">
+      <button class="nav-link">${ICONS.board}Tasks</button>
+      <button class="nav-link">${ICONS.bolt}Routines<span class="n">3</span></button>
+      <button class="nav-link">${ICONS.calendar}Scheduled</button>
+      <button class="nav-link">${ICONS.trash}<span class="n">5</span></button>
+    </div>
+    <button class="row"><span class="sub">This machine</span><span class="tail"><span class="dot running"></span></span></button>`
+  theme()
+</script>
+</body>
+</html>

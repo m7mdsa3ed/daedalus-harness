@@ -146,7 +146,8 @@ const RESERVED: Record<string, ReservedChord> = {
   "mod+r": { action: "Reload the page", reserved: "hard" },
   "mod+shift+r": { action: "Hard reload", reserved: "hard" },
   "mod+l": { action: "Focus the address bar", reserved: "hard" },
-  "mod+tab": { action: "Next tab", reserved: "hard" },
+  "mod+tab": { action: "Switch browser tabs", reserved: "hard" },
+  "mod+shift+tab": { action: "Switch browser tabs", reserved: "hard" },
   "mod+s": { action: "Save the page", reserved: "soft" },
   "mod+p": { action: "Print", reserved: "soft" },
   "mod+f": { action: "Find in page", reserved: "soft" },
@@ -188,10 +189,18 @@ export type ShortcutId =
   | "sidebar"
   | "help"
   | "tabJump"
+  | "nextTab"
+  | "prevTab"
+  | "closeTab"
   | "splitRight"
+  | "splitDown"
+  | "fillPanel"
   | "reopenPanel"
   | "terminal"
   | "ide"
+  | "changeModel"
+  | "changeProject"
+  | "viewOptions"
   | "send"
   | "steer"
   | "historyPrev"
@@ -238,12 +247,35 @@ export const KEYS = {
   steer: ["mod+enter", "mod+shift+enter"],
   historyPrev: "up",
   historyNext: "down",
+  /** The tab strip, on the browser's own pair *and* on a pair that works in a
+      browser tab. `mod+tab` is ⌘/Ctrl+Tab, which is the chord people reach for
+      — and Chromium keeps it, so it fires in the desktop shell (where the page
+      is the whole window) and not on the web, which is the same bargain
+      `tabJump`'s ⌘1…9 and `reopenPanel`'s ⌘⇧T already make; `RESERVED` says
+      so on the settings row rather than leaving it to be found by pressing.
+      Ctrl+Tab cannot be spelled aside from that — `matchesChord` folds Control
+      into `mod` by design — so the way to a chord that works everywhere is
+      Alt: ⌥/Alt+↓ and ↑ are unclaimed by every browser and by the OS, and are
+      the pair the tab's own menu prints beside "Next tab" / "Previous tab". */
+  nextTab: ["mod+tab", "alt+down"],
+  prevTab: ["mod+shift+tab", "alt+up"],
+  /** Close this tab. Not ⌘/Ctrl+W: Electron gives that to close-window, so it
+      would quit the app rather than close a tab — the reason `splitRight` is
+      not ⌘W either. Alt+W is free in both browsers. */
+  closeTab: ["alt+w"],
   /** Skip the question, reject the permission, stop the turn — in that order. */
   escape: "esc",
   /** Workspace. Not `mod+w`: Electron gives that to close-window, and a chord
       that closes the app when the dock is empty is not a panel shortcut. */
   splitRight: "mod+\\",
+  /** The other axis of the pair, with the other mnemonic to match: the backslash
+      next to ⌘ is "put it beside", and ⇧ adds the "down" that `↓` already
+      spells for the tab strip. */
+  splitDown: "mod+shift+\\",
   reopenPanel: "mod+shift+t",
+  /** Make the panel in front fill the dock. Not `mod+shift+f` — that is Search
+      across files — and not ⌘↩, which the composer owns. */
+  fillPanel: "mod+shift+m",
   /** VS Code's panel chord, not its ⌃` terminal one: `matchesChord` folds Ctrl
       into `mod` by design (⌘ on Apple, Ctrl elsewhere), so a standalone `ctrl`
       is not part of the vocabulary — and ⌘` is macOS's own "cycle windows",
@@ -253,6 +285,13 @@ export const KEYS = {
       the panel Monaco binds its own keys, and a chord the app claims first is
       one the editor can never see. */
   ide: "mod+shift+g",
+  /** The three that open a chooser rather than doing a thing. Alt+letter, the
+      same well the tab strip's keys came out of: every ⌘/Ctrl letter with a
+      mnemonic worth having is either Chromium's (⌘M, ⌘P, ⌘L) or already
+      spoken for here, and ⌥M/⌥P/⌥V are claimed by no browser and no OS. */
+  changeModel: "alt+m",
+  changeProject: "alt+p",
+  viewOptions: "alt+v",
 } as const
 
 export const SHORTCUTS: ShortcutDef[] = [
@@ -268,11 +307,50 @@ export const SHORTCUTS: ShortcutDef[] = [
     note: "Counts the tabs in the group you are looking at, which is every open thread until the workspace is split.",
   },
   {
+    id: "nextTab",
+    scope: "Global",
+    label: "Next tab",
+    chords: [...KEYS.nextTab],
+    rebindable: true,
+    note: "Walks around the group you are looking at, wrapping at the ends. Alt+↓ works everywhere; ⌘/Ctrl+Tab is Chromium's own, so it fires in the desktop app rather than in a browser tab.",
+  },
+  {
+    id: "prevTab",
+    scope: "Global",
+    label: "Previous tab",
+    chords: [...KEYS.prevTab],
+    rebindable: true,
+  },
+  {
+    id: "closeTab",
+    scope: "Global",
+    label: "Close the tab you are looking at",
+    chords: [...KEYS.closeTab],
+    rebindable: true,
+    note: "A tab that refuses to close — a terminal whose shell is still busy — is left open.",
+  },
+  {
     id: "splitRight",
     scope: "Global",
     label: "Split the panel to the right",
     chords: [KEYS.splitRight],
     rebindable: true,
+    note: "Makes a second column and puts *this* panel in it. A tab landing in the empty column fills it; the tab you left goes back when you fill it.",
+  },
+  {
+    id: "splitDown",
+    scope: "Global",
+    label: "Split the panel downward",
+    chords: [KEYS.splitDown],
+    rebindable: true,
+  },
+  {
+    id: "fillPanel",
+    scope: "Global",
+    label: "Fill the panel with this tab",
+    chords: [KEYS.fillPanel],
+    rebindable: true,
+    note: "Takes back the split: the column in front of you fills the dock, and switching to another column empties it again.",
   },
   {
     id: "terminal",
@@ -299,6 +377,31 @@ export const SHORTCUTS: ShortcutDef[] = [
     note: "Walks back through the last ten, the way a browser reopens tabs.",
   },
   { id: "help", scope: "Global", label: "Keyboard shortcuts", chords: [...KEYS.help], rebindable: true },
+  {
+    id: "viewOptions",
+    scope: "Global",
+    label: "View options",
+    chords: [KEYS.viewOptions],
+    rebindable: true,
+    note: "How transcripts are drawn on this device — the same dialog the sliders in the header open.",
+  },
+
+  {
+    id: "changeModel",
+    scope: "Thread",
+    label: "Change model",
+    chords: [KEYS.changeModel],
+    rebindable: true,
+    note: "Opens the palette on the models the thread in front of you advertises. An agent that offers no model selector has none to list.",
+  },
+  {
+    id: "changeProject",
+    scope: "Thread",
+    label: "Change project",
+    chords: [KEYS.changeProject],
+    rebindable: true,
+    note: "Only until the first message: a started thread's project is the agent's cwd, so the page reads it out instead of offering it.",
+  },
 
   {
     id: "send",

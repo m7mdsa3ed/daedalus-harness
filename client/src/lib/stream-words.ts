@@ -54,8 +54,13 @@ export type StreamEffect =
   | "none"
 
 /** Which mechanism an effect is built on — which is also the whole of what the
- *  pass needs to know, and the honest way to group them in the picker. */
-export type StreamFamily = "edge" | "word"
+ *  pass needs to know, and the honest way to group them in the picker.
+ *
+ *  `plain` is a family of one and is not a mechanism: `none` adds nothing, and
+ *  filing it under `word` said it was a per-word animation that happened to be
+ *  invisible. It is the answer to a different question — "what does arriving
+ *  look like" answered with "like arriving" — and the picker draws it apart. */
+export type StreamFamily = "edge" | "word" | "plain"
 
 export const STREAM_EFFECTS: {
   id: StreamEffect
@@ -114,9 +119,10 @@ export const STREAM_EFFECTS: {
   },
   {
     id: "none",
-    family: "word",
+    family: "plain",
     label: "None",
-    description: "Words appear as they arrive, with nothing added. The pacing itself is unchanged.",
+    description:
+      "Words appear as they arrive, with nothing added. The pace is still yours to set above — this is the reveal without an effect on it, not the reveal switched off.",
   },
 ]
 
@@ -185,9 +191,8 @@ const wordSpan = (word: string, tail: number | null): Node => ({
   tagName: "span",
   properties: {
     className: ["t-stream-w"],
-    // Only under `sweep`: the attribute is what the CSS matches on, so the
-    // words behind the ramp carry no filter and no transition at all.
-    /* Both, and they are not redundant: `--tail` is what CSS divides down into
+    /* Only under the edge family, and both are written: `--tail` is what CSS
+       divides down into
        a 0…1 position, and the attribute *value* is what a selector can match on
        — which is how `caret` finds the one word at the edge. */
     ...(tail === null ? {} : { "data-tail": String(tail), style: `--tail:${tail}` }),

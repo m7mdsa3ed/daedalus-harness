@@ -88,6 +88,18 @@ export const fetchProfileQuota = (
     { signal }
   )
 
+/** A window's name where it is drawn in a flat list rather than under its own
+    heading — the composer's popover, the sidebar's block, a one-line summary.
+
+    A reading of one account is its label and nothing else. A reading of several
+    (a 9Router gateway: many subscriptions behind one endpoint, `window.group`
+    naming which) has to say which account, or four rows saying `session (5h)`
+    are four unanswerable rows. The settings card is the exception and passes
+    the bare label, because there the account is the heading the tiles sit
+    under, and saying it again in every tile is the noise the sections removed. */
+export const windowTitle = (window: QuotaWindow): string =>
+  window.group?.trim() ? `${window.group.trim()} · ${window.label}` : window.label
+
 /** Whether this snapshot has anything to draw a bar for. */
 export const hasWindows = (quota: QuotaSnapshot | null | undefined): quota is QuotaSnapshot =>
   Boolean(quota && quota.windows.length > 0)
@@ -159,6 +171,105 @@ export function formatReset(window: QuotaWindow): string | null {
     })
   }
   return window.resetsLabel ?? null
+}
+
+/** `0.47 / 6 credits`, when the provider gave the amounts the percentage came
+    from. Null where it only ever printed a percentage (Claude Code, z.ai's token
+    windows) — the bar already says that much, and a made-up denominator is the
+    one thing `raw` exists to avoid. */
+export function formatAmount(window: QuotaWindow): string | null {
+  const { used, cap, unit } = window
+  if (typeof used !== "number" || typeof cap !== "number" || cap <= 0) return null
+  const n = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(2))
+  return `${n(used)} / ${n(cap)}${unit ? ` ${unit}` : ""}`
+}
+
+/** `2d 3h`, `1h 20m`, `14m`. The one duration format on these surfaces, so a
+    reset countdown and a "hits the cap in" read as the same kind of number. */
+export function formatDuration(ms: number): string | null {
+  if (ms <= 0) return null
+  const mins = Math.round(ms / 60000)
+  if (mins < 60) return `${mins}m`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ${mins % 60}m`
+  return `${Math.floor(hours / 24)}d ${hours % 24}h`
+}
+
+/** How long until it rolls over, beside the instant `formatReset` gives — "in
+    2d 3h" is the number someone pacing a week actually reads. Only for a window
+    with a real timestamp; a past one says nothing rather than counting up. */
+export function formatResetIn(window: QuotaWindow): string | null {
+  if (!window.resetsAt) return null
+  const left = formatDuration(window.resetsAt - Date.now())
+  return left && `in ${left}`
+}
+
+/** What is left, in the provider's own units — the other half of `formatAmount`,
+    and the number someone deciding whether to start a long turn actually wants.
+    Null on the same windows `formatAmount` is null on. */
+export function formatRemaining(window: QuotaWindow): string | null {
+  const { used, cap, unit } = window
+  if (typeof used !== "number" || typeof cap !== "number" || cap <= 0) return null
+  const left = Math.max(0, cap - used)
+  return `${Number.isInteger(left) ? left : left.toFixed(2)}${unit ? ` ${unit}` : ""} left`
+}
+
+/**
+ * Spend against the clock: where an evenly-paced spend would be right now, and
+ * where this one lands if the rate holds.
+ *
+ * A percentage on its own is half a fact — 40% used is comfortable four hours
+ * into a weekly window and alarming forty minutes into one. The window's length
+ * (`windowMinutes`) and its rollover (`resetsAt`) are both already on the wire,
+ * so elapsed time is a subtraction and the rest is one ratio.
+ *
+ * Null when either is missing (Claude Code's prose windows, z.ai's unrecognised
+ * unit codes) and in the window's first tenth, where dividing by a nearly-zero
+ * elapsed fraction turns one early request into "you will hit the cap in 3
+ * minutes". Better to say nothing than to say that.
+ *
+ * ponytail: a rolling window is not a fixed bucket, so `elapsed` here is really
+ * "time since the current window's notional start" and the projection is a
+ * straight-line one. Good enough to pace by; if a provider ever hands us the
+ * window's start directly, use that instead of deriving it.
+ */
+export interface WindowPace {
+  /** 0–100: used-percent an even spend would show right now. */
+  expectedPercent: number
+  /** `usedPercent - expectedPercent`. Positive is spending fast. */
+  deltaPoints: number
+  /** Used-percent at the window's close if this rate holds. Uncapped, so >100
+      is exactly the interesting case. */
+  projectedPercent: number
+  /** ms until the cap is hit at this rate, when that lands before the reset. */
+  exhaustsInMs: number | null
+}
+
+/** Below this fraction of the window elapsed, the projection is noise. */
+const PACE_FLOOR = 0.1
+
+export function windowPace(window: QuotaWindow, now = Date.now()): WindowPace | null {
+  const { windowMinutes, resetsAt, usedPercent } = window
+  if (!windowMinutes || !resetsAt) return null
+  const totalMs = windowMinutes * 60_000
+  const leftMs = resetsAt - now
+  if (leftMs <= 0 || leftMs > totalMs) return null
+  const elapsed = (totalMs - leftMs) / totalMs
+  if (elapsed < PACE_FLOOR) return null
+
+  const used = Math.max(0, usedPercent)
+  const expectedPercent = elapsed * 100
+  const projectedPercent = used / elapsed
+  /* Where the remaining budget runs out at the observed rate — only worth
+     saying when it is before the reset, since after it the window rolls. */
+  const rate = used / (totalMs - leftMs)
+  const exhaustsInMs = rate > 0 && used < 100 ? (100 - used) / rate : null
+  return {
+    expectedPercent,
+    deltaPoints: used - expectedPercent,
+    projectedPercent,
+    exhaustsInMs: exhaustsInMs !== null && exhaustsInMs < leftMs ? exhaustsInMs : null,
+  }
 }
 
 /** One line for a snapshot with no windows — the common case, and one the UI has

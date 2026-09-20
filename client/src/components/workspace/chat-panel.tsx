@@ -3,6 +3,7 @@ import type { IDockviewPanelProps } from "dockview-react"
 
 import { ErrorBoundary } from "@/components/error-boundary"
 import { ThreadView } from "@/components/thread-view"
+import { ThreadSkeleton } from "@/components/thread-view/skeleton"
 import type { Actions } from "@/lib/actions"
 import { useSessionMeta, useThread } from "@/lib/store"
 import { markFor, type ThreadActivity } from "@/lib/thread/phase"
@@ -86,7 +87,19 @@ export function ChatPanel({
      other surface that renders a transcript (see lib/workspace/use-thread-links). */
   const links = useThreadLinksFor(params.sessionId)
 
-  if (!meta) return null
+  /* No row yet: the session list has not landed, so there is nothing to
+     connect to and `ThreadView` cannot mount (every read below it is keyed by
+     the row). That is the longest blank this panel ever shows — a cold boot
+     waiting on the server — so it is the one that gets the stand-in. Once the
+     row arrives the transcript's own gate takes over (`skeletonShown`). */
+  if (!meta)
+    return (
+      <div className="flex h-full min-h-0 flex-col pt-[var(--dock-content-overlap,var(--app-header-h))]">
+        <div className="mx-auto w-full max-w-[var(--harness-chat-width)] px-4 py-4">
+          <ThreadSkeleton />
+        </div>
+      </div>
+    )
 
   return (
     <div className="flex h-full min-h-0 flex-col">

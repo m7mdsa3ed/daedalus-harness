@@ -13,6 +13,9 @@ export type PageId =
   | "root"
   | "search"
   | "projects"
+  /** Which project the draft in front of you runs in. Not `projects`, which is
+      a list of places to *go*: this one answers a question about the thread. */
+  | "project"
   | "start"
   | "theme"
   | "model"
@@ -44,6 +47,9 @@ export interface Palette {
   newProject: () => void
   importThreads: () => void
   showShortcuts: () => void
+  /** How transcripts are drawn on this device. Owned by app-shell for the same
+      reason the shortcut sheet is — the palette unmounts as the row runs. */
+  showViewOptions: () => void
 }
 
 export const PaletteContext = React.createContext<Palette | null>(null)
@@ -58,6 +64,7 @@ export const PAGE_LABEL: Record<PageId, string> = {
   root: "",
   search: "Search",
   projects: "Projects",
+  project: "Project",
   start: "New thread",
   theme: "Theme",
   model: "Model",
@@ -72,6 +79,7 @@ export const PAGE_PLACEHOLDER: Record<PageId, string> = {
   root: "Type a command…",
   search: "Search threads and messages…",
   projects: "Search projects…",
+  project: "Search projects…",
   start: "Search projects…",
   theme: "Search palettes…",
   model: "Search models…",

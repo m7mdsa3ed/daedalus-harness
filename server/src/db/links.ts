@@ -4,9 +4,6 @@ import {
   commands as commandsTable,
   db,
   mcpServers as mcpServersTable,
-  profileCommands,
-  profileMcpServers,
-  profileSkills,
   sessionCommands,
   sessionMcpServers,
   sessionSkills,
@@ -14,8 +11,8 @@ import {
 } from "./index.js";
 
 /**
- * The library links — MCP servers, skills, slash commands — that a profile
- * and a session each carry.
+ * The library links — MCP servers, skills, slash commands — that a session
+ * carries.
  *
  * They used to be id arrays on the owning record, which nothing kept honest:
  * deleting an MCP server left its id behind in every owner that referenced
@@ -50,12 +47,6 @@ export interface LinkTables {
   skill: LinkTable;
   command: LinkTable;
 }
-
-export const PROFILE_LINKS: LinkTables = {
-  mcp: { table: profileMcpServers, owner: profileMcpServers.profileId, target: profileMcpServers.mcpServerId, ownerKey: "profileId", targetKey: "mcpServerId" },
-  skill: { table: profileSkills, owner: profileSkills.profileId, target: profileSkills.skillId, ownerKey: "profileId", targetKey: "skillId" },
-  command: { table: profileCommands, owner: profileCommands.profileId, target: profileCommands.commandId, ownerKey: "profileId", targetKey: "commandId" },
-};
 
 export const SESSION_LINKS: LinkTables = {
   mcp: { table: sessionMcpServers, owner: sessionMcpServers.sessionId, target: sessionMcpServers.mcpServerId, ownerKey: "sessionId", targetKey: "mcpServerId" },

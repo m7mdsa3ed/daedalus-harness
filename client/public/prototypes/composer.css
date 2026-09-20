@@ -1,0 +1,128 @@
+/* ── The composer's own vocabulary ──
+   Layered ON TOP of `transcript.css` (the shell, the sidebar, the transcript
+   behind the glass), so a composer prototype differs from the app in the unit
+   under test and nothing else. Tokens are the app's: `--composer` for the
+   card, `--shelf` for the shelf's ground, `--harness-composer-width` for the
+   measure, and the `--step-*` hues for the readings.
+
+   The anatomy being prototyped (from `components/composer/` and
+   `composer-strip.tsx`):
+
+     shelf   a pile of cards — the front one open, the rest a 14px sliver
+     card    the frosted box: textarea over a toolbar row
+     footer  one row, always drawn: the project, the tools, the readings
+
+   The floor is permanent; the pile is transient. Every variant here keeps that
+   bargain and moves the shape. */
+
+/* ── The unit ── */
+/* Docked: the single positioned wrapper (absolute against the panel), with the
+   composer's one measure at its root — so the shelf and the card share it and
+   the shelf can be narrower than the card by a fixed inset. */
+.cmp { max-width: var(--harness-composer-width); margin: 0 auto; }
+.cmp.dock { position: absolute; inset: auto 0 0; z-index: 20; padding: 0 16px 14px; }
+/* In flow: a pane's own element, not an overlay on the transcript's foot. */
+.cmp-inline { position: relative; padding: 18px 0 0; }
+
+/* ── The shelf (pile) ──
+   Behind-cards are slivers; the front card carries its own body. Bottom edge
+   tucks behind the composer, so the two read as one object. */
+.pile { position: relative; z-index: 1; margin: 0 16px -4px; }
+.peek {
+  display: flex; align-items: center; gap: 6px; height: 14px; margin: 0 auto;
+  padding: 0 10px; border-radius: 9px 9px 0 0; background: var(--shelf);
+  color: var(--muted-foreground); font-size: 9px;
+  transition: background 140ms;
+}
+.peek:hover { background: color-mix(in oklab, var(--shelf) 92%, var(--foreground) 8%); }
+.peek svg { width: 12px; height: 12px; }
+.peek .badge { display: inline-flex; height: 12px; min-width: 12px; align-items: center; justify-content: center; border-radius: 999px; background: color-mix(in oklab, var(--primary) 15%, transparent); color: var(--primary); font-size: 8px; font-weight: 600; padding: 0 3px; }
+.shelf-card {
+  border-radius: 14px 14px 0 0; background: var(--shelf);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  padding: 8px 10px 12px;
+}
+.shelf-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 0.8125rem; }
+.shelf-row .ttl { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted-foreground); }
+.shelf-row .ttl b { color: var(--foreground); font-weight: 500; }
+.shelf-row .x { opacity: 0.5; }
+/* The checklist card, in the shelf. */
+.shelf-todo { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 0.75rem; color: var(--muted-foreground); }
+.shelf-todo .box { width: 14px; height: 14px; border-radius: 4px; box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--muted-foreground) 50%, transparent); display: grid; place-items: center; flex: 0 0 auto; }
+.shelf-todo .box svg { width: 9px; height: 9px; }
+.shelf-todo[data-done="true"] .box { background: var(--primary); color: var(--primary-foreground); box-shadow: none; }
+.shelf-todo[data-done="true"] .txt { text-decoration: line-through; opacity: 0.55; }
+.shelf-todo[data-active="true"] .txt { color: var(--foreground); }
+/* An attachment chip on the shelf. */
+.files { display: flex; gap: 6px; flex-wrap: wrap; }
+.fchip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 4px 0 8px; border-radius: 7px; font-size: 11px; font-family: ui-monospace, Menlo, monospace; color: var(--muted-foreground); background: color-mix(in oklab, var(--foreground) 7%, transparent); }
+.fchip .x { opacity: 0.5; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; }
+.fchip .x:hover { background: var(--hover); }
+
+/* ── The card ── */
+.cmp-card {
+  position: relative; z-index: 10; border-radius: 16px; background: color-mix(in oklab, var(--composer) 78%, transparent);
+  backdrop-filter: blur(16px) saturate(1.4); -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  box-shadow: 0 12px 34px rgba(0,0,0,.16); padding: 8px;
+}
+.cmp-text { min-height: 36px; padding: 8px 8px 4px; font-size: 0.9375rem; line-height: 1.5; color: var(--muted-foreground); }
+.cmp-text.typed { color: var(--foreground); }
+.cmp-text .caret { display: inline-block; width: 1.5px; height: 1.05em; background: var(--foreground); vertical-align: -2px; animation: blink 1.1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.cmp-toolbar { display: flex; align-items: center; gap: 4px; padding-top: 4px; }
+.rnd { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 999px; color: var(--muted-foreground); flex: 0 0 auto; }
+.rnd:hover { background: var(--hover); color: var(--foreground); }
+.rnd.disc { background: var(--muted); }
+.rnd.send { background: var(--primary); color: var(--primary-foreground); }
+.rnd.stop { background: var(--destructive); color: #fff; }
+.rnd svg { width: 14px; height: 14px; }
+.model { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 999px; font-size: 12px; color: var(--muted-foreground); }
+.model:hover { background: var(--hover); color: var(--foreground); }
+.model .sep { opacity: 0.5; }
+.est { font-size: 10px; font-variant-numeric: tabular-nums; color: var(--muted-foreground); padding: 0 2px; }
+
+/* ── The footer (the scope row — permanently true) ── */
+.cmp-foot { display: flex; align-items: center; gap: 4px; padding: 6px 2px 2px; }
+.fpill { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 7px; font-size: 12px; color: var(--muted-foreground); }
+.fpill:hover { background: var(--hover); color: var(--foreground); }
+.fpill .mk { width: 16px; height: 16px; border-radius: 5px; display: grid; place-items: center; color: #fff; font-size: 9px; font-weight: 700; }
+.readings { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+.reading { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 7px; border-radius: 7px; font-size: 11px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.reading:hover { background: var(--hover); color: var(--foreground); }
+.reading svg { width: 13px; height: 13px; }
+.reading .ring { width: 14px; height: 14px; }
+.reading .ring::after { inset: 2.5px; background: var(--shelf); }
+.reading.warn { color: color-mix(in oklab, var(--amber) 70%, var(--foreground)); }
+
+/* ── The notice above the shelf (about *sending*) ── */
+.notice-line { display: flex; align-items: center; gap: 8px; margin: 0 16px 6px; padding: 7px 10px; border-radius: 10px; font-size: 12px; color: var(--muted-foreground); background: color-mix(in oklab, var(--amber) 8%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--amber) 30%, transparent); }
+.notice-line svg { width: 14px; height: 14px; color: color-mix(in oklab, var(--amber) 70%, var(--foreground)); }
+.notice-line .btn { margin-left: auto; height: 24px; padding: 0 8px; font-size: 11px; }
+
+/* ── The queue, drawn as the sentences it is (transcript's, and the shelf's) ── */
+.qline { display: flex; align-items: center; gap: 8px; font-size: 0.8125rem; color: var(--muted-foreground); }
+
+/* ── C2: the command bar — one row, nothing else ── */
+.bar { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 10px; }
+.bar .txt { flex: 1; min-width: 0; font-size: 0.9375rem; color: var(--muted-foreground); }
+.bar .txt.typed { color: var(--foreground); }
+.bar .divider { width: 1px; height: 18px; background: color-mix(in oklab, var(--border) 80%, transparent); }
+.bar .model { height: 22px; font-size: 11.5px; }
+.bar .rnd { width: 22px; height: 22px; }
+.bar .ring { width: 15px; height: 15px; }
+.bar .ring::after { inset: 3px; }
+
+/* ── C3: the panel — the composer with room for the shelf's subjects ── */
+.panel-tabs { display: flex; align-items: center; gap: 4px; padding: 2px 2px 8px; border-bottom: 1px solid var(--border-60); margin-bottom: 6px; }
+.ptab { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 7px; font-size: 12px; color: var(--muted-foreground); }
+.ptab:hover { background: var(--hover); }
+.ptab[data-on="true"] { background: color-mix(in oklab, var(--foreground) 8%, transparent); color: var(--foreground); font-weight: 500; }
+.ptab .n { font-size: 10px; opacity: 0.7; font-variant-numeric: tabular-nums; }
+
+/* ── An annotation beside a prototype (why a thing is shaped how it is) ── */
+.note { position: absolute; z-index: 30; max-width: 210px; padding: 7px 9px; border-radius: 9px; font-size: 11.5px; line-height: 1.4; color: var(--foreground); background: var(--card); box-shadow: 0 6px 20px rgba(0,0,0,.22), inset 0 0 0 1px var(--border); }
+.note b { color: var(--step-tool); font-weight: 600; }
+.note::after { content: ""; position: absolute; width: 8px; height: 8px; background: var(--card); box-shadow: 1px 1px 2px rgba(0,0,0,.06); }
+.note.right::after { left: -4px; top: 14px; transform: rotate(45deg); }
+.note.left::after { right: -4px; top: 14px; transform: rotate(45deg); }
+.note.top::after { bottom: -4px; left: 16px; transform: rotate(45deg); }

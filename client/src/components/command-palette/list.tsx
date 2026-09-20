@@ -1,6 +1,6 @@
 /* ── Drawing the rows `rank.ts` ordered ──
-   One `CommandGroup` per heading, one `Row` per item — cmdk still owns
-   selection and ↑/↓; it just does not own the filter any more.
+   One section per heading, one `Row` per item — the menu still owns selection
+   and ↑/↓; it just does not own the filter any more.
 
    Every row is the same four columns, whatever page it is on:
 
@@ -15,15 +15,29 @@
    or a tick, never both. A row declares what goes in each slot and nothing
    about where — which is the whole reason the rows on nine pages line up.
 
-   The item is cmdk's primitive rather than `ui/command`'s `CommandItem`: that
-   one draws an always-present, usually invisible tick at the end of every row,
-   which is exactly the 16px of drift the trailing content on every page was
-   fighting with `ml-auto`. */
+   ── Why a page publishes instead of rendering ──
+   `CommandMenu` (`ui/command-menu.tsx`) is items-driven: the root is handed the
+   flat list, and *it* derives the sections, the flat index every row is keyed
+   by, the keyboard's idea of "next row" and the hover fill's idea of which row
+   it is over. A row drawn inside the list that the root's array does not name
+   is a row the arrows skip and the fill cannot reach — which is why the notes
+   the search page interleaves are rows here (`PaletteItem.note`) rather than
+   the bare `<div>`s they used to be.
+
+   But a page is a *component*: it has a query, a debounce, a store read. So it
+   renders for its hooks and draws nothing, handing its ranked groups up to the
+   shell through `PaletteRowsProvider`. The shell puts them on the root, and the
+   root hands each one back down to `Row` through `renderItem`.
+
+   The loop that shape invites — publish, shell re-renders, page re-renders,
+   publishes again — is closed at the other end, in `index.tsx`: the page is
+   `React.memo`'d and the palette context value is memoized on its real deps,
+   so a publish does not re-render the page that caused it. Both halves are
+   load-bearing; see the note there. */
 import * as React from "react"
-import { Command as CommandPrimitive } from "cmdk"
 import { CheckIcon } from "lucide-react"
 
-import { CommandGroup } from "@/components/ui/command"
+import { CommandMenuItem, type CommandMenuItemData } from "@/components/ui/command-menu"
 import { Shortcut } from "@/components/shortcut"
 import { cn } from "@/lib/utils"
 
@@ -38,6 +52,30 @@ import {
 export type { PaletteBadge, PaletteItem, PaletteMeta }
 export { rankItems }
 
+/** A heading and the rows under it, in the order they are to be drawn. */
+export interface PaletteGroup {
+  name: string
+  items: PaletteItem[]
+}
+
+type Publish = (groups: PaletteGroup[]) => void
+
+const PublishContext = React.createContext<Publish | null>(null)
+
+export const PaletteRowsProvider = PublishContext.Provider
+
+/** Hand this page's rows to the shell. Layout-effect rather than effect so the
+    rows land in the same frame the page rendered them — an ordinary effect
+    paints one frame of the previous page's list. */
+function usePublish(groups: PaletteGroup[]) {
+  const publish = React.useContext(PublishContext)
+  React.useLayoutEffect(() => {
+    publish?.(groups)
+  }, [publish, groups])
+}
+
+/** A page that is a list of *things you can do*: declare the rows, and this
+    scores, orders and groups them. Draws nothing — see the header. */
 export function ItemList({
   items,
   query,
@@ -50,34 +88,41 @@ export function ItemList({
   recents?: string[]
 }) {
   const groups = React.useMemo(() => rankItems(items, query, recents), [items, query, recents])
-  return (
-    <>
-      {groups.map((group) => (
-        <Group key={group.name} heading={group.name}>
-          {group.items.map((item) => (
-            <Row key={item.id} item={item} />
-          ))}
-        </Group>
-      ))}
-    </>
-  )
+  usePublish(groups)
+  return null
 }
 
-/** A heading in the palette's own voice — small caps, tracked, and with the
-    same horizontal inset as the tile below it so the label and the glyphs
-    share a left edge. */
-export function Group({ heading, children }: { heading?: string; children: React.ReactNode }) {
-  return (
-    <CommandGroup
-      heading={heading || undefined}
-      className={cn(
-        "px-2 py-1.5",
-        "**:[[cmdk-group-heading]]:px-2 **:[[cmdk-group-heading]]:pt-1.5 **:[[cmdk-group-heading]]:pb-1",
-        "**:[[cmdk-group-heading]]:text-[10.5px] **:[[cmdk-group-heading]]:font-medium **:[[cmdk-group-heading]]:uppercase **:[[cmdk-group-heading]]:tracking-[0.08em] **:[[cmdk-group-heading]]:text-muted-foreground/80"
-      )}
-    >
-      {children}
-    </CommandGroup>
+/** A page whose order is somebody else's — the server's ranking, or the clock.
+    Same publishing, no scoring: the groups are drawn exactly as given. */
+export function OrderedList({ groups }: { groups: PaletteGroup[] }) {
+  usePublish(groups)
+  return null
+}
+
+/** The shell's half of the contract: flatten the published groups into the flat
+    array the menu root wants. `group` is what it re-derives the sections from,
+    and it keeps each heading's first-appearance order — which is the order
+    `rankItems` already decided, so the two never disagree.
+
+    A note is `disabled` here and nowhere else: that one flag is what makes the
+    keyboard walk past it while the row still holds its place in the list.
+
+    **One unheaded group per page.** The menu keys its sections by heading
+    (`sectionRows`), so a second group with an empty name does not become a
+    second unheaded section — its rows are appended to the first one's, which
+    is to say they move to where the first one stands. A page that wants a
+    leading note and a trailing one puts both in the same group. */
+export function toMenuItems(groups: PaletteGroup[]): CommandMenuItemData[] {
+  return groups.flatMap((group) =>
+    group.items.map(
+      (item): CommandMenuItemData => ({
+        value: item.id,
+        label: item.title,
+        group: group.name || undefined,
+        disabled: item.note,
+        onSelect: item.onSelect,
+      })
+    )
   )
 }
 
@@ -90,18 +135,19 @@ const BADGE_TONE: Record<BadgeTone, string> = {
 }
 
 export function Row({ item }: { item: PaletteItem }) {
+  if (item.note) return <Note item={item} />
+
   const hasEnd = !!item.chord || item.checked !== undefined
   return (
-    <CommandPrimitive.Item
+    <CommandMenuItem
       value={item.id}
-      data-slot="palette-row"
-      data-checked={item.checked}
-      onSelect={item.onSelect}
       className={cn(
-        "group/row relative flex cursor-default items-center gap-3 rounded-md px-2 py-1.5 text-sm outline-hidden select-none",
-        "data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50",
-        "data-selected:bg-accent data-selected:text-accent-foreground",
-        item.muted && "opacity-60 data-selected:opacity-100"
+        /* The menu's own row is one fixed-height line (`sizeClasses.control`).
+           These are two — a title and a subtitle — so the height is given back
+           to the content and only the floor is kept, which is what lines a
+           one-line row up with a two-line one on the same page. */
+        "group/row h-auto min-h-9 items-center gap-3 py-1.5",
+        item.muted && "opacity-60 aria-selected:opacity-100"
       )}
     >
       <Tile>{item.icon}</Tile>
@@ -130,7 +176,7 @@ export function Row({ item }: { item: PaletteItem }) {
           {item.chord ? (
             <Shortcut
               chord={item.chord}
-              keyClassName="h-5 min-w-5 bg-background/60 text-[11px] text-muted-foreground group-data-selected/row:bg-background group-data-selected/row:text-foreground"
+              keyClassName="h-5 min-w-5 bg-background/60 text-[11px] text-muted-foreground group-aria-selected/row:bg-background group-aria-selected/row:text-foreground"
             />
           ) : (
             <CheckIcon
@@ -142,7 +188,32 @@ export function Row({ item }: { item: PaletteItem }) {
           )}
         </span>
       )}
-    </CommandPrimitive.Item>
+    </CommandMenuItem>
+  )
+}
+
+/** A line about the list rather than an entry in it. Still a `CommandMenuItem`,
+    because the root's flat array is what the keyboard and the hover fill count
+    in — it is simply the disabled one, which both of them step over. */
+function Note({ item }: { item: PaletteItem }) {
+  return (
+    <CommandMenuItem
+      value={item.id}
+      className={cn(
+        "h-auto min-h-0 cursor-default gap-2 py-2.5 text-xs",
+        item.noteTone === "warn" ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground",
+        // `disabled` fades a row that could have been picked; a note was never
+        // going to be, so the fade is only noise over text meant to be read.
+        "!opacity-100"
+      )}
+    >
+      {item.icon && (
+        <span className="flex shrink-0 items-center [&_svg:not([class*='size-'])]:size-3.5">
+          {item.icon}
+        </span>
+      )}
+      <span className="min-w-0 flex-1">{item.title}</span>
+    </CommandMenuItem>
   )
 }
 
@@ -154,7 +225,7 @@ function Tile({ children }: { children: React.ReactNode }) {
       aria-hidden="true"
       className={cn(
         "flex size-7 shrink-0 items-center justify-center rounded-md bg-muted/70 text-muted-foreground ring-1 ring-border/50 ring-inset",
-        "transition-colors group-data-selected/row:bg-background group-data-selected/row:text-foreground",
+        "transition-colors group-aria-selected/row:bg-background group-aria-selected/row:text-foreground",
         "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         "[&_img]:size-5"
       )}
@@ -182,7 +253,7 @@ function Badge({ badge }: { badge: PaletteBadge }) {
     it — the part that is short and always wanted — stays. */
 function Meta({ parts }: { parts: PaletteMeta[] }) {
   return (
-    <span className="flex max-w-[45%] min-w-0 shrink items-center gap-1.5 text-[11px] leading-4 text-muted-foreground group-data-selected/row:text-accent-foreground/80">
+    <span className="flex max-w-[45%] min-w-0 shrink items-center gap-1.5 text-[11px] leading-4 text-muted-foreground">
       {parts.map((part, index) => (
         <React.Fragment key={index}>
           {index > 0 && <span className="shrink-0 opacity-50">·</span>}

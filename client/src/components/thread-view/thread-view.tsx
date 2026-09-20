@@ -25,6 +25,7 @@ import {
 import type { Actions } from "@/lib/actions"
 import { KEYBOARD_CENTER_FLOW, KEYBOARD_LIFT, KEYBOARD_LIFT_FOCUSED } from "@/lib/keyboard-inset"
 import { holdOf } from "@/lib/thread/hold"
+import { isOpening } from "@/lib/thread/phase"
 import { currentThreadId, navigateTo, threadPath } from "@/lib/router"
 import { useDispatch, useSessionMeta, useThread, threadIsEmpty, type ThreadItem } from "@/lib/store"
 import { useLocation } from "react-router"
@@ -58,6 +59,7 @@ import {
 import { useEarlierAnchor } from "@/components/thread-view/earlier-anchor"
 import { useThreadKeys } from "@/components/thread-view/thread-keys"
 import { StartingLine, useWaitShown } from "@/components/thread-view/starting-line"
+import { ThreadSkeleton } from "@/components/thread-view/skeleton"
 import { ThreadWelcome } from "@/components/thread-view/welcome"
 
 /** A transcript, addressed by the pair that names it. The panel above hands
@@ -82,7 +84,23 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
   /* An interrupt is resumable only while it is the last thing that happened:
      the turn is over, the agent is still there, and nothing has been said
      since. Anything older is history, and history does not get a button. */
-  const options = useViewOptions()
+  /* Deferred, and this is the *only* place it is: a view option is read through
+     `ViewOptionsContext` by every row, tool pane and diff below, and a context
+     value change punches straight through every `React.memo` on the way down —
+     the same thing the `stepTokens` note further down guards against. With no
+     virtualization, one flipped switch is a synchronous re-render of every row
+     in the thread, so the click that flipped it waited for the whole transcript
+     before the switch itself moved.
+
+     `useDeferredValue` splits that in two: the dialog reads the store directly
+     (`session-settings.tsx`), so its switch is still instant, and the
+     transcript re-renders at low priority a frame behind. Nothing here is
+     time-critical enough to notice the frame — `autoScroll` included.
+
+     Not `startTransition` at the write: `useViewOptions` is a
+     `useSyncExternalStore`, and an external store's update is always urgent.
+     Deferring the value is the only side of this that works. */
+  const options = React.useDeferredValue(useViewOptions())
   const follow = useFollowStream(options.autoScroll)
   /* Paging back costs a round trip and then a re-fold of the whole widened
      window. Only the round trip can be paid before it is asked for, so it is:
@@ -374,6 +392,11 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
   // Shared with the hero behind the whole inset, which the shell paints — the
   // two must agree about when this thread counts as empty. See lib/store.
   const empty = threadIsEmpty(thread, meta?.draft)
+  /* The stand-in for a transcript that is on its way: opening, nothing folded
+     yet, and not a draft (which has no transcript to wait for). Gated out here
+     rather than inside the component because a `MessageScrollerItem` that
+     renders nothing still reserves its intrinsic size. */
+  const skeletonShown = !meta?.draft && thread.items.length === 0 && isOpening(thread.phase)
 
   /* Which finished answers get a suggestion card, keyed by the answer's own id
      — the same per-turn slot the sources and token footers occupy. The thread's
@@ -479,13 +502,20 @@ export function ThreadView({ sessionId, actions }: { sessionId: string; actions:
                 !empty && "pb-[calc(var(--composer-dock-h,13rem)+1rem)]",
               )}
             >
-              {/* Nothing stands in while a thread connects. A skeleton claimed a
-                  shape for content nobody had seen yet, and on a thread that
-                  turns out to be empty it was a lie twice over. The sidebar row
-                  says "connecting" instead — see AppShell.
+              {/* A stand-in while the transcript is being read — and only then:
+                  an opening thread with nothing folded yet, never a draft, and
+                  gone the instant the first row lands. That gate is what makes
+                  it not the old unconditional skeleton, which claimed a shape
+                  for content nobody had seen yet. The sidebar row still says
+                  "connecting" — see AppShell.
                   The empty state is not in here either: it sits with the
                   composer in the middle row, so the greeting and the box you
                   type into travel to the bottom together. */}
+              {skeletonShown && (
+                <MessageScrollerItem messageId="skeleton">
+                  <ThreadSkeleton />
+                </MessageScrollerItem>
+              )}
               {/* The transcript begins in the middle: this thread was long
                   enough that the server sent only its tail. The rest is still
                   there and comes back a page at a time. */}

@@ -29,7 +29,26 @@ function PopoverContent({
         alignOffset={alignOffset}
         side={side}
         sideOffset={sideOffset}
-        className="isolate z-50"
+        /* `z-50` and deliberately NOT `isolate`, which is what the Base UI
+           registry ships here and what silently turned off every frosted
+           surface in the app.
+
+           `isolation: isolate` makes an element a *backdrop root*, and a
+           `backdrop-filter` only samples what is painted below it as far up as
+           the nearest backdrop root. The Positioner is the popup's parent and
+           holds nothing but the popup, so with `isolate` on it the popup's
+           backdrop is empty: `backdrop-blur` runs, finds nothing behind it and
+           returns nothing. Both the `GLASS_SURFACE` recipe and the
+           `[data-slot="popover-content"]` rule in index.css were asking for a
+           blur that could never draw, which reads as a flat translucent slab —
+           the bug that was reported against the sidebar's plan-usage and
+           servers popovers, and was true of every popover in the app.
+
+           Nothing is lost by dropping it: the Positioner is absolutely
+           positioned with a z-index, so it is already its own stacking context.
+           The same line is gone from the dropdown, context-menu, select,
+           combobox and hover-card positioners for the same reason. */
+        className="z-50"
       >
         <PopoverPrimitive.Popup
           data-slot="popover-content"

@@ -89,10 +89,13 @@ export function projectItem({
   badge,
   lastActivity,
   always,
+  checked,
 }: {
   project: Project
   group: string
   onSelect: () => void
+  /** Marked where the list is a picker rather than a set of destinations. */
+  checked?: boolean
   /** "Last used", on the project a bare New thread would have picked. */
   badge?: string
   lastActivity?: number
@@ -109,6 +112,7 @@ export function projectItem({
     icon: <ProjectIcon project={project} className="size-5" />,
     badges: badge ? [{ label: badge, tone: "primary" }] : undefined,
     meta,
+    checked,
     onSelect,
   }
 }

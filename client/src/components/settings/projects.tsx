@@ -1,7 +1,11 @@
 import * as React from "react"
+import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core"
+import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
 import {
   BookOpenIcon,
   FolderIcon,
+  GripVertical,
   GlobeIcon,
   PanelsTopLeft,
   Pencil,
@@ -30,9 +34,11 @@ import {
   useDeleteHelper,
   useDeleteKnowledge,
   useProjectKnowledge,
+  useReorderProjects,
   useUpdateHelper,
 } from "@/lib/queries/surfaces"
-import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions, FormSection } from "./primitives"
+import { cn } from "@/lib/utils"
+import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions, FormSection, INSET } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 import { projectPath, settingsFormPath, settingsPath } from "@/lib/router"
@@ -45,6 +51,35 @@ export function ProjectsPage() {
   const projects = useProjects()
   const confirm = useConfirm()
   const navigate = useNavigate()
+  const reorder = useReorderProjects()
+
+  /* The dragged arrangement is drawn immediately and the server is told; the
+     local copy is dropped once the refetched list agrees with it, so the row
+     never jumps back to the old order for a frame while the write is in
+     flight. A failed write leaves the stale arrangement on screen only until
+     the list refreshes — the error is what says it did not take. */
+  const [dragged, setDragged] = React.useState<Project[] | null>(null)
+  const list = dragged ?? projects
+  const ids = projects.map((p) => p.id).join()
+  React.useEffect(() => {
+    setDragged((d) => (d && d.map((p) => p.id).join() === ids ? null : d))
+  }, [ids])
+
+  /* A grip is its own target, so there is no swipe-versus-drag ambiguity to
+     resolve and one pointer sensor covers mouse and touch alike. */
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
+
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return
+    const from = list.findIndex((p) => p.id === active.id)
+    const to = list.findIndex((p) => p.id === over.id)
+    if (from < 0 || to < 0) return
+    const next = arrayMove(list, from, to)
+    setDragged(next)
+    reorder.mutate(next.map((p) => p.id), {
+      onError: (err) => reportError(err, "Couldn't save the project order"),
+    })
+  }
 
   const remove = async (project: Project) => {
     if (
@@ -81,37 +116,70 @@ export function ProjectsPage() {
           action={newButton}
         />
       ) : (
-        <Group>
-          {projects.map((project) => (
-            <Row
-              key={project.id}
-              icon={<ProjectIcon project={project} className="size-4 shrink-0" />}
-              title={project.name}
-              subtitle={
-                <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                  <span className="font-mono">{project.cwd}</span>
-                  {project.description && (
-                    <span className="basis-full truncate break-normal">{project.description}</span>
-                  )}
-                </span>
-              }
-            >
-              {/* The overview is the project as a *place* — its threads, its
-                  numbers — where this page is the project as a record. */}
-              <Button variant="ghost" size="icon-lg" title="Open overview" onClick={() => void navigate(projectPath(project.id))}>
-                <PanelsTopLeft />
-              </Button>
-              <Button variant="ghost" size="icon-lg" title="Edit" onClick={() => void navigate(settingsFormPath("projects", project.id))}>
-                <Pencil />
-              </Button>
-              <Button variant="ghost" size="icon-lg" title="Delete" onClick={() => remove(project)}>
-                <Trash2 />
-              </Button>
-            </Row>
-          ))}
-        </Group>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+          <SortableContext items={list.map((p) => p.id)} strategy={verticalListSortingStrategy}>
+            <Group label={`${list.length} project${list.length === 1 ? "" : "s"}`}>
+              {list.map((project) => (
+                <SortableProjectRow key={project.id} project={project}>
+                  {/* The overview is the project as a *place* — its threads, its
+                      numbers — where this page is the project as a record. */}
+                  <Button variant="ghost" size="icon-lg" title="Open overview" onClick={() => void navigate(projectPath(project.id))}>
+                    <PanelsTopLeft />
+                  </Button>
+                  <Button variant="ghost" size="icon-lg" title="Edit" onClick={() => void navigate(settingsFormPath("projects", project.id))}>
+                    <Pencil />
+                  </Button>
+                  <Button variant="ghost" size="icon-lg" title="Delete" onClick={() => remove(project)}>
+                    <Trash2 />
+                  </Button>
+                </SortableProjectRow>
+              ))}
+            </Group>
+          </SortableContext>
+        </DndContext>
       )}
     </>
+  )
+}
+
+/** One project as a draggable row. The wrapper is what moves; only the grip
+    starts a drag, so every button in the row still takes a plain click. */
+function SortableProjectRow({ project, children }: { project: Project; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: project.id,
+  })
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={isDragging ? "relative z-10 bg-background opacity-90 shadow-lg" : undefined}
+    >
+      <Row
+        handle={
+          <button
+            type="button"
+            className="mt-0.5 shrink-0 cursor-grab touch-none text-muted-foreground hover:text-foreground"
+            aria-label={`Reorder ${project.name}`}
+            {...attributes}
+            {...listeners}
+          >
+            <GripVertical className="size-4" />
+          </button>
+        }
+        icon={<ProjectIcon project={project} className="size-4 shrink-0" />}
+        title={project.name}
+        subtitle={
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+            <span className="font-mono">{project.cwd}</span>
+            {project.description && (
+              <span className="basis-full truncate break-normal">{project.description}</span>
+            )}
+          </span>
+        }
+      >
+        {children}
+      </Row>
+    </div>
   )
 }
 
@@ -139,10 +207,17 @@ export function ProjectForm({
   project,
   settings,
   onDone,
+  dialog = false,
 }: {
   project: Project | null
   settings: ServerSettings
-  onDone: (saved: boolean) => void
+  /** The saved row, so a caller that opened this to *pick* a project can
+      select what it just made; null when the form was cancelled. */
+  onDone: (saved: Project | null) => void
+  /** Drawn inside a dialog rather than as a settings route: the page header is
+      the dialog's own, and the sections that need a saved id (helpers,
+      knowledge) have nothing to say about a project being created. */
+  dialog?: boolean
 }) {
   const [form, setForm] = React.useState(() => ({
     name: project?.name ?? "",
@@ -168,12 +243,10 @@ export function ProjectForm({
         logoUrl: form.logoUrl.trim(),
         previewUrl: form.previewUrl.trim(),
       }
-      if (project) {
-        await api(settings, `/api/projects/${project.id}`, { method: "PUT", body: JSON.stringify(payload) })
-      } else {
-        await api(settings, "/api/projects", { method: "POST", body: JSON.stringify(payload) })
-      }
-      onDone(true)
+      const saved = project
+        ? await api<Project>(settings, `/api/projects/${project.id}`, { method: "PUT", body: JSON.stringify(payload) })
+        : await api<Project>(settings, "/api/projects", { method: "POST", body: JSON.stringify(payload) })
+      onDone(saved)
     } catch (err) {
       setSaveError(captureError(err, "Couldn't save the project"))
       setBusy(false)
@@ -182,11 +255,13 @@ export function ProjectForm({
 
   return (
     <>
-      <FormPageHeader
-        title={project ? `Edit ${project.name}` : "New project"}
-        description="Configure the workspace, linked capabilities, and project knowledge."
-        onBack={() => onDone(false)}
-      />
+      {!dialog && (
+        <FormPageHeader
+          title={project ? `Edit ${project.name}` : "New project"}
+          description="Configure the workspace, linked capabilities, and project knowledge."
+          onBack={() => onDone(null)}
+        />
+      )}
       <PageForm onSubmit={save}>
       <FormSection label="Workspace">
         <Field label="Name">
@@ -236,12 +311,14 @@ export function ProjectForm({
           </div>
         </Field>
       </FormSection>
-      <FormActions busy={busy} onCancel={() => onDone(false)} error={saveError} />
+      <FormActions busy={busy} onCancel={() => onDone(null)} error={saveError} />
       </PageForm>
-      <div className="mt-8 border-t pt-6 space-y-8">
-        <HelpersSection project={project} />
-        <KnowledgeSection project={project} />
-      </div>
+      {!dialog && (
+        <div className="mt-8 border-t pt-6 space-y-8">
+          <HelpersSection project={project} />
+          <KnowledgeSection project={project} />
+        </div>
+      )}
     </>
   )
 }
@@ -379,7 +456,7 @@ function HelpersSection({ project }: { project: Project | null }) {
           {helpers.length === 0 ? (
             <Empty>No helper commands yet — add one below.</Empty>
           ) : (
-            <ul className="max-h-64 divide-y overflow-y-auto rounded-lg border">
+            <ul className={cn("max-h-64 divide-y divide-border/60 overflow-y-auto", INSET)}>
               {helpers.map((h) => (
                 <li key={h.id} className="flex items-start gap-3 px-3 py-2">
                   <SquareTerminal className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
@@ -429,7 +506,7 @@ function HelpersSection({ project }: { project: Project | null }) {
               ))}
             </ul>
           )}
-          <form onSubmit={save} className="space-y-3 rounded-lg border p-3">
+          <form onSubmit={save} className={cn("space-y-3 p-3", INSET)}>
             <div className="text-xs font-medium">
               {editingId ? "Edit helper command" : "New helper command"}
             </div>
@@ -481,7 +558,7 @@ function HelpersSection({ project }: { project: Project | null }) {
               />
               {envProblem && <p className="text-xs text-destructive">{envProblem}</p>}
             </Field>
-            <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+            <div className={cn("flex items-center justify-between gap-3 px-3 py-2", INSET)}>
               <div className="min-w-0">
                 <div className="text-xs font-medium">Ask before running</div>
                 <div className="text-[11px] text-muted-foreground">
@@ -490,7 +567,7 @@ function HelpersSection({ project }: { project: Project | null }) {
               </div>
               <Switch checked={confirm} onCheckedChange={setConfirm} aria-label="Ask before running" />
             </div>
-            <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+            <div className={cn("flex items-center justify-between gap-3 px-3 py-2", INSET)}>
               <div className="min-w-0">
                 <div className="text-xs font-medium">Starts the project's dev server</div>
                 <div className="text-[11px] text-muted-foreground">
@@ -605,7 +682,7 @@ function KnowledgeSection({ project }: { project: Project | null }) {
           {rows.length === 0 ? (
             <Empty>No knowledge entries yet — add the first one below.</Empty>
           ) : (
-            <ul className="max-h-64 divide-y overflow-y-auto rounded-lg border">
+            <ul className={cn("max-h-64 divide-y divide-border/60 overflow-y-auto", INSET)}>
               {rows.map((entry) => (
                 <li key={entry.id} className="flex items-start gap-3 px-3 py-2">
                   <BookOpenIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
@@ -630,7 +707,7 @@ function KnowledgeSection({ project }: { project: Project | null }) {
               ))}
             </ul>
           )}
-          <form onSubmit={add} className="space-y-4 rounded-lg border p-3">
+          <form onSubmit={add} className={cn("space-y-4 p-3", INSET)}>
             <Field label="Title">
               <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What this is about" required />
             </Field>

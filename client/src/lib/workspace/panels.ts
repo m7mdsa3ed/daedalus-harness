@@ -11,19 +11,31 @@
    server restart. `parsePanel` is the other half of that contract — anything
    restored has to come back through it before the dock will trust it. */
 
-export type PanelKind = "chat" | "ide" | "terminal" | "web" | "tasks" | "page"
+import type { SerializedDockview } from "dockview-react"
+
+export type PanelKind = "chat" | "ide" | "terminal" | "web" | "tasks" | "page" | "group"
 
 /** Whether a web panel is looking at a project's own dev server or the wider
     internet. It is carried on the descriptor so the panel cannot decide for
     itself; a panel may drop to "external" but never raise itself back. */
+/** The project id of a terminal or IDE opened with no thread routed: the
+    server roots it at $HOME (`projectRoot`). */
+export const HOME_PROJECT_ID = "home"
+
 export type WebTrust = "project" | "external"
 
 export type PanelDescriptor =
   | { kind: "chat"; sessionId: string }
   /** The IDE — the editor, the file explorer, file search and source control
       in one. One per project, because what is open *inside* it is its own
-      state (`lib/ide/editors.ts`) and not the dock's. */
-  | { kind: "ide"; projectId: string }
+      state (`lib/ide/editors.ts`) and not the dock's — until asked for by name:
+      `viewId` is what lets there be a second one: the panel is the surface and
+      the project is what it is pointed at, so two of them are two views of the
+      same project — the old, unsuffixed id is still a valid one, which is what
+      keeps every stored layout and every "show me the IDE" caller working.
+      ponytail: the two share `lib/ide/editors.ts` (keyed by project), so their
+      tabs move together; give the store the viewId if that ever matters. */
+  | { kind: "ide"; projectId: string; viewId?: string }
   /* `closeOnExit` is a helper command's terminal: it was opened by a button
      that meant "run this", not "give me a shell", so a clean exit is the end of
      the errand and the panel goes with it. A non-zero exit keeps the panel —
@@ -34,8 +46,10 @@ export type PanelDescriptor =
       board being read is a *place inside* it (`lib/tasks-location.ts`) the way
       a file is a place inside the IDE, so it travels in the params and moving
       between boards is not opening a second panel. Boards are the server's,
-      not a project's, which is why this carries no `projectId`. */
-  | { kind: "tasks"; boardId?: string; taskId?: string }
+      not a project's, which is why this carries no `projectId`. A second one is
+      asked for by name the way a second IDE is (`viewId`), and then the two are
+      two places, not two copies: the board is in the descriptor. */
+  | { kind: "tasks"; boardId?: string; taskId?: string; viewId?: string }
   /** Every route that is not a thread — settings, a project's page, the inbox,
       the landing console — as a tab, so a settings page can stand beside the
       chat it is about. `path` is the route (pathname plus search) the panel
@@ -44,9 +58,16 @@ export type PanelDescriptor =
       unpinned one rather than adding another (`openPage` in dock.tsx), so its
       id says nothing about where it is pointed. */
   | { kind: "page"; path: string }
+  /** A dock inside a tab — its own strip of tabs standing beside the top-level
+      ones (`workspace/group-panel.tsx`, a second dockview instance). What it
+      holds is its `layout`, a whole serialized dock carried on the params so
+      the outer save carries it; the group writes it back on every nested
+      change. **One level**: a group never holds a group (`pruneLayout`). */
+  | { kind: "group"; groupId: string; layout?: SerializedDockview }
 
 export interface PanelSpec {
-  /** One per project — opening it again focuses what is there. */
+  /** One per resource *by default* — opening it again focuses what is there,
+      unless the opener asks for a fresh one by minting a `viewId`. */
   singleton: boolean
   /** Shown until the panel knows better and calls `api.setTitle`. */
   defaultTitle: string
@@ -63,6 +84,7 @@ export const PANEL_SPECS: Record<PanelKind, PanelSpec> = {
   web: { singleton: false, defaultTitle: "Browser", implemented: true },
   tasks: { singleton: true, defaultTitle: "Tasks", implemented: true },
   page: { singleton: false, defaultTitle: "Page", implemented: true },
+  group: { singleton: false, defaultTitle: "Group", implemented: true },
 }
 
 export const PANEL_KINDS = Object.keys(PANEL_SPECS) as PanelKind[]
@@ -80,7 +102,7 @@ export function panelId(panel: PanelDescriptor): string {
     case "chat":
       return `thread:${panel.sessionId}`
     case "ide":
-      return `ide:${panel.projectId}`
+      return panel.viewId ? `ide:${panel.projectId}:${panel.viewId}` : `ide:${panel.projectId}`
     case "terminal":
       return `terminal:${panel.projectId}:${panel.terminalId}`
     case "web":
@@ -88,11 +110,13 @@ export function panelId(panel: PanelDescriptor): string {
         ? `web:external:${panel.viewId}`
         : `web:${panel.projectId}:${panel.viewId}`
     case "tasks":
-      return "tasks"
+      return panel.viewId ? `tasks:${panel.viewId}` : "tasks"
     case "page":
       /* Never looked up by — a page tab is found by `pageKey`, never by id
          (see `openPage`). This is only the *base* of a fresh tab's id. */
       return `page:${pageKey(panel.path)}`
+    case "group":
+      return `group:${panel.groupId}`
   }
 }
 
@@ -128,7 +152,9 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
       return sessionId ? { kind: "chat", sessionId } : null
     }
     case "ide": {
-      return projectId ? { kind: "ide", projectId } : null
+      return projectId
+        ? { kind: "ide", projectId, ...(str(p.viewId) ? { viewId: str(p.viewId) } : {}) }
+        : null
     }
     case "terminal": {
       const terminalId = str(p.terminalId)
@@ -140,6 +166,15 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
       const path = str(p.path)
       return path?.startsWith("/") ? { kind: "page", path } : null
     }
+    case "group": {
+      const groupId = str(p.groupId)
+      if (!groupId) return null
+      /* The nested layout is carried as-is: it is dockview's own JSON, and what
+         inside it can be restored is `pruneLayout`'s question, asked on the way
+         back in — this is only the shape check. */
+      const layout = p.layout && typeof p.layout === "object" ? (p.layout as SerializedDockview) : undefined
+      return { kind: "group", groupId, ...(layout ? { layout } : {}) }
+    }
     case "tasks": {
       /* Both fields are optional and both are only ever *hints*: an unknown
          board falls through to the remembered one, and an unknown task closes
@@ -149,6 +184,7 @@ export function parsePanel(component: unknown, params: unknown): PanelDescriptor
         kind: "tasks",
         ...(str(p.boardId) ? { boardId: str(p.boardId) } : {}),
         ...(str(p.taskId) ? { taskId: str(p.taskId) } : {}),
+        ...(str(p.viewId) ? { viewId: str(p.viewId) } : {}),
       }
     }
     case "web": {

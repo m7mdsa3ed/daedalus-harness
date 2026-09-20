@@ -12,11 +12,11 @@ import { Notice } from "@/components/notice"
 import {
   READING_MARK,
   READING_TRIGGER,
-  ReadingBadge,
   ReadingBubble,
+  ReadingFace,
   Ring,
 } from "@/components/composer/indicator"
-import { formatReset, peakWindow, planReadable, quotaStatusText, quotaTone } from "@/lib/quota"
+import { formatAmount, formatReset, peakWindow, planReadable, quotaStatusText, quotaTone, windowTitle } from "@/lib/quota"
 import type { Actions } from "@/lib/actions"
 import type { SessionMeta } from "@/lib/settings"
 import { useAgents, useProfiles } from "@/lib/queries/catalog"
@@ -109,13 +109,18 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
             return (
               <div key={window.id}>
                 <div className="flex items-baseline justify-between gap-2 text-xs">
-                  <span className="truncate text-muted-foreground">{window.label}</span>
-                  <span className={cn("font-medium tabular-nums", tone.text)}>{percent}%</span>
+                  <span className="truncate text-muted-foreground">{windowTitle(window)}</span>
+                  <span className="flex shrink-0 items-baseline gap-1.5">
+                    {formatAmount(window) && (
+                      <span className="text-muted-foreground tabular-nums">{formatAmount(window)}</span>
+                    )}
+                    <span className={cn("font-medium tabular-nums", tone.text)}>{percent}%</span>
+                  </span>
                 </div>
                 <div
                   className="mt-1 h-1 w-full overflow-hidden rounded-pill bg-muted"
                   role="progressbar"
-                  aria-label={window.label}
+                  aria-label={windowTitle(window)}
                   aria-valuenow={percent}
                   aria-valuemin={0}
                   aria-valuemax={100}
@@ -128,7 +133,7 @@ function PlanUsage({ thread, meta, actions }: { thread: ThreadState; meta?: Sess
           })}
           {peak && peak.usedPercent >= 90 && (
             <Notice tone="error" className="px-2 py-1.5 text-[11px]">
-              Nearly out of plan — {peak.label.toLowerCase()} is {Math.round(peak.usedPercent)}% used.
+              Nearly out of plan — {windowTitle(peak).toLowerCase()} is {Math.round(peak.usedPercent)}% used.
             </Notice>
           )}
         </div>
@@ -219,9 +224,13 @@ export function ContextIndicator({
                 : "Turn stats"
             }
           >
-            <Ring percent={percent} className={READING_MARK} />
-            <ReadingBubble>{context ? percent : "—"}</ReadingBubble>
-            <ReadingBadge>{context ? `${about}${percent}%` : "Stats"}</ReadingBadge>
+            {/* The dial rides inside the pill, so the reading is one face rather
+                than a ring with a label parked beside it. */}
+            <ReadingFace
+              icon={<Ring percent={percent} className={READING_MARK} />}
+              label={context ? `${about}${percent}%` : "Stats"}
+              after={<ReadingBubble>{context ? percent : "—"}</ReadingBubble>}
+            />
           </Button>
         }
       />

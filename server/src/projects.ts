@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { asc, eq, max, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, projects as projectsTable } from "./db/index.js";
 import { helpersByProject, listHelpers, type HelperCommand } from "./project-helpers.js";
@@ -52,7 +52,10 @@ const columns = (input: ProjectInput) => ({
 });
 
 export async function listProjects(): Promise<Project[]> {
-  const rows = await db.select().from(projectsTable);
+  const rows = await db
+    .select()
+    .from(projectsTable)
+    .orderBy(asc(projectsTable.sortOrder), asc(projectsTable.name));
   const helpers = await helpersByProject(rows.map((r) => r.id));
   return rows.map((row) => rowToProject(row, helpers.get(row.id) ?? []));
 }
@@ -64,9 +67,30 @@ export async function getProject(id: string): Promise<Project | undefined> {
 
 export async function createProject(input: ProjectInput): Promise<Project> {
   const id = randomUUID();
+  // A new project lands at the end of the list, not in the middle of an order
+  // somebody arranged by hand.
+  const last = (await db.select({ max: max(projectsTable.sortOrder) }).from(projectsTable))[0]?.max ?? 0;
   await db.insert(projectsTable)
-    .values({ id, ...columns(input) });
+    .values({ id, ...columns(input), sortOrder: last + 1 });
   return (await getProject(id))!;
+}
+
+/** Reorder by the ids the client hands back, in the order it drew them. Ids
+    the caller does not name keep their relative order *after* the named ones:
+    a stale list from a second tab reorders what it knew about and never drops
+    or shuffles a project it had not seen. */
+export async function reorderProjects(ids: string[]): Promise<Project[]> {
+  if (ids.length > 0) {
+    await db.transaction(async (tx) => {
+      // Unnamed rows are pushed past the named block so the two halves cannot
+      // interleave; ordering within each half is preserved.
+      await tx.update(projectsTable).set({ sortOrder: sql`${projectsTable.sortOrder} + ${ids.length}` });
+      for (const [i, id] of ids.entries()) {
+        await tx.update(projectsTable).set({ sortOrder: i }).where(eq(projectsTable.id, id));
+      }
+    });
+  }
+  return await listProjects();
 }
 
 export async function updateProject(id: string, input: ProjectInput): Promise<Project | undefined> {

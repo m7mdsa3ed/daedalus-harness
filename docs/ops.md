@@ -193,6 +193,52 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   - `openrouter` — `GET /api/v1/key` and `/api/v1/credits`, documented; a key with a
     `limit` is a window over its `limit_reset`, the credits line is the account's.
     `/credits` failing is folded as "no credits line", not as the reading's failure.
+  - `9router` — a **self-hosted gateway**, and the one adapter whose reading is
+    not one plan: 9Router fronts many accounts (a Claude subscription, a Codex
+    login, a GLM key, a free tier) and falls back between them. **So every account is its own
+    plan, and a window says which it belongs to** (`QuotaWindow.group`, the new
+    and only field this needed): the card draws a section per account — name,
+    its fullest window beside it, its own tiles under it — which is the shape
+    the sidebar popover already drew two accounts of one provider in. Pooling
+    across the accounts was tried first, on the theory that fallback makes the
+    gateway's aggregate the only number that gates a turn, and it is wrong for
+    what a person does with this page: a five-hour window is a *different* five
+    hours per account, a Max subscription and a GLM key are not interchangeable
+    capacity, and "60% across four accounts" hides both the exhausted account
+    and the untouched one. **The accounts stay in the gateway's own priority
+    order** — the order it will spend them in, so the first section is the one
+    serving now and sorting by fullness would scramble the one fact a fallback
+    chain has to show. Two accounts the gateway gives the same name are
+    disambiguated (`Claude`, `Claude (2)`), because one `group` string is one
+    section. The plan name counts the accounts actually behind the bars
+    (`9Router · 4 accounts (1 not reporting)`), plus the ones past the cap that
+    were never read (`(+3 not shown)`, from the gateway's own `pagination.total`
+    — an account nobody asked about is not an account that stayed quiet).
+    **A window is named the way the gateway's own dashboard names it, not the
+    way its handler keyed it**: `/api/usage/:id` is a raw body 9Router runs
+    through one provider-aware normalizer before drawing (`parseQuotaData` in
+    `ProviderLimits/utils.js`), and reading it without that is how the same
+    account said `spark_weekly` here and "Spark (Weekly)" there. Ported, and
+    only where it differs from the raw body: Codex's window names, Antigravity's
+    dozen model rows collapsed to one bar per family at the family's **worst**
+    window (the model that runs out first is what gates the account), Qoder's
+    empty `organization` bucket skipped, and `unit` carried. The percentage was
+    already the gateway's own rule — `remainingPercentage`, else `used`/`total`.
+    Nothing in the client knows what
+    a group *is*: `WindowGrid` draws whatever the reading grouped, an ungrouped
+    reading is the flat grid it always was, and the flat surfaces (the composer
+    popover, the sidebar, the overview's tightest line) prefix the account
+    through the one `windowTitle` helper. `GET /api/providers/client?accountStatus=active` (already
+    filtered to the connections it can report on, which is why it and not
+    `/api/providers`) then `GET /api/usage/:connectionId` per row, capped at 20
+    so one refresh cannot become fifty upstream calls. Host from the profile's
+    own base URL's origin — it is the same server as `…:20128/v1`. **Its `sk-`
+    key is not the credential**: that authorizes `/v1` inference only, while
+    every `/api/*` route sits behind the dashboard session, so the call is made
+    bare (the whole answer with `requireLogin` off) and, on a 401, retried after
+    a `POST /api/auth/login` with the dashboard password — which is what
+    `ProfileUsage.apiKey` holds here. A 401 with no password says so in words.
+    One account failing is that account's row, never the reading's.
   Two that were checked and deliberately not added: Alibaba's coding-plan quota (the
   console's `queryCodingPlanInstanceInfoV2` route answers `ConsoleNeedLogin` to a bare
   API key — it needs a browser session the harness will not hold) and Chutes (no pinned

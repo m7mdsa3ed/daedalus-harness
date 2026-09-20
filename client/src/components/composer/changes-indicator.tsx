@@ -9,8 +9,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import {
   READING_MARK,
   READING_TRIGGER,
-  ReadingBadge,
   ReadingBubble,
+  ReadingFace,
 } from "@/components/composer/indicator"
 import { shortPath } from "@/lib/tools"
 import type { ChangedFile, TurnChanges } from "@/lib/workspace/git-api"
@@ -81,14 +81,15 @@ export function ChangesIndicator({
             title={`${label} — +${added} −${removed}`}
             aria-label={label}
           >
-            <GitCompareIcon className={READING_MARK} />
-            {/* The subagent count's bargain, one tone quieter: the label where
-                the panel has room for words, the bubble on the mark where it does
-                not — one count, two dresses, never both, both shared with the
-                four beside it. Secondary and not primary: a settled fact, not
-                something still running. */}
-            <ReadingBadge>{label}</ReadingBadge>
-            <ReadingBubble tone="secondary">{count > 9 ? "9+" : count}</ReadingBubble>
+            {/* The subagent count's bargain: the mark rides inside the pill where
+                the panel has room for words, and stands bare with the bubble on
+                it where it does not — one count, two dresses, never both, both
+                shared with the four beside it. */}
+            <ReadingFace
+              icon={<GitCompareIcon className={READING_MARK} />}
+              label={label}
+              after={<ReadingBubble>{count > 9 ? "9+" : count}</ReadingBubble>}
+            />
           </Button>
         }
       />

@@ -1,0 +1,269 @@
+<!doctype html>
+<!--
+  v15 — Sections as cards. v2's tiers and v2's one-line rows, with the *tier*
+  given a shape.
+
+  In v2 every tier is a heading followed by rows, and the whole column is one
+  flat surface: "Today" and "Projects" read as the same kind of thing because
+  nothing but 8px of gap separates them, and a long list of rows makes the
+  headings hard to find on the way back up. Here each section is a card — a
+  rounded surface with its heading inside it, its count on the trailing edge,
+  and its rows below. The eye gets a countable number of things to scan rather
+  than one list with text in it, and a folded section is a single line of chrome
+  rather than a heading floating over nothing.
+
+  Everything inside a card is v2's row, unchanged.
+-->
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="/logo.svg" type="image/svg+xml" />
+<title>v15 — Section cards</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --radius: 0.625rem; --radius-xl: calc(var(--radius) * 1.4);
+    --background: oklch(1 0 0); --foreground: oklch(0.145 0 0); --card: oklch(1 0 0);
+    --muted: oklch(0.97 0 0); --muted-foreground: oklch(0.556 0 0); --primary: oklch(0.205 0 0);
+    --sidebar: var(--background); --sidebar-foreground: oklch(0.145 0 0);
+    --sidebar-accent: oklch(0.9 0 0); --sidebar-border: oklch(0.91 0 0);
+    --app-ground: oklch(0.97 0 0); --amber: oklch(0.769 0.188 70.08);
+    --green: oklch(0.723 0.219 149.579); --destructive: oklch(0.577 0.245 27.325);
+    --blue: oklch(0.707 0.165 254.624); --violet: oklch(0.606 0.25 292.717);
+    /* The card's ground: one step off the sidebar, so a section is a surface
+       and not a line. Derived, so it follows the palette and both modes. */
+    --group: color-mix(in oklab, var(--foreground) 4%, transparent);
+  }
+  html.dark {
+    --background: oklch(0.145 0 0); --foreground: oklch(0.985 0 0); --card: oklch(0.205 0 0);
+    --muted: oklch(0.269 0 0); --muted-foreground: oklch(0.708 0 0); --primary: oklch(0.922 0 0);
+    --sidebar: var(--background); --sidebar-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.269 0 0); --sidebar-border: oklch(1 0 0 / 10%);
+    --app-ground: oklch(0.12 0 0);
+    --group: color-mix(in oklab, var(--foreground) 7%, transparent);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: "Figtree", ui-sans-serif, system-ui, sans-serif; font-size: 13px; line-height: 1.38;
+    color: var(--foreground); background: var(--app-ground); -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  svg { width: 16px; height: 16px; flex: 0 0 auto; }
+  [hidden] { display: none !important; }
+
+  .app { display: flex; height: 100vh; overflow: hidden; }
+  .sidebar {
+    --w: 276px; width: var(--w); min-width: 210px; max-width: 440px; flex: 0 0 auto;
+    display: flex; flex-direction: column; overflow: hidden;
+    background: var(--sidebar); border-right: 1px solid var(--sidebar-border);
+  }
+  .main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; padding: 6px 6px 6px 0; }
+  .tabs { display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 4px; }
+  .tab {
+    display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px 0 10px;
+    border-radius: 8px; color: var(--muted-foreground); box-shadow: inset 0 0 0 1px var(--sidebar-border);
+  }
+  .tab[data-active="true"] { color: var(--foreground); background: var(--card); box-shadow: inset 2px 0 0 0 var(--primary), 0 1px 2px rgba(0,0,0,.12); }
+  .card { flex: 1 1 auto; border-radius: var(--radius-xl); background: var(--card); display: grid; place-items: center; color: var(--muted-foreground); font-size: 12px; }
+
+  .head { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; padding: 10px 8px 4px; }
+  .brand-row { display: flex; align-items: center; gap: 8px; height: 28px; padding-left: 4px; }
+  .logo { width: 20px; height: 20px; border-radius: 6px; background: linear-gradient(140deg, var(--violet), var(--blue)); display: grid; place-items: center; color: white; }
+  .logo svg { width: 12px; height: 12px; }
+  .brand-row span { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+  .head-actions { margin-left: auto; display: flex; gap: 2px; }
+  .icon-btn { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 7px; color: var(--muted-foreground); }
+  .icon-btn:hover { background: var(--sidebar-accent); color: var(--sidebar-foreground); }
+  .primary { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: 8px; background: var(--sidebar-accent); font-weight: 500; }
+  .search { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 9px; border-radius: 8px; color: var(--muted-foreground); box-shadow: inset 0 0 0 1px var(--sidebar-border); }
+  .search:hover { background: var(--sidebar-accent); }
+  kbd { font: inherit; font-size: 10px; padding: 1px 5px; border-radius: 4px; margin-left: auto; color: var(--muted-foreground); background: var(--muted); box-shadow: 0 0 0 1px var(--sidebar-border); }
+
+  .chip-row { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 8px 0; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 25px; padding: 0 9px 0 7px;
+    border-radius: 999px; font-size: 12px; background: var(--muted); box-shadow: inset 0 0 0 1px var(--sidebar-border); }
+  .chip:hover { background: var(--sidebar-accent); }
+  .chip .dot { width: 6px; height: 6px; }
+
+  .scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 6px 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+  .scroll::-webkit-scrollbar { width: 8px; }
+  .scroll::-webkit-scrollbar-thumb { background: color-mix(in oklab, var(--foreground) 18%, transparent); border-radius: 999px; }
+
+  /* ── A section is a surface ── */
+  .group { border-radius: 10px; background: var(--group); overflow: hidden; }
+  .group-head { display: flex; align-items: center; gap: 6px; width: 100%; height: 28px; padding: 0 8px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase;
+    color: color-mix(in oklab, var(--sidebar-foreground) 55%, transparent); }
+  .group-head.clickable { cursor: pointer; }
+  .group-head.clickable:hover { color: var(--sidebar-foreground); }
+  .group-head .n { margin-left: auto; letter-spacing: 0; font-weight: 600; opacity: 0.75; }
+  .group-body { padding: 0 4px 4px; }
+  .chev { color: var(--muted-foreground); transition: transform 180ms ease; }
+  [aria-expanded="true"] > .chev { transform: rotate(90deg); }
+
+  .row { display: flex; align-items: center; gap: 8px; width: 100%; height: 28px; padding: 0 6px; border-radius: 7px; text-align: left; }
+  .row:hover { background: var(--sidebar); }
+  .row[data-active="true"] { background: var(--sidebar); font-weight: 500; }
+  .row.dim { color: var(--muted-foreground); }
+  .row .title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .tail { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+  .row .sub { font-size: 11px; color: var(--muted-foreground); }
+  .row .dot { width: 7px; height: 7px; border-radius: 999px; }
+  .dot.running { background: var(--green); animation: pulse 1.6s ease-in-out infinite; }
+  .dot.waiting { background: var(--amber); }
+  .dot.failed { background: var(--destructive); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  /* A project row inside the Projects card: the mark, the name, its count. */
+  .proj { display: flex; align-items: center; gap: 7px; width: 100%; height: 32px; padding: 0 6px; border-radius: 7px; text-align: left; }
+  .proj:hover { background: var(--sidebar); }
+  .proj .mark { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; color: white; font-size: 10px; font-weight: 700; }
+  .proj .name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .proj .sub { font-size: 11px; color: var(--muted-foreground); }
+  .tree { margin-left: 12px; padding-left: 8px; border-left: 1px solid var(--sidebar-border); }
+  .tree .row { height: 27px; }
+
+  .foot { flex: 0 0 auto; display: flex; flex-direction: column; gap: 1px; padding: 6px 8px 8px; border-top: 1px solid var(--sidebar-border); }
+  .foot .frow { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; border-radius: 8px; }
+  .foot .frow:hover { background: var(--sidebar-accent); }
+  .foot .frow .sub { font-size: 11px; color: var(--muted-foreground); }
+  .foot-nav { display: flex; flex-wrap: wrap; gap: 2px; padding: 0 2px; }
+  .nav-link { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 7px; border-radius: 6px; font-size: 12px; color: var(--muted-foreground); }
+  .nav-link:hover { background: var(--sidebar-accent); color: var(--sidebar-foreground); }
+  .nav-link .n { font-size: 11px; opacity: 0.8; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <header class="head">
+      <div class="brand-row">
+        <span class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M12 12v10"/></svg></span>
+        <span>Daedalus</span>
+        <div class="head-actions"><button class="icon-btn" title="Sort and filter"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 5h18M6 12h12M10 19h4"/></svg></button></div>
+      </div>
+      <button class="primary" id="new"></button>
+      <button class="search" id="search"></button>
+    </header>
+    <div class="chip-row" id="chips"></div>
+    <div class="scroll" id="scroll"></div>
+    <footer class="foot" id="foot"></footer>
+  </aside>
+
+  <main class="main">
+    <div class="tabs">
+      <button class="tab" data-active="true"><span class="dot" style="width:6px;height:6px;border-radius:999px;background:var(--green)"></span>Ship the composer width fix</button>
+      <button class="tab">Index the rules table</button>
+      <button class="tab" style="width:30px;padding:0;justify-content:center"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+    </div>
+    <div class="card">the dock — the transcript in front of you</div>
+  </main>
+</div>
+
+<script>
+  const PROJECTS = [
+    { id: "harness", name: "daedalus-harness", hue: 292, initial: "D" },
+    { id: "website", name: "marketing-site", hue: 210, initial: "M" },
+    { id: "infra", name: "infra", hue: 150, initial: "I" },
+    { id: "docs", name: "handbook", hue: 60, initial: "H" },
+  ]
+  const THREADS = [
+    { t: "Ship the composer width fix", p: "harness", s: "running", when: "now", active: true },
+    { t: "Index the rules table", p: "harness", s: "waiting", when: "4m" },
+    { t: "Pricing page copy", p: "website", s: "waiting", when: "22m" },
+    { t: "PM2 fork mode", p: "infra", s: "failed", when: "1h" },
+    { t: "Replay coalescing", p: "harness", s: "idle", when: "3h" },
+    { t: "Trim the OG images", p: "website", s: "idle", when: "5h" },
+    { t: "Terminal key row", p: "harness", s: "idle", when: "9h" },
+    { t: "Onboarding rewrite", p: "docs", s: "idle", when: "1d" },
+    { t: "Backup import", p: "infra", s: "idle", when: "1d" },
+    { t: "Scratch — bridge profiling", p: "harness", s: "idle", when: "2d" },
+    { t: "Session journal replay", p: "harness", s: "idle", when: "2d" },
+    { t: "Font subsetting", p: "website", s: "idle", when: "4d" },
+  ]
+  const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))
+  const dot = (s) => (s === "idle" ? "" : `<span class="dot ${s}"></span>`)
+  const isToday = (w) => /^(now|\d+m|\d+h)$/.test(w)
+
+  document.getElementById("new").innerHTML =
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>New thread<kbd>⌘N</kbd>`
+  document.getElementById("search").innerHTML =
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Search<kbd>⌘K</kbd>`
+  document.getElementById("chips").innerHTML = THREADS.filter((t) => t.active)
+    .map((t) => `<button class="chip">${dot(t.s)}<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.t)}</span></button>`).join("")
+
+  const row = (t, dim) => `
+    <button class="row ${dim ? "dim" : ""}" data-active="${!!t.active}">
+      ${dot(t.s)}<span class="title">${esc(t.t)}</span>
+      <span class="tail"><span class="sub">${t.when}</span></span>
+    </button>`
+
+  /* A card: the header is the fold, the body is the rows. Nothing about a
+     section is drawn outside its own surface. */
+  const card = (key, label, body, opts = {}) => {
+    if (!body) return ""
+    const open = opts.closed !== true
+    return `
+      <section class="group">
+        <button class="group-head ${key ? "clickable" : ""}" ${key ? `data-fold="${key}"` : ""} aria-expanded="${open}">
+          ${key ? `<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg>` : ""}
+          ${label}${opts.count != null ? `<span class="n">${opts.count}</span>` : ""}
+        </button>
+        <div class="group-body" ${key ? `data-folded="${key}"` : ""} ${open ? "" : "hidden"}>${body}</div>
+      </section>`
+  }
+
+  const rest = THREADS.filter((t) => !t.active)
+  const needs = rest.filter((t) => t.s === "waiting" || t.s === "failed")
+  const today = rest.filter((t) => t.s === "idle" && isToday(t.when))
+  const yesterday = rest.filter((t) => t.s === "idle" && t.when === "1d")
+  const earlier = rest.filter((t) => t.s === "idle" && !isToday(t.when) && t.when !== "1d")
+
+  const projects = PROJECTS.map((p) => {
+    const mine = THREADS.filter((t) => t.p === p.id)
+    const open = p.id !== "docs"
+    return `
+      <button class="proj" data-proj="${p.id}" aria-expanded="${open}">
+        <span class="mark" style="background:oklch(0.55 0.18 ${p.hue})">${p.initial}</span>
+        <span class="name">${esc(p.name)}</span>
+        <span class="sub">${mine.length}</span>
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg>
+      </button>
+      <div class="tree" data-projbody="${p.id}" ${open ? "" : "hidden"}>${mine.map((t) => row(t)).join("")}</div>`
+  }).join("")
+
+  document.getElementById("scroll").innerHTML =
+    card("needs", "Needs you", needs.map((t) => row(t)).join(""), { count: needs.length }) +
+    card("today", "Today", today.map((t) => row(t)).join(""), { count: today.length }) +
+    card("yesterday", "Yesterday", yesterday.map((t) => row(t)).join(""), { count: yesterday.length }) +
+    card("earlier", "Earlier", earlier.map((t) => row(t)).join(""), { count: earlier.length, closed: true }) +
+    card(null, "Projects", projects, { count: PROJECTS.length })
+
+  document.getElementById("foot").innerHTML = `
+    <div class="foot-nav">
+      <button class="nav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="11" rx="1"/></svg>Tasks</button>
+      <button class="nav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg>Routines<span class="n">3</span></button>
+      <button class="nav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>Scheduled</button>
+    </div>
+    <button class="frow"><span class="sub">This machine</span><span style="margin-left:auto" class="dot running"></span></button>`
+
+  const fold = (head, target, open) => {
+    head.setAttribute("aria-expanded", String(!open))
+    target.hidden = open
+  }
+  for (const head of document.querySelectorAll(".group-head[data-fold]")) {
+    head.addEventListener("click", () =>
+      fold(head, document.querySelector(`[data-folded="${head.dataset.fold}"]`), head.getAttribute("aria-expanded") === "true"))
+  }
+  for (const head of document.querySelectorAll(".proj")) {
+    head.addEventListener("click", () =>
+      fold(head, document.querySelector(`[data-projbody="${head.dataset.proj}"]`), head.getAttribute("aria-expanded") === "true"))
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "d" && !e.metaKey && !e.ctrlKey) document.documentElement.classList.toggle("dark")
+  })
+</script>
+</body>
+</html>

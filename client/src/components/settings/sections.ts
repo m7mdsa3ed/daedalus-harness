@@ -41,6 +41,14 @@ export const SETTINGS_SECTIONS = [
       "The harness servers this device knows and which one it talks to, plus the device side of the install: whether the app is installed, what the browser makes of the page's security, and the site data it keeps.",
   },
   {
+    id: "ai",
+    label: "AI helpers",
+    icon: Sparkles,
+    title: "AI helpers",
+    description:
+      "The model calls the harness makes for you rather than as a thread: rewriting a draft prompt, drafting a commit message, naming a branch. Each picks its own profile and model, kept on this device; each is one completion on the server, never a turn on a thread's agent, and the key never leaves the server.",
+  },
+  {
     id: "appearance",
     label: "Appearance",
     icon: Palette,
@@ -213,14 +221,19 @@ export const sectionOf = (segment: string): SettingsSectionId | null =>
    owns them. */
 const FULL_WIDTH_SETTINGS: readonly RegExp[] = [/^\/settings\/appearance\/themes\//]
 
+/** A settings page that takes the whole frame — and, with it, no section rail:
+    the studio is already two columns and a third is what makes neither fit. */
+export const isFullWidthSettings = (pathname: string): boolean =>
+  FULL_WIDTH_SETTINGS.some((pattern) => pattern.test(pathname))
+
 export const settingsMaxWidth = (pathname: string): string =>
-  FULL_WIDTH_SETTINGS.some((pattern) => pattern.test(pathname)) ? "max-w-none" : "max-w-5xl"
+  isFullWidthSettings(pathname) ? "max-w-none" : "max-w-5xl"
 
 export const SETTINGS_NAV_GROUPS: readonly {
   label: string
   sections: readonly SettingsSectionId[]
 }[] = [
-  { label: "Preferences", sections: ["general", "appearance", "keyboard", "notifications", "web-search"] },
+  { label: "Preferences", sections: ["general", "appearance", "keyboard", "notifications", "ai", "web-search"] },
   { label: "Workspace", sections: ["projects", "knowledge", "mcp", "skills", "commands", "rules", "personas", "model-prompts"] },
   { label: "Agents", sections: ["profiles", "agents", "usage"] },
   { label: "Server", sections: ["backup"] },

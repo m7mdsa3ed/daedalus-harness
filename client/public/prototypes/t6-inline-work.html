@@ -1,0 +1,140 @@
+<!doctype html>
+<!--
+  T6 — Inline work. The gutter is where a step lives.
+
+  The current row puts every step on a full-width line: mark, title, readings
+  at the right edge. That is a lot of furniture for "read one file". Here the
+  work moves entirely into the left gutter — a branch of marks, no titles —
+  and only the things that need reading (an edit's diff, a command's output,
+  a thought) claim the column. The step's name appears on hover, or as a
+  tooltip; the word "Read" forty times down a thread is what this removes.
+
+  What it buys: a scannable spine of the turn's actions. What it costs: a step
+  with a long file name is no longer readable without opening it, which is why
+  the edits keep their diffs and the runs keep their headers.
+-->
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="/logo.svg" type="image/svg+xml" />
+<title>T6 — Inline work</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./transcript.css" />
+<style>
+  :root { --dock-h: 220px; }
+  /* The gutter owns the steps: a mark column the prose wraps around. */
+  .tv-scroll .col { padding-left: 10px; }
+  .gm { position: relative; padding-left: 30px; }
+  .gm .mark {
+    position: absolute; left: 0; top: 5px; width: 22px; height: 22px; border-radius: 7px;
+    display: grid; place-items: center; background: var(--muted);
+  }
+  .gm .mark svg { width: 13px; height: 13px; }
+  .gm .mark .tip {
+    position: absolute; left: 26px; top: -2px; z-index: 5; white-space: nowrap; pointer-events: none;
+    font-size: 11px; padding: 3px 8px; border-radius: 7px; background: var(--foreground); color: var(--background);
+    opacity: 0; transition: opacity 120ms;
+  }
+  .gm:hover .mark .tip { opacity: 1; }
+  .gm[data-kind="think"] .mark { color: var(--step-think); background: color-mix(in oklab, var(--step-think) 14%, transparent); }
+  .gm[data-kind="execute"] .mark { color: var(--step-command); background: color-mix(in oklab, var(--step-command) 14%, transparent); }
+  .gm[data-kind="other"] .mark { color: var(--step-tool); background: color-mix(in oklab, var(--step-tool) 14%, transparent); }
+  .gm[data-status="failed"] .mark { color: var(--destructive); background: color-mix(in oklab, var(--destructive) 12%, transparent); }
+  /* The spine that joins two marks. */
+  .gm[data-cont]::after {
+    content: ""; position: absolute; left: 10.5px; top: 27px; bottom: -8px; width: 1px; background: var(--border-60);
+  }
+  /* A mark with nothing to say is just the mark — 22px of row. */
+  .gm.silent { min-height: 28px; }
+  /* The run's header, as a gutter mark with a count. */
+  .runmark { position: relative; padding-left: 30px; margin: 6px 0 0; }
+  .runmark > button { display: flex; align-items: center; gap: 8px; }
+  .runmark .mark { position: absolute; left: 0; top: 0; height: 22px; display: flex; align-items: center; }
+  .runmark .stack i { width: 14px; height: 14px; }
+  .runmark .sum { font-size: 0.75rem; color: var(--muted-foreground); }
+  .runmark .steps { margin: 4px 0 2px; }
+  .runmark[data-open] .steps { display: block; }
+  /* A step with a body: a compact header then the payload, both in the column. */
+  .gstep { position: relative; padding-left: 30px; margin: 4px 0 10px; }
+  .gstep .head { display: flex; align-items: center; gap: 8px; font-size: 0.75rem; color: var(--muted-foreground); }
+  .gstep .head .fx { width: 22px; height: 22px; margin-left: -30px; border-radius: 7px; display: grid; place-items: center; background: var(--muted); }
+  .gstep .head .fx svg { width: 13px; height: 13px; }
+  .gstep[data-kind="other"] .head .fx { color: var(--step-tool); }
+  .gstep[data-kind="execute"] .head .fx { color: var(--step-command); }
+  .gstep[data-kind="think"] .head .fx { color: var(--step-think); }
+  .gstep .payload { margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" data-sidebar></aside>
+  <main class="main">
+    <div data-tabs></div>
+    <div class="panel">
+      <div class="tv">
+        <div class="tv-scroll"><div class="col" data-flow></div></div>
+        <div data-dock></div>
+      </div>
+    </div>
+  </main>
+</div>
+<script src="./shared-transcript.js"></script>
+<script>
+  const rows = TX.flow()
+  const { esc, I } = TX
+  const KIND_ICON = { read: I.read, edit: I.edit, search: I.search, execute: I.exec, think: I.think }
+
+  /* One step as a gutter mark. `body` steps print a compact header + payload
+     in the column; silent ones are just the mark. */
+  const mark = (s, cont) => {
+    const icon = KIND_ICON[s.k] || I.other
+    const label = s.file ? `${s.title} ${s.file}` : s.cap ? `${s.title} ${s.cap}` : s.title
+    if (!s.body)
+      return `<div class="gm silent" data-kind="${s.k}" data-status="${s.status || ""}"${cont ? " data-cont" : ""}>
+        <span class="mark">${icon}<span class="tip">${esc(label)}</span></span>
+      </div>`
+    const payload =
+      s.body === "diff"
+        ? `<div class="pane"><pre class="diff"><span class="ctx">@@ composer.tsx:118 @@</span><span class="del">-  :focus-within { width: 100% }</span><span class="add">+  width: var(--harness-composer-width)</span></pre></div>`
+        : s.body === "out"
+          ? `<div class="pane"><pre>$ pnpm exec tsc -b
+✓ built in 3.1s</pre></div>`
+          : `<div class="pane"><pre>/* one width, declared once */
+.composer-shell { width: var(--harness-composer-width); }</pre></div>`
+    return `<div class="gstep" data-kind="${s.k}" data-status="${s.status || ""}">
+      <div class="head"><span class="fx">${icon}</span><span class="ttl">${esc(s.title)}</span>${s.file ? `<span class="punct">·</span><span class="file-chip">${esc(s.file)}</span>` : ""}</div>
+      <div class="payload">${payload}</div>
+    </div>`
+  }
+
+  const runBlock = (r) => `
+    <div class="runmark" data-open>
+      <span class="mark">${I.list}</span>
+      <button onclick="this.closest('.runmark').toggleAttribute('data-open');const s=this.closest('.runmark').querySelector('.steps');if(s)s.hidden=!s.hidden">
+        <span class="stack">${r.items.slice(0, 2).map((it) => `<i style="background:color-mix(in oklab, var(--step-tool) 70%, var(--card))">${it.k[0].toUpperCase()}</i>`).join("")}</span>
+        <span class="sum">${esc(r.summary)}</span>
+      </button>
+      <div class="steps">${r.items.map((it, i) => mark(it, i < r.items.length - 1)).join("")}</div>
+    </div>`
+
+  const thoughtMark = (r) => `
+    <div class="gstep" data-kind="think">
+      <div class="head"><span class="fx">${I.think}</span><span class="ttl" style="font-style:italic">thinking</span></div>
+      <div class="payload"><div class="pane-pad" style="font-size:12px;color:var(--muted-foreground)">${esc(r.text)}</div></div>
+    </div>`
+
+  document.querySelector("[data-tabs]").innerHTML = TX.tabs("Ship the composer width fix")
+  document.querySelector("[data-flow]").innerHTML = rows
+    .map((r) => {
+      if (r.t === "run") return runBlock(r)
+      if (r.t === "thought") return thoughtMark(r)
+      return TX.render([r])
+    })
+    .join("")
+  document.querySelector("[data-dock]").innerHTML = TX.composer({ placeholder: "Reply…", queue: ["and check it at 320px too"] })
+  TX.sidebar(document.querySelector("[data-sidebar]"))
+  TX.theme()
+</script>
+</body>
+</html>

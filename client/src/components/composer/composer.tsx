@@ -3,15 +3,19 @@
    surface that takes a prompt.
 
    ── The card is three bands ──
-   **The scope band on top** — where this thread runs, what it carries, and how
-   full its window is: project · tools · … · the context ring. It is the band
-   that does not change when the thread starts. Both halves used to be
-   draft-only rows on the shelf, which meant the project vanished at the moment
-   it started mattering: while you were typing the *first* message you could see
-   which directory the agent would edit, and from the second message on you
-   could not. A started thread's project is fixed (it is the cwd) so it reads
-   out rather than picks, and the tools menu already knew how to do both. The
-   ring at the end is the same `ContextIndicator` the tab wears, opening upward.
+   **The scope band on top** — where this thread runs, what it carries, how full
+   its window is, and whether this device can get a message out about it:
+   project · connection · tools · … · the context ring. It is the band that does
+   not change when the thread starts. Both halves used to be draft-only rows on
+   the shelf, which meant the project vanished at the moment it started
+   mattering: while you were typing the *first* message you could see which
+   directory the agent would edit, and from the second message on you could not.
+   A started thread's project is fixed (it is the cwd) so it reads out rather
+   than picks, and the tools menu already knew how to do both. The connection
+   sits directly after it, because the two are the questions the rest of the
+   floor is read against — and because it is the one reading whose answer the
+   shelf's own ground then wears (`tone` below). The ring at the end is the same
+   `ContextIndicator` the tab wears, opening upward.
 
    **The textarea.** **Then one toolbar** that reads left to right as *what goes
    in → who answers → what happens*: the "+" menu (attach, photo, mention,
@@ -52,7 +56,8 @@
    ── What lives beside this file ──
    The card and its two rows are here, because the rule is about the two of
    them together. The pieces that are a subject of their own are not:
-   `notices.tsx` (the two dashed notes above the shelf), `add-menu.tsx` (the
+   `connection-indicator.tsx` (this device's connection, beside the project on
+   the footer, and the tone the shelf wears for it), `add-menu.tsx` (the
    "+", and the pickers only it clicks), `text-insertions.ts` (what that menu
    types on the user's behalf), `enhance-button.tsx` (the rewrite and every
    read behind it), `keys.ts` (the one ordering of Enter and the completers),
@@ -69,14 +74,17 @@ import {
   AgentsIndicator,
   ChangesIndicator,
   ConfigIndicator,
+  ConnectionIndicator,
   ContextIndicator,
+  RepoIndicator,
   TodoIndicator,
+  connectionNote,
+  connectionTone,
 } from "@/components/composer-status"
 import { ComposerAttachments, ComposerPastes, type AttachmentDelivery } from "@/components/composer-attachments"
 import { ComposerHistoryDialog } from "@/components/composer-history-dialog"
 import { ComposerStrip, ComposerStripItem } from "@/components/composer-strip"
 import { ComposerAddMenu } from "@/components/composer/add-menu"
-import { ComposerNotices } from "@/components/composer/notices"
 import { EnhanceButton } from "@/components/composer/enhance-button"
 import { composerKeyDown } from "@/components/composer/keys"
 import { usePromptHistory } from "@/components/composer/prompt-history"
@@ -111,7 +119,14 @@ import {
   savePastes,
   type Paste,
 } from "@/lib/pastes"
-import { useComposerHistory, useProjects, useRecordComposerHistory } from "@/lib/queries"
+import {
+  useComposerHistory,
+  useInvalidateShellHistory,
+  useProjectScripts,
+  useProjects,
+  useRecordComposerHistory,
+  useShellHistory,
+} from "@/lib/queries"
 import { currentThreadId, schedulePath } from "@/lib/router"
 import type { SessionMeta } from "@/lib/settings"
 import { formatChord } from "@/lib/shortcuts"
@@ -408,34 +423,53 @@ export function Composer({
   const slash = useSlashCommands(text, thread.availableCommands, setText, harnessCommands)
   const hasCommands = thread.availableCommands.length > 0 || harnessCommands.length > 0
 
-  /* `!` suggests the project's saved shell lines. A project command is not a
-     prompt: `send` above runs the line it names against the project and writes
-     the result into the transcript, so nothing travels to the agent. The rows
+  /* `!` suggests the project's saved shell lines and the scripts its
+     package.json files declare. A project command is not a prompt: `send`
+     above runs the line it names against the project and writes the result
+     into the transcript, so nothing travels to the agent. The helper rows
      ride on `useProjects()` — the server folds a project's helpers into its
-     list, so no second request and no new hook — and they are offered only on a
-     started thread, because a draft has no journal to write the result to. */
+     list — and the script rows on one query per project, both offered only
+     on a started thread, because a draft has no journal to write the result
+     to. */
   const projects = useProjects()
   const project = meta?.projectId
     ? projects.find((candidate) => candidate.id === meta.projectId)
     : undefined
   const helpers = draft ? [] : (project?.helpers ?? [])
-  const commands = useProjectCommands({ text, helpers, setText })
+  const scripts = useProjectScripts(meta?.projectId ?? "", !draft && Boolean(meta?.projectId)).data ?? []
+  /* Plus what has already been run here — a routine is re-run far more often
+     than it is written, and the server's tally is what puts the daily line at
+     the top of the menu. The server's, not this device's: the line you build
+     with belongs to the workspace, so the phone offers what the desktop ran. */
+  const shellHistory =
+    useShellHistory(meta?.projectId ?? "", !draft && Boolean(meta?.projectId)).data ?? []
+  const invalidateShellHistory = useInvalidateShellHistory()
+  const commands = useProjectCommands({ text, helpers, scripts, history: shellHistory, setText })
   /* The line runs in the project and its output lands in the transcript as a
      `_daedalus/shell` row — no turn, no prompt. Which directory and environment
      it runs in is not the client's to decide: the server resolves a line that
      IS one of the saved commands back to its helper (so a helper's own cwd and
      env still apply, whether the line was picked or typed), and runs anything
      else in the project root. */
-  const runProjectCommand = async (line: string) => {
-    try {
-      await actions.runShell(sessionId, line)
-      /* Cleared only once it ran: a failure leaves the line in the box to try
-         again, the way a failed send leaves its words. */
-      setText("")
-      clearDraft(sessionId)
-    } catch (err) {
-      reportError(err, `Couldn't run ${line}`)
-    }
+  const runProjectCommand = (line: string) => {
+    /* Send and forget, exactly as a prompt is: the row the running line
+       already draws IS the feedback, and `runShell` settles it itself —
+       including on failure, whose error row is the thing to read, not a box
+       still holding the line. */
+    setText("")
+    clearDraft(sessionId)
+    void actions
+      .runShell(sessionId, line)
+      .catch((err) => {
+        reportError(err, `Couldn't run ${line}`)
+      })
+      /* The server counted the run; this is the cache catching up, so the
+         next `!` already has the line at the top. Whether it failed is not
+         the tally's business — a line that failed is one you are about to
+         run again with a flag fixed. */
+      .finally(() => {
+        if (meta?.projectId) invalidateShellHistory(meta.projectId)
+      })
   }
 
   /* `@` completes a path in the project. It reads the token at the caret — a
@@ -582,10 +616,15 @@ export function Composer({
         ? `Queue (${steerChord} steers the running turn instead)`
         : "Send"
 
+  /* What the shelf's ground is saying. Read from the same answer the footer's
+     connection reading draws, so the colour and the words cannot disagree, and
+     `null` (an idle or live thread) is the ordinary ground. */
+  const shelfTone = connectionTone(thread) ?? "neutral"
+
   return (
     <div className="pointer-events-auto px-4 pt-1 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-      <ComposerNotices sessionId={sessionId} actions={actions} thread={thread} />
       <ComposerStrip
+        tone={shelfTone}
         /* ── The scope row ──
            Where this thread runs, what it carries, how full it is — the shelf's
            floor, under whatever the turn has put on it. It survives the first
@@ -600,21 +639,38 @@ export function Composer({
               meta={meta}
               actions={actions}
               editable={draft}
+              /* The row's head, immediately after the project: where the work
+                 lands and whether this device can get a message out about it
+                 are the two facts the rest of the floor is read against, so
+                 they sit together rather than at opposite ends of the row. The
+                 connection is also the one whose answer the shelf's own ground
+                 wears (`tone` above) — a thread that cannot send is not a
+                 thread whose other readings are the news.
+
+                 Passed only when there is something to say. The reading itself
+                 draws nothing on a healthy thread, but its *presence* is what
+                 tells the project to give up its name — and there is no reason
+                 for that on the ordinary thread whose state is "fine". */
+              leading={
+                connectionNote(thread) ? (
+                  <ConnectionIndicator thread={thread} sessionId={sessionId} actions={actions} />
+                ) : undefined
+              }
               /* The readings, in one cluster at the row's end: how far the
-                 checklist has got, how many workers are out, what the last
-                 turn wrote, how full the window is. Four answers of the same
-                 *kind* — one number that is true of the thread right now,
-                 glanced at constantly and read in full rarely — so they are
-                 one shape (a 24px trigger over a popover) in one place, rather
-                 than a card on a shelf each. Every one of them draws nothing
-                 when it has nothing to say, so an idle thread's cluster is the
-                 ring alone. */
+                 checklist has got, how many workers are out, what the last turn
+                 wrote, how full the window is. Four answers of the same *kind*
+                 — one number that is true of the thread right now, glanced at
+                 constantly and read in full rarely — so they are one shape (a
+                 24px trigger over a popover) in one place, rather than a card on
+                 a shelf each. Every one of them draws nothing when it has
+                 nothing to say, so an idle thread's cluster is the ring alone. */
               trailing={
                 <>
                   <ConfigIndicator thread={thread} sessionId={sessionId} actions={actions} />
                   <TodoIndicator thread={thread} />
                   <AgentsIndicator thread={thread} />
                   <ChangesIndicator changes={changes} onOpen={onOpenChanges} />
+                  <RepoIndicator meta={meta} />
                   <ContextIndicator
                     thread={thread}
                     meta={meta}
@@ -670,11 +726,16 @@ export function Composer({
         <FileMentionMenu state={mentions} />
       </ComposerStrip>
       {/* relative/z-10: the composer paints over the strip's tucked bottom edge.
-          It wears the same soft shadow as the app's floating menus and no
+          It wears the same `shadow-glass-lg` the app's floating menus do and no
           hairline ring at all, so the card reads as the raised top of the
-          composer unit by its ground alone. Deliberately no focus ring: the
-          caret in the textarea is the "you are typing here" signal. The only
-          ring is destructive, while voice is listening.
+          composer unit by its ground alone. That token, not a raw Tailwind
+          step: it is the theme's depth choice (`--app-shadow-glass-lg` →
+          `--depth-*-glass-lg`), so the shadow is mode-aware — a black at 25% is
+          a stain in light and invisible in dark — and a Flat theme draws none,
+          which is exactly what the theme studio's own composer preview does.
+          Deliberately no focus ring: the caret in the textarea is the "you are
+          typing here" signal. The only ring is destructive, while voice is
+          listening.
 
           It is also the drop target, and deliberately the whole card rather
           than the textarea: a file aimed at "the composer" lands on the button
@@ -684,7 +745,7 @@ export function Composer({
       <div
         data-slot="composer-card"
         className={cn(
-          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl bg-composer/70 p-2 shadow-2xl backdrop-blur-xl backdrop-saturate-150",
+          "relative z-10 mx-auto w-full max-w-[var(--harness-composer-width)] rounded-2xl bg-composer/70 p-2 shadow-glass-lg backdrop-blur-xl backdrop-saturate-150",
           "transition-[ring-color] duration-200",
           voice.listening && "ring-1 ring-destructive/40"
         )}
@@ -776,7 +837,7 @@ export function Composer({
             onFiles={files.add}
             canMention={Boolean(meta?.projectId)}
             hasCommands={hasCommands}
-            hasProjectCommands={helpers.length > 0}
+            hasProjectCommands={helpers.length > 0 || scripts.length > 0}
             hasHistory={composerHistory.items.length > 0}
             hasContent={hasContent}
             onMention={insertMention}
@@ -790,9 +851,8 @@ export function Composer({
             {/* Who answers. Before the session exists the profile catalog is the
                 only thing that knows the choices; after it, the agent is. Two
                 controls, one slot — see CLAUDE.md's rule about which owns the
-                model. The kit this thread carries is NOT here: it moved to the
-                scope band above, beside the project, where it is the same
-                read-out on a started thread that it is a picker on a draft. */}
+                model. The kit this thread carries is NOT here: it is one of the
+                footer's readings, in the cluster that ends the scope row above. */}
             {draft && meta ? (
               <DraftConfigPopover meta={meta} actions={actions} />
             ) : (

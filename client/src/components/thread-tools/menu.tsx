@@ -17,6 +17,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { DropdownMenuContentPositioned } from "@/components/ui-ext/dropdown-menu"
+import {
+  READING_MARK,
+  READING_TRIGGER,
+  ReadingBubble,
+  ReadingFace,
+} from "@/components/composer/indicator"
 import type { Actions } from "@/lib/actions"
 import { mcpNeedsAuth, mcpSubtitle, type SessionMeta } from "@/lib/settings"
 import { saveThreadDefaults } from "@/lib/thread-defaults"
@@ -86,14 +92,14 @@ export function ThreadToolsMenu({
   /* Four catalog reads, each its own cache entry: this menu is in the
      composer row of a live transcript, and nothing the transcript streams
      touches any of them. */
-  const profile = useProfiles().find((p) => p.id === meta.profileId)
   const mcpServers = useMcpServers()
   const skills = useSkills()
   const commands = useCommands()
+  // Profiles carry no links; nothing is inherited.
   const inherited: Record<LinkKey, Set<string>> = {
-    mcpServerIds: new Set(profile?.mcpServerIds ?? []),
-    skillIds: new Set(profile?.skillIds ?? []),
-    commandIds: new Set(profile?.commandIds ?? []),
+    mcpServerIds: new Set<string>(),
+    skillIds: new Set<string>(),
+    commandIds: new Set<string>(),
   }
   const own: Record<LinkKey, string[]> = {
     mcpServerIds: meta.mcpServerIds ?? [],
@@ -138,6 +144,18 @@ export function ThreadToolsMenu({
   if (!editable && total === 0) return null
 
   const iconClass = "size-4 text-muted-foreground"
+  /* One string for the title and the accessible name, since the trigger's
+     words are its own (`Tools` and a count) rather than the whole answer. */
+  const countLabel = `${editable ? "Tools for this thread" : "Tools this thread is running with"} — ${
+    total === 0 ? "none" : `${total} tool${total === 1 ? "" : "s"}`
+  }${editable && extra > 0 ? ` (+${extra} added here)` : ""}`
+  /* The count in words where the panel has room, riding the mark where it does
+     not — the bargain every reading of the thread strikes, because it is the
+     same *kind* of question: what this thread answers with, glanced at
+     constantly and read in full rarely. Two dresses of one count, never both.
+     A phrase rather than a bare glyph because "12 tools" says what the 12 *are*
+     — the wrench alone is the one thing in the cluster a reader has to decode. */
+  const toolsLabel = total === 0 ? "No tools" : `${total} tool${total === 1 ? "" : "s"}`
   /* What every section needs and none of them decides for itself. */
   const common = { editable, needsAuth, agentName: agent?.name }
 
@@ -145,19 +163,29 @@ export function ThreadToolsMenu({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
+          /* A reading, like the four beside it rather than a bare glyph: the
+             words say *what* the count counts, which a wrench alone does not.
+             It stands in the footer's end cluster, not on the row's start —
+             `DraftScopeRow` places it — because "what this thread carries" is a
+             fact about the thread, the same as how full its window is. */
           <Button
             variant="ghost"
-            title={editable ? "Tools for this thread" : "Tools this thread is running with"}
-            className={cn(
-              "h-6 min-w-0 gap-1.5 rounded-md border-0 bg-transparent px-1.5 text-[11px] font-normal text-muted-foreground shadow-none hover:bg-accent/50 hover:text-foreground data-popup-open:bg-accent/50",
-              className
-            )}
+            size="icon-xs"
+            title={countLabel}
+            aria-label={countLabel}
+            className={cn(READING_TRIGGER, "text-muted-foreground hover:text-foreground", className)}
           >
-            <WrenchIcon className="size-4" />
-            <span className="max-w-40 truncate">
-              {total === 0 ? "No tools" : `${total} tool${total === 1 ? "" : "s"}`}
-              {editable && extra > 0 && ` (+${extra})`}
-            </span>
+            {/* The mark rides inside the pill. The other dress of the same
+                count is the bubble, withheld at zero — a `0` on the mark reads
+                as a broken reading, where "No tools" on the wide panel is
+                simply the answer. */}
+            <ReadingFace
+              icon={<WrenchIcon className={READING_MARK} />}
+              label={toolsLabel}
+              after={
+                total > 0 ? <ReadingBubble>{total > 9 ? "9+" : total}</ReadingBubble> : null
+              }
+            />
           </Button>
         }
       />

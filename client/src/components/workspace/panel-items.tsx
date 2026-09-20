@@ -99,7 +99,6 @@ export function WorkspacePanelItems({
 }: {
   onNewTab: () => void
   onOpen: (kind: PanelKind) => void
-  /** False with no thread routed: there is no project to open a panel for. */
   canOpenPanels: boolean
   /** Open the panel rows out in place instead of behind "Open a panel ▸".
       For the tab strip's +, where the menu *is* the question the submenu asks:

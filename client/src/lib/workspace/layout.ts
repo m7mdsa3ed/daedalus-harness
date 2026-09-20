@@ -132,7 +132,7 @@ function dockPopouts(layout: SerializedDockview): SerializedDockview {
  * rather than from a grid describing groups with no panels in them, which
  * Dockview renders as an unclosable blank frame.
  */
-export function pruneLayout(layout: SerializedDockview): SerializedDockview | null {
+export function pruneLayout(layout: SerializedDockview, nested = false): SerializedDockview | null {
   /* A popped-out window cannot be reopened on a page load — `window.open`
      without a gesture is a popup, and a browser blocks it — so a restore never
      starts one. Its panels come home to the grid first, before anything is
@@ -150,21 +150,40 @@ export function pruneLayout(layout: SerializedDockview): SerializedDockview | nu
        the user can close it themselves. Deleting it would silently discard a
        panel that a newer build (or the next phase) would understand. */
     if (!isPanelKind(component)) continue
-    if (!parsePanel(component, state.params)) continue
+    const descriptor = parsePanel(component, state.params)
+    if (!descriptor) continue
+    /* A group is a dock of its own, pruned by the same rule one level down —
+       and dropped whole when nothing inside it survives, because an empty group
+       is a tab with nothing to show. One level: a group inside a group is
+       dropped, which is also what keeps this recursion finite. */
+    if (descriptor.kind === "group") {
+      if (nested) continue
+      const inner = descriptor.layout ? pruneLayout(descriptor.layout, true) : null
+      if (!inner) continue
+      kept[id] = { ...state, params: { ...descriptor, layout: inner } }
+      continue
+    }
     kept[id] = state
   }
   if (Object.keys(kept).length === 0) return null
 
-  const walk = (node: GridNode | undefined): GridNode | null => {
+  const walk = (node: GridNode | undefined, isRoot = false): GridNode | null => {
     if (!node || typeof node !== "object") return null
     if (node.type === "branch") {
       const children = Array.isArray(node.data)
-        ? (node.data as GridNode[]).map(walk).filter((child): child is GridNode => child !== null)
+        ? (node.data as GridNode[]).map((child) => walk(child)).filter((child): child is GridNode => child !== null)
         : []
       if (children.length === 0) return null
-      // A branch with one child left is that child — an empty split otherwise
-      // stays in the grid as a sash with nothing on one side of it.
-      if (children.length === 1) return { ...children[0], size: node.size }
+      /* A branch with one child left is that child — an empty split otherwise
+         stays in the grid as a sash with nothing on one side of it. Never at
+         the root, though: `fromJSON` refuses a root that is not a branch
+         ("dockview: root must be of type branch"), and the ordinary dock is
+         exactly one branch over one group — opening a panel never splits it
+         (see `openPanel`). Collapsing the root turned every such layout into
+         something the dock could not read back, so the restore threw, the dock
+         was cleared, and the debounced save wrote that emptiness over the tabs
+         on the next refresh. */
+      if (children.length === 1 && !isRoot) return { ...children[0], size: node.size }
       return { ...node, data: children }
     }
     const data = node.data as LeafData | undefined
@@ -174,8 +193,8 @@ export function pruneLayout(layout: SerializedDockview): SerializedDockview | nu
     return { ...node, data: { ...data, views, activeView } }
   }
 
-  const root = walk(source.grid?.root as GridNode | undefined)
-  if (!root) return null
+  const root = walk(source.grid?.root as GridNode | undefined, true)
+  if (!root || root.type !== "branch") return null
 
   const activeGroup = source.activeGroup
   /* A floating group survives a reload — it is drawn inside this page, so

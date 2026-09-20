@@ -1,13 +1,13 @@
 import "./require-temp-data.js";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const dir = mkdtempSync(join(tmpdir(), "daedalus-test-helpers-"));
 process.env.DAEDALUS_DATA_DIR = dir;
 
-const { createProject } = await import("../src/projects.js");
+const { createProject, listProjects, reorderProjects } = await import("../src/projects.js");
 const { db, projectHelpers: helpersTable } = await import("../src/db/index.js");
 const { eq } = await import("drizzle-orm");
 const {
@@ -19,6 +19,7 @@ const {
   updateHelper,
 } = await import("../src/project-helpers.js");
 const { containedPath } = await import("../src/workspace-fs.js");
+const { listProjectScripts } = await import("../src/project-scripts.js");
 
 try {
   mkdirSync(join(dir, "sub"));
@@ -116,7 +117,50 @@ try {
   assert.equal((await listHelpers(p1.id)).length, 1);
   assert.equal(await getHelper(p1.id, h1.id), undefined);
 
-  console.log("project-helpers: 8 passed, 0 failed");
+  /* 9. package.json scripts (root + one directory deep): read off the disk,
+        never stored — the `!` completer's second suggestion list. */
+  const manifest = (dir === "/" ? dir : `${dir}/`) + "package.json";
+  mkdirSync(join(dir, "app"));
+  mkdirSync(join(dir, "node_modules/dep"), { recursive: true });
+  writeFileSync(join(dir, "pnpm-lock.yaml"), "");
+  writeFileSync(
+    manifest,
+    JSON.stringify({ scripts: { build: "tsc -b", "test:e2e": "playwright test" } }),
+  );
+  writeFileSync(
+    join(dir, "app/package.json"),
+    JSON.stringify({ packageManager: "pnpm@9.1.0", scripts: { dev: "vite" } }),
+  );
+  writeFileSync(
+    join(dir, "node_modules/dep/package.json"),
+    JSON.stringify({ scripts: { install: "node-gyp rebuild" } }),
+  );
+  const scripts = await listProjectScripts(p1.id);
+  assert.deepEqual(
+    scripts.map((s) => [s.name, s.command]),
+    [
+      // Root: pnpm — the lockfile below says so. Nested: dir-qualified, its
+      // own `cd`, and the runner `packageManager` names.
+      ["build", "pnpm run build"],
+      ["test:e2e", "pnpm run test:e2e"],
+      ["app:dev", "cd app && pnpm run dev"],
+    ],
+  );
+  // The other project shares this cwd, so it suggests the same lines — the
+  // directory is what's read, never the project's own rows.
+  assert.deepEqual(await listProjectScripts(p2.id), scripts);
+
+  // 10. Order: creation order to start with, then whatever the user drags it
+  // to — and a caller naming only some of the ids leaves the rest behind them.
+  const p3 = await createProject({ name: "P3", cwd: dir, description: null });
+  const named = async () => (await listProjects()).map((p) => p.name);
+  assert.deepEqual(await named(), ["P1", "P2", "P3"]);
+  await reorderProjects([p3.id, p1.id, p2.id]);
+  assert.deepEqual(await named(), ["P3", "P1", "P2"]);
+  await reorderProjects([p2.id]);
+  assert.deepEqual(await named(), ["P2", "P3", "P1"]);
+
+  console.log("project-helpers: 10 passed, 0 failed");
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }

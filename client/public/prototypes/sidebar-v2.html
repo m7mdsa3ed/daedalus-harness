@@ -1,0 +1,536 @@
+<!doctype html>
+<!--
+  Sidebar v2 — a standalone prototype for the redesign conversation.
+
+  It borrows the real app's design tokens (client/src/index.css: --sidebar,
+  --sidebar-accent, --radius, the Figtree stack) but nothing else — no React,
+  no Tailwind, no server. Open it directly in a browser, or `python3 -m http.server`
+  from client/prototypes. The point is to compare *structure*, so the states are
+  faked with a little data at the bottom of the file.
+
+  The three changes it is arguing for:
+    1. The tab strip already lists what is open, so the sidebar drops the
+       Pinned/Opened/Recents/Tasks echoes and shows ONE index: the projects,
+       flat, most-recently-used first, unfiled threads under "Loose".
+    2. Pins fold into a compact chip row that starts no group of its own.
+    3. Every level gets a real count on its right edge, and the working set
+       lives in Settings, not in the sidebar's fixed nav.
+-->
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="/logo.svg" type="image/svg+xml" />
+<title>Sidebar v2 — prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  /* ── The app's own tokens, light + dark, lifted from client/src/index.css ── */
+  :root {
+    --radius: 0.625rem;
+    --radius-xl: calc(var(--radius) * 1.4);
+    --background: oklch(1 0 0);
+    --foreground: oklch(0.145 0 0);
+    --card: oklch(1 0 0);
+    --muted: oklch(0.97 0 0);
+    --muted-foreground: oklch(0.556 0 0);
+    --primary: oklch(0.205 0 0);
+    --destructive: oklch(0.577 0.245 27.325);
+    --sidebar: var(--background);
+    --sidebar-foreground: oklch(0.145 0 0);
+    --sidebar-accent: oklch(0.9 0 0);
+    --sidebar-border: oklch(0.91 0 0);
+    --amber: oklch(0.769 0.188 70.08);
+    --green: oklch(0.723 0.219 149.579);
+    --blue: oklch(0.707 0.165 254.624);
+    --violet: oklch(0.606 0.25 292.717);
+    --app-ground: oklch(0.97 0 0);
+    --on-accent: oklch(0.985 0 0);
+  }
+  html.dark {
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.205 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --primary: oklch(0.922 0 0);
+    --sidebar: var(--background);
+    --sidebar-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.269 0 0);
+    --sidebar-border: oklch(1 0 0 / 10%);
+    --app-ground: oklch(0.12 0 0);
+    --on-accent: oklch(0.145 0 0);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: "Figtree", ui-sans-serif, system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.38;
+    color: var(--foreground);
+    background: var(--app-ground);
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  svg { width: 16px; height: 16px; flex: 0 0 auto; }
+
+  .app { display: flex; height: 100vh; overflow: hidden; }
+
+  /* ── The sidebar ──────────────────────────────────────────────────────────
+     One surface, three fixed bands (header / scroll / footer), everything in
+     the middle scrolls together — so the footer never fights the list for the
+     bottom of the column. */
+  .sidebar {
+    --w: 272px;
+    width: var(--w);
+    min-width: 200px;
+    max-width: 460px;
+    display: flex;
+    flex-direction: column;
+    background: var(--sidebar);
+    position: relative;
+    flex: 0 0 auto;
+    overflow: hidden;
+  }
+  .sidebar[data-collapsed="true"] { --w: 0px; min-width: 0; }
+
+  /* The resizer is a hit strip sitting on the seam, not a layout column. */
+  .resizer {
+    position: absolute; inset-block: 0; right: -3px; width: 6px;
+    cursor: col-resize; z-index: 5;
+  }
+  .resizer::after {
+    content: ""; position: absolute; inset-block: 0; left: 2px; width: 2px;
+    background: transparent; transition: background 120ms;
+  }
+  .resizer:hover::after, .resizer[data-dragging="true"]::after { background: var(--sidebar-border); }
+
+  .side-head { display: flex; flex-direction: column; gap: 8px; padding: 8px 8px 0; }
+  .brand-row { display: flex; align-items: center; gap: 8px; height: 32px; }
+  .brand {
+    display: flex; align-items: center; gap: 8px; padding-left: 8px;
+    border-radius: 6px; outline: none;
+  }
+  .brand:focus-visible { box-shadow: 0 0 0 2px var(--sidebar-border); }
+  .logo {
+    width: 18px; height: 18px; border-radius: 5px; flex: 0 0 auto;
+    background: linear-gradient(140deg, var(--violet), var(--blue));
+    display: grid; place-items: center; color: white;
+  }
+  .logo svg { width: 11px; height: 11px; }
+  .brand span { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+  .head-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+  .icon-btn {
+    width: 28px; height: 28px; display: grid; place-items: center; border-radius: 7px;
+    color: var(--muted-foreground); transition: background 120ms, color 120ms;
+  }
+  .icon-btn:hover { background: var(--sidebar-accent); color: var(--sidebar-foreground); }
+  .icon-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--sidebar-border); }
+
+  /* The primary action is a real button, sticky at the top of the list where
+     "new" belongs, and not one more entry in a nav menu. */
+  .new-thread {
+    display: flex; align-items: center; gap: 8px; width: 100%; height: 34px;
+    padding: 0 10px; border-radius: 8px; background: var(--sidebar-accent);
+    color: var(--sidebar-foreground); font-weight: 500;
+  }
+  .new-thread:hover { filter: brightness(1.08); }
+  .new-thread kbd { margin-left: auto; }
+  kbd {
+    font: inherit; font-size: 10px; padding: 1px 5px; border-radius: 4px;
+    color: var(--muted-foreground); background: color-mix(in oklab, var(--sidebar) 80%, transparent);
+    box-shadow: 0 0 0 1px var(--sidebar-border);
+  }
+  .new-thread kbd { background: var(--sidebar); }
+
+  .search {
+    display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px;
+    border-radius: 8px; color: var(--muted-foreground);
+    box-shadow: inset 0 0 0 1px var(--sidebar-border);
+  }
+  .search:hover { background: var(--sidebar-accent); }
+  .search kbd { margin-left: auto; }
+
+  .pinned-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 8px 0; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+    height: 26px; padding: 0 8px 0 6px; border-radius: 999px; font-size: 12px;
+    color: var(--sidebar-foreground); background: var(--muted);
+    box-shadow: inset 0 0 0 1px var(--sidebar-border);
+  }
+  .chip:hover { background: var(--sidebar-accent); }
+  .chip .dot { width: 6px; height: 6px; border-radius: 999px; flex: 0 0 auto; }
+  .chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ── The one index ── */
+  .scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 4px 8px 8px; }
+  .scroll::-webkit-scrollbar { width: 8px; }
+  .scroll::-webkit-scrollbar-thumb { background: color-mix(in oklab, var(--foreground) 18%, transparent); border-radius: 999px; }
+
+  .section { margin-top: 12px; }
+  .section:first-child { margin-top: 4px; }
+  .section-head {
+    display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase;
+    color: color-mix(in oklab, var(--sidebar-foreground) 55%, transparent);
+  }
+  .section-head .count { margin-left: auto; letter-spacing: 0; font-weight: 600; opacity: 0.7; }
+  .section-head button.section-edit {
+    margin-left: auto; display: none; align-items: center; gap: 4px; font: inherit;
+    font-size: 10px; text-transform: none; letter-spacing: 0; color: var(--muted-foreground);
+  }
+  .section:hover .section-edit { display: inline-flex; }
+  .section:hover .section-head .count { display: none; }
+
+  .rule { height: 1px; background: var(--sidebar-border); margin: 8px 8px 0; }
+
+  /* A project folder and its threads. The folder row carries the count and two
+     hover controls (open project, new thread in it). */
+  .folder-row {
+    display: flex; align-items: center; gap: 8px; width: 100%; height: 30px;
+    padding: 0 8px; border-radius: 8px; text-align: left; position: relative;
+  }
+  .folder-row:hover, .folder-row[aria-expanded="true"]:hover { background: var(--sidebar-accent); }
+  .folder-row .chev { transition: transform 180ms ease; color: var(--muted-foreground); }
+  .folder-row[aria-expanded="true"] .chev { transform: rotate(90deg); }
+  .folder-row .mark { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; flex: 0 0 auto; color: white; }
+  .folder-row .mark svg { width: 11px; height: 11px; }
+  .folder-row .name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .folder-row .dirty { color: var(--amber); }
+  .folder-row .count { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--muted-foreground); }
+  .folder-row .row-actions { margin-left: -2px; display: flex; gap: 2px; }
+  .folder-row .mini {
+    width: 22px; height: 22px; display: grid; place-items: center; border-radius: 6px;
+    color: var(--muted-foreground); opacity: 0; transition: opacity 120ms, background 120ms;
+  }
+  .folder-row:hover .mini, .folder-row:focus-within .mini { opacity: 1; }
+  .folder-row:hover .count, .folder-row:focus-within .count { display: none; }
+  .mini:hover { background: var(--sidebar); color: var(--sidebar-foreground); }
+
+  .tree { margin-left: 13px; padding-left: 9px; border-left: 1px solid var(--sidebar-border); }
+  .tree[hidden] { display: none; }
+
+  .thread {
+    display: flex; align-items: center; gap: 8px; width: 100%; height: 28px;
+    padding: 0 8px; border-radius: 7px; text-align: left; color: var(--sidebar-foreground);
+  }
+  .thread:hover { background: var(--sidebar-accent); }
+  .thread[data-active="true"] { background: var(--sidebar-accent); font-weight: 500; }
+  .thread .title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .thread .tail { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+  .thread .wcount { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--muted-foreground); }
+  .thread[data-exited="true"] .title { color: var(--muted-foreground); }
+  .dot { width: 7px; height: 7px; border-radius: 999px; flex: 0 0 auto; }
+  .dot.running { background: var(--green); animation: pulse 1.6s ease-in-out infinite; }
+  .dot.waiting { background: var(--amber); }
+  .dot.failed { background: var(--destructive); }
+  .dot.reconnect { background: var(--muted-foreground); animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  /* Where everything else went: one quiet row to the settings sections that
+     used to be four fixed nav rows. */
+  .drawer-rows { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 0 8px; }
+  .drawer-rows .link { color: var(--muted-foreground); display: inline-flex; align-items: center; gap: 5px; padding: 4px 6px; border-radius: 6px; }
+  .drawer-rows .link:hover { background: var(--sidebar-accent); color: var(--sidebar-foreground); }
+  .drawer-rows .link .n { font-size: 11px; font-variant-numeric: tabular-nums; opacity: 0.8; }
+  .drawer-rows .sep { color: var(--muted-foreground); opacity: 0.4; }
+
+  /* ── Footer: the device's own band, pinned to the bottom ── */
+  .foot { flex: 0 0 auto; padding: 6px 8px 8px; display: flex; flex-direction: column; gap: 1px; }
+  .foot .row { display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 8px; border-radius: 8px; }
+  .foot .row:hover { background: var(--sidebar-accent); }
+  .foot .row[data-active="true"] { background: var(--sidebar-accent); font-weight: 500; }
+  .foot .row .sub { margin-left: auto; font-size: 11px; color: var(--muted-foreground); display: flex; align-items: center; gap: 6px; }
+  .foot .badge { display: inline-flex; align-items: center; gap: 5px; }
+  .foot .bell-badge {
+    min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; font-size: 10px; font-weight: 600;
+    display: grid; place-items: center; background: var(--destructive); color: white;
+  }
+  .foot .usage { padding: 0 8px 2px; display: flex; flex-direction: column; gap: 5px; }
+  .foot .usage .bar { height: 3px; border-radius: 999px; background: var(--muted); overflow: hidden; }
+  .foot .usage .bar i { display: block; height: 100%; border-radius: 999px; background: var(--green); }
+  .foot .usage .label { font-size: 11px; color: var(--muted-foreground); display: flex; justify-content: space-between; }
+
+  /* ── The rest of the app, cheaply, so the composition is readable ── */
+  .main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; background: var(--app-ground); padding: 6px; padding-left: 0; }
+  .header { height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 8px; }
+  .header .tab {
+    display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px 0 10px;
+    border-radius: 8px; color: var(--muted-foreground); box-shadow: inset 0 0 0 1px var(--sidebar-border);
+  }
+  .header .tab[data-active="true"] {
+    color: var(--foreground); background: var(--card); box-shadow: inset 2px 0 0 0 var(--primary), 0 1px 2px rgba(0,0,0,.12);
+  }
+  .header .tab .dot { width: 6px; height: 6px; }
+  .header .add { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 7px; color: var(--muted-foreground); }
+  .header .add:hover { background: var(--sidebar-accent); }
+  .card {
+    flex: 1 1 auto; min-height: 0; border-radius: var(--radius-xl); background: var(--card);
+    box-shadow: 0 1px 2px rgba(0,0,0,.06); display: grid; place-items: center;
+    color: var(--muted-foreground); font-size: 12px;
+  }
+  .shell-toggle { position: fixed; top: 12px; left: 12px; z-index: 20; }
+  .sidebar[data-collapsed="true"] ~ .main .shell-toggle { display: grid; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ═══ Sidebar ═══ -->
+  <aside class="sidebar" id="sidebar" data-collapsed="false">
+    <div class="side-head">
+      <div class="brand-row">
+        <button class="brand">
+          <span class="logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+              <path d="M12 2 2 7l10 5 10-5-10-5Z" /><path d="M2 17l10 5 10-5" /><path d="M2 12l10 5 10-5" />
+            </svg>
+          </span>
+          <span>Daedalus</span>
+        </button>
+        <div class="head-actions">
+          <button class="icon-btn" title="Notifications">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+              <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+            </svg>
+          </button>
+          <button class="icon-btn" title="Hide sidebar" id="collapse">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Primary action, once, sticky. -->
+      <button class="new-thread">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+        New thread
+        <kbd>⌘N</kbd>
+      </button>
+
+      <button class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+          <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
+        </svg>
+        Search
+        <kbd>⌘K</kbd>
+      </button>
+    </div>
+
+    <!-- Pins: a chip row, not a group. -->
+    <div class="pinned-chips">
+      <button class="chip" title="Ship the composer width fix">
+        <span class="dot running"></span><span>Composer width fix</span>
+      </button>
+      <button class="chip" title="Index the rules table">
+        <span class="dot waiting"></span><span>Rules table index</span>
+      </button>
+    </div>
+
+    <!-- ═══ The one index ═══ -->
+    <div class="scroll" id="scroll">
+      <div class="section">
+        <div class="section-head">
+          <span>Recently active</span>
+        </div>
+        <!-- project rows injected here -->
+        <div id="recent-threads"></div>
+      </div>
+
+      <div class="rule"></div>
+
+      <div class="section">
+        <div class="section-head">
+          <span>Projects</span>
+          <span class="count">4</span>
+        </div>
+        <div id="projects"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-head"><span>Loose</span><span class="count">2</span></div>
+        <div id="loose"></div>
+      </div>
+    </div>
+
+    <!-- Everything the fixed nav used to carry, as one quiet band. -->
+    <div class="drawer-rows">
+      <button class="link" title="Tasks board">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="11" rx="1"/></svg>
+      </button>
+      <button class="link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg>Routines<span class="n">3</span></button>
+      <span class="sep">·</span>
+      <button class="link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>Scheduled<span class="n">1</span></button>
+      <button class="link" title="Trash"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg><span class="n">5</span></button>
+    </div>
+
+    <!-- ═══ Footer ═══ -->
+    <div class="foot">
+      <div class="usage">
+        <div class="label"><span>Z.AI · 5h</span><span>62%</span></div>
+        <div class="bar"><i style="width:62%"></i></div>
+      </div>
+      <button class="row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="2" y="4" width="20" height="7" rx="2"/><rect x="2" y="13" width="20" height="7" rx="2"/><path d="M6 7.5h.01M6 16.5h.01"/></svg>
+        This machine
+        <span class="sub"><span class="dot" style="background:var(--green)"></span>Connected</span>
+      </button>
+      <button class="row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H1a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 2.6 7a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 7 2.6h.1A1.7 1.7 0 0 0 8.3 1V1a2 2 0 1 1 4 0v.1A1.7 1.7 0 0 0 15 2.6"/></svg>
+        Settings
+      </button>
+    </div>
+
+    <div class="resizer" id="resizer"></div>
+  </aside>
+
+  <!-- ═══ The rest of the app ═══ -->
+  <main class="main">
+    <button class="icon-btn shell-toggle" id="expand" title="Show sidebar" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>
+    </button>
+    <div class="header">
+      <!-- The tab strip is the sidebar's sibling: it lists what is OPEN. -->
+      <button class="tab" data-active="true"><span class="dot running"></span>Composer width fix</button>
+      <button class="tab" data-active="false">Index the rules table</button>
+      <button class="tab" data-active="false">Usage page polish</button>
+      <button class="add" title="New tab">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </div>
+    <div class="card">the dock — the transcript in front of you</div>
+  </main>
+</div>
+
+<script>
+  /* ── Fake state ──────────────────────────────────────────────────────────
+     Small on purpose. The shape under test is the *tiering*, not the data. */
+  const PROJECTS = [
+    { id: "harness", name: "daedalus-harness", hue: 292, initial: "D", active: true,
+      threads: [
+        { title: "Composer width fix", state: "running", writes: 12, active: true },
+        { title: "Opened tier regression", state: "idle", writes: 3 },
+        { title: "Rewind at turn boundary", state: "idle", writes: 0 },
+        { title: "Replay coalescing", state: "idle", writes: 0 },
+        { title: "Terminal key row wrap", state: "idle", writes: 0 },
+        { title: "Skill materialisation", state: "idle", writes: 0 },
+      ] },
+    { id: "website", name: "marketing-site", hue: 210, initial: "M",
+      threads: [
+        { title: "Ship the pricing page", state: "waiting", writes: 2 },
+        { title: "Trim the hero copy", state: "idle", writes: 0 },
+        { title: "Fix the OG images", state: "idle", writes: 0 },
+      ] },
+    { id: "infra", name: "infra", hue: 150, initial: "I",
+      threads: [
+        { title: "PM2 fork mode", state: "failed", writes: 1 },
+        { title: "Backup import", state: "idle", writes: 0 },
+      ] },
+    { id: "docs", name: "handbook", hue: 60, initial: "H",
+      threads: [ { title: "Rewrite the onboarding", state: "idle", writes: 0 } ] },
+  ];
+  const LOOSE = [
+    { title: "Scratch — profiling the bridge", state: "idle", writes: 0 },
+    { title: "Why did churn spike?", state: "idle", writes: 0 },
+  ];
+
+  /* Recently active: the projects that have moved, newest first, each showing
+     its newest few threads. The full history is one fold away, in Projects. */
+  const RECENT = PROJECTS.filter((p) => p.threads.some((t) => t.state !== "idle"));
+
+  const dotHtml = (state) => {
+    const map = { running: "running", waiting: "waiting", failed: "failed", reconnect: "reconnect" };
+    return map[state] ? `<span class="dot ${map[state]}"></span>` : "";
+  };
+  const threadHtml = (t) => `
+    <button class="thread" data-active="${!!t.active}" data-exited="${t.state === "exited"}">
+      <span class="title">${t.title}</span>
+      <span class="tail">
+        ${t.writes > 0 ? `<span class="wcount" title="${t.writes} files changed">±${t.writes}</span>` : ""}
+        ${dotHtml(t.state)}
+      </span>
+    </button>`;
+
+  const folderRow = (p, expanded) => `
+    <button class="folder-row" aria-expanded="${expanded}">
+      <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg>
+      <span class="mark" style="background:oklch(0.55 0.18 ${p.hue})">${p.initial}</span>
+      <span class="name">${p.name}</span>
+      <span class="row-actions">
+        <span class="mini" title="Open project"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg></span>
+        <span class="mini" title="New thread in ${p.name}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+      </span>
+      <span class="count">${p.threads.length}</span>
+    </button>`;
+
+  /* Recently active: nested folders, open, newest threads only. */
+  document.getElementById("recent-threads").innerHTML = RECENT.map((p) => `
+    ${folderRow(p, true)}
+    <div class="tree">
+      ${p.threads.filter((t) => t.state !== "idle").concat(p.threads.filter((t) => t.state === "idle").slice(0, 1)).map(threadHtml).join("")}
+    </div>`).join("");
+
+  /* Projects: the same folders, flat list, all of them, closed by default. */
+  document.getElementById("projects").innerHTML = PROJECTS.map((p, i) => `
+    <div data-project="${p.id}">
+      ${folderRow(p, i === 0)}
+      <div class="tree" ${i === 0 ? "" : "hidden"}>
+        ${p.threads.map(threadHtml).join("")}
+      </div>
+    </div>`).join("");
+
+  document.getElementById("loose").innerHTML = LOOSE.map(threadHtml).join("");
+
+  /* Fold a folder. */
+  document.getElementById("scroll").addEventListener("click", (event) => {
+    const row = event.target.closest(".folder-row");
+    if (!row || event.target.closest(".mini")) return;
+    const tree = row.nextElementSibling;
+    const open = row.getAttribute("aria-expanded") === "true";
+    row.setAttribute("aria-expanded", String(!open));
+    if (tree) tree.hidden = open;
+  });
+
+  /* Collapse, so the rail state can be seen too. */
+  const sidebar = document.getElementById("sidebar");
+  const expand = document.getElementById("expand");
+  document.getElementById("collapse").addEventListener("click", () => {
+    sidebar.dataset.collapsed = "true";
+    expand.style.display = "grid";
+  });
+  expand.addEventListener("click", () => {
+    sidebar.dataset.collapsed = "false";
+    expand.style.display = "none";
+  });
+
+  /* Drag to resize — the seam handle, the way the app's resizer works. */
+  (() => {
+    const handle = document.getElementById("resizer");
+    let dragging = false;
+    handle.addEventListener("pointerdown", (event) => {
+      dragging = true; handle.dataset.dragging = "true"; handle.setPointerCapture(event.pointerId);
+    });
+    handle.addEventListener("pointermove", (event) => {
+      if (!dragging) return;
+      const left = sidebar.getBoundingClientRect().left;
+      sidebar.style.setProperty("--w", Math.min(460, Math.max(200, event.clientX - left)) + "px");
+    });
+    const stop = (event) => { dragging = false; delete handle.dataset.dragging; handle.releasePointerCapture?.(event.pointerId); };
+    handle.addEventListener("pointerup", stop);
+    handle.addEventListener("pointercancel", stop);
+  })();
+
+  /* Theme toggle: press "d" to flip light/dark while comparing. */
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "d" && !event.metaKey && !event.ctrlKey) {
+      document.documentElement.classList.toggle("dark");
+    }
+  });
+</script>
+</body>
+</html>

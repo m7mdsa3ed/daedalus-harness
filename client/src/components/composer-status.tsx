@@ -15,8 +15,14 @@
                                       line shares;
    — `composer/changes-indicator.tsx` what the last writing turn did to the
                                       worktree;
+   — `composer/repo-indicator.tsx`    which branch the work lands on, and the
+                                      writes a repository takes from here;
    — `composer/activity-line.tsx`     `workingMessage`, `PhaseLine` and
-                                      `ActivityIndicator`.
+                                      `ActivityIndicator`;
+   — `composer/connection-indicator.tsx` this device's connection, in the two
+                                      states a reader has to know about, and
+                                      the tone the shelf's ground wears for
+                                      them.
 
    This file is the barrel those importers still resolve through. */
 export { StripIndicator } from "@/components/composer/indicator"
@@ -25,4 +31,10 @@ export { ContextIndicator } from "@/components/composer/context-indicator"
 export { TodoIndicator } from "@/components/composer/todo-indicator"
 export { AgentsIndicator, runningAgents } from "@/components/composer/agents-indicator"
 export { ChangesIndicator } from "@/components/composer/changes-indicator"
+export {
+  ConnectionIndicator,
+  connectionNote,
+  connectionTone,
+} from "@/components/composer/connection-indicator"
+export { RepoIndicator } from "@/components/composer/repo-indicator"
 export { ActivityIndicator, PhaseLine, workingMessage } from "@/components/composer/activity-line"

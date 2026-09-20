@@ -21,7 +21,6 @@ import * as React from "react"
 import { Loader2, MessageSquarePlusIcon, SearchXIcon } from "lucide-react"
 import { useNavigate } from "react-router"
 
-import { CommandSeparator } from "@/components/ui/command"
 import { useSidebar } from "@/components/ui/sidebar"
 import { KEYS } from "@/lib/shortcuts"
 import { searchThreads, type SearchResult } from "@/lib/search"
@@ -31,7 +30,7 @@ import { useProjects } from "@/lib/queries/catalog"
 import { threadPath } from "@/lib/router"
 import { useLiveTurnActive, useStoreSelect } from "@/lib/store"
 import { usePalette } from "./context"
-import { Group, Row, type PaletteItem } from "./list"
+import { OrderedList, type PaletteGroup, type PaletteItem } from "./list"
 import { messageItem, threadItem } from "./rows"
 import { score } from "./score"
 
@@ -132,72 +131,63 @@ export function SearchPage() {
 
   const messageRows = hits.map((hit) => messageItem(hit, () => open(hit.sessionId)))
 
-  return (
-    <>
-      <Group heading={query ? "Threads" : "Recent threads"}>
-        {threadRows.length > 0 ? (
-          threadRows.map((item) => <Row key={item.id} item={item} />)
-        ) : (
-          <Note>No thread title matches “{query}”.</Note>
-        )}
-      </Group>
+  /* The state of the request, always said in words: a group that is silently
+     empty for 200ms reads as "nothing found", which is a different answer from
+     "still asking". */
+  const messageNote = (): PaletteItem | null => {
+    if (messageRows.length === 0) {
+      if (query.length < MIN_QUERY)
+        return note("min", `Type ${MIN_QUERY} characters or more to search inside transcripts.`)
+      if (loading)
+        return note("loading", "Searching transcripts…", <Loader2 className="animate-spin" />)
+      if (failed) return note("failed", "Couldn't reach the search index.", <SearchXIcon />)
+      return note("none", `No message matches “${query}”.`)
+    }
+    // Results are in, and a newer request is already out.
+    if (loading) return note("updating", "Updating…", <Loader2 className="animate-spin" />)
+    return null
+  }
 
-      <Group heading="Messages">
-        {messageRows.map((item) => <Row key={item.id} item={item} />)}
-        {/* The state of the request, always said in words: a group that is
-            silently empty for 200ms reads as "nothing found", which is a
-            different answer from "still asking". */}
-        {messageRows.length === 0 &&
-          (query.length < MIN_QUERY ? (
-            <Note>Type {MIN_QUERY} characters or more to search inside transcripts.</Note>
-          ) : loading ? (
-            <Note>
-              <Loader2 className="size-3.5 animate-spin" />
-              Searching transcripts…
-            </Note>
-          ) : failed ? (
-            <Note>
-              <SearchXIcon className="size-3.5" />
-              Couldn't reach the search index.
-            </Note>
-          ) : (
-            <Note>No message matches “{query}”.</Note>
-          ))}
-        {/* Results are in, and a newer request is already out. */}
-        {messageRows.length > 0 && loading && (
-          <Note>
-            <Loader2 className="size-3.5 animate-spin" />
-            Updating…
-          </Note>
-        )}
-      </Group>
+  const messageTail = messageNote()
 
-      {query.length > 0 && (
-        <>
-          <CommandSeparator />
-          <Group>
-            <Row
-              item={{
-                id: "search:ask",
-                group: "",
-                title: `Ask a new thread — “${query}”`,
-                always: true,
-                icon: <MessageSquarePlusIcon />,
-                chord: KEYS.send,
-                onSelect: () => palette.run(() => palette.newThread({ text: query })),
-              }}
-            />
-          </Group>
-        </>
-      )}
-    </>
-  )
+  const groups: PaletteGroup[] = [
+    {
+      name: query ? "Threads" : "Recent threads",
+      items:
+        threadRows.length > 0
+          ? threadRows
+          : [note("no-threads", `No thread title matches “${query}”.`)],
+    },
+    {
+      name: "Messages",
+      items: messageTail ? [...messageRows, messageTail] : messageRows,
+    },
+  ]
+
+  if (query.length > 0) {
+    groups.push({
+      name: "",
+      items: [
+        {
+          id: "search:ask",
+          group: "",
+          title: `Ask a new thread — “${query}”`,
+          always: true,
+          icon: <MessageSquarePlusIcon />,
+          chord: KEYS.send,
+          onSelect: () => palette.run(() => palette.newThread({ text: query })),
+        },
+      ],
+    })
+  }
+
+  return <OrderedList groups={groups} />
 }
 
-/** A line that says something about the list rather than being an entry in it —
-    not a cmdk item, so ↑/↓ walk straight past it. */
-function Note({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-2 px-2 py-2.5 text-xs text-muted-foreground">{children}</div>
-  )
+/** A line that says something about the list rather than being an entry in it.
+    It is a row — the menu counts its flat list, and anything not in it is
+    skipped by the arrows and unreachable by the hover fill — but a disabled
+    one, which is what ↑/↓ walk past. See `PaletteItem.note`. */
+function note(id: string, title: string, icon?: React.ReactNode): PaletteItem {
+  return { id: `search:note:${id}`, group: "", title, icon, note: true }
 }

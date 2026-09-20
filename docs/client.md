@@ -214,7 +214,14 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   with no material are offered no switch, and switching it off cannot hide the
   switch that switches it back on. The preload reads the same key for the one
   frame before the bundle parses (a window left opaque used to flash the
-  material on). `main.tsx` imports the module for its boot-time `apply`.
+  material on), and it reads it **at `mark()` time, never at preload scope**:
+  preload scope runs before the document exists, where the key is not
+  dependably readable, and an empty read cached there fell back to the
+  default-on and then clobbered the module's parsed-time `apply` at
+  `DOMContentLoaded` — so "off" never survived a restart while "on" did. And
+  `mark()` only ever *sets* the attribute when the choice is on; an off choice
+  leaves whatever the module applied standing, so the page's newer reading wins
+  any race. `main.tsx` imports the module for its boot-time `apply`.
   **The colour before the app exists is
   `src/lib/boot-colors.ts`** — the address-bar tint, the inlined splash and the
   manifest all need the background named before any stylesheet is parsed, so it
@@ -313,6 +320,20 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   chunk. `applyTerminalMeta` accumulates the chunks onto `ToolItem.terminal` in
   the store reducer, which is also what makes replay work, since a replayed
   thread runs the same reducer over the same journaled updates.
+  **A row's default expansion is the view's own decision, and the view is not known
+  when the row mounts.** `opensByDefault` is a column on the same table as `Detail` and
+  `hasDetail`, so a diff, a checklist and a plan stand open and everything else is a one-line
+  row; `toolOpensByDefault` adds the one cross-view rule (a background task keeps producing
+  after its turn ends, so folded it would be the one live thing on screen and invisible). The
+  trap is that a streamed call mounts with no input — `toolViewOf` answers `generic`, and a
+  `generic` row has no disclosure at all — and only becomes an `edit` when its arguments land,
+  so a `defaultOpen` read once at mount is thrown away and the diff waits for a click that no
+  part of the transcript asked for. `StepRow` therefore applies a `defaultOpen` that becomes
+  *newly* true exactly once and only toward opening: the edit opens the moment it is readable,
+  and a row the reader closed is never reopened by the rest of its own stream. The other sync —
+  the one behind "Show thinking" and "Expand tool output" — is keyed on the option and not on
+  `defaultOpen`, for the same reason in the other direction: re-applying the whole expression
+  would yank open every row the reader had closed while it streamed.
   **The web has two views of its own, and they are matched on the tool's
   *leaf* name** (`toolLeafName`: `web_search` out of `mcp__web-search__web_search`
   or Codex's `mcp.web-search.web_search`), so Claude Code's built-in
@@ -514,14 +535,19 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 - **The composer is one component, `components/composer.tsx`, and one card of two rows** — the
   textarea and a toolbar — with the shelf above it.
 - **The shelf has a floor: `ComposerStrip`'s `footer`, the one row that is always there**
-  (`DraftScopeRow` in `components/draft-config.tsx`): the project this thread runs in, the
-  tools it carries (`ThreadToolsMenu`), and at the row's end the context ring
-  (`ContextIndicator`, opening upward). It is not a card — it registers no sliver, never goes
-  behind, and holds the shelf open between turns, so **the strip is a permanent object with a
-  pile that comes and goes** rather than the other way round. It wears the shelf's width (half
-  a rem narrower than the composer, a rem and a half from `@panel-sm`) and **`--composer`, not
-  the pile's `--surface`** — it belongs to the box it sits on, not to the shelf, so the seam
-  below it disappears and the one above it is where the shelf begins.
+  (`DraftScopeRow` in `components/draft-config.tsx`): the project this thread runs in at the
+  row's start, and at its **end** a cluster of readings — the tools it carries
+  (`ThreadToolsMenu`, first of them) and then the context ring (`ContextIndicator`, opening
+  upward), with `trailing`'s checklist, subagent and changes readings after. The tools menu
+  used to stand on the row's start behind a hairline divider, which made the one control that
+  is a reading look like a control that was not; it is placed by the cluster now, where **the
+  divider is gone** because nothing needs separating. It is not a card — it registers no
+  sliver, never goes behind, and holds the shelf open between turns, so **the strip is a
+  permanent object with a pile that comes and goes** rather than the other way round. It wears
+  the shelf's width (half a rem narrower than the composer, a rem and a half from
+  `@panel-sm`) and **`--composer`, not the pile's `--surface`** — it belongs to the box it sits
+  on, not to the shelf, so the seam below it disappears and the one above it is where the shelf
+  begins.
   **The tuck belongs to whoever is last** (`TUCK`): with a footer the cards stand on it and
   give up their `pb-4`, and the footer takes it, so the shelf still ends behind the composer
   and nothing reserves that edge twice. The footer squares its top corners the moment a card
@@ -557,15 +583,24 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   and a fact that is *always* true is not a card in it — the project spent its life as a card
   nobody brought forward and then stopped being drawn at all. It stacks **above the footer**.
 - **The readings are one cluster at the end of the footer, one shape each**
-  (`TodoIndicator`, `AgentsIndicator`, `ChangesIndicator`, `ContextIndicator` in
-  `components/composer-status.tsx`,
-  passed as `DraftScopeRow`'s `trailing`). They answer the same *kind* of question — one number
-  that is true of the thread right now, glanced at constantly and read in full rarely — so each
-  is a 24px trigger over a popover: the checklist's ring and its steps, the running-subagent
-  count and their names and elapsed times, the changed-file count and the paths with their
-  +/− and a "Review in source control" button, the context ring and the turn's numbers. Each draws
-  nothing when it has nothing to say, so an idle thread's cluster is the ring alone. The
-  checklist and the agent count have been a card on the shelf (folded behind a 14px sliver) and
+  (`ThreadToolsMenu`, then `TodoIndicator`, `AgentsIndicator`, `ChangesIndicator`,
+  `ContextIndicator` in `components/composer-status.tsx` — the first placed by the row itself,
+  the rest passed as `DraftScopeRow`'s `trailing`). They answer the same *kind* of question —
+  one number that is true of the thread right now, glanced at constantly and read in full
+  rarely — so each is a 24px trigger over a surface: the checklist's ring and its steps, the
+  running-subagent count and their names and elapsed times, the changed-file count and the
+  paths with their +/− and a "Review in source control" button, the context ring and the turn's
+  numbers, and the tools the thread carries, where the surface is a **menu** — the one reading
+  you can change rather than only read, which is why it is a `DropdownMenu` and not a popover.
+  **What a reading wears is named once, in `composer/indicator.tsx`**: `ReadingBadge` is its
+  value in words where the *panel* has room and `ReadingBubble` is the same number riding the
+  mark where it does not, never both — so the tools menu prints "12 tools" beside the wrench
+  on a wide panel and a `12` on it where there is not, exactly as the checklist prints `2/5`.
+  **The project is the exception that keeps its words at every width**, because it is the one
+  control in the row that says which directory the work lands in; it wears the same badge with
+  `always` and truncates. Each still answers for itself whether it draws at all, so an idle
+  thread's cluster is the ring alone, plus the tools row on a draft, where it is the picker.
+  The checklist and the agent count have been a card on the shelf (folded behind a 14px sliver) and
   a card at the foot of the transcript (a screenful of scrolling from view); both were the
   whole list, permanently, for a question that is usually "how far along". **A popover is a
   fixed surface with a viewport of its own**, which is what lets these lists scroll without
@@ -693,14 +728,25 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
 ## `!` commands
 
 - **A `!` line is a shell command the user runs against the project, and the project's saved
-  ones are its suggestions.** `components/project-commands.tsx` is the third completer — the same
+  ones and its package.json scripts are its suggestions.** `components/project-commands.tsx` is
+  the third completer — the same
   strip row, the same start-anchored token and the same mousedown/key contract as
   `slash-commands.tsx`. It lists the project's helpers (the list the tab menu draws under
   **Project commands** and the project page under **Run**, matched on name *or* on command), and
-  picking one fills its **command** into the box rather than its name: what will run is the thing
-  worth reading and editing before it does. `Composer`'s `send` then consumes the line instead of
-  prompting (`shellLineFor`) — it never reaches the agent. **The result is a transcript row, not
-  a terminal**: `actions.runShell` posts to `POST /api/sessions/:id/shell` (`server/src/shell.ts`,
+  **the scripts the project's `package.json` files declare** beside them — the root's own and one
+  directory down (`server/src/project-scripts.ts`, `GET /api/projects/:id/scripts`), read off the
+  disk and never stored, helpers first because a row the person wrote outranks one the package
+  shipped. A nested package's suggested line carries its own `cd`, so it runs from the project
+  root through the same door every other `!` line does — nothing about the run path knows a
+  script exists. Picking either fills its **command** into the box rather than its name: what
+  will run is the thing worth reading and editing before it does. `Composer`'s
+  `send` then consumes the line instead of
+  prompting (`shellLineFor`) — it never reaches the agent, and it is **send and forget, like a
+  prompt**: the box clears on the send, never on the run's completion, and the running row is
+  where the line and any failure are said (`runShell` settles its own optimistic row when the
+  request dies, rather than leaving a spinner the cleared box can no longer explain). **The
+  result is a transcript row, not a terminal**: `actions.runShell` posts to
+  `POST /api/sessions/:id/shell` (`server/src/shell.ts`,
   an `execFile` capture that shares the login shell `terminals.ts` uses, which is why `pnpm` is
   found), and the server journals a **`_daedalus/shell`** update — constructed the way
   `config_notice` is, with `seq: 0`, so `append` assigns the real one and replay, fan-out and
@@ -721,9 +767,10 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   was picked or typed — and anything else runs in the project root. This is the one route that
   takes a command *up* from the browser; the bearer token is the gate, the same one the terminal
   panel's own prompt answers to. **A draft is offered none of it**: running one needs a session to
-  journal the row onto, which a draft has not got until its first message. The rows ride on
-  `useProjects()` (the server folds a project's helpers into its list, so no second request and no
-  new hook), and because a thread opened to read holds **no socket** (`phase.ts`), `runShell`
+  journal the row onto, which a draft has not got until its first message. The helper rows ride
+  on `useProjects()` (the server folds a project's helpers into its list) and the script rows on
+  `useProjectScripts` (one query per project, a minute stale — a suggestion's cadence, not a
+  catalog's), and because a thread opened to read holds **no socket** (`phase.ts`), `runShell`
   draws the running row up front and settles it from the answer — the same idempotent upsert the
   fan-out performs, so a live thread and a read-only one agree and neither shows it twice.
   **A `!` row is never windowed away**: `windowStart` opens the replay at the thread's oldest
@@ -879,6 +926,24 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   must be written down, not open the palette — with Escape and Tab left alone so
   a recorder opened by accident is not a trap.
 
+- **The tab strip's keys all pick from the group you are looking at**
+  (`dock.tsx`), which is the strip in front of you; while the dock is one group
+  that is also "every open tab", and once it is not, following the visible strip
+  beats a global order you cannot see. Digits jump (`tabJump`, and the range is
+  that binding's — the reader's first chord is what the recorder writes and the
+  rest of ⌘1…9 answer to the same key), ⌘/Ctrl+Tab or ⌥/Alt+↓ walk the strip
+  wrapping, and Alt+W closes the tab in front through the same guarded door its
+  ✕ uses (`setTabIndex`/`cycleTab`/`closeActiveTab`, which the palette's rows
+  also call). **Every chord here is one `matchesChord` can spell**, which rules
+  out the plain Ctrl+Tab people reach for: `matchesChord` folds Control into
+  `mod` by design (⌘ on Apple, Ctrl elsewhere), so the chord is `mod+tab` — the
+  browser's own switch-tabs, which Chromium keeps, so it fires in the desktop
+  shell and `RESERVED` says so on the row instead of leaving the dead web
+  binding to be found by pressing it. Alt is the pair that works in a browser
+  tab too, which is why it is the second. **⌘/Ctrl+W is not the close chord
+  either** — Electron gives it to close-window, so it would quit the app rather
+  than close a tab, the same reason `splitRight` is not ⌘W.
+
 ## Errors
 
 - **Errors are never `String(err)`.** `client/src/lib/errors.ts` normalizes everything
@@ -969,6 +1034,45 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   two windows apart — a zero-height box keeps its last answer rather than reading a hidden tab
   as fully covered, and the constant survives only as the fallback: one frame before the first
   measurement, and the surfaces that are not in a dock at all.
+- **Nested tabs are a dock inside a tab.** The `group` panel kind
+  (`components/workspace/group-panel.tsx`, descriptor `{kind:"group", groupId, layout?}`)
+  renders a second `DockviewReact` where a panel's content goes — dockview's own "nested
+  instances" — through `DockSurface`, the one component in `dock.tsx` that both levels are
+  drawn with, so a tab inside a group has the same tab, strip, `+`, list and theme it had
+  outside one. What the group holds is its serialized inner layout, kept on the panel's
+  params: dockview treats a panel's params change as a layout change of the outer, so the
+  inner dock writing `updateParameters` on every inner change is what puts nested tabs into
+  the outer's debounced save with no second store; `pruneLayout` prunes the inner layout by
+  the same rule one level down and drops a group nothing survived in. The doors between the
+  levels are the dock's: `attachNested` registers the inner api under the group panel's id
+  and wires the route sync, the "Opened" tier and the empty-group close (a group with no
+  tabs left closes itself, silently — the tab's own close was what landed on ⌘⇧T); every walk
+  of "the panels" (`allPanels`, `findPanel`, `ownerOf`) sees through the group, which is what
+  keeps a nested `thread:{id}` the one there is (`revealPanel` activates the group's tab first,
+  or the inner tab would switch behind a group you are not on); `activeApi` is the instance in
+  front of you — the top level, unless the tab you are on is a group — and it is what the
+  chords, the split, the maximize and a fresh panel's placement follow, so "beside what you
+  are looking at" means inside the group when that is where you are. Moving between levels is
+  a **close and an open of the same descriptor**: dockview's `moveTo` cannot cross instances,
+  and a panel *is* its descriptor, so nothing is lost — a terminal reattaches to its PTY by
+  id, a thread to its session, the IDE to its own tab store. Three doors do it, all silent:
+  the tab's "Move to group ▸" submenu (`moveToGroup`) — "New group" mints one in the tab's
+  place, or beside the group it is leaving, and fills it once the inner instance is ready
+  (`pendingNestRef`, because the inner dock mounts a React commit later than the panel; the
+  layout is persisted synchronously right after, because dockview's layout-change event is a
+  microtask and StrictMode disposes the first instance before it fires), and every open group
+  is a row, the current one greyed, with what it holds as the hint (`useDockGroups`, a
+  version-bumped store, because a tab inside one group cannot hear another group appear
+  through its own container's events); "Move out of the group" on a nested tab (beside the
+  group it was in); and a drag across the two strips (`dropForeign`, off `onDidDrop`, which
+  dockview raises for a drop it did not move itself; `onUnhandledDragOver` accepts the overlay
+  for it). The group panel restores from dockview's own live `params`, never from its props,
+  which lag a commit behind `updateParameters`. **One level, never a tree**: a group's own tab offers neither row, a group dropped
+  into a group is refused, and `pruneLayout` drops one on the way in. In CSS the inner dock is
+  `.dock-nested`: the header overlap is zeroed there (it is measured on the *outer* groups and
+  never reaches the overlay the inner strip lives in), the inner card gives up the frame's
+  right and bottom gutters it would otherwise owe twice, and the inner strip stands on
+  `--app-ground` so its active tab reads against something.
 - **The dock holds six panel kinds: chat, ide, terminal, web (the *Browser* panel), tasks
   and page.** The IDE panel (`components/workspace/ide-panel.tsx`, descriptor
   `{kind:"ide", projectId}`) holds four surfaces that are one product: the editor, the file
@@ -1050,8 +1154,17 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   lib/theme-ramp.ts), so the active tab's `--background` read as a shade of the same grey
   rather than as a different material. The chip is now `h-[var(--dock-chip-h)]` and the *cell*
   is what keeps the air (`py-0.5`, `m-0.5`), so the selected tab rises the full height of the
-  row and the rest are the ground with a title written on them — hover being the single 6%
-  wash, which is the one mix that reads on a light ground and a dark one alike. **One height
+  row and the rest are the ground with a title written on them. **Three weights of one
+  material, and no colour on any of them**: resting is a 4% wash of the foreground toward the
+  ground — the smallest step there is, short of the 7% that is a full step of the page's own
+  ramp — hover is the same wash at 8%, and the selected tab is the card's own ground and its
+  `shadow-sm`. Hover sitting *between* the two weights rather than on top of the active tab is
+  what stops pointing from looking like selecting, and the resting wash is what makes a row of
+  six tabs something to aim at rather than six pieces of text: on a bare band the only thing
+  marking one cell off the next is where the title happens to stop. A tab's own leading padding
+  (`pl-2.5`) is unconditional, so nothing shifts as a tab becomes active, and the slab's corners
+  are `--radius` less the cell's 2px inset — concentric with the card's `--radius-xl` rather
+  than a small arc against a large one. **One height
   token for everything standing in a strip** (`--dock-chip-h`/`--dock-control-h` on `:root`,
   because the app header's own `HEADER_CHIP` controls stand in the same row whenever a group
   joins the band and a token scoped to the dockview element is one they cannot see): it was
@@ -1072,8 +1185,22 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   tab stop. So the ⋮ and the close are `tabIndex={-1}` and the keyboard reaches them the way
   VS Code and Chrome do: on the tab itself, `Delete`/`Backspace` closes and `Shift`+`F10` (or
   the Menu key) opens the actions, with both controls drawn while the tab has focus so the
-  keys are discoverable by the one reader who cannot find them by pointing. The tab also gets
+  keys are discoverable by the one reader who cannot find them by pointing — and their slot is
+  `pointer-events: none` until the state that reveals it arms it, because an invisible button
+  is still a target. The tab also gets
   a **visible focus ring** — a roving tabindex you cannot see is arrow keys into the dark.
+  **The two controls float.** They were the tab's last flex item, which held a gutter open on
+  every tab in the strip for a pair of things that exist only while one of them is pointed at;
+  they are absolutely positioned against the chip's trailing inset now, so a title owns the whole
+  of the tab's width. The title and its `PanelStatusDot` are **one box** under the fade — the dot
+  inside it is why the ✕ no longer lands on the dot on hover — and what the controls cover when
+  they appear, the title stops saying: `--tab-fade-w` masks its end for the width of what is
+  actually there, declared on the chip (hover, focused, or holding the ⋮'s menu open) and
+  `@property`-registered so it interpolates, with the transition on the mask alone. The **pin is
+  a `[data-tab-action]` too**, so it is the one control drawn before you point and the fade can
+  size itself to it; the close no longer takes the active tab's exemption, since a floated
+  control has nothing to be covered by. The mask's transition joins the strip's other two in the
+  `prefers-reduced-motion` block, so the fade is a step for the readers who asked for one.
   What dockview cannot know is what the panel is *doing*: its `aria-label` is the plain title,
   so `useTabLabel` rewrites it with the reading and the pin state folded in.
   **Dockview's own overflow dropdown is off** (`disableTabsOverflowList`): it draws one at the

@@ -41,6 +41,22 @@ const SORT_OF: Partial<Record<TableColumn, SortBy>> = {
   estimate: "estimate",
 }
 
+/* ── The frozen columns ──
+   Key and Title are frozen so the row stays identifiable while the fields
+   scroll. On a phone that inverted itself: checkbox + key + title is ~23rem of
+   a 23rem viewport, so the whole screen was frozen and there was nothing left
+   to scroll the other columns into. Below `@panel-sm` they scroll with
+   everything else — the title is the first thing on the row anyway, so nothing
+   is lost but the freeze.
+
+   Their background cannot be the row's alpha tint, either: an alpha background
+   lets the columns sliding underneath show through, which is what `bg-inherit`
+   (inheriting a transparent `<tr>`) did at every width. Same colours, resolved
+   against the page instead of stacked on it. */
+const STUCK =
+  "@panel-sm:sticky bg-background group-hover:bg-[color-mix(in_oklch,var(--accent)_30%,var(--background))]"
+const STUCK_SELECTED = "bg-[color-mix(in_oklch,var(--primary)_5%,var(--background))]"
+
 const fmtDate = (ms: number | null) =>
   ms == null ? "" : new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "2-digit" })
 
@@ -207,7 +223,10 @@ export function TableView({ board, statuses, sprints, tasks, allTasks, view, ctx
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-auto p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+    /* `overscroll-x-contain`: this table is always wider than the panel, so a
+       sideways swipe is the normal way to read it — and reaching the last
+       column must not hand the gesture to the browser's back-navigation. */
+    <div className="min-h-0 flex-1 overflow-auto overscroll-x-contain p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       <table className="w-full min-w-[56rem] border-separate border-spacing-0 text-sm">
         <thead className="sticky top-0 z-10 bg-background/95 backdrop-blur">
           <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -220,8 +239,8 @@ export function TableView({ board, statuses, sprints, tasks, allTasks, view, ctx
                 className="size-3.5 accent-primary"
               />
             </th>
-            <th className="sticky left-8 z-20 w-20 border-b bg-background px-2 py-2">Key</th>
-            <th className="sticky left-28 z-20 min-w-[16rem] border-b bg-background px-2 py-2">Title</th>
+            <th className="@panel-sm:sticky left-8 z-20 w-20 border-b bg-background px-2 py-2">Key</th>
+            <th className="@panel-sm:sticky left-28 z-20 min-w-[12rem] @panel-sm:min-w-[16rem] border-b bg-background px-2 py-2">Title</th>
             {columns.map((col) => {
               const sortable = SORT_OF[col]
               const active = sortable && view.sortBy === sortable
@@ -254,8 +273,8 @@ export function TableView({ board, statuses, sprints, tasks, allTasks, view, ctx
                     className="size-3.5 accent-primary"
                   />
                 </td>
-                <td className="sticky left-8 z-10 border-b bg-inherit px-2 py-1 font-mono text-[11px] tabular-nums text-muted-foreground">{taskKey(task, board.key)}</td>
-                <td className="sticky left-28 z-10 border-b bg-inherit px-2 py-1">
+                <td className={cn("left-8 z-10 border-b px-2 py-1 font-mono text-[11px] tabular-nums text-muted-foreground", STUCK, selected && STUCK_SELECTED)}>{taskKey(task, board.key)}</td>
+                <td className={cn("left-28 z-10 border-b px-2 py-1", STUCK, selected && STUCK_SELECTED)}>
                   <button
                     type="button"
                     onClick={() => onOpen(task)}

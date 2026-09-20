@@ -374,6 +374,51 @@ export type McpAuthProbe =
   | { kind: "oauth"; resource: string; issuer: string; scopesSupported: string[] }
   | { kind: "unknown"; status: number; detail: string }
 
+/** What `POST /api/mcp-servers/:id/check` answers: the server was connected to
+    the way a thread's agent would, and this is what it advertises. `ok: false`
+    carries the reason in `error` — a refusal is an answer, not a request that
+    failed, so it is a 200. */
+export interface McpCheckEntry {
+  name: string
+  description?: string
+  /** A tool's JSON Schema, as the server declared it — what the detail page
+      draws its arguments from. */
+  inputSchema?: unknown
+  /** A tool's declared output schema, where it declares one. */
+  outputSchema?: unknown
+  /** A prompt's declared arguments. */
+  arguments?: { name: string; description?: string; required?: boolean }[]
+  /** A resource's URI and type; `name` is the URI, which is what identifies
+      one, so the human name (where there is one) is the description. */
+  uri?: string
+  mimeType?: string
+}
+
+/** What the playground can run: the three things an MCP server offers. */
+export type McpInvokeKind = "tool" | "prompt" | "resource"
+
+/** One playground call: what the server answered, whole. `error` is the call
+    that never happened — a tool that ran and failed comes back as a result
+    carrying `isError`, which is an answer. */
+export interface McpCallResult {
+  ok: boolean
+  ms: number
+  result?: unknown
+  error?: string
+}
+export interface McpCheckResult {
+  ok: boolean
+  ms: number
+  serverInfo?: { name: string; version: string }
+  tools: McpCheckEntry[]
+  prompts: McpCheckEntry[]
+  resources: McpCheckEntry[]
+  error?: string
+  /** Unix ms of the connection this listing came from — absent on the two
+      answers the server gives without connecting at all. */
+  checkedAt?: number
+}
+
 /** One of the harness's own servers, in the library as a row that holds
     nothing but which one it is — command, env and credentials are synthesized
     at spawn from the server's config and the thread's project. Injected from
@@ -526,6 +571,7 @@ export type ProfileUsageKind =
   | "deepseek"
   | "openrouter"
   | "command-code"
+  | "9router"
 
 export interface ProfileUsage {
   kind: ProfileUsageKind
@@ -576,12 +622,6 @@ export interface Profile {
       Default, which can never be either). */
   hidden?: boolean
   disabled?: boolean
-  /** Library entries every thread on this profile gets, on top of its
-      project's. The same three a project and a thread carry; the agent sees
-      the union. */
-  mcpServerIds: string[]
-  skillIds: string[]
-  commandIds: string[]
 }
 
 /** A coding plan a new profile can start from (`server/src/profile-presets.ts`):

@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useIsMobile } from "@/hooks/use-device"
+import { STRIP_GROUND } from "@/lib/header-chrome"
 import { MENU_WIDTH } from "@/components/menu-row"
 import { PANEL_ICONS } from "@/components/workspace/panel-kinds"
 import { PanelStatusDot } from "@/components/workspace/panel-status-dot"
@@ -54,8 +55,13 @@ const LIST_FROM = 3
    strip takes (`--dock-chip-h` in `index.css`). They were `size-6` in a 32px
    bar — a 24px target to hit for the two controls a strip is used through, and
    the third height in a row that had one. */
-const STRIP_CONTROL =
-  "size-[var(--dock-chip-h)] rounded-full text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+const STRIP_CONTROL = cn(
+  "size-[var(--dock-chip-h)] rounded-full text-muted-foreground hover:bg-foreground/10 hover:text-foreground",
+  /* On a phone they wear the header controls' ground for the same reason those
+     do — the strip is an overlay over a moving transcript there. One recipe,
+     named once (`lib/header-chrome.ts`). */
+  STRIP_GROUND
+)
 
 function TabRow({ panel, onClose }: { panel: IDockviewPanel; onClose: () => void }) {
   const kind = panel.api.component
@@ -115,16 +121,20 @@ function TabRow({ panel, onClose }: { panel: IDockviewPanel; onClose: () => void
   )
 }
 
-export function TabActions({ panels }: IDockviewHeaderActionsProps) {
+export function TabActions({ panels, containerApi }: IDockviewHeaderActionsProps) {
   const dock = useDock()
   const { onNewTab, onOpenPanel } = useDockOpeners()
   const isMobile = useIsMobile()
 
-  /* No padding of its own: the strip's own 6px is the end of the row, and the
-     chip's `mx-0.5` is the gutter between the last tab and the first of these —
-     the same inset the tabs keep between themselves. */
+  /* ── One gutter in the row ──
+     Everything standing in a strip keeps the same 4px between it and its
+     neighbour: two tabs are their own `mx-0.5` twice over, so these pay the
+     other half of it against the last tab (`pl-0.5`) and a full one between
+     themselves (`gap-1`). They used to be flush — two 28px targets with no
+     seam, reading as one wide control — while the tabs beside them were
+     spaced, which is the inconsistency this is. */
   return (
-    <div className="flex h-full items-center">
+    <div className="flex h-full items-center gap-1 pl-0.5">
       {onNewTab && (
         <DropdownMenu>
           <Tooltip>
@@ -152,8 +162,14 @@ export function TabActions({ panels }: IDockviewHeaderActionsProps) {
                 the header menu's, unchanged. */}
             <WorkspacePanelItems
               flat
-              onNewTab={onNewTab}
-              onOpen={(kind) => onOpenPanel?.(kind)}
+              onNewTab={() => {
+                dock.targetNext(containerApi)
+                onNewTab()
+              }}
+              onOpen={(kind) => {
+                dock.targetNext(containerApi)
+                onOpenPanel?.(kind)
+              }}
               canOpenPanels={!!onOpenPanel}
             />
           </DropdownMenuContent>

@@ -35,6 +35,11 @@ export const settingsRootPath = () => `/settings`
 export const settingsPath = (section: string) => `/settings/${section}`
 export const settingsFormPath = (section: string, id: string = "new") =>
   `/settings/${section}/${encodeURIComponent(id)}`
+/** One MCP server seen as a thing that *offers* something — its tools, prompts
+    and resources, and the playground that runs one. The form beside it
+    (`settingsFormPath("mcp", id)`) is where the row is edited; this is what
+    the row turned out to be. */
+export const mcpDetailPath = (id: string) => `/settings/mcp/${encodeURIComponent(id)}/tools`
 /** A project's own page — the overview, its threads and its numbers. Settings
     keeps the *form* (`settingsFormPath("projects", id)`); this is the workspace
     seen as a thing that has a history, which is not a settings screen. */

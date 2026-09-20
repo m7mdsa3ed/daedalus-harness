@@ -73,9 +73,6 @@ const profile: Profile = {
   defaultModel: "",
   smallModel: "",
   logoUrl: "",
-  mcpServerIds: [],
-  skillIds: [],
-  commandIds: [],
 };
 const project = { id: "w1", name: "test-ws", cwd: "/tmp/daedalus-test-routines/ws", description: null };
 await db.insert(schema.profiles)

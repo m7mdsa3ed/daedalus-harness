@@ -131,9 +131,14 @@ export interface WorkspaceFile extends WorkspaceStat {
 
 const within = (root: string, path: string) => path === root || path.startsWith(root + sep);
 
+/** The id a panel with no project carries — the client spells the same string. */
+export const HOME_PROJECT_ID = "home";
+
 /** The project's canonical `cwd`. Canonical, so a project rooted at a symlink
     does not fail its own containment check on every request. */
 export async function projectRoot(projectId: string): Promise<string> {
+  // A panel opened with no thread routed has no project: it lands in $HOME.
+  if (projectId === HOME_PROJECT_ID) return realpathSync(homedir());
   const project = await getProject(projectId);
   if (!project) throw fail(404, "unknown project");
   try {

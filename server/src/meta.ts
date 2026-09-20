@@ -6,8 +6,10 @@
    src/ or node is running dist/. */
 import { readFileSync, statSync } from "node:fs";
 
-export type ChangelogSection = { title: string; items: string[] };
-export type ChangelogEntry = { version: string; date: string | null; sections: ChangelogSection[] };
+/* One release, its body kept as the markdown the file holds. The client renders
+   it, so the file's own formatting — bold lead-ins, inline code, links, a table —
+   reaches the dialog instead of being flattened into titles and bullets here. */
+export type ChangelogEntry = { version: string; date: string | null; markdown: string };
 
 const packageUrl = new URL("../../package.json", import.meta.url);
 const changelogUrl = new URL("../../CHANGELOG.md", import.meta.url);
@@ -32,24 +34,25 @@ export function changelog(): ChangelogEntry[] {
   const text = readFileSync(changelogUrl, "utf8");
   const entries: ChangelogEntry[] = [];
   let entry: ChangelogEntry | null = null;
-  let section: ChangelogSection | null = null;
+  let body: string[] = [];
   for (const line of text.split("\n")) {
     const heading = /^## \[([^\]]+)\](?: - (\S+))?/.exec(line);
     if (heading) {
-      entry = { version: heading[1], date: heading[2] ?? null, sections: [] };
-      entries.push(entry);
-      section = null;
+      if (entry) {
+        entry.markdown = body.join("\n").trim();
+        entries.push(entry);
+      }
+      entry = { version: heading[1], date: heading[2] ?? null, markdown: "" };
+      body = [];
       continue;
     }
-    if (!entry) continue;
-    const sub = /^### (.+)$/.exec(line);
-    if (sub) {
-      section = { title: sub[1].trim(), items: [] };
-      entry.sections.push(section);
-      continue;
-    }
-    const item = /^- (.+)$/.exec(line.trim());
-    if (item && section) section.items.push(item[1].trim());
+    /* Everything above the first `## [version]` is the file's own preamble, not
+       a release's, so it is dropped rather than handed to the first entry. */
+    if (entry) body.push(line);
+  }
+  if (entry) {
+    entry.markdown = body.join("\n").trim();
+    entries.push(entry);
   }
   changelogCache = { mtime, entries };
   return entries;

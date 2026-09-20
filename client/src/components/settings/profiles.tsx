@@ -1,5 +1,5 @@
 import * as React from "react"
-import { ExternalLink, KeyRound, Pencil, Plus, Trash2 } from "lucide-react"
+import { Copy, ExternalLink, KeyRound, Pencil, Plus, Search, Trash2 } from "lucide-react"
 import { Navigate, useNavigate, useParams } from "react-router"
 import { dropAgentOptions } from "@/lib/agent-options"
 import { reportError } from "@/lib/errors"
@@ -17,9 +17,9 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { AgentIcon, ProfileIcon } from "@/components/entity-icon"
+import { Empty } from "@/components/empty"
 import {
   api,
-  mcpSubtitle,
   profileAgentIds,
   type Profile,
   type ProfileAgentLink,
@@ -29,17 +29,15 @@ import {
 } from "@/lib/settings"
 import {
   useAgents,
-  useCommands,
   useInvalidateProfileCatalog,
-  useMcpServers,
   useProfilePresets,
   useProfiles,
   useSetProfileFlags,
-  useSkills,
 } from "@/lib/queries/catalog"
 import { toast } from "@/lib/toast"
 import { cn } from "@/lib/utils"
-import { FormPageHeader, PageForm, PageHeader, Group, Row, EmptyCard, Field, FormActions, FormSection, Picker } from "./primitives"
+import { FormPageHeader, PageForm, PageHeader, EmptyCard, Field, FormActions, FormSection, INSET } from "./primitives"
+import { SettingsList } from "./list"
 import {
   ModelsSection,
   blankModelRow,
@@ -103,8 +101,14 @@ const USAGE_PROVIDERS: { kind: ProfileUsageKind; label: string; hint: string; ho
   {
     kind: "command-code",
     label: "Command Code — plan credits",
-    hint: "Reads the plan's rolling 5-hour and weekly credit windows, and the credits left in the cycle, from the same account route the CLI's /usage panel calls — it has no non-interactive form. The staging platform is picked from the base URL above unless you name a host.",
+    hint: "Reads the plan's rolling 5-hour and weekly credit windows, the monthly plan pot, and the credits left in the cycle, from the same account routes the CLI's /usage panel calls — it has no non-interactive form. The plan's name and its monthly allowance come from the CLI's own table, so a brand-new plan may read as unknown. The staging platform is picked from the base URL above unless you name a host.",
     hostPlaceholder: "https://api.commandcode.ai",
+  },
+  {
+    kind: "9router",
+    label: "9Router — every linked account",
+    hint: "A self-hosted 9Router gateway is many accounts behind one endpoint that falls back between them, so each limit is pooled across every account reporting it — one bar for what the gateway has left, not one per account, with each account's own numbers in the raw report. The gateway is taken from the base URL above unless you name a host. Its sk- key does not open the dashboard API: if the dashboard asks for a login, put its password in the token field below.",
+    hostPlaceholder: "http://localhost:20128",
   },
 ]
 
@@ -149,6 +153,22 @@ export function ProfilesPage() {
     }
   }
 
+  /* Duplicating is server-side (`POST …/duplicate`) because the credentials
+     are: the client holds `hasApiKey` and never the key, so a copy assembled
+     here would come back keyless. The copy lands hidden and opens in the
+     editor — a duplicate exists to be changed, and two identical names in the
+     composer's picker is the one outcome nobody wants. */
+  const duplicate = async (profile: Profile) => {
+    try {
+      const copy = await api<Profile>(settings, `/api/profiles/${profile.id}/duplicate`, { method: "POST" })
+      await invalidate()
+      toast.success(`Copied “${profile.name}” — hidden until you show it`)
+      void navigate(settingsFormPath("profiles", copy.id))
+    } catch (err) {
+      reportError(err, "Couldn't duplicate the profile")
+    }
+  }
+
   const newButton = (
     <Button onClick={() => void navigate(settingsFormPath("profiles"))}>
       <Plus className="size-4" /> New profile
@@ -165,74 +185,152 @@ export function ProfilesPage() {
   const stored = profiles.filter((p) => !p.virtual)
   const agentName = (id: string) => agents.find((a) => a.id === id)?.name
 
+  /* Search and ordering are the list's own, not the server's: the whole
+     catalog is already here (one `/api/profiles` read), so filtering it is a
+     string match, and what a reader wants first is the profiles still in play
+     — disabled last, hidden after shown, each group by name. */
+  const [query, setQuery] = React.useState("")
+  /* Hidden profiles are folded away by default and the switch says how many, so
+     the only way back to one is never a thing you have to already know about.
+     A search reaches them regardless: a needle that matches nothing *visible*
+     would otherwise answer "nothing matches" about a profile that is right
+     there. Disabled rows are not folded — disabled is a state to see. */
+  const [showHidden, setShowHidden] = React.useState(false)
+  const needle = query.trim().toLowerCase()
+  const hiddenCount = stored.filter((p) => p.hidden).length
+  const rank = (p: Profile) => (p.disabled ? 2 : p.hidden ? 1 : 0)
+  const shown = stored
+    .filter((p) => showHidden || needle || !p.hidden)
+    .filter(
+      (p) =>
+        !needle ||
+        `${p.name} ${p.baseUrl} ${p.defaultModel} ${profileAgentIds(p).map((id) => agentName(id) ?? id).join(" ")} ${p.models.map((m) => `${m.id} ${m.label}`).join(" ")}`
+          .toLowerCase()
+          .includes(needle)
+    )
+    .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
+
   return (
     <>
       <PageHeader meta={meta} action={newButton} />
-      {stored.length === 0 ? (
-        <EmptyCard
-          icon={KeyRound}
-          text="No profiles yet. Every agent already runs on its own defaults — add a profile to point one at your own gateway, key or model catalog."
-          action={newButton}
-        />
-      ) : (
-        <Group>
-          {stored.map((profile) => (
-            <div key={profile.id} className="flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-4 sm:py-3">
-              <div className="flex items-start gap-3 min-w-0 flex-1">
-                <ProfileIcon profile={profile} className="size-5 shrink-0 mt-0.5" />
-                <div className="min-w-0 flex-1 space-y-1.5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={cn("truncate text-sm font-semibold", (profile.hidden || profile.disabled) && "text-muted-foreground")}>
+      {/* The search box only once the list is long enough to need it — a filter
+          over three rows costs more than it saves. The hidden switch appears
+          whenever there is something folded away, however short the list. */}
+      {(stored.length > 5 || hiddenCount > 0) && (
+        <div className="mb-4 flex flex-col gap-2 @panel-sm:flex-row @panel-sm:items-center">
+          {stored.length > 5 && (
+            <div className="relative min-w-0 flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search profiles, agents, models…"
+                aria-label="Search profiles"
+                className="pl-9"
+              />
+            </div>
+          )}
+          {hiddenCount > 0 && (
+            <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground @panel-sm:ml-auto">
+              <Switch checked={showHidden} onCheckedChange={setShowHidden} />
+              Show {hiddenCount} hidden
+            </label>
+          )}
+        </div>
+      )}
+      <SettingsList
+        rows={shown}
+        rowId={(profile) => profile.id}
+        /* No `search` here: the page owns its own box above (it also drives the
+           "show hidden" switch), and two search fields over one list is one
+           more than there is a list. */
+        columns={[
+          {
+            id: "profile",
+            header: "Profile",
+            cell: (profile) => (
+              <div className="flex min-w-0 items-center gap-2.5">
+                <ProfileIcon profile={profile} className="size-5 shrink-0" />
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span
+                      className={cn(
+                        "truncate font-medium",
+                        (profile.hidden || profile.disabled) && "text-muted-foreground"
+                      )}
+                    >
                       {profile.name}
                     </span>
                     {profile.disabled ? (
-                      <span className="rounded-pill bg-muted px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase text-muted-foreground">
+                      <Badge variant="secondary" className="text-[10px]">
                         Disabled
-                      </span>
-                    ) : profile.hidden && (
-                      <span className="rounded-pill bg-muted px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase text-muted-foreground">
+                      </Badge>
+                    ) : profile.hidden ? (
+                      <Badge variant="secondary" className="text-[10px]">
                         Hidden
-                      </span>
-                    )}
+                      </Badge>
+                    ) : null}
                     {!profile.hasApiKey && (
-                      <Badge variant="outline" className="text-muted-foreground text-[10px] font-normal px-1.5 py-0">
+                      <Badge variant="outline" className="px-1.5 py-0 text-[10px] font-normal text-muted-foreground">
                         no key
                       </Badge>
                     )}
                   </div>
-                  <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                    {profileAgentIds(profile).map((id) => (
-                      <span key={id} className="inline-flex items-center gap-1 rounded bg-muted/60 px-1.5 py-0.5 text-[11px]">
-                        <AgentIcon agentId={id} className="size-3 shrink-0" />
-                        <span className="truncate">{agentName(id) ?? id}</span>
-                      </span>
-                    ))}
-                    {profile.defaultModel && (
-                      <span className="inline-flex items-center rounded bg-muted/60 px-1.5 py-0.5 font-mono text-[11px] break-all">
-                        {profile.defaultModel}
-                      </span>
-                    )}
-                    {profile.models.length > 1 && (
-                      <span className="text-[11px]">· {profile.models.length} models</span>
-                    )}
-                    {profile.mcpServerIds.length > 0 && (
-                      <span className="text-[11px]">· {profile.mcpServerIds.length} MCP</span>
-                    )}
-                    {profile.skillIds.length > 0 && (
-                      <span className="text-[11px]">· {profile.skillIds.length} skills</span>
-                    )}
-                    {profile.commandIds.length > 0 && (
-                      <span className="text-[11px]">· {profile.commandIds.length} commands</span>
-                    )}
-                  </div>
+                  {/* The host, not the whole URL: which gateway this profile
+                      points at is the question, and the path is what made the
+                      row wrap. A URL that won't parse is said as it was typed. */}
+                  {profile.baseUrl && (
+                    <div className="truncate text-[11px] text-muted-foreground" title={profile.baseUrl}>
+                      {URL.parse(profile.baseUrl)?.host ?? profile.baseUrl}
+                    </div>
+                  )}
                 </div>
               </div>
-              <div className="flex items-center justify-end gap-1 shrink-0 pt-2 border-t border-border/40 sm:border-t-0 sm:pt-0">
-                {/* Kept, not deleted: either flag still leaves the profile
-                    spawning the threads already on it. Hiding is the pickers
-                    only — the usage page keeps reading the plan; disabling
-                    closes everywhere, usage included. State-labelled, since
-                    two bare switches would not say which was which. */}
+            ),
+          },
+          {
+            id: "agents",
+            header: "Agents",
+            secondary: true,
+            cell: (profile) => (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {profileAgentIds(profile).map((id) => (
+                  <span
+                    key={id}
+                    className="inline-flex items-center gap-1 rounded bg-muted/60 px-1.5 py-0.5 text-[11px]"
+                  >
+                    <AgentIcon agentId={id} className="size-3 shrink-0" />
+                    <span className="truncate">{agentName(id) ?? id}</span>
+                  </span>
+                ))}
+              </div>
+            ),
+          },
+          {
+            id: "model",
+            header: "Model",
+            secondary: true,
+            cell: (profile) => (
+              <div className="space-y-0.5 text-[11px] text-muted-foreground">
+                {profile.defaultModel && (
+                  <div className="font-mono break-all">{profile.defaultModel}</div>
+                )}
+                {profile.models.length > 1 && <div>{profile.models.length} models</div>}
+                {profile.usage && profile.usage.kind !== "none" && <div>plan usage</div>}
+              </div>
+            ),
+          },
+          {
+            id: "state",
+            header: "State",
+            align: "end",
+            /* Kept, not deleted: either flag still leaves the profile spawning
+               the threads already on it. Hiding is the pickers only — the usage
+               page keeps reading the plan; disabling closes everywhere, usage
+               included. State-labelled, since two bare switches would not say
+               which was which. */
+            cell: (profile) => (
+              <div className="flex items-center justify-end gap-3">
                 <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Switch
                     checked={!profile.hidden}
@@ -253,17 +351,80 @@ export function ProfilesPage() {
                   />
                   Enabled
                 </label>
-                <Button variant="ghost" size="icon-lg" title="Edit" onClick={() => void navigate(settingsFormPath("profiles", profile.id))}>
-                  <Pencil />
-                </Button>
-                <Button variant="ghost" size="icon-lg" title="Delete" onClick={() => remove(profile)}>
-                  <Trash2 />
-                </Button>
               </div>
+            ),
+          },
+        ]}
+        actions={[
+          {
+            id: "duplicate",
+            label: "Duplicate",
+            icon: <Copy />,
+            onClick: (profile) => void duplicate(profile),
+          },
+          {
+            id: "edit",
+            label: "Edit",
+            icon: <Pencil />,
+            onClick: (profile) => void navigate(settingsFormPath("profiles", profile.id)),
+          },
+          {
+            id: "delete",
+            label: "Delete",
+            icon: <Trash2 />,
+            tone: "danger",
+            onClick: (profile) => void remove(profile),
+          },
+        ]}
+        renderCard={(profile) => (
+          <>
+            <div className="flex min-w-0 items-center gap-2.5">
+              <ProfileIcon profile={profile} className="size-5 shrink-0" />
+              <span
+                className={cn(
+                  "truncate text-sm font-medium",
+                  (profile.hidden || profile.disabled) && "text-muted-foreground"
+                )}
+              >
+                {profile.name}
+              </span>
+              {profile.disabled ? (
+                <Badge variant="secondary" className="text-[10px]">
+                  Disabled
+                </Badge>
+              ) : profile.hidden ? (
+                <Badge variant="secondary" className="text-[10px]">
+                  Hidden
+                </Badge>
+              ) : null}
             </div>
-          ))}
-        </Group>
-      )}
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+              {profileAgentIds(profile).map((id) => (
+                <span key={id} className="inline-flex items-center gap-1 rounded bg-muted/60 px-1.5 py-0.5">
+                  <AgentIcon agentId={id} className="size-3 shrink-0" />
+                  <span className="truncate">{agentName(id) ?? id}</span>
+                </span>
+              ))}
+              {profile.defaultModel && (
+                <span className="rounded bg-muted/60 px-1.5 py-0.5 font-mono break-all">
+                  {profile.defaultModel}
+                </span>
+              )}
+            </div>
+          </>
+        )}
+        empty={
+          stored.length === 0 ? (
+            <EmptyCard
+              icon={KeyRound}
+              text="No profiles yet. Every agent already runs on its own defaults — add a profile to point one at your own gateway, key or model catalog."
+              action={newButton}
+            />
+          ) : (
+            <Empty size="lg">Nothing matches “{query.trim()}”.</Empty>
+          )
+        }
+      />
     </>
   )
 }
@@ -300,30 +461,31 @@ export function ProfileFormPage() {
    The form owns the state (rows, defaultModel) and the bookkeeping that keeps
    the default honest; that module owns the row shapes, conversions and UI. */
 
-function ProfileForm({
+export function ProfileForm({
   profile,
   agents,
   settings,
   onDone,
+  dialog = false,
 }: {
   profile: Profile | null
   agents: { id: string; name: string }[]
   settings: ServerSettings
-  onDone: (saved: boolean) => void
+  /** The saved row, so a caller that opened this to *pick* a profile can
+      select what it just made; null when the form was cancelled. */
+  onDone: (saved: Profile | null) => void
+  /** Drawn inside a dialog rather than as a settings route — the page header
+      is the dialog's own. */
+  dialog?: boolean
 }) {
   // The library the pickers below draw from.
-  const mcpServers = useMcpServers()
-  const skills = useSkills()
-  const commands = useCommands()
   const [form, setForm] = React.useState(() => ({
     name: profile?.name ?? "",
     baseUrl: profile?.baseUrl ?? "",
     apiKey: "",
     defaultModel: profile?.defaultModel ?? "",
     logoUrl: profile?.logoUrl ?? "",
-    mcpServerIds: profile?.mcpServerIds ?? [],
-    skillIds: profile?.skillIds ?? [],
-    commandIds: profile?.commandIds ?? [],
+
     /* The usage reader, flattened into the form the way `apiKey` is: the token
        is write-only (the server sends back a boolean), so an empty field means
        "keep the stored one" here too. */
@@ -451,29 +613,27 @@ function ProfileForm({
         suppressModelMetadataWarning: form.suppressModelMetadataWarning,
         hidden: form.hidden,
         disabled: form.disabled,
-        mcpServerIds: form.mcpServerIds,
-        skillIds: form.skillIds,
-        commandIds: form.commandIds,
+
       }
-      if (profile) {
-        await api<Profile>(settings, `/api/profiles/${profile.id}`, { method: "PUT", body: JSON.stringify(payload) })
-      } else {
-        await api<Profile>(settings, "/api/profiles", { method: "POST", body: JSON.stringify(payload) })
-      }
-      onDone(true)
+      const saved = profile
+        ? await api<Profile>(settings, `/api/profiles/${profile.id}`, { method: "PUT", body: JSON.stringify(payload) })
+        : await api<Profile>(settings, "/api/profiles", { method: "POST", body: JSON.stringify(payload) })
+      onDone(saved)
     })
   }
 
   return (
     <>
-      <FormPageHeader
-        title={profile ? `Edit ${profile.name}` : "New profile"}
-        description="Credentials, model catalog, which agents run on it, and what every thread on it brings along."
-        onBack={() => onDone(false)}
-      />
+      {!dialog && (
+        <FormPageHeader
+          title={profile ? `Edit ${profile.name}` : "New profile"}
+          description="Credentials, model catalog, which agents run on it, and what every thread on it brings along."
+          onBack={() => onDone(null)}
+        />
+      )}
       <PageForm onSubmit={save}>
       {!profile && <PresetPicker value={preset} onPick={applyPreset} />}
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 @panel-sm:grid-cols-2">
         <Field label="Name">
           <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
         </Field>
@@ -558,7 +718,7 @@ function ProfileForm({
           {agentRows.map((agent) => {
             const link = links[agent.id]
             return (
-              <div key={agent.id} className="grid gap-2 rounded-md border border-border/60 p-2 sm:grid-cols-[minmax(10rem,auto)_1fr] sm:items-center">
+              <div key={agent.id} className={cn("grid gap-2 p-2 @panel-sm:grid-cols-[minmax(10rem,auto)_1fr] @panel-sm:items-center", INSET)}>
                 <label className="flex items-center gap-2 text-sm min-w-0 cursor-pointer">
                   <Switch className="shrink-0" checked={!!link} onCheckedChange={(on) => toggleAgent(agent.id, on)} />
                   <AgentIcon agentId={agent.id} className="size-4 shrink-0" />
@@ -611,7 +771,7 @@ function ProfileForm({
           </Select>
         </Field>
         {form.usageKind !== "none" && (
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 @panel-sm:grid-cols-2">
             <Field label="Usage host" hint="Optional — the provider's default unless it is served somewhere else.">
               <Input
                 value={form.usageBaseUrl}
@@ -664,41 +824,7 @@ function ProfileForm({
           <span className="min-w-0 flex-1 leading-snug">Hide "Model metadata … not found. Defaulting to fallback metadata"</span>
         </label>
       </Field>
-      {/* The same three a project links. A project's say what the workspace
-          brings; a profile's say what the provider setup brings, to every
-          thread started on it whichever project it is in. The thread adds its
-          own on top (the Tools menu on a new thread's composer), and the
-          agent is spawned with the union of all three. */}
-      <FormSection label="Capabilities">
-        <Field label="MCP servers" hint="Manage the definitions in Settings › MCP servers.">
-          <Picker
-            items={mcpServers}
-            selected={form.mcpServerIds}
-            onToggle={(mcpServerIds) => set({ mcpServerIds })}
-            subtitle={mcpSubtitle}
-            empty="No MCP servers defined yet."
-          />
-        </Field>
-        <Field label="Skills" hint="Manage the paths in Settings › Skills.">
-          <Picker
-            items={skills}
-            selected={form.skillIds}
-            onToggle={(skillIds) => set({ skillIds })}
-            subtitle={(s) => s.path}
-            empty="No skills defined yet."
-          />
-        </Field>
-        <Field label="Slash commands" hint="Manage the prompts in Settings › Commands.">
-          <Picker
-            items={commands}
-            selected={form.commandIds}
-            onToggle={(commandIds) => set({ commandIds })}
-            subtitle={(c) => `/${c.name}`}
-            empty="No commands defined yet."
-          />
-        </Field>
-      </FormSection>
-      <FormActions busy={busy} onCancel={() => onDone(false)} error={saveError} />
+      <FormActions busy={busy} onCancel={() => onDone(null)} error={saveError} />
       </PageForm>
     </>
   )

@@ -397,7 +397,14 @@ _Extracted from CLAUDE.md; the rationale behind the rules summarised there._
   longer serves it loses to the first profile that does). Migration `0019` filled every
   existing row with `{ [agent_id]: {} }`; it was written by hand under `generate --custom`
   because drizzle-kit's rename prompt needs a TTY and its table-rebuild for this diff
-  selected a column the old table did not have.
+  selected a column the old table did not have. **The harness's own model calls are the one
+  place the pair does not apply** (`enhance.ts`, reached by both `/api/enhance` and
+  `…/git/draft-message`): they go to the profile's *shared* base URL and never the per-agent
+  override, so an agent picks nothing for them and naming none is not an error. Their gate is
+  `profileHasAgent` — at least one named runtime is one the harness knows — and it deliberately
+  takes no "which one", because narrowing by the agent would refuse a rewrite whose profile
+  simply does not serve the draft's agent. `resolveProfileAgent`'s strict reading is the
+  spawn paths' alone.
 
 ## Personas
 

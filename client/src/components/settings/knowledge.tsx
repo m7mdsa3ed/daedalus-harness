@@ -88,7 +88,7 @@ export function KnowledgePage() {
       <Select value={projectId} onValueChange={(value) => setProjectId(value ?? ALL)}>
         {/* Full width on a phone, where the header's action block is the whole
             column and a 176px trigger beside two buttons leaves neither room. */}
-        <SelectTrigger className="w-full max-sm:h-9 sm:w-44">
+        <SelectTrigger className="h-9 w-full @panel-sm:w-44">
           <SelectValue>{projectId === ALL ? "All projects" : (projectName(projectId) ?? "Project")}</SelectValue>
         </SelectTrigger>
         <SelectContent>
@@ -241,7 +241,7 @@ function AddEntryDialog({
 
   return (
     <ResponsiveDialog open onOpenChange={(open) => !open && onClose()}>
-      <ResponsiveDialogContent className="sm:max-w-lg">
+      <ResponsiveDialogContent className="@panel-sm:max-w-lg">
         <ResponsiveDialogHeader>
           <ResponsiveDialogTitle>Add knowledge entry</ResponsiveDialogTitle>
           <ResponsiveDialogDescription>

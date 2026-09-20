@@ -27,7 +27,10 @@
      trickle stays smooth, and anything past `SNAP_CHARS` behind is not a stream
      at all — a whole message arriving at once — and is shown immediately.
      Combined with the floor of one character per frame, the buffer is
-     guaranteed to reach the end rather than asymptotically approach it.
+     guaranteed to reach the end rather than asymptotically approach it. *How
+     big* that fraction is, is the reader's (`streamSpeed`, `lib/stream-pace`),
+     and `instant` bypasses the buffer outright — the rules below are what make
+     pacing safe, not an argument that everyone wants it.
    • **The cut lands on a boundary.** Revealing markdown mid-token means
      `**bo` renders as literal asterisks and then reflows into bold a frame
      later, which is a worse flicker than the stutter this replaces. The visible
@@ -37,10 +40,8 @@
      length never goes backwards while the text keeps growing. */
 import * as React from "react"
 
-/** Fraction of the remaining backlog drained per frame at 60fps. Low enough to
- *  read as motion rather than as a jump, high enough that a paragraph-sized
- *  burst is gone in a few hundred milliseconds. */
-const DRAIN_PER_FRAME = 0.14
+import { drainFor } from "@/lib/stream-pace"
+import { useViewOptionsContext } from "@/lib/view-options"
 
 /** Never slower than this, whatever the backlog — what makes the tail finish. */
 const MIN_CHARS_PER_FRAME = 1
@@ -70,8 +71,15 @@ function boundary(text: string, n: number): number {
  * `streaming` is the row's own flag (thread-view sets it on the transcript's
  * tail while the turn is active) — false means "this is finished or is
  * history", and the full text is returned with no scheduling at all.
+ *
+ * The speed is read from the view options here rather than threaded in: this
+ * hook is mounted on the one row being written and nowhere else, so it is two
+ * context reads in the whole transcript, and every call site would otherwise
+ * have to pass a value it has no opinion about. Read during render, never into
+ * a `useState` initialiser — see the note at the top of `lib/view-options`.
  */
 export function useStreamedText(text: string, streaming: boolean): string {
+  const drain = drainFor(useViewOptionsContext().streamSpeed)
   const [shown, setShown] = React.useState(text)
   /* The loop reads these: it runs per frame, far more often than React renders,
      and a stale closure would pace a message the row has already moved past. */
@@ -80,7 +88,9 @@ export function useStreamedText(text: string, streaming: boolean): string {
   textRef.current = text
 
   React.useEffect(() => {
-    if (!streaming) {
+    /* `instant` and a settled row are the same instruction — paint what is
+       there — so they are the same branch, and no frame is ever scheduled. */
+    if (!streaming || drain === null) {
       lenRef.current = text.length
       setShown(text)
       return
@@ -112,7 +122,7 @@ export function useStreamedText(text: string, streaming: boolean): string {
       last = now
       const advance = Math.max(
         MIN_CHARS_PER_FRAME * frames,
-        remaining * DRAIN_PER_FRAME * frames
+        remaining * drain * frames
       )
       lenRef.current = Math.min(full.length, lenRef.current + Math.ceil(advance))
       const next = full.slice(0, boundary(full, lenRef.current))
@@ -128,7 +138,7 @@ export function useStreamedText(text: string, streaming: boolean): string {
     // the loop advances it, and re-running per revealed word would restart the
     // frame clock on every one of them.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [streaming, text])
+  }, [streaming, text, drain])
 
-  return streaming ? shown : text
+  return streaming && drain !== null ? shown : text
 }

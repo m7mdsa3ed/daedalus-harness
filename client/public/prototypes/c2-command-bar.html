@@ -1,0 +1,73 @@
+<!doctype html>
+<!--
+  C2 — The command bar. Everything on one row.
+
+  The two-row card collapses: the textarea sits on the same 32px line as the
+  "+", the model, the readings and Send. It is the composer for someone who
+  mostly types one sentence at a time — the box is always one line tall, so a
+  long thread and a short one put the same thing on the glass.
+
+  What it costs: a long message scrolls sideways inside a slack row rather than
+  growing, and the moment the shelf has anything on it (a file, a queue, a
+  checklist) the row is too narrow and the shelf has to come back. This is the
+  variant to reject if the shelf is ever busy.
+-->
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="/logo.svg" type="image/svg+xml" />
+<title>C2 — Command bar</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./transcript.css" />
+<link rel="stylesheet" href="./composer.css" />
+<style>
+  :root { --dock-h: 74px; }
+  .tv { position: absolute; inset: 0; }
+  .tv .col { opacity: 0.4; mask-image: linear-gradient(to bottom, #000, #000 45%, transparent 96%); -webkit-mask-image: linear-gradient(to bottom, #000, #000 45%, transparent 96%); }
+  .cmp-card { border-radius: 999px; padding: 0; }
+  .cmp-inline .cmp-card { box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" data-sidebar></aside>
+  <main class="main">
+    <div data-tabs></div>
+    <div class="panel">
+      <div class="tv">
+        <div class="tv-scroll"><div class="col" data-flow></div></div>
+        <div data-dock></div>
+      </div>
+      <div class="note left" style="right:14px; top:32%"><b>One row</b> — text, model, readings and Send share a single 32px line.</div>
+    </div>
+  </main>
+</div>
+<script src="./shared-transcript.js"></script>
+<script src="./shared-composer.js"></script>
+<script>
+  const { I } = CX
+  document.querySelector("[data-tabs]").innerHTML = TX.tabs("Ship the composer width fix")
+  document.querySelector("[data-flow]").innerHTML = TX.render(TX.flow())
+  document.querySelector("[data-dock]").innerHTML = `
+    <div class="cmp">
+      <div class="dock">
+        <div class="cmp-card">
+          <div class="bar">
+            <button class="rnd disc" title="Add">${TX.I.plus}</button>
+            <span class="txt">Reply…</span>
+            <span class="divider"></span>
+            <button class="model" title="Model and effort">claude-sonnet-4</button>
+            <button class="reading" title="Plan 3 of 4">${I.list}3/4</button>
+            <button class="reading" title="3 files changed">${I.files}3</button>
+            <button class="reading" title="Context window">32%<span class="ring"></span></button>
+            <button class="rnd send" title="Send">${I.send}</button>
+          </div>
+        </div>
+      </div>
+    </div>`
+  TX.sidebar(document.querySelector("[data-sidebar]"))
+  TX.theme()
+</script>
+</body>
+</html>

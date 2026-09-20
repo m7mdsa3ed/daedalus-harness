@@ -85,7 +85,7 @@ export function WebSearchPage() {
       )}
       <PageForm onSubmit={save}>
         <Group label="Default backend">
-          <div className="grid gap-4 p-4 sm:grid-cols-2">
+          <div className="grid gap-4 p-4 @panel-sm:grid-cols-2">
             <Field label="Search API base URL" hint="e.g. http://localhost:20128">
             <Input
               value={form.searchApiBaseUrl}

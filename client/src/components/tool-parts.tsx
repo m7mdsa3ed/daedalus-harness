@@ -9,7 +9,7 @@
 import * as React from "react"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import rehypeHighlight from "rehype-highlight"
+import { rehypeHighlight } from "@/lib/highlight"
 import { needsTail, rehypeStreamWords, type StreamEffect } from "@/lib/stream-words"
 import type * as acp from "@daedalus/acp"
 import {
@@ -101,15 +101,12 @@ export const KIND_CHIPS: Record<string, string> = {
 
 /* Prose palette + code/table styling live in index.css, so both themes come
    from the app tokens — no prose-invert needed. */
-/* `detect: false` — highlight.js only colours a fence that declares its
-   language. Left to guess, it cheerfully "detects" a shell transcript as Perl
-   and paints a log file at random, which is worse than no colour at all.
-
-   ponytail: this pulls lowlight's whole `common` grammar set (~180KB gzipped),
-   because rehype-highlight imports it statically — passing `languages` narrows
-   what resolves but not what ships. Trimming it means driving `createLowlight`
-   from a hand-rolled plugin; worth doing if the bundle ever matters more than
-   the twenty lines. */
+/* Highlighting is `lib/highlight.ts` now, not `rehype-highlight`: the walk is
+   the same, the grammar registry is a named list instead of lowlight's whole
+   `common` set, and the ~180KB gzipped that used to sit in the entry chunk for
+   every cold load is gone. It only colours a fence that declares its language,
+   for the reason it always did — left to guess, highlight.js cheerfully
+   "detects" a shell transcript as Perl. */
 /* How tall an inline output pane grows before it starts scrolling.
 
    Relative rather than the fixed 16rem this used to be: 256px is a reasonable
@@ -187,15 +184,14 @@ export function Disclosure({
   )
 }
 
-const REHYPE = [[rehypeHighlight, { detect: false, ignoreMissing: true }]] as never
+const REHYPE = [rehypeHighlight] as never
 /* The same pass with the tail wrapper appended, for the one row being written.
    Two arrays, because only the edge family needs each span stamped with its
    distance from the edge; both are held as constants rather than built per render, since
    a new array identity would make react-markdown rebuild its processor on every
    revealed word — the opposite of what the pacing is for. */
-const REHYPE_HIGHLIGHT = [rehypeHighlight, { detect: false, ignoreMissing: true }]
-const REHYPE_STREAM = [REHYPE_HIGHLIGHT, [rehypeStreamWords, { tail: false }]] as never
-const REHYPE_STREAM_TAIL = [REHYPE_HIGHLIGHT, [rehypeStreamWords, { tail: true }]] as never
+const REHYPE_STREAM = [rehypeHighlight, [rehypeStreamWords, { tail: false }]] as never
+const REHYPE_STREAM_TAIL = [rehypeHighlight, [rehypeStreamWords, { tail: true }]] as never
 
 const rehypeFor = (stream: StreamEffect | undefined) =>
   needsTail(stream) ? REHYPE_STREAM_TAIL : stream && stream !== "none" ? REHYPE_STREAM : REHYPE
@@ -269,7 +265,10 @@ const MarkdownPre = ({
   )
 }
 
-const MARKDOWN_COMPONENTS = {
+/* Exported so the one markdown pass can be reused outside the transcript — the
+   changelog dialog renders a release's own markdown, and a table or a link there
+   should be the same box and the same target `Prose` gives it. */
+export const MARKDOWN_COMPONENTS = {
   table: ({ node: _node, ...props }: React.ComponentProps<"table"> & { node?: unknown }) => (
     <div className="harness-table">
       <table {...props} />
@@ -694,7 +693,9 @@ export function ProseWithOpenui({
   if (!parts) return <Prose text={text} stream={stream} className={className} />
 
   return (
-    <div className={className}>
+    /* The same gap the view's own sections keep, so prose and a drawn view
+       sit as one rhythm instead of touching. */
+    <div className={cn("flex min-w-0 flex-col gap-3", className)}>
       {parts.map((part, index) =>
         typeof part === "string" ? (
           /* Keyed by offset, not by index: a chunk arriving at the tail must not

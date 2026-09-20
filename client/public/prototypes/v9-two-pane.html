@@ -1,0 +1,121 @@
+<!doctype html>
+<!-- v9 — Master and detail, inside the sidebar. The left sub-column is the index;
+     the right is what is *about* the row you selected: status, project, model,
+     what the turn wrote, and the actions. It is the ThreadInfoCard promoted from
+     a hover popover to a permanent pane — the reading the current sidebar hides
+     behind a hover — and it is the only variant here that needs a wider sidebar
+     (360px) to work. Cost: the index half is ~150px, so titles get short. -->
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="/logo.svg" type="image/svg+xml" />
+<title>v9 — Two panes</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./shared.css" />
+<style>
+  .panes { flex: 1 1 auto; min-height: 0; display: flex; }
+  .index { width: 44%; min-width: 132px; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--sidebar-border); }
+  .index .scroll { padding: 2px 6px 8px; }
+  .index .row { min-height: 30px; gap: 7px; padding: 0 6px; }
+  .index .row .title { font-size: 12.5px; }
+  .detail { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; padding: 10px 10px 8px; overflow-y: auto; gap: 10px; }
+  .detail .t { font-size: 13px; font-weight: 600; line-height: 1.3; }
+  .detail dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; font-size: 12px; }
+  .detail dt { color: var(--muted-foreground); }
+  .detail dd { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .detail .pill { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 999px; font-size: 11px; background: var(--muted); }
+  .detail .actions { display: flex; flex-direction: column; gap: 4px; margin-top: auto; }
+  .detail .actions .act { height: 28px; justify-content: flex-start; background: none; box-shadow: none; padding: 0 8px; }
+  .detail .actions .act:hover { background: var(--sidebar-accent); }
+  .detail .note { border-radius: 8px; border: 1px solid color-mix(in oklab, var(--amber) 35%, transparent); background: color-mix(in oklab, var(--amber) 8%, transparent); padding: 7px 9px; font-size: 11.5px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" style="--w:360px">
+    <header class="sb-head">
+      <div class="sb-title-row">
+        <h2>Threads</h2>
+        <div class="head-actions">
+          <button class="icon-btn" data-new></button>
+          <button class="icon-btn" data-collapse title="Collapse"></button>
+        </div>
+      </div>
+      <button class="search" id="search"></button>
+    </header>
+    <div class="panes">
+      <div class="index">
+        <div class="scroll" id="index"></div>
+      </div>
+      <div class="detail" id="detail"></div>
+    </div>
+    <footer class="sb-foot" id="foot"></footer>
+  </aside>
+  <main class="main">
+    <div class="tabs">
+      <button class="tab" data-active="true"><span class="dot running"></span>Ship the composer width fix</button>
+      <button class="tab">Index the rules table</button>
+      <button class="tab" style="width:30px;padding:0;justify-content:center" id="add-tab"></button>
+    </div>
+    <div class="card">the dock — the transcript in front of you</div>
+  </main>
+</div>
+<script src="./shared.js"></script>
+<script>
+  const { data, HTML, esc, dot, theme, on, ICONS } = PROTO
+  const { projects, threads } = data()
+  const proj = (id) => projects.find((p) => p.id === id) || projects[0]
+
+  document.querySelector("[data-new]").innerHTML = ICONS.plus
+  document.querySelector("[data-collapse]").innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>`
+  document.getElementById("add-tab").innerHTML = ICONS.plus
+  document.getElementById("search").innerHTML = ICONS.search + " Search<kbd>⌘K</kbd>"
+
+  let selected = "t2" // the first thing that needs you
+
+  const STATUS = { running: "Running", waiting: "Needs you", failed: "Last turn failed", idle: "Idle" }
+
+  const detailOf = (t) => {
+    const p = proj(t.p)
+    return HTML`
+      <p class="t">${esc(t.t)}</p>
+      <span class="pill">${dot(t.s)}${STATUS[t.s]}</span>
+      ${t.asks ? HTML`<div class="note">${esc(t.asks)}</div>` : ""}
+      ${t.err ? HTML`<div class="note" style="border-color:color-mix(in oklab,var(--destructive) 35%,transparent);background:color-mix(in oklab,var(--destructive) 8%,transparent)">${esc(t.err)}</div>` : ""}
+      <dl>
+        <dt>Project</dt><dd><span class="tag"><i style="background:oklch(0.62 0.17 ${p.hue})"></i>${esc(p.name)}</span></dd>
+        <dt>Agent</dt><dd>claude-code</dd>
+        <dt>Model</dt><dd>deepseek-v4.1 · high</dd>
+        <dt>Last said</dt><dd>${esc(t.when)}</dd>
+        ${t.files ? HTML`<dt>Changed</dt><dd>${t.files} files</dd>` : ""}
+      </dl>
+      <div class="actions">
+        ${t.s === "waiting" ? HTML`<button class="act" data-no-activate>Answer the question</button>` : ""}
+        ${t.s === "failed" ? HTML`<button class="act danger" data-no-activate>Retry the turn</button>` : ""}
+        ${t.s === "running" ? HTML`<button class="act" data-no-activate>Stop the turn</button>` : ""}
+        <button class="act" data-no-activate>Open the transcript</button>
+        <button class="act" data-no-activate>Rename…</button>
+      </div>`
+  }
+
+  const draw = () => {
+    document.getElementById("index").innerHTML = threads.map((t) => HTML`
+      <button class="row" data-active="${t.id === selected}" data-id="${t.id}">
+        ${dot(t.s)}<span class="title">${esc(t.t)}</span>
+      </button>`).join("")
+    document.getElementById("detail").innerHTML = detailOf(threads.find((t) => t.id === selected))
+    on(document.getElementById("index"), "[data-id]", (el) => { selected = el.dataset.id; draw() })
+  }
+
+  document.getElementById("foot").innerHTML = HTML`
+    <div class="foot-nav">
+      <button class="nav-link">${ICONS.board}Tasks</button>
+      <button class="nav-link">${ICONS.bolt}Routines<span class="n">3</span></button>
+      <button class="nav-link">${ICONS.trash}<span class="n">5</span></button>
+    </div>`
+  theme()
+  draw()
+</script>
+</body>
+</html>

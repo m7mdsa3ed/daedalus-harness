@@ -1,0 +1,107 @@
+<!doctype html>
+<!--
+  Tabs-B — Two rows. Tabs, then where you are inside the tab.
+
+  The strip keeps its 32px row of tabs and gains a second row under it: the
+  panel's own path and controls — a file's path, a page's sections, a thread's
+  agent — so the header answers "which panel" and "where in it" without a
+  second bar. It is the pattern an IDE and a browser both converged on, and the
+  one the app's `PagePanel` already wants: a page's route is a place, and a
+  place has breadcrumbs.
+
+  What it costs: 24px of chrome on every group, including the ones whose panel
+  has nothing to put there. What it buys: the tab's title can stop carrying the
+  path, and a page tab's own controls stop being a menu.
+
+  Click a tab to see the second row change with it.
+-->
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="/logo.svg" type="image/svg+xml" />
+<title>Tabs-B — Two rows</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./transcript.css" />
+<link rel="stylesheet" href="./tabs.css" />
+<style>
+  /* The strip is a row of the panel, and the transcript is what is left under
+     it — so the panel stacks and `.tv` comes back out of the shared shell's
+     absolute overlay. */
+  .panel { display: flex; flex-direction: column; }
+  .tv { position: relative; flex: 1 1 auto; min-height: 0; }
+  .standin { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+  .strip.tworow { border-bottom: 1px solid var(--border-60); }
+  .strip.tworow .row2 { padding: 0 4px 2px; }
+  .within { display: inline-flex; align-items: center; gap: 2px; }
+  .within .seg { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 11.5px; color: var(--muted-foreground); }
+  .within .seg:hover { background: var(--hover); color: var(--foreground); }
+  .within .seg[data-on] { color: var(--foreground); background: color-mix(in oklab, var(--foreground) 7%, transparent); }
+  .within .sep { color: color-mix(in oklab, var(--muted-foreground) 40%, transparent); margin: 0 2px; }
+  .within .fill { flex: 1 1 auto; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" data-sidebar></aside>
+  <main class="main">
+    <div class="panel">
+      <div id="strip"></div>
+      <div class="tv">
+        <div class="tv-scroll"><div class="col" data-flow></div></div>
+        <div data-dock></div>
+      </div>
+    </div>
+  </main>
+</div>
+<script src="./shared-transcript.js"></script>
+<script src="./shared-tabs.js"></script>
+<script src="./shared-composer.js"></script>
+<script>
+  const { tabs, tab, I } = TB
+  const all = tabs()
+  const contentOf = (id) => TB.content(id)
+
+  /* The second row: what is inside the tab you are on. */
+  const within = (id) => {
+    const c = contentOf(id)
+    if (c.kind === "chat")
+      return `<span class="crumb">${I.chat}<span>daedalus-harness</span></span><span class="sep">/</span><span class="crumb" style="color:var(--foreground);font-weight:500">${c.title}</span>
+        <span class="fill"></span>
+        <span class="seg" data-on>${I.list}Plan</span><span class="seg">${I.diff}Changes</span>`
+    if (c.kind === "file")
+      return `<span class="seg">${I.file}src</span><span class="sep">/</span><span class="seg">components</span><span class="sep">/</span><span class="seg" data-on>composer</span>
+        <span class="sep">/</span><span class="seg" style="color:var(--foreground)">composer.tsx</span>
+        <span class="fill"></span><span class="seg">main</span>`
+    if (c.kind === "terminal")
+      return `<span class="seg" data-on>${I.term}zsh</span><span class="seg">1 tab</span><span class="sep">·</span><span class="seg">/var/www/daedalus-harness</span><span class="fill"></span><span class="seg">${I.plus}New shell</span>`
+    if (c.kind === "scm")
+      return `<span class="seg" data-on">Changes<span style="opacity:.6">2</span></span><span class="seg">Stashes</span><span class="seg">Log</span><span class="fill"></span><span class="sep">·</span><span class="seg">main</span>`
+    return `<span class="seg"></span>`
+  }
+
+  const draw = (id) => {
+    document.querySelector("#strip").innerHTML = `
+      <div class="strip tworow">
+        <div class="row1">${all.map((t) => tab({ ...t, active: t.id === id })).join("")}<span class="void" style="flex:1"></span><button class="group-add" title="New tab">${I.plus}</button><button class="list" title="All tabs">${I.list}</button></div>
+        <div class="row2">${within(id)}</div>
+      </div>`
+    const chat = contentOf(id).kind === "chat"
+    document.querySelector(".tv").style.display = chat ? "" : "none"
+    document.querySelector("[data-dock]").innerHTML = chat ? TX.composer({ placeholder: "Reply…" }) : ""
+    const stand = document.querySelector(".standin")
+    if (stand) stand.remove()
+    if (!chat) document.querySelector(".panel").insertAdjacentHTML("beforeend", `<div class="standin">${TB.panel(id)}</div>`)
+  }
+
+  document.querySelector("[data-flow]").innerHTML = TX.render(TX.flow())
+  draw("t1")
+  document.querySelector("#strip").addEventListener("click", (e) => {
+    const t = e.target.closest(".tab")
+    if (t) draw(t.dataset.id)
+  })
+  TX.sidebar(document.querySelector("[data-sidebar]"))
+  TX.theme()
+</script>
+</body>
+</html>

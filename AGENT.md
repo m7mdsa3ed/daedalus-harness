@@ -39,7 +39,10 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   exist. **A table push does not know about is a table push drops** — anything the server
   reads must be declared there. The FTS5 index is the one exception.
 - **Agents spawn by their globally installed binary, never `npx`** (~0.4s vs ~3.2s, and a
-  thread spawns on create, revive and every profile/model change). codex-acp **≥ 1.7.0**.
+  thread spawns on create, revive and every profile/model change). codex-acp **≥ 1.12.0**,
+  claude-agent-acp **≥ 0.78.0** — the release both adapters put the tool's own name on the
+  ACP tool call in (`ToolCall.name`), which `lib/tools/naming.ts` prefers over a vendor
+  `_meta` block.
   Seeding backfills new fields but **never** replaces name/command/args/env — those are the
   user's, and so are `install`/`icon` (descriptive, not protocol).
 - **What the harness believes about a runtime is a column on its row, never a comparison
@@ -239,6 +242,20 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **An HTTP MCP server that demands OAuth is fronted by a second shim, and the child never
   holds the token.** `mcp_servers.auth` is a **stored** answer, never a typed one; the
   callback route is unauthenticated by necessity, so **the `state` is the credential**.
+- **What an MCP server offers is read, remembered and drawn without being asked for.** The
+  listing (`mcp-check.ts` → `mcp_catalog`) expires on a TTL like the quota does rather than
+  being invalidated, is coalesced per row server-side, and every library row draws its counts
+  from the one shared query (`useMcpCatalog`). **Check means connect *now*** — `POST …/check`
+  is the only door that refuses the stored answer. The badge links to the server's own page
+  (`settings/mcp-detail.tsx`, `/settings/mcp/:id/tools`), which draws **both sides of each
+  contract** — a tool's input fields and its `outputSchema`, a prompt's arguments, a resource's
+  URI and type, each as a field list with the raw schema one fold below. **The playground runs
+  anything the server offers, through one door**: `POST …/invoke {kind,name,args}` →
+  `invokeMcp`, where the kind picks an SDK method (`tools/call`, `prompts/get`,
+  `resources/read`) and nothing else, and the page draws all three with the one `EntryRow`.
+  It connects per call and hands the answer back verbatim. **Something that ran and failed is
+  an answer, not an error** — only a call that never happened is one. Arguments are typed as
+  JSON beside the field list, never a generated form.
 - **Workflows are the harness's, except where the runtime says it has its own**
   (`AgentDef.workflowsVia === "native"` — Claude Code: linking ours disallows its better one,
   so ours is not offered). A definition is **declarative JSON**, never a script. **Every step is a real thread** on the parent's own profile, agent, model,
@@ -280,8 +297,11 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   `harness-table`, the `--chart-*` tokens) in `lib/openui/library.tsx` — the component table,
   which is one file's edit. **The prompt is generated from that table, never hand-written**:
   `pnpm openui` in client/ runs `scripts/gen-openui.mjs` (the library's own prompt generator,
-  under Node) into `agent/src/openui-prompt.ts`, and `pnpm openui:check` is the drift gate —
-  so the text the model is told and the components the reader gets cannot disagree. Adding a
+  under Node) into `server/src/openui-prompt.ts`, and `pnpm openui:check` is the drift gate —
+  so the text the model is told and the components the reader gets cannot disagree. **The
+  table travels in the spawn trailer, like the suggestions one** (`OPENUI_INSTRUCTIONS`,
+  `personas.ts`), so every runtime on a profile is asked with the same components — it used
+  to be pushed by our own runtime alone, which told every other one the lane was not for it. Adding a
   component is the library edit and one regeneration. **A generated view reflows on the panel's
   width, not the window's** — the components carry `@panel-sm:` variants (`StatRow` falls two-up,
   `KeyValue` stacks key over value, the chart's tick gutters shrink), because the one thing the
@@ -339,6 +359,27 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   the restored one rather than being renamed to the placeholder.
 - **Sidebar order and the period a row is filed under are `activityAt` — the last turn, never
   `createdAt`. Reading is not activity.** Pinned and Recents are shortcuts, not places.
+- **The sidebar has two contents and the *active panel* picks, never a route match of its
+  own.** Settings sections are its content while the panel in front of you is a settings page
+  (`sidebar/settings-nav.tsx`); threads otherwise. This was tried and reverted once, when the
+  sidebar read `/settings` directly and a settings tab open beside a chat rewrote the sidebar
+  of the chat you were reading. What makes it correct is that **the dock writes the focused
+  panel's path to the URL** (`onDidActivePanelChange`), so the route *is* the active panel's
+  descriptor — focusing the chat gives the threads back on the same gesture, and focusing a
+  terminal navigates nowhere, which is why the sidebar does not change under one. Settings
+  therefore carries **no second sidebar of its own**; the in-page `SectionPicker` survives for
+  the one surface the sidebar cannot reach, a phone, where it is a drawer that closed when you
+  tapped Settings — and that gate is `isMobile` (the device), never the panel's width, because
+  a narrow settings panel on a desktop still has the sidebar beside it.
+- **A settings group is a card, and a box inside one is `INSET`** (`settings/primitives.tsx`):
+  a caption in small caps above a bordered, filled, `shadow-sm` box whose rows are divided by
+  hairlines. The inset is the **card's**, not the row's — pages put raw elements into a `Group`
+  as often as `Row`s — and it steps 16px → 12px below `@panel-sm` so a 320px panel keeps its
+  reading width; a child that must bleed reaches out with `-mx-3 @panel-sm:-mx-4`. A nested
+  list or inline form wears `INSET` (a recessed ground, a lighter hairline) and never a second
+  `rounded-lg border`, which on a card's own ground is two identical frames one inside the
+  other. `primitives.tsx` is shared past settings — routines, schedules, the inbox, the theme
+  studio — so the look is one file's edit for all of them.
 - **Everything with a face is drawn by `components/entity-icon.tsx`.** No component draws a
   folder for a project, and **an agent's mark is the server's** (`AgentDef.icon`, `"app"` =
   the harness's own) — the client holds no table of which runtimes exist. A **kind** wears the
@@ -376,11 +417,24 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   history notice, the two completers, the archive notice.
 - **A reading of the thread is a 24px trigger over a popover, in the footer's end cluster** —
   the checklist's progress, the running-subagent count, what the last turn wrote, the context
-  ring (`TodoIndicator`, `AgentsIndicator`, `ChangesIndicator`, `ContextIndicator`). One kind
-  of question, one shape, one place; each
-  draws nothing when it has nothing to say. A popover is a fixed surface, so those lists scroll
+  ring (`TodoIndicator`, `AgentsIndicator`, `ChangesIndicator`, `ContextIndicator`), **and the
+  tools the thread carries** (`ThreadToolsMenu`). One kind of question, one shape, one place;
+  each draws nothing when it has nothing to say. **The tools menu belongs in the cluster, not
+  on the row's start** — what a thread carries is the same kind of fact as how full its window
+  is, and a picker with a divider in front of it was the one thing in the row pretending not to
+  be a reading. A popover is a fixed surface, so those lists scroll
   without taking room from the transcript. **A floating summary pill over the composer was
   tried and removed** — see `docs/client.md`.
+- **A reading's words are its own dress, and which dress is named once** — from
+  `components/composer/indicator.tsx`, never per component: `ReadingBadge` is the value in words
+  where the *panel* has room (`@panel-sm`, never the viewport — a chat squeezed beside a terminal
+  is narrow for the same reason a phone is) and `ReadingBubble` is the same number riding the
+  mark where it does not, **never both**. The tools menu is a reading too: a **menu** where the
+  others have a popover, and the count in the same two dresses. **The project is the one control
+  that keeps its words on every width** — it names where the work lands, so its badge is
+  `always` and it truncates rather than going quiet. Whether a reading draws at all stays each
+  one's own answer (`total === 0` renders nothing on a started thread; a draft still draws the
+  picker, its bubble withheld at zero).
 - **The queue is drawn as the user messages it is**, dashed, at the very **end** of the flow —
   after the approval and the question, because a queued message is the conversation's future.
   **Editing one takes it back to the composer** (`queueRemove`, then `fill`, and only on
@@ -392,13 +446,23 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   mention is text *and* a `resource_link`, added server-side for any `~`/absolute/relative
   path that exists — the scope is the person's, never only the cwd.
   A `!` line is a **shell command and the composer's third completer**: the project's helpers
-  are suggested, picking one fills its *command* into the box, and the send path *consumes* the
-  line rather than prompting (`shellLineFor`) so it never reaches the agent. It runs on the
+  **and the scripts its `package.json` files declare** (root and one directory deep,
+  `GET /api/projects/:id/scripts`, read off the disk and never stored — helpers first, a row
+  the person wrote outranks one the package shipped) **and what the project keeps running**
+  (`shell_history`, a per-project tally the shell route itself bumps — never the browser —
+  read back through `GET /api/projects/:id/shell-history`; **server-side, not device-local**,
+  because the line you build with belongs to the workspace, and it orders the other two lists
+  as well as filling its own "Recent" one) are suggested, picking one fills its
+  *command* into the box, and the send path *consumes* the
+  line rather than prompting (`shellLineFor`) so it never reaches the agent — **send and
+  forget, like a prompt**: the box clears on the send, and the running row is where the line
+  and any failure are said. It runs on the
   server against the project, and the result is **journaled as a `_daedalus/shell` row** — two
   updates, `running` then `done`, under one caller-minted `shellId` — part of the transcript,
   replayed on reload, no turn and no prompt; the one route that takes a command up from the
   browser (`POST /api/sessions/:id/shell`). A line that IS a saved helper's command runs as that
-  helper (its cwd and env); anything else runs as itself. It draws as a **Bash step** — the same
+  helper (its cwd and env); anything else runs as itself — including a nested package's script,
+  whose suggested line carries its own `cd`. It draws as a **Bash step** — the same
   icon, heading rule (`toolHeading`) and `ShellPane` as an `execute` tool call, open by default
   and from the moment it starts — because that is what it is; only the agent's absence differs.
 - **Every surface a caret can land in clears the soft keyboard.** The page does not resize
@@ -415,6 +479,11 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
 - **A key that is bound is a key that is listed and a key that can be moved.** Nothing reads
   `KEYS` to bind — use `useShortcut(id, handler)`; chords print through
   `components/shortcut.tsx` and nowhere else.
+- **The tab strip's keys all act on the group you are looking at** — digits jump, Alt+↓/↑ walk
+  it wrapping, Alt+W closes the tab in front through the guarded door its ✕ uses
+  (`setTabIndex`/`cycleTab`/`closeActiveTab`, which the palette's rows call too); ⌘Tab is the
+  browser's own, so it rides `RESERVED` to the desktop shell like ⌘1…9 and ⌘⇧T, and **⌘W is
+  never the close chord** because Electron gives it to close-window.
 - **A restart the user asked for is not a thread coming back from the dead**, and the wait
   says which (`ConnPhase.reviving.because`): one paragraph explaining idle-retirement used to
   be shown to someone who had just picked a persona. **A wait in front of a transcript that
@@ -432,6 +501,19 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   a toast: these sit *inside* the thing that failed, where a toast about a copy competes with
   the failure being read and on a dialog lands behind it. A failed **tool call** gets its copy
   from `CodeBlock`, the one place all four `SmartBlock tone="error"` call sites land.
+- **A `group` panel is a dock inside a tab** (`workspace/group-panel.tsx`): a second dockview
+  instance drawn as a panel's content, holding its own strip of tabs. **It is the same
+  surface** — `DockSurface`, one component map, one tab, one strip — and its layout rides on
+  the group panel's **params** (a params change is a layout change to dockview, so the outer's
+  own save carries it; `pruneLayout` recurses one level). **Every question about "the panels"
+  is asked across every instance** (`allPanels`/`findPanel`/`ownerOf` in `dock.tsx`), so a
+  nested `thread:{id}` is still the one there is; `activeApi` is the instance in front of you
+  and is what the strip's chords and a fresh panel's placement follow. **One level, never a
+  tree.** In, across and out are the tab's own rows — "Move to group ▸" lists a new group and
+  every open one (`useDockGroups`, a version-bumped store, because a tab in one group cannot
+  hear another appear), a grouped tab also has "Move out of the group" — and a drag across
+  two strips (`dropForeign` — dockview only moves within an instance); all are a close and an
+  open of the same descriptor, silently. An emptied group closes itself.
 - **The dock holds six panel kinds: chat, ide, terminal, web, tasks, page**, and **Monaco is the
   text surface and the diff and nothing else** — the official `monaco-editor`, so there is no
   workbench and no "initialize once per page" rule.
@@ -454,12 +536,29 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   are pointing at, the rest. A surface that only appears on click reads as the selection
   rather than as the shape a tab has. (A browser's shape — top-rounded, flared into the panel
   — was tried and removed: the flare only reads against a filled toolbar, and everything under
-  these tabs is transparent by design.) It carries the **panel's own mark** (`PanelIcon` — a
-  chat's is its agent's), its title, its **reading** (`PanelStatusDot`), and the ⋮ and
-  close, **both of which appear on hover or focus** (always where there is no pointer, and the
-  ⋮ holds itself visible while its menu is open) — **not** the thread's context reading, which
-  the composer's footer says once. The ⋮ and the right-click menu render one `items` array, so
-  they cannot drift. Sizing is a browser's — one width whether it is alone or one of nine, so
+  these tabs is transparent by design.) Three weights of one material, and **no colour on any
+  of them**: resting is a 4% wash of the foreground, hover the same wash at 8%, and the active
+  tab the card's own ground and its `shadow-sm`. Hover sits *between* the two weights rather
+  than on top of the active one — pointing must not look like selecting — and the resting wash
+  is what makes a row of six tabs something to aim at rather than six pieces of text; it is
+  deliberately under the 7% that is a full step of the page's ramp (`--app-ground-step`).
+  If a tab should ever be marked the way an active tab in a *browser* is marked, it is the
+  ground that says it, because **no tab wears a colour**: the reading is `PanelStatusDot`'s,
+  which is a *state* and stays a dot. Corners are `--radius` less the cell's 2px inset, so the
+  tab's corner sits just inside the card's `--radius-xl` instead of colliding with it. It
+  carries the **panel's own mark** (`PanelIcon` — a chat's is its agent's), its title and its
+  **reading** (`PanelStatusDot`) as one box, and the ⋮ and close **floating over that box's end**
+  — **not** the thread's context reading, which the composer's footer says once. **The controls
+  are an overlay and reserve no room**: absolutely positioned against the chip's trailing inset,
+  so a title owns the whole of the tab's width and the strip pays no gutter for a pair of things
+  that exist only while you point at one tab. What they cover when they appear, the title has
+  already stopped saying — it fades under them (`--tab-fade-w`, a registered length declared on
+  the **chip**, which is what knows whether it is hovered, focused or holding the ⋮'s menu open;
+  the transition rides the title's mask alone, because a registered property every element
+  inherits would invalidate style for the whole app), and the fade is the width of what is
+  actually there, the pin included. **The pin is a `[data-tab-action]` too**, which is what lets
+  it be the one control drawn before you point. The ⋮ and the right-click menu render one `items`
+  array, so they cannot drift. Sizing is a browser's — one width whether it is alone or one of nine, so
   **no `singleTabMode`** — but wider than a browser's, because a thread is named after what it
   is doing, and the emptiness beside a lone tab is the void container's to drag the window by.
   **That width is a `width`, never a `flex-basis`**: reordering is dockview's own
@@ -513,12 +612,13 @@ of them cost a bug. `CLAUDE.md` is a symlink to this file.
   reorder is the strip's only motion (`--dock-tab-duration`).
 - **The app header's controls are the tab's material *and its height*** (`.header-chip` beside
   `.panel-tab-chip` in `index.css`; `HEADER_CHIP` carries `size-8`, the tab's `h-8`): the
-  sidebar toggle, the view-settings sliders and that group's tabs are one row whenever a group
-  joins the band, so a pill of `--background` at 24px next to a rounded rectangle of
-  `--composer` at 32px is two bars pretending to be one. **There is no ⋯ menu**
-  — what it held went to the surface each half belongs to: opening a thread or a panel is the
-  strip's +, and how transcripts are drawn on this device is the sliders beside the sidebar
-  toggle, which is the app's other device-level control.
+  sidebar toggle's cluster and that group's tabs are one row whenever a group joins the band, so
+  a pill of `--background` at 24px next to a rounded rectangle of `--composer` at 32px is two
+  bars pretending to be one. **There is no ⋯ menu**, and **the header holds one control** —
+  the sidebar toggle. Opening a thread or a panel is the strip's +; how transcripts are drawn,
+  which notifications have arrived, and what the app can search are rows in the sidebar, which
+  is where a place you go is named. The header is the band the *tabs* join, so what stands in it
+  is the tab's own material and height and nothing that is about the app rather than this group.
 - **Opening a panel never splits the dock** — every kind arrives the way a new thread does, a
   tab beside what you are looking at, and `OpenPanelOptions.direction` is read as "do not
   replace what is in front of me" and nothing more. It used to split when the window was wide

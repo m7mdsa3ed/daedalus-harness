@@ -46,7 +46,7 @@
    `components/thread-sidebar.tsx` is the barrel the rest of the app imports
    from. */
 import * as React from "react"
-import { Clock, FolderIcon, Layers, Pin, Trash2 } from "lucide-react"
+import { FolderIcon, History as HistoryIcon, Layers, Pin, Trash2 } from "lucide-react"
 import { useNavigate } from "react-router"
 import {
   SidebarGroup,
@@ -269,7 +269,9 @@ export function ThreadSidebar({ actions }: { actions: Actions }) {
       )}
 
       {recent.length > 0 && (
-        <FoldableGroup groupKey="__recent" label="Recents" icon={<Clock className="size-3 shrink-0" />}>
+        /* A clock read as "scheduled" next to a Scheduled nav row; Recents is
+           what happened, so it wears a history mark. */
+        <FoldableGroup groupKey="__recent" label="Recents" icon={<HistoryIcon className="size-3 shrink-0" />}>
           <ThreadList sessions={recent} {...listProps} />
         </FoldableGroup>
       )}

@@ -12,7 +12,7 @@
    row is a place you go; the plans are a reading, and they belong with the
    server's name. */
 import * as React from "react"
-import { CalendarClock, SquareKanban, SquarePen, Zap } from "lucide-react"
+import { CalendarClock, MessageSquarePlus, Repeat, SquareKanban } from "lucide-react"
 import { useLocation, useNavigate } from "react-router"
 import {
   SidebarGroup,
@@ -67,7 +67,9 @@ export function SidebarNav({ onNewThread }: { onNewThread?: () => void } = {}) {
       ? [
           {
             key: "new-thread",
-            icon: <SquarePen />,
+            /* A square with a pen is "edit"; this is a new *conversation*, which
+               is what the row starts. */
+            icon: <MessageSquarePlus />,
             label: "New thread",
             tooltip: newThreadChord
               ? `New thread (${formatChord(newThreadChord)})`
@@ -94,7 +96,9 @@ export function SidebarNav({ onNewThread }: { onNewThread?: () => void } = {}) {
        before you open it. */
     {
       key: "routines",
-      icon: <Zap />,
+      /* A lightning bolt says "instant" — the opposite of a routine. Recurrence
+         is what the row is: the same thing, on its own clock, again. */
+      icon: <Repeat />,
       label: "Routines",
       tooltip: "Routines — threads that start on their own",
       isActive: inRoutines,

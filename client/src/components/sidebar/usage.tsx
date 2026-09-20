@@ -24,14 +24,9 @@ import { ChevronRightIcon, GaugeIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import {
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  useSidebar,
-} from "@/components/ui/sidebar"
-import { MENU, ROW } from "./scale"
-import { formatReset, providerKindLabel, quotaTone } from "@/lib/quota"
+import { useSidebar } from "@/components/ui/sidebar"
+import { FOOTER_ICON } from "./scale"
+import { formatReset, providerKindLabel, quotaTone, windowTitle } from "@/lib/quota"
 import type { QuotaSnapshot } from "@/lib/quota"
 import { GLASS_SURFACE } from "@/lib/header-chrome"
 import { settingsPath } from "@/lib/router"
@@ -133,7 +128,7 @@ export function SidebarUsage() {
     return (quotas ?? []).flatMap((quota: QuotaSnapshot) => {
       if (quota.status === "unsupported") return []
       const windows = quota.windows.map((window) =>
-        readingOf(window.usedPercent, window.id, window.label, formatReset(window))
+        readingOf(window.usedPercent, window.id, windowTitle(window), formatReset(window))
       )
       /* A plan with no windows has nothing a bar can say — "metered per token"
          is prose, and prose is the page's. */
@@ -202,89 +197,87 @@ export function SidebarUsage() {
     void navigate(settingsPath("usage"))
   }
 
+  const label = `Plan usage — ${plans.length} ${plans.length === 1 ? "plan" : "plans"} reporting`
+
   return (
-    <SidebarMenu className={MENU}>
-      <SidebarMenuItem>
-        <Popover open={open} onOpenChange={setOpen}>
-          <PopoverTrigger
-            render={
-              <SidebarMenuButton
-                size="sm"
-                className={ROW}
-                aria-label={`Plan usage — ${plans.length} ${
-                  plans.length === 1 ? "plan" : "plans"
-                } reporting`}
-              >
-                <GaugeIcon />
-                <span className="min-w-0 flex-1 truncate">Plan usage</span>
-              </SidebarMenuButton>
-            }
-          />
-          {/* Upward on the rail, downward on a phone. On a desk the row is the
-              last thing in the sidebar, so a card below it has nowhere to go —
-              but the phone's sidebar is a sheet anchored at the screen's top,
-              and its footer is mid-screen, where opening upward would push the
-              card off the top (and into the keyboard's way when one is up).
-              `align="start"` puts its left edge on the row's, which is the only
-              edge that is always on screen — the rail collapses, the sheet is
-              18rem wide. Frosted like the bell's glance (`GLASS_SURFACE`): one
-              recipe for the cards the app raises over the shell. */}
-          <PopoverContent
-            align="start"
-            side={isMobile ? "bottom" : "top"}
-            sideOffset={8}
-            className={cn(GLASS_SURFACE, "w-[min(22rem,calc(100vw-1rem))] p-0")}
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            title={label}
+            aria-label={label}
+            className={FOOTER_ICON}
           >
-            {/* `overflow-hidden` on the column, not the popup: the header rule,
-                the rows' hover and the footer's ground would otherwise paint
-                square corners over the card's rounded ones. The list is the
-                half that scrolls, so the header and the way out stay put. */}
-            <div className="flex max-h-[min(26rem,var(--panel-h,100svh))] flex-col overflow-hidden rounded-2xl">
-              <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2.5">
-                <GaugeIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-[13px] leading-5 font-semibold">Plan usage</p>
-                  <p className="text-[11px] leading-4 text-muted-foreground">
-                    {plans.length} {plans.length === 1 ? "plan" : "plans"} reporting
-                  </p>
-                </div>
-              </div>
-              {/* One card per provider: the bordered panel is the unit, with the
-                  provider as its header and each account a section divided off
-                  from the next — the same shape the Usage page draws at full
-                  measure. */}
-              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
-                {groups.map((group) => (
-                  <section
-                    key={group.label}
-                    className="overflow-hidden rounded-xl border border-border/60 bg-card/40"
-                  >
-                    <p className="border-b border-border/60 px-3 py-1.5 text-[11px] font-semibold tracking-[0.06em] text-muted-foreground uppercase">
-                      {group.label}
-                    </p>
-                    <div className="divide-y divide-border/40">
-                      {group.plans.map((plan) => (
-                        <PlanReadingBlock key={plan.key} plan={plan} />
-                      ))}
-                    </div>
-                  </section>
-                ))}
-              </div>
-              <div className="border-t border-border/60 p-1">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="w-full justify-between text-muted-foreground"
-                  onClick={openSettings}
-                >
-                  Open Settings
-                  <ChevronRightIcon />
-                </Button>
-              </div>
+            <GaugeIcon />
+          </Button>
+        }
+      />
+      {/* Upward on the rail, downward on a phone. On a desk the footer is the
+          last thing in the sidebar, so a card below it has nowhere to go — but
+          the phone's sidebar is a sheet anchored at the screen's top, and its
+          footer is mid-screen, where opening upward would push the card off the
+          top (and into the keyboard's way when one is up). `align="start"` puts
+          its left edge on the icon's, which is the edge that is always on
+          screen — the rail collapses, the sheet is 18rem wide, and the
+          22rem card's right edge is kept in view by collision handling. Frosted
+          like the bell's glance (`GLASS_SURFACE`): one recipe for the cards the
+          app raises over the shell. */}
+      <PopoverContent
+        align="start"
+        side={isMobile ? "bottom" : "top"}
+        sideOffset={8}
+        className={cn(GLASS_SURFACE, "w-[min(22rem,calc(100vw-1rem))] p-0")}
+      >
+        {/* `overflow-hidden` on the column, not the popup: the header rule,
+            the rows' hover and the footer's ground would otherwise paint
+            square corners over the card's rounded ones. The list is the
+            half that scrolls, so the header and the way out stay put. */}
+        <div className="flex max-h-[min(26rem,var(--panel-h,100svh))] flex-col overflow-hidden rounded-2xl">
+          <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2.5">
+            <GaugeIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] leading-5 font-semibold">Plan usage</p>
+              <p className="text-[11px] leading-4 text-muted-foreground">
+                {plans.length} {plans.length === 1 ? "plan" : "plans"} reporting
+              </p>
             </div>
-          </PopoverContent>
-        </Popover>
-      </SidebarMenuItem>
-    </SidebarMenu>
+          </div>
+          {/* One card per provider: the bordered panel is the unit, with the
+              provider as its header and each account a section divided off
+              from the next — the same shape the Usage page draws at full
+              measure. */}
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
+            {groups.map((group) => (
+              <section
+                key={group.label}
+                className="overflow-hidden rounded-xl border border-border/60 bg-card/40"
+              >
+                <p className="border-b border-border/60 px-3 py-1.5 text-[11px] font-semibold tracking-[0.06em] text-muted-foreground uppercase">
+                  {group.label}
+                </p>
+                <div className="divide-y divide-border/40">
+                  {group.plans.map((plan) => (
+                    <PlanReadingBlock key={plan.key} plan={plan} />
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+          <div className="border-t border-border/60 p-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full justify-between text-muted-foreground"
+              onClick={openSettings}
+            >
+              Open Settings
+              <ChevronRightIcon />
+            </Button>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }

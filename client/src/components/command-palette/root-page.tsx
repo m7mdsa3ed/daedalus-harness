@@ -21,6 +21,8 @@
 import * as React from "react"
 import {
   AppWindowIcon,
+  ChevronLeft,
+  ChevronRight,
   LayoutGrid,
   PictureInPicture2,
   Save,
@@ -53,6 +55,7 @@ import {
   ServerIcon,
   Settings2,
   ShieldCheck,
+  SlidersHorizontal,
   Square,
   SquareKanban,
   SquareStack,
@@ -69,6 +72,7 @@ import { SETTINGS_SECTIONS } from "@/components/settings/sections"
 import { useSidebar } from "@/components/ui/sidebar"
 import { useIsMobile } from "@/hooks/use-device"
 import { openTerminal } from "@/lib/workspace/open-terminal"
+import { HOME_PROJECT_ID } from "@/lib/workspace/panels"
 import { reportError } from "@/lib/errors"
 import { currentChoiceLabel } from "@/lib/session-options"
 import { useKeybindings } from "@/lib/keybindings"
@@ -332,7 +336,23 @@ export function RootPage() {
         keywords: "llm switch",
         icon: <Cpu />,
         meta: [{ label: currentChoiceLabel(options.model) }],
+        chord: binds.changeModel.chords[0],
         onSelect: () => palette.descend("model"),
+      })
+    }
+    /* Only while it is a draft. After the first message the project is the
+       agent's cwd — the composer's own row stops offering it there too, and a
+       row that opens a page with nothing on it is worse than no row. */
+    if (meta.draft && projects.length > 1) {
+      items.push({
+        id: "thread:project",
+        group: "This thread",
+        title: "Change project…",
+        keywords: "workspace directory cwd where folder",
+        icon: <ProjectIcon project={projects.find((p) => p.id === meta.projectId)} className="size-4" />,
+        meta: [{ label: projects.find((p) => p.id === meta.projectId)?.name ?? "No project" }],
+        chord: binds.changeProject.chords[0],
+        onSelect: () => palette.descend("project"),
       })
     }
     if (options.effort) {
@@ -469,8 +489,9 @@ export function RootPage() {
   /* ── Workspace ──
      Dragging a tab does all of this too, but a gesture is not discoverable and
      cannot be typed — and the two presets are the only way to get an
-     arrangement back once it has been dragged into a shape nobody wanted. */
-  if (meta) {
+     arrangement back once it has been dragged into a shape nobody wanted.
+     With no thread routed there is no project, and these open in $HOME. */
+  {
     items.push({
       id: "dock:web",
       group: "Workspace",
@@ -478,13 +499,13 @@ export function RootPage() {
       keywords: "preview dev server localhost web",
       icon: <MonitorIcon />,
       onSelect: () => {
-        const previewUrl = projects.find((candidate) => candidate.id === meta.projectId)?.previewUrl ?? ""
+        const previewUrl = projects.find((candidate) => candidate.id === meta?.projectId)?.previewUrl ?? ""
         palette.run(() =>
           palette.dock.openPanel(
             {
               kind: "web",
               trust: "project",
-              projectId: meta.projectId,
+              ...(meta ? { projectId: meta.projectId } : {}),
               viewId: "default",
               ...(previewUrl ? { url: previewUrl } : {}),
             },
@@ -500,7 +521,7 @@ export function RootPage() {
       keywords: "shell console command line",
       icon: <SquareTerminalIcon />,
       chord: binds.terminal.chords[0],
-      onSelect: () => palette.run(() => void openTerminal(palette.dock, meta.projectId)),
+      onSelect: () => palette.run(() => void openTerminal(palette.dock, meta?.projectId ?? HOME_PROJECT_ID)),
     })
   }
   /* Outside the `meta` block above: a board is the server's, not a project's,
@@ -544,15 +565,17 @@ export function RootPage() {
             title: "Split down",
             keywords: "panel below",
             icon: <PanelBottom />,
+            chord: binds.splitDown.chords[0],
             onSelect: () => palette.run(() => palette.dock.splitActive("below")),
           },
         ]),
     {
       id: "dock:maximize",
       group: "Workspace",
-      title: "Maximize / restore panel",
-      keywords: "fullscreen zoom",
+      title: "Fill the dock with this panel",
+      keywords: "maximize restore fullscreen zoom side by side",
       icon: <Square />,
+      chord: binds.fillPanel.chords[0],
       onSelect: () => palette.run(() => palette.dock.toggleMaximize()),
     },
     {
@@ -630,6 +653,30 @@ export function RootPage() {
       onSelect: () => palette.run(() => palette.dock.toggleFloat()),
     }
   )
+
+  /* The strip's walking keys, offered as commands for the same reason the
+     split's are: a chord is only discoverable once it is written down somewhere
+     a reader goes looking, and the tab menu says what to press while the
+     palette says what happens. Both act on the panel you are looking at, which
+     is exactly what the chord does. */
+  items.push({
+    id: "dock:tab-next",
+    group: "Workspace",
+    title: "Next tab",
+    keywords: "switch cycle tab strip",
+    icon: <ChevronRight />,
+    chord: binds.nextTab.chords[0],
+    onSelect: () => palette.run(() => palette.dock.cycleTab(1)),
+  })
+  items.push({
+    id: "dock:tab-prev",
+    group: "Workspace",
+    title: "Previous tab",
+    keywords: "switch cycle tab strip back",
+    icon: <ChevronLeft />,
+    chord: binds.prevTab.chords[0],
+    onSelect: () => palette.run(() => palette.dock.cycleTab(-1)),
+  })
 
   /* ── Saved layouts ──
      A preset above is an arrangement of what is open; these carry their
@@ -755,6 +802,15 @@ export function RootPage() {
       onSelect: () => palette.run(toggleSidebar),
     },
     {
+      id: "look:view-options",
+      group: "Appearance",
+      title: "View options",
+      keywords: "transcript display density timestamps thinking diffs motion how drawn",
+      icon: <SlidersHorizontal />,
+      chord: binds.viewOptions.chords[0],
+      onSelect: () => palette.run(palette.showViewOptions),
+    },
+    {
       id: "look:shortcuts",
       group: "Appearance",
       title: "Keyboard shortcuts",
@@ -843,7 +899,7 @@ export function RootPage() {
           ...item,
           onSelect: () => {
             recordPaletteCommand(item.id)
-            item.onSelect()
+            item.onSelect?.()
           },
         }
   )

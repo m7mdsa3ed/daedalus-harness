@@ -481,6 +481,45 @@ async function waitFor(ready: () => boolean, what: string, timeoutMs = 5_000): P
   console.log("turn: a 400 holds at once and keeps its whole message ok");
 }
 
+// --- a 400 relayed under a 503 is still the request, not the moment ---
+{
+  /* The same wall as above, as the local combo gateway actually sends it: the
+     upstream 400 smuggled into the message body, the relay's own 503 on the
+     status line and a `retry-after: 30` that would book four 30s backoffs of
+     re-sending bytes the provider had already rejected as invalid. */
+  const relayed = new APICallError({
+    message:
+      '[commandcode/deepseek/deepseek-v4.1-flash] [400]: Invalid request error. Often missing required parameters or typo. ' +
+      'HINT: Validation error: Too big: expected number to be <=200000 at "params.max_tokens" (reset after 30s)',
+    url: "http://provider/chat/completions",
+    requestBodyValues: {},
+    statusCode: 503,
+    responseHeaders: { "retry-after": "30" },
+  });
+  const agent = buildAgentApp({
+    env: testEnv({ holdOnError: true }),
+    makeModel: scriptedModel([
+      [
+        { type: "stream-start", warnings: [] },
+        { type: "error", error: relayed },
+        { type: "finish", finishReason: { unified: "error", raw: "error" } as never, usage: usage(1, 0) },
+      ],
+      textScript("after the fix "),
+    ]),
+  });
+  const { app: client, harness } = makeClient();
+  await client.connectWith(agent, async (ctx) => {
+    await initialize(ctx);
+    const { sessionId } = await ctx.request("session/new", { cwd, mcpServers: [] });
+    const turn = ctx.request("session/prompt", { sessionId, prompt: promptOf("go") }) as Promise<acp.PromptResponse>;
+    await waitFor(() => harness.holds.some((h) => h.paused), "the relayed 400 to hold", 1_000);
+    assert.equal(harness.retries.length, 0, "a relayed invalid request is not retried despite the 503");
+    await ctx.request("_daedalus/session/resume", { sessionId });
+    assert.equal((await turn).stopReason, "end_turn");
+  });
+  console.log("turn: a 400 relayed as a 503 holds at once ok");
+}
+
 // --- an image attachment reaches the provider as a content part ---
 {
   /* The bridge sends an image as an ACP `image` block only because this

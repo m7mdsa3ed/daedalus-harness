@@ -30,6 +30,7 @@ import {
   CopyIcon,
   DownloadIcon,
   FolderIcon,
+  GitBranchIcon,
   MessagesSquareIcon,
   MoreHorizontal,
   RocketIcon,
@@ -51,6 +52,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -76,7 +78,7 @@ import { threadStatus } from "@/lib/thread/statuses"
 import { shortAge } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { activityDays, type ProjectStats } from "@/lib/workspace/project-stats"
-import { useProjectStats } from "@/lib/queries/surfaces"
+import { useProjectRepos, useProjectStats } from "@/lib/queries/surfaces"
 import { queuePanel } from "@/lib/workspace/pending-panels"
 import { useRunHelper } from "@/lib/workspace/use-run-helper"
 import { openTab } from "@/lib/ide/editors"
@@ -293,6 +295,46 @@ function ProjectOverview({ project, actions }: { project: Project; actions: Acti
 
 /* ── Pieces ── */
 
+/* The branches the project is standing on, beside its path.
+ *
+ * A project is a directory, not a repository, so this is a *list*: the
+ * project's own checkout if it has one, plus the ones one walk down its
+ * subdirectories — which is the answer `git/repos` already gives, branch
+ * included, so there is nothing to derive here. A repo below the project
+ * wears its own name, because "main" twice says nothing about which is which;
+ * the project's own repo is just its branch. Past three, the rest is a count —
+ * the SCM panel is where a long list is read.
+ *
+ * Nothing is drawn when there is no repository at all: absence of git is not
+ * news on a project page. */
+function ProjectBranches({ projectId }: { projectId: string }) {
+  const { data } = useProjectRepos(projectId)
+  const repos = data ?? []
+  if (repos.length === 0) return null
+  const shown = repos.slice(0, 3)
+
+  return (
+    <>
+      {shown.map((repo) => (
+        <span
+          key={repo.path}
+          title={`${repo.path || "Project"} — ${repo.branch ?? "detached HEAD"}`}
+          className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border/70 bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground"
+        >
+          <GitBranchIcon className="size-3 shrink-0 opacity-60" />
+          {repos.length > 1 && repo.path && (
+            <span className="truncate font-medium text-foreground/80">{repo.name}</span>
+          )}
+          <span className="truncate font-mono text-[11px]">{repo.branch ?? "detached"}</span>
+        </span>
+      ))}
+      {repos.length > shown.length && (
+        <span className="text-xs text-muted-foreground">+{repos.length - shown.length} more</span>
+      )}
+    </>
+  )
+}
+
 /* The header's "Run" dropdown — the project's own commands, and the way back
    to Settings › Projects to edit them, so the dropdown is self-contained even
    for a project with none yet. */
@@ -322,25 +364,30 @@ function HelpersMenu({
         }
       />
       <DropdownMenuContent align="end" className="w-64">
-        <DropdownMenuLabel className="flex items-center justify-between text-xs text-muted-foreground">
-          <span>Project commands</span>
-          {helpers.length > 0 && (
-            <span className="font-mono text-[10px]">{helpers.length} configured</span>
-          )}
-        </DropdownMenuLabel>
-        {helpers.map((helper) => (
-          <DropdownMenuItem
-            key={helper.id}
-            onClick={() => onRunHelper(helper)}
-            title={helper.description ?? undefined}
-          >
-            <Play className="size-3.5 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate">{helper.name}</span>
-            {helper.confirm && (
-              <TriangleAlert className="size-3 shrink-0 text-amber-500" aria-hidden />
+        {/* DropdownMenuLabel is Base UI's Menu.GroupLabel: it reads its group
+            from context and throws outside one, so the label and its items are
+            wrapped together rather than sitting loose in the content. */}
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>Project commands</span>
+            {helpers.length > 0 && (
+              <span className="font-mono text-[10px]">{helpers.length} configured</span>
             )}
-          </DropdownMenuItem>
-        ))}
+          </DropdownMenuLabel>
+          {helpers.map((helper) => (
+            <DropdownMenuItem
+              key={helper.id}
+              onClick={() => onRunHelper(helper)}
+              title={helper.description ?? undefined}
+            >
+              <Play className="size-3.5 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate">{helper.name}</span>
+              {helper.confirm && (
+                <TriangleAlert className="size-3 shrink-0 text-amber-500" aria-hidden />
+              )}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => void navigate(settingsFormPath("projects", project.id))}>
           <Pencil className="size-4 text-muted-foreground" />
@@ -448,11 +495,12 @@ function ProjectHeader({
             </h1>
           </div>
 
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           <button
             type="button"
             onClick={() => void copy()}
             title="Copy working directory"
-            className="mt-1.5 inline-flex max-w-full items-center gap-1.5 rounded-md border border-border/70 bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:border-border hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border/70 bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground transition-colors hover:border-border hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <span className="truncate font-mono text-[11px]">{project.cwd}</span>
             {copied ? (
@@ -461,6 +509,8 @@ function ProjectHeader({
               <CopyIcon className="size-3 shrink-0 opacity-60" />
             )}
           </button>
+          <ProjectBranches projectId={project.id} />
+          </div>
 
           {project.description && (
             <p className="mt-2 max-w-2xl text-xs sm:text-sm text-pretty text-muted-foreground leading-relaxed">

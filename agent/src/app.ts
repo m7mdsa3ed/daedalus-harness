@@ -82,9 +82,12 @@ export function buildAgentApp(options: AppOptions): acp.AgentApp {
       await prior.mcp?.close();
     }
     const session = new Session(sessionId, cwd, env);
-    session.commands = scanCommands(cwd);
     session.skills = scanSkills(cwd);
     session.mcp = await connectMcpServers(mcpServers);
+    /* File commands first: `expandCommand` takes the first match, so a command
+       the user wrote shadows a server prompt of the same name — the same
+       bargain the agent's commands make with the harness's. */
+    session.commands = [...scanCommands(cwd), ...session.mcp.prompts];
     sessions.set(sessionId, session);
     return session;
   };

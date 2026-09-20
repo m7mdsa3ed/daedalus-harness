@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Navigate, useNavigate, useParams } from "react-router"
+import { Link, Navigate, useNavigate, useParams } from "react-router"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -14,6 +14,7 @@ import {
   authSummary,
   mcpSubtitle,
   type McpAuthProbe,
+  type McpCheckResult,
   type McpServerDef,
   type ServerSettings,
 } from "@/lib/settings"
@@ -24,8 +25,10 @@ import {
   GlobeIcon,
   KeyRoundIcon,
   PlugIcon,
+  PlugZapIcon,
   PlusIcon,
   SearchCheckIcon,
+  TerminalIcon,
   UnplugIcon,
   WorkflowIcon,
 } from "lucide-react"
@@ -37,7 +40,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { useInvalidateCatalog, useMcpServers } from "@/lib/queries/catalog"
+import { useInvalidateCatalog, useMcpCatalog, useMcpServers } from "@/lib/queries/catalog"
+import { mcpCatalogKey } from "@/lib/queries/keys"
+import { useQueryClient } from "@tanstack/react-query"
 import { useStoreSelect } from "@/lib/store"
 import { FormPageHeader, PageForm, Field, FormActions, lines, pairs } from "./primitives"
 import { sectionMeta } from "./sections"
@@ -45,15 +50,63 @@ import { useSettingsPage } from "./layout"
 import { LibraryImportPage, LibrarySection, saveLibraryEntry } from "./library"
 import { captureError, reportError, type InlineError } from "@/lib/errors"
 import { useAsyncAction } from "@/hooks/use-async-action"
-import { settingsPath } from "@/lib/router"
+import { mcpDetailPath, settingsPath } from "@/lib/router"
 
 type BuiltinKind = "web-search" | "knowledge" | "workflow"
 
-const BUILTINS: { kind: BuiltinKind; label: string; hint: string; icon: typeof GlobeIcon }[] = [
-  { kind: "web-search", label: "Web search", icon: GlobeIcon, hint: "The harness's web search + fetch tools, on the backend in Settings › Web search" },
-  { kind: "knowledge", label: "Knowledge base", icon: BookOpenIcon, hint: "A per-project knowledge base the agent can read and write" },
-  { kind: "workflow", label: "Workflows", icon: WorkflowIcon, hint: "Run multi-step workflows: each step is a real thread, mirrored into the calling thread as a subagent" },
+/* `hint` is the sentence the Add menu needs to make a choice; `detail` is the
+   phrase the list needs to identify a row already there. They are different
+   lengths because they answer different questions, and using the menu's
+   sentence in the list stretched a table cell to the width of a paragraph. */
+const BUILTINS: {
+  kind: BuiltinKind
+  label: string
+  hint: string
+  detail: string
+  icon: typeof GlobeIcon
+}[] = [
+  { kind: "web-search", label: "Web search", icon: GlobeIcon, detail: "web search + fetch", hint: "The harness's web search + fetch tools, on the backend in Settings › Web search" },
+  { kind: "knowledge", label: "Knowledge base", icon: BookOpenIcon, detail: "per-project knowledge base", hint: "A per-project knowledge base the agent can read and write" },
+  { kind: "workflow", label: "Workflows", icon: WorkflowIcon, detail: "multi-step workflows", hint: "Run multi-step workflows: each step is a real thread, mirrored into the calling thread as a subagent" },
 ]
+
+const builtinOf = (kind: BuiltinKind) => BUILTINS.find((b) => b.kind === kind)
+
+/** This row's mark. A library of MCP servers is not one kind of thing: two
+    transports and the harness's own tools share the list, and the plug every
+    row used to wear said none of that. */
+function mcpIcon(s: McpServerDef) {
+  if (s.type === "builtin") return builtinOf(s.builtin)?.icon ?? PlugIcon
+  return s.type === "http" ? GlobeIcon : TerminalIcon
+}
+
+/**
+ * The detail line: what this row *is*, then what it points at.
+ *
+ * It used to be `mcpSubtitle` in monospace, which made three mistakes at once —
+ * it set a built-in's plain-English description in a command font, it buried
+ * the transport in a string nobody parses at a glance, and it repeated the
+ * OAuth state that the Status column already draws as a badge two inches away.
+ * The badge says the kind; the monospace is kept for the one thing that really
+ * is a command or a URL. `mcpSubtitle` is still what search matches on.
+ */
+function McpDetail({ server }: { server: McpServerDef }) {
+  const builtin = server.type === "builtin" ? builtinOf(server.builtin) : null
+  return (
+    <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+      <Badge variant="outline" className="shrink-0 font-normal">
+        {builtin ? "Built-in" : server.type === "http" ? "HTTP" : "stdio"}
+      </Badge>
+      {server.type === "builtin" ? (
+        <span className="text-xs text-muted-foreground">{builtin?.detail}</span>
+      ) : (
+        <span className="truncate font-mono text-xs text-muted-foreground">
+          {server.type === "http" ? server.url : [server.command, ...server.args].join(" ")}
+        </span>
+      )}
+    </span>
+  )
+}
 
 export function McpPage() {
   const { settings } = useSettingsPage()
@@ -107,11 +160,22 @@ export function McpPage() {
       settings={settings}
       refresh={() => invalidate("mcp-servers")}
       extraActions={builtins}
-      rowExtra={(s) =>
-        s.type === "http" && s.auth === "oauth" ? (
-          <McpConnection server={s} settings={settings} refresh={() => invalidate("mcp-servers")} />
-        ) : null
-      }
+      rowIcon={mcpIcon}
+      rowDetail={(s) => <McpDetail server={s} />}
+      /* Reads first, then the controls that produce them — the same order the
+         composer's footer puts a reading and its trigger in. `justify-end` in
+         the table (the column is end-aligned, so the cluster has to be too) and
+         `justify-start` on a card, where the row above it starts at the left
+         and a right-aligned pile of buttons reads as a second column that
+         isn't there. */
+      rowExtra={(s) => (
+        <div className="flex flex-wrap items-center gap-1.5 @panel-md:justify-end">
+          {s.type === "http" && s.auth === "oauth" && (
+            <McpConnection server={s} settings={settings} refresh={() => invalidate("mcp-servers")} />
+          )}
+          <McpCheck server={s} settings={settings} />
+        </div>
+      )}
       // A built-in has nothing to edit — it is resolved at spawn, not stored.
       editable={(s) => s.type !== "builtin"}
     />
@@ -213,7 +277,7 @@ function McpConnection({
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-end gap-1.5">
+    <div className="flex flex-wrap items-center gap-1.5 @panel-md:justify-end">
       {error && <ErrorNote error={error} className="basis-full" />}
       <Badge variant={connected ? "secondary" : "destructive"} title={state?.error ?? undefined}>
         <KeyRoundIcon /> {authSummary(server.authState)}
@@ -227,6 +291,105 @@ function McpConnection({
         </Button>
       )}
     </div>
+  )
+}
+
+/** How old the listing is, said as the reading's own tooltip: a remembered
+    answer must never read as a connection that just happened. */
+function listedWhen(result: McpCheckResult) {
+  const connected = `connected in ${result.ms}ms`
+  if (!result.checkedAt) return connected
+  const mins = Math.round((Date.now() - result.checkedAt) / 60_000)
+  if (mins < 1) return `${connected}, just now`
+  return `${connected}, ${mins < 60 ? `${mins}m` : `${Math.round(mins / 60)}h`} ago`
+}
+
+/**
+ * What this server advertises — tools, prompts and resources.
+ *
+ * Drawn without being asked for: a row that says only its command tells the
+ * reader nothing about what a thread linking it actually gets. The listing is
+ * the server's to remember (`mcp_catalog`, one connect per row per TTL and
+ * coalesced across tabs), so a settings visit costs a GET and not a dozen
+ * child processes — and the read is what every row does on mount.
+ *
+ * The result is a *reading*, so it is the shape every other reading in the app
+ * has — a badge with the counts in it. It is a **link to the server's own
+ * page**, not a popover: what a tool takes, what a prompt's arguments are and
+ * what happens when you run one is a place you go, and it was already more
+ * than a fixed surface over a table row could hold.
+ *
+ * Check is what is left of the old button and it still means what it said:
+ * connect *now*. It POSTs, which is the one door that refuses the stored
+ * answer, and writes what comes back into the cache the row draws from.
+ */
+function McpCheck({ server, settings }: { server: McpServerDef; settings: ServerSettings }) {
+  const qc = useQueryClient()
+  const key = mcpCatalogKey(settings, server.id)
+  const query = useMcpCatalog(server.id)
+  const result = query.data ?? null
+  /* The toast flavour, because this button stays on screen: the inline one
+     keeps `busy` up on purpose for the callers that navigate away on success,
+     which would leave Check reading "Checking…" for as long as the page is
+     open. */
+  const { busy, run } = useAsyncAction({ toast: true })
+
+  const check = () =>
+    void run(`Couldn't check ${server.name}`, async () => {
+      qc.setQueryData(
+        key,
+        await api<McpCheckResult>(settings, `/api/mcp-servers/${server.id}/check`, { method: "POST" })
+      )
+    })
+
+  const groups = result
+    ? ([
+        ["Tools", result.tools],
+        ["Prompts", result.prompts],
+        ["Resources", result.resources],
+      ] as const).filter(([, list]) => list.length > 0)
+    : []
+  const counts = groups.map(([label, list]) => `${list.length} ${label.toLowerCase()}`).join(", ")
+
+  return (
+    <>
+      {/* A read that failed is a reading too — the row says so where it would
+          have said what the server offers, rather than drawing as a server
+          that offers nothing. */}
+      {!result && query.error && (
+        <Badge variant="destructive" title={query.error.message}>
+          <PlugZapIcon /> Couldn't read what it offers
+        </Badge>
+      )}
+      {result && !result.ok && (
+        <Badge variant="destructive" title={result.error}>
+          <PlugZapIcon /> {result.error ?? "Didn't connect"}
+        </Badge>
+      )}
+      {result?.ok &&
+        (groups.length === 0 ? (
+          /* Connected and advertises nothing: a real answer, and the one a
+             misconfigured server gives most often. */
+          <Badge variant="secondary" title={listedWhen(result)}>
+            <PlugZapIcon /> Connected, nothing advertised
+          </Badge>
+        ) : (
+          <Link to={mcpDetailPath(server.id)} title={`${result.serverInfo?.name ?? server.name} — ${listedWhen(result)}`}>
+            <Badge variant="secondary" className="cursor-pointer hover:bg-secondary/80">
+              <PlugZapIcon /> {counts}
+            </Badge>
+          </Link>
+        ))}
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={busy || query.isFetching}
+        onClick={check}
+        title="Connect now and list what this server offers"
+      >
+        <SearchCheckIcon className="size-4" /> {busy || query.isFetching ? "Checking…" : "Check"}
+      </Button>
+    </>
   )
 }
 
@@ -341,7 +504,7 @@ function McpForm({
         onBack={() => onDone(false)}
       />
       <PageForm onSubmit={save}>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 @panel-sm:grid-cols-2">
         <Field label="Name" hint="How the agent addresses the server.">
           <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
         </Field>

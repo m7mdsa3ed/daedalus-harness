@@ -92,7 +92,7 @@ export function EnhanceButton({
       ? enhanceDraft(
           settings,
           value,
-          { profileId: profile.id, agentId: meta?.agentId || undefined, model: rewriteModel },
+          { profileId: profile.id, model: rewriteModel },
           controller.signal
         )
       : enhanceThread(

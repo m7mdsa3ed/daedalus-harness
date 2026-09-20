@@ -32,7 +32,19 @@ export const GROUP_LABEL =
      NEST    a folder's threads, indented so a child's icon sits under the
              folder's own — the border is the folder chevron's centre line. */
 export const ROW = "h-8 px-2 text-[13px]"
+/* A thread row is two lines — the title over "project · age" — so it is taller
+   than ROW and taller than the primitive's own `sm`. `min-h-11` keeps a title
+   short enough not to wrap at the same 44px a full one reaches, so a column of
+   rows is one rhythm rather than alternating heights. The ⋯ still sits at
+   `top-1.5`, which is the *title's* line, not the row's centre. */
+export const ROW_TWO_LINE = "h-auto min-h-11 px-2 py-1.5 text-[13px]"
 export const MENU = "gap-0.5"
+/* The footer's icon buttons — plan usage, servers, notifications and settings
+   in one row. Sized and rounded like a sidebar row, because that is the surface
+   they stand on, and tinted with the sidebar's own accent on hover rather than
+   the button primitive's `muted`, which is the page's ground. */
+export const FOOTER_ICON =
+  "size-8 shrink-0 rounded-lg text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
 export const GROUP = "px-2 py-0"
 export const TIER = "mt-3"
 export const ACTION = "top-1.5! right-1"

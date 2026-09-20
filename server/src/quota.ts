@@ -85,6 +85,59 @@ const inflight = new Map<string, Promise<QuotaSnapshot>>();
     does not vary by directory, but a child still needs somewhere to be. */
 export const quotaCwd = (): Project => ({ id: "", name: "", cwd: process.cwd(), description: null });
 
+/*
+ * ── A probe is a second process on the same login, and that is a race ──
+ *
+ * The agent probe is not an API call: it is a whole second copy of the runtime's
+ * CLI, and it reads and writes the very credentials file the live agent child is
+ * reading and writing. A subscription login is OAuth with a *rotating* refresh
+ * token, so two processes that both find the access token expired both present
+ * the same refresh token; the provider honours one and answers the other
+ * `invalid_grant`, and whichever finishes last is what the file ends up holding.
+ * The account is logged out, and the user is asked to sign in again.
+ *
+ * Nothing here can lock against it — the agent child is not ours to coordinate
+ * with, and the window is opened by exactly the thing that makes the reading
+ * useful: `refreshQuota` asks at *turn end*, when the child is certainly alive.
+ *
+ * So the probe yields. While any process of that runtime is live, the stored
+ * reading is served however old it is, and no CLI is spawned. A percentage that
+ * is a few minutes stale is a smaller harm than an account that has to log in
+ * again, and the reading catches up the moment the thread retires.
+ *
+ * Deliberately by **agent id and not by (agent, profile)**: a login is a file on
+ * this machine, and two profiles that set no config-dir of their own share it.
+ * Over-broad costs a stale number; too narrow costs the logout this exists for.
+ */
+let runtimeIsLive: (agentId: string) => boolean = () => false;
+
+/** Told by the SessionManager, which owns the child processes and is the only
+    thing that knows. Left as "nothing is live" for a server without one. */
+export function setRuntimeLiveCheck(fn: (agentId: string) => boolean): void {
+  runtimeIsLive = fn;
+}
+
+/**
+ * Must this reading be taken from the cache rather than by spawning?
+ *
+ * Only ever true of the **agent probe**: a profile provider's reading is an
+ * HTTP call against a stored key, which races nothing and is always taken.
+ */
+export function probeHeldBack(profile: Profile, agentId: string): boolean {
+  return !profileUsage(profile) && runtimeIsLive(agentId);
+}
+
+/** The last thing this pair was known to be, with no probe spawned. `error` when
+    there is nothing stored yet: the card says why, and it is never written to the
+    cache, so the first quiet moment still takes a real reading. */
+async function lastKnown(agentId: string, profileId: string): Promise<QuotaSnapshot> {
+  const hit = (await db.select().from(agentQuotaTable).where(eq(agentQuotaTable.key, cacheKey(profileId, agentId))).limit(1))[0];
+  if (hit) return hit.snapshot as QuotaSnapshot;
+  return {
+    ...failed({ agentId, profileId, source: "agent", fetchedAt: Date.now() }, new Error("not read while the runtime is running — it would race the login's own token refresh")),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Running the probe
 // ---------------------------------------------------------------------------
@@ -527,6 +580,12 @@ export function getQuota(
   if (!profileUsage(profile) && !agent.quotaProbe) {
     return Promise.resolve(unsupported(agent.id, profile.id));
   }
+  /* The profile's own provider is an HTTP call against a stored key and races
+     nothing, so it is never held back; only the probe, which is a process. See
+     the header above `runtimeIsLive`. `refresh` does not override this — the
+     Refresh button is the *worst* moment to spawn a second CLI, because it is
+     pressed while watching a turn run. */
+  if (probeHeldBack(profile, agent.id)) return lastKnown(agent.id, profile.id);
   return cached(keyFor(profile, agent.id), refresh, () => runProbe(agent, profile, project));
 }
 

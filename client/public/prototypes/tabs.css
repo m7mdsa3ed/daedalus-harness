@@ -1,0 +1,103 @@
+/* ── The tab strip's own vocabulary ──
+   Layered on `transcript.css`. The strip is modelled on the app's real one,
+   which is dockview's (`index.css`, the `.dock-tab` block): a strip in the
+   header band, one 32px slab per panel, three weights of one material and no
+   colour on any of them.
+
+     --dock-chip-h   28px  the tab's height
+     --dock-control-h 20px the ⋮ / ✕ controls, floated over the chip's end
+     --tab-fade-w     the title's mask, the width of what is showing
+
+   Here the strip is a static row — no dockview, no drag — so the variants can
+   move where it sits and what each tab carries. Every variant keeps the
+   standing rules: no tab wears a colour (the reading is `PanelStatusDot`'s),
+   the controls are an overlay that reserves no room, and a narrow strip keeps
+   the tab you are on and moves the rest to a list. */
+
+:root {
+  --dock-chip-h: 28px;
+  --dock-control-h: 20px;
+  --tab-w: 224px;          /* one width whether a tab is alone or one of nine */
+  --strip-h: var(--app-header-row-h, 2rem);
+}
+
+/* ── The strip ── */
+.strip { display: flex; align-items: center; gap: 6px; height: var(--strip-h); flex: 0 0 auto; padding: 0 6px; }
+.strip.band { border-bottom: 1px solid var(--border-60); }
+.strip .void { flex: 1 1 auto; }
+.strip .group-add { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 7px; color: var(--muted-foreground); flex: 0 0 auto; }
+.strip .group-add:hover { background: var(--hover); color: var(--foreground); }
+.strip .list { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 7px; color: var(--muted-foreground); flex: 0 0 auto; }
+.strip .list:hover { background: var(--hover); color: var(--foreground); }
+.strip .list svg { width: 15px; height: 15px; }
+
+/* ── A tab ──
+   Three weights of one material: the one you are on is the card's own ground;
+   the one you point at is the same wash as the resting tab at double; the rest
+   are a 4% wash. No colour on any of them. */
+.tab {
+  position: relative; display: flex; align-items: center; gap: 6px; flex: 0 0 auto;
+  width: var(--tab-w); max-width: var(--tab-w); height: var(--dock-chip-h);
+  padding: 0 8px; border-radius: calc(var(--radius) - 2px);
+  color: var(--muted-foreground);
+  background: color-mix(in oklch, var(--foreground) 4%, transparent);
+  transition: background 160ms, color 160ms;
+}
+.tab:hover { background: color-mix(in oklch, var(--foreground) 8%, transparent); }
+.tab[data-active] { color: var(--foreground); background: var(--background); box-shadow: 0 1px 3px rgba(0,0,0,.1), 0 1px 2px -1px rgba(0,0,0,.1); }
+.tab .mark { width: 14px; height: 14px; flex: 0 0 auto; display: grid; place-items: center; color: var(--muted-foreground); }
+.tab[data-active] .mark { color: var(--foreground); }
+.tab .mark svg { width: 14px; height: 14px; }
+.tab .t { position: relative; min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+/* The title ends under its own fade, exactly as the app's does — nothing moves
+   as the controls appear. */
+.tab .t { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--tab-fade-w, 0rem)), transparent calc(100% - var(--tab-fade-w, 0rem) + 0.75rem)); mask-image: linear-gradient(to right, #000 calc(100% - var(--tab-fade-w, 0rem)), transparent calc(100% - var(--tab-fade-w, 0rem) + 0.75rem)); transition: -webkit-mask-image 120ms, mask-image 120ms; }
+.tab:hover { --tab-fade-w: calc(2 * var(--dock-control-h) + 14px); }
+.tab:has(.pin) { --tab-fade-w: calc(var(--dock-control-h) + 14px); }
+.tab .controls { position: absolute; inset: 0 4px 0 auto; display: flex; align-items: center; gap: 1px; opacity: 0; pointer-events: none; }
+.tab:hover .controls { opacity: 1; pointer-events: auto; }
+.tab .ctrl { display: grid; place-items: center; width: var(--dock-control-h); height: var(--dock-control-h); border-radius: 5px; color: var(--muted-foreground); }
+.tab .ctrl:hover { background: var(--hover); color: var(--foreground); }
+.tab .ctrl svg { width: 13px; height: 13px; }
+/* The pin is a *state*, so it is the one control drawn before you point. */
+.tab .pin { position: absolute; right: 5px; top: 50%; transform: translateY(-50%); opacity: 1; }
+.tab:has(.pin) .controls { right: 26px; }
+/* The reading: a dot, never a glyph in the title. */
+.sdot { width: 6px; height: 6px; border-radius: 999px; flex: 0 0 auto; }
+.sdot.running { background: var(--primary); animation: pulse 1.6s ease-in-out infinite; }
+.sdot.attention { background: var(--amber); }
+.sdot.warn { background: var(--destructive); }
+.sdot.dirty { background: transparent; box-shadow: inset 0 0 0 1.5px currentColor; }
+.tab .close-all { opacity: 0; }
+.strip:hover .close-all { opacity: 1; }
+
+/* ── A chip that is not a panel: a preset, "add to group" ── */
+.chipbtn { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 999px; font-size: 12px; color: var(--muted-foreground); box-shadow: inset 0 0 0 1px var(--border-60); }
+.chipbtn:hover { background: var(--hover); color: var(--foreground); }
+.chipbtn[data-on="true"] { background: color-mix(in oklab, var(--foreground) 8%, transparent); color: var(--foreground); }
+
+/* ── Tabs-A: stacked pairs ── */
+.pairgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+.pair { display: flex; flex-direction: column; gap: 8px; }
+.pair .cap { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: color-mix(in oklab, var(--muted-foreground) 80%, transparent); }
+.pair .demo { border-radius: var(--radius-xl); border: 1px solid var(--border-60); background: color-mix(in oklab, var(--card) 70%, transparent); padding: 8px; }
+.pair .demo .strip { padding: 0; }
+
+/* ── Tabs-B: the two-row strip ── */
+.strip.tworow { height: auto; flex-direction: column; align-items: stretch; gap: 4px; padding: 5px 6px; }
+.strip.tworow .row1, .strip.tworow .row2 { display: flex; align-items: center; gap: 6px; }
+.strip.tworow .row1 .tab { width: auto; max-width: 200px; flex: 0 1 auto; }
+.strip.tworow .row2 { font-size: 11.5px; color: var(--muted-foreground); }
+.strip.tworow .row2 .crumb { display: inline-flex; align-items: center; gap: 6px; padding: 2px 6px; border-radius: 6px; }
+.strip.tworow .row2 .crumb:hover { background: var(--hover); color: var(--foreground); }
+.strip.tworow .row2 .sep { opacity: 0.4; }
+.strip.tworow .tab { height: 24px; }
+
+/* ── Tabs-C: the breadcrumb strip ── */
+.crumbs { display: flex; align-items: center; gap: 2px; height: var(--strip-h); padding: 0 8px; }
+.crumb { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 7px; font-size: 12.5px; color: var(--muted-foreground); }
+.crumb:hover { background: var(--hover); color: var(--foreground); }
+.crumb[data-active] { color: var(--foreground); font-weight: 500; background: color-mix(in oklab, var(--foreground) 5%, transparent); }
+.crumb .mark { width: 14px; height: 14px; display: grid; place-items: center; }
+.crumb .mark svg { width: 14px; height: 14px; }
+.crumb .sep { color: color-mix(in oklab, var(--muted-foreground) 45%, transparent); margin: 0 1px; }

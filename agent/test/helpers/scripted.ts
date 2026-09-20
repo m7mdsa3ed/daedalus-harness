@@ -36,7 +36,6 @@ export function testEnv(overrides: Partial<AgentEnv> = {}): AgentEnv {
        tests turn it on. */
     holdOnError: false,
     modelPromptsFile: null,
-    uiBlocks: true,
     home: mkdtempSync(join(tmpdir(), "daedalus-agent-test-")),
     ...overrides,
   };

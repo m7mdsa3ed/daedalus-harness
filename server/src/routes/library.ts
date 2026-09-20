@@ -27,6 +27,9 @@ import {
 } from "../mcp-oauth.js";
 import { startAuthorization } from "@modelcontextprotocol/sdk/client/auth.js";
 import { getConfig } from "../config.js";
+import { invokeMcp, mcpCatalogFor } from "../mcp-check.js";
+import { mcpServersFor } from "../sessions.js";
+import { listProjects } from "../projects.js";
 
 /** The library: MCP servers, skills, slash commands, personas and model
     prompts, shared across projects — plus the import scan over the agents' own
@@ -75,6 +78,97 @@ export function libraryRoutes(app: Hono): void {
 
   /** Put one of the harness's own MCP servers in the library. Idempotent — the
       row has a fixed id — so the button is safe to press again. */
+  /**
+   * Check one stored row: connect as the agent would and report what it
+   * advertises — tools, prompts and resources.
+   *
+   * The def is resolved through `mcpServersFor`, the one function a spawn uses,
+   * so a builtin is checked as the synthesized server it becomes and an OAuth
+   * row as the shim URL the child is actually handed. A row that resolves to
+   * nothing is the two cases worth naming rather than reporting as a failure:
+   * an OAuth server nobody has connected, and a builtin whose backend is not
+   * configured.
+   */
+  /**
+   * The server as a thread's agent would be handed it — the one resolution
+   * both the listing and the playground stand on.
+   *
+   * A builtin's env carries the *calling thread's* project, and there is no
+   * thread behind a settings screen, so one is named or the first stands in.
+   * For a listing which project it is changes what the tools answer and never
+   * what they are; for a call it changes the answer itself, which is why the
+   * detail page lets a builtin's project be picked.
+   */
+  async function resolveMcpDef(id: string, projectId?: string) {
+    const row = (await mcpServers.list()).find((s) => s.id === id);
+    if (!row) return { error: "not found", status: 404 as const };
+    const projects = await listProjects();
+    const project = (projectId && projects.find((p) => p.id === projectId)) || projects[0];
+    if (!project) return { error: "add a project first", status: 400 as const };
+    const { servers } = await mcpServersFor({ mcpServerIds: [id] }, project, getConfig(), null);
+    const def = servers[0];
+    if (def) return { def, project };
+    /* The two cases worth naming rather than reporting as a failure: an OAuth
+       server nobody has connected, and a builtin whose backend is unconfigured. */
+    return {
+      unavailable:
+        row.type === "builtin"
+          ? `The ${row.builtin} server is not configured, so no thread is given it.`
+          : "Not connected — authorize this server first.",
+    };
+  }
+
+  /* Both doors are the same read; they differ only in whether a remembered
+     listing is allowed to answer. GET is what the list draws itself from, so
+     every row says what it offers without anybody pressing anything; POST is
+     the Check button, which means "connect now". */
+  app.on(["GET", "POST"], ["/api/mcp-servers/:id/catalog", "/api/mcp-servers/:id/check"], async (c) => {
+    const id = c.req.param("id");
+    const resolved = await resolveMcpDef(id, c.req.query("project"));
+    if ("error" in resolved) return c.json({ error: resolved.error }, resolved.status);
+    if ("unavailable" in resolved) {
+      return c.json({ ok: false, ms: 0, tools: [], prompts: [], resources: [], error: resolved.unavailable });
+    }
+    return c.json(await mcpCatalogFor(id, resolved.def, c.req.method === "POST"));
+  });
+
+  /**
+   * The playground: run one of the things this server offers — a tool, a
+   * prompt or a resource — and hand back what it answered, verbatim.
+   *
+   * One route for all three, because the kind picks an SDK method and nothing
+   * else (`invokeMcp`). A connection of its own per call rather than a pooled
+   * one, the same bargain the check makes. A tool call is a *write* as often as
+   * a read, so this is deliberately behind an explicit press on a page somebody
+   * navigated to, and nothing here is cached: the point is the live answer.
+   */
+  app.post("/api/mcp-servers/:id/invoke", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      kind?: string;
+      name?: string;
+      args?: unknown;
+      project?: string;
+    };
+    if (body.kind !== "tool" && body.kind !== "prompt" && body.kind !== "resource") {
+      return c.json({ error: "kind must be tool, prompt or resource" }, 400);
+    }
+    if (!body.name) return c.json({ error: "name is required" }, 400);
+    const args = body.args;
+    if (args !== undefined && (typeof args !== "object" || args === null || Array.isArray(args))) {
+      return c.json({ error: "arguments must be a JSON object" }, 400);
+    }
+    const resolved = await resolveMcpDef(c.req.param("id"), body.project);
+    if ("error" in resolved) return c.json({ error: resolved.error }, resolved.status);
+    if ("unavailable" in resolved) return c.json({ error: resolved.unavailable }, 400);
+    return c.json(
+      await invokeMcp(resolved.def, {
+        kind: body.kind,
+        name: body.name,
+        args: (args as Record<string, unknown>) ?? {},
+      }),
+    );
+  });
+
   app.post("/api/mcp-servers/builtin/:kind", async (c) => {
     const kind = c.req.param("kind");
     if (!isBuiltinMcp(kind)) return c.json({ error: "unknown builtin" }, 404);

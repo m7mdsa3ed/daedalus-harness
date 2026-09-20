@@ -153,6 +153,12 @@ function zaiWindow(limit: ZaiLimit): QuotaWindow | null {
       id: "mcp_monthly",
       label: "MCP tool usage (monthly)",
       usedPercent: limit.percentage,
+      /* `usage` is the cap here and `currentValue` what has been spent of it —
+         the one z.ai window that gives amounts at all; the token windows are a
+         percentage and nothing else. */
+      used: limit.currentValue ?? null,
+      cap: limit.usage ?? null,
+      unit: "calls",
       resetsAt: limit.nextResetTime ?? null,
       windowMinutes: 30 * 24 * 60,
     };
@@ -794,6 +800,49 @@ const COMMAND_CODE_API = "https://api.commandcode.ai";
     other's. */
 const COMMAND_CODE_STAGING_API = "https://staging-api.commandcode.ai";
 const COMMAND_CODE_CREDITS_PATH = "/alpha/billing/credits";
+const COMMAND_CODE_SUBSCRIPTION_PATH = "/alpha/billing/subscriptions";
+
+/*
+ * What a plan is called and what it gives per month.
+ *
+ * A table, because the API does not serve one: `/alpha/billing/credits` says
+ * how many credits are *left* and `/alpha/billing/subscriptions` names the
+ * plan, and neither says what the plan started the month with — the CLI's own
+ * `/usage` panel carries this same map and computes the bar from it. So the
+ * monthly reading is only as current as this table: a plan Command Code adds,
+ * or a price it changes, is a line here.
+ *
+ * ponytail: a hardcoded map, kept because the only alternative is no monthly
+ * window at all. If the account API ever serves the allowance, read it instead
+ * and let this be the fallback.
+ */
+const COMMAND_CODE_PLANS: Record<string, { name: string; monthlyCredits: number }> = {
+  "individual-go": { name: "Go", monthlyCredits: 10 },
+  "individual-goat": { name: "GOAT", monthlyCredits: 70 },
+  "individual-pro": { name: "Pro", monthlyCredits: 30 },
+  "individual-pro-v1": { name: "Pro", monthlyCredits: 80 },
+  "individual-provider": { name: "Provider", monthlyCredits: 15 },
+  "individual-max": { name: "Max", monthlyCredits: 150 },
+  "individual-ultra": { name: "Ultra", monthlyCredits: 300 },
+  "teams-pro": { name: "Teams Pro", monthlyCredits: 40 },
+};
+
+/** The subscription statuses that mean the plan is still giving credits. A
+    canceled or unpaid one still names a `planId`, and drawing its monthly bar
+    would be a plan the account no longer has. */
+const COMMAND_CODE_LIVE_STATUSES = new Set(["active", "trialing", "past_due"]);
+
+/** Longest prefix wins, so `individual-pro-v1` is not read as `individual-pro`
+    — two different allowances behind names that share one. Underscores and case
+    are normalized the way the CLI normalizes them. */
+function commandCodePlan(planId: unknown): { id: string; name: string; monthlyCredits: number } | null {
+  if (typeof planId !== "string" || !planId.trim()) return null;
+  const id = planId.trim().toLowerCase().replace(/_/g, "-");
+  const match = Object.keys(COMMAND_CODE_PLANS)
+    .sort((a, b) => b.length - a.length)
+    .find((known) => id.startsWith(known));
+  return match ? { id, ...COMMAND_CODE_PLANS[match]! } : null;
+}
 
 /** One of the two rolling windows. `used`/`cap` are credits; `resetAt` is epoch
     milliseconds, unlike codex's seconds (and `when` reads both). */
@@ -807,10 +856,15 @@ interface CommandCodeWindow {
 interface CommandCodeCreditsBody {
   success?: boolean;
   credits?: {
+    /** What is **left** of this month's plan pot, not what has been spent. */
     monthlyCredits?: unknown;
     purchasedCredits?: unknown;
     freeCredits?: unknown;
     belowThreshold?: unknown;
+    /** The plan this key is on. Already here, which is why naming the plan
+        costs no second call — the subscription route is asked only for the
+        status and the renewal date. */
+    planId?: unknown;
   } | null;
   windowLimits?: {
     limited?: boolean;
@@ -819,6 +873,18 @@ interface CommandCodeCreditsBody {
     weekly?: CommandCodeWindow | null;
   } | null;
   error?: { code?: string; status?: number; message?: string } | null;
+}
+
+/** `GET /alpha/billing/subscriptions`, the second and optional call: the plan's
+    `status` (is it still giving credits) and `currentPeriodEnd` (when the
+    monthly pot refills, an ISO string — `when` reads those too). */
+interface CommandCodeSubscriptionBody {
+  data?: {
+    planId?: unknown;
+    status?: unknown;
+    currentPeriodStart?: unknown;
+    currentPeriodEnd?: unknown;
+  } | null;
 }
 
 /** Where to GET. A `baseUrl` that already names the route is used whole (someone
@@ -843,16 +909,52 @@ function commandCodeWindow(
   const used = num(window?.used);
   const cap = num(window?.cap);
   if (used === null || cap === null || cap <= 0) return null;
-  return { id, label, usedPercent: pct(used, cap), resetsAt: when(window?.resetAt), windowMinutes };
+  return { id, label, usedPercent: pct(used, cap), used, cap, unit: "credits", resetsAt: when(window?.resetAt), windowMinutes };
 }
 
-export function foldCommandCodeQuota(body: CommandCodeCreditsBody, status = 200): Fold {
+/** The plan's monthly pot as a window, from what is *left* of it and what the
+    plan gives — the one reading here that is not in the response, and the shape
+    the CLI's own panel draws. Nothing when the plan is unknown to the table or
+    the subscription says it is no longer live; a plan whose remaining credits
+    exceed its allowance (a mid-month upgrade) widens the cap rather than
+    reporting a negative spend, which is what the CLI does too. */
+function commandCodeMonthly(
+  plan: { name: string; monthlyCredits: number } | null,
+  remaining: number | null,
+  subscription: CommandCodeSubscriptionBody | null,
+): QuotaWindow | null {
+  if (!plan || remaining === null) return null;
+  const status = subscription?.data?.status;
+  if (typeof status === "string" && !COMMAND_CODE_LIVE_STATUSES.has(status.toLowerCase())) return null;
+  const cap = Math.max(plan.monthlyCredits, remaining);
+  if (cap <= 0) return null;
+  return {
+    id: "monthly",
+    label: `Plan credits (monthly) · ${plan.name}`,
+    usedPercent: pct(cap - remaining, cap),
+    used: cap - remaining,
+    cap,
+    unit: "credits",
+    resetsAt: when(subscription?.data?.currentPeriodEnd),
+    windowMinutes: 30 * 24 * 60,
+  };
+}
+
+export function foldCommandCodeQuota(
+  body: CommandCodeCreditsBody,
+  status = 200,
+  subscription: CommandCodeSubscriptionBody | null = null,
+): Fold {
   const limits = body?.windowLimits;
+  const plan = commandCodePlan(body?.credits?.planId ?? subscription?.data?.planId);
   /* The ids Claude Code's and z.ai's adapters mint for the same shapes of
-     window. The labels are Command Code's own, as its panel prints them. */
+     window. The labels are Command Code's own, as its panel prints them. The
+     monthly pot goes last: it is the slowest window, and the two rolling ones
+     are what pace a session. */
   const windows = [
     commandCodeWindow("five_hour", "5-hour", limits?.fiveHour, 300),
     commandCodeWindow("seven_day", "Weekly", limits?.weekly, 7 * 24 * 60),
+    commandCodeMonthly(plan, num(body?.credits?.monthlyCredits), subscription),
   ].filter((w): w is QuotaWindow => w !== null);
 
   const quotaStatus: QuotaStatus =
@@ -867,27 +969,420 @@ export function foldCommandCodeQuota(body: CommandCodeCreditsBody, status = 200)
         (httpStatus(status) ?? (limits?.limited === false ? "api-key" : "error"));
 
   const monthly = num(body?.credits?.monthlyCredits);
+  const purchased = num(body?.credits?.purchasedCredits) ?? 0;
+  const free = num(body?.credits?.freeCredits) ?? 0;
+  const round = (n: number) => Math.round(n * 100) / 100;
+  /* The three pots spend as one balance, so the total is the number; the parts
+     are only said when there is more than one of them to say. */
+  const parts = [
+    ["plan", monthly ?? 0],
+    ["purchased", purchased],
+    ["free", free],
+  ].filter(([, n]) => (n as number) > 0) as [string, number][];
+  const balance =
+    monthly === null
+      ? null
+      : `${round((monthly ?? 0) + purchased + free)} credits` +
+        (parts.length > 1 ? ` (${parts.map(([k, n]) => `${round(n)} ${k}`).join(", ")})` : "");
   return {
     status: quotaStatus,
     windows,
-    raw: JSON.stringify(body, null, 2),
-    /* The plan's name lives on `/alpha/billing/subscriptions`. A second call for
-       a label the card can live without is not worth it yet. */
-    planName: null,
-    credits: monthly === null ? null : { balance: `${Math.round(monthly * 100) / 100} credits`, unlimited: false },
+    /* Both calls, named — the OpenRouter adapter's envelope, for the same
+       reason: two undocumented routes went into this reading and a shape that
+       moved has to be visible as itself. */
+    raw: JSON.stringify({ credits: body, subscription }, null, 2),
+    planName: plan?.name ?? null,
+    credits: balance === null ? null : { balance, unlimited: false },
   };
 }
 
 async function readCommandCodeUsage(profile: Profile, usage: ProfileUsage): Promise<Fold> {
   const key = usageKey(profile, usage);
   if (!key) throw new Error("this profile has no API key to read Command Code usage with");
+  /* `x-api-key`, not `Authorization` — the same header the CLI sends. */
+  const headers = { "x-api-key": key, Accept: "application/json" };
+  const creditsUrl = commandCodeQuotaUrl(profile, usage);
   const { body, status } = await fetchJson<CommandCodeCreditsBody>(
-    commandCodeQuotaUrl(profile, usage),
-    /* `x-api-key`, not `Authorization` — the same header the CLI sends. */
-    { method: "GET", headers: { "x-api-key": key, Accept: "application/json" } },
+    creditsUrl,
+    { method: "GET", headers },
     "Command Code",
   );
-  return foldCommandCodeQuota(body, status);
+  /* The subscription is an extra, like OpenRouter's balance: it only sharpens
+     the monthly window (is the plan live, when does the pot refill), and the
+     plan's own name already rode in on the credits body. A failure here leaves
+     the reading exactly as it was before this call existed. */
+  let subscription: CommandCodeSubscriptionBody | null = null;
+  /* Only where the credits URL is the credits route: an override pointing at
+     some other path is a proxy whose sibling route we cannot name, and asking
+     the same URL twice would fold a credits body in as a subscription. */
+  try {
+    if (!creditsUrl.endsWith(COMMAND_CODE_CREDITS_PATH)) throw new Error("no subscription route to ask");
+    const res = await fetchJson<CommandCodeSubscriptionBody>(
+      creditsUrl.slice(0, -COMMAND_CODE_CREDITS_PATH.length) + COMMAND_CODE_SUBSCRIPTION_PATH,
+      { method: "GET", headers },
+      "Command Code",
+    );
+    if (res.status === 200) subscription = res.body;
+  } catch {
+    /* Kept quiet on purpose — `raw` shows it as null. */
+  }
+  return foldCommandCodeQuota(body, status, subscription);
+}
+
+// ---------------------------------------------------------------------------
+// Adapter: 9Router — the local gateway's own quota tracker
+// ---------------------------------------------------------------------------
+
+/*
+ * 9Router (github.com/tungbach12/9router) is a self-hosted proxy: one
+ * OpenAI-compatible endpoint in front of many *accounts* — a Claude
+ * subscription, a Codex login, a GLM key, a free tier — with fallback between
+ * them as each runs out. So the question the other adapters ask ("what is left
+ * of this plan") has no single answer here, and the shape of the answer is the
+ * design decision this adapter turns on.
+ *
+ * **Every account is its own plan, and the reading says so.** A window carries
+ * `QuotaWindow.group` — the account it belongs to — and the page draws a
+ * section per account, each reading the way a z.ai or a Kimi card reads: a
+ * name, and that account's own bars under it. Nothing is pooled and nothing is
+ * averaged. Pooling was tried first, on the theory that fallback makes the
+ * gateway's aggregate headroom the only number that gates a turn, and it is
+ * wrong for the thing a person actually does with this page: a five-hour
+ * window is a *different* five hours per account, a Max subscription and a GLM
+ * key are not interchangeable capacity, and "60% across four accounts" hides
+ * both the one that is exhausted and the one that has not been touched. The
+ * accounts arrive in the gateway's own priority order — the order it will
+ * spend them in — and stay in it, so the first section is the one serving now.
+ *
+ * It is read in two calls plus one per account, all on the gateway's own HTTP
+ * API:
+ *
+ *   GET /api/providers/client?accountStatus=active&pageSize=…
+ *     → { connections: [{ id, provider, name, authType, … }], … }
+ *       already filtered to the connections 9Router can report usage for
+ *       (`isUsageEligible` there), which is why this route is used and not the
+ *       unfiltered `/api/providers`.
+ *   GET /api/usage/<connectionId>
+ *     → { plan?, quotas: { "<label>": { used, total, remaining,
+ *         remainingPercentage, resetAt, unlimited } } }  — or `{ message }`
+ *       when that account has nothing to report, which is not a failure.
+ *
+ * **The gateway's API key is not the credential here.** `sk-…` keys authorize
+ * `/v1` inference only; every `/api/*` dashboard route is behind the dashboard
+ * session (`src/dashboardGuard.js`). So the reading is: try it bare — which is
+ * the whole answer on an installation with `requireLogin` off — and on a 401
+ * log in with the dashboard password (`ProfileUsage.apiKey`, the one place a
+ * separate credential was always meant to go) for an `auth_token` cookie, then
+ * retry. A 401 with no password configured says so in words rather than
+ * reading as "no plan".
+ */
+
+const NINEROUTER_HOST = "http://localhost:20128";
+/** One page is the whole list in practice; the cap is what stops a gateway with
+    fifty linked accounts from becoming fifty upstream calls behind one refresh.
+    ponytail: a flat cap, paginate when someone actually has more. */
+const NINEROUTER_MAX_CONNECTIONS = 20;
+
+interface NineRouterConnection {
+  id?: unknown;
+  provider?: unknown;
+  name?: unknown;
+  email?: unknown;
+}
+
+interface NineRouterQuota {
+  used?: unknown;
+  total?: unknown;
+  remaining?: unknown;
+  remainingPercentage?: unknown;
+  /** Epoch ms, epoch seconds or ISO — `when` takes all three. */
+  resetAt?: unknown;
+  unlimited?: unknown;
+  /** What `used`/`total` count, when the handler said (Qoder's credits). */
+  unit?: unknown;
+  /** The handler's own name for the window (Antigravity's model rows). */
+  displayName?: unknown;
+}
+
+interface NineRouterUsageBody {
+  plan?: unknown;
+  quotas?: Record<string, NineRouterQuota> | null;
+  /** What an account with nothing to report says, and what an expired
+      credential says. Kept, never thrown. */
+  message?: unknown;
+  error?: unknown;
+}
+
+/** The gateway's origin. An override is used whole (minus a trailing slash);
+    otherwise the profile's own base URL is the gateway — it is the same server,
+    `…:20128/v1` — and its path is dropped. */
+export function nineRouterHost(profile: Profile, usage: ProfileUsage): string {
+  const override = usage.baseUrl?.trim().replace(/\/+$/, "");
+  if (override) return override;
+  const base = profile.baseUrl?.trim();
+  if (base) {
+    try {
+      return new URL(base).origin;
+    } catch {
+      /* Not a URL — fall through to the default rather than fetching nonsense. */
+    }
+  }
+  return NINEROUTER_HOST;
+}
+
+/** What to call an account in a label and an id: the name the gateway shows,
+    else the login it belongs to, else the provider it is. */
+function nineRouterWho(connection: NineRouterConnection): string {
+  return (
+    (typeof connection.name === "string" && connection.name.trim()) ||
+    (typeof connection.email === "string" && connection.email.trim()) ||
+    (typeof connection.provider === "string" && connection.provider) ||
+    "account"
+  );
+}
+
+/** One account's reading of one window, before pooling. The percentage is what
+    9Router already computed (`remainingPercentage`, so the spend is its
+    complement); `used`/`total` are kept only when they count something — a
+    provider whose handler normalized to `total: 100` is reporting the
+    percentage twice. An `unlimited` window is a free tier with nothing to pace
+    and is dropped, as is a window with no percentage and no pair to compute one
+    from: a shape that moved is visible in `raw`, never drawn as 0%. */
+function nineRouterReading(quota: NineRouterQuota): { usedPercent: number; used: number | null; cap: number | null } | null {
+  if (!quota || typeof quota !== "object" || quota.unlimited === true) return null;
+  const used = num(quota.used);
+  const total = num(quota.total);
+  const remainingPercent = num(quota.remainingPercentage);
+  const usedPercent =
+    remainingPercent !== null
+      ? Math.max(0, Math.min(100, 100 - remainingPercent))
+      : used !== null && total !== null && total > 0
+        ? pct(used, total)
+        : null;
+  if (usedPercent === null) return null;
+  const counted = used !== null && total !== null && total !== 100;
+  return { usedPercent, used: counted ? used : null, cap: counted ? total : null };
+}
+
+/* The gateway's dashboard does not draw its handlers' raw quota keys: it runs
+   them through one provider-aware normalizer (`ProviderLimits/utils.js`,
+   `parseQuotaData`) before anything is named or counted, and reading the same
+   `/api/usage/<id>` body without it is how the same account came out labelled
+   `spark_weekly` here and "Spark (Weekly)" there. What that function does that
+   the raw body does not say is below; everything else it does — the percentage,
+   which is `remainingPercentage` else `used`/`total`, and dropping a row it
+   cannot read — this adapter already did. */
+
+/** Codex names its windows after the rate-limit snapshot they came from; the
+    gateway names them after the period they are. */
+const NINEROUTER_CODEX_LABELS: Record<string, string> = {
+  session: "5h",
+  weekly: "Weekly",
+  spark_session: "Spark (5h)",
+  spark_weekly: "Spark (Weekly)",
+  review_session: "Review (5h)",
+  review_weekly: "Review (Weekly)",
+};
+
+/** Antigravity reports a window per *model*, a dozen of them, which is a dozen
+    bars for one account. The gateway draws one bar per family instead, and the
+    one it draws is the family's **worst** window — the model that runs out
+    first is what gates the account. Weekly, image and anything else stay as
+    they are. */
+function nineRouterAntigravity(entries: [string, NineRouterQuota][]): [string, string, NineRouterQuota][] {
+  const family = (key: string): string | null =>
+    key.includes("image")
+      ? null
+      : key.startsWith("gemini-")
+        ? "Gemini (Flash / Pro)"
+        : key.startsWith("claude-")
+          ? "Claude (Sonnet / Opus)"
+          : null;
+  const out: [string, string, NineRouterQuota][] = [];
+  const worst = new Map<string, [string, NineRouterQuota]>();
+  for (const [key, quota] of entries) {
+    const name = family(key);
+    if (!name) {
+      out.push([key, nineRouterLabel(quota, key), quota]);
+      continue;
+    }
+    const standing = worst.get(name);
+    const percent = (q: NineRouterQuota) => num(q?.remainingPercentage) ?? 100;
+    /* Keyed on the family, not the model, so the row is stable across a refresh
+       that changes which model is worst. */
+    if (!standing || percent(quota) < percent(standing[1])) worst.set(name, [key, quota]);
+  }
+  for (const [name, [, quota]] of worst) out.push([name.toLowerCase(), name, quota]);
+  return out;
+}
+
+function nineRouterLabel(quota: NineRouterQuota, key: string): string {
+  return (typeof quota?.displayName === "string" && quota.displayName.trim()) || key;
+}
+
+/** The windows of one account, named the way the gateway's own dashboard names
+    them: `[id, label, quota]`. */
+function nineRouterWindows(
+  connection: NineRouterConnection,
+  quotas: Record<string, NineRouterQuota>,
+): [string, string, NineRouterQuota][] {
+  const entries = Object.entries(quotas);
+  const provider = typeof connection.provider === "string" ? connection.provider.toLowerCase() : "";
+  if (provider === "antigravity") return nineRouterAntigravity(entries);
+  return entries.flatMap(([key, quota]) => {
+    /* A personal Qoder account carries an empty `organization` bucket; the
+       gateway skips it rather than drawing 0/0. */
+    if (provider === "qoder" && key === "organization" && (num(quota?.total) ?? 0) === 0) return [];
+    const label =
+      provider === "codex" ? (NINEROUTER_CODEX_LABELS[key] ?? key) : nineRouterLabel(quota, key);
+    return [[key, label, quota] as [string, string, NineRouterQuota]];
+  });
+}
+
+/** What the account's section is headed with. The gateway's own name for it,
+    and the plan that account is on when its handler reported one (`plan`) —
+    "Work Max · Claude Code", which is the same two facts a z.ai card puts in
+    its name and its badge. A name already carrying the plan is left alone
+    rather than saying it twice. */
+function nineRouterGroup(connection: NineRouterConnection, body: NineRouterUsageBody): string {
+  const who = nineRouterWho(connection);
+  const plan = typeof body?.plan === "string" ? body.plan.trim() : "";
+  if (!plan || who.toLowerCase().includes(plan.toLowerCase())) return who;
+  return `${who} · ${plan}`;
+}
+
+export function foldNineRouterQuota(
+  entries: { connection: NineRouterConnection; usage: NineRouterUsageBody }[],
+  /** How many eligible accounts the gateway has, when it said — the list is one
+      page and the cap is this adapter's, so the accounts past it are not
+      "not reporting", they are not read at all. */
+  linked = entries.length,
+): Fold {
+  const windows: QuotaWindow[] = [];
+  /* An account is "reporting" once it has contributed a single window. The rest
+     — an expired login, a provider with no usage API, a free tier that is all
+     `unlimited` — are counted and said in the plan name, because "4 accounts"
+     over a card drawn from two of them is a number that lies. */
+  let reporting = 0;
+  /* Two accounts the gateway shows the same name for would otherwise be drawn
+     as one section, which is the one thing `group` must not let happen. */
+  const taken = new Map<string, number>();
+
+  for (const { connection, usage } of entries) {
+    const quotas = usage?.quotas;
+    if (!quotas || typeof quotas !== "object") continue;
+    const id = typeof connection.id === "string" ? connection.id : nineRouterWho(connection);
+    const before = windows.length;
+    let group = nineRouterGroup(connection, usage);
+
+    for (const [key, label, quota] of nineRouterWindows(connection, quotas)) {
+      const reading = nineRouterReading(quota);
+      if (!reading) continue;
+      if (windows.length === before) {
+        /* Claimed on the account's first readable window, so a name is only
+           disambiguated against accounts that are actually drawn. */
+        const seen = taken.get(group) ?? 0;
+        taken.set(group, seen + 1);
+        if (seen > 0) group = `${group} (${seen + 1})`;
+      }
+      windows.push({
+        id: `${id}:${key}`,
+        /* The window's own name: the account is said once, on the section it
+           heads, and repeating it in every tile beneath it is the noise that
+           made eight accounts unreadable. */
+        label,
+        ...reading,
+        unit: typeof quota.unit === "string" ? quota.unit : null,
+        resetsAt: when(quota.resetAt),
+        group,
+      });
+    }
+    if (windows.length > before) reporting += 1;
+  }
+
+  /* Deliberately unsorted: the gateway hands its connections back in priority
+     order — the order it will actually spend them in — so the first section is
+     the account serving now and the last is the free tier behind everything.
+     Sorting by fullness would scramble exactly the fact a fallback chain has to
+     show. Within an account the order is the gateway's too. */
+
+  const quiet = entries.length - reporting;
+  const unread = Math.max(0, linked - entries.length);
+  const plural = (n: number) => `${n} account${n === 1 ? "" : "s"}`;
+  return {
+    status: windows.length ? "subscription" : "api-key",
+    windows,
+    /* Every account's answer, named and in full — the sections are what folded,
+       and an account that is expired, throttled or simply has no usage API is
+       only answerable here. */
+    raw: JSON.stringify(entries, null, 2),
+    /* No single plan: the gateway is several, and how many of them are actually
+       behind the bars is the honest headline. */
+    planName: entries.length
+      ? `9Router · ${plural(reporting)}${quiet > 0 ? ` (${quiet} not reporting)` : ""}${unread > 0 ? ` (+${unread} not shown)` : ""}`
+      : null,
+    credits: null,
+  };
+}
+
+async function readNineRouterUsage(profile: Profile, usage: ProfileUsage): Promise<Fold> {
+  const host = nineRouterHost(profile, usage);
+  const password = usage.apiKey?.trim() || "";
+  let cookie = "";
+
+  /** GET a dashboard route, logging in once on a 401 when a password is set.
+      The cookie is kept for the calls after it, so the login happens at most
+      once per reading. */
+  const get = async <T>(path: string): Promise<{ body: T; status: number }> => {
+    const ask = () =>
+      fetchJson<T>(host + path, { method: "GET", headers: cookie ? { Cookie: cookie } : {} }, "9Router");
+    let res = await ask();
+    if (res.status === 401 && !cookie) {
+      if (!password)
+        throw new Error(
+          "9Router's dashboard requires a login: put its dashboard password in the plan usage token field",
+        );
+      const login = await fetch(host + "/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+        signal: AbortSignal.timeout(USAGE_TIMEOUT_MS),
+      });
+      const auth = login.headers
+        .getSetCookie()
+        .map((c) => c.split(";")[0])
+        .find((c) => c.startsWith("auth_token="));
+      if (!auth) throw new Error(`9Router login failed (${login.status}): check the dashboard password`);
+      cookie = auth;
+      res = await ask();
+    }
+    return res;
+  };
+
+  const { body, status } = await get<{
+    connections?: NineRouterConnection[];
+    pagination?: { total?: unknown };
+  }>(
+    `/api/providers/client?accountStatus=active&sort=priority&pageSize=${NINEROUTER_MAX_CONNECTIONS}`,
+  );
+  const httpFold = httpStatus(status);
+  if (httpFold)
+    return { status: httpFold, windows: [], raw: JSON.stringify(body, null, 2), planName: null, credits: null };
+
+  const connections = (body?.connections ?? []).slice(0, NINEROUTER_MAX_CONNECTIONS);
+  const entries = await Promise.all(
+    connections.map(async (connection) => {
+      /* One account failing is that account's row, never the reading's: a
+         revoked Codex login must not blank the Claude subscription beside it. */
+      try {
+        const res = await get<NineRouterUsageBody>(`/api/usage/${encodeURIComponent(String(connection.id))}`);
+        return { connection, usage: res.body };
+      } catch (err) {
+        return { connection, usage: { message: err instanceof Error ? err.message : String(err) } };
+      }
+    }),
+  );
+  return foldNineRouterQuota(entries, num(body?.pagination?.total) ?? entries.length);
 }
 
 // ---------------------------------------------------------------------------
@@ -917,6 +1412,8 @@ export function readProfileUsage(profile: Profile): Promise<Fold> {
       return readOpenrouterUsage(profile, usage);
     case "command-code":
       return readCommandCodeUsage(profile, usage);
+    case "9router":
+      return readNineRouterUsage(profile, usage);
     default:
       /* Deliberately not a fall-through to some default adapter: a `kind` this
          build does not know is a profile written by a newer one, and answering

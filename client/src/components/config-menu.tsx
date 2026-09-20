@@ -6,6 +6,7 @@
    select, and that is the caller's business, not the row's. */
 import type * as acp from "@daedalus/acp"
 import * as React from "react"
+import { PlusIcon } from "lucide-react"
 import {
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -29,25 +30,127 @@ export interface Choice {
   group?: string
 }
 
+/** The row that makes the list longer, at the foot of a submenu: "Add model…",
+    "New profile…", "New project…". A catalog you can pick from and a catalog
+    you can only add to from settings are the same menu to look at, and the
+    second one sends you three clicks away to name one model. */
+export interface MenuAdd {
+  label: string
+  /** Runs on select; the menu closes first, because every one of these opens
+      something (a prompt, a page) that owns the focus next. */
+  onSelect: () => void
+}
+
+/** Past this many choices the submenu grows a filter box. Under it the list is
+    shorter than the box would make it, and a search field over six rows is a
+    control asking to be used for nothing. */
+const SEARCH_THRESHOLD = 8
+
+/** Case-insensitive substring, over what the reader can see plus the id they
+    may have pasted. Deliberately not fuzzy: these are model ids and project
+    paths, where a subsequence match is mostly noise. Exported because the
+    strip's own picker (`PickerMenu`) filters the same way over a different
+    row shape — one rule for what "search" means in a menu. */
+export function menuFilter<T extends { value: string; name: string; group?: string; hint?: string }>(
+  items: T[],
+  query: string
+): T[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return items
+  return items.filter((item) =>
+    [item.name, item.value, item.group ?? "", item.hint ?? ""].some((field) =>
+      field.toLowerCase().includes(q)
+    )
+  )
+}
+
+/**
+ * The filter box at the head of a menu popup.
+ *
+ * A plain input, not the Combobox: the list below is already rendered and a
+ * filter over it is a substring test, not a second popup with its own anchor
+ * inside one that has one.
+ *
+ * `stopPropagation` on the printable keys is what makes it work at all — Base
+ * UI runs the menu's typeahead off keydown on the popup, so every character
+ * typed here would otherwise jump the highlight to an item and the box would
+ * take none of them. The navigation keys are deliberately let through: arrows,
+ * Enter and Escape belong to the menu, so query → ↓ → Enter is one gesture.
+ */
+export function MenuSearchInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+}) {
+  return (
+    <input
+      autoFocus
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      onKeyDown={(event) => {
+        if (!MENU_KEYS.includes(event.key)) event.stopPropagation()
+      }}
+      placeholder={`Search ${label.toLowerCase()}…`}
+      aria-label={`Search ${label.toLowerCase()}`}
+      className="mb-1 w-full rounded-lg bg-muted/50 px-3 py-2 text-sm outline-none placeholder:text-muted-foreground"
+    />
+  )
+}
+
+const MENU_KEYS = ["ArrowDown", "ArrowUp", "Enter", "Escape", "Tab", "Home", "End"]
+
+/** The add row at the foot of a menu, for the pickers that can grow their own
+    catalog. Same shape in a submenu and in the strip's picker.
+
+    ponytail: the caller closes the menu and opens its dialog in the same tick,
+    and the menu's own focus-restore fires as it unmounts. The dialog is modal
+    and re-traps, so it wins; if a browser is ever seen yanking the caret back
+    to the trigger, defer the `onSelect` past the close animation. */
+export function MenuAddItem({ add }: { add: MenuAdd }) {
+  return (
+    <>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem onClick={add.onSelect}>
+        <PlusIcon className="size-4 text-muted-foreground" />
+        {add.label}
+      </DropdownMenuItem>
+    </>
+  )
+}
+
 export function MenuRow({
   label,
   value,
   choices,
   onSelect,
+  add,
 }: {
   label: string
   value: string
   choices: Choice[]
   onSelect: (value: string) => void
+  /** When the catalog this row draws can be added to from here. */
+  add?: MenuAdd
 }) {
   const current = choices.find((choice) => choice.value === value)
   const [submenuOpen, setSubmenuOpen] = React.useState(false)
+  const [query, setQuery] = React.useState("")
+  // The box is about *this* opening of the submenu, never the last one.
+  React.useEffect(() => {
+    if (!submenuOpen) setQuery("")
+  }, [submenuOpen])
+  const searchable = choices.length > SEARCH_THRESHOLD
+  const shown = searchable ? menuFilter(choices, query) : choices
 
   /* When any choice carries a group, the submenu is partitioned into labelled
      sections.  The array order is the display order; a group label is drawn the
      first time its value appears, and a separator is drawn between adjacent
      groups.  Choices without a group go under no heading. */
-  const hasGroups = choices.some((c) => c.group)
+  const hasGroups = shown.some((c) => c.group)
 
   /** Render one choice item, optionally preceded by a group header. */
   const renderChoice = (choice: Choice, prevGroup: string | undefined) => {
@@ -86,6 +189,7 @@ export function MenuRow({
       </DropdownMenuSubTrigger>
       <DropdownMenuPortal>
         <DropdownMenuSubContent className="max-w-80">
+          {searchable && <MenuSearchInput label={label} value={query} onChange={setQuery} />}
           <DropdownMenuRadioGroup
             value={value}
             onValueChange={(next) => {
@@ -95,13 +199,31 @@ export function MenuRow({
           >
             {(() => {
               let prevGroup: string | undefined
-              return choices.flatMap((choice) => {
+              return shown.flatMap((choice) => {
                 const parts = renderChoice(choice, prevGroup)
                 prevGroup = choice.group
                 return parts
               })
             })()}
           </DropdownMenuRadioGroup>
+          {/* Absence is said, because a filter that matches nothing and a
+              catalog that is empty look identical as a blank popup. */}
+          {shown.length === 0 && (
+            <DropdownMenuItem disabled className="text-xs">
+              No match
+            </DropdownMenuItem>
+          )}
+          {add && (
+            <MenuAddItem
+              add={{
+                label: add.label,
+                onSelect: () => {
+                  setSubmenuOpen(false)
+                  add.onSelect()
+                },
+              }}
+            />
+          )}
         </DropdownMenuSubContent>
       </DropdownMenuPortal>
     </DropdownMenuSub>

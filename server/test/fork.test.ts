@@ -65,9 +65,6 @@ const profile: Profile = {
   defaultModel: "",
   smallModel: "",
   logoUrl: "",
-  mcpServerIds: [],
-  skillIds: [],
-  commandIds: [],
 };
 
 const send = (ws: MockWs, command: ThreadCommand) =>

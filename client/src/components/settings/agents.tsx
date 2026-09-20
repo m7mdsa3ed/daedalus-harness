@@ -43,7 +43,8 @@ import { inlineFromQuery, reportError } from "@/lib/errors"
 import { api, profileSupports, type AgentDef, type AgentStatus } from "@/lib/settings"
 import { useAgentsStatus, useInvalidateProfileCatalog, useAgents, useProfiles } from "@/lib/queries/catalog"
 import { toast } from "@/lib/toast"
-import { PageHeader, Group, EmptyCard, Field, lines } from "./primitives"
+import { PageHeader, EmptyCard, Field, lines } from "./primitives"
+import { SettingsList } from "./list"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 
@@ -134,53 +135,115 @@ export function AgentsPage() {
         ) : null}
       </p>
       <ErrorNote error={inlineFromQuery(error, "Couldn't check the agents")} />
-      {agents.length === 0 ? (
-        <EmptyCard icon={Cpu} text="The server has no agents registered." />
-      ) : (
-        <Group>
-          {agents.map((agent) => {
-            const uses = profiles.filter((p) => profileSupports(p, agent.id)).length
-            const st = byAgent.get(agent.id)
-            return (
-              <div
-                key={agent.id}
-                className="flex flex-col gap-3 px-3.5 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-x-4 sm:px-4"
-              >
-                <div className="flex min-w-0 flex-1 items-start gap-3">
-                  <AgentIcon agentId={agent.id} className="mt-0.5 size-5 shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span className="min-w-0 max-w-full truncate text-sm font-medium">{agent.name}</span>
-                      <StatusBadges status={st} pending={loading || checking} />
-                    </div>
-                    <div className="mt-0.5 text-xs break-words text-muted-foreground">
-                      <span className="font-mono break-all">
-                        {agent.id}
-                        {agent.command ? ` · ${[agent.command, ...(agent.args ?? [])].join(" ")}` : ""}
-                      </span>
-                      {st && <StatusLine status={st} />}
-                    </div>
+      <SettingsList
+        rows={agents}
+        rowId={(agent) => agent.id}
+        loading={loading}
+        search={
+          agents.length > 8
+            ? {
+                placeholder: "Search runtimes…",
+                matches: (agent, needle) =>
+                  `${agent.name} ${agent.id} ${agent.command ?? ""}`.toLowerCase().includes(needle),
+              }
+            : undefined
+        }
+        columns={[
+          {
+            id: "agent",
+            header: "Runtime",
+            cell: (agent) => (
+              <div className="flex min-w-0 items-center gap-2.5">
+                <AgentIcon agentId={agent.id} className="size-5 shrink-0" />
+                <div className="min-w-0">
+                  <div className="truncate font-medium">{agent.name}</div>
+                  <div className="truncate font-mono text-[11px] text-muted-foreground">
+                    {agent.id}
                   </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-1.5 max-sm:pl-8 sm:justify-end">
-                  <Badge variant="secondary">
-                    {uses} profile{uses === 1 ? "" : "s"}
-                  </Badge>
-                  {st && <InstallButton agent={agent} status={st} onDone={recheck} />}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="max-sm:h-9 max-sm:flex-1"
-                    onClick={() => setEditing(agent)}
-                  >
-                    <PencilIcon className="size-4" /> Edit
-                  </Button>
-                </div>
               </div>
-            )
-          })}
-        </Group>
-      )}
+            ),
+          },
+          {
+            id: "command",
+            header: "Command",
+            secondary: true,
+            cell: (agent) => (
+              <span className="font-mono text-xs break-all text-muted-foreground">
+                {agent.command ? [agent.command, ...(agent.args ?? [])].join(" ") : "—"}
+              </span>
+            ),
+          },
+          {
+            id: "status",
+            header: "Status",
+            align: "end",
+            cell: (agent) => {
+              const st = byAgent.get(agent.id)
+              return (
+                <div className="flex flex-col items-end gap-1">
+                  <div className="flex items-center gap-1.5">
+                    <StatusBadges status={st} pending={loading || checking} />
+                    {st && <InstallButton agent={agent} status={st} onDone={recheck} />}
+                  </div>
+                  {st && (
+                    <span className="text-[11px] text-muted-foreground">
+                      <StatusLine status={st} />
+                    </span>
+                  )}
+                </div>
+              )
+            },
+          },
+          {
+            id: "uses",
+            header: "Profiles",
+            align: "end",
+            secondary: true,
+            cell: (agent) => (
+              <Badge variant="secondary">
+                {profiles.filter((p) => profileSupports(p, agent.id)).length}
+              </Badge>
+            ),
+          },
+        ]}
+        actions={[
+          {
+            id: "edit",
+            label: "Edit",
+            icon: <PencilIcon />,
+            onClick: (agent) => setEditing(agent),
+          },
+        ]}
+        renderCard={(agent) => {
+          const st = byAgent.get(agent.id)
+          const uses = profiles.filter((p) => profileSupports(p, agent.id)).length
+          return (
+            <>
+              <div className="flex min-w-0 items-center gap-2.5">
+                <AgentIcon agentId={agent.id} className="size-5 shrink-0" />
+                <span className="truncate text-sm font-medium">{agent.name}</span>
+              </div>
+              <div className="mt-1 font-mono text-[11px] break-all text-muted-foreground">
+                {agent.id}
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <StatusBadges status={st} pending={loading || checking} />
+                <Badge variant="secondary">
+                  {uses} profile{uses === 1 ? "" : "s"}
+                </Badge>
+                {st && <InstallButton agent={agent} status={st} onDone={recheck} />}
+              </div>
+              {st && (
+                <div className="mt-1 text-[11px] text-muted-foreground">
+                  <StatusLine status={st} />
+                </div>
+              )}
+            </>
+          )
+        }}
+        empty={<EmptyCard icon={Cpu} text="The server has no agents registered." />}
+      />
       {editing && <AgentDialog agent={editing} onClose={() => setEditing(null)} />}
     </>
   )
@@ -246,7 +309,7 @@ function InstallButton({ agent, status, onDone }: { agent: AgentDef; status: Age
     }
   }
   return (
-    <Button variant="outline" size="sm" className="max-sm:h-9" disabled={busy} onClick={() => void run()}>
+    <Button variant="outline" size="sm" className="h-9" disabled={busy} onClick={() => void run()}>
       <DownloadIcon className={`size-4 ${busy ? "animate-pulse" : ""}`} />
       {busy ? "Running…" : update ? "Update" : "Install"}
     </Button>
@@ -359,7 +422,7 @@ function AgentDialog({ agent, onClose }: { agent: AgentDef; onClose: () => void 
 
   return (
     <ResponsiveDialog open onOpenChange={(open) => !open && onClose()}>
-      <ResponsiveDialogContent className="sm:max-w-2xl">
+      <ResponsiveDialogContent className="@panel-sm:max-w-2xl">
         <form onSubmit={save} className="space-y-4">
           <ResponsiveDialogHeader>
             <ResponsiveDialogTitle>Edit {agent.name}</ResponsiveDialogTitle>
@@ -369,7 +432,7 @@ function AgentDialog({ agent, onClose }: { agent: AgentDef; onClose: () => void 
             </ResponsiveDialogDescription>
           </ResponsiveDialogHeader>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 @panel-sm:grid-cols-2">
             <Field label="Name" hint="What the pickers call it.">
               <Input value={form.name} onChange={(e) => set({ name: e.target.value })} required />
             </Field>
@@ -410,7 +473,7 @@ function AgentDialog({ agent, onClose }: { agent: AgentDef; onClose: () => void 
               somebody added has no seed to inherit either from: without them a
               row measured as missing showed no way to fix it, and every
               non-built-in wore the same neutral glyph. */}
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 @panel-sm:grid-cols-2">
             <Field label="Install command" hint="Shown when the binary is not on the server's PATH.">
               <Input
                 value={form.install}
@@ -438,7 +501,7 @@ function AgentDialog({ agent, onClose }: { agent: AgentDef; onClose: () => void 
                 variant="ghost"
                 disabled={busy}
                 onClick={() => void reset()}
-                className="sm:mr-auto"
+                className="@panel-sm:mr-auto"
                 title="Put this agent back the way it ships"
               >
                 <RotateCcwIcon className="size-4" /> Reset to default

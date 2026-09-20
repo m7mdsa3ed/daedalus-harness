@@ -35,9 +35,14 @@ import { api, type Routine, type RoutineRun } from "@/lib/settings"
 import { useProjects } from "@/lib/queries/catalog"
 import { shortAge } from "@/lib/time"
 import { toast } from "@/lib/toast"
-import { cn } from "@/lib/utils"
 import { usePalette } from "./context"
-import { Group, ItemList, Row, type PaletteBadge, type PaletteItem } from "./list"
+import {
+  ItemList,
+  OrderedList,
+  type PaletteBadge,
+  type PaletteGroup,
+  type PaletteItem,
+} from "./list"
 
 /** Runs read per routine, and rows drawn in total. Both small on purpose: this
     is a digest, not the archive — the archive is the routine's own page. */
@@ -209,59 +214,78 @@ export function RoutineActivityPage() {
       void navigate(run.sessionId ? threadPath(run.sessionId) : routinePath(run.routineId))
     })
 
-  return (
-    <>
-      {needsYou > 0 && (
-        <Note tone="warn">
-          <AlertTriangle className="size-3.5 shrink-0" />
-          {needsYou} run{needsYou === 1 ? "" : "s"} need{needsYou === 1 ? "s" : ""} you — blocked or
-          failed.
-        </Note>
-      )}
-
-      <Group heading="Recent runs">
-        {runs.map((run) => (
-          <Row key={run.id} item={runItem(run, nameOf(run.routineId), seenAt, () => open(run))} />
-        ))}
-        {runs.length === 0 &&
-          /* Three different answers that a bare empty list would render
-             identically — and one of them ("the request never arrived") is a
-             failure, which must never be drawn as emptiness. */
-          (routines.length === 0 ? (
-            <Note>No routines yet.</Note>
-          ) : loading ? (
-            <Note>
-              <Loader2 className="size-3.5 animate-spin" />
-              Reading run history…
-            </Note>
-          ) : failed ? (
-            <Note tone="warn">
-              <AlertTriangle className="size-3.5 shrink-0" />
-              Couldn't read the run history.
-            </Note>
-          ) : query ? (
-            <Note>No routine named “{palette.query.trim()}” has run.</Note>
-          ) : (
-            <Note>Nothing has run yet.</Note>
-          ))}
-        {runs.length > 0 && failed && (
-          <Note tone="warn">
-            <AlertTriangle className="size-3.5 shrink-0" />
-            Some routines' history couldn't be read — this list is incomplete.
-          </Note>
-        )}
-      </Group>
-
-      {/* Said once, at the foot, and not per row: the alternative to stating it
-          is a reader who assumes an empty Blocked column means nothing was ever
-          auto-answered. See this file's header. */}
-      <Note>
-        <History className="size-3.5 shrink-0" />
-        Blocked means an auto-answer settled a question nobody came to. Grants the routine
-        answered its own way aren't listed anywhere — open a run to see what it actually did.
-      </Note>
-    </>
+  const runRows = runs.map((run) =>
+    runItem(run, nameOf(run.routineId), seenAt, () => open(run))
   )
+
+  /* Three different answers that a bare empty list would render identically —
+     and one of them ("the request never arrived") is a failure, which must
+     never be drawn as emptiness. */
+  const emptyNote = (): PaletteItem => {
+    if (routines.length === 0) return note("no-routines", "No routines yet.")
+    if (loading)
+      return note("loading", "Reading run history…", <Loader2 className="animate-spin" />)
+    if (failed)
+      return note("failed", "Couldn't read the run history.", <AlertTriangle />, "warn")
+    if (query) return note("no-match", `No routine named “${palette.query.trim()}” has run.`)
+    return note("nothing", "Nothing has run yet.")
+  }
+
+  /* One section, three slices — the warning, the runs, the footnote. It is one
+     rather than three because the menu keys its sections by heading, so two
+     *unheaded* groups merge into one and the second one's rows are pulled up to
+     where the first one stands (`sectionRows`). Which is fine here: the whole
+     page is one reading, and a warning about these runs belongs with them. */
+  const groups: PaletteGroup[] = [
+    {
+      name: "Recent runs",
+      items: [
+        ...(needsYou > 0
+          ? [
+              note(
+                "needs-you",
+                `${needsYou} run${needsYou === 1 ? "" : "s"} need${needsYou === 1 ? "s" : ""} you — blocked or failed.`,
+                <AlertTriangle />,
+                "warn"
+              ),
+            ]
+          : []),
+        ...(runRows.length === 0 ? [emptyNote()] : runRows),
+        ...(runRows.length > 0 && failed
+          ? [
+              note(
+                "incomplete",
+                "Some routines' history couldn't be read — this list is incomplete.",
+                <AlertTriangle />,
+                "warn"
+              ),
+            ]
+          : []),
+        /* Said once, at the foot, and not per row: the alternative to stating
+           it is a reader who assumes an empty Blocked column means nothing was
+           ever auto-answered. See this file's header. */
+        note(
+          "footnote",
+          "Blocked means an auto-answer settled a question nobody came to. Grants the routine answered its own way aren't listed anywhere — open a run to see what it actually did.",
+          <History />
+        ),
+      ],
+    },
+  ]
+
+  return <OrderedList groups={groups} />
+}
+
+/** A line about the list rather than an entry in it. A row in the menu's flat
+    list — which is what the arrows and the hover fill count — but the disabled
+    one, so ↑/↓ walk straight past it. See `PaletteItem.note`. */
+function note(
+  id: string,
+  title: string,
+  icon?: React.ReactNode,
+  noteTone?: "warn"
+): PaletteItem {
+  return { id: `activity:note:${id}`, group: "", title, icon, note: true, noteTone }
 }
 
 /** One run: the routine, then the thing it is *about* — its verdict where it
@@ -306,19 +330,4 @@ function summarise(verdict: unknown): string | null {
   } catch {
     return null
   }
-}
-
-/** A line about the list rather than an entry in it — not a cmdk item, so ↑/↓
-    walk straight past it. */
-function Note({ children, tone }: { children: React.ReactNode; tone?: "warn" }) {
-  return (
-    <div
-      className={cn(
-        "flex items-center gap-2 px-3 py-2 text-xs",
-        tone === "warn" ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
-      )}
-    >
-      {children}
-    </div>
-  )
 }

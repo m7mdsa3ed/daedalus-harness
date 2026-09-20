@@ -5,7 +5,8 @@ import { captureError, type InlineError } from "@/lib/errors"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { Field, FormActions, PageForm, PageHeader } from "./primitives"
+import { cn } from "@/lib/utils"
+import { Field, FormActions, INSET, PageForm, PageHeader } from "./primitives"
 import { sectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 
@@ -76,7 +77,7 @@ export function RulesPage() {
             <p className="text-sm text-muted-foreground">No rules yet. Add one to get started.</p>
           ) : (
             rules.map((rule, idx) => (
-              <div key={rule.id} className="space-y-2 rounded-lg border p-3">
+              <div key={rule.id} className={cn("space-y-2 p-3", INSET)}>
                 <div className="flex items-center gap-2">
                   <Button
                     type="button"
@@ -125,7 +126,7 @@ export function RulesPage() {
             ))
           )}
         </div>
-        <FormActions busy={createRule.isPending} onCancel={() => {}} error={error} />
+        <FormActions busy={createRule.isPending} error={error} />
       </PageForm>
     </>
   )

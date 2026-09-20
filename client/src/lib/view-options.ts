@@ -33,6 +33,7 @@
 import { createContext, useContext, useSyncExternalStore } from "react"
 
 import { createLocalStore } from "./local-store"
+import { isStreamSpeed, type StreamSpeed } from "./stream-pace"
 import { isStreamEffect, type StreamEffect } from "./stream-words"
 
 export interface ViewOptions {
@@ -84,6 +85,13 @@ export interface ViewOptions {
    *  one option here that is not a switch — the choice is between shapes, not
    *  between on and off, and "none" is one of the shapes. */
   streamEffect: StreamEffect
+  /** How fast a live turn's prose is revealed (lib/stream-pace) — the other
+   *  half of the reveal, and the half that used to be a constant. Deliberately
+   *  *not* folded into calm motion: pacing is when a word appears, not whether
+   *  something animates, and a reader who wants nothing moving on its own may
+   *  still want to read along rather than be handed a paragraph at once.
+   *  `instant` is how they ask for the paragraph. */
+  streamSpeed: StreamSpeed
   /** Hide the work and keep the conversation: your messages and the agent's
    *  answers, with thinking, tool steps, plans, subagents and compactions left
    *  out. Errors stay — a failure hidden reads as an answer that never came. */
@@ -111,6 +119,7 @@ export const VIEW_DEFAULTS: ViewOptions = {
   calmMotion: false,
   answersOnly: false,
   streamEffect: "sweep",
+  streamSpeed: "natural",
 }
 
 /* ── Options that answer a question `answersOnly` has already answered ──
@@ -172,6 +181,8 @@ function pick(raw: unknown): Partial<ViewOptions> {
       if (typeof value === "boolean") out[key] = value
     } else if (key === "streamEffect") {
       if (isStreamEffect(value)) out[key] = value
+    } else if (key === "streamSpeed") {
+      if (isStreamSpeed(value)) out[key] = value
     }
   }
   return out as Partial<ViewOptions>

@@ -16,15 +16,15 @@ import {
   type ComposerHistoryEntry,
   type ComposerHistoryState,
 } from "@/lib/composer-history"
-import type { ServerSettings } from "@/lib/settings"
+import type { Project, ServerSettings } from "@/lib/settings"
+import { api } from "@/lib/settings"
 import { useServer } from "@/lib/server-context"
 
 /* ── App meta ──
    The deployment's version and changelog, for Settings › General's About
    group. `staleTime` rather than the default because the answer only changes
    on a deploy, and the settings page reads it on every mount. */
-export type ChangelogSection = { title: string; items: string[] }
-export type ChangelogEntry = { version: string; date: string | null; sections: ChangelogSection[] }
+export type ChangelogEntry = { version: string; date: string | null; markdown: string }
 export type AppMeta = { version: string; changelog: ChangelogEntry[] }
 
 export function useAppMeta() {
@@ -40,6 +40,7 @@ import {
   type KnowledgeEntryAcross,
 } from "@/lib/workspace/knowledge-api"
 import { fetchProjectStats, type ProjectStats } from "@/lib/workspace/project-stats"
+import type { BranchList, GitCommit, GitRepo, GitStatus } from "@/lib/workspace/git-api"
 import {
   addHelper,
   deleteHelper,
@@ -47,6 +48,7 @@ import {
   type HelperInput,
 } from "@/lib/workspace/project-helpers"
 import type { HelperCommand } from "@/lib/settings"
+import type { ProjectScript, ShellUse } from "@/lib/workspace/project-helpers"
 import {
   agentQuotaKey,
   allKnowledgeKey,
@@ -55,9 +57,15 @@ import {
   composerHistoryKey,
   notificationsKey,
   projectKnowledgeKey,
+  projectGitBranchesKey,
+  projectGitLogKey,
+  projectGitStatusKey,
+  projectReposKey,
+  projectScriptsKey,
   projectStatsKey,
   projectsKey,
   profileQuotaKey,
+  shellHistoryKey,
 } from "./keys"
 import { useApiMutation, useApiQuery } from "./helpers"
 
@@ -79,6 +87,88 @@ export function useProjectStats(projectId: string) {
     loading: query.isPending,
     refresh: () => void query.refetch(),
   }
+}
+
+/** Every repository under the project (its own first, then one walk down its
+    subdirectories) with each one's branch. The server's `git/repos` already
+    answers exactly that, so the page just reads it; `staleTime` because a
+    branch changes on a checkout, not on a render. */
+export function useProjectRepos(projectId: string) {
+  return useApiQuery<GitRepo[]>(
+    projectReposKey(useServer(), projectId),
+    `/api/projects/${encodeURIComponent(projectId)}/git/repos`,
+    { staleTime: 30_000 }
+  )
+}
+
+/** The scripts a project's own package.json files declare (root and one
+    directory deep), read off the disk and never stored — the `!`
+    completer's second suggestion list, beside the saved helpers. Not asked
+    for on a draft, which is offered no `!` line at all, and stale for the
+    same minute the catalog is: a script list is a suggestion, not a row. */
+export function useProjectScripts(projectId: string, enabled = true) {
+  return useApiQuery<ProjectScript[]>(
+    projectScriptsKey(useServer(), projectId),
+    `/api/projects/${encodeURIComponent(projectId)}/scripts`,
+    { enabled, staleTime: 60_000 }
+  )
+}
+
+/** What this project's `!` lines are, most used first — the completer's third
+    list. The server tallies it as lines run (`POST /api/sessions/:id/shell`),
+    so nothing here writes; `useInvalidateShellHistory` is what the run calls
+    to put the line it just ran at the top of the next menu. */
+export function useShellHistory(projectId: string, enabled = true) {
+  return useApiQuery<ShellUse[]>(
+    shellHistoryKey(useServer(), projectId),
+    `/api/projects/${encodeURIComponent(projectId)}/shell-history`,
+    { enabled, staleTime: 60_000 }
+  )
+}
+
+export function useInvalidateShellHistory() {
+  const client = useQueryClient()
+  const server = useServer()
+  return (projectId: string) =>
+    void client.invalidateQueries({ queryKey: shellHistoryKey(server, projectId) })
+}
+
+/** One repository's working set. Asked for by the surfaces that act on a
+    repository rather than list them — the composer's, which only opens it when
+    the popover does, hence `enabled`. */
+export function useGitStatus(projectId: string, repo: string, enabled = true) {
+  const search = repo ? `?repo=${encodeURIComponent(repo)}` : ""
+  return useApiQuery<GitStatus>(
+    projectGitStatusKey(useServer(), projectId, repo),
+    `/api/projects/${encodeURIComponent(projectId)}/git/status${search}`,
+    { enabled }
+  )
+}
+
+/** The newest commits on one repository. `limit` is the caller's, because the
+    surfaces asking differ by an order of magnitude — a glance in the composer's
+    popover is five, the panel's history is a page. */
+export function useGitLog(projectId: string, repo: string, limit: number, enabled = true) {
+  const search = new URLSearchParams({ limit: String(limit) })
+  if (repo) search.set("repo", repo)
+  return useApiQuery<GitCommit[]>(
+    projectGitLogKey(useServer(), projectId, repo).concat([limit]),
+    `/api/projects/${encodeURIComponent(projectId)}/git/log?${search.toString()}`,
+    { enabled }
+  )
+}
+
+/** One repository's local branches and which one is checked out. Read when a
+    surface offers the switch, not with the status: a branch list is a menu's
+    worth of work that a reader who never opens the menu should not pay for —
+    the same bargain the source-control panel's own branch menu makes. */
+export function useGitBranches(projectId: string, repo: string, enabled = true) {
+  const search = repo ? `?repo=${encodeURIComponent(repo)}` : ""
+  return useApiQuery<BranchList>(
+    projectGitBranchesKey(useServer(), projectId, repo),
+    `/api/projects/${encodeURIComponent(projectId)}/git/branches${search}`,
+    { enabled }
+  )
 }
 
 // ---- subscription quota ----
@@ -335,6 +425,21 @@ export function useOpenNotification() {
 
 // ---- the composer's prompt history ----
 
+/** A row that can actually be recalled, or nothing.
+ *
+ * The list is read by three surfaces — the Up walk (which puts `text` back in
+ * the composer), the history dialog, and the persisted cache that answers
+ * before the first read — and all three take `text` for a string. A row without
+ * one is not a prompt, and letting it through is how `setText` received an
+ * `undefined` and the composer's caret math (`text.slice` in file-mentions)
+ * threw on the next render. Normalized here, at the one place the list is read,
+ * rather than defended at each reader — and it heals a cache an older build
+ * wrote (the row is persisted) without waiting for the refetch to land. */
+function isComposerHistoryEntry(entry: unknown): entry is ComposerHistoryEntry {
+  const row = entry as Partial<ComposerHistoryEntry> | null
+  return !!row && typeof row.id === "string" && typeof row.text === "string"
+}
+
 /**
  * Every prompt this server has been sent, newest first and global across
  * threads — what Up walks and what the history page lists.
@@ -352,7 +457,7 @@ export function useComposerHistory() {
   const settings = useServer()
   const query = useApiQuery<ComposerHistoryState>(composerHistoryKey(settings), "/api/composer-history")
   return {
-    items: query.data?.items ?? [],
+    items: (query.data?.items ?? []).filter(isComposerHistoryEntry),
     isPending: query.isPending,
     refetch: () => void query.refetch(),
   }
@@ -374,9 +479,14 @@ export function useRecordComposerHistory() {
     mutationFn: (entry: { text: string; sessionId?: string | null; threadTitle?: string | null }) =>
       recordComposerHistory(settings, entry),
     onSuccess: (result) => {
-      if (!result.entry) return
+      /* `isComposerHistoryEntry`, not a truthiness check: an older server
+         answered this route with a serialized-to-`{}` promise, which passed
+         `if (!result.entry)` and patched an entry-shaped hole in as the newest
+         prompt. The read above filters the same way, so one bad row cannot
+         reach the composer from either door. */
+      const entry = result.entry
+      if (!isComposerHistoryEntry(entry)) return
       qc.setQueryData<ComposerHistoryState>(composerHistoryKey(settings), (prev) => {
-        const entry = result.entry as ComposerHistoryEntry
         /* The same de-duplication the server just did, applied to the copy on
            screen: the row moves to the head, it does not appear twice. */
         const rest = (prev?.items ?? []).filter((i) => i.id !== entry.id && i.text !== entry.text)
@@ -395,6 +505,17 @@ export function useClearComposerHistory() {
     mutationFn: (id?: string) => clearComposerHistory(settings, id),
     onSuccess: () => void qc.invalidateQueries({ queryKey: composerHistoryKey(settings) }),
   })
+}
+
+/** The order projects are drawn in, as the ids in the order the list shows
+    them. A fact about the projects, not about this device — so it goes to the
+    server and the sidebar's folders follow it for free. */
+export function useReorderProjects() {
+  const settings = useServer()
+  return useApiMutation<string[], Project[]>(
+    () => [projectsKey(settings)],
+    (s, ids) => api<Project[]>(s, "/api/projects/reorder", { method: "POST", body: JSON.stringify({ ids }) })
+  )
 }
 
 // ---- project helper commands ----

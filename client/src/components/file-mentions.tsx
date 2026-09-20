@@ -1,9 +1,10 @@
 import * as React from "react"
 import { AtSign, FileText, Folder } from "lucide-react"
-import { cn } from "@/lib/utils"
 import { reportError } from "@/lib/errors"
+import { formatBytes } from "@/lib/attachments"
 import { searchFiles, type WorkspaceEntry } from "@/lib/workspace/fs-api"
-import { ComposerStripItem, useStripSummary } from "./composer-strip"
+import { useStripSummary } from "./composer-strip"
+import { CompleterList, CompleterNote, CompleterRow } from "./composer/completer"
 
 /* `@` mentions for the composer — the file half of the slash menu.
 
@@ -221,7 +222,6 @@ export function useFileMentions(opts: {
  * painting over the plan or the queue.
  */
 export function FileMentionMenu({ state }: { state: FileMentionState }) {
-  const listRef = React.useRef<HTMLDivElement>(null)
   const open = state.query !== null
   useStripSummary(
     open
@@ -237,12 +237,6 @@ export function FileMentionMenu({ state }: { state: FileMentionState }) {
         }
       : null
   )
-  React.useEffect(() => {
-    listRef.current
-      ?.querySelector('[data-selected="true"]')
-      ?.scrollIntoView({ block: "nearest" })
-  }, [state.selected, state.matches])
-
   if (!open) return null
 
   /* Empty is a state worth drawing, not nothing: the summary line says the menu
@@ -250,50 +244,52 @@ export function FileMentionMenu({ state }: { state: FileMentionState }) {
      as the feature breaking rather than as "no file is called that". */
   if (state.matches.length === 0) {
     return (
-      <ComposerStripItem className="flex items-center gap-2 px-2 py-1.5 text-[11px] text-muted-foreground">
-        <AtSign className="size-3 shrink-0" />
-        <span>{state.loading ? "Searching files…" : "No matching files"}</span>
-      </ComposerStripItem>
+      <CompleterNote icon={AtSign}>
+        {state.loading ? "Searching files…" : "No matching files"}
+      </CompleterNote>
     )
   }
 
+  /* What the query is searching, said once at the foot rather than as a second
+     line on every row: with the directory in front of each name the rows are
+     already paths, and the scope is the one fact they all share. */
+  const scope = state.query?.includes("/")
+    ? state.query.slice(0, state.query.lastIndexOf("/") + 1)
+    : undefined
+
   return (
-    <ComposerStripItem>
-      {/* Caps at roughly five rows and scrolls — the same rule the command menu
-          and the plan list follow. */}
-      <div ref={listRef} className="max-h-44 overflow-y-auto p-1 overscroll-contain">
-        {state.matches.map((entry, i) => {
-          const dir = entry.path.slice(0, entry.path.length - entry.name.length)
-          const Icon = entry.type === "dir" ? Folder : FileText
-          return (
-            <button
-              key={entry.path}
-              type="button"
-              data-selected={i === state.selected || undefined}
-              /* mousedown, not click: click fires after the textarea has lost
-                 focus, and preventDefault here keeps the caret where typing
-                 continues. */
-              onMouseDown={(e) => {
-                e.preventDefault()
-                state.pick(entry)
-              }}
-              onMouseMove={() => state.setSelected(i)}
-              className={cn(
-                "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left sm:py-1",
-                i === state.selected && "bg-accent text-accent-foreground"
-              )}
-            >
-              <Icon className="size-3.5 shrink-0 text-muted-foreground" />
-              <span className="shrink-0 font-mono text-xs">{entry.name}</span>
-              {/* The directory is what tells two same-named files apart, so it
-                  is the part that truncates, not the name. */}
-              <span className="truncate font-mono text-[11px] text-muted-foreground/70">
-                {dir}
-              </span>
-            </button>
-          )
-        })}
-      </div>
-    </ComposerStripItem>
+    <CompleterList selected={state.selected} count={state.matches.length} hint={scope}>
+      {state.matches.map((entry, i) => {
+        /* The directory is what tells two same-named files apart. It leads the
+           row, dimmed — a row then reads as the path it will insert, and the
+           list is one line per file instead of two. It is also what gives up
+           width first, so the *name* survives a narrow composer. */
+        const dir = entry.path.slice(0, entry.path.length - entry.name.length)
+        return (
+          <CompleterRow
+            key={entry.path}
+            icon={entry.type === "dir" ? Folder : FileText}
+            prefix={dir || undefined}
+            label={entry.name}
+            /* Size is the cheapest way to tell a 40-byte stub from the 2 MB
+               bundle beside it, and the search already answered it. Pinned to
+               the row's end, where every row's is on one line. */
+            aside={
+              entry.type === "file" && entry.size !== undefined
+                ? formatBytes(entry.size)
+                : undefined
+            }
+            /* What the project's own tooling thinks of this path — an ignored
+               or symlinked file is one you usually did not mean to name. */
+            badge={
+              entry.link ? "link" : entry.ignored ? "ignored" : entry.hidden ? "hidden" : undefined
+            }
+            selected={i === state.selected}
+            onPick={() => state.pick(entry)}
+            onHover={() => state.setSelected(i)}
+          />
+        )
+      })}
+    </CompleterList>
   )
 }

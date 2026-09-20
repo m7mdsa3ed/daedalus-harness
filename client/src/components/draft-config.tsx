@@ -16,8 +16,23 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { MenuRow, selectChoices } from "@/components/config-menu"
+import {
+  MenuAddItem,
+  MenuRow,
+  MenuSearchInput,
+  menuFilter,
+  selectChoices,
+  type MenuAdd,
+} from "@/components/config-menu"
+import { useAddModel, useNewProfile, useNewProject } from "@/lib/catalog-add"
+import {
+  READING_MARK,
+  READING_TRIGGER,
+  READING_TRIGGER_ALWAYS,
+  ReadingFace,
+} from "@/components/composer/indicator"
 import { ThreadToolsMenu, useThreadToolCount } from "@/components/thread-tools"
+import { cn } from "@/lib/utils"
 import type { Actions } from "@/lib/actions"
 import { optionKey, shownOptions, useAgentOptions, useProbeStatus } from "@/lib/agent-options"
 import { currentChoiceLabel, partitionSessionOptions } from "@/lib/session-options"
@@ -97,6 +112,7 @@ export function DraftScopeRow({
   remember = true,
   editable = true,
   side,
+  leading,
   trailing,
 }: {
   meta: SessionMeta
@@ -110,20 +126,37 @@ export function DraftScopeRow({
   /** Passed to the tools menu — the row does not know whether it is standing
       in the composer or on a form. See `ThreadToolsMenu`. */
   side?: "top" | "bottom"
+  /** Drawn just after the project, on the row's *start*. The composer's
+      connection reading goes here: "where does this work land" and "can I get
+      a message out about it" are the two facts that outrank the rest of the
+      floor, so they sit at its head rather than in the cluster of counts at
+      its end.
+
+      A `leading` that draws makes the project give up its *name* and keep only
+      its mark (see `reading` below): the connection is a state of the unit and
+      may not be elided, so what yields on a narrow panel is the label that is
+      still legible as an icon. */
+  leading?: React.ReactNode
   /** Drawn at the row's own end. The composer's context ring goes here: how
       full the window is belongs with where the thread runs, not with the
       controls that send. */
   trailing?: React.ReactNode
 }) {
   const { projects, project, configure } = useDraft(meta, actions, remember)
-  /* Asked before the menu is drawn rather than left to it: on a started thread
-     carrying nothing the menu renders null, and a divider in front of a
-     component that decided not to exist is a hairline hanging off the end of
-     the row. Same count the menu itself prints. */
+  const newProject = useNewProject()
+  /* Asked here rather than left to the menu: it decides whether that menu is on
+     the row at all — a draft always draws it (it is the picker), a started
+     thread only when it carries something. Same count the menu itself prints,
+     one place for the rule. */
   const carries = useThreadToolCount(meta)
   const showTools = editable || carries > 0
-
-  const divider = <span aria-hidden className="h-3.5 w-px shrink-0 bg-border" />
+  /* Whether something is standing beside the project on the head of the row.
+     The project is the only control here whose words are optional *in
+     practice*: it is named one directory and marked with an icon that says
+     which directory at a glance, so on a narrow panel its name is the label
+     that can go. A `leading` that draws takes that room — the connection is a
+     state, and a state that has gone quiet cannot be read at all. */
+  const shared = leading != null
 
   return (
     /* py-1, not the shelf's py-1.5: every control in here is already h-6, so
@@ -135,10 +168,16 @@ export function DraftScopeRow({
     <div className="flex min-w-0 items-center gap-1 px-2 py-1">
       {editable ? (
         <PickerMenu
-          icon={<ProjectIcon project={project} className="size-3.5" />}
+          /* `always`: the project is the one control in this row that names
+             *where the work lands*, so it keeps its words on a narrow panel
+             where the readings beside it drop theirs — unless something else
+             is standing beside it, which needs that room more (`shared`). The
+             same badge dress either way, so the row reads as one language. */
+          icon={<ProjectIcon project={project} className={READING_MARK} />}
           label={project?.name ?? "No project"}
           title="Project"
           value={project?.id ?? ""}
+          reading={shared ? "mark" : "always"}
           options={projects.map((p) => ({
             value: p.id,
             name: p.name,
@@ -146,6 +185,12 @@ export function DraftScopeRow({
             icon: <ProjectIcon project={p} className="size-4" />,
           }))}
           onSelect={(id) => configure({ projectId: id })}
+          /* Adding one selects it: a project made from this row is the one
+             this draft is about to run in. */
+          add={{
+            label: "New project…",
+            onSelect: () => newProject((id) => configure({ projectId: id })),
+          }}
         />
       ) : (
         /* The same shape as the picker beside it, minus the affordance: there
@@ -154,26 +199,41 @@ export function DraftScopeRow({
            directory" are the same question asked at two zoom levels. */
         <span
           title={project?.cwd}
-          className="flex h-6 min-w-0 items-center gap-1.5 px-1.5 text-[11px] text-muted-foreground"
+          className={cn(
+            READING_TRIGGER,
+            shared && READING_TRIGGER_ALWAYS,
+            "flex h-6 items-center text-muted-foreground"
+          )}
         >
-          <ProjectIcon project={project} className="size-3.5 shrink-0" />
-          <span className="max-w-40 truncate">{project?.name ?? "No project"}</span>
+          <ReadingFace
+            always={!shared}
+            icon={<ProjectIcon project={project} className={READING_MARK} />}
+            label={project?.name ?? "No project"}
+            labelClass="max-w-40"
+          />
         </span>
       )}
-      {showTools && divider}
-      {showTools && (
-        <ThreadToolsMenu
-          meta={meta}
-          actions={actions}
-          editable={editable}
-          remember={remember}
-          side={side}
-        />
-      )}
+      {/* Before the `ms-auto` cluster, so `leading` is the row's start whatever
+          the row grows into. */}
+      {leading}
       {/* gap-0.5, not the row's gap-1: the cluster is several 24px triggers of
           one kind, so they read as a group of readings rather than as three
-          more controls on the row. */}
-      {trailing && <span className="ms-auto flex shrink-0 items-center gap-0.5">{trailing}</span>}
+          more controls on the row. The tools menu is one of them — it is the
+          same question as the four beside it ("what is true of this thread"),
+          and it used to stand on the row's start behind a divider, which was
+          the only thing in the row pretending not to be a reading. */}
+      <span className="ms-auto flex min-w-0 shrink-0 items-center gap-0.5">
+        {showTools && (
+          <ThreadToolsMenu
+            meta={meta}
+            actions={actions}
+            editable={editable}
+            remember={remember}
+            side={side}
+          />
+        )}
+        {trailing}
+      </span>
     </div>
   )
 }
@@ -188,6 +248,8 @@ export function PickerMenu({
   value,
   options,
   onSelect,
+  reading = "always",
+  add,
 }: {
   icon: React.ReactNode
   label: string
@@ -195,18 +257,42 @@ export function PickerMenu({
   value: string
   options: { value: string; name: string; hint?: string; icon?: React.ReactNode }[]
   onSelect: (value: string) => void
+  /** Whether the value's words are kept on a narrow panel: `always` for the
+      project, which names *where the work lands* and so never goes quiet unless
+      it has to; `mark` for it when another reading is standing beside it and
+      the row's start is contended. Either way the mark stays, so the control is
+      never a blank. */
+  reading?: "always" | "mark"
+  /** The row that makes this catalog longer — see `MenuAdd`. */
+  add?: MenuAdd
 }) {
+  const always = reading === "always"
+  const [open, setOpen] = React.useState(false)
+  const [query, setQuery] = React.useState("")
+  React.useEffect(() => {
+    if (!open) setQuery("")
+  }, [open])
+  /* Same rule as the config submenu's: a filter box over a handful of rows is
+     a control asking to be used for nothing. */
+  const searchable = options.length > 8
+  const shown = searchable ? menuFilter(options, query) : options
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger
         render={
+          /* The reading shape the rest of the footer wears — one 24px pill, a
+             16px mark, and the value as a badge on a wide panel. */
           <Button
             variant="ghost"
+            size="icon-xs"
             title={title}
-            className="h-6 min-w-0 gap-1.5 rounded-pill border-0 bg-transparent px-1.5 text-[11px] font-normal text-muted-foreground shadow-none hover:bg-accent/50 hover:text-foreground data-popup-open:bg-accent/50"
+            className={cn(
+              READING_TRIGGER,
+              always && READING_TRIGGER_ALWAYS,
+              "text-muted-foreground hover:text-foreground"
+            )}
           >
-            {icon}
-            <span className="max-w-40 truncate">{label}</span>
+            <ReadingFace always={always} icon={icon} label={label} labelClass="max-w-40" />
           </Button>
         }
       />
@@ -214,13 +300,16 @@ export function PickerMenu({
         {/* DropdownMenuLabel is Base UI's Menu.GroupLabel: it reads its group
             from context and throws outside one, so the label and its items are
             wrapped together rather than sitting loose in the content. */}
+        {/* Outside the group: `DropdownMenuLabel` is Base UI's GroupLabel and
+            names the group's *items*, and a textbox is not one of them. */}
+        {searchable && <MenuSearchInput label={title} value={query} onChange={setQuery} />}
         <DropdownMenuGroup>
           <DropdownMenuLabel>{title}</DropdownMenuLabel>
           <DropdownMenuRadioGroup
             value={value}
             onValueChange={(next) => next && next !== value && onSelect(next)}
           >
-            {options.map((option) => (
+            {shown.map((option) => (
               <DropdownMenuRadioItem key={option.value} value={option.value}>
                 {option.icon}
                 <span className="flex min-w-0 flex-col">
@@ -234,7 +323,23 @@ export function PickerMenu({
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>
+          {shown.length === 0 && (
+            <DropdownMenuItem disabled className="text-xs">
+              No match
+            </DropdownMenuItem>
+          )}
         </DropdownMenuGroup>
+        {add && (
+          <MenuAddItem
+            add={{
+              label: add.label,
+              onSelect: () => {
+                setOpen(false)
+                add.onSelect()
+              },
+            }}
+          />
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   )
@@ -290,6 +395,8 @@ export function DraftConfigPopover({
   }
   const models = profile?.models ?? []
   const resolvedModel = models.find((m) => m.id === (meta.model || profile?.defaultModel))
+  const newProfile = useNewProfile()
+  const addModel = useAddModel()
 
   /* What this profile's agent offered the last time one ran. A draft has no
      process to ask, so this is the only way its settings can be picked before
@@ -405,8 +512,10 @@ export function DraftConfigPopover({
             ) : (
               <ProfileIcon profile={profile} agentId={agent?.id ?? meta.agentId} className="size-4" />
             )}
+            {/* Same words the started thread's trigger (SessionConfigPopover)
+               reads — the agent is named by its mark above, and naming it here
+               too made the label change the moment the thread started. */}
             <span className="max-w-40 truncate">
-              {agent?.name ?? "No agent"} ·{" "}
               {persona && <span>{persona.name} · </span>}
               {modelLabel}
               {effortLabel && <span className="capitalize"> · {effortLabel}</span>}
@@ -457,18 +566,26 @@ export function DraftConfigPopover({
               }}
             />
           )}
-          {agentProfiles.length > 1 && (
-            <MenuRow
-              label="Profile"
-              value={profile?.id ?? ""}
-              choices={agentProfiles.map((p) => ({
-                value: p.id,
-                name: p.name,
-                icon: <ProfileIcon profile={p} agentId={meta.agentId} className="size-4" />,
-              }))}
-              onSelect={(id) => configure({ profileId: id, model: "", effort: "" })}
-            />
-          )}
+          {/* Drawn even on a single profile now, which it was not: the row is
+              also the door to making another, and a menu that hides the list
+              whenever there is one entry is a menu with nowhere to add the
+              second. */}
+          <MenuRow
+            label="Profile"
+            value={profile?.id ?? ""}
+            choices={agentProfiles.map((p) => ({
+              value: p.id,
+              name: p.name,
+              icon: <ProfileIcon profile={p} agentId={meta.agentId} className="size-4" />,
+            }))}
+            onSelect={(id) => configure({ profileId: id, model: "", effort: "" })}
+            add={{
+              /* Adding one selects it, as the project picker does: the model
+                 and effort are the old profile's, so they are cleared. */
+              label: "New profile…",
+              onSelect: () => newProfile((id) => configure({ profileId: id, model: "", effort: "" })),
+            }}
+          />
           {overridden ? (
             <MenuRow
               label="Model"
@@ -487,6 +604,19 @@ export function DraftConfigPopover({
               ]}
               onSelect={(value) =>
                 configure({ model: value === DEFAULT_CHOICE ? "" : value, effort: "" })
+              }
+              /* Only on the overridden branch: a profile with no catalog is
+                 deferring to the agent's own list, and appending one row there
+                 would silently flip it into overriding the agent — a decision
+                 that belongs in the editor, not in a menu. */
+              add={
+                profile && !profile.virtual
+                  ? {
+                      label: "Add model…",
+                      onSelect: () =>
+                        addModel(profile.id, (id) => configure({ model: id, effort: "" })),
+                    }
+                  : undefined
               }
             />
           ) : (

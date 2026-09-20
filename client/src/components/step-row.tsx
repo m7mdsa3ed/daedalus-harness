@@ -174,27 +174,42 @@ export const StepRow = React.memo(function StepRow({
       icon wears its own background; a failure tints the tile red instead. */
   iconChip?: string
 }) {
-  const [open, setOpen] = React.useState(defaultOpen)
-  /* `useState` reads its argument once, so a `defaultOpen` that later changes
-     is thrown away — which is why "Show thinking" and "Expand tool output"
-     appeared to do nothing: the context update reached every row and every row
-     ignored it, so only steps that mounted *after* the flip honoured it.
+  /* The reader's own answer, or `null` while they have not given one. Whatever
+     they last clicked outranks everything below until the view option moves. */
+  const [chosen, setChosen] = React.useState<boolean | null>(null)
 
-     The re-sync is keyed on the option, NOT on `defaultOpen`. `defaultOpen` for
-     a tool is `showToolDetails || toolOpensByDefault(item)`, and the second
-     half flips on its own mid-stream — a call is `generic` until its input
-     arrives and an `edit` once it does — so watching the whole expression would
-     yank rows open as they stream and re-open ones you had just collapsed.
-     Watching the setting means a row you closed by hand stays closed until you
-     actually change the setting again. Turning the setting *off* re-applies
-     `defaultOpen` too, which lands on the natural default rather than closing
-     everything: an edit goes back to showing its diff, a read goes back to
-     folded. */
+  /* "This row opens by itself" is a fact that becomes true and then stays true:
+     a streamed call mounts before there is any input to read, so `toolViewOf`
+     answers `generic` — and the disclosure it would draw is nothing — until the
+     arguments land and it becomes an `edit`. Latched during render rather than
+     synced in an effect, so the row is open on the very commit that learns it
+     (an effect-driven open depended on this component re-rendering *after* the
+     one that raised `defaultOpen`, which is exactly what memo boundaries and
+     StrictMode make unreliable). Latched only *toward* opening: a view that
+     stops opening by default never closes a row the reader is reading. */
+  const [latched, setLatched] = React.useState(defaultOpen)
+  if (defaultOpen && !latched) setLatched(true)
+  const open = chosen ?? latched
+  const setOpen = (value: boolean | ((previous: boolean) => boolean)) =>
+    setChosen(typeof value === "function" ? value(open) : value)
+
+  /* The view option is the one thing that takes a row back from the reader —
+     which is why "Show thinking" and "Expand tool output" appeared to do
+     nothing before there was any re-sync at all: the context update reached
+     every row and every row ignored it.
+
+     Keyed on the option, NOT on the whole `defaultOpen`: the other half of that
+     expression settles on its own mid-stream, and re-applying it here would
+     re-open, behind the reader's back, every row they had closed while it
+     streamed. Turning the setting *off* re-latches from `defaultOpen` too, which
+     lands on the natural default rather than closing everything: an edit goes
+     back to showing its diff, a read goes back to folded. */
   const latestDefault = React.useRef(defaultOpen)
   latestDefault.current = defaultOpen
   React.useEffect(() => {
-    // Same value on mount, so React bails out without a second render.
-    setOpen(latestDefault.current)
+    // Same values on mount, so React bails out without a second render.
+    setLatched(latestDefault.current)
+    setChosen(null)
   }, [openSetting])
   const expandable = detail !== undefined && detail !== null && detail !== false
   const active = status === "in_progress" || status === "pending"

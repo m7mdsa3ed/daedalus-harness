@@ -13,7 +13,7 @@ import { usePersonas, useProjects } from "@/lib/queries/catalog"
 import { useStoreSelect } from "@/lib/store"
 import { customThemeValue } from "@/lib/custom-themes"
 import { BUILTIN_THEMES, useCustomThemes, useTheme } from "@/lib/theme"
-import { loadThreadDefaults } from "@/lib/thread-defaults"
+import { loadThreadDefaults, saveThreadDefaults } from "@/lib/thread-defaults"
 import { usePalette } from "./context"
 import { ItemList, type PaletteItem } from "./list"
 import { projectItem } from "./rows"
@@ -169,6 +169,49 @@ export function PersonaPage() {
         }),
     })
   }
+
+  return <ItemList items={items} query={palette.query} />
+}
+
+/**
+ * Which project this thread runs in.
+ *
+ * A draft only, and not for want of a route: the project IS the agent's cwd, so
+ * it is spawned with the first message and after that the composer's own row
+ * reads it out rather than offering it. This page makes the same bargain — with
+ * nothing to change it lists nothing, and the root page does not offer the row.
+ *
+ * The write is `configureDraft` plus the remembered default — the same pair the
+ * composer's own picker makes, because a project picked in one surface and not
+ * the other is two answers to "where does the next thread land".
+ */
+export function ProjectPage() {
+  const palette = usePalette()
+  const projects = useProjects()
+  const { meta } = useThreadTarget()
+  if (!meta?.draft) return null
+
+  const items: PaletteItem[] = projects.map((project) =>
+    projectItem({
+      project,
+      group: "Run this thread in",
+      checked: project.id === meta.projectId,
+      onSelect: () =>
+        palette.run(() => {
+          palette.actions.configureDraft(meta.id, { projectId: project.id })
+          saveThreadDefaults({ projectId: project.id })
+        }),
+    })
+  )
+  items.push({
+    id: "project:new",
+    group: "",
+    title: "New project…",
+    keywords: "workspace directory cwd add",
+    icon: <FolderPlus />,
+    rank: "bottom",
+    onSelect: () => palette.run(palette.newProject),
+  })
 
   return <ItemList items={items} query={palette.query} />
 }

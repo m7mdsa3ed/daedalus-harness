@@ -13,6 +13,24 @@
    `lib/workspace/terminals.ts` (`startHelperTerminal`). */
 import { api, type HelperCommand, type ServerSettings } from "@/lib/settings"
 
+/** One runnable script a project's package.json declares: the name to read
+    (dir-qualified when nested) and the shell line that runs it from the
+    project root. Mirrors `server/src/project-scripts.ts`. */
+export interface ProjectScript {
+  name: string
+  command: string
+}
+
+/** One `!` line this project has run, and how often. Mirrors
+    `server/src/shell-history.ts` — a tally the server keeps as lines run, not
+    a list anyone wrote. */
+export interface ShellUse {
+  line: string
+  count: number
+  /** Epoch ms of the last run. */
+  lastAt: number
+}
+
 const base = (projectId: string) => `/api/projects/${encodeURIComponent(projectId)}/helpers`
 
 export interface HelperInput {

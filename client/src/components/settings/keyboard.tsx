@@ -21,6 +21,7 @@
 import * as React from "react"
 import { AlertTriangleIcon, InfoIcon, KeyboardIcon, RotateCcwIcon } from "lucide-react"
 
+import { useCoarsePointer } from "@/hooks/use-device"
 import { Shortcut } from "@/components/shortcut"
 import { Button } from "@/components/ui/button"
 import {
@@ -124,14 +125,14 @@ function RecordDialog({
 
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-      <ResponsiveDialogContent className="sm:max-w-md">
+      <ResponsiveDialogContent className="@panel-sm:max-w-md">
         <ResponsiveDialogHeader>
           <ResponsiveDialogTitle>{shortcut.label}</ResponsiveDialogTitle>
           <ResponsiveDialogDescription>
             Press the keys you want. Escape closes this without changing anything.
           </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
-        <div className="px-4 pb-2 sm:px-0">
+        <div className="pb-2">
           <div
             className={cn(
               "flex min-h-20 flex-col items-center justify-center gap-2 rounded-xl border border-dashed",
@@ -176,6 +177,11 @@ function ShortcutRow({
   override: boolean
   onRecord: () => void
 }) {
+  /* The pointer, not the width: a finger needs a bigger target on a phone AND
+     on a touch laptop, and a narrow dock panel on a desktop has a mouse in
+     front of it. (docs/client.md: width is the panel's, the pointer is the
+     device's.) */
+  const coarse = useCoarsePointer()
   const rebindable = shortcut.rebindable === true
   const custom = isCustomized(shortcut.id)
   const reserved = chords.map((chord) => reservedChord(chord)).find(Boolean)
@@ -197,14 +203,14 @@ function ShortcutRow({
      a switch and two buttons fighting the title for 300px reads as noise. From
      sm up there is room for the one-line row again. */
   return (
-    <div className="flex flex-col gap-2.5 px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-x-4 sm:px-4">
-      <div className="min-w-0 sm:flex-1">
+    <div className="flex min-h-11 flex-col gap-2.5 py-3 @panel-sm:flex-row @panel-sm:items-center @panel-sm:justify-between @panel-sm:gap-x-4">
+      <div className="min-w-0 @panel-sm:flex-1">
         <div className="truncate text-sm font-medium">{shortcut.label}</div>
         {subtitle && (
           <div className="mt-0.5 text-xs break-words text-muted-foreground">{subtitle}</div>
         )}
       </div>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 max-sm:justify-between sm:shrink-0 sm:justify-end sm:gap-1.5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 @max-panel-sm:justify-between @panel-sm:shrink-0 @panel-sm:justify-end @panel-sm:gap-1.5">
         {/* Alternatives read as alternatives, the way the help sheet prints them. */}
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           {shortcut.display ? (
@@ -227,7 +233,7 @@ function ShortcutRow({
                 answer. A hard-reserved chord is not overridable at all — the page
                 never receives it — so the switch says so by being disabled. */}
             {reserved && (
-              <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground max-sm:text-xs">
+              <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground @max-panel-sm:text-xs">
                 <span>Override</span>
                 <Switch
                   checked={override && reserved.reserved !== "hard"}
@@ -240,7 +246,7 @@ function ShortcutRow({
               type="button"
               size="sm"
               variant="outline"
-              className="max-sm:h-9 max-sm:flex-1"
+              className={cn(coarse && "h-9", "@max-panel-sm:flex-1")}
               onClick={onRecord}
             >
               Change
@@ -249,7 +255,7 @@ function ShortcutRow({
               type="button"
               size="icon-sm"
               variant="ghost"
-              className="max-sm:size-9"
+              className={cn(coarse && "size-9")}
               aria-label="Reset to the default"
               title="Reset to the default"
               disabled={!custom}
@@ -259,7 +265,7 @@ function ShortcutRow({
             </Button>
           </>
         ) : (
-          <span className="text-[11px] text-muted-foreground max-sm:text-xs">Fixed</span>
+          <span className="text-[11px] text-muted-foreground @max-panel-sm:text-xs">Fixed</span>
         )}
       </div>
     </div>
@@ -313,7 +319,7 @@ export function KeyboardPage() {
         )
       })}
       <Group label="About these keys">
-        <div className="flex items-start gap-3 px-4 py-3 text-xs text-muted-foreground">
+        <div className="flex items-start gap-3 py-3 text-xs text-muted-foreground">
           <KeyboardIcon className="mt-0.5 size-4 shrink-0" />
           <p className="text-pretty">
             Shortcuts are stored on this device and never synced.{" "}

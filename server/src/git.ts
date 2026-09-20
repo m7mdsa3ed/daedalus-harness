@@ -132,6 +132,9 @@ function run(
      are asking for — and re-implementing the diff to avoid the code would be
      worse than naming it here. */
   allowExit: number[] = [],
+  /* Everything here is local and fast except the two that talk to a remote,
+     which wait on a network and an ssh agent rather than on a disk. */
+  timeoutMs: number = TIMEOUT_MS,
 ): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     execFile(
@@ -139,7 +142,7 @@ function run(
       ["--no-optional-locks", "-c", "core.quotepath=false", ...args],
       {
         cwd,
-        timeout: TIMEOUT_MS,
+        timeout: timeoutMs,
         maxBuffer: MAX_BUFFER,
         windowsHide: true,
         ...(env ? { env: { ...process.env, ...env } } : {}),
@@ -151,7 +154,7 @@ function run(
           return resolve({ stdout, stderr });
         if (err.code === "ENOENT")
           return reject(fail(404, "git is not installed on the Daedalus server"));
-        if (err.killed) return reject(fail(409, `git timed out after ${TIMEOUT_MS / 1000}s`));
+        if (err.killed) return reject(fail(409, `git timed out after ${timeoutMs / 1000}s`));
         /* git's own message is the useful one — "pathspec did not match",
            "nothing to commit", the pre-commit hook's output. `stderr` is where
            it lives, and flattening it to "command failed" is how a panel ends
@@ -503,25 +506,32 @@ export async function commit(
 export interface BranchList {
   current: string | null;
   branches: string[];
+  /** Remote-tracking branches, `origin/main` shaped. A switcher offers these
+      as "check this out", which is a *create* — see `checkout`'s `track`. */
+  remotes: string[];
 }
 
 export async function branches(projectId: string, repo?: string): Promise<BranchList> {
   const { dir } = await repoOrThrow(projectId, repo);
-  const { stdout } = await run(dir, [
-    "for-each-ref",
-    "--format=%(refname:short)",
-    "refs/heads",
+  const refs = (out: string) => out.split("\n").map((l) => l.trim()).filter(Boolean);
+  const [local, remote] = await Promise.all([
+    run(dir, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]),
+    run(dir, ["for-each-ref", "--format=%(refname:short)", "refs/remotes"]),
   ]);
   return {
     current: await currentBranch(dir),
-    branches: stdout.split("\n").map((l) => l.trim()).filter(Boolean),
+    branches: refs(local.stdout),
+    /* `origin/HEAD` is a symbolic ref pointing at the remote's default branch,
+       not a branch of its own: offering it would check out whatever it aliases
+       under a name nobody typed. */
+    remotes: refs(remote.stdout).filter((name) => !name.endsWith("/HEAD")),
   };
 }
 
 export async function checkout(
   projectId: string,
   branch: string,
-  options: { create?: boolean; repo?: string } = {},
+  options: { create?: boolean; track?: boolean; repo?: string } = {},
 ): Promise<void> {
   const { dir } = await repoOrThrow(projectId, options.repo);
   if (!branch.trim()) throw fail(400, "a branch needs a name");
@@ -534,7 +544,67 @@ export async function checkout(
      thing that breaks quietly. git's own ref rules forbid a leading `-`
      anyway, so nothing legitimate is lost. */
   if (branch.startsWith("-")) throw fail(400, "a branch name cannot start with '-'");
+
+  /* Checking out a remote-tracking branch is a *create*: `origin/feature` is
+     not something you can be on, so what the user means is a local branch of
+     the same name set to track it. Spelled here rather than left to git's DWIM,
+     which only fires when exactly one remote has the name and silently does
+     something else when two do. The local name is the ref minus its remote,
+     so `origin/release/2.0` becomes `release/2.0`. */
+  if (options.track) {
+    const local = branch.split("/").slice(1).join("/");
+    if (!local) throw fail(400, `${branch} does not name a remote branch`);
+    await run(dir, ["checkout", "-b", local, "--track", branch]);
+    return;
+  }
   await run(dir, options.create ? ["checkout", "-b", branch, "--"] : ["checkout", branch, "--"]);
+}
+
+/* ── The remote ──
+   The only two operations in this file that leave the machine, which is what
+   makes them different from everything above: they wait on a network and on
+   whatever credential helper the machine has, so they get a timeout of their
+   own rather than the 20s a local read is held to. Anything that would *ask*
+   for a password would hang instead — `GIT_TERMINAL_PROMPT=0` turns that into
+   an error the panel can print, and `GIT_SSH_COMMAND`'s `BatchMode` does the
+   same for the ssh half. A repository with no credentials configured fails
+   loudly here, which is the only honest outcome: this server has no terminal
+   to type into. */
+const REMOTE_TIMEOUT_MS = 120_000;
+
+const REMOTE_ENV = {
+  GIT_TERMINAL_PROMPT: "0",
+  GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
+};
+
+export async function sync(
+  projectId: string,
+  action: "pull" | "push",
+  repo?: string,
+): Promise<{ output: string }> {
+  const { dir } = await repoOrThrow(projectId, repo);
+  const state = await status(projectId, repo);
+  if (state.unborn) throw fail(409, "this repository has no commits yet");
+
+  /* `--ff-only`: a pull that has to merge or rebase is a decision, and this is
+     a button in a composer. It fails with git's own "not possible to
+     fast-forward", which says exactly what happened and leaves the worktree
+     untouched — better than a merge conflict nobody asked a button for.
+
+     A push with no upstream sets one on `origin`, because "publish this
+     branch" is what the user means by Push on a branch they just created; with
+     an upstream it is the plain push, and git decides what that means. */
+  const args =
+    action === "pull"
+      ? ["pull", "--ff-only"]
+      : state.upstream || !state.branch
+        ? ["push"]
+        : ["push", "--set-upstream", "origin", state.branch];
+
+  const { stdout, stderr } = await run(dir, args, REMOTE_ENV, [], REMOTE_TIMEOUT_MS);
+  // git says "Already up to date" / "Everything up-to-date" on stdout and the
+  // interesting transfer narration on stderr; both are the answer.
+  return { output: [stdout.trim(), stderr.trim()].filter(Boolean).join("\n") };
 }
 
 /* ── History ──
@@ -899,6 +969,11 @@ const COMMIT_PROMPT_DIFF_MAX = 60_000;
 export async function commitMessagePrompt(
   projectId: string,
   repo?: string,
+  /* A branch name is the same question asked of the same diff — what is this
+     work — so it is the same gathering, and only the headline (and the system
+     prompt in `enhance.ts`) differ. A second copy of the untracked-file
+     handling below is how the two would drift. */
+  kind: "commit" | "branch" = "commit",
 ): Promise<{ prompt: string; files: string[]; staged: boolean }> {
   const { dir } = await repoOrThrow(projectId, repo);
   const state = await status(projectId, repo);
@@ -952,22 +1027,30 @@ export async function commitMessagePrompt(
     }
     if (added.length > 0) {
       return {
-        prompt: buildPrompt(staged, files, `${stdout}${added.join("")}`),
+        prompt: buildPrompt(kind, staged, files, `${stdout}${added.join("")}`),
         files,
         staged,
       };
     }
   }
 
-  return { prompt: buildPrompt(staged, files, stdout), files, staged };
+  return { prompt: buildPrompt(kind, staged, files, stdout), files, staged };
 }
 
 /** The prompt's own shape, in one place so both exits above agree. */
-function buildPrompt(staged: boolean, files: string[], diff: string): string {
+function buildPrompt(
+  kind: "commit" | "branch",
+  staged: boolean,
+  files: string[],
+  diff: string,
+): string {
   const patch = diff.slice(0, COMMIT_PROMPT_DIFF_MAX);
+  const scope = staged ? "staged" : "working-tree";
 
   return [
-    `Write a commit message for these ${staged ? "staged" : "working-tree"} changes.`,
+    kind === "branch"
+      ? `Name a git branch for these ${scope} changes.`
+      : `Write a commit message for these ${scope} changes.`,
     "",
     "Files:",
     files.length > 0 ? files.join("\n") : "(none)",

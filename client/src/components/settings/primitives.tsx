@@ -1,7 +1,32 @@
 /* ── Settings layout primitives ──
-   The shared visual vocabulary of every settings page: header, grouped card,
-   row, field, picker. Pages import from here; nothing here knows which page
-   it is on. */
+   The shared visual vocabulary of every settings page: header, group, row,
+   field, picker. Pages import from here; nothing here knows which page it is
+   on — which is what makes the look one edit in this file rather than twenty.
+
+   ── The style: cards and surfaces ──
+   Every group is a **card** — a caption in small caps above it, then a filled,
+   bordered, softly-shadowed box whose rows are divided by hairlines. A settings
+   page is a list of lists, and a card is what says where one list stops and the
+   next begins without asking the reader to count blank space.
+
+   It was flat for a while (a caption on a hairline, rows on hairlines) because
+   a stack of cards is a stack of borders in a narrow dock panel. What that got
+   wrong is that air is not a boundary: at the bottom of a long page a group of
+   four rows and a group of nine read as one list of thirteen. The card's gutter
+   is the cost, and it is paid where it is cheapest — the inset drops from 16px
+   to 12px below `@panel-sm`, so a 320px panel keeps its reading width.
+
+   The **inset is the card's, not the row's**: pages put raw elements into a
+   `Group` as often as they put `Row`s, and a padded container gives both the
+   same left edge for free. Anything that needs to bleed to the card's edge
+   reaches out with `-mx-3 @panel-sm:-mx-4`.
+
+   ── Two questions, two mechanisms (docs/client.md) ──
+   Layout is the **panel's**, so everything that reflows is a `@panel-sm:`
+   container query and never `sm:`: settings can be half a window wide beside a
+   terminal, and a media query would draw the desktop row there. Touch targets
+   are the **device's**, so rows and controls carry `min-h-11` outright rather
+   than asking a width about a finger. */
 import * as React from "react"
 import { ArrowLeft, type LucideIcon } from "lucide-react"
 import { Empty } from "@/components/empty"
@@ -11,13 +36,19 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import type { InlineError } from "@/lib/errors"
+import { KEYBOARD_RISE } from "@/lib/keyboard-inset"
 import { cn } from "@/lib/utils"
 import { type PageMeta } from "./sections"
 
 
-/** Page title block: title + description, with room for one action. On
-    mobile the action stacks full-width under the title so it never crowds the
-    text or wraps awkwardly; on sm+ it sits to the right. */
+/** Page title block: title + description, with room for one action. The
+    action stacks full-width under the title on a narrow panel so it never
+    crowds the text or wraps awkwardly; at `@panel-sm` it sits to the right.
+
+    No bottom rule: the first group's caption already draws one a line below,
+    and two hairlines a paragraph apart is a header boxed off from the page it
+    titles. The prose is clamped at 68ch — the descriptions in `sections.ts`
+    are long, and a 90-character line in a wide panel is one an eye loses. */
 export function PageHeader({
   meta,
   action,
@@ -26,13 +57,17 @@ export function PageHeader({
   action?: React.ReactNode
 }) {
   return (
-    <header className="mb-6 flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-start sm:justify-between">
+    <header className="mb-8 flex flex-col gap-4 @panel-sm:flex-row @panel-sm:items-start @panel-sm:justify-between">
       <div className="min-w-0 flex-1">
-        <h1 className="text-lg font-semibold tracking-tight sm:text-xl">{meta.title}</h1>
-        <p className="mt-1 text-sm text-pretty text-muted-foreground">{meta.description}</p>
+        <h1 className="text-xl font-semibold tracking-tight text-balance @panel-sm:text-2xl">
+          {meta.title}
+        </h1>
+        <p className="mt-2 max-w-[68ch] text-sm/relaxed text-pretty text-muted-foreground">
+          {meta.description}
+        </p>
       </div>
       {action && (
-        <div className="w-full shrink-0 [&>*]:w-full sm:ml-auto sm:w-auto sm:[&>*]:w-auto">
+        <div className="w-full shrink-0 [&>*]:w-full @panel-sm:ml-auto @panel-sm:w-auto @panel-sm:[&>*]:w-auto">
           {action}
         </div>
       )}
@@ -40,16 +75,42 @@ export function PageHeader({
   )
 }
 
-/** Grouped card with an optional caption above it. */
-export function Group({ label, children }: { label?: string; children: React.ReactNode }) {
+/** One section: a caption above a card, then the card's rows divided by
+    hairlines. `hint` is a line under the caption for a group that needs a
+    sentence of its own — the page description cannot say something true of
+    only four of its twelve rows, and it sits *outside* the card because it is
+    about the card rather than a row in it.
+
+    The caption is not sticky. It was, back when a group was a caption on a
+    hairline and there was nothing to tell you which list you were in halfway
+    down it; a card's own edges say that, and a small-caps label unsticking
+    itself from a rounded corner as you scroll is a seam that draws the eye to
+    nothing. */
+export function Group({
+  label,
+  hint,
+  children,
+}: {
+  label?: string
+  hint?: React.ReactNode
+  children: React.ReactNode
+}) {
   return (
-    <section className="mb-6 last:mb-0">
+    <section className="mt-8 first:mt-0">
       {label && (
-        <h2 className="mb-2 px-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+        <h2 className="mb-2 px-1 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
           {label}
         </h2>
       )}
-      <div className="divide-y overflow-hidden rounded-xl border bg-card">{children}</div>
+      {hint && (
+        <p className="mb-2 max-w-[68ch] px-1 text-xs/relaxed text-muted-foreground">{hint}</p>
+      )}
+      {/* `overflow-hidden` so a full-bleed child (a table, a scroller that
+          reaches out with `-mx-3`) is clipped to the card's radius instead of
+          squaring off its corners. */}
+      <div className="divide-y divide-border/60 overflow-hidden rounded-xl border bg-card px-3 shadow-sm @panel-sm:px-4">
+        {children}
+      </div>
     </section>
   )
 }
@@ -62,13 +123,17 @@ export function Group({ label, children }: { label?: string; children: React.Rea
     column rather than ever wrapping. Given a real minimum the wrap happens on
     its own, per row and per viewport: a switch or a pair of icon buttons still
     sits inline, a wide cluster drops to a second line and stays right-aligned.
-    `sm:flex-nowrap` keeps every row on one line once there is room for one. */
+    `@panel-sm:flex-nowrap` keeps every row on one line once there is room for one. */
 export function Row({
   icon: Icon,
+  handle,
   title,
   subtitle,
   children,
 }: {
+  /** A drag grip, drawn before the icon — a list whose order is the user's
+      (projects). Absent everywhere else, which is most rows. */
+  handle?: React.ReactNode
   /** A Lucide component, or an already-rendered element (a profile's logo). */
   icon?: LucideIcon | React.ReactElement
   title: React.ReactNode
@@ -76,24 +141,39 @@ export function Row({
   children?: React.ReactNode
 }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2.5 px-3.5 py-3 sm:flex-nowrap sm:px-4">
-      <div className="flex items-start gap-3 min-w-0 flex-1">
+    <div className="group/row flex min-h-12 flex-wrap items-center justify-between gap-x-4 gap-y-3 py-3 @panel-sm:flex-nowrap">
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        {handle}
         {Icon && (
-          <div className="shrink-0 mt-0.5">
+          <div className="mt-0.5 shrink-0">
             {React.isValidElement(Icon) ? Icon : <Icon className="size-4 text-muted-foreground" />}
           </div>
         )}
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium">{title}</div>
-          {subtitle && <div className="mt-0.5 text-xs break-words text-muted-foreground">{subtitle}</div>}
+          {subtitle && (
+            <div className="mt-0.5 text-xs/relaxed break-words text-muted-foreground">{subtitle}</div>
+          )}
         </div>
       </div>
+      {/* Wrapped below the text on a narrow panel, the cluster keeps its right
+          edge rather than sliding under the label: a column of controls that
+          all end on one line is scannable, and a Switch on the left of a wide
+          empty row reads as a bullet. */}
       {children && (
         <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1.5">{children}</div>
       )}
     </div>
   )
 }
+
+/** A box *inside* a card — a nested list, an inline add/edit form, one item of
+    a reorderable set. Now that a `Group`/`FormSection` is itself a card, these
+    used to draw a second `rounded-lg border` on the card's own ground, which
+    is two identical frames one inside the other and reads as a rendering bug.
+    A recessed ground with a lighter hairline says "inside" instead. One token
+    so every nested box in every page agrees. */
+export const INSET = "rounded-lg border border-border/60 bg-muted/30"
 
 export function EmptyCard({ icon, text, action }: { icon: LucideIcon; text: string; action?: React.ReactNode }) {
   return (
@@ -105,20 +185,26 @@ export function EmptyCard({ icon, text, action }: { icon: LucideIcon; text: stri
 
 export function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       <Label className="text-xs font-medium">{label}</Label>
       {children}
-      {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
+      {hint && <p className="max-w-[68ch] text-[11px]/relaxed text-muted-foreground">{hint}</p>}
     </div>
   )
 }
 
-/** Labeled group of Fields inside a form dialog — Group's caption, without the card. */
+/** Labeled group of Fields inside a form — `Group`'s caption and card, with
+    the fields stacked inside it rather than divided into rows, so a form reads
+    as the same object a list does. */
 export function FormSection({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <section className="space-y-4">
-      <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{label}</h3>
-      {children}
+    <section>
+      <h3 className="mb-2 px-1 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+        {label}
+      </h3>
+      <div className="space-y-4 rounded-xl border bg-card p-3 shadow-sm @panel-sm:p-4">
+        {children}
+      </div>
     </section>
   )
 }
@@ -133,14 +219,24 @@ export function FormPageHeader({
   onBack: () => void
 }) {
   return (
-    <header className="mb-6 border-b pb-5">
-      <Button type="button" variant="ghost" size="sm" className="-ml-2 mb-3 text-muted-foreground" onClick={onBack}>
+    <header className="mb-8">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="-ml-2 mb-3 h-8 text-muted-foreground"
+        onClick={onBack}
+      >
         <ArrowLeft />
         Back
       </Button>
       <div className="min-w-0">
-        <h1 className="text-lg font-semibold tracking-tight sm:text-xl">{title}</h1>
-        {description && <p className="mt-1 max-w-[65ch] text-sm text-pretty text-muted-foreground">{description}</p>}
+        <h1 className="text-xl font-semibold tracking-tight text-balance @panel-sm:text-2xl">{title}</h1>
+        {description && (
+          <p className="mt-2 max-w-[68ch] text-sm/relaxed text-pretty text-muted-foreground">
+            {description}
+          </p>
+        )}
       </div>
     </header>
   )
@@ -210,7 +306,7 @@ export function Picker<T extends { id: string; name: string }>({
     shown.length === 0 ? (
       <Empty>Nothing matches “{query.trim()}”.</Empty>
     ) : (
-      <div className="max-h-64 divide-y overflow-y-auto rounded-lg border">
+      <div className={cn("max-h-64 divide-y divide-border/60 overflow-y-auto", INSET)}>
         {shown.map((item) => (
           <label key={item.id} className="flex cursor-pointer items-start gap-3 px-3 py-2 hover:bg-accent/50">
             <Checkbox
@@ -286,17 +382,34 @@ export function FormActions({
   error,
 }: {
   busy: boolean
-  onCancel: () => void
+  /** Omitted where the form has nothing to go back to — the Rules page is a
+      section, not a route-backed form, and its Cancel was a no-op button. In a
+      bar that is always on screen a button that does nothing is worse than no
+      button, so there is no button. */
+  onCancel?: () => void
   error?: InlineError | null
 }) {
   return (
-    <footer className="flex flex-col gap-3 border-t pt-4">
+    /* Stuck to the foot of the frame rather than sitting at the end of the
+       document: a profile's form is four screens on a phone, and Save was
+       something you scrolled to find after every edit. `-mx`/`px` bleeds the
+       bar's ground to the column's edges so the rows scrolling under it are
+       covered; `KEYBOARD_RISE` puts it above the soft keys, since the page does
+       not resize when one opens and `bottom-0` would be behind them. */
+    <footer
+      className={cn(
+        "sticky z-20 -mx-4 mt-2 flex flex-col gap-3 border-t bg-background px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] @panel-sm:-mx-8 @panel-sm:px-8",
+        KEYBOARD_RISE
+      )}
+    >
       <ErrorNote error={error ?? null} />
-      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        <Button type="button" variant="outline" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button type="submit" disabled={busy}>
+      <div className="flex flex-col-reverse gap-2 @panel-sm:flex-row @panel-sm:justify-end">
+        {onCancel && (
+          <Button type="button" variant="outline" className="h-11 @panel-sm:h-9" onClick={onCancel}>
+            Cancel
+          </Button>
+        )}
+        <Button type="submit" className="h-11 @panel-sm:h-9" disabled={busy}>
           {busy ? "Saving…" : "Save"}
         </Button>
       </div>

@@ -47,9 +47,6 @@ function profileWith(over: Partial<Profile> = {}): Profile {
     defaultModel: "gw/big",
     smallModel: "",
     logoUrl: "",
-    mcpServerIds: [],
-    skillIds: [],
-    commandIds: [],
     ...over,
   };
 }

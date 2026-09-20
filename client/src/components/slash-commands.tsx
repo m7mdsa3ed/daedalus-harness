@@ -1,8 +1,8 @@
 import * as React from "react"
 import { CalendarClock, FoldVertical, SlashSquare, type LucideIcon } from "lucide-react"
 import type * as acp from "@daedalus/acp"
-import { cn } from "@/lib/utils"
-import { ComposerStripItem, useStripSummary } from "./composer-strip"
+import { useStripSummary } from "./composer-strip"
+import { CompleterList, CompleterNote, CompleterRow } from "./composer/completer"
 
 /* Slash-command autocomplete for the composer.
 
@@ -189,7 +189,6 @@ export function useSlashCommands(
  * belong to the turn.
  */
 export function SlashCommandMenu({ state }: { state: SlashCommandState }) {
-  const listRef = React.useRef<HTMLDivElement>(null)
   /* Urgent: a menu you are arrow-keying through has to be visible to be a menu.
      It belongs to the text being typed right now, so while it is up the shelf
      is open regardless of what the summary line would otherwise have said. */
@@ -204,67 +203,31 @@ export function SlashCommandMenu({ state }: { state: SlashCommandState }) {
         }
       : null
   )
-  React.useEffect(() => {
-    listRef.current
-      ?.querySelector('[data-selected="true"]')
-      ?.scrollIntoView({ block: "nearest" })
-  }, [state.selected, state.matches])
-
-  if (state.hint) {
-    return (
-      <ComposerStripItem className="flex items-center gap-2 px-2 py-1.5 text-[11px] text-muted-foreground">
-        <SlashSquare className="size-3 shrink-0" />
-        <span className="min-w-0 truncate">{state.hint}</span>
-      </ComposerStripItem>
-    )
-  }
+  if (state.hint) return <CompleterNote icon={SlashSquare}>{state.hint}</CompleterNote>
   if (state.matches.length === 0) return null
 
   return (
-    <ComposerStripItem>
-      {/* Caps at roughly five rows and scrolls: a long catalog must not push the
-          composer off the bottom of the screen — the same rule the plan list
-          follows. */}
-      <div ref={listRef} className="max-h-44 overflow-y-auto p-1 overscroll-contain">
-        {state.matches.map((command, i) => {
-          const Icon = state.harnessNames.has(command.name)
-            ? (HARNESS_ICON[command.name] ?? SlashSquare)
-            : SlashSquare
-          return (
-          <button
+    <CompleterList selected={state.selected} count={state.matches.length}>
+      {state.matches.map((command, i) => {
+        const harness = state.harnessNames.has(command.name)
+        return (
+          <CompleterRow
             key={command.name}
-            type="button"
-            data-selected={i === state.selected || undefined}
-            /* mousedown, not click: click fires after the textarea has lost
-               focus, and preventDefault here keeps the caret where typing
-               continues. */
-            onMouseDown={(e) => {
-              e.preventDefault()
-              state.pick(command)
-            }}
-            onMouseMove={() => state.setSelected(i)}
-            className={cn(
-              "flex w-full items-baseline gap-2 rounded-lg px-2 py-2 text-left sm:py-1",
-              i === state.selected && "bg-accent text-accent-foreground"
-            )}
-          >
-            <Icon className="size-3.5 shrink-0 self-center text-muted-foreground" />
-            <span className="shrink-0 font-mono text-xs">/{command.name}</span>
-            {command.input?.hint && (
-              <span className="shrink-0 font-mono text-[11px] text-muted-foreground/70">
-                {command.input.hint}
-              </span>
-            )}
-            {/* min-w-0: a flex item won't shrink below its content without it,
-                so the description pushed a long row past the strip's edge
-                instead of eliding. */}
-            <span className="min-w-0 truncate text-[11px] text-muted-foreground">
-              {command.description}
-            </span>
-          </button>
-          )
-        })}
-      </div>
-    </ComposerStripItem>
+            icon={harness ? (HARNESS_ICON[command.name] ?? SlashSquare) : SlashSquare}
+            label={`/${command.name}`}
+            /* The argument hint sits beside the name because it is part of what
+               you are about to type; the description is the second line. */
+            meta={command.input?.hint ? `‹${command.input.hint}›` : undefined}
+            description={command.description ?? undefined}
+            /* Which side of the collision this row is on — a harness command
+               opens a surface here, an agent one becomes a prompt. */
+            badge={harness ? "Harness" : undefined}
+            selected={i === state.selected}
+            onPick={() => state.pick(command)}
+            onHover={() => state.setSelected(i)}
+          />
+        )
+      })}
+    </CompleterList>
   )
 }

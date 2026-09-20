@@ -1,0 +1,2212 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./src/lib/boot-colors" without a file extension (vite.config.ts:6:29). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./src/lib/boot-colors" without a file extension (vite.config.ts:6:29). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+(!) Failed to run dependency scan. Skipping dependency pre-bundling. Error: The following dependencies are imported but could not be resolved:
+
+  rehype-highlight (imported by /var/www/daedalus-harness/client/src/components/tool-parts.tsx)
+
+Are they installed?
+    at file:///var/www/daedalus-harness/client/node_modules/.pnpm/vite@8.2.2_@types+node@26.4.1_esbuild@0.27.2_jiti@2.7.0_terser@5.51.1/node_modules/vite/dist/node/chunks/node.js:32187:33
+    at async file:///var/www/daedalus-harness/client/node_modules/.pnpm/vite@8.2.2_@types+node@26.4.1_esbuild@0.27.2_jiti@2.7.0_terser@5.51.1/node_modules/vite/dist/node/chunks/node.js:34462:15
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:37 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:38 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:39 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:40 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:40 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:40 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:40 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:40 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:40 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:40 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:40 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:40 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:40 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:40 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:40 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:40 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:40 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:40 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:40 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:40 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:40 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:46 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:46 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:46 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:46 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:46 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:46 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:46 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:46 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:46 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:46 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:46 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:46 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:46 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:46 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:46 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:46 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:46 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:46 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:46 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:46 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+12:16:47 PM [vite] (client) Pre-transform error: Failed to resolve import "rehype-highlight" from "src/components/tool-parts.tsx". Does the file exist?
+  Plugin: vite:import-analysis
+  File: /var/www/daedalus-harness/client/src/components/tool-parts.tsx:12:28
+  10 |  import Markdown from "react-markdown";
+  11 |  import remarkGfm from "remark-gfm";
+  12 |  import rehypeHighlight from "rehype-highlight";
+     |                               ^
+  13 |  import { needsTail, rehypeStreamWords } from "@/lib/stream-words";
+  14 |  import { ArrowLeftRightIcon, BrainIcon, CheckIcon, ChevronRightIcon, ClipboardListIcon, CopyIcon, CornerDownRightIcon...
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./src/lib/boot-colors" without a file extension (vite.config.ts:6:29). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.

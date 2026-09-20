@@ -1,0 +1,352 @@
+<!doctype html>
+<!-- The gallery. Open this in the dock's Browser panel and click through the
+     options — each is a full page. Everything here is static: no React, no
+     server, no build. Two shared shells, one per surface: `transcript.css` +
+     `shared-transcript.js` for the transcript options, `shared.css` +
+     `shared.js` for the sidebar ones. A difference between two prototypes is a
+     difference in the design and nothing else. -->
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="/logo.svg" type="image/svg+xml" />
+<title>Prototypes — transcript and sidebar</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./shared.css" />
+<style>
+  body { background: var(--app-ground); }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 40px 24px 64px; }
+  .title { display: flex; align-items: center; gap: 12px; }
+  .title .logo {
+    width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; color: white;
+    background: linear-gradient(140deg, var(--violet), var(--blue));
+  }
+  h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+  .lede { max-width: 68ch; margin: 10px 0 0; color: var(--muted-foreground); text-wrap: pretty; }
+  .hint { margin-top: 14px; font-size: 12px; color: var(--muted-foreground); }
+  .hint kbd { margin: 0 2px; }
+  h2.sect { margin: 40px 0 0; font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    color: color-mix(in oklab, var(--foreground) 55%, transparent); display: flex; align-items: center; gap: 10px; }
+  h2.sect::after { content: ""; flex: 1; height: 1px; background: var(--sidebar-border); }
+  .sect-note { margin: 8px 0 0; font-size: 12.5px; color: var(--muted-foreground); max-width: 72ch; text-wrap: pretty; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(288px, 1fr)); gap: 12px; margin-top: 20px; }
+  a.cardlink {
+    display: flex; flex-direction: column; gap: 8px; padding: 16px; border-radius: var(--radius-xl);
+    background: var(--card); border: 1px solid var(--sidebar-border); text-decoration: none; color: inherit;
+    transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+  }
+  a.cardlink:hover { transform: translateY(-2px); border-color: color-mix(in oklab, var(--foreground) 25%, transparent); box-shadow: 0 6px 18px rgba(0,0,0,.18); }
+  .cardlink .top { display: flex; align-items: center; gap: 8px; }
+  .cardlink .no {
+    font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; padding: 2px 7px; border-radius: 999px;
+    background: var(--muted); color: var(--muted-foreground);
+  }
+  .cardlink h3 { margin: 0; font-size: 15px; font-weight: 600; }
+  .cardlink p { margin: 0; font-size: 12.5px; color: var(--muted-foreground); text-wrap: pretty; }
+  .cardlink .tagline { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; font-weight: 700; color: color-mix(in oklab, var(--foreground) 45%, transparent); }
+  .cardlink .cost { font-size: 11.5px; color: color-mix(in oklab, var(--muted-foreground) 85%, transparent); }
+  .cardlink .cost b { font-weight: 600; color: color-mix(in oklab, var(--foreground) 70%, transparent); }
+  .swatches { display: flex; gap: 4px; margin-top: 2px; }
+  .swatches i { width: 22px; height: 26px; border-radius: 5px; background: var(--muted); border: 1px solid var(--sidebar-border); }
+  .swatches i.on { background: var(--sidebar-accent); }
+  /* A transcript card's sketch: the panel with a column in it, drawn the way
+     the variant lays the column out. Pure CSS, no images. */
+  .sketch { display: flex; gap: 3px; height: 46px; margin-top: 2px; padding: 5px; border-radius: 8px;
+    background: var(--muted); border: 1px solid var(--sidebar-border); overflow: hidden; }
+  .sketch .c { flex: 1; display: flex; flex-direction: column; gap: 3px; align-items: center; justify-content: center; }
+  .sketch .m { flex: 0 0 auto; }
+  .sketch b { display: block; height: 4px; border-radius: 2px; background: color-mix(in oklab, var(--foreground) 22%, transparent); }
+  .sketch .w80 { width: 64%; align-self: flex-end; }
+  .sketch .w60 { width: 48%; }
+  .sketch .w100 { width: 100%; }
+  .sketch .card { width: 100%; border-radius: 4px; background: color-mix(in oklab, var(--foreground) 8%, transparent); padding: 4px; display: flex; flex-direction: column; gap: 3px; }
+  .sketch .col2 { flex: 0 0 26%; border-radius: 3px; background: color-mix(in oklab, var(--foreground) 10%, transparent); }
+  .sketch .gutter { flex: 0 0 10%; display: flex; flex-direction: column; gap: 3px; align-items: center; }
+  .sketch .node { width: 5px; height: 5px; border-radius: 999px; background: color-mix(in oklab, var(--foreground) 30%, transparent); }
+  .sketch .dockbar { height: 9px; border-radius: 4px; background: color-mix(in oklab, var(--foreground) 16%, transparent); width: 70%; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="title">
+    <span class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span>
+    <h1>Prototypes</h1>
+  </div>
+  <p class="lede">
+    Static, whole-page options for the two surfaces being redesigned. Each is built on the app's own
+    tokens and drawn from one fake workspace, so a difference between two of them is a difference in
+    the design under test — not in the chrome around it. Nothing here imports the client.
+  </p>
+  <p class="hint">Press <kbd>d</kbd> on any page to flip light/dark.</p>
+
+  <h2 class="sect">Transcript layouts</h2>
+  <p class="sect-note">
+    While the sidebar options argue about what the left column holds, these argue about the transcript
+    itself: what a turn is, where the work goes, and where you type. T1 is the layout shipped today;
+    every other option is a single change to it, and the option states what it costs.
+  </p>
+  <p class="sect-note">Ten options: <b>T1</b> is the shipped layout, <b>T2–T7</b> are the original set, and <b>T9–T10</b> are the newest — a prompt-anchored grid and a stripped-back reading view.</p>
+  <div class="grid">
+    <a class="cardlink" href="./t1-current.html">
+      <div class="top"><span class="no">T1</span><h3>Current column</h3></div>
+      <p class="tagline">The baseline</p>
+      <p>The shipped layout: one 748px column, your prompt a tinted bubble at 80%, the agent's prose bare on the ground, each step one 24px line, and the composer docked in glass over the foot. Nothing to choose here.</p>
+      <div class="sketch"><span class="c"><b class="w80"></b><b class="w100"></b><b class="w60"></b><b class="w100"></b><b class="dockbar"></b></span></div>
+    </a>
+
+    <a class="cardlink" href="./t2-feed.html">
+      <div class="top"><span class="no">T2</span><h3>Prose feed</h3></div>
+      <p class="tagline">Hide the work</p>
+      <p>Every tool call, thought and run folds to one mark on a left rail; prose gets larger and the column a little narrower. A long thread reads as a document.</p>
+      <p class="cost"><b>Costs</b> — you cannot see what it touched without opening it.</p>
+      <div class="sketch"><span class="gutter"><span class="node"></span><span class="node"></span><span class="node"></span></span><span class="c"><b class="w80"></b><b class="w100"></b><b class="w100"></b><b class="w60"></b></span></div>
+    </a>
+
+    <a class="cardlink" href="./t3-turns.html">
+      <div class="top"><span class="no">T3</span><h3>Turns as cards</h3></div>
+      <p class="tagline">The turn is the unit</p>
+      <p>Each exchange is one card on a quiet ground: your prompt is the header, the work is the body, and what it cost and touched is the footer.</p>
+      <p class="cost"><b>Costs</b> — a card per turn is a lot of shape for a two-line exchange.</p>
+      <div class="sketch"><span class="c"><span class="card"><b class="w80"></b><b class="w100"></b><b class="w60"></b></span><span class="card"><b class="w100"></b></span></span></div>
+    </a>
+
+    <a class="cardlink" href="./t4-work-first.html">
+      <div class="top"><span class="no">T4</span><h3>Work first</h3></div>
+      <p class="tagline">The inverse of T2</p>
+      <p>The actions get the column — a wide rail, foreground step titles, diffs open as they fall — while the agent's prose steps back to a caption's weight.</p>
+      <p class="cost"><b>Costs</b> — the conversation stops being the thing you read.</p>
+      <div class="sketch"><span class="gutter"><span class="node"></span><span class="node"></span><span class="node"></span><span class="node"></span></span><span class="c"><b class="w100"></b><b class="w100"></b><b class="w80"></b><b class="w100"></b><b class="w60"></b></span></div>
+    </a>
+
+    <a class="cardlink" href="./t5-two-pane.html">
+      <div class="top"><span class="no">T5</span><h3>Two panes</h3></div>
+      <p class="tagline">A margin for the thread</p>
+      <p>A 256px right column holds what is <em>about</em> the thread — the live plan, the files this turn touched, the context gauge, the queue — while the transcript shrinks beside it.</p>
+      <p class="cost"><b>Costs</b> — the panel has to be wide; below ~1100px the margin folds away.</p>
+      <div class="sketch"><span class="c" style="flex:2"><b class="w80"></b><b class="w100"></b><b class="w60"></b><b class="w100"></b></span><span class="col2"></span></div>
+    </a>
+
+    <a class="cardlink" href="./t6-inline-work.html">
+      <div class="top"><span class="no">T6</span><h3>Inline work</h3></div>
+      <p class="tagline">Steps in the gutter</p>
+      <p>The work moves into the left gutter as a branch of marks with no titles; only an edit's diff, a command's output or a thought claims the column. The step's name is a tooltip.</p>
+      <p class="cost"><b>Costs</b> — a long file name is unreadable without opening the step.</p>
+      <div class="sketch"><span class="gutter"><span class="node"></span><span class="node"></span><span class="node"></span><span class="node"></span><span class="node"></span></span><span class="c"><b class="w80"></b><b class="w100"></b><b class="w60"></b></span></div>
+    </a>
+
+    <a class="cardlink" href="./t7-threaded.html">
+      <div class="top"><span class="no">T7</span><h3>Threaded</h3></div>
+      <p class="tagline">Your prompt as a heading</p>
+      <p>The bubble becomes a node on a spine: your words are a title and a time, and everything the agent did hangs beneath them. The order of the conversation is the page's indentation.</p>
+      <p class="cost"><b>Costs</b> — your words stop looking like speech; the thread is a log.</p>
+      <div class="sketch"><span class="gutter"><span class="node"></span><span class="node"></span></span><span class="c"><b class="w60"></b><b class="w100"></b><b class="w100"></b><b class="w80"></b><b class="w60"></b></span></div>
+    </a>
+
+    <a class="cardlink" href="./t8-focus.html">
+      <div class="top"><span class="no">T8</span><h3>Focus</h3></div>
+      <p class="tagline">The composer in flow</p>
+      <p>A narrower column, larger prose, the work folded to one line per run, and the composer sitting <em>in</em> the transcript at the point the next message lands rather than docked over it.</p>
+      <p class="cost"><b>Costs</b> — the box moves as the thread grows; no glass to rest content behind.</p>
+      <div class="sketch"><span class="c"><b class="w80"></b><b class="w100"></b><b class="w60"></b><span class="card" style="height:12px"></span><b class="w100"></b></span></div>
+    </a>
+
+    <a class="cardlink" href="./t9-prompt-anchored.html">
+      <div class="top"><span class="no">T9</span><h3>Prompt anchored</h3></div>
+      <p class="tagline">Your prompt is a column</p>
+      <p>Your message gets a fixed column on the left and everything it caused runs down the rest, aligned with it. Two turns stack as two such rows.</p>
+      <p class="cost"><b>Costs</b> — the column is spent on the prompt, and the answer gets the smaller share.</p>
+      <div class="sketch"><span class="c" style="flex:0 0 30%;align-items:flex-start"><b class="w100"></b><b class="w60"></b></span><span class="c" style="flex:1"><b class="w100"></b><b class="w100"></b><b class="w60"></b></span></div>
+    </a>
+
+    <a class="cardlink" href="./t10-minimal.html">
+      <div class="top"><span class="no">T10</span><h3>Minimal</h3></div>
+      <p class="tagline">The conversation only</p>
+      <p>No sidebar, no tabs, no card, no footer, no timestamps. Your prompt is one line under a rule, a step is a bare icon, and the composer is one hairline at the foot.</p>
+      <p class="cost"><b>Costs</b> — every reading the app has is somewhere else or nowhere.</p>
+      <div class="sketch"><span class="c"><b class="w80"></b><b class="w100"></b><b class="w100"></b><b class="w60"></b><span style="width:100%;height:1px;background:color-mix(in oklab,var(--foreground) 25%,transparent)"></span></span></div>
+    </a>
+  </div>
+
+  <h2 class="sect">Composer layouts</h2>
+  <p class="sect-note">
+    The transcript's other half. The unit has three parts — the <b>shelf</b> (a pile of cards: the
+    front one open, the rest a 14px sliver), the <b>card</b> (the textarea over its toolbar row) and the
+    <b>footer</b> (one row, always drawn — the project, the tools, the readings). C1 is the unit as it
+    ships; the options move the shelf, the rows and the measure.
+  </p>
+  <div class="grid">
+    <a class="cardlink" href="./c1-current.html">
+      <div class="top"><span class="no">C1</span><h3>Current composer</h3></div>
+      <p class="tagline">The baseline</p>
+      <p>The shipped unit: the shelf as a pile, the frosted card at one measure, the scope row as a permanent footer, and the readings clustered at its end. Annotated; nothing to choose.</p>
+      <div class="sketch"><span class="c"><b class="w60" style="height:3px"></b><span class="card" style="height:16px"></span><b class="w100" style="height:3px"></b></span></div>
+    </a>
+
+    <a class="cardlink" href="./c2-command-bar.html">
+      <div class="top"><span class="no">C2</span><h3>Command bar</h3></div>
+      <p class="tagline">Everything on one row</p>
+      <p>Text, model, readings and Send share one 32px line. The composer for someone who types one sentence at a time.</p>
+      <p class="cost"><b>Costs</b> — a long message scrolls sideways; a busy shelf does not fit.</p>
+      <div class="sketch"><span class="c"><span class="card" style="height:14px;border-radius:999px"><b class="w100" style="height:3px"></b></span></span></div>
+    </a>
+
+    <a class="cardlink" href="./c3-panel.html">
+      <div class="top"><span class="no">C3</span><h3>Composer panel</h3></div>
+      <p class="tagline">Named tabs</p>
+      <p>The pile becomes a header row: Queue, Files, Plan and History are named, counted tabs of the card, and the readings move into the footer.</p>
+      <p class="cost"><b>Costs</b> — a row of chrome for what a pile answers by being looked at.</p>
+      <div class="sketch"><span class="c"><b class="w100" style="height:3px"></b><span class="card" style="height:10px"></span><span class="card" style="height:14px"></span></span></div>
+    </a>
+
+    <a class="cardlink" href="./c4-in-flow.html">
+      <div class="top"><span class="no">C4</span><h3>Composer in flow</h3></div>
+      <p class="tagline">Docked no more</p>
+      <p>The card sits at the end of the transcript instead of pinned over its foot, so nothing you read is under glass and the transcript reserves nothing.</p>
+      <p class="cost"><b>Costs</b> — the box moves as the thread grows; the working line can fall below the fold.</p>
+      <div class="sketch"><span class="c"><b class="w80"></b><b class="w100"></b><b class="w60"></b><span class="card" style="height:14px"></span></span></div>
+    </a>
+  </div>
+
+  <h2 class="sect">Tab strip layouts</h2>
+  <p class="sect-note">
+    How the header names what is open. Every variant keeps the app's two rules: <b>no tab wears a
+    colour</b> (the reading is a dot, and the title is drawn under a fade when the controls appear),
+    and a <b>narrow strip keeps the tab you are on</b> and moves the rest to a list.
+  </p>
+  <div class="grid">
+    <a class="cardlink" href="./tabs-a-current.html">
+      <div class="top"><span class="no">Tabs-A</span><h3>Current</h3></div>
+      <p class="tagline">The three weights, shown</p>
+      <p>The shipped strip, then the tab's resting, hover and active states laid out side by side so the material can be judged without pointing at anything.</p>
+      <div class="sketch"><span class="c" style="align-items:stretch"><span style="height:66%;border-radius:4px;background:color-mix(in oklab,var(--foreground) 10%,transparent);display:flex;gap:3px;padding:3px"><b style="flex:1;background:color-mix(in oklab,var(--foreground) 22%,transparent)"></b><b style="flex:1"></b><b style="flex:1"></b></span></span></div>
+    </a>
+
+    <a class="cardlink" href="./tabs-b-two-row.html">
+      <div class="top"><span class="no">Tabs-B</span><h3>Two rows</h3></div>
+      <p class="tagline">Tabs, then where you are</p>
+      <p>A second row under the tabs carries the panel's own path and controls — a file's path, a page's sections — so a title stops carrying the path. Click a tab to switch it.</p>
+      <p class="cost"><b>Costs</b> — 24px on every group, including the panels with nothing to put there.</p>
+      <div class="sketch"><span class="c" style="align-items:stretch"><span style="display:flex;gap:3px;padding:2px"><b style="flex:1;background:color-mix(in oklab,var(--foreground) 22%,transparent)"></b><b style="flex:1"></b></span><b class="w60" style="height:3px"></b></span></div>
+    </a>
+
+    <a class="cardlink" href="./tabs-c-breadcrumb.html">
+      <div class="top"><span class="no">Tabs-C</span><h3>Breadcrumb</h3></div>
+      <p class="tagline">One location, not tabs</p>
+      <p>The strip becomes a path — <code>project / thread / Plan</code> — with ancestors clickable and no tab to close, because a place is not a thing you keep.</p>
+      <p class="cost"><b>Costs</b> — one place at a time: no docked terminal, no second thread, no split.</p>
+      <div class="sketch"><span class="c"><b class="w60" style="height:4px"></b><span style="width:40%;height:3px;background:color-mix(in oklab,var(--foreground) 14%,transparent)"></span></span></div>
+    </a>
+  </div>
+
+  <h2 class="sect">Sidebar layouts</h2>
+  <p class="sect-note">
+    The earlier set. They differ in <em>information architecture</em>, not in styling — what gets a
+    fixed band, what folds, what is a rail, and which question the column answers first.
+  </p>
+  <div class="grid">
+    <a class="cardlink" href="./sidebar-v2.html">
+      <div class="top"><span class="no">v2</span><h3>One index</h3></div>
+      <p class="tagline">Recents as a fold</p>
+      <p>Pins as chips, no “Opened” tier, one flat index with the project tree under it. The smallest change to today's sidebar.</p>
+      <div class="swatches"><i class="on"></i><i class="on"></i><i></i></div>
+    </a>
+
+    <a class="cardlink" href="./sidebar-v3.html">
+      <div class="top"><span class="no">v3</span><h3>Activity rail</h3></div>
+      <p class="tagline">Status is a place</p>
+      <p>A 52px rail picks what the list shows — Threads, Projects, Needs you — and the list is that answer at full height.</p>
+      <div class="swatches"><i class="on"></i><i class="on"></i><i class="on"></i></div>
+    </a>
+
+    <a class="cardlink" href="./v10-sticky-sections.html">
+      <div class="top"><span class="no">v10</span><h3>Sticky sections</h3></div>
+      <p class="tagline">v2, for a long list</p>
+      <p>v2's one index with every tier heading pinned as it scrolls, and a “Needs you” strip above the scroll that never moves.</p>
+      <div class="swatches"><i class="on"></i><i class="on"></i><i class="on"></i></div>
+    </a>
+
+    <a class="cardlink" href="./v11-compact.html">
+      <div class="top"><span class="no">v11</span><h3>Compact</h3></div>
+      <p class="tagline">v2, at density</p>
+      <p>The same index drawn tight: 26px rows, no tier gaps, and the fixed nav as one icon row instead of seven — roughly seven more threads on screen.</p>
+      <div class="swatches"><i class="on"></i><i class="on"></i><i class="on"></i></div>
+    </a>
+
+    <a class="cardlink" href="./v12-organized.html">
+      <div class="top"><span class="no">v12</span><h3>Organized</h3></div>
+      <p class="tagline">v2, with a switch</p>
+      <p>Threads and Projects stop sharing one scroll: the header swaps the list, so the project tree gets the whole viewport when it is what you asked for.</p>
+      <div class="swatches"><i class="on"></i><i class="on"></i><i class="on"></i></div>
+    </a>
+
+    <a class="cardlink" href="./v13-two-line.html">
+      <div class="top"><span class="no">v13</span><h3>Two-line rows</h3></div>
+      <p class="tagline">v2, with a bigger row</p>
+      <p>Every thread gets a title line and a meta line — project and time, or the question it is waiting on. Built for titles like the long one in this very workspace.</p>
+      <div class="swatches"><i class="on"></i><i class="on"></i><i class="on"></i></div>
+    </a>
+
+    <a class="cardlink" href="./v14-quiet-chrome.html">
+      <div class="top"><span class="no">v14</span><h3>Quiet chrome</h3></div>
+      <p class="tagline">v2, with less furniture</p>
+      <p>The brand row, new-thread button, search row and list heading collapse into one bar: the mark, then new / search / filter as three icons.</p>
+      <div class="swatches"><i class="on"></i><i class="on"></i><i class="on"></i></div>
+    </a>
+
+    <a class="cardlink" href="./v15-section-cards.html">
+      <div class="top"><span class="no">v15</span><h3>Section cards</h3></div>
+      <p class="tagline">v2, with section surfaces</p>
+      <p>Each tier becomes a card with its heading and count inside it, so the column is a countable set of sections rather than one flat list with text in it.</p>
+      <div class="swatches"><i class="on"></i><i class="on"></i><i class="on"></i></div>
+    </a>
+
+    <a class="cardlink" href="./v4-projects-first.html">
+      <div class="top"><span class="no">v4</span><h3>Projects first</h3></div>
+      <p class="tagline">The tree is the sidebar</p>
+      <p>Every thread lives under its project. No flat recent list at all — the Codex / Cursor model.</p>
+      <div class="swatches"><i class="on"></i><i></i><i></i></div>
+    </a>
+
+    <a class="cardlink" href="./v5-status-board.html">
+      <div class="top"><span class="no">v5</span><h3>Status board</h3></div>
+      <p class="tagline">Needs you, first</p>
+      <p>Two full groups — Needs you and Running — with the action on the row itself, then everything else. Projects fold at the bottom.</p>
+      <div class="swatches"><i class="on"></i><i class="on"></i><i></i></div>
+    </a>
+
+    <a class="cardlink" href="./v6-timeline.html">
+      <div class="top"><span class="no">v6</span><h3>Timeline</h3></div>
+      <p class="tagline">Strictly chronological</p>
+      <p>One spine, newest first, period headings, the project a colour on each row. No folders anywhere.</p>
+      <div class="swatches"><i class="on"></i><i></i><i></i></div>
+    </a>
+
+    <a class="cardlink" href="./v7-pinned-bands.html">
+      <div class="top"><span class="no">v7</span><h3>Pinned bands</h3></div>
+      <p class="tagline">Middle ground</p>
+      <p>Needs you and Running as two fixed bands that never scroll away, over one dense, quiet index of everything else.</p>
+      <div class="swatches"><i class="on"></i><i class="on"></i><i class="on"></i></div>
+    </a>
+
+    <a class="cardlink" href="./v8-omnibox.html">
+      <div class="top"><span class="no">v8</span><h3>Omni-search</h3></div>
+      <p class="tagline">Type, don't scroll</p>
+      <p>A filter box and project chips over one flat ranked list. For a workspace where forty threads is normal.</p>
+      <div class="swatches"><i class="on"></i><i></i><i></i></div>
+    </a>
+
+    <a class="cardlink" href="./v9-two-pane.html">
+      <div class="top"><span class="no">v9</span><h3>Two panes</h3></div>
+      <p class="tagline">The info card, permanent</p>
+      <p>The index on the left, what is <em>about</em> the selected row on the right — status, project, model, actions. Needs a 360px sidebar.</p>
+      <div class="swatches"><i class="on"></i><i class="on"></i><i></i></div>
+    </a>
+  </div>
+</div>
+<script>
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "d" && !e.metaKey && !e.ctrlKey) document.documentElement.classList.toggle("dark")
+  })
+</script>
+</body>
+</html>

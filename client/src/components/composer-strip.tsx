@@ -26,13 +26,20 @@
    for the diff or plan you have to read before answering — a shelf capped at a
    fraction of the panel is the wrong place to read a document. The agent's own
    plan left for the same reason: it belongs at the point in the conversation
-   where it was written.
+   where it was written — which is the whole of the split, because anything
+   about the *turn* is at the foot of the transcript where the next thing will
+   happen, and everything else is here. There used to be one exception, the
+   connection that carries the message, drawn as a box above the shelf; it is a
+   reading on the shelf's floor now (`composer/connection-indicator.tsx`), so
+   every state has exactly one home.
 
-   Above the shelf is the composer's other surface (`composer/notices.tsx`), and
-   the split between the two is by subject: a note up there is about *sending*
-   (the connection that carries a message, a send that revives a stopped agent),
-   while anything about the *turn* is at the foot of the transcript, where the
-   next thing will happen. Between them every state has exactly one home.
+   That reading is the one thing on the floor that can be *wrong*, so it also
+   decides what the shelf's ground is saying (`tone`, and `TONE_GROUND` below):
+   the footer is the surface that is always on screen, so a thread whose
+   connection died with no pile up is nothing but that row and the tone has to
+   reach the ground itself. Nothing here knows what a tone means — it is one key
+   into one table — so the vocabulary is the connection's and this file stays as
+   generic as it was.
 
    ── The shelf is a pile of cards, one in front ──
    Left to itself the shelf grew a row per concern — archive notice, draft
@@ -87,19 +94,36 @@ import { useCoarsePointer } from "@/hooks/use-device"
 import { cn } from "@/lib/utils"
 
 /* ── Chip badge ──
-   A small count or indicator that sits at the end of a chip label. Used to
-   surface live counts (queued messages, attachments, subagents) without
-   requiring the row to be open. Renders as a tiny pill with a number inside. */
-function ChipBadge({ count, className }: { count?: number; className?: string }) {
-  if (count == null || count <= 0) return null
+   A small count or indicator that sits at the end of a chip label, or — on a
+   sliver, where there is no label — the chip itself, with the row's own mark
+   inside it. Used to surface live counts (queued messages, attachments,
+   subagents) without requiring the row to be open. Renders as a tiny pill with
+   the mark and a number inside. */
+function ChipBadge({
+  count,
+  icon: Icon,
+  className,
+}: {
+  count?: number
+  /** The row's mark, drawn inside the pill. Absent for a row that names none,
+      which still gets the capsule so the pile stays a column of chips. */
+  icon?: React.ComponentType<{ className?: string }>
+  className?: string
+}) {
+  if (!Icon && (count == null || count <= 0)) return null
   return (
     <span
       className={cn(
-        "inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary/15 px-1 text-[9px] font-semibold tabular-nums leading-none text-primary",
+        "inline-flex h-3.5 min-w-3.5 items-center justify-center gap-0.5 rounded-full bg-primary/15 px-1 text-[9px] font-semibold tabular-nums leading-none text-primary",
         className
       )}
     >
-      {count > 99 ? "99+" : count}
+      {Icon ? (
+        <Icon className="size-2.5" />
+      ) : (
+        <span aria-hidden className="size-1.5 rounded-full bg-muted-foreground/60" />
+      )}
+      {count != null && count > 0 && (count > 99 ? "99+" : count)}
     </span>
   )
 }
@@ -229,6 +253,29 @@ export function useStripSummary(summary: StripSummary | null) {
   }, [strip, id])
 }
 
+/* ── The tone the whole shelf wears ──
+   The shelf's ground is the thesis that nothing in the unit is alarming: it is
+   a step off the composer, and the readings on it are settled facts. A
+   connection that is not well is the one thing that has to say so at a glance
+   rather than on being read — it is drawn in the footer's cluster
+   (`composer/connection-indicator.tsx`), and the surface it stands on takes the
+   same tone, so the mood of the whole unit is one look rather than one read.
+
+   The tones are the ones `Notice` already means by theirs (sky, amber,
+   destructive), and they are *derived* the way `--shelf` is — mixed from the
+   composer toward the tone, per mode, in index.css — so a generated palette or
+   a user-made theme gets them for nothing and no palette needs a new token.
+   `neutral` is the ordinary shelf, and the reason it is spelled as a tone
+   rather than as `null` is that every one of these is one key into one table. */
+export type StripTone = "neutral" | "info" | "warn" | "error"
+
+const TONE_GROUND: Record<StripTone, string> = {
+  neutral: "bg-shelf",
+  info: "bg-shelf-info",
+  warn: "bg-shelf-warn",
+  error: "bg-shelf-error",
+}
+
 /* How tall a sliver is. Fine pointer: 14px, the largest peek that still beats
    the rail's flat 35px at three rows, and just enough for the 12px icon.
    Coarse: 20px, because on a touch device the sliver is the tap target. */
@@ -259,6 +306,7 @@ export function ComposerStrip({
   className,
   children,
   footer,
+  tone = "neutral",
   ...props
 }: React.ComponentProps<"div"> & {
   /** The one row that is always there, under the pile: what is permanently
@@ -266,6 +314,12 @@ export function ComposerStrip({
       it registers no sliver, never goes behind, and holds the shelf open when
       the pile is empty. See the note at the top of this file. */
   footer?: React.ReactNode
+  /** What the shelf's ground is saying. `neutral` is the ordinary step behind
+      the composer; a tone is what a reading in the footer needs the surface to
+      say with it (the connection that is not well — see `StripTone`). The
+      caller owns both, because the row that draws the reading is not the box
+      that wears the colour. */
+  tone?: StripTone
 }) {
   const [entries, setEntries] = React.useState<StripEntry[]>([])
   /** The card the user last brought forward. Urgency outranks it; it is
@@ -274,6 +328,11 @@ export function ComposerStrip({
   const [picked, setPicked] = React.useState<string | null>(null)
   const coarse = useCoarsePointer()
   const peek = coarse ? PEEK_COARSE : PEEK_FINE
+  /* The surface, once, for the three places a card is seen: the front card, a
+     card behind's sliver, and the box itself on the way down. The footer spells
+     it inline — it is the one that must stay put when there is no signal to
+     give. */
+  const ground = TONE_GROUND[tone]
 
   const register = React.useCallback((entry: StripEntry) => {
     setEntries((prev) => {
@@ -467,7 +526,7 @@ export function ComposerStrip({
              where every raised surface is frosted. The sliver carries the
              surface for the card it belongs to; the rest of that card is a
              transparent box holding a mounted row. */
-          front && "bg-shelf backdrop-blur-sm",
+          front && cn("backdrop-blur-sm", ground),
           !place && "hidden"
         )}
         style={
@@ -500,20 +559,20 @@ export function ComposerStrip({
               /* The sliver is the card's surface, since it is the only part of
                  the card anyone sees, and it draws no ring: the seam to the
                  card in front is the two grounds meeting, not a hairline. */
-              "bg-shelf backdrop-blur-sm",
+              "backdrop-blur-sm",
+              ground,
               "transition-colors hover:bg-accent/40 hover:text-foreground",
               "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
             )}
           >
-            {Icon ? (
-              <Icon className="size-3 shrink-0" />
-            ) : (
-              <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-muted-foreground/60" />
-            )}
-            {/* A count still reads at this size; the label does not, which is
-                what `title` is for. Smaller than the rail's badge on purpose —
-                the default 14px pill is the whole sliver. */}
-            <ChipBadge count={entry.badge} className="h-3 min-w-3 text-[8px]" />
+            {/* The mark rides inside the pill, the same face every reading on
+                the shelf's floor wears — a 12px mark inside a grey capsule. A
+                row that names no icon still gets the capsule, so the pile is a
+                column of chips rather than an icon and a bare number beside it.
+                A count reads at this size and the label does not, which is what
+                `title` is for; the badge is deliberately smaller than the
+                floor's, since the whole sliver is 14px. */}
+            <ChipBadge count={entry.badge} icon={Icon} className="h-3 min-w-3 text-[8px]" />
           </button>
         )}
         {/* The shelf may not eat the screen. An expanded queue of ten messages,
@@ -587,7 +646,7 @@ export function ComposerStrip({
           // the way down. Without it the composer would jump rather than slide.
           // Never with a footer: that surface is already down there, and a
           // second one over it would wash the row it is under.
-          empty && !stowed && "overflow-hidden rounded-t-xl bg-shelf",
+          empty && !stowed && cn("overflow-hidden rounded-t-xl", ground),
           // Nothing registered and the fold finished: no pile, no shelf.
           stowed && empty && "hidden",
           className
@@ -615,8 +674,15 @@ export function ComposerStrip({
                  sits a step away from it in both modes (light: darker toward the
                  foreground; dark: darker toward the background), so the strip
                  reads as a distinct object under the box it belongs to. No
-                 ring: the difference in ground is what separates them. */
-              "bg-shelf",
+                 ring: the difference in ground is what separates them.
+
+                 It wears the tone, and so does every card above it — the
+                 footer is the one surface that is always on screen, so the
+                 ordinary case (a thread whose connection went while no pile is
+                 up) is nothing *but* this row, and a tone that only reached the
+                 cards would have been invisible in exactly the case it is for.
+                 Both read the one prop, so they cannot disagree. */
+              ground,
               entries.length === 0 && "rounded-t-xl"
             )}
           >

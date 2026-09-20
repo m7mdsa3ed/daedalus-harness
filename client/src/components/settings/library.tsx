@@ -11,7 +11,8 @@ import { PickerSkeleton } from "@/components/ui/skeletons"
 import { useConfirm } from "@/components/confirm-dialog"
 import { api, type ImportCandidates, type ServerSettings } from "@/lib/settings"
 import { settingsFormPath, settingsPath } from "@/lib/router"
-import { PageForm, FormPageHeader, PageHeader, Group, Row, EmptyCard, Picker } from "./primitives"
+import { PageForm, FormPageHeader, PageHeader, EmptyCard, Picker } from "./primitives"
+import { SettingsList } from "./list"
 import { type SectionMeta } from "./sections"
 import { useSettingsPage } from "./layout"
 
@@ -26,6 +27,8 @@ export function LibrarySection<T extends { id: string; name: string }>({
   refresh,
   extraActions,
   rowExtra,
+  rowIcon,
+  rowDetail,
   editable = () => true,
   importable = true,
 }: {
@@ -41,6 +44,16 @@ export function LibrarySection<T extends { id: string; name: string }>({
   /** Per-row controls before Edit / Delete — the MCP page's Connect and its
       status pill, which are about a row rather than about the library. */
   rowExtra?: (item: T) => React.ReactNode
+  /** This row's own mark, where the rows of a library are not all the same
+      kind of thing — MCP's built-ins, which are the harness's own tools and
+      not a server somebody configured. Defaults to the section's icon. */
+  rowIcon?: (item: T) => React.ComponentType<{ className?: string }>
+  /** The detail line, drawn. `subtitle` stays the *string* — it is what search
+      matches on, and a node cannot be searched — so a page that wants badges
+      and prose supplies both: the words to match, and the shape to draw.
+      Defaults to `subtitle` in monospace, which is right when the detail is a
+      command or a URL and wrong when it is a sentence. */
+  rowDetail?: (item: T) => React.ReactNode
   /** Whether a row gets an Edit button. Every row can still be deleted. */
   editable?: (item: T) => boolean
   /** Whether there is anything to import from. False for a library the agents'
@@ -89,33 +102,103 @@ export function LibrarySection<T extends { id: string; name: string }>({
   return (
     <>
       <PageHeader meta={meta} action={actions} />
-      {items.length === 0 ? (
-        <EmptyCard
-          icon={meta.icon}
-          text={
-            importable
-              ? `No ${noun}s yet — add one, or import from the agents' own configs.`
-              : `No ${noun}s yet.`
-          }
-          action={actions}
-        />
-      ) : (
-        <Group>
-          {items.map((item) => (
-            <Row key={item.id} icon={meta.icon} title={item.name} subtitle={<span className="font-mono">{subtitle(item)}</span>}>
-              {rowExtra?.(item)}
-              {editable(item) && (
-                <Button variant="ghost" size="icon-lg" title="Edit" onClick={() => void navigate(settingsFormPath(meta.id, item.id))}>
-                  <Pencil />
-                </Button>
-              )}
-              <Button variant="ghost" size="icon-lg" title="Delete" onClick={() => remove(item)}>
-                <Trash2 />
-              </Button>
-            </Row>
-          ))}
-        </Group>
-      )}
+      {/* One list shape for all five library pages (`settings/list.tsx`). The
+          `rowExtra` a page passes — MCP's Connect button and its status pill —
+          is a *column*, not something crowded in beside Edit and Delete: it is
+          a fact about the row, and a fact belongs under a heading. */}
+      <SettingsList
+        rows={items}
+        rowId={(item) => item.id}
+        search={
+          items.length > 8
+            ? {
+                placeholder: `Search ${noun}s…`,
+                matches: (item, needle) =>
+                  `${item.name} ${subtitle(item)}`.toLowerCase().includes(needle),
+              }
+            : undefined
+        }
+        columns={[
+          {
+            id: "name",
+            header: noun,
+            cell: (item) => {
+              const Icon = rowIcon?.(item) ?? meta.icon
+              return (
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <Icon className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="truncate font-medium">{item.name}</span>
+                </div>
+              )
+            },
+          },
+          {
+            id: "detail",
+            header: "Detail",
+            cell: (item) =>
+              rowDetail?.(item) ?? (
+                <span className="font-mono text-xs break-all text-muted-foreground">
+                  {subtitle(item)}
+                </span>
+              ),
+            secondary: true,
+          },
+          ...(rowExtra
+            ? [
+                {
+                  id: "status",
+                  header: "Status",
+                  align: "end" as const,
+                  cell: (item: T) => (
+                    <div className="flex items-center justify-end gap-1.5">{rowExtra(item)}</div>
+                  ),
+                },
+              ]
+            : []),
+        ]}
+        actions={[
+          {
+            id: "edit",
+            label: "Edit",
+            icon: <Pencil />,
+            hidden: (item) => !editable(item),
+            onClick: (item) => void navigate(settingsFormPath(meta.id, item.id)),
+          },
+          {
+            id: "delete",
+            label: "Delete",
+            icon: <Trash2 />,
+            tone: "danger",
+            onClick: (item) => void remove(item),
+          },
+        ]}
+        renderCard={(item) => {
+          const Icon = rowIcon?.(item) ?? meta.icon
+          return (
+            <>
+              <div className="flex min-w-0 items-center gap-2.5">
+                <Icon className="size-4 shrink-0 text-muted-foreground" />
+                <span className="truncate text-sm font-medium">{item.name}</span>
+              </div>
+              <div className="mt-1 text-[11px] break-all text-muted-foreground">
+                {rowDetail?.(item) ?? <span className="font-mono">{subtitle(item)}</span>}
+              </div>
+              {rowExtra && <div className="mt-2 flex flex-wrap gap-1.5">{rowExtra(item)}</div>}
+            </>
+          )
+        }}
+        empty={
+          <EmptyCard
+            icon={meta.icon}
+            text={
+              importable
+                ? `No ${noun}s yet — add one, or import from the agents' own configs.`
+                : `No ${noun}s yet.`
+            }
+            action={actions}
+          />
+        }
+      />
     </>
   )
 }
@@ -235,7 +318,7 @@ export function LibraryImportPage({
           />
         </>
       )}
-      <footer className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
+      <footer className="flex flex-col-reverse gap-2 border-t pt-4 @panel-sm:flex-row @panel-sm:justify-end">
         <Button type="button" variant="outline" onClick={() => void navigate(settingsPath(meta.id))}>
           Cancel
         </Button>

@@ -1,0 +1,103 @@
+<!doctype html>
+<!-- v4 — Projects first. The folder tree IS the sidebar: every thread lives
+     under the project it belongs to, and there is no flat "recent" list above
+     it. Closest to Codex / Cursor / a file tree. Cost: a thread you worked on
+     this morning is two levels down. -->
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="/logo.svg" type="image/svg+xml" />
+<title>v4 — Projects first</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./shared.css" />
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <header class="sb-head">
+      <div class="sb-title-row">
+        <span class="brand"><span class="logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        </span><span>Daedalus</span></span>
+        <div class="head-actions">
+          <button class="icon-btn" title="New thread" data-new></button>
+          <button class="icon-btn" title="Settings"></button>
+        </div>
+      </div>
+      <button class="search" id="search"><span id="search-ico"></span>Search threads, files, commands<kbd>⌘K</kbd></button>
+    </header>
+    <div class="scroll" id="scroll"></div>
+    <footer class="sb-foot" id="foot"></footer>
+  </aside>
+  <main class="main">
+    <div class="tabs">
+      <button class="tab" data-active="true"><span class="dot running"></span>Ship the composer width fix</button>
+      <button class="tab">Index the rules table</button>
+      <button class="tab" style="width:30px;padding:0;justify-content:center" id="add-tab"></button>
+    </div>
+    <div class="card">the dock — the transcript in front of you</div>
+  </main>
+</div>
+<script src="./shared.js"></script>
+<script>
+  const { data, HTML, esc, dot, mark, on, theme, render, ICONS } = PROTO
+  const { projects, threads } = data()
+
+  document.getElementById("search-ico").innerHTML = ICONS.search
+  document.querySelector("[data-new]").innerHTML = ICONS.plus
+  document.querySelector('[title="Settings"]').innerHTML = ICONS.gear
+  document.getElementById("add-tab").innerHTML = ICONS.plus
+
+  /* Fold state is the folder's own, so it survives a re-render. */
+  const collapsed = new Set(["docs"])
+  const threadRow = (t) => HTML`
+    <button class="row" data-active="${!!t.active}" data-thread="${t.id}">
+      ${dot(t.s)}
+      <span class="title">${esc(t.t)}</span>
+      ${t.files ? HTML`<span class="sub">±${t.files}</span>` : ""}
+      <span class="sub">${t.when}</span>
+    </button>`
+
+  const folder = (p, loose) => {
+    const mine = threads.filter((t) => t.p === p.id)
+    const open = !collapsed.has(p.id)
+    return HTML`
+      <div class="section" data-project="${p.id}">
+        <button class="folder" data-fold="${p.id}" aria-expanded="${open}">
+          ${loose ? HTML`<span class="mark" style="background:var(--muted);color:var(--muted-foreground)">?</span>`
+                  : mark(p)}
+          <span class="name">${esc(p.name)}</span>
+          <span class="n">${mine.length}</span>
+          ${ICONS.chev}
+        </button>
+        <div class="tree" data-folded="${p.id}" ${open ? "" : "hidden"}>
+          ${mine.map(threadRow).join("")}
+        </div>
+      </div>`
+  }
+
+  const foot = HTML`
+    <div class="foot-nav">
+      <button class="nav-link">${ICONS.board}Tasks</button>
+      <button class="nav-link">${ICONS.bolt}Routines<span class="n">3</span></button>
+      <button class="nav-link">${ICONS.calendar}Scheduled</button>
+      <button class="nav-link">${ICONS.trash}<span class="n">5</span></button>
+    </div>
+    <button class="row"><span class="sub">This machine</span><span class="tail"><span class="dot running"></span></span></button>`
+
+  render(document.getElementById("scroll"), projects.map((p) => folder(p)).join(""))
+  document.getElementById("foot").innerHTML = foot
+  theme()
+
+  /* Fold state is the folder's own, and a second click has to toggle rather
+     than re-render — so the handler is the shared `on` one and this only keeps
+     the set in step, which is what the next render reads. */
+  on(document.getElementById("scroll"), ".folder", (el) => {
+    const id = el.dataset.fold
+    if (el.getAttribute("aria-expanded") === "true") collapsed.delete(id)
+    else collapsed.add(id)
+  })
+</script>
+</body>
+</html>

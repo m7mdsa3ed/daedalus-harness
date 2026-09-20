@@ -267,15 +267,15 @@ function ImportGroup({ settings }: { settings: ServerSettings }) {
         </Button>
       </Row>
       {pickError && (
-        <div className="px-4 py-3">
+        <div className="py-3">
           <ErrorNote error={pickError} />
         </div>
       )}
       {file && (
         <>
-          <div className="px-4 py-3">
+          <div className="py-3">
             <div className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">Contents</div>
-            <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm sm:grid-cols-3">
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm @panel-sm:grid-cols-3">
               {TABLES.map(([key, label]) => (
                 <div key={key} className="flex justify-between gap-2">
                   <dt className="truncate text-muted-foreground">{label}</dt>
@@ -302,7 +302,7 @@ function ImportGroup({ settings }: { settings: ServerSettings }) {
               </p>
             )}
           </div>
-          <div className="px-4 py-3">
+          <div className="py-3">
             <RadioGroup value={mode} onValueChange={(v) => setMode(v as "merge" | "replace")} className="gap-3">
               <label className="flex cursor-pointer items-start gap-3">
                 <RadioGroupItem value="merge" id="backup-merge" className="mt-0.5" />

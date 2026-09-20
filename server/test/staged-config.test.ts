@@ -59,9 +59,6 @@ const profile: Profile = {
   defaultModel: "m1",
   smallModel: "",
   logoUrl: "",
-  mcpServerIds: [],
-  skillIds: [],
-  commandIds: [],
 };
 const project = {
   id: "w1",

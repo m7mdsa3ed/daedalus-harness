@@ -45,10 +45,10 @@ import {
   type RoutineBody,
 } from "./db/index.js";
 import type { AutonomyPolicy } from "./autonomy.js";
-import { PROFILE_LINKS, SESSION_LINKS, emptyLinks, readLinks, writeLinks, type LinkSet, type Tx } from "./db/links.js";
+import { SESSION_LINKS, emptyLinks, readLinks, writeLinks, type LinkSet, type Tx } from "./db/links.js";
 /* The routine link descriptor lives with the engine rather than in db/links.ts
-   — see the note there. It is imported for its links exactly as PROFILE_LINKS
-   and SESSION_LINKS are used above. */
+   — see the note there. It is imported for its links exactly as
+   SESSION_LINKS is used above. */
 import { ROUTINE_LINKS } from "./routines.js";
 import { readWebSearch, saveWebSearch, type WebSearchConfig } from "./config.js";
 import { writeModelPromptsLibrary } from "./model-prompts.js";
@@ -168,9 +168,10 @@ const ProfileRow = z.object({
   /** Optional like `hidden` so an old bundle's `disabled: true` restores as
       exactly that — disabled — rather than being dropped by a rename. */
   disabled: z.boolean().optional(),
-  mcpServerIds: z.array(str).default([]),
-  skillIds: z.array(str).default([]),
-  commandIds: z.array(str).default([]),
+  // Older bundles may still carry profile links; accepted and ignored.
+  mcpServerIds: z.array(str).default([]).optional(),
+  skillIds: z.array(str).default([]).optional(),
+  commandIds: z.array(str).default([]).optional(),
 });
 
 const McpServerRow = z.object({
@@ -258,6 +259,9 @@ const ProjectRow = z.object({
   cwd: str,
   description: optStr,
   logoUrl: optStr,
+  /** Absent on bundles from before the column; 0 then, which leaves the
+      imported rows tied and ordered by name. */
+  sortOrder: z.number().int().nullish(),
 });
 
 /** A standing instruction rule — individual title and content. */
@@ -769,7 +773,7 @@ export async function exportBundle(opts: ExportOptions): Promise<Bundle> {
     exportedAt: Date.now(),
     redacted: { secrets: !opts.includeSecrets, journals: !opts.includeJournals },
     agents: await db.select().from(agentsTable),
-    profiles: withLinks(profiles, await readLinks(PROFILE_LINKS, profiles.map((p) => p.id))).map((p) => {
+    profiles: profiles.map((p) => {
       const { apiKey, usage, ...rest } = p;
       /* The usage provider's own token is the second credential on a profile
          and is redacted with the first — `kind` and the host stay, since they
@@ -1049,7 +1053,12 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
       tx,
       projectsTable,
       "id",
-      bundle.projects.map((p) => ({ ...p, description: p.description ?? null, logoUrl: p.logoUrl ?? "" })),
+      bundle.projects.map((p) => ({
+        ...p,
+        description: p.description ?? null,
+        logoUrl: p.logoUrl ?? "",
+        sortOrder: p.sortOrder ?? 0,
+      })),
     );
     summary.projects = bundle.projects.length;
 
@@ -1071,8 +1080,8 @@ export async function importBundle(bundle: Bundle, mode: ImportMode): Promise<Im
 
     /* The link tables are replaced wholesale per owner: `writeLinks` drops the
        owner's rows and re-adds only ids the library actually holds, so a
-       bundle naming a server this install never had links nothing. */
-    for (const p of bundle.profiles) await writeLinks(tx, PROFILE_LINKS, p.id, p);
+       bundle naming a server this install never had links nothing. Profiles
+       carry no links; older bundles may still name them and those are dropped. */
 
     // Children of projects. A row whose project exists nowhere is dropped, not
     // fatal — the foreign key would refuse it and take the whole import down.

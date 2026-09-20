@@ -62,7 +62,7 @@ import {
 } from "@/components/item-context-menu"
 import { PanelIcon } from "@/components/workspace/panel-kinds"
 import { PanelStatusDot } from "@/components/workspace/panel-status-dot"
-import { useDock } from "@/components/workspace/dock"
+import { useDock, useDockGroups, useDockOpeners } from "@/components/workspace/dock"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { writeClipboard } from "@/lib/clipboard"
 import { reportError } from "@/lib/errors"
@@ -76,9 +76,26 @@ import { useRunHelper } from "@/lib/workspace/use-run-helper"
 import { PANEL_SPECS, isPanelKind, parsePanel } from "@/lib/workspace/panels"
 import { cn } from "@/lib/utils"
 
+/** What a tab can open beside itself in a group — everything the + offers but
+    a thread, which the composer's own doors open. */
+const GROUPABLE = ["terminal", "web", "ide", "tasks"] as const
+
 type PanelApi = IDockviewPanelHeaderProps["api"]
 type ContainerApi = IDockviewPanelHeaderProps["containerApi"]
 type Descriptor = ReturnType<typeof parsePanel>
+
+/** The tab `delta` away from this one, wrapping — the strip's own "next" and
+    "previous", for the two menu rows. The chord (`dock.tsx`) walks from the
+    *active* tab; a menu row opened on a tab that is not the active one walks
+    from the one it is on, which is what "next" means in a menu you opened by
+    pointing at a tab. */
+function stepTabInGroup(api: PanelApi, delta: 1 | -1): void {
+  const siblings = api.group?.panels ?? []
+  if (siblings.length < 2) return
+  const index = siblings.findIndex((panel) => panel.id === api.id)
+  const next = siblings[(Math.max(index, 0) + delta + siblings.length) % siblings.length]
+  next.api.setActive()
+}
 
 /** Dockview's own tab element — the one carrying `role="tab"`, the roving
     tabindex and the `aria-*`. Our content is a child of it, so anything that
@@ -108,21 +125,35 @@ function useTabActive(api: PanelApi): boolean {
  * group is a row that does nothing, and a disabled row says so before it is
  * pressed rather than after.
  *
+ * `hasOtherGroups` and `maximized` are the same question asked of the *dock*:
+ * a pair of tabs is two groups of one, so `hasOthers` is false for both of them
+ * and "fill the dock" is not the row it disables. Whether this tab's group is
+ * the maximized one comes from dockview, which is what makes the row able to
+ * name the direction it will go.
+ *
  * Dragging a tab between groups changes the siblings without adding or
  * removing a panel, which is why the layout event is in here too.
  */
 function useTabNeighbours(
   api: PanelApi,
   containerApi: ContainerApi
-): { hasOthers: boolean; hasRightward: boolean } {
-  const [state, setState] = React.useState({ hasOthers: false, hasRightward: false })
+): { hasOthers: boolean; hasRightward: boolean; hasOtherGroups: boolean; maximized: boolean } {
+  const [state, setState] = React.useState({
+    hasOthers: false,
+    hasRightward: false,
+    hasOtherGroups: false,
+    maximized: false,
+  })
   React.useEffect(() => {
     const sync = () => {
-      const siblings = containerApi.getPanel(api.id)?.group.panels ?? []
-      const index = siblings.findIndex((panel) => panel.id === api.id)
+      const panel = containerApi.getPanel(api.id)
+      const siblings = panel?.group.panels ?? []
+      const index = siblings.findIndex((candidate) => candidate.id === api.id)
       setState({
         hasOthers: siblings.length > 1,
         hasRightward: index >= 0 && index < siblings.length - 1,
+        hasOtherGroups: containerApi.groups.length > 1,
+        maximized: !!panel?.api.isMaximized(),
       })
     }
     sync()
@@ -130,6 +161,7 @@ function useTabNeighbours(
       containerApi.onDidAddPanel(sync),
       containerApi.onDidRemovePanel(sync),
       containerApi.onDidLayoutChange(sync),
+      containerApi.onDidMaximizedGroupChange(sync),
     ]
     return () => disposables.forEach((disposable) => disposable.dispose())
   }, [api, containerApi])
@@ -181,6 +213,24 @@ function useTabKeys(
   }, [ref])
 }
 
+/* ── Activation is dockview's, and it must stay dockview's ──
+   A tab used to be opened by its click rather than its press: a capture-phase
+   `pointerdown` listener called `preventDefault()`, which is the one thing
+   dockview's own handler steps aside for (`if (event.defaultPrevented) return`),
+   and the click put the panel in front afterwards. It was written for a real
+   complaint — pressing a background tab to drag it swapped the panel you were
+   looking at before the drag even began — and it cost the whole of drag and
+   drop: **a native HTML5 drag is the default action of the `mousedown` that
+   arms it**, and preventing a `pointerdown` suppresses that compatibility
+   `mousedown` outright. `.dv-tab` is natively `draggable`, so with the press
+   prevented no tab could be dragged anywhere — not across a strip, not between
+   two groups, not into a nested one.
+
+   Nothing replaces it, because the complaint is upstream's now:
+   `_activateOnPointerDown` defers the activation by a frame precisely so
+   `dragstart` arms first (dockview #932), and activating on press is what a
+   browser tab does anyway. */
+
 export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProps) {
   const dock = useDock()
   const ref = React.useRef<HTMLDivElement>(null)
@@ -200,7 +250,15 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
   useTabLabel(ref, [title, status?.label, pinned && "pinned"])
   useTabKeys(ref, { onClose: close, onMenu: () => setMenuOpen(true) })
 
-  const items = useTabMenuItems({ api, dock, descriptor, title, pinned, ...neighbours })
+  const items = useTabMenuItems({
+    api,
+    dock,
+    descriptor,
+    title,
+    pinned,
+    groupId: dock.groupIdOf(containerApi),
+    ...neighbours,
+  })
 
   return (
     <ItemContextMenu items={items}>
@@ -209,7 +267,12 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
           tabs — one number for one distance (`index.css`). The chip is a slab
           *of the row* on a docked strip, so it takes the row's height with a
           2px inset, which is what `py-0.5` here and `h-full` + `m-0.5` below
-          add up to. */}
+          add up to.
+
+          `pl-2.5`: the leading side is paid for the active tab's 2px rail
+          (`index.css`), which sits at the slab's left edge — at `pl-2` the mark
+          would start *on* the rail. The padding is unconditional so the mark
+          does not jump 2px when a tab becomes active. */}
       <div className="flex h-full min-w-0 flex-1 items-center py-0.5">
         <div
           /* The ref lives here and not on the box above, which is the one
@@ -225,25 +288,38 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
                sliders beside it (`HEADER_CHIP`, the same token), because all
                three stand on the one line; on a docked strip it is the row minus
                the 2px of air the cell keeps above and below it. */
-            "dock-tab mx-0.5 flex h-[var(--dock-chip-h)] min-w-0 flex-1 items-center gap-2 px-2 text-xs",
+            "dock-tab relative mx-0.5 flex h-[var(--dock-chip-h)] min-w-0 flex-1 items-center gap-1.5 py-0 pr-2 pl-2.5 text-xs",
             active ? "text-foreground" : "text-muted-foreground hover:text-foreground"
           )}
         >
           <TabMark descriptor={descriptor} />
-          {/* A grid of one column (`index.css`), so the inner span has a column
-              of exactly the tab's width to truncate against. `truncate` goes on
-              the inner span — the grid item is what overflows. */}
-          <span data-tab-title className="grid min-w-0 flex-1">
-            <span title={title} className="truncate">
+          {/* The title is the whole of what the tab lays out — the two controls
+              are floating (`index.css`), so nothing reserves a gutter for a pair
+              of things that only exist while you point at one tab. The title and
+              its reading are **one box**: the mask below fades this box's right
+              end, so what the controls cover when they arrive is this box, and
+              the reading is what they replace there. Leaving the dot outside it
+              put the ✕ on top of the dot on hover, which is why it is in here.
+
+              `flex-1 min-w-0` on both this box and the text gives the text a
+              real column to truncate in — the grid-of-one this used to be was
+              the same idea spelled with `grid-template-columns`. */}
+          <span data-tab-title className="flex min-w-0 flex-1 items-center gap-1.5">
+            <span title={title} className="min-w-0 flex-1 truncate">
               {title}
             </span>
+            {/* What the panel is doing, for a panel you cannot see. Decorative
+                here: the reading is folded into the tab's accessible name above,
+                and a live region per tab inside `role="tab"` is both invalid and
+                a strip that talks over itself. */}
+            <PanelStatusDot status={status} aria-hidden role={undefined} />
           </span>
-          {/* What the panel is doing, for a panel you cannot see. Decorative
-              here: the reading is folded into the tab's accessible name above,
-              and a live region per tab inside `role="tab"` is both invalid and
-              a strip that talks over itself. */}
-          <PanelStatusDot status={status} aria-hidden role={undefined} />
-          <span data-tab-controls className="flex shrink-0 items-center">
+          {/* **Floating, and laid out in no row at all** (`index.css`): two
+              absolutely positioned controls against the chip's trailing inset,
+              so the title owns the whole of the tab's width. What they cover
+              when they appear, the title no longer says — it fades under them
+              instead, and to the same width the pin takes when there is one. */}
+          <span data-tab-controls className="absolute inset-y-0 right-1 flex items-center">
             {/* One array, two surfaces: this and the right-click (long-press on
                 a touch screen). A context menu is a gesture you have to already
                 know is there, and on a touch screen it competes with the drag
@@ -281,6 +357,7 @@ export function PanelTab({ api, containerApi, params }: IDockviewPanelHeaderProp
                 other until you hovered it is most of what pinning is for. */}
             {pinned ? (
               <TabControl
+                data-tab-action="pin"
                 label={`Unpin ${title}`}
                 icon={PinOffIcon}
                 onClick={() => dock.togglePin(api.id)}
@@ -378,16 +455,23 @@ function useTabMenuItems({
   descriptor,
   title,
   pinned,
+  groupId,
   hasOthers,
   hasRightward,
+  hasOtherGroups,
+  maximized,
 }: {
   api: PanelApi
   dock: ReturnType<typeof useDock>
   descriptor: Descriptor
   title: string
   pinned: boolean
+  /** The group this tab stands in, or undefined in the top-level strip. */
+  groupId: string | undefined
   hasOthers: boolean
   hasRightward: boolean
+  hasOtherGroups: boolean
+  maximized: boolean
 }): MenuItemSpec[] {
   const navigate = useNavigate()
   const runHelper = useRunHelper(dock)
@@ -402,13 +486,18 @@ function useTabMenuItems({
   const meta = useSessionMeta(descriptor?.kind === "chat" ? descriptor.sessionId : "")
   const projects = useProjects()
   const project = meta ? projects.find((candidate) => candidate.id === meta.projectId) : undefined
+  const groups = useDockGroups()
+  const nested = groupId !== undefined
+  /* The same opener the strip's + and the chords call, so "open it in a group"
+     and "open it" differ in where it lands and in nothing else. */
+  const { onOpenPanel } = useDockOpeners()
 
   return [
     /* Close comes first and names *this* tab, so a pinned panel still has a way
        out — the bulk closes below are the ones pinning is a defence against.
        Every tab closes, the last one included: an empty dock goes to the
        landing console (`dock.tsx`). */
-    { label: "Close", onClick: () => void dock.closePanel(api.id) },
+    { label: "Close", shortcut: "closeTab", onClick: () => void dock.closePanel(api.id) },
     { label: "Close others", disabled: !hasOthers, onClick: () => void dock.closeOthers(api.id) },
     {
       label: "Close to the right",
@@ -416,8 +505,124 @@ function useTabMenuItems({
       onClick: () => void dock.closeToTheRight(api.id),
     },
     { label: "Close group", disabled: !hasOthers, onClick: () => void dock.closeGroup(api.id) },
+    /* ── Side by side ──
+       The dock's own rows, on a tab rather than in a menu behind the app's
+       chrome, because a tab is the thing the reader is pointing at. On a phone a
+       split is a column the fold-back takes away in the next microtask, so the
+       rows are not offered — the same answer the palette gives. */
+    ...(isMobile
+      ? []
+      : ([
+          { type: "separator" },
+          {
+            label: "Split right",
+            shortcut: "splitRight",
+            onClick: () => dock.splitActive("right"),
+          },
+          {
+            label: "Split down",
+            shortcut: "splitDown",
+            onClick: () => dock.splitActive("below"),
+          },
+          /* One row, and it says which way it will go: filling a pair takes the
+             fill away, so "Fill the dock" on an already-filled group would name
+             the state it is about to leave. The chord toggles, because a key
+             cannot know which of the two is true from where it fires. */
+          {
+            label: maximized ? "Restore the columns" : "Fill the dock",
+            shortcut: "fillPanel",
+            disabled: !hasOtherGroups,
+            onClick: () => dock.toggleMaximize(),
+          },
+        ] satisfies MenuItemSpec[])),
+    /* The strip's two walking keys are not about *this* tab, but the menu is
+       where a reader who has not found the sheet asks what the tabs answer to —
+       and the row prints whatever chord they are bound to, so it cannot go
+       stale the way a written-down one would. */
+    { type: "separator" },
+    {
+      label: "Next tab",
+      shortcut: "nextTab",
+      disabled: !hasOthers,
+      onClick: () => stepTabInGroup(api, 1),
+    },
+    {
+      label: "Previous tab",
+      shortcut: "prevTab",
+      disabled: !hasOthers,
+      onClick: () => stepTabInGroup(api, -1),
+    },
     { type: "separator" },
     { label: pinned ? "Unpin" : "Pin", onClick: () => dock.togglePin(api.id) },
+    /* ── Tabs inside a tab ──
+       A group is a dock of its own behind one top-level tab (`group-panel.tsx`),
+       and a tab goes in, across or out by its own menu: "Move to group" lists a
+       new group and every group that is open, the one this tab is already in
+       greyed; a grouped tab also has its way out, beside the group it was in.
+       One level, so a group's own tab offers neither. Dragging a tab across two
+       strips does the same move.
+
+       **The door in is not offered on a phone.** A group is a second strip
+       inside a tab, and below `md` each strip already draws only the tab you
+       are on — so a nested one is a second row of chrome over a 390px
+       transcript, with the tab you want one level further in. The same
+       judgement the float and the popout rows make below. */
+    ...(isMobile || descriptor?.kind === "group"
+      ? []
+      : ([
+          /* ── Open something *with* this tab ──
+             "Open a terminal" puts a tab beside the transcript; this puts both
+             into one group, which is the arrangement a reader who wants a shell
+             under the thread they are reading actually asked for. Two steps in
+             one row: this tab into a group (the one it is already in, if it is
+             in one), and the next open aimed at that group — which is why
+             `targetNext` takes the group's id rather than its instance, the
+             instance being one render away when the group is minted here. */
+          ...(onOpenPanel
+            ? ([
+                {
+                  type: "sub",
+                  label: nested ? "Open in this group" : "Open in a new group",
+                  items: GROUPABLE.map((kind) => ({
+                    label: PANEL_SPECS[kind].defaultTitle,
+                    onClick: () => {
+                      const group = nested ? groupId : dock.moveToGroup(api.id, null)
+                      if (!group) return
+                      dock.targetNext(group)
+                      onOpenPanel(kind)
+                    },
+                  })),
+                },
+              ] satisfies MenuItemSpec[])
+            : []),
+          {
+            type: "sub",
+            label: "Move to group",
+            items: [
+              { label: "New group", onClick: () => dock.moveToGroup(api.id, null) },
+              ...(groups.length > 0
+                ? ([
+                    { type: "separator" },
+                    ...groups.map(
+                      (group): MenuItemSpec => ({
+                        label: group.title,
+                        hint: group.hint || undefined,
+                        disabled: group.id === groupId,
+                        onClick: () => dock.moveToGroup(api.id, group.id),
+                      })
+                    ),
+                  ] satisfies MenuItemSpec[])
+                : []),
+            ],
+          },
+        ] satisfies MenuItemSpec[])),
+    /* The way *out* is never withheld, phone included: a group made on a wide
+       window is still there when the window narrows, and a tab inside one with
+       no row to leave by is a tab you cannot reach except through a strip the
+       narrow rules have already reduced to a single tab. */
+    ...(nested && descriptor?.kind !== "group"
+      ? ([{ label: "Move out of the group", onClick: () => dock.unnestPanel(api.id) }] satisfies MenuItemSpec[])
+      : []),
     ...(isMobile
       ? []
       : ([

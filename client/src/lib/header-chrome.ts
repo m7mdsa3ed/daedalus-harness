@@ -24,6 +24,29 @@
 export const HEADER_BADGE =
   "rounded-full bg-background/50 ring-1 ring-border/50 backdrop-blur-sm"
 
+/** ── A ground for a control in the strip, on a phone ──
+ *
+ * Above `md` the row's occupants stand on the shell's own ground beside the
+ * tabs and need nothing: the strip is a row of shapes and they are more of
+ * them. Below it the strip is an *overlay* — the transcript scrolls under the
+ * bar and goes out of focus in the progressive blur (`app-shell.tsx`) — so a
+ * bare glyph sits on whatever line happens to be passing beneath it, and with
+ * the tab beside them taking the whole strip they are the only things in the
+ * row without a shape.
+ *
+ * **The active tab's material, not a frosted capsule of its own**: `--background`
+ * and the card's `shadow-sm`, which is what the tab beside them is made of
+ * (`html .dock-tab[data-active]`, `index.css`). They stand in that tab's row, so
+ * one material is what makes the row one bar — a translucent ring-and-blur
+ * beside an opaque slab is two kinds of chrome sharing a line. No ring, for the
+ * same reason the tab has none: the ground *is* the edge.
+ *
+ * Shared by the header's own two controls and the strip's (`STRIP_CONTROL`,
+ * `tab-actions.tsx`). Round rather than the tab's `calc(--radius - 2px)`: these
+ * are 28px icon buttons, and a square-ish corner on a glyph that size reads as a
+ * tab that failed to grow. */
+export const STRIP_GROUND = "max-md:rounded-full max-md:bg-background max-md:shadow-sm"
+
 /** The header's icon buttons — the sidebar toggle and the view-settings
     sliders beside it. Bare ghost buttons, no ground: the row stands on the
     wrapper's ground now rather than over a transcript, so there is nothing to
@@ -36,7 +59,7 @@ export const HEADER_BADGE =
     line. It is the same token `WORKSPACE/DOCK`'s strip takes, so the three
     cannot drift apart. The sidebar header's own buttons are not bound by this —
     they stand on a surface of their own, with nothing to line up with. */
-export const HEADER_CHIP = "size-[var(--dock-chip-h)]"
+export const HEADER_CHIP = `size-[var(--dock-chip-h)] ${STRIP_GROUND}`
 
 /** The ground of a surface the app *raises over* its own content — what a
     capsule opens (the bell's glance) and what the app raises on its own (a

@@ -1,15 +1,11 @@
-/* ── The bell, in the app header ──
-   It sat on the sidebar's fixed nav, which is a column of places you *go*; a
-   count capsule is not a place, and in the collapsed icon rail the capsule had
-   to be flung into the row's corner to survive at all. The header is where a
-   badge belongs — one target, always visible, on every route — so that is
-   where it is now, beside the thread's own ⋯ menu.
-
-   The sidebar keeps a row, and it navigates: `/notifications` is the whole
-   history, and this popover is the glance — the newest handful, unread first
-   in the sense that they are the coloured ones, and one line to the page for
-   the rest. Fetched on open and on return to the window, never on a timer
-   (see lib/notifications-inbox). */
+/* ── The bell, in the sidebar footer ──
+   An icon in the footer's row of them, beside plan usage, servers and
+   settings. The count is the button's own badge rather than a label, which is
+   what lets it share a line with three other icons — and the popover is the
+   glance: the newest handful, unread first in the sense that they are the
+   coloured ones, and one line to the page for the rest. `/notifications` is
+   the whole history. Fetched on open and on return to the window, never on a
+   timer (see lib/notifications-inbox). */
 import * as React from "react"
 import { BellIcon, CheckCheckIcon, ChevronRightIcon } from "lucide-react"
 import { useNavigate } from "react-router"
@@ -19,24 +15,27 @@ import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Skeleton } from "@/components/ui/skeleton"
 import { NotificationRowsSkeleton } from "@/components/ui/skeletons"
+import { useSidebar } from "@/components/ui/sidebar"
 import {
   useInbox,
   useMarkNotificationsRead,
 } from "@/lib/queries/surfaces"
 import { notificationsPath } from "@/lib/router"
-import { GLASS_SURFACE, HEADER_CHIP } from "@/lib/header-chrome"
+import { GLASS_SURFACE } from "@/lib/header-chrome"
 import { cn } from "@/lib/utils"
+import { FOOTER_ICON } from "@/components/sidebar/scale"
 
 /** The glance is the newest few; the page is the rest. */
 const GLANCE = 8
 
-export function NotificationBell() {
+export function NotificationIconButton() {
   /* The query cache owns the read: the badge fetches on mount, opening
      re-fetches, and returning to the window re-fetches via focus — the three
      moments the old module store asked for by hand. */
   const { inbox, isPending, refetch } = useInbox()
   const markRead = useMarkNotificationsRead()
   const navigate = useNavigate()
+  const { isMobile } = useSidebar()
   const [open, setOpen] = React.useState(false)
 
   const unread = inbox?.unread ?? 0
@@ -61,28 +60,31 @@ export function NotificationBell() {
         render={
           <Button
             variant="ghost"
-            size="icon-xs"
-            /* A plain ghost button, because it stands in the sidebar header now
-               and not in the transparent app header: it has the sidebar's own
-               ground under it, so it needs no capsule to be visible, and it is
-               the palette trigger's twin — same size, same weight, one pair. */
-            className={cn(HEADER_CHIP, "relative shrink-0 text-muted-foreground hover:text-foreground")}
+            size="icon-sm"
+            /* The count rides the bell's corner: in a row of icons there is no
+               trailing slot for it, and the number is a property of this button
+               rather than a fourth label. */
+            className={cn(FOOTER_ICON, "relative")}
             aria-label={unread > 0 ? `Notifications (${unread} unread)` : "Notifications"}
-            title="Notifications"
+            title={unread > 0 ? `Notifications (${unread} unread)` : "Notifications"}
           >
-            <BellIcon className="size-3.5" />
-            {unread > 0 && <UnreadCount count={unread} className="absolute -top-1 -right-1" />}
+            <BellIcon />
+            {unread > 0 && (
+              <UnreadCount count={unread} className="absolute -top-0.5 -right-0.5" />
+            )}
           </Button>
         }
       />
       {/* Frosted — see `lib/header-chrome`. `align="start"` and not `end`: the
-          trigger is at the sidebar's inner edge, so a 24rem card aligned to its
+          button is at the sidebar's inner edge, so a 24rem card aligned to its
           end opens off the left of the screen and gets shoved back by collision
           handling. From the start edge it opens across the content, which is
-          the room there is. */}
+          the room there is. Upward on the rail, downward on the phone sheet —
+          the footer is mid-screen there, and a card opening up would go off the
+          top (and into the keyboard's way). */}
       <PopoverContent
         align="start"
-        side="bottom"
+        side={isMobile ? "bottom" : "top"}
         sideOffset={8}
         className={cn(GLASS_SURFACE, "w-[min(24rem,calc(100vw-1rem))] p-0")}
       >

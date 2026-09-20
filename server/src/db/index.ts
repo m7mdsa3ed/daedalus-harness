@@ -481,7 +481,7 @@ function coerce(value: unknown, type: string): unknown {
  * Text that does not parse is scrubbed literally rather than dropped, because
  * a column that was never really JSON is still a column with a value in it.
  */
-function scrubJson(raw: string): string {
+export function scrubJson(raw: string): string {
   if (!raw.includes("\0") && !/\\u0000/i.test(raw)) return raw;
   const strip = (value: unknown): unknown => {
     if (typeof value === "string") return value.replaceAll("\0", "");

@@ -379,7 +379,13 @@ export function miscRoutes(
     const parsed = ComposerHistorySchema.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
     const { text, sessionId, threadTitle } = parsed.data;
-    return c.json({ entry: addComposerHistory({ text, sessionId, threadTitle }) });
+    /* Awaited: `addComposerHistory` is async, and returning the bare promise
+       had `c.json` serialize `{}` into every answer — the write itself still
+       ran, so the row was there on the next read while the caller was handed a
+       row with no id and no text. The client patches its cache from this answer
+       (`useRecordComposerHistory`), which is how an entry-shaped hole became the
+       newest prompt on screen and a recall put `undefined` into the box. */
+    return c.json({ entry: await addComposerHistory({ text, sessionId, threadTitle }) });
   });
 
   /* Forget one line (`?id=`), everything older than `?before=` (ms), or the

@@ -1,13 +1,14 @@
 import * as React from "react"
-import { SquareTerminal, TriangleAlert } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { FileCode, History, SquareTerminal, TriangleAlert } from "lucide-react"
 import type { HelperCommand } from "@/lib/settings"
-import { ComposerStripItem, useStripSummary } from "./composer-strip"
+import type { ProjectScript, ShellUse } from "@/lib/workspace/project-helpers"
+import { useStripSummary } from "./composer-strip"
+import { CompleterList, CompleterRow, CompleterSection } from "./composer/completer"
 
 /* `!` commands for the composer — a shell line, with the project's saved ones
-   suggested.
+   and its package.json scripts suggested.
 
-   Two things share the prefix, and the send path tells them apart. The
+   Three things share the prefix, and the send path tells them apart. The
    **project's helper commands** ("Restart server", "Run migrations") are the
    suggestions: saved shell lines owned by `server/src/project-helpers.ts`,
    edited in Settings › Projects, and the same list the tab menu draws under
@@ -15,8 +16,25 @@ import { ComposerStripItem, useStripSummary } from "./composer-strip"
    **command** into the box rather than its name — what will actually run is the
    thing worth reading and editing before it does.
 
-   **Anything else after the `!`** is a shell line of the user's own. Neither
-   kind is a prompt: the send path consumes the text instead of prompting (the
+   **The scripts the project's package.json files declare** are suggested
+   beside them — read off the disk (root and one directory deep), never
+   stored. A helper is a row the user wrote; a script is one the project
+   already shipped, and both are "the small shell actions this workspace
+   runs". A nested package's line carries its own `cd`, so it runs from the
+   project root like any other `!` line.
+
+   **What this project keeps running** is the third list, and the one nobody
+   writes: the server tallies every `!` line per project
+   (`server/src/shell-history.ts`, bumped by the run route itself) and the menu
+   offers them most-used first, under "Recent". Server-side rather than
+   device-local on purpose — the line you build with is a property of the
+   workspace, so the phone offers what the desktop ran. The same tally *orders*
+   the other two lists, so the helper you run daily stands at the top of its
+   own section; a line that is already a helper or a script is never repeated
+   under Recent.
+
+   **Anything else after the `!`** is a shell line of the user's own. None of
+   them is a prompt: the send path consumes the text instead of prompting (the
    bargain `harnessCommandFor` makes for `/schedule`) and runs it in a terminal.
    A line that *is* one of the saved commands runs **as** that helper — its own
    directory, environment and confirm, because the row is the definition — and
@@ -34,13 +52,29 @@ export function shellLineFor(text: string): string | null {
   return trimmed.slice(1).trim() || null
 }
 
+/** One `!` suggestion row, whichever list it came from. A script's `id` is
+    its own `command` — it names no row, and the key only has to be unique
+    among the rows drawn. */
+export interface ProjectCommandSuggestion {
+  id: string
+  name: string
+  command: string
+  /** Which list it came from — a row the person wrote, or one the project's
+      package.json shipped. Drawn, because a helper carries a cwd, an
+      environment and a confirm the script does not. */
+  kind: "recent" | "helper" | "script"
+  /** A helper that asks before it runs. Scripts never do: the row the
+      package shipped did not come with the project's own confirm setting. */
+  confirm?: boolean
+}
+
 export interface ProjectCommandState {
-  /** Helper rows matching the token being typed; empty when nothing matches,
-      which is also when there is no card to draw. */
-  matches: HelperCommand[]
+  /** Helper rows and script rows matching the token being typed; empty when
+      nothing matches, which is also when there is no card to draw. */
+  matches: ProjectCommandSuggestion[]
   selected: number
-  /** Fill the box with a helper's *command* line. */
-  pick: (helper: HelperCommand) => void
+  /** Fill the box with a suggestion's *command* line. */
+  pick: (suggestion: ProjectCommandSuggestion) => void
   setSelected: (index: number) => void
   /** Returns true when the key drove the menu and must not reach the send logic. */
   onKeyDown: (e: React.KeyboardEvent) => boolean
@@ -49,9 +83,12 @@ export interface ProjectCommandState {
 export function useProjectCommands(opts: {
   text: string
   helpers: readonly HelperCommand[]
+  scripts: readonly ProjectScript[]
+  /** What this project has already run, most used first (the server's tally). */
+  history: readonly ShellUse[]
   setText: (text: string) => void
 }): ProjectCommandState {
-  const { text, helpers, setText } = opts
+  const { text, helpers, scripts, history, setText } = opts
   const [selected, setSelected] = React.useState(0)
   const [dismissed, setDismissed] = React.useState(false)
 
@@ -63,25 +100,70 @@ export function useProjectCommands(opts: {
   const open = token !== null && !dismissed
   /* Matched on the name *and* the command: `!pnpm` should find the saved line
      whose name is "Build", and `!Build` the one whose command starts with it —
-     either is a thing the user knows it by. */
+     either is a thing the user knows it by. Helpers first, then scripts — a
+     row the person wrote outranks one the package shipped. */
+  const suggestions = React.useMemo<ProjectCommandSuggestion[]>(() => {
+    /* A line already offered as a helper or a script is not repeated as a
+       recent one — the row the project defines carries a name, a cwd and a
+       confirm the bare line does not. What it *does* lend it is order:
+       inside each list, the thing you run most stands first. */
+    const uses = new Map(history.map((use) => [use.line, use.count]))
+    const defined = new Set([
+      ...helpers.map((helper) => helper.command),
+      ...scripts.map((script) => script.command),
+    ])
+    const byUse = <T extends { command: string }>(rows: T[]) =>
+      rows
+        .map((row, index) => ({ row, index }))
+        .sort(
+          (a, b) =>
+            (uses.get(b.row.command) ?? 0) - (uses.get(a.row.command) ?? 0) || a.index - b.index
+        )
+        .map(({ row }) => row)
+    return [
+      ...history
+        .filter((use) => !defined.has(use.line))
+        .map((use) => ({
+          id: `recent:${use.line}`,
+          name: use.count === 1 ? "Run once" : `Run ${use.count} times`,
+          command: use.line,
+          kind: "recent" as const,
+        })),
+      ...byUse(helpers.map((helper) => ({
+        id: helper.id,
+        name: helper.name,
+        command: helper.command,
+        kind: "helper" as const,
+        confirm: helper.confirm || undefined,
+      }))),
+      ...byUse(
+        scripts.map((script) => ({
+          id: script.command,
+          name: script.name,
+          command: script.command,
+          kind: "script" as const,
+        }))
+      ),
+    ]
+  }, [helpers, scripts, history])
   const matches = React.useMemo(() => {
     if (!open || token === null) return []
     const q = token.toLowerCase()
-    return helpers.filter(
-      (helper) =>
-        helper.name.toLowerCase().startsWith(q) || helper.command.toLowerCase().startsWith(q)
+    return suggestions.filter(
+      (suggestion) =>
+        suggestion.name.toLowerCase().startsWith(q) || suggestion.command.toLowerCase().startsWith(q)
     )
-  }, [open, token, helpers])
+  }, [open, token, suggestions])
 
   // Escape closes the menu for this token only; typing anything reopens it.
   React.useEffect(() => setDismissed(false), [text])
   // Clamp instead of resetting so narrowing the query keeps the highlight stable.
   const index = Math.min(selected, Math.max(matches.length - 1, 0))
 
-  const pick = (helper: HelperCommand) => {
+  const pick = (suggestion: ProjectCommandSuggestion) => {
     /* The command, not the name: what goes in the box is what will run, and a
        line the user can read and edit beats an opaque label. */
-    setText(`!${helper.command}`)
+    setText(`!${suggestion.command}`)
     setSelected(0)
   }
 
@@ -133,7 +215,6 @@ export function useProjectCommands(opts: {
  * would be the menu arguing with the box.
  */
 export function ProjectCommandMenu({ state }: { state: ProjectCommandState }) {
-  const listRef = React.useRef<HTMLDivElement>(null)
   const showing = state.matches.length > 0
   /* Urgent: a menu you are arrow-keying through has to be visible to be a menu,
      so while it is up the shelf is open whatever the summary line would say. */
@@ -147,52 +228,53 @@ export function ProjectCommandMenu({ state }: { state: ProjectCommandState }) {
         }
       : null
   )
-  React.useEffect(() => {
-    listRef.current
-      ?.querySelector('[data-selected="true"]')
-      ?.scrollIntoView({ block: "nearest" })
-  }, [state.selected, state.matches])
-
   if (!showing) return null
 
   return (
-    <ComposerStripItem>
-      {/* Caps at roughly five rows and scrolls — the same rule the command menu
-          and the plan list follow. */}
-      <div ref={listRef} className="max-h-44 overflow-y-auto p-1 overscroll-contain">
-        {state.matches.map((helper, i) => (
-          <button
-            key={helper.id}
-            type="button"
-            data-selected={i === state.selected || undefined}
-            /* mousedown, not click: click fires after the textarea has lost
-               focus, and preventDefault here keeps the caret where typing
-               continues. */
-            onMouseDown={(e) => {
-              e.preventDefault()
-              state.pick(helper)
-            }}
-            onMouseMove={() => state.setSelected(i)}
-            className={cn(
-              "flex w-full items-baseline gap-2 rounded-lg px-2 py-2 text-left sm:py-1",
-              i === state.selected && "bg-accent text-accent-foreground"
-            )}
-          >
-            <SquareTerminal className="size-3.5 shrink-0 self-center text-muted-foreground" />
-            {/* The command leads, because that is what a pick puts in the box. */}
-            <span className="min-w-0 truncate font-mono text-xs">!{helper.command}</span>
-            <span className="shrink-0 text-[11px] text-muted-foreground">{helper.name}</span>
-            {/* A helper that asks before it runs says so here too, so a row
-                picked with the keyboard is not a surprise dialog. */}
-            {helper.confirm && (
+    <CompleterList selected={state.selected} count={state.matches.length}>
+      {state.matches.map((suggestion, i) => (
+        <React.Fragment key={suggestion.id}>
+          {/* The two lists are already ordered (helpers, then scripts), so the
+              heading is drawn where the kind changes — said once for the group
+              instead of as a badge on every row of it, which is a column of
+              chips repeating what the run above it already established. */}
+          {suggestion.kind !== state.matches[i - 1]?.kind && (
+            <CompleterSection>
+              {suggestion.kind === "recent"
+                ? "Recent"
+                : suggestion.kind === "helper"
+                  ? "Project helpers"
+                  : "package.json scripts"}
+            </CompleterSection>
+          )}
+        <CompleterRow
+          icon={
+            suggestion.kind === "recent"
+              ? History
+              : suggestion.kind === "helper"
+                ? SquareTerminal
+                : FileCode
+          }
+          /* The command leads, because that is what a pick puts in the box —
+             and the name it is known by is the second line. */
+          label={`!${suggestion.command}`}
+          description={suggestion.name}
+          /* A helper that asks before it runs says so here too, so a row
+             picked with the keyboard is not a surprise dialog. */
+          trailing={
+            suggestion.confirm ? (
               <TriangleAlert
-                className="size-3 shrink-0 self-center text-amber-500"
+                className="size-3 shrink-0 text-amber-500"
                 aria-label="Asks before running"
               />
-            )}
-          </button>
-        ))}
-      </div>
-    </ComposerStripItem>
+            ) : undefined
+          }
+          selected={i === state.selected}
+          onPick={() => state.pick(suggestion)}
+          onHover={() => state.setSelected(i)}
+        />
+        </React.Fragment>
+      ))}
+    </CompleterList>
   )
 }

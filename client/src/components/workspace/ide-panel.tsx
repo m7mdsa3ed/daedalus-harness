@@ -20,6 +20,7 @@
 
    Monaco itself is reached only through `lib/ide/monaco.ts`'s dynamic import,
    so a reader who never opens this panel never downloads it. */
+import { HOME_PROJECT_ID } from "@/lib/workspace/panels"
 import * as React from "react"
 import type { IDockviewPanelProps } from "dockview-react"
 import { FileCode2Icon, FilesIcon, GitCompareIcon, SearchIcon, XIcon } from "lucide-react"
@@ -144,7 +145,7 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
   }, [])
 
   React.useEffect(() => {
-    const name = project?.name ?? "IDE"
+    const name = project?.name ?? (projectId === HOME_PROJECT_ID ? "Home" : "IDE")
     api.setTitle(active ? `${titleOf(active)} — ${name}` : `${name} — IDE`)
   }, [api, project, active])
 
@@ -209,7 +210,7 @@ export function IdePanel({ api, params }: IDockviewPanelProps<{ projectId: strin
     { label: "Close all", onClick: () => closeAllTabs(projectId) },
   ]
 
-  if (!project)
+  if (!project && projectId !== HOME_PROJECT_ID)
     return (
       <div className="p-2">
         <Empty>This project is no longer available.</Empty>

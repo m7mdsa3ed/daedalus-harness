@@ -9,38 +9,38 @@
    The sidebar's own pieces are `components/sidebar/`; the route tree and the
    page titles are `components/routes.tsx`, the only importer of the pages. */
 import * as React from "react"
-import { ChevronLeft, GitBranch, SearchIcon, Settings2, SlidersHorizontalIcon } from "lucide-react"
+import { GitBranch, SearchIcon, Settings, SlidersHorizontalIcon } from "lucide-react"
 import { useLocation, useNavigate } from "react-router"
 import type { DockviewApi } from "dockview-react"
 import { Button } from "@/components/ui/button"
 import { Logo } from "@/components/ui/logo"
-import { ProgressiveBlur } from "@/components/ui/progressive-blur"
 import { SidebarGroupsSkeleton } from "@/components/ui/skeletons"
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
   SidebarHeader,
   SidebarInset,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
   SidebarProvider,
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar"
 import { CommandPalette, useCommandPalette } from "@/components/command-palette"
 import { ImportThreadsDialog } from "@/components/import-threads"
-import { NotificationBell } from "@/components/notifications/bell"
-import { pageRoutes, SettingsNav, usePageHeading } from "@/components/routes"
+import { NotificationIconButton } from "@/components/notifications/bell"
+import { pageRoutes, usePageHeading } from "@/components/routes"
 import { sectionOf, type SettingsSectionId } from "@/components/settings/sections"
 import { SessionSettingsDialog } from "@/components/session-settings"
 import { ShortcutsHelp, useShortcutsHelp } from "@/components/shortcuts-help"
 import { useSidebarWidth } from "@/components/sidebar/resizer"
-import { ServerMenu } from "@/components/sidebar/server-menu"
-import { GROUP, MENU, ROW, SidebarNav, SidebarUsage, ThreadSidebar } from "@/components/thread-sidebar"
+import { ServerIconButton } from "@/components/sidebar/server-menu"
+import {
+  FOOTER_ICON,
+  SettingsNav,
+  SidebarNav,
+  SidebarUsage,
+  ThreadSidebar,
+} from "@/components/thread-sidebar"
 import { WorkspaceDock, useWorkspaceDock } from "@/components/workspace/dock"
 import { PageRoutesProvider } from "@/components/workspace/page-panel"
 import { useShortcut } from "@/hooks/use-hotkey"
@@ -59,10 +59,10 @@ import {
 import type { ServerSettings } from "@/lib/settings"
 import { setSidebarLayout, useSidebarLayout } from "@/lib/sidebar-layout"
 import { formatChord } from "@/lib/shortcuts"
-import { useStoreSelect } from "@/lib/store"
+import { useStoreHandle, useStoreSelect } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { openTerminal } from "@/lib/workspace/open-terminal"
-import type { PanelKind } from "@/lib/workspace/panels"
+import { HOME_PROJECT_ID, type PanelKind } from "@/lib/workspace/panels"
 import { consumeQueuedPanels } from "@/lib/workspace/pending-panels"
 
 /** Closes the mobile sidebar sheet whenever the route changes. Desktop keeps
@@ -108,6 +108,7 @@ export function AppShell({
      streamed token of every open thread. None of the three is touched by an
      `update`; `sessions` moves once per turn, at most. */
   const sessions = useStoreSelect((state) => state.sessions)
+  const storeHandle = useStoreHandle()
   const projects = useProjects()
   const profiles = useProfiles()
   /* `bootstrap` answers for the session list alone — each catalog is its own
@@ -134,9 +135,6 @@ export function AppShell({
   const inSettings = location.pathname.startsWith("/settings")
   const section = inSettings ? sectionOf(location.pathname.split("/")[2] ?? "") : null
   const sessionId = routedThreadId(location.pathname, location.search)
-  // Leaving settings returns to the thread it was opened from.
-  const lastThread = React.useRef<string | null>(null)
-  if (sessionId) lastThread.current = sessionId
   const active = sessions.find((s) => s.id === sessionId)
   /* Where the thread in front of us was branched from, if anywhere — drawn as
      a chip, followed only by a click. The list holds the trash too, so a
@@ -273,11 +271,24 @@ export function AppShell({
      layout save then writes to disk. */
   React.useEffect(() => {
     if (loading || failed) return
+    /* The session list is read off the store rather than off this render's
+       snapshot. `sessions` is a `useSyncExternalStore` value, and the store
+       publishes its ref in a layout effect — so a commit that flips `loading`
+       (the boot promise resolving) can render before that ref caught up, and
+       this effect then runs holding an empty list while the store already holds
+       every row. Pruning on that empty list closed the very tabs the restore had
+       just put back, and the debounced layout save wrote the loss to disk — the
+       same failure the `failed` gate above exists to prevent, arriving by a
+       different door. The store is authoritative at the moment the effect runs,
+       so it is what the prune is given; the guard below is the backstop for a
+       genuinely empty one. */
+    const live = storeHandle.getState().sessions
+    if (live.length === 0) return
     dock.prunePanels({
-      sessions: sessions.map((session) => session.id),
-      projects: projects.map((project) => project.id),
+      sessions: live.map((session) => session.id),
+      projects: [HOME_PROJECT_ID, ...projects.map((project) => project.id)],
     })
-  }, [loading, failed, sessions, projects, dock])
+  }, [loading, failed, sessions, projects, dock, storeHandle])
 
   const handleDockReady = React.useCallback(
     (api: DockviewApi) => {
@@ -311,44 +322,80 @@ export function AppShell({
   }, [ready, location.search])
 
   /* One opener for every workspace panel, so the tab strip's + menu, the
-     chords below and the palette cannot drift apart. Toggling rather than
-     stacking: pressing the same thing twice should put the transcript back. */
+     chords below and the palette cannot drift apart.
+
+     **A + opens a new one; a chord shows you the one you have.** Pressing the
+     button that means "open a terminal" a second time and being handed the
+     terminal already open is the dock refusing the thing the strip's + is for
+     — and with groups there is a second place to put it. So the default mints
+     a fresh instance (`viewId`, or a whole new terminal), and `reuse` is what
+     the chords and the thread's own links pass: those mean "show me the IDE
+     for this project", which is a different question. */
   const openWorkspacePanel = React.useCallback(
-    (kind: PanelKind) => {
+    (kind: PanelKind, reuse?: boolean) => {
+      /* Only ever the *second* panel's suffix. The first of a kind keeps the
+         plain `ide:<project>`/`tasks`/`default` id every stored layout and
+         every reusing caller already names, so nothing has to migrate and a
+         chord still lands on the one the + opened. */
+      const second = (existing: unknown) =>
+        !reuse && existing ? { viewId: crypto.randomUUID().slice(0, 8) } : {}
       /* Boards are the server's, not a project's, so this one opens with no
          project at all — the only kind that does. Reopened with the board it
          was left on, not reset to "no board": the descriptor is where a tasks
          panel keeps its place. */
       if (kind === "tasks") {
         const existing = dock.listPanels().find((entry) => entry.panel.kind === "tasks")
-        dock.openPanel(existing?.panel ?? { kind: "tasks" }, { direction: "right" })
+        if (existing && reuse) dock.openPanel(existing.panel, { direction: "right" })
+        else dock.openPanel({ kind: "tasks", ...second(existing) }, { direction: "right" })
         return
       }
-      const projectId = routeRef.current.projectId
-      if (!projectId) return
+      /* Which project the new panel acts on is the panel *in front of you*,
+         and only then the route: focusing a terminal or an IDE navigates
+         nowhere, so the route still names the chat you were last reading and
+         a + pressed over project A's terminal used to open project B's. Chats
+         and pages write the route themselves, which is what the fallback
+         answers for. */
+      const focused = dock.activeDescriptor()
+      const focusedProject =
+        focused && "projectId" in focused ? (focused.projectId as string | undefined) : undefined
+      const projectId =
+        (focusedProject === HOME_PROJECT_ID
+          ? HOME_PROJECT_ID
+          : projects.find((candidate) => candidate.id === focusedProject)?.id) ??
+        routeRef.current.projectId ??
+        HOME_PROJECT_ID
       if (kind === "terminal") {
+        /* A terminal is already one panel per shell — the only thing reuse
+           changes here is whether a second shell is started at all. */
         const existing = dock
           .listPanels()
           .find((entry) => entry.panel.kind === "terminal" && entry.panel.projectId === projectId)
-        if (existing) dock.openPanel(existing.panel)
+        if (existing && reuse) dock.openPanel(existing.panel)
         else void openTerminal(dock, projectId)
       } else if (kind === "web") {
         /* The stored preview URL rides on the descriptor, so a project panel
            opens on its dev server instead of an empty address bar — and an
            existing panel is re-pointed to it the same way. */
         const previewUrl = projects.find((candidate) => candidate.id === projectId)?.previewUrl ?? ""
+        const existing = dock
+          .listPanels()
+          .find((entry) => entry.panel.kind === "web" && entry.panel.viewId === "default")
         dock.openPanel(
           {
             kind: "web",
             trust: "project",
-            projectId,
+            ...(projectId !== HOME_PROJECT_ID ? { projectId } : {}),
             viewId: "default",
+            ...second(existing),
             ...(previewUrl ? { url: previewUrl } : {}),
           },
           { direction: "right" }
         )
       } else if (kind === "ide") {
-        dock.openPanel({ kind: "ide", projectId }, { direction: "right" })
+        const existing = dock
+          .listPanels()
+          .find((entry) => entry.panel.kind === "ide" && entry.panel.projectId === projectId)
+        dock.openPanel({ kind: "ide", projectId, ...second(existing) }, { direction: "right" })
       }
     },
     [dock, projects]
@@ -358,8 +405,16 @@ export function AppShell({
      shortcut, so something has to answer for it. The chords are named in
      lib/shortcuts, which is also what the help sheet prints. */
   useShortcut("newThread", () => startRef.current.startThread())
-  useShortcut("terminal", () => openWorkspacePanel("terminal"))
-  useShortcut("ide", () => openWorkspacePanel("ide"))
+  useShortcut("terminal", () => openWorkspacePanel("terminal", true))
+  useShortcut("ide", () => openWorkspacePanel("ide", true))
+  /* The two chords that open a chooser rather than doing a thing. They go
+     through the palette's own pages — one list per question, whether it was
+     reached by chord or by typing its row — and the palette answers for a
+     thread that has nothing to offer (no model selector, no draft) by listing
+     nothing, which is the same answer its row's absence gives. */
+  useShortcut("changeModel", () => palette.openAt("model"))
+  useShortcut("changeProject", () => palette.openAt("project"))
+  useShortcut("viewOptions", () => setViewSettings(true))
 
   /* The route tree — every page that is not the transcript — lives in
      `components/routes.tsx`, which is also the only module that imports those
@@ -442,13 +497,12 @@ export function AppShell({
                 Daedalus
               </span>
             </button>
-            {/* Search and the bell sit beside the brand; in the icon rail they
-                stack under it. Both are the app's own, not a route's and not a
-                dock group's — the sidebar is the one surface that is on every
-                route and never splits, which is why they are here rather than
-                in a header the workspace shares with tabs. Same chip size as
-                the header's (`HEADER_CHIP`): this row and the header are one
-                bar across the seam, so its controls are the same object. */}
+            {/* The palette, beside the brand. It is the app's own, not a
+                route's and not a dock group's — the sidebar is the one surface
+                that is on every route and never splits, which is why it is
+                here rather than in a header the workspace shares with tabs.
+                In the icon rail it stacks under the brand with the footer's
+                icons, which is where every other control lives. */}
             <div className="ml-auto flex items-center gap-0.5 group-data-[collapsible=icon]:ml-0 group-data-[collapsible=icon]:flex-col">
               <Button
                 variant="ghost"
@@ -460,38 +514,24 @@ export function AppShell({
               >
                 <SearchIcon className="size-3.5" />
               </Button>
-              <NotificationBell />
             </div>
           </div>
         </SidebarHeader>
+        {/* ── One sidebar, two contents, chosen by the panel in front of you ──
+            Settings sections are this sidebar's content while the active panel
+            is a settings page; the thread list is its content otherwise.
+
+            This was tried before and reverted, because the sidebar followed
+            the *route* while the panel you were reading could be a chat. What
+            makes it correct now is that the dock writes the focused panel's
+            path to the URL (`onDidActivePanelChange`), so the route IS the
+            active panel's descriptor — focus the chat beside a settings tab
+            and the sidebar is threads again, on the same gesture. Settings
+            therefore carries no second sidebar of its own; see
+            `sidebar/settings-nav.tsx`. */}
         <SidebarContent className="gap-0 pt-2">
           {inSettings ? (
-            <>
-              <SidebarGroup className={GROUP}>
-                <SidebarGroupContent>
-                  <SidebarMenu className={MENU}>
-                    <SidebarMenuItem>
-                      <SidebarMenuButton
-                        size="sm"
-                        tooltip="Back to threads"
-                        onClick={() =>
-                          void navigate(lastThread.current ? threadPath(lastThread.current) : "/")
-                        }
-                        className={ROW}
-                      >
-                        <ChevronLeft className="size-4" />
-                        <span>Back to threads</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  </SidebarMenu>
-                </SidebarGroupContent>
-              </SidebarGroup>
-              <SettingsNav
-                section={section}
-                onSelect={(next) => void navigate(settingsPath(next))}
-                onOverview={() => void navigate(settingsRootPath())}
-              />
-            </>
+            <SettingsNav />
           ) : (
             <>
               {/* The fixed nav rows sit above the list, the way the Codex and
@@ -503,27 +543,40 @@ export function AppShell({
           )}
         </SidebarContent>
         <SidebarFooter className="p-2">
-          {/* Above the account row: what is left of the plans this machine
-              spends is account-level, like the server being talked to. Draws
-              itself away when nothing reports a plan (see sidebar/usage.tsx). */}
-          <SidebarUsage />
-          <SidebarMenu className={MENU}>
-            <SidebarMenuItem>
-              <ServerMenu settings={settings} onAddServer={onAddServer} />
-            </SidebarMenuItem>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                size="sm"
-                tooltip="Settings"
-                isActive={inSettings}
-                onClick={() => openSettings()}
-                className={ROW}
-              >
-                <Settings2 />
-                <span>Settings</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
+          {/* ── One row of icons ──
+              The four things the panel itself needs, on one line: what is left
+              of the plans this machine spends, the server it is talking to,
+              what has arrived while you were away, and the way into every
+              setting. They were two rows of labelled buttons, which cost the
+              thread list their 128px and made the panel's furniture read as
+              more places to go. Each is a control that opens something, and
+              each says its own name in a tooltip. `SidebarUsage` draws itself
+              away when nothing reports a plan, so a machine with no plan has
+              three. */}
+          <div className="flex items-center gap-0.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:gap-1">
+            <SidebarUsage />
+            <ServerIconButton settings={settings} onAddServer={onAddServer} />
+            <NotificationIconButton />
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              title="Settings"
+              aria-label="Settings"
+              onClick={() => openSettings()}
+              className={cn(
+                FOOTER_ICON,
+                /* The row that opens the section you are in says so, exactly as
+                   the labelled rows did. */
+                inSettings && "bg-sidebar-accent text-sidebar-accent-foreground",
+                "ml-auto group-data-[collapsible=icon]:ml-0"
+              )}
+            >
+              {/* A bare gear, not the "cog with sliders": the two-tone glyph
+                  reads as noise at 16px, and the sliders half of it is the
+                  View-settings button this panel used to carry. */}
+              <Settings />
+            </Button>
+          </div>
         </SidebarFooter>
         {sidebar.resizer}
       </Sidebar>
@@ -560,37 +613,52 @@ export function AppShell({
             every tab of a group standing in this row, and every attempt to
             select the first line of a transcript scrolled under it.
 
-            Below `md` the header lines up with the transcript and the composer,
-            which both keep a 16px gutter (`px-4`). The toggle is a 28px button
-            around a 14px glyph with no ground of its own, so what the eye lines
-            up is the glyph: 9px of padding puts its edge on the 16px line.
+            Below `md` the header is the same container as the transcript and
+            the composer: `px-4`, the 16px gutter they keep, so the bar's box
+            starts where the content below it does. (It was 9px — the glyph's
+            own edge on the 16px line rather than the chip's — which lined up a
+            control with the text but made the bar a wider container than
+            everything under it.)
             `px-1` above `md`, where the chips stand on the card's own edge. The
             tab strip in the band pads by this box's content edge
             (`--dock-band-left`, workspace/dock.tsx), so it follows. */}
         <header
           data-app-header
           data-drag-region
-          className="pointer-events-none absolute inset-x-0 top-0 z-30 flex h-[var(--app-header-h)] items-center gap-1 bg-transparent px-[9px] pt-[var(--app-inset-top)] sm:gap-2 md:px-1"
+          className="pointer-events-none absolute inset-x-0 top-0 z-30 flex h-[var(--app-header-h)] items-center gap-1 bg-transparent px-4 pt-[var(--app-inset-top)] sm:gap-2 md:px-1"
         >
-          {/* Below `md` there is no card: the strip in the band is an overlay
-              again (`index.css`) and the transcript scrolls up under the tabs
-              and this bar, so the bar keeps its progressive blur there — the
-              ramp that takes a line out of focus before it reaches the chrome.
-              `md:hidden`, because at `md` the card starts under the tabs and
-              the tail would only blur its top rem. */}
-          <ProgressiveBlur
-            position="top"
-            height="calc(100% + 1rem)"
-            blurLevels={[0.4, 0.8, 1.4, 2.2, 3.4, 5.4, 8.6, 14]}
-            className="absolute inset-x-0 top-0 -z-10 md:hidden"
-          />
+          {/* ── The header paints NOTHING, and carries no backdrop filter ──
+              One bar on every device: no ground of its own, no ramp, no blur.
+              The band it spans is the shell's ground (`body::before`,
+              `--app-ground`), the same sheet the sidebar and the gutters are
+              transparent down to, so the strip in this row and the sidebar
+              beside it are one surface by construction — which is only true
+              while nothing here paints over it.
+
+              A `backdrop-blur` here is that paint, and under the window's own
+              material it is the thing that turns the material off. A
+              backdrop-filter composites its backdrop *from the page*, and
+              macOS vibrancy / Windows mica live behind the **window**, not in
+              the page — so the filtered box is drawn without them and the
+              header's row comes out a flat slab across exactly the tab strip's
+              band, against a sidebar two pixels away that still shows the
+              desktop. The blur was there to soften a line of transcript
+              passing under the chips, and nothing passes under them any more:
+              the band is in flow above the card (`data-header-band`,
+              index.css) and the transcript starts below it. A filter with
+              nothing to filter, costing a compositing layer and the OS
+              material. */}
           {/* The two device-level controls. No title and no crumb — every
               route is a tab, and the tab says the name; a thread keeps only
               its fork badge here. Wrapped and named so the dock can measure
               what a strip in this row has to reserve (`--dock-band-left`).
               Nothing on the right: the bell and the palette stand in the
               sidebar header. */}
-          <div data-header-left className="flex min-w-0 items-center gap-1 sm:gap-2">
+          {/* `md`, not `sm`: below `md` this cluster stands *in the tab strip's
+              row*, where the one gutter is 4px (the tab chip's `mx-0.5` twice
+              over). At `sm` it widened to 8px while the tab 2px away from it
+              did not, which is the row reading as two different spacings. */}
+          <div data-header-left className="flex min-w-0 items-center gap-1 md:gap-2">
             <SidebarTrigger className={cn(HEADER_CHIP, "pointer-events-auto shrink-0")} />
             {/* How transcripts are drawn, on this device — beside the one other
                 control that is also this device's and not this route's.
@@ -653,6 +721,8 @@ export function AppShell({
         onNewProject={() => void navigate(settingsFormPath("projects"))}
         onImportThreads={() => setImporting(true)}
         onShortcuts={() => shortcuts.setOpen(true)}
+        onViewOptions={() => setViewSettings(true)}
+        initialPage={palette.initialPage}
       />
       <ShortcutsHelp open={shortcuts.open} onOpenChange={shortcuts.setOpen} />
       {/* Owned here rather than by the palette, which unmounts as soon as a

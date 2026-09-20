@@ -1,0 +1,117 @@
+<!doctype html>
+<!--
+  T5 — Two panes. The transcript and its margin.
+
+  The column moves left and a second, 240px column opens on the right. It
+  holds what is *about* the thread rather than what is in it: the plan as the
+  live checklist, the files this turn touched, the context the window is
+  using, the queue. The transcript itself is smaller and quieter, because the
+  reading beside it answers "what is this thread doing" without scrolling.
+
+  The margin needs the dock to be wide. In a panel under ~1100px it folds to
+  nothing (the max-width query below) — the margin is a thing a wide monitor
+  buys you, not a thing the thread depends on.
+-->
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="/logo.svg" type="image/svg+xml" />
+<title>T5 — Two panes</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./transcript.css" />
+<style>
+  :root { --dock-h: 220px; }
+  .split { position: absolute; inset: 0; display: flex; flex-direction: column; }
+  .split-row { flex: 1 1 auto; min-height: 0; display: flex; }
+  .tv { position: relative; flex: 1 1 auto; min-width: 0; }
+  .col { max-width: 660px; margin: 0 auto; padding: 0 16px; }
+  .margin {
+    --w: 256px; width: var(--w); flex: 0 0 auto; border-left: 1px solid var(--border-60);
+    overflow-y: auto; padding: 18px 14px; display: flex; flex-direction: column; gap: 16px;
+  }
+  .mgroup h3 { margin: 0 0 8px; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: color-mix(in oklab, var(--muted-foreground) 75%, transparent); }
+  .todos .todo { display: flex; align-items: flex-start; gap: 8px; font-size: 0.75rem; color: var(--muted-foreground); padding: 3px 0; }
+  .todos .box { width: 14px; height: 14px; margin-top: 1px; border-radius: 4px; box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--muted-foreground) 50%, transparent); display: grid; place-items: center; flex: 0 0 auto; }
+  .todos .box svg { width: 9px; height: 9px; }
+  .todos .todo[data-done="true"] .box { background: var(--primary); color: var(--primary-foreground); box-shadow: none; }
+  .todos .todo[data-done="true"] .txt { text-decoration: line-through; opacity: 0.55; }
+  .todos .todo[data-active="true"] .txt { color: var(--foreground); font-weight: 500; }
+  .mlist { display: flex; flex-direction: column; }
+  .mrow { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 0.75rem; color: var(--muted-foreground); font-family: ui-monospace, Menlo, monospace; }
+  .mrow .f { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mrow .stat { margin-left: auto; display: flex; gap: 6px; font-variant-numeric: tabular-nums; }
+  .mrow .add { color: var(--green); }
+  .mrow .del { color: var(--destructive); }
+  .gauge { height: 5px; border-radius: 999px; background: var(--muted); overflow: hidden; }
+  .gauge i { display: block; height: 100%; width: 32%; background: var(--step-think); }
+  .mrow2 { display: flex; align-items: baseline; justify-content: space-between; font-size: 0.75rem; color: var(--muted-foreground); padding: 3px 0; font-variant-numeric: tabular-nums; }
+  .mrow2 b { color: var(--foreground); font-weight: 500; }
+  .qcard { border-radius: 10px; border: 1px dashed var(--border); padding: 8px 10px; font-size: 0.75rem; color: var(--muted-foreground); }
+  .qcard .x { float: right; opacity: 0.6; }
+  @media (max-width: 1100px) { .margin { display: none; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" data-sidebar></aside>
+  <main class="main">
+    <div data-tabs></div>
+    <div class="panel">
+      <div class="split">
+        <div class="split-row">
+          <div class="tv">
+            <div class="tv-scroll"><div class="col" data-flow></div></div>
+          </div>
+          <aside class="margin">
+            <div class="mgroup">
+              <h3>Plan</h3>
+              <div class="todos" data-plan-margin></div>
+            </div>
+            <div class="mgroup">
+              <h3>This turn</h3>
+              <div class="mlist">
+                <div class="mrow"><span class="f">composer/composer.tsx</span><span class="stat"><span class="add">+3</span><span class="del">−2</span></span></div>
+                <div class="mrow"><span class="f">index.css</span><span class="stat"><span class="add">+11</span><span class="del">−7</span></span></div>
+                <div class="mrow"><span class="f">composer/shelf.tsx</span><span class="stat"><span class="add">+1</span><span class="del">−1</span></span></div>
+              </div>
+            </div>
+            <div class="mgroup">
+              <h3>Context</h3>
+              <div class="gauge"><i></i></div>
+              <div class="mrow2"><span>Window</span><b>32%</b></div>
+              <div class="mrow2"><span>This turn</span><b>24.5k</b></div>
+              <div class="mrow2"><span>Plan left</span><b>61%</b></div>
+            </div>
+            <div class="mgroup">
+              <h3>Queued</h3>
+              <div class="qcard"><span class="x">×</span>and check it at 320px too</div>
+            </div>
+          </aside>
+        </div>
+        <div data-dock></div>
+      </div>
+    </div>
+  </main>
+</div>
+<script src="./shared-transcript.js"></script>
+<script>
+  const rows = TX.flow()
+  const plan = rows.find((r) => r.t === "plan")
+  document.querySelector("[data-tabs]").innerHTML = TX.tabs("Ship the composer width fix")
+  document.querySelector("[data-flow]").innerHTML = TX.render(rows)
+  document.querySelector("[data-dock]").innerHTML = TX.composer({ placeholder: "Reply…" })
+  /* The plan lives in the margin here, so it leaves the flow — and the margin
+     is built from the same data, not a copy of it. */
+  document.querySelector("[data-flow] [data-plan]").remove()
+  document.querySelector("[data-plan-margin]").innerHTML = plan.todos
+    .map(
+      (td) =>
+        `<div class="todo" data-done="${!!td.done}" data-active="${!!td.active}"><span class="box">${td.done ? TX.I.check : ""}</span><span class="txt">${TX.esc(td.text)}</span></div>`
+    )
+    .join("")
+  TX.sidebar(document.querySelector("[data-sidebar]"))
+  TX.theme()
+</script>
+</body>
+</html>

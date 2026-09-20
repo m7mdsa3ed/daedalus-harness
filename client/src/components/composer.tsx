@@ -4,7 +4,6 @@
    `components/composer/composer.tsx`, with the pieces that are a subject of
    their own beside it:
 
-   — `composer/notices.tsx`        the connection banner and the archive note;
    — `composer/add-menu.tsx`       the "+", and the two pickers only it clicks;
    — `composer/text-insertions.ts` what that menu types on the user's behalf,
                                    and the caret slot they all go through;

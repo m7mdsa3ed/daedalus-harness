@@ -10,6 +10,7 @@ import { BrowserRouter } from 'react-router'
 import App from './App.tsx'
 import { ErrorBoundary } from './components/error-boundary.tsx'
 import { installGlobalErrorReporting } from './lib/errors.ts'
+import { installChunkReload } from './lib/chunk-reload.ts'
 import { installDesktopNotifications, installNotificationTestHelper } from './lib/notifications.ts'
 import { registerPwa } from './lib/pwa'
 import { watchInstallability } from './lib/install.ts'
@@ -22,6 +23,12 @@ import { installWindowControlsOverlay } from './hooks/use-windows-controls-overl
 // threw outside React's tree, would otherwise vanish into the console. The
 // ErrorBoundary only sees failures that happen during a render.
 installGlobalErrorReporting()
+// A tab open across a deploy asks for the previous build's chunk hashes, which
+// no longer exist. Vite says so on `vite:preloadError` and would rethrow; this
+// takes that failure and reloads onto a build whose hashes match, because
+// `React.lazy` caches a rejected import for the life of the page and the
+// boundary's "Try again" can otherwise only re-throw it.
+installChunkReload()
 // `daedalus.notify()` in the console — the only way to look at a notification
 // without arranging for a turn to finish in a window you are not watching.
 installNotificationTestHelper()

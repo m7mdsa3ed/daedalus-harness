@@ -1,0 +1,272 @@
+<!doctype html>
+<!--
+  v10 — Sticky sections. The v2 one-column index, with two changes that are
+  about a *long* list:
+
+    1. Every tier's heading is sticky, so "Yesterday" stays over its own rows
+       while the list scrolls instead of sliding away with the first one.
+    2. A "Needs you" strip is pinned above the scroll region entirely — the one
+       reading that must never be scrolled for is the one that never moves.
+
+  It is still v2's shape: one index, a chip row for pins, project folders at
+  the bottom, one footer. What it trades is a little vertical chrome for never
+  losing the heading of the list you are reading.
+-->
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="/logo.svg" type="image/svg+xml" />
+<title>v10 — Sticky sections</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --radius: 0.625rem; --radius-xl: calc(var(--radius) * 1.4);
+    --background: oklch(1 0 0); --foreground: oklch(0.145 0 0); --card: oklch(1 0 0);
+    --muted: oklch(0.97 0 0); --muted-foreground: oklch(0.556 0 0); --primary: oklch(0.205 0 0);
+    --sidebar: var(--background); --sidebar-foreground: oklch(0.145 0 0);
+    --sidebar-accent: oklch(0.9 0 0); --sidebar-border: oklch(0.91 0 0);
+    --app-ground: oklch(0.97 0 0); --amber: oklch(0.769 0.188 70.08);
+    --green: oklch(0.723 0.219 149.579); --blue: oklch(0.707 0.165 254.624); --violet: oklch(0.606 0.25 292.717);
+  }
+  html.dark {
+    --background: oklch(0.145 0 0); --foreground: oklch(0.985 0 0); --card: oklch(0.205 0 0);
+    --muted: oklch(0.269 0 0); --muted-foreground: oklch(0.708 0 0); --primary: oklch(0.922 0 0);
+    --sidebar: var(--background); --sidebar-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.269 0 0); --sidebar-border: oklch(1 0 0 / 10%);
+    --app-ground: oklch(0.12 0 0);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: "Figtree", ui-sans-serif, system-ui, sans-serif; font-size: 13px; line-height: 1.38;
+    color: var(--foreground); background: var(--app-ground); -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  svg { width: 16px; height: 16px; flex: 0 0 auto; }
+  [hidden] { display: none !important; }
+
+  .app { display: flex; height: 100vh; overflow: hidden; }
+  .sidebar {
+    --w: 272px; width: var(--w); min-width: 200px; max-width: 420px; flex: 0 0 auto;
+    display: flex; flex-direction: column; overflow: hidden;
+    background: var(--sidebar); border-right: 1px solid var(--sidebar-border);
+  }
+  .main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; padding: 6px 6px 6px 0; }
+  .tabs { display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 4px; }
+  .tab {
+    display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px 0 10px;
+    border-radius: 8px; color: var(--muted-foreground); box-shadow: inset 0 0 0 1px var(--sidebar-border);
+  }
+  .tab[data-active="true"] { color: var(--foreground); background: var(--card); box-shadow: inset 2px 0 0 0 var(--primary), 0 1px 2px rgba(0,0,0,.12); }
+  .tab .dot { width: 6px; height: 6px; }
+  .card { flex: 1 1 auto; border-radius: var(--radius-xl); background: var(--card); display: grid; place-items: center; color: var(--muted-foreground); font-size: 12px; }
+
+  /* ── Head ── */
+  .head { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; padding: 10px 8px 4px; }
+  .brand-row { display: flex; align-items: center; gap: 8px; height: 30px; padding-left: 4px; }
+  .logo { width: 20px; height: 20px; border-radius: 6px; background: linear-gradient(140deg, var(--violet), var(--blue)); display: grid; place-items: center; color: white; }
+  .logo svg { width: 12px; height: 12px; }
+  .brand-row span { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+  .head-actions { margin-left: auto; display: flex; gap: 2px; }
+  .icon-btn { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 7px; color: var(--muted-foreground); }
+  .icon-btn:hover { background: var(--sidebar-accent); color: var(--sidebar-foreground); }
+  .primary { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: 8px; background: var(--sidebar-accent); font-weight: 500; }
+  .search { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: 8px; color: var(--muted-foreground); box-shadow: inset 0 0 0 1px var(--sidebar-border); }
+  .search:hover { background: var(--sidebar-accent); }
+  kbd { font: inherit; font-size: 10px; padding: 1px 5px; border-radius: 4px; margin-left: auto; color: var(--muted-foreground); background: var(--muted); box-shadow: 0 0 0 1px var(--sidebar-border); }
+
+  /* ── The pinned strip ──
+     Above the scroll region, so it is the one thing in the panel that cannot
+     scroll away: what is waiting on you is what the sidebar is for. */
+  .needs { flex: 0 0 auto; margin: 6px 8px 0; padding: 6px 6px 6px 8px; border-radius: 10px;
+    background: color-mix(in oklab, var(--amber) 10%, transparent);
+    border: 1px solid color-mix(in oklab, var(--amber) 30%, transparent); }
+  .needs-head { display: flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 700;
+    letter-spacing: 0.07em; text-transform: uppercase; color: color-mix(in oklab, var(--amber) 75%, var(--foreground)); }
+  .needs-head .n { margin-left: auto; font-weight: 600; }
+  .needs-head button { font-size: 10px; text-transform: none; letter-spacing: 0; color: var(--muted-foreground); }
+  .needs-head button:hover { color: var(--foreground); }
+  .needs .item { display: flex; align-items: center; gap: 7px; width: 100%; height: 26px; padding: 0 4px; border-radius: 6px; text-align: left; }
+  .needs .item:hover { background: color-mix(in oklab, var(--amber) 14%, transparent); }
+  .needs .item .t { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+
+  /* ── The chip row ── */
+  .chip-row { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 8px 0; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 25px; padding: 0 9px 0 7px;
+    border-radius: 999px; font-size: 12px; background: var(--muted); box-shadow: inset 0 0 0 1px var(--sidebar-border); }
+  .chip:hover { background: var(--sidebar-accent); }
+  .chip .dot { width: 6px; height: 6px; }
+
+  /* ── The scroll region ── */
+  .scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 4px 8px 10px; }
+  .scroll::-webkit-scrollbar { width: 8px; }
+  .scroll::-webkit-scrollbar-thumb { background: color-mix(in oklab, var(--foreground) 18%, transparent); border-radius: 999px; }
+
+  /* The sticky heading. Its ground is the sidebar's own, because rows pass
+     under it — a translucent heading over moving text is mush. */
+  .sticky-head {
+    position: sticky; top: 0; z-index: 2; background: var(--sidebar);
+    display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase;
+    color: color-mix(in oklab, var(--sidebar-foreground) 55%, transparent);
+    cursor: pointer; border-radius: 6px;
+  }
+  .sticky-head:hover { color: var(--sidebar-foreground); }
+  .sticky-head .n { margin-left: auto; letter-spacing: 0; font-weight: 600; opacity: 0.7; }
+  .chev { color: var(--muted-foreground); transition: transform 180ms ease; }
+  [aria-expanded="true"] > .chev { transform: rotate(90deg); }
+
+  .row { display: flex; align-items: center; gap: 8px; width: 100%; height: 30px; padding: 0 8px; border-radius: 8px; text-align: left; }
+  .row:hover { background: var(--sidebar-accent); }
+  .row[data-active="true"] { background: var(--sidebar-accent); font-weight: 500; }
+  .row .title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .tail { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+  .row .sub { font-size: 11px; color: var(--muted-foreground); }
+  .row .dot { width: 7px; height: 7px; border-radius: 999px; }
+  .tag { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted-foreground); }
+  .tag i { width: 7px; height: 7px; border-radius: 999px; display: block; }
+  .dot.running { background: var(--green); animation: pulse 1.6s ease-in-out infinite; }
+  .dot.waiting { background: var(--amber); }
+  .dot.failed { background: var(--destructive, oklch(0.577 0.245 27.325)); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  .folder { display: flex; align-items: center; gap: 7px; width: 100%; height: 30px; padding: 0 8px; border-radius: 8px; text-align: left; }
+  .folder:hover { background: var(--sidebar-accent); }
+  .folder .mark { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; color: white; font-size: 10px; font-weight: 700; }
+  .folder .name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .folder .n { font-size: 11px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+  .tree { margin-left: 14px; padding-left: 8px; border-left: 1px solid var(--sidebar-border); }
+
+  .foot { flex: 0 0 auto; display: flex; flex-direction: column; gap: 1px; padding: 6px 8px 8px; border-top: 1px solid var(--sidebar-border); }
+  .foot .row { height: 30px; }
+  .foot-nav { display: flex; flex-wrap: wrap; gap: 2px; padding: 0 2px; }
+  .nav-link { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 7px; border-radius: 6px; font-size: 12px; color: var(--muted-foreground); }
+  .nav-link:hover { background: var(--sidebar-accent); color: var(--sidebar-foreground); }
+  .nav-link .n { font-size: 11px; opacity: 0.8; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <header class="head">
+      <div class="brand-row">
+        <span class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="M2 17l10 5 10-5"/><path d="M12 12v10"/></svg></span>
+        <span>Daedalus</span>
+        <div class="head-actions">
+          <button class="icon-btn" id="collapse" title="Hide the sidebar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg></button>
+        </div>
+      </div>
+      <button class="primary" id="new"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>New thread<kbd>⌘N</kbd></button>
+      <button class="search" id="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Search<kbd>⌘K</kbd></button>
+    </header>
+
+    <!-- Never scrolls away. -->
+    <section class="needs" id="needs"></section>
+    <div class="chip-row" id="chips"></div>
+    <div class="scroll" id="scroll"></div>
+    <footer class="foot" id="foot"></footer>
+  </aside>
+
+  <main class="main">
+    <div class="tabs">
+      <button class="tab" data-active="true"><span class="dot running" style="background:var(--green)"></span>Ship the composer width fix</button>
+      <button class="tab">Index the rules table</button>
+      <button class="tab" style="width:30px;padding:0;justify-content:center"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+    </div>
+    <div class="card">the dock — the transcript in front of you</div>
+  </main>
+</div>
+
+<script>
+  const PROJECTS = [
+    { id: "harness", name: "daedalus-harness", short: "harness", hue: 292, initial: "D" },
+    { id: "website", name: "marketing-site", short: "site", hue: 210, initial: "M" },
+    { id: "infra", name: "infra", short: "infra", hue: 150, initial: "I" },
+    { id: "docs", name: "handbook", short: "docs", hue: 60, initial: "H" },
+  ]
+  const THREADS = [
+    { t: "Ship the composer width fix", p: "harness", s: "running", when: "now", active: true },
+    { t: "Index the rules table", p: "harness", s: "waiting", when: "4m" },
+    { t: "Pricing page copy", p: "website", s: "waiting", when: "22m" },
+    { t: "PM2 fork mode", p: "infra", s: "failed", when: "1h" },
+    { t: "Replay coalescing", p: "harness", s: "idle", when: "3h" },
+    { t: "Trim the OG images", p: "website", s: "idle", when: "5h" },
+    { t: "Terminal key row", p: "harness", s: "idle", when: "9h" },
+    { t: "Onboarding rewrite", p: "docs", s: "idle", when: "1d" },
+    { t: "Backup import", p: "infra", s: "idle", when: "1d" },
+    { t: "Scratch — bridge profiling", p: "harness", s: "idle", when: "2d" },
+    { t: "Session journal replay", p: "harness", s: "idle", when: "2d" },
+    { t: "Font subsetting", p: "website", s: "idle", when: "4d" },
+  ]
+  const proj = (id) => PROJECTS.find((p) => p.id === id) || PROJECTS[0]
+  const isToday = (w) => /^(now|\d+m|\d+h)$/.test(w)
+  const dot = (s) => (s === "idle" ? "" : `<span class="dot ${s}"></span>`)
+  const tag = (id) => { const p = proj(id); return `<span class="tag"><i style="background:oklch(0.62 0.17 ${p.hue})"></i>${p.short}</span>` }
+  const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))
+
+  const needs = THREADS.filter((t) => t.s === "waiting" || t.s === "failed")
+  const pinned = THREADS.filter((t) => t.active || t.s === "running")
+  const rest = THREADS.filter((t) => !pinned.includes(t))
+
+  /* The strip: what is waiting on you, each row a jump, and one way out. */
+  document.getElementById("needs").innerHTML = `
+    <div class="needs-head">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+      Needs you<span class="n">${needs.length}</span>
+    </div>
+    ${needs.map((t) => `<button class="item">${dot(t.s)}<span class="t">${esc(t.t)}</span><span class="sub" style="margin-left:auto">${t.when}</span></button>`).join("")}`
+
+  document.getElementById("chips").innerHTML = pinned
+    .map((t) => `<button class="chip">${dot(t.s)}<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.t)}</span></button>`)
+    .join("")
+
+  /* The index: sticky headings, every row naming its project. */
+  const section = (label, rows, open = true) => `
+    <div class="sticky-head" data-fold="${label}" aria-expanded="${open}">
+      <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg>
+      ${label}<span class="n">${rows.length}</span>
+    </div>
+    <div data-folded="${label}" ${open ? "" : "hidden"}>
+      ${rows.map((t) => `
+        <button class="row" data-active="${!!t.active}">
+          <span class="title">${esc(t.t)}</span>
+          <span class="tail">${tag(t.p)}<span class="sub">${t.when}</span></span>
+        </button>`).join("")}
+    </div>`
+
+  document.getElementById("scroll").innerHTML =
+    section("Today", rest.filter((t) => isToday(t.when)), true) +
+    section("Yesterday", rest.filter((t) => t.when === "1d"), true) +
+    section("Earlier", rest.filter((t) => !isToday(t.when) && t.when !== "1d"), false) +
+    `<div class="sticky-head" style="margin-top:8px">Projects<span class="n">${PROJECTS.length}</span></div>
+     ${PROJECTS.map((p) => `
+      <button class="folder">
+        <span class="mark" style="background:oklch(0.55 0.18 ${p.hue})">${p.initial}</span>
+        <span class="name">${esc(p.name)}</span>
+        <span class="n">${THREADS.filter((t) => t.p === p.id).length}</span>
+      </button>`).join("")}`
+
+  document.getElementById("foot").innerHTML = `
+    <div class="foot-nav">
+      <button class="nav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="11" rx="1"/></svg>Tasks</button>
+      <button class="nav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg>Routines<span class="n">3</span></button>
+      <button class="nav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>Scheduled</button>
+    </div>
+    <button class="row"><span class="sub">This machine</span><span class="tail"><span class="dot running"></span></span></button>`
+
+  /* Sticky headings fold, and the heading is what is clicked. */
+  for (const head of document.querySelectorAll(".sticky-head[data-fold]")) {
+    head.addEventListener("click", () => {
+      const open = head.getAttribute("aria-expanded") === "true"
+      head.setAttribute("aria-expanded", String(!open))
+      const target = document.querySelector(`[data-folded="${head.dataset.fold}"]`)
+      if (target) target.hidden = open
+    })
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "d" && !e.metaKey && !e.ctrlKey) document.documentElement.classList.toggle("dark")
+  })
+</script>
+</body>
+</html>

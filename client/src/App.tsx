@@ -4,6 +4,7 @@ import { AppShell } from "@/components/app-shell"
 import { AppToaster } from "@/components/app-toaster"
 import { ConfirmProvider } from "@/components/confirm-dialog"
 import { PromptProvider } from "@/components/prompt-dialog"
+import { CatalogFormProvider } from "@/lib/catalog-add"
 import { ConnectScreen } from "@/components/connect-screen"
 import { useActions } from "@/lib/actions"
 import { refreshNotificationOffer } from "@/lib/notifications"
@@ -104,7 +105,11 @@ function Connected({
   return (
     <ServerProvider settings={settings}>
       <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
-        <ConnectedShell settings={settings} onAddServer={onAddServer} />
+        {/* Inside the cache, not beside PromptProvider: the shared project and
+            profile forms it mounts read the catalog and the connection. */}
+        <CatalogFormProvider>
+          <ConnectedShell settings={settings} onAddServer={onAddServer} />
+        </CatalogFormProvider>
       </PersistQueryClientProvider>
     </ServerProvider>
   )

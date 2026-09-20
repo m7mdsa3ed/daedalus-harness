@@ -49,7 +49,7 @@ function SliderRow({
   unit: string
 }) {
   return (
-    <div className="px-4 py-3">
+    <div className="py-3">
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium">{title}</div>

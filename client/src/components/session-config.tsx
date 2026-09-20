@@ -15,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { MenuRow, MenuRowSkeleton, selectChoices } from "@/components/config-menu"
+import { useAddModel, useNewProfile } from "@/lib/catalog-add"
 import type { Actions } from "@/lib/actions"
 import { optionKey, shownOptions, useAgentOptions } from "@/lib/agent-options"
 import { reportError } from "@/lib/errors"
@@ -147,6 +148,8 @@ export function SessionConfigPopover({
   }, [actions, unanswered, meta?.profileId, agentId, meta?.projectId])
   // Called before the return below, for the reason the comment above gives.
   const now = useMinute()
+  const newProfile = useNewProfile()
+  const addModel = useAddModel()
   if (!meta || !row || !profile) return null
 
   const modeIds = new Set(thread.modes?.availableModes.map((m) => m.id) ?? [])
@@ -365,18 +368,23 @@ export function SessionConfigPopover({
               onSelect={(value) => actions.changeThreadPersona(row, value === NO_PERSONA ? "" : value)}
             />
           )}
-          {agentProfiles.length > 1 && (
-            <MenuRow
-              label="Profile"
-              value={profile.id}
-              choices={agentProfiles.map((p) => ({
-                value: p.id,
-                name: p.name,
-                icon: <ProfileIcon profile={p} agentId={agent?.id ?? agentId} className="size-4" />,
-              }))}
-              onSelect={(value) => actions.changeProfile(row, value)}
-            />
-          )}
+          {/* Drawn on a single profile too — the row is also the door to
+              making another. See the draft menu's copy of this. */}
+          <MenuRow
+            label="Profile"
+            value={profile.id}
+            choices={agentProfiles.map((p) => ({
+              value: p.id,
+              name: p.name,
+              icon: <ProfileIcon profile={p} agentId={agent?.id ?? agentId} className="size-4" />,
+            }))}
+            onSelect={(value) => actions.changeProfile(row, value)}
+            add={{
+              // Adding one moves the thread onto it — that is why it was made.
+              label: "New profile…",
+              onSelect: () => newProfile((id) => actions.changeProfile(row, id)),
+            }}
+          />
           {overridden ? (
             <MenuRow
               label="Model"
@@ -398,6 +406,21 @@ export function SessionConfigPopover({
                   model: value === DEFAULT_CHOICE ? "" : value,
                   effort: "",
                 })
+              }
+              /* Only where the profile already owns the catalog — see the
+                 draft menu's copy of this. Selecting the new model is the
+                 same spawn-config change picking an existing one would be, so
+                 it is staged or applied by the same rules. */
+              add={
+                profile.virtual
+                  ? undefined
+                  : {
+                      label: "Add model…",
+                      onSelect: () =>
+                        addModel(profile.id, (id) =>
+                          actions.changeSpawnConfig(row, { model: id, effort: "" })
+                        ),
+                    }
               }
             />
           ) : options.model ? (

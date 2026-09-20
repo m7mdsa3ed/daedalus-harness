@@ -1,0 +1,96 @@
+<!doctype html>
+<!-- v8 — The omnibox. One filter box at the top, a flat list of results sorted
+     "needs you → running → recent", and project chips that act as a scope. The
+     design that accepts the real situation: a workspace with forty threads is
+     navigated by typing, not by scrolling to the right fold. Everything else is
+     demoted to the footer. Cost: a sidebar whose primary affordance is a text
+     field is a sidebar you cannot read a project tree off. -->
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href="/logo.svg" type="image/svg+xml" />
+<title>v8 — Omni-search</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./shared.css" />
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <header class="sb-head">
+      <div class="sb-title-row">
+        <h2>Threads</h2>
+        <div class="head-actions"><button class="icon-btn" data-new></button></div>
+      </div>
+      <label class="omnibox" id="box">
+        <span id="box-ico" style="display:contents"></span>
+        <input id="q" placeholder="Search threads…" autocomplete="off" />
+        <kbd id="box-kbd">⌘K</kbd>
+      </label>
+      <div class="chip-row" id="chips"></div>
+    </header>
+    <div class="scroll" id="scroll"></div>
+    <footer class="sb-foot" id="foot"></footer>
+  </aside>
+  <main class="main">
+    <div class="tabs">
+      <button class="tab" data-active="true"><span class="dot running"></span>Ship the composer width fix</button>
+      <button class="tab">Index the rules table</button>
+      <button class="tab" style="width:30px;padding:0;justify-content:center" id="add-tab"></button>
+    </div>
+    <div class="card">the dock — the transcript in front of you</div>
+  </main>
+</div>
+<script src="./shared.js"></script>
+<script>
+  const { data, HTML, esc, dot, tag, theme, on, ICONS } = PROTO
+  const { projects, threads } = data()
+  document.querySelector("[data-new]").innerHTML = ICONS.plus
+  document.getElementById("add-tab").innerHTML = ICONS.plus
+  document.getElementById("box-ico").outerHTML = ICONS.search
+
+  let scope = null // a project id, or null for "all"
+  let query = ""
+
+  const chips = HTML`
+    <button class="chip" data-scope="" data-active="${scope === null}">All</button>
+    ${projects.map((p) => HTML`
+      <button class="chip" data-scope="${p.id}" data-active="${scope === p.id}">
+        <i style="width:7px;height:7px;border-radius:999px;background:oklch(0.62 0.17 ${p.hue})"></i>${esc(p.short)}
+      </button>`).join("")}`
+
+  const rank = (t) => (t.s === "waiting" ? 0 : t.s === "failed" ? 1 : t.s === "running" ? 2 : 3)
+
+  const draw = () => {
+    document.getElementById("chips").innerHTML = chips
+    const hit = threads
+      .filter((t) => (scope ? t.p === scope : true))
+      .filter((t) => (query ? t.t.toLowerCase().includes(query) : true))
+      .sort((a, b) => rank(a) - rank(b))
+
+    document.getElementById("scroll").innerHTML = hit.length
+      ? hit.map((t) => HTML`
+          <button class="row ${t.s === "waiting" ? "ask" : t.s === "failed" ? "bad" : ""}" data-active="${!!t.active}">
+            ${dot(t.s)}
+            <span class="title">${t.t.replace(new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), (m) => HTML`<span class="hl">${esc(m)}</span>`)}</span>
+            <span class="tail">${tag(t.p)}<span class="sub">${t.when}</span></span>
+          </button>`).join("")
+      : HTML`<p class="empty">Nothing matches${query ? ` “${esc(query)}”` : ""}${scope ? " in this project" : ""}.</p>`
+
+    on(document.getElementById("chips"), ".chip", (el) => { scope = el.dataset.scope || null; draw() })
+  }
+
+  document.getElementById("q").addEventListener("input", (e) => { query = e.target.value.trim().toLowerCase(); draw() })
+  document.getElementById("foot").innerHTML = HTML`
+    <div class="foot-nav">
+      <button class="nav-link">${ICONS.board}Tasks</button>
+      <button class="nav-link">${ICONS.bolt}Routines<span class="n">3</span></button>
+      <button class="nav-link">${ICONS.calendar}Scheduled</button>
+      <button class="nav-link">${ICONS.trash}<span class="n">5</span></button>
+    </div>
+    <button class="row"><span class="sub">This machine</span><span class="tail"><span class="dot running"></span></span></button>`
+  theme()
+  draw()
+</script>
+</body>
+</html>

@@ -28,11 +28,6 @@ export interface AgentEnv {
       re-read every turn so a library edit or a live model change lands on the
       next pass. Absent: the built-in family calibrations stand alone. */
   modelPromptsFile: string | null;
-  /** Whether the turn may answer with a fenced `openui-lang` block, which the
-      client draws as real UI. On unless the thread turned it off, and a spawn
-      input rather than a live one — the lane is system-prompt text, read only
-      at `session/new`/`session/load`, so changing it costs a respawn. */
-  uiBlocks: boolean;
   /** Read AGENTS.md / CLAUDE.md from the workspace. Off with `0`/`false`. */
   projectInstructions: boolean;
   /** Send `prompt_cache_key` so a router keeps a thread on one backend. Off with `0`/`false`. */
@@ -96,12 +91,6 @@ export function readEnv(env: NodeJS.ProcessEnv = process.env): AgentEnv {
     modelWindows: windows(env.DAEDALUS_AGENT_MODEL_WINDOWS),
     personaFile: str(env.DAEDALUS_AGENT_PERSONA_FILE),
     modelPromptsFile: str(env.DAEDALUS_AGENT_MODEL_PROMPTS_FILE),
-    /* Default-on, and off only when the thread said so: a value the harness has
-       never written (a hand-run agent, an older spawn) reads as the default,
-       which is what "on unless turned off" has to mean at a process boundary. */
-    uiBlocks: !["0", "false", "off"].includes(
-      (str(env.DAEDALUS_AGENT_UI_BLOCKS) ?? "").toLowerCase(),
-    ),
     projectInstructions: !["0", "false", "off"].includes(
       (str(env.DAEDALUS_AGENT_PROJECT_INSTRUCTIONS) ?? "").toLowerCase(),
     ),

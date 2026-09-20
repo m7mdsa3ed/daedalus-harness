@@ -1,0 +1,276 @@
+/* ── Shared shell, for the *transcript* prototypes ──
+   Sibling of `shared.css` (which the sidebar options use). Same bargain: the
+   tokens are lifted from client/src/index.css, the fake workspace is
+   `shared-transcript.js`, and the variants below differ only in *layout*. A
+   difference on screen is a difference in the design under test and nothing
+   else.
+
+   The vocabulary here is the app's real one, so a prototype is a place a
+   layout can be judged against the transcript it will actually become:
+
+     · one column, `--harness-chat-width` wide, centred on the panel
+     · your message a tinted bubble at 80%, against the end edge
+     · the agent's prose on the page ground, no bubble
+     · every step one 24px line box — a gutter mark, the thing acted on, and
+       the readings pushed to the right edge
+     · a hairline rail down the gutter for anything nested
+     · the composer a frosted card docked over the foot of the column
+
+   Classic stylesheet, no build. Served by Vite from /prototypes/. */
+
+:root {
+  --radius: 0.625rem;
+  --radius-xl: calc(var(--radius) * 1.4);
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.91 0 0);
+  --sidebar: var(--background);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-accent: oklch(0.9 0 0);
+  --sidebar-border: oklch(0.91 0 0);
+  --app-ground: color-mix(in oklab, var(--foreground) 7%, var(--background));
+  --amber: oklch(0.769 0.188 70.08);
+  --green: oklch(0.723 0.219 149.579);
+  --blue: oklch(0.707 0.165 254.624);
+  --violet: oklch(0.606 0.25 292.717);
+  --step-think: oklch(0.685 0.169 237.323);
+  --step-command: oklch(0.556 0.015 286.067);
+  --step-tool: oklch(0.606 0.25 292.717);
+  --composer: var(--card);
+  --shelf: color-mix(in oklch, var(--composer) 96%, var(--foreground) 4%);
+  --harness-chat-width: 748px;
+  --harness-composer-width: calc(var(--harness-chat-width) - 2rem);
+  --hover: color-mix(in oklab, var(--foreground) 6%, transparent);
+  --border-60: color-mix(in oklab, var(--border) 70%, transparent);
+}
+html.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.145 0 0);
+  --border: oklch(1 0 0 / 10%);
+  --sidebar: var(--background);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --app-ground: color-mix(in oklab, var(--foreground) 16%, var(--background));
+  --step-think: oklch(0.746 0.16 232.661);
+  --step-command: oklch(0.705 0.015 286.067);
+  --step-tool: oklch(0.702 0.183 293.541);
+  --composer: color-mix(in oklch, var(--muted) 55%, var(--card) 45%);
+  --shelf: color-mix(in oklch, var(--composer) 44%, var(--background) 56%);
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: "Figtree", ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px; line-height: 1.4;
+  color: var(--foreground); background: var(--app-ground);
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+textarea { font: inherit; color: inherit; background: none; border: 0; outline: none; resize: none; }
+svg { width: 16px; height: 16px; flex: 0 0 auto; }
+[hidden] { display: none !important; }
+.spacer { flex: 1 1 auto; }
+.mono { font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace; }
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* ── The two columns (same shell the sidebar options use) ── */
+.app { display: flex; height: 100vh; overflow: hidden; }
+.sidebar {
+  --w: 272px; width: var(--w); min-width: 210px; max-width: 440px; flex: 0 0 auto;
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--sidebar); border-right: 1px solid var(--sidebar-border);
+}
+.main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; padding: 6px 6px 6px 0; }
+.tabs { display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 4px; flex: 0 0 auto; }
+.tab {
+  display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px 0 10px; max-width: 260px;
+  border-radius: 8px; color: var(--muted-foreground); box-shadow: inset 0 0 0 1px var(--sidebar-border);
+}
+.tab[data-active="true"] { color: var(--foreground); background: var(--card); box-shadow: inset 2px 0 0 0 var(--primary), 0 1px 2px rgba(0,0,0,.12); }
+.tab .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel {
+  position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden;
+  border-radius: var(--radius-xl); background: var(--card);
+}
+.tabstrip-note { position: absolute; top: 10px; right: 12px; z-index: 5; font-size: 11px; color: var(--muted-foreground); }
+
+/* ── Sidebar (trimmed — the sidebar options own that surface) ── */
+.sb-head { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; padding: 10px 8px 4px; }
+.brand-row { display: flex; align-items: center; gap: 8px; height: 28px; padding-left: 4px; }
+.logo { width: 20px; height: 20px; border-radius: 6px; background: linear-gradient(140deg, var(--violet), var(--blue)); display: grid; place-items: center; color: #fff; }
+.logo svg { width: 12px; height: 12px; }
+.brand-row .name { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.icon-btn { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 7px; color: var(--muted-foreground); }
+.icon-btn:hover { background: var(--sidebar-accent); color: var(--sidebar-foreground); }
+.primary { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: 8px; background: var(--sidebar-accent); font-weight: 500; }
+kbd { font: inherit; font-size: 10px; padding: 1px 5px; border-radius: 4px; margin-left: auto; color: var(--muted-foreground); background: var(--muted); box-shadow: 0 0 0 1px var(--sidebar-border); }
+.sb-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 4px 8px 10px; }
+.tier { display: flex; align-items: center; height: 22px; margin-top: 8px; padding: 0 8px; font-size: 10px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: color-mix(in oklab, var(--sidebar-foreground) 52%, transparent); }
+.tier .n { margin-left: auto; letter-spacing: 0; opacity: 0.7; }
+.srow { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 0 8px; border-radius: 8px; text-align: left; }
+.srow:hover { background: var(--sidebar-accent); }
+.srow[data-active="true"] { background: var(--sidebar-accent); font-weight: 500; }
+.srow .t { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.dot { width: 7px; height: 7px; border-radius: 999px; flex: 0 0 auto; }
+.dot.running { background: var(--green); animation: pulse 1.6s ease-in-out infinite; }
+.dot.waiting { background: var(--amber); }
+.dot.failed { background: var(--destructive); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* ── The transcript surface ──
+   A scroll region, and the docked composer overlays its foot. `--dock-h` is
+   each variant's declaration of how much of the column the glass covers, so
+   the scroll reserve is one number and not a stack of magic paddings. */
+.tv { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.tv-scroll {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 28px 0 calc(var(--dock-h, 190px) + 24px);
+}
+.tv-scroll::-webkit-scrollbar { width: 9px; }
+.tv-scroll::-webkit-scrollbar-thumb { background: color-mix(in oklab, var(--foreground) 16%, transparent); border-radius: 999px; }
+.col { max-width: var(--harness-chat-width); margin: 0 auto; padding: 0 16px; }
+
+/* ── Your message ── */
+.u-msg { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; padding: 8px 0; }
+.u-bubble {
+  max-width: 80%; padding: 10px 16px; border-radius: 16px 16px 4px 16px;
+  font-size: 0.875rem; line-height: 1.55;
+  color: var(--foreground);
+  background: oklch(from var(--primary) 0.93 calc(c * 0.4) h);
+}
+html.dark .u-bubble { background: oklch(from var(--primary) 0.3 calc(c * 0.4) h); }
+.u-meta { font-size: 11px; color: var(--muted-foreground); padding-right: 2px; }
+
+/* ── The agent's prose ── */
+.a-msg { padding: 8px 0; }
+.prose { font-size: 0.875rem; line-height: 1.625; }
+.prose p { margin: 0 0 0.75em; }
+.prose p:last-child { margin-bottom: 0; }
+.prose ul { margin: 0.25em 0 0.75em; padding-left: 1.25em; }
+.prose li { margin: 0.15em 0; }
+.prose strong { font-weight: 600; }
+.prose code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.8125rem; background: var(--muted); padding: 0.1em 0.35em; border-radius: 5px; }
+
+/* ── A step: one 24px line box ── */
+.step { position: relative; }
+.step-cycle { display: flex; align-items: flex-start; gap: 8px; width: 100%; min-width: 0; text-align: left; }
+.step-rowz {
+  display: flex; align-items: flex-start; gap: 8px; min-width: 0;
+  margin: 0 -6px; width: calc(100% + 12px); padding: 2px 6px; border-radius: 6px;
+}
+.step[data-open] .step-rowz,
+.step.expandable:hover .step-rowz { background: var(--hover); }
+.step .mark { position: relative; display: flex; width: 14px; height: 24px; flex: 0 0 auto; align-items: center; justify-content: center; }
+.step .mark svg { width: 14px; height: 14px; }
+.step .mark .chip { position: absolute; inset: 5px 0 auto; width: 14px; height: 14px; border-radius: 4px; }
+.step[data-kind="think"] .mark { color: var(--step-think); }
+.step[data-kind="execute"] .mark { color: var(--step-command); }
+.step[data-kind="other"] .mark { color: var(--step-tool); }
+.step[data-status="failed"] .mark { color: var(--destructive); }
+.step[data-kind="think"] .mark .chip { background: color-mix(in oklab, var(--step-think) 15%, transparent); }
+.step[data-kind="execute"] .mark .chip { background: color-mix(in oklab, var(--step-command) 15%, transparent); }
+.step[data-kind="other"] .mark .chip { background: color-mix(in oklab, var(--step-tool) 15%, transparent); }
+.step[data-status="failed"] .mark .chip { background: color-mix(in oklab, var(--destructive) 12%, transparent); }
+.step .chev { position: absolute; opacity: 0; transition: opacity 120ms, transform 120ms; color: var(--muted-foreground); }
+.step.expandable:hover .chev { opacity: 1; }
+.step[data-open] .mark svg.face { opacity: 0; }
+.step[data-open] .chev { opacity: 1; transform: rotate(90deg); }
+.step .body { display: flex; min-width: 0; flex: 1 1 auto; flex-direction: column; }
+.step .line { display: flex; min-width: 0; align-items: baseline; gap: 5px; }
+.step .title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.75rem; line-height: 1.5rem; color: var(--muted-foreground); }
+.step .title.m { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.step[data-status="failed"] .title { color: var(--destructive); }
+.step .punct { color: var(--muted-foreground); font-size: 0.75rem; }
+.step .cap { margin-top: -4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.6875rem; line-height: 1.25rem; color: color-mix(in oklab, var(--muted-foreground) 62%, transparent); }
+.step .cap.m { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.file-chip { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; padding: 1px 6px; border-radius: 6px; font-size: 0.6875rem; font-family: ui-monospace, Menlo, monospace; color: var(--muted-foreground); background: var(--muted); }
+.step .meta { display: flex; height: 24px; flex: 0 0 auto; align-items: center; gap: 4px; font-size: 0.6875rem; font-variant-numeric: tabular-nums; color: color-mix(in oklab, var(--muted-foreground) 65%, transparent); }
+.step .meta .sep { color: color-mix(in oklab, var(--muted-foreground) 35%, transparent); }
+.step .meta .bad { color: var(--destructive); }
+.step-detail { margin: 4px 0 10px; min-width: 0; }
+.step-below { margin: 0 0 4px; padding-left: 22px; }
+.shimmer { background: linear-gradient(90deg, color-mix(in oklab, var(--foreground) 45%, transparent) 0%, var(--foreground) 45%, color-mix(in oklab, var(--foreground) 45%, transparent) 90%); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 1.6s linear infinite; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+/* ── A payload's box (PANE / PANE_PAD / CARD in tool-parts) ── */
+.pane { overflow: hidden; border-radius: 6px; border: 1px solid var(--border-60); background: color-mix(in oklab, var(--muted) 45%, transparent); }
+.pane-pad { border-radius: 6px; border: 1px solid var(--border-60); background: color-mix(in oklab, var(--muted) 45%, transparent); padding: 8px 10px; }
+.pane pre { margin: 0; font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; line-height: 1.5; color: var(--muted-foreground); white-space: pre-wrap; overflow-wrap: anywhere; }
+.pane .diff { font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; line-height: 1.5; }
+.diff .del { color: var(--destructive); background: color-mix(in oklab, var(--destructive) 8%, transparent); display: block; padding: 0 8px; }
+.diff .add { color: var(--green); background: color-mix(in oklab, var(--green) 10%, transparent); display: block; padding: 0 8px; }
+.diff .ctx { color: var(--muted-foreground); display: block; padding: 0 8px; }
+.card { margin: 8px 0; border-radius: 12px; border: 1px solid var(--border-60); padding: 10px 12px; background: color-mix(in oklab, var(--muted) 35%, transparent); }
+.card .lab { display: block; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: color-mix(in oklab, var(--muted-foreground) 80%, transparent); margin-bottom: 6px; }
+.card.warn { border-color: color-mix(in oklab, var(--amber) 40%, transparent); background: color-mix(in oklab, var(--amber) 7%, transparent); }
+.card.bad { border-color: color-mix(in oklab, var(--destructive) 35%, transparent); background: color-mix(in oklab, var(--destructive) 6%, transparent); }
+.card-head { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+.card-head svg { width: 15px; height: 15px; }
+.card.warn .card-head { color: color-mix(in oklab, var(--amber) 62%, var(--foreground)); }
+.card.bad .card-head { color: var(--destructive); }
+.card p { margin: 6px 0 0; font-size: 0.8125rem; color: var(--muted-foreground); }
+.actions { display: flex; gap: 8px; margin-top: 10px; }
+.btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 8px; font-size: 12.5px; font-weight: 500; box-shadow: inset 0 0 0 1px var(--border); }
+.btn:hover { background: var(--hover); }
+.btn.solid { background: var(--primary); color: var(--primary-foreground); box-shadow: none; }
+.btn.ghost { box-shadow: none; color: var(--muted-foreground); }
+.opt { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 7px 9px; border-radius: 8px; font-size: 12.5px; box-shadow: inset 0 0 0 1px var(--border-60); margin-top: 6px; }
+.opt:hover { background: var(--hover); }
+.opt .k { width: 16px; height: 16px; border-radius: 999px; box-shadow: inset 0 0 0 1.5px var(--muted-foreground); flex: 0 0 auto; }
+.input { width: 100%; height: 32px; padding: 0 10px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--border); font-size: 13px; margin-top: 8px; }
+
+/* ── A run's rail + the "N earlier steps" line ── */
+.run-head { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; margin: 0 -6px; padding: 2px 6px; border-radius: 6px; width: calc(100% + 12px); }
+.run-head:hover { background: var(--hover); }
+.run-head .chev { transition: transform 200ms; color: color-mix(in oklab, var(--muted-foreground) 60%, transparent); }
+.run-head[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.stack { display: flex; flex-direction: row-reverse; justify-content: flex-end; flex: 0 0 auto; }
+.stack i { width: 16px; height: 16px; border-radius: 5px; margin-left: -6px; display: grid; place-items: center; color: #fff; font-size: 8px; font-weight: 700; font-style: normal; box-shadow: 0 0 0 1.5px var(--card); }
+.run-head .sum { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.75rem; line-height: 1.5rem; color: var(--muted-foreground); }
+.rail { margin: 2px 0 0 calc(6px - 1px); padding-left: 10px; border-left: 1px solid var(--border-60); }
+.rail .step { margin: 2px 0; }
+.earlier { display: block; width: 100%; text-align: left; font-size: 0.6875rem; line-height: 1.25rem; color: color-mix(in oklab, var(--muted-foreground) 70%, transparent); }
+.earlier:hover { color: var(--foreground); }
+
+/* ── The working line ── */
+.working { display: flex; align-items: center; gap: 8px; padding: 4px 2px; font-size: 0.75rem; color: var(--primary); }
+.working .mark { width: 12px; height: 12px; }
+
+/* ── The docked composer ──
+   `--composer-dock-h` on the app's own grid is what the transcript reserves;
+   here it is a variant-set `--dock-h` and the reserve above already reads it. */
+.dock { position: absolute; inset: auto 0 0; z-index: 20; pointer-events: none; padding: 0 16px 14px; }
+.dock > * { pointer-events: auto; }
+.composer { max-width: var(--harness-composer-width); margin: 0 auto; }
+.composer-card {
+  border-radius: var(--radius-xl); background: color-mix(in oklab, var(--composer) 82%, transparent);
+  backdrop-filter: blur(16px) saturate(1.3); -webkit-backdrop-filter: blur(16px) saturate(1.3);
+  box-shadow: 0 10px 30px rgba(0,0,0,.14); overflow: hidden;
+}
+.shelf { display: flex; flex-direction: column; background: color-mix(in oklab, var(--shelf) 86%, transparent); }
+.shelf-top { display: flex; align-items: center; gap: 8px; padding: 7px 8px 0; }
+.shelf-bottom { display: flex; align-items: center; gap: 8px; padding: 6px 8px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 7px; font-size: 12px; color: var(--muted-foreground); }
+.pill:hover { background: var(--hover); color: var(--foreground); }
+.pill .mk { width: 16px; height: 16px; border-radius: 5px; display: grid; place-items: center; color: #fff; font-size: 9px; font-weight: 700; }
+.pill[data-on="true"] { color: var(--foreground); background: var(--hover); }
+.tbox { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px 10px 14px; }
+.tbox .ph { flex: 1; min-width: 0; font-size: 0.9375rem; line-height: 1.5; color: color-mix(in oklab, var(--muted-foreground) 75%, transparent); }
+.tbox .send { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: var(--muted); color: var(--muted-foreground); flex: 0 0 auto; }
+.tbox .send.on { background: var(--primary); color: var(--primary-foreground); }
+.ring { position: relative; width: 16px; height: 16px; border-radius: 999px; background: conic-gradient(var(--step-think) 0 32%, color-mix(in oklab, var(--muted-foreground) 30%, transparent) 32% 100%); }
+.ring::after { content: ""; position: absolute; inset: 3px; border-radius: 999px; background: var(--composer); }
+.qrow { display: flex; align-items: center; gap: 10px; border-top: 1px dashed color-mix(in oklab, var(--border) 90%, transparent); padding: 7px 12px; font-size: 0.8125rem; color: var(--muted-foreground); }
+.qrow .x { margin-left: auto; opacity: 0.7; }

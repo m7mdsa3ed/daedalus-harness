@@ -90,9 +90,6 @@ const profile: Profile = {
   defaultModel: "",
   smallModel: "",
   logoUrl: "",
-  mcpServerIds: [],
-  skillIds: [],
-  commandIds: [],
 };
 const project = {
   id: "w1",
@@ -1252,17 +1249,11 @@ const profileInput = {
   suppressModelMetadataWarning: false,
   hidden: false,
   disabled: false,
-  mcpServerIds: [server1.id],
-  skillIds: [],
-  commandIds: [],
 };
 const linkedProfile = await createProfile(profileInput);
-assert.deepEqual((await getProfile(linkedProfile.id))!.mcpServerIds, [server1.id]);
 await mcpServers.remove(server1.id);
-assert.deepEqual((await getProfile(linkedProfile.id))!.mcpServerIds, [], "the link went with the server");
 // A stale id in a request links nothing rather than failing the whole write.
-const staleProfile = await createProfile({ ...profileInput, name: "stale", mcpServerIds: ["gone"] });
-assert.deepEqual((await getProfile(staleProfile.id))!.mcpServerIds, []);
+const staleProfile = await createProfile({ ...profileInput, name: "stale" });
 
 // The Codex fallback-metadata opt-out is one of the stored columns: a profile
 // created with it reads it back, an update can turn it off, and a profile that

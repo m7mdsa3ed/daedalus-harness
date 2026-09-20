@@ -428,12 +428,24 @@ export function TerminalPanel({
     /* Dockview resizes by changing the element, not by telling anyone, so the
        observer is the only reliable signal — and the PTY has to be told too, or
        the remote process keeps wrapping at the old width. */
+    /* Said only when it changed. `ResizeObserver` delivers once per frame, so
+       anything that resizes this panel over time — a sash drag, a maximize —
+       used to be one `resize` message per frame, and the PTY answers each by
+       reflowing the remote process's whole output. A width animating across a
+       panel crosses a *character* boundary a handful of times, not sixty: the
+       grid is what the far end cares about, so the grid is what gates the
+       send. `fit()` still runs every frame, because the grid is its answer. */
+    let lastCols = terminal.cols
+    let lastRows = terminal.rows
     const observer = new ResizeObserver(() => {
       try {
         fitAddon.fit()
       } catch {
         return
       }
+      if (terminal.cols === lastCols && terminal.rows === lastRows) return
+      lastCols = terminal.cols
+      lastRows = terminal.rows
       if (ws.readyState === WebSocket.OPEN)
         ws.send(JSON.stringify({ t: "resize", cols: terminal.cols, rows: terminal.rows }))
     })

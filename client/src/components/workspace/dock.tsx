@@ -56,6 +56,13 @@ const TasksPanel = React.lazy(async () => ({
   default: (await import("@/components/workspace/tasks-panel"))
     .TasksPanel as React.FC<IDockviewPanelProps>,
 }))
+/* The group panel is lazy for a second reason on top of the chunk: it imports
+   `DockSurface` from *this* file, so a static import would be a module cycle
+   evaluated at load. A dynamic one is resolved when a group is first drawn, by
+   which time this module is whole. */
+const GroupPanel = React.lazy(async () => ({
+  default: (await import("@/components/workspace/group-panel")).GroupPanel as React.FC<IDockviewPanelProps>,
+}))
 import type { Actions } from "@/lib/actions"
 import { navigateTo, threadPath } from "@/lib/router"
 import { loadSettings } from "@/lib/settings"
@@ -64,6 +71,7 @@ import { useHotkey, useShortcut } from "@/hooks/use-hotkey"
 import { MOBILE_BREAKPOINT, useIsMobile } from "@/hooks/use-device"
 import { KEYS } from "@/lib/shortcuts"
 import { useTheme } from "@/lib/theme"
+import { cn } from "@/lib/utils"
 import {
   deleteSavedLayout as forgetSavedLayout,
   listSavedLayouts,
@@ -243,6 +251,11 @@ export interface WorkspaceDock {
   closeToTheRight: (id: string) => Promise<void>
   closeGroup: (id: string) => Promise<void>
   splitActive: (direction: "right" | "below") => void
+  /** Lands the next panel opened in `api` rather than the outer dock — a nested
+      strip's +. A group panel's *id* aims at that group whether or not its
+      instance has mounted yet, which is what lets a tab group itself with the
+      panel it is about to open. */
+  targetNext: (api: DockviewApi | string) => void
   toggleMaximize: () => void
   stackAll: () => void
   resetLayout: () => void
@@ -271,6 +284,79 @@ export interface WorkspaceDock {
   listPanels: () => { id: string; panel: PanelDescriptor; title: string }[]
   isPanelOpen: (id: string) => boolean
   hasClosedPanels: () => boolean
+  /** The descriptor of the panel in front of you — a nested group's own when a
+      group tab is active. The route only follows chats and pages, so this is
+      the one thing that can answer "which project am I looking at" while a
+      terminal or an IDE has the focus. */
+  activeDescriptor: () => PanelDescriptor | undefined
+
+  /* ── The strip you are looking at ──
+     All three act on the *active* instance — the nested dock when a group tab
+     is in front, the top level otherwise — because following the strip in
+     front of you beats following a global order the reader cannot see. */
+  /** Jump to the nth tab (0-based) of the group in front of you. */
+  setTabIndex: (index: number) => void
+  /** Walk that group's tabs, wrapping at both ends. */
+  cycleTab: (delta: number) => void
+  /** Close the tab in front of you, through the same guarded door its ✕ uses. */
+  closeActiveTab: () => Promise<void>
+
+  /* ── A dock inside a tab ──
+     One level, never a tree (`group-panel.tsx`). */
+  /** Register a nested instance against its group panel; returns its detach. */
+  attachNested: (groupPanelId: string, api: DockviewApi) => () => void
+  /** The group panel a tab's own instance stands in, or undefined at the top
+      level — which is what tells a tab menu whether it has a way out. */
+  groupIdOf: (api: DockviewApi) => string | undefined
+  /** Move a panel into a group — an existing one, or `null` for a new one.
+      Answers the group panel's id, so a caller can aim the next open at it. */
+  moveToGroup: (id: string, groupPanelId: string | null) => string | null
+  /** Move a panel out of its group, back beside the group's own tab. */
+  unnestPanel: (id: string) => void
+}
+
+/* ── The groups that are open, as a store ──
+   A tab in one group cannot hear another group appear — they are separate
+   dockview instances and separate React trees — so "Move to group ▸" reads a
+   version-bumped module store rather than a walk it would have to re-run on
+   every render. Bumped from the dock's own layout listeners.
+
+   The snapshot is replaced only when it *differs*, because `useSyncExternalStore`
+   compares by identity: a fresh array per layout change would re-render every
+   tab in the app on every sash drag. */
+export interface DockGroupRow {
+  id: string
+  title: string
+  /** What it holds, for a menu row that would otherwise be three identical
+      "Group" lines. */
+  hint: string
+}
+
+let groupRows: DockGroupRow[] = []
+const groupSubscribers = new Set<() => void>()
+
+function setDockGroups(rows: DockGroupRow[]): void {
+  if (
+    rows.length === groupRows.length &&
+    rows.every((row, index) => {
+      const previous = groupRows[index]
+      return previous.id === row.id && previous.title === row.title && previous.hint === row.hint
+    })
+  )
+    return
+  groupRows = rows
+  for (const notify of groupSubscribers) notify()
+}
+
+export function useDockGroups(): DockGroupRow[] {
+  return React.useSyncExternalStore(
+    React.useCallback((notify: () => void) => {
+      groupSubscribers.add(notify)
+      return () => groupSubscribers.delete(notify)
+    }, []),
+    () => groupRows,
+    () => groupRows
+  )
 }
 
 const DockContext = React.createContext<WorkspaceDock | null>(null)
@@ -315,9 +401,9 @@ const isChat = (panel: IDockviewPanel) => panel.api.component === "chat"
     sidebar's "Opened" tier lists and what Recents leaves out. Only chats: every
     other kind is a panel, not a thread, and a session id is unique per panel, so
     this cannot hold a duplicate. */
-function openChatThreads(api: DockviewApi): string[] {
+function openChatThreads(panels: IDockviewPanel[]): string[] {
   const ids: string[] = []
-  for (const panel of api.panels) {
+  for (const panel of panels) {
     if (!isChat(panel)) continue
     const descriptor = descriptorOf(panel)
     if (descriptor?.kind === "chat") ids.push(descriptor.sessionId)
@@ -350,6 +436,93 @@ export function useWorkspaceDock(): DockController {
     } finally {
       silentRef.current -= 1
     }
+  }, [])
+
+  /* ── The two levels ──
+     A group panel holds a whole second dockview (`group-panel.tsx`), which
+     registers itself here on ready. Everything that asks a question about "the
+     panels" asks it across every instance — a nested `thread:{id}` is still the
+     one there is, so opening that thread must focus it rather than mint a
+     second connection. */
+  const nestedRef = React.useRef(new Map<string, DockviewApi>())
+  /* Panels promised to a group that does not have an instance yet: minting the
+     group panel and filling it are two frames apart (`attachNested` drains
+     this). */
+  const pendingNestRef = React.useRef(new Map<string, { panel: PanelDescriptor; title: string }[]>())
+
+  /** Every live instance, the top level first. */
+  const instances = React.useCallback((): DockviewApi[] => {
+    const api = apiRef.current
+    return api ? [api, ...nestedRef.current.values()] : [...nestedRef.current.values()]
+  }, [])
+
+  const allPanels = React.useCallback(
+    (): IDockviewPanel[] => instances().flatMap((api) => api.panels),
+    [instances]
+  )
+
+  const findPanel = React.useCallback(
+    (id: string): IDockviewPanel | undefined => {
+      for (const api of instances()) {
+        const panel = api.getPanel(id)
+        if (panel) return panel
+      }
+      return undefined
+    },
+    [instances]
+  )
+
+  /** The instance a panel belongs to. */
+  const ownerOf = React.useCallback(
+    (panel: IDockviewPanel): DockviewApi | undefined =>
+      instances().find((api) => api.panels.includes(panel)),
+    [instances]
+  )
+
+  const isNested = React.useCallback((api: DockviewApi) => api !== apiRef.current, [])
+
+  /** The top-level group panel an instance is drawn inside. */
+  const groupPanelOf = React.useCallback((api: DockviewApi): IDockviewPanel | undefined => {
+    for (const [groupPanelId, nested] of nestedRef.current)
+      if (nested === api) return apiRef.current?.getPanel(groupPanelId) ?? undefined
+    return undefined
+  }, [])
+
+  const groupIdOf = React.useCallback(
+    (api: DockviewApi) => (isNested(api) ? groupPanelOf(api)?.id : undefined),
+    [isNested, groupPanelOf]
+  )
+
+  /** The instance in front of you: the nested one when a group tab is active. */
+  const activeApi = React.useCallback((): DockviewApi | undefined => {
+    const api = apiRef.current
+    const active = api?.activeGroup?.activePanel
+    if (active && active.api.component === "group") {
+      const nested = nestedRef.current.get(active.id)
+      if (nested) return nested
+    }
+    return api ?? undefined
+  }, [])
+
+  const activeDescriptor = React.useCallback((): PanelDescriptor | undefined => {
+    const panel = activeApi()?.activeGroup?.activePanel
+    return (panel && descriptorOf(panel)) ?? undefined
+  }, [activeApi])
+
+  const notifyGroups = React.useCallback(() => {
+    const api = apiRef.current
+    setDockGroups(
+      (api?.panels ?? [])
+        .filter((panel) => panel.api.component === "group")
+        .map((panel) => ({
+          id: panel.id,
+          title: panel.title ?? PANEL_SPECS.group.defaultTitle,
+          hint: (nestedRef.current.get(panel.id)?.panels ?? [])
+            .map((held) => held.title ?? "")
+            .filter(Boolean)
+            .join(", "),
+        }))
+    )
   }, [])
 
   /* ── The browsing tab ──
@@ -408,16 +581,78 @@ export function useWorkspaceDock(): DockController {
     silently(() => api.removePanel(active))
   }, [silently])
 
+  /* A nested strip's + names its own instance. Read by the next open and
+     spent by it; the thread path gets there a navigation later, hence a
+     window rather than the same tick.
+     ponytail: 2s window, pass the instance down the thread path if it misfires. */
+  const targetRef = React.useRef<{ api: DockviewApi | string; at: number } | null>(null)
+  const targetNext = React.useCallback((api: DockviewApi | string) => {
+    targetRef.current = { api, at: Date.now() }
+  }, [])
+
+  /* Put a panel in a named group, whether or not that group has an instance
+     yet: the group a "+ into a group" row mints is one render old when the
+     open arrives, so an unattached one takes the same pending list the move
+     that minted it uses. Already there — focus it; anywhere else — it is the
+     close-and-open every crossing between two instances is. */
+  const intoGroup = React.useCallback(
+    (groupPanelId: string, panel: PanelDescriptor) => {
+      const root = apiRef.current
+      const nested = nestedRef.current.get(groupPanelId)
+      const existing = findPanel(panelId(panel))
+      const owner = existing ? ownerOf(existing) : undefined
+      const title = existing?.title ?? PANEL_SPECS[panel.kind].defaultTitle
+      if (existing && owner && owner === nested) {
+        existing.api.setActive()
+      } else {
+        silently(() => {
+          if (existing && owner) owner.removePanel(existing)
+          if (nested)
+            nested.addPanel({
+              id: panelId(panel),
+              component: panel.kind,
+              title,
+              params: panel as unknown as Record<string, unknown>,
+            })
+        })
+        if (!nested)
+          pendingNestRef.current.set(groupPanelId, [
+            ...(pendingNestRef.current.get(groupPanelId) ?? []),
+            { panel, title },
+          ])
+      }
+      root?.getPanel(groupPanelId)?.api.setActive()
+    },
+    [findPanel, ownerOf, silently]
+  )
+
   const openPanel = React.useCallback(
     (panel: PanelDescriptor, options?: OpenPanelOptions) => {
-      const api = apiRef.current
+      const target = targetRef.current
+      targetRef.current = null
+      const aimed = target && Date.now() - target.at < 2000 ? target.api : null
+      /* Aimed at a group by id: the one path that can land somewhere that does
+         not exist yet, so it is answered before anything reads an instance. */
+      if (typeof aimed === "string" && panel.kind !== "page" && panel.kind !== "group") {
+        if (PANEL_SPECS[panel.kind].implemented) intoGroup(aimed, panel)
+        return
+      }
+      /* No aim: the instance in front of you, which is the nested one while a
+         group tab is active — a thread started from ⌘N, the sidebar or the
+         palette while you are reading a group belongs in that group, not
+         behind it at the top level. */
+      const api =
+        aimed && typeof aimed !== "string" && instances().includes(aimed) ? aimed : activeApi()
       if (!api) return
       if (!PANEL_SPECS[panel.kind].implemented) return
       /* One door for a page, whoever knocks — ⌘⇧T reopening one included. */
       if (panel.kind === "page") return openPage(panel.path)
 
       const id = panelId(panel)
-      const existing = api.getPanel(id)
+      /* Across both levels: a panel inside a group is still the one that holds
+         this resource, so opening it again focuses it — through its group's own
+         tab, which is the only way it can be seen. */
+      const existing = findPanel(id)
       if (existing) {
         /* Same id, different params is "the same surface, pointed somewhere
            else" — the Browser panel following a second source is the whole
@@ -432,7 +667,11 @@ export function useWorkspaceDock(): DockController {
         if (!current || JSON.stringify(current) !== JSON.stringify(next)) {
           existing.api.updateParameters(panel as unknown as Record<string, unknown>)
         }
-        if (!options?.background) existing.api.setActive()
+        if (!options?.background) {
+          const owner = ownerOf(existing)
+          if (owner && isNested(owner)) groupPanelOf(owner)?.api.setActive()
+          existing.api.setActive()
+        }
         return
       }
 
@@ -489,7 +728,7 @@ export function useWorkspaceDock(): DockController {
 
       if (replace && current) silently(() => api.removePanel(current))
     },
-    [silently, openPage]
+    [silently, openPage, findPanel, ownerOf, isNested, groupPanelOf, instances, activeApi, intoGroup]
   )
 
   const openChat = React.useCallback(
@@ -501,13 +740,16 @@ export function useWorkspaceDock(): DockController {
      the landing console (`onDidRemovePanel` in `handleReady`), which is the
      app's own empty state — the last chat used to be pinned open because a
      route always named a thread, and it no longer has to. */
-  const isClosable = React.useCallback((panel: IDockviewPanel): boolean => {
-    const api = apiRef.current
-    return !!api && api.panels.includes(panel)
-  }, [])
+  const isClosable = React.useCallback(
+    (panel: IDockviewPanel): boolean => !!ownerOf(panel),
+    [ownerOf]
+  )
 
   const removeWithGuard = React.useCallback(async (panel: IDockviewPanel): Promise<boolean> => {
-    const api = apiRef.current
+    /* The instance that *holds* it, never the top level: a tab inside a group
+       is removed by its own dock, and asking the outer one to remove it is a
+       no-op that leaves the tab on screen. */
+    const api = ownerOf(panel)
     if (!api) return false
     const guard = guardsRef.current.get(panel.id)
     if (guard && !(await guard())) return false
@@ -524,24 +766,26 @@ export function useWorkspaceDock(): DockController {
     }
     api.removePanel(panel)
     return true
-  }, [])
+  }, [ownerOf])
 
   const closePanel = React.useCallback(
     async (id: string) => {
-      const api = apiRef.current
-      const panel = api?.getPanel(id)
+      const panel = findPanel(id)
       if (!panel || !isClosable(panel)) return
       await removeWithGuard(panel)
     },
-    [isClosable, removeWithGuard]
+    [findPanel, isClosable, removeWithGuard]
   )
 
   /** Panels sharing a group with `id`, in tab order. Recomputed per call — a
       snapshot taken at render could close the wrong tabs after a drag. */
-  const groupPanels = React.useCallback((id: string): IDockviewPanel[] => {
-    const panel = apiRef.current?.getPanel(id)
-    return panel ? [...panel.group.panels] : []
-  }, [])
+  const groupPanels = React.useCallback(
+    (id: string): IDockviewPanel[] => {
+      const panel = findPanel(id)
+      return panel ? [...panel.group.panels] : []
+    },
+    [findPanel]
+  )
 
   /* Bulk closes stop at the first refusal rather than skipping past it: a
      "close others" that silently leaves one guarded panel behind, in a group
@@ -766,17 +1010,15 @@ export function useWorkspaceDock(): DockController {
   }, [])
 
   const listPanels = React.useCallback(() => {
-    const api = apiRef.current
-    if (!api) return []
-    return api.panels.flatMap((panel) => {
+    return allPanels().flatMap((panel) => {
       const descriptor = descriptorOf(panel)
       return descriptor
         ? [{ id: panel.id, panel: descriptor, title: panel.title ?? PANEL_SPECS[descriptor.kind].defaultTitle }]
         : []
     })
-  }, [])
+  }, [allPanels])
 
-  const isPanelOpen = React.useCallback((id: string) => !!apiRef.current?.getPanel(id), [])
+  const isPanelOpen = React.useCallback((id: string) => !!findPanel(id), [findPanel])
   const hasClosedPanels = React.useCallback(() => closedRef.current.length > 0, [])
 
   const prunePanels = React.useCallback(
@@ -790,12 +1032,18 @@ export function useWorkspaceDock(): DockController {
          is always at least one project once bootstrap is done. */
       const pruneProjects = projects.size > 0
       silently(() => {
-        for (const panel of [...api.panels]) {
+        /* Both levels: a thread closed on the server is stale wherever its tab
+           happens to be sitting. A group panel itself is never stale — it names
+           no session and no project — and emptying one closes it (`attachNested`). */
+        for (const panel of allPanels()) {
+          const owner = ownerOf(panel)
+          if (!owner) continue
           const descriptor = descriptorOf(panel)
           if (!descriptor) {
-            api.removePanel(panel)
+            owner.removePanel(panel)
             continue
           }
+          if (descriptor.kind === "group") continue
           const gone =
             descriptor.kind === "chat"
               ? !sessions.has(descriptor.sessionId)
@@ -825,12 +1073,258 @@ export function useWorkspaceDock(): DockController {
               forgetProjectEditors(descriptor.projectId)
               forgetScmFilter(descriptor.projectId)
             }
-            api.removePanel(panel)
+            owner.removePanel(panel)
           }
         }
       })
     },
-    [silently]
+    [silently, allPanels, ownerOf]
+  )
+
+  /* ── The strip's own keys ──
+     All three read the group in front of you and nothing wider: the digits, the
+     walk and the close act on the strip the reader is looking at, which on a
+     split is one column of it and inside a group tab is the nested strip. */
+  const activeStrip = React.useCallback(() => {
+    const api = activeApi()
+    return api?.activeGroup ?? api?.groups[0]
+  }, [activeApi])
+
+  const setTabIndex = React.useCallback(
+    (index: number) => {
+      activeStrip()?.panels[index]?.api.setActive()
+    },
+    [activeStrip]
+  )
+
+  const cycleTab = React.useCallback(
+    (delta: number) => {
+      const group = activeStrip()
+      const panels = group?.panels ?? []
+      if (panels.length < 2) return
+      const current = group?.activePanel
+      const index = current ? panels.indexOf(current) : 0
+      /* Wrapping, and `%` after a `+ length` because a negative delta on the
+         first tab is the whole point of walking backwards. */
+      panels[(index + delta + panels.length) % panels.length]?.api.setActive()
+    },
+    [activeStrip]
+  )
+
+  const closeActiveTab = React.useCallback(async () => {
+    const panel = activeStrip()?.activePanel
+    if (!panel || !isClosable(panel)) return
+    await removeWithGuard(panel)
+  }, [activeStrip, isClosable, removeWithGuard])
+
+  /* ── The doors between the two levels ── */
+
+  /* A tab dragged from one instance's strip onto another's: dockview only moves
+     within an instance, so the foreign drop arrives unhandled and is the same
+     close-and-open every menu row is. The transfer names the panel; which
+     instance it came from is ours to find. */
+  const dropForeign = React.useCallback(
+    (target: DockviewApi, droppedId: string, group?: { id: string }) => {
+      const panel = findPanel(droppedId)
+      const source = panel && ownerOf(panel)
+      const descriptor = panel && descriptorOf(panel)
+      if (!panel || !source || !descriptor || source === target) return
+      /* One level: a group cannot be dropped into a group. */
+      if (descriptor.kind === "group" && isNested(target)) return
+      const title = panel.title ?? PANEL_SPECS[descriptor.kind].defaultTitle
+      silently(() => {
+        source.removePanel(panel)
+        target.addPanel({
+          id: droppedId,
+          component: descriptor.kind,
+          title,
+          params: descriptor as unknown as Record<string, unknown>,
+          position: group ? { referenceGroup: group.id, direction: "within" as const } : undefined,
+        })
+      })
+    },
+    [findPanel, ownerOf, isNested, silently]
+  )
+
+  const attachNested = React.useCallback(
+    (groupPanelId: string, api: DockviewApi) => {
+      nestedRef.current.set(groupPanelId, api)
+      const owner = () => apiRef.current?.getPanel(groupPanelId)
+      /* The inner layout rides on the group panel's params. To dockview a
+         params change *is* a layout change of the outer, so this is what puts
+         the nested tabs into the outer's debounced save with no second store
+         and no second key. The title is the count, and only written when it
+         changes — a title change is a layout change too. */
+      const persist = () => {
+        const panel = owner()
+        const descriptor = panel && descriptorOf(panel)
+        if (!panel || descriptor?.kind !== "group") return
+        panel.api.updateParameters({ ...descriptor, layout: api.toJSON() } as unknown as Record<string, unknown>)
+        const title = `Group · ${api.panels.length}`
+        if (panel.title !== title) panel.api.setTitle(title)
+        notifyGroups()
+      }
+
+      /* Anything promised to this group before it had an instance — the move
+         that minted it. Drained once, here, because the panel was removed from
+         its old dock in the same breath and this is the only thing holding it. */
+      const pending = pendingNestRef.current.get(groupPanelId)
+      pendingNestRef.current.delete(groupPanelId)
+      if (pending?.length) {
+        silently(() => {
+          for (const entry of pending) {
+            if (api.getPanel(panelId(entry.panel))) continue
+            api.addPanel({
+              id: panelId(entry.panel),
+              component: entry.panel.kind,
+              title: entry.title,
+              params: entry.panel as unknown as Record<string, unknown>,
+            })
+          }
+        })
+      }
+
+      const disposables = [
+        api.onDidLayoutChange(() => {
+          persist()
+          /* The inner groups moved; every panel measures its own overlap. */
+          notifyDockLayout()
+        }),
+        api.onDidAddPanel(persist),
+        api.onDidMovePanel(persist),
+        api.onDidRemovePanel(() => {
+          persist()
+          /* An empty group is a tab with nothing to show, so it goes with its
+             last panel — silently, because the panel's own close is what landed
+             on ⌘⇧T. A microtask later, for the reason the outer's own
+             last-tab rule waits: a restore empties before it refills. */
+          queueMicrotask(() => {
+            if (api.panels.length > 0) return
+            const panel = owner()
+            if (panel) silently(() => apiRef.current?.removePanel(panel))
+          })
+        }),
+        /* The same two things the top level does with its own strip: a tab
+           dropped in from outside, and the route following the chat you
+           focused — a thread in a group is still the thread on screen. */
+        api.onDidDrop((event) => {
+          const transfer = event.getData()
+          if (transfer?.panelId) dropForeign(api, transfer.panelId, event.group ?? undefined)
+        }),
+        api.onDidActivePanelChange(({ panel }) => {
+          const descriptor = panel && descriptorOf(panel)
+          const path =
+            descriptor?.kind === "chat"
+              ? threadPath(descriptor.sessionId)
+              : descriptor?.kind === "page"
+                ? descriptor.path
+                : null
+          if (path && location.pathname + location.search !== path) navigateTo(path, { replace: true })
+        }),
+      ]
+      persist()
+      notifyGroups()
+
+      return () => {
+        disposables.forEach((disposable) => disposable.dispose())
+        if (nestedRef.current.get(groupPanelId) === api) nestedRef.current.delete(groupPanelId)
+        notifyGroups()
+      }
+    },
+    [silently, notifyGroups, dropForeign]
+  )
+
+  /* ── In, across and out ──
+     Every one of them is a close and an open of the same descriptor, silently:
+     dockview's own `moveTo` cannot cross two instances. A panel *is* its
+     descriptor (`panels.ts`), so nothing is lost — a terminal reattaches to its
+     PTY by id, a thread to its session, the IDE to its own tab store. The title
+     is carried so a thread does not flash "Thread" on the way. */
+  const moveToGroup = React.useCallback(
+    (id: string, groupPanelId: string | null): string | null => {
+      const panel = findPanel(id)
+      const source = panel && ownerOf(panel)
+      const descriptor = panel && descriptorOf(panel)
+      const root = apiRef.current
+      if (!panel || !source || !descriptor || !root || descriptor.kind === "group") return null
+
+      /* Into a group that exists: straight across, and the group's own tab is
+         brought to the front so the move is seen. The source, if it was a
+         group emptied by this, closes itself. */
+      if (groupPanelId) {
+        const target = nestedRef.current.get(groupPanelId)
+        if (!target || target === source) return null
+        const title = panel.title ?? PANEL_SPECS[descriptor.kind].defaultTitle
+        silently(() => {
+          source.removePanel(panel)
+          target.addPanel({
+            id,
+            component: descriptor.kind,
+            title,
+            params: descriptor as unknown as Record<string, unknown>,
+          })
+        })
+        root.getPanel(groupPanelId)?.api.setActive()
+        return groupPanelId
+      }
+
+      /* Into a new group: minted at the top level — in the tab's place when
+         it is a top-level tab, beside the group it is leaving otherwise — and
+         filled once its instance is ready (`attachNested`). */
+      const groupId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+      const newId = panelId({ kind: "group", groupId })
+      pendingNestRef.current.set(newId, [
+        { panel: descriptor, title: panel.title ?? PANEL_SPECS[descriptor.kind].defaultTitle },
+      ])
+      const anchor = isNested(source) ? groupPanelOf(source) : panel
+      const group = anchor?.group
+      silently(() => {
+        root.addPanel({
+          id: newId,
+          component: "group",
+          title: PANEL_SPECS.group.defaultTitle,
+          params: { kind: "group", groupId },
+          position: group
+            ? {
+                referenceGroup: group.id,
+                direction: "within",
+                index: group.panels.indexOf(anchor!) + (anchor === panel ? 0 : 1),
+              }
+            : undefined,
+        })
+        source.removePanel(panel)
+      })
+      return newId
+    },
+    [findPanel, ownerOf, isNested, groupPanelOf, silently]
+  )
+
+  const unnestPanel = React.useCallback(
+    (id: string) => {
+      const panel = findPanel(id)
+      const source = panel && ownerOf(panel)
+      const descriptor = panel && descriptorOf(panel)
+      const root = apiRef.current
+      if (!panel || !source || !descriptor || !root || !isNested(source)) return
+      /* Out beside the group's own tab, which is where it went in from. */
+      const anchor = groupPanelOf(source)
+      const group = anchor?.group
+      const title = panel.title ?? PANEL_SPECS[descriptor.kind].defaultTitle
+      silently(() => {
+        source.removePanel(panel)
+        root.addPanel({
+          id,
+          component: descriptor.kind,
+          title,
+          params: descriptor as unknown as Record<string, unknown>,
+          position:
+            group && anchor
+              ? { referenceGroup: group.id, direction: "within", index: group.panels.indexOf(anchor) + 1 }
+              : undefined,
+        })
+      })
+    },
+    [findPanel, ownerOf, isNested, groupPanelOf, silently]
   )
 
   const cleanupRef = React.useRef<(() => void) | null>(null)
@@ -859,7 +1353,14 @@ export function useWorkspaceDock(): DockController {
        of it: publish on every add, remove and move, and once now for what the
        restored layout just put back. This is what makes a refresh bring the
        same tabs back *and* the same rows into the sidebar. */
-    const publishOpenThreads = () => setOpenThreads(openChatThreads(api))
+    const publishOpenThreads = () => {
+      /* Both levels: a thread in a group is open, and the sidebar's "Opened"
+         tier is a reading of the dock, not of one instance. */
+      setOpenThreads(openChatThreads(allPanels()))
+      /* A group tab appearing or closing is news to every other tab's menu,
+         which reads the store rather than this instance (`useDockGroups`). */
+      notifyGroups()
+    }
     publishOpenThreads()
 
     /* The strip stays. It used to hide itself when the dock held a single
@@ -905,11 +1406,21 @@ export function useWorkspaceDock(): DockController {
       }),
     ]
 
+    /* A tab dragged from another instance's strip: dockview could not handle
+       it, so it arrives here. Both directions are the same call — this is the
+       top level's half, `attachNested` wires the nested one. */
+    disposables.push(
+      api.onDidDrop((event) => {
+        const transfer = event.getData()
+        if (transfer?.panelId) dropForeign(api, transfer.panelId, event.group ?? undefined)
+      })
+    )
+
     cleanupRef.current = () => {
       clearTimeout(saveTimer)
       disposables.forEach((disposable) => disposable.dispose())
     }
-  }, [silently])
+  }, [silently, allPanels, notifyGroups, dropForeign])
 
   /* Bound through `use-hotkey` like every other key in the app, not on a raw
      window listener as this used to be: that bypassed the defaultPrevented
@@ -921,12 +1432,25 @@ export function useWorkspaceDock(): DockController {
      "every open thread", and once it is not, following the strip in front of
      you beats following a global order you cannot see. */
   useHotkey("mod+1 mod+2 mod+3 mod+4 mod+5 mod+6 mod+7 mod+8 mod+9", (event) => {
-    const api = apiRef.current
-    const group = api?.activeGroup ?? api?.groups[0]
-    const panel = group?.panels[Number(event.key) - 1]
-    if (!panel) return
+    const index = Number(event.key) - 1
+    if (!activeStrip()?.panels[index]) return
     event.preventDefault()
-    panel.api.setActive()
+    setTabIndex(index)
+  })
+
+  /* The strip's walk and its close, on the group in front of you. ⌘W is never
+     the close chord — Electron gives it to close-window — which is why the
+     table binds Alt+W (`lib/shortcuts.ts`). */
+  useShortcut("nextTab", () => {
+    cycleTab(1)
+  })
+
+  useShortcut("prevTab", () => {
+    cycleTab(-1)
+  })
+
+  useShortcut("closeTab", () => {
+    void closeActiveTab()
   })
 
   useShortcut("splitRight", () => {
@@ -959,6 +1483,7 @@ export function useWorkspaceDock(): DockController {
       closeToTheRight,
       closeGroup,
       splitActive,
+      targetNext,
       toggleMaximize,
       stackAll,
       resetLayout,
@@ -976,7 +1501,15 @@ export function useWorkspaceDock(): DockController {
       listPanels,
       isPanelOpen,
       hasClosedPanels,
+      activeDescriptor,
       prunePanels,
+      setTabIndex,
+      cycleTab,
+      closeActiveTab,
+      attachNested,
+      groupIdOf,
+      moveToGroup,
+      unnestPanel,
     }),
     [
       onReady,
@@ -989,6 +1522,7 @@ export function useWorkspaceDock(): DockController {
       closeToTheRight,
       closeGroup,
       splitActive,
+      targetNext,
       toggleMaximize,
       stackAll,
       resetLayout,
@@ -1006,25 +1540,41 @@ export function useWorkspaceDock(): DockController {
       listPanels,
       isPanelOpen,
       hasClosedPanels,
+      activeDescriptor,
       prunePanels,
+      setTabIndex,
+      cycleTab,
+      closeActiveTab,
+      attachNested,
+      groupIdOf,
+      moveToGroup,
+      unnestPanel,
     ]
   )
 }
 
 export type { DockviewApi }
 
-export function WorkspaceDock({
-  actions,
-  dock,
+/* The component map, as a context: a nested dock is rendered from inside a
+   panel and cannot be handed props by the outer one, and it must draw the same
+   panels — a tab in a group is the same object it was outside one. Built once
+   in `WorkspaceDock` (it closes over `actions`) and read here. */
+const DockComponentsContext = React.createContext<Record<string, React.FC<IDockviewPanelProps>>>({})
+
+/**
+ * One dockview surface — the same components, the same tab, the same strip, at
+ * either level (`group-panel.tsx`). Everything that differs between the two is
+ * CSS on the class the caller passes (`.dock-nested`, `index.css`).
+ */
+export function DockSurface({
+  className,
   onReady,
-  onNewTab,
-  onOpenPanel,
-}: DockOpeners & {
-  actions: Actions
-  dock: WorkspaceDock
+}: {
+  className?: string
   onReady: (api: DockviewApi) => void
 }) {
   const { resolved } = useTheme()
+  const components = React.useContext(DockComponentsContext)
   /* ── Reordering a tab is a reorder, not a target picker ──
      Dockview's default is a half-width fill over every tab — a row of slabs
      the size of half a tab, which is what "multiple spots, wrong size" was.
@@ -1041,9 +1591,51 @@ export function WorkspaceDock({
       tabAnimation: "smooth" as const,
       dndTabIndicator: "line" as const,
     }),
-    [resolved],
+    [resolved]
   )
 
+  return (
+    <DockviewReact
+      className={cn("session-dock h-full min-h-0 flex-1", className)}
+      components={components}
+      defaultRenderer="always"
+      defaultTabComponent={PanelTab}
+      /* Floating groups are on: a panel over the dock, and — through
+         `popoutPanel` — one in a window of its own. `floatingGroupBounds`
+         keeps a float from being dragged off-screen, which on a laptop is a
+         panel the user cannot get back without clearing the layout. */
+      floatingGroupBounds="boundedWithinViewport"
+      onReady={(event) => onReady(event.api)}
+      /* Dockview draws its own overflow chevron once the tabs stop fitting,
+         and `TabActions` already draws one at the same end of the same strip
+         — two dropdowns side by side, answering the same question. Ours is
+         the one that stays: it lists every tab rather than only the hidden
+         ones, says what each is doing (`panel-status`) and closes one without
+         bringing it back into the strip first. */
+      disableTabsOverflowList
+      /* No `singleTabMode`: a browser tab is the width of a tab whether it is
+         alone or one of nine (`index.css` gives it the same 15rem ceiling and
+         lets it shrink), and the strip beside it is the run of emptiness the
+         window is dragged by. A lone tab stretched to the whole band used to
+         be how that emptiness stayed pressable — it is the void container's
+         again now, which is what it is for. */
+      rightHeaderActionsComponent={TabActions}
+      theme={theme}
+    />
+  )
+}
+
+export function WorkspaceDock({
+  actions,
+  dock,
+  onReady,
+  onNewTab,
+  onOpenPanel,
+}: DockOpeners & {
+  actions: Actions
+  dock: WorkspaceDock
+  onReady: (api: DockviewApi) => void
+}) {
   /* ── One group on a phone ──
      Two panels side by side in 390px is two panels nobody can read, so below
      `md` the dock is one stack of tabs: every group folds into the active one
@@ -1092,6 +1684,7 @@ export function WorkspaceDock({
     map.tasks = contained(TasksPanel)
     map.web = contained(WebPanel as React.FC<IDockviewPanelProps>)
     map.page = contained(PagePanel as React.FC<IDockviewPanelProps>)
+    map.group = contained(GroupPanel)
     return map
   }, [actions])
 
@@ -1199,33 +1792,9 @@ export function WorkspaceDock({
   return (
     <DockContext.Provider value={dock}>
       <DockOpenersContext.Provider value={openers}>
-      <DockviewReact
-        className="session-dock h-full min-h-0 flex-1"
-        components={components}
-        defaultRenderer="always"
-        defaultTabComponent={PanelTab}
-        /* Floating groups are on: a panel over the dock, and — through
-           `popoutPanel` — one in a window of its own. `floatingGroupBounds`
-           keeps a float from being dragged off-screen, which on a laptop is a
-           panel the user cannot get back without clearing the layout. */
-        floatingGroupBounds="boundedWithinViewport"
-        onReady={(event) => handleReady(event.api)}
-        /* Dockview draws its own overflow chevron once the tabs stop fitting,
-           and `TabActions` already draws one at the same end of the same strip
-           — two dropdowns side by side, answering the same question. Ours is
-           the one that stays: it lists every tab rather than only the hidden
-           ones, says what each is doing (`panel-status`) and closes one without
-           bringing it back into the strip first. */
-        disableTabsOverflowList
-        /* No `singleTabMode`: a browser tab is the width of a tab whether it is
-           alone or one of nine (`index.css` gives it the same 15rem ceiling and
-           lets it shrink), and the strip beside it is the run of emptiness the
-           window is dragged by. A lone tab stretched to the whole band used to
-           be how that emptiness stayed pressable — it is the void container's
-           again now, which is what it is for. */
-        rightHeaderActionsComponent={TabActions}
-        theme={theme}
-      />
+        <DockComponentsContext.Provider value={components}>
+          <DockSurface onReady={handleReady} />
+        </DockComponentsContext.Provider>
       </DockOpenersContext.Provider>
     </DockContext.Provider>
   )

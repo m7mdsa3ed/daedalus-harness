@@ -20,7 +20,20 @@ export const agentsKey = (s: ServerSettings) => scope(s).concat(["agents"])
     (`GET /api/agents/status`) — a reading about this machine, not a row. */
 export const agentsStatusKey = (s: ServerSettings) => scope(s).concat(["agents-status"])
 export const projectsKey = (s: ServerSettings) => scope(s).concat(["projects"])
+/** The scripts a project's package.json files declare, read off the disk —
+    suggested by the composer's `!` completer, so its staleness is a
+    suggestion's, not a catalog's. */
+export const projectScriptsKey = (s: ServerSettings, projectId: string) =>
+  scope(s).concat(["project-scripts", projectId])
+/** The `!` lines a project keeps running, most used first — the completer's
+    third list, and the one the server tallies as lines run. Invalidated by
+    the run itself, so it is fresh on the menu that follows it. */
+export const shellHistoryKey = (s: ServerSettings, projectId: string) =>
+  scope(s).concat(["shell-history", projectId])
 export const mcpServersKey = (s: ServerSettings) => scope(s).concat(["mcp-servers"])
+/** What one MCP server advertises. Under the servers key, so invalidating the
+    library takes every listing with it. */
+export const mcpCatalogKey = (s: ServerSettings, id: string) => mcpServersKey(s).concat(["catalog", id])
 export const skillsKey = (s: ServerSettings) => scope(s).concat(["skills"])
 export const commandsKey = (s: ServerSettings) => scope(s).concat(["commands"])
 export const personasKey = (s: ServerSettings) => scope(s).concat(["personas"])
@@ -52,6 +65,14 @@ export const routineTriggersKey = (s: ServerSettings, routineId: string) =>
 /* Ad-hoc read surfaces (Phase 2). */
 export const projectStatsKey = (s: ServerSettings, projectId: string) =>
   scope(s).concat(["project-stats", projectId])
+export const projectReposKey = (s: ServerSettings, projectId: string) =>
+  scope(s).concat(["project-repos", projectId])
+export const projectGitStatusKey = (s: ServerSettings, projectId: string, repo: string) =>
+  scope(s).concat(["project-git-status", projectId, repo])
+export const projectGitLogKey = (s: ServerSettings, projectId: string, repo: string) =>
+  scope(s).concat(["project-git-log", projectId, repo])
+export const projectGitBranchesKey = (s: ServerSettings, projectId: string, repo: string) =>
+  scope(s).concat(["project-git-branches", projectId, repo])
 export const allQuotaKey = (s: ServerSettings) => scope(s).concat(["quota", "all"])
 export const agentQuotaKey = (s: ServerSettings, agentId: string, profileId?: string) =>
   scope(s).concat(["quota", agentId, profileId ?? ""])

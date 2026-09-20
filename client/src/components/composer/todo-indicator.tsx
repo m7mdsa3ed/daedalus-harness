@@ -10,8 +10,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import {
   READING_MARK,
   READING_TRIGGER,
-  ReadingBadge,
   ReadingBubble,
+  ReadingFace,
   Ring,
 } from "@/components/composer/indicator"
 import { extractTodos, toolViewOf } from "@/lib/tools"
@@ -97,14 +97,16 @@ export function TodoIndicator({ thread }: { thread: ThreadState }) {
             title={`Checklist — ${completed} of ${total} done${current ? ` · ${current.content}` : ""}`}
             aria-label="Checklist"
           >
-            <Ring percent={percent} className={READING_MARK} />
-            {/* The count rides the mark on a narrow panel and becomes the
-                badge's `2/5` where there is room — the same bargain the other
-                four readings strike, so the cluster is one row. */}
-            <ReadingBubble>{completed}</ReadingBubble>
-            <ReadingBadge>
-              {completed}/{total}
-            </ReadingBadge>
+            {/* The dial rides inside the pill — its own dress rather than a
+                generic glyph, but the same one-face bargain. The count rides
+                the dial on a narrow panel and becomes the pill's `2/5` where
+                there is room — the same bargain the other four readings
+                strike, so the cluster is one row. */}
+            <ReadingFace
+              icon={<Ring percent={percent} className={READING_MARK} />}
+              label={`${completed}/${total}`}
+              after={<ReadingBubble>{completed}</ReadingBubble>}
+            />
           </Button>
         }
       />

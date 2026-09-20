@@ -4,6 +4,7 @@ import {
   ProfileInputSchema,
   createProfile,
   deleteProfile,
+  duplicateProfile,
   getProfile,
   listProfiles,
   redact,
@@ -103,6 +104,41 @@ export function profileRoutes(app: Hono, deps: { sessions: SessionManager }): vo
   const profilePatchSchema = z.object({
     hidden: z.boolean().optional(),
     disabled: z.boolean().optional(),
+  });
+  /* One model appended to a profile's catalog, for the composer's "Add
+     model…". Its own route for the same reason the flags PATCH is one: the
+     client is sent `hasApiKey` and never the key, so it cannot PUT the profile
+     back to add a row without a credential round-trip that can only lose. Id
+     and label only — everything else a models[] entry can carry is display
+     metadata the editor is for. Idempotent: an id already listed is the
+     profile unchanged, not an error, because two menus may race. */
+  app.post("/api/profiles/:id/models", async (c) => {
+    const parsed = z
+      .object({ id: z.string().min(1), label: z.string().min(1) })
+      .safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    const profile = await getProfile(c.req.param("id"));
+    if (!profile) return c.json({ error: "unknown profile" }, 404);
+    if (profile.virtual) return c.json({ error: "the default profile has no catalog to add to" }, 400);
+    if (profile.models.some((m) => m.id === parsed.data.id)) return c.json(redact(profile));
+    const updated = await updateProfile(profile.id, {
+      ...profile,
+      // Blank means "keep the stored key" — see updateProfile.
+      apiKey: "",
+      smallModel: profile.smallModel ?? "",
+      suppressModelMetadataWarning: profile.suppressModelMetadataWarning ?? false,
+      hidden: profile.hidden ?? false,
+      disabled: profile.disabled ?? false,
+      models: [...profile.models, { ...parsed.data, reasoningEfforts: [] }],
+    });
+    return updated ? c.json(redact(updated)) : c.json({ error: "not found" }, 404);
+  });
+  /* A copy of the row, credentials and all — see duplicateProfile for why the
+     browser cannot assemble one. Its own route rather than a flag on POST
+     /api/profiles: the body would be the profile the client does not hold. */
+  app.post("/api/profiles/:id/duplicate", async (c) => {
+    const copy = await duplicateProfile(c.req.param("id"));
+    return copy ? c.json(redact(copy)) : c.json({ error: "not found" }, 404);
   });
   app.patch("/api/profiles/:id", async (c) => {
     const parsed = profilePatchSchema.safeParse(await c.req.json().catch(() => ({})));

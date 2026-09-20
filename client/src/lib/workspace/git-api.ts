@@ -114,6 +114,9 @@ export function gitStatus(
 export interface BranchList {
   current: string | null
   branches: string[]
+  /** Remote-tracking refs, `origin/main` shaped (`origin/HEAD` excluded).
+      Checking one out is a create-with-tracking — see `track` below. */
+  remotes: string[]
 }
 
 export function gitBranches(
@@ -220,19 +223,31 @@ export type GitAction =
   | { action: "commit"; message: string; amend?: boolean }
   /** One hunk: `cached` stages it, `reverse` alone discards it. */
   | { action: "apply"; patch: string; cached?: boolean; reverse?: boolean }
-  /** Switch branches; `create` makes it a `-b`. */
-  | { action: "checkout"; branch: string; create?: boolean }
+  /** Switch branches; `create` makes it a `-b`, and `track` means `branch`
+      names a remote ref (`origin/x`) to be checked out as a local branch of the
+      same name tracking it. */
+  | { action: "checkout"; branch: string; create?: boolean; track?: boolean }
+  /** The remote. A pull is `--ff-only` and a push publishes an unpublished
+      branch to `origin`; both answer what the remote said in `output`. */
+  | { action: "pull" | "push" }
 
 /** Paths are relative to `repo`, the same way the status that listed them was. */
 export type GitWrite = GitAction & { repo?: string }
 
-/** Draft a commit message from the repository's own diff, through the picked
-    profile's endpoint. The diff is read server-side — this sends a profile, not
-    a patch. */
+/** Draft a commit message — or, with `kind: "branch"`, a branch name — from the
+    repository's own diff, through the picked profile's endpoint. The diff is
+    read server-side: this sends a profile, not a patch. Both are the same
+    question asked of the same diff, which is why they are one call. */
 export function draftCommitMessage(
   settings: ServerSettings,
   projectId: string,
-  input: { profileId: string; agentId?: string; model?: string; repo?: string },
+  input: {
+    profileId: string
+    agentId?: string
+    model?: string
+    repo?: string
+    kind?: "commit" | "branch"
+  },
   signal?: AbortSignal
 ): Promise<{ message: string; files: number; staged: boolean }> {
   return api(settings, `${base(projectId)}/draft-message`, {

@@ -45,6 +45,7 @@ each bullet on a single line.
 - **Escape takes back the message that has not landed**, newest first and one only, back into the composer — the take-back comes before the cancel, so a settle cannot draw the held steer first.
 - **"Load earlier steps" leaves the reader where they were.** The re-fold mints a new row for every row on screen, which defeated both the scroller's element-matched preserve-on-prepend and the browser's scroll anchoring; the anchor is now distance-from-end, which survives the replacement.
 - **A page of history brought back carries every `!` command**, because a shell row belongs to no turn and one the reader ran can never be something the replay withholds.
+- **Drafting a commit message, a branch name or a prompt rewrite works on a profile that serves several runtimes again.** Those calls go to the profile's shared endpoint and never the per-agent override, but they were gated by the spawn paths' rule — which refuses to guess an agent when a profile names more than one — so every draft answered "unknown agent for this profile". Their gate is now `profileHasAgent`: at least one runtime the profile names is one the harness knows.
 - A failed attempt no longer persists an assistant message whose tool call has no result, which the next `session/load` handed back to a provider that rejects it.
 - A pinned thread is no longer listed twice, an exited terminal gets a new shell rather than a reconnect, and a profile model pick is drawn before it lands instead of patching the row.
 

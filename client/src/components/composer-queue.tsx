@@ -24,12 +24,26 @@
    the same shape for both states, and the steer's dot pulses, because that
    one is a thing happening rather than a thing waiting.
 
-   ── The caption is a caption, and the actions are one object ──
-   Four ghost buttons, a pill and a time all loose on one 10px line read as
-   six things. The actions live in a single bordered group that fades in on
-   hover (and is simply always there where there is no hover to fade with —
-   the **pointer's** question, not the width's), so the caption itself is only
-   ever what it says it is: state, then time.
+   ── The caption is a caption, and it is almost nothing ──
+   State was a filled pill, the actions rode a bordered, blurred, shadowed
+   group, and the rule above the stack carried two more buttons: a queue of
+   three messages drew a pill, a time, four buttons and a container per row,
+   plus a header bar. That is a panel of controls standing where the
+   conversation continues.
+
+   So the chrome is gone and the *signals* stayed. State is the bubble's own
+   border — three weights, which already said which one goes next — plus one
+   pulsing dot beside the time for a steer, which is the only state a border
+   weight cannot say (happening, not waiting). The actions are bare ghost
+   buttons on the caption line with no group around them, revealed on hover
+   under a cursor and simply always there where there is no hover to reveal
+   them with — the **pointer's** question, not the width's. A caption is now
+   what it claims to be: time, and what you can do about it.
+
+   ── Nothing acts on the whole queue ──
+   "Send all" and "Clear" were a second copy of two buttons every row already
+   has, one line up and louder, and they were the reason the rule needed to be
+   a bar. The rule is a rule again: a hairline and a count.
 
    ── And on a phone the actions get their own line ──
    A pill, a time and four 32px touch targets are a phone's whole width, so
@@ -73,19 +87,10 @@ import type { ThreadState } from "@/lib/store"
 import { formatBytes } from "@/lib/attachments"
 import { cn } from "@/lib/utils"
 
-/* One object, not four: the actions ride in a bordered group so a row's
-   caption reads as [actions] [state] [time] and not as six loose 10px things.
-   Same shell for the whole-queue pair on the rule, so the two halves of this
-   surface are visibly the same kind of control. */
-const ACTION_GROUP =
-  "flex max-w-full shrink-0 flex-wrap items-center justify-end gap-0.5 rounded-pill border border-border/60 bg-background/80 p-0.5 shadow-xs backdrop-blur-sm"
-/* Taller on a finger than under a cursor — the device's question, not the
-   panel width's. */
-const ROW_BUTTON = "shrink-0 gap-1 rounded-pill px-2 text-[11px]"
-/* The state pill: one shape for both states, so what differs between "Next"
-   and "Steering" is the word and the dot, never the geometry. */
-const STATE_PILL =
-  "flex shrink-0 items-center gap-1 rounded-pill bg-primary/10 px-1.5 py-0.5 font-medium text-primary"
+/* No container, no border, no ground: the buttons are the group. What used to
+   hold them together was a bordered, blurred pill, which is a control standing
+   in the transcript — the spacing does the same job for nothing. */
+const ACTION_GROUP = "flex max-w-full shrink-0 flex-wrap items-center justify-end gap-0.5"
 
 export function ComposerQueue({
   sessionId,
@@ -100,11 +105,10 @@ export function ComposerQueue({
       from the queue by the time this is called — see the note above. */
   onEdit: (text: string) => void
 }) {
-  const coarse = useCoarsePointer()
   const items = thread.queue
   const count = items.length
-  /* A held steer is listed but already sent: "send all" and "clear" have
-     nothing to do with it, so they act — and light up — on the rest. */
+  /* A held steer is listed but already sent, so it is not the one the turn's
+     end will send: "Next" is the first row that is not a steer. */
   const editable = items.filter((item) => !item.steer)
   if (count === 0) return null
 
@@ -115,23 +119,17 @@ export function ComposerQueue({
   const canSend = !closed && !thread.archived
   const canEdit = !closed
   const running = thread.turnActive
-  /* "Send all" and "Clear" are the *plural* actions. With one editable
-      message they say exactly what its own two buttons say, one line below
-      and louder — so at that size the rule carries nothing but its label,
-      which is the common case and the quiet one. */
-  const bulk = editable.length > 1
 
   return (
     <div className="pt-1">
-      {/* A rule, the same one a notice wears, rather than a header bar: what
-          follows is the conversation continuing, not a panel of queued items,
-          and the two actions that apply to the whole queue ride the rule
-          because there is nowhere else they belong.
+      {/* A rule and a count, and nothing else. It used to carry "Send all" and
+          "Clear", which were the same two things every row's own caption says
+          one line below — and carrying them is what turned a rule into a header
+          bar over a panel of queued items. What follows is the conversation
+          continuing; this only says how much of it has not gone yet.
 
-          A divider with its label near the start and the growing half of the
-          rule *after* it: the label truncates and the actions never wrap, so a
-          narrow panel gets a shorter rule rather than a 16px stub of dash with
-          two orphaned buttons under it. */}
+          The label sits near the start and the growing half of the rule after
+          it, so a narrow panel gets a shorter rule rather than a stub. */}
       <div className="flex items-center gap-2.5 py-2 text-[11px] text-muted-foreground/70">
         <span aria-hidden className="h-px w-4 shrink-0 bg-border" />
         <span className="min-w-0 truncate">
@@ -139,35 +137,6 @@ export function ComposerQueue({
           {running ? "waiting for this turn" : "waiting to be sent"}
         </span>
         <span aria-hidden className="h-px min-w-2 flex-1 bg-border" />
-        {bulk && (
-          <span className={ACTION_GROUP}>
-            <Button
-              variant="ghost"
-              size={coarse ? "sm" : "xs"}
-              className={cn(ROW_BUTTON, "text-primary hover:text-primary")}
-              disabled={!canSend}
-              title={
-                running
-                  ? "Stop the running turn and send everything queued as one message"
-                  : "Send everything queued as one message"
-              }
-              onClick={() => void actions.queueSendNow(sessionId).catch(() => {})}
-            >
-              <SendHorizontalIcon />
-              {running ? "Send all now" : "Send all"}
-            </Button>
-            <Button
-              variant="ghost"
-              size={coarse ? "sm" : "xs"}
-              className={cn(ROW_BUTTON, "text-muted-foreground")}
-              disabled={!canEdit}
-              title="Forget every queued message"
-              onClick={() => void actions.queueClear(sessionId).catch(() => {})}
-            >
-              Clear
-            </Button>
-          </span>
-        )}
       </div>
       {items.map((item) => (
         <QueuedMessageRow
@@ -343,24 +312,23 @@ function QueuedMessageRow({
             </Button>
           </span>
         )}
+        {/* Time, and for a steer one pulsing dot in front of it.
+            "Next" was a filled pill saying what the bubble's middle border
+            weight already says, and "Steering" was the same pill saying what
+            the near-solid one does — so the words went and the weights stayed.
+            The dot is what no border weight can say: this one is *happening*,
+            already on the wire, joining the running turn at its next step
+            boundary, which is also why the row has no actions. It keeps a
+            title, because a bare dot is not a label. */}
         <span className="order-1 flex items-center gap-1.5 @panel-sm:order-2">
-          {item.steer ? (
-            /* Already on the wire, joining the running turn at its next step
-               boundary — which is where its bubble will land. Until then this
-               row is the only place the words are, which is also why it has no
-               actions: there is nothing left to take back. The dot pulses
-               because this one is happening, not waiting. */
-            <span className={STATE_PILL}>
+          {item.steer && (
+            <span
+              title="Steering — already sent into the running turn"
+              className="flex items-center"
+            >
               <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-primary" />
-              Steering
+              <span className="sr-only">Steering</span>
             </span>
-          ) : (
-            next && (
-              <span className={STATE_PILL}>
-                <span aria-hidden className="size-1.5 rounded-full bg-primary/50" />
-                Next
-              </span>
-            )
           )}
           <Timestamp at={item.createdAt} className="text-[10px]" />
         </span>

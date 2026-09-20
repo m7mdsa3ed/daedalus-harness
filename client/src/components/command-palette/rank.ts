@@ -78,7 +78,21 @@ export interface PaletteItem {
   /** Never filtered out — the row answers for any query, or was ranked by
       somebody else already. */
   always?: boolean
-  onSelect: () => void
+  /** A line *about* the list rather than an entry in it: a loading state, an
+      empty answer, a warning. It is still a row — it takes a place in the flat
+      list the menu owns — but it is `disabled` there, so ↑/↓ walk straight
+      past it and ↵ never lands on it.
+
+      It is a row and not a `<div>` between rows because the menu decides
+      selection from its own `items` array: anything drawn inside the list that
+      the array does not name would be skipped by the keyboard *and* by the
+      hover fill, which is how a note that is a div ends up highlightable by
+      the mouse and not by the arrows. */
+  note?: boolean
+  /** A note's colour. Amber for the ones that report a failure. */
+  noteTone?: "warn"
+  /** Absent on a `note`, which is the one row that cannot be picked. */
+  onSelect?: () => void
 }
 
 interface Ranked {
@@ -132,7 +146,7 @@ export function rankItems(
   const byId = new Map(items.map((item) => [item.id, item]))
   const recent = recents
     .map((id) => byId.get(id))
-    .filter((item): item is PaletteItem => !!item && !item.always && !item.rank)
+    .filter((item): item is PaletteItem => !!item && !item.always && !item.rank && !item.note)
   const order = new Map(recent.map((item, index) => [item.id, index]))
   const lifted = q ? new Set<string>() : new Set(recent.slice(0, RECENT_SHOWN).map((i) => i.id))
 
@@ -146,11 +160,14 @@ export function rankItems(
 
   const scored: Ranked[] = []
   for (const item of items) {
-    const base = !q || item.always ? 1 : scoreItem(item.title, item.keywords, q)
+    // A note answers for any query: it is *about* the list the query produced,
+    // so filtering it out is exactly backwards — the emptier the result, the
+    // more the note is the only thing worth drawing.
+    const base = !q || item.always || item.note ? 1 : scoreItem(item.title, item.keywords, q)
     if (!base) continue
     scored.push({ item, score: base })
   }
-  const named = scored.some((row) => !row.item.always && row.score >= NAMED)
+  const named = scored.some((row) => !row.item.always && !row.item.note && row.score >= NAMED)
 
   for (const row of scored) {
     const { item } = row
